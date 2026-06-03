@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
-from core.database import SessionLocal, EmailAccount, Base, engine  # noqa: E402
+from core.database import Base, EmailAccount, SessionLocal, engine  # noqa: E402
 from src.secret_storage import encrypt  # noqa: E402
 
 NAME = "Demo"

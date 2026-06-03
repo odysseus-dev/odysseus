@@ -23,11 +23,10 @@ import pytest
 
 from src.llm_core import (
     _detect_provider,
-    _provider_label,
     _format_upstream_error,
+    _provider_label,
     _uses_max_completion_tokens,
 )
-
 
 # ── _detect_provider ──
 # Matches on hostname (exact or subdomain), never substring, and falls back to

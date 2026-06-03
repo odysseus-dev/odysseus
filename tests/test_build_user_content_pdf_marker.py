@@ -11,8 +11,8 @@ import os
 import tempfile
 
 import src.document_processor as dp
-import src.pdf_forms as pdf_forms
 import src.pdf_form_doc as pdf_form_doc
+import src.pdf_forms as pdf_forms
 
 
 class _FakeUploadHandler:

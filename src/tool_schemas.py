@@ -10,9 +10,8 @@ tool parsing / execution logic.
 
 import json
 import logging
-from typing import Optional
 
-from src.agent_tools import ToolBlock, TOOL_TAGS
+from src.agent_tools import TOOL_TAGS, ToolBlock
 from src.tool_parsing import _TOOL_NAME_MAP
 
 logger = logging.getLogger(__name__)
@@ -1063,7 +1062,7 @@ FUNCTION_TOOL_SCHEMAS = [
 # Converter: native function call -> ToolBlock
 # ---------------------------------------------------------------------------
 
-def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock]:
+def function_call_to_tool_block(name: str, arguments: str) -> ToolBlock | None:
     """Convert a native function call into a ToolBlock for the existing execution pipeline."""
     try:
         if not arguments or (isinstance(arguments, str) and not arguments.strip()):

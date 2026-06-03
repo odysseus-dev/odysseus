@@ -3,7 +3,6 @@ import json
 import re
 from urllib.parse import urlparse
 
-
 # Copy the pure functions to test them without importing the full module.
 # This avoids module cache conflicts with other test files that mock dependencies.
 

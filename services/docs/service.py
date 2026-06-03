@@ -2,7 +2,7 @@
 """Docs service — personal document RAG."""
 
 from dataclasses import dataclass
-from typing import List, Dict, Any
+from typing import Any
 
 from src.rag_manager import RAGManager
 
@@ -13,7 +13,7 @@ class DocChunk:
     text: str
     source: str
     score: float
-    metadata: Dict[str, Any] = None
+    metadata: dict[str, Any] = None
 
 
 @dataclass
@@ -21,7 +21,7 @@ class IndexResult:
     """Result of indexing documents."""
     indexed: int
     failed: int
-    errors: List[str]
+    errors: list[str]
 
 
 class DocsService:
@@ -37,7 +37,7 @@ class DocsService:
     def __init__(self, persist_dir: str = "data/chroma"):
         self.rag = RAGManager(persist_directory=persist_dir)
 
-    async def query(self, query: str, top_k: int = 5) -> List[DocChunk]:
+    async def query(self, query: str, top_k: int = 5) -> list[DocChunk]:
         """
         Query the document index.
 
@@ -77,11 +77,11 @@ class DocsService:
             errors=result.get("errors", []),
         )
 
-    async def add_document(self, text: str, metadata: Dict[str, Any]) -> bool:
+    async def add_document(self, text: str, metadata: dict[str, Any]) -> bool:
         """Add a single document to the index."""
         return self.rag.add_document(text, metadata)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get index statistics."""
         return self.rag.get_stats()
 

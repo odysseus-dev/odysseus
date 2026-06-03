@@ -4,11 +4,12 @@ import math
 import re
 import time
 from collections import Counter
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Any
+
 from src.chat_helpers import extract_urls
-from src.youtube_handler import is_youtube_url
-from src.search import comprehensive_web_search, fetch_webpage_content
 from src.prompt_security import UNTRUSTED_CONTEXT_POLICY, untrusted_context_message
+from src.search import comprehensive_web_search, fetch_webpage_content
+from src.youtube_handler import is_youtube_url
 
 logger = logging.getLogger(__name__)
 
@@ -163,14 +164,14 @@ class ChatProcessor:
         use_web: bool = False,
         use_rag: bool = True,
         use_memory: bool = True,
-        time_filter: Optional[str] = None,
-        preset_system_prompt: Optional[str] = None,
-        owner: Optional[str] = None,
-        character_name: Optional[str] = None,
+        time_filter: str | None = None,
+        preset_system_prompt: str | None = None,
+        owner: str | None = None,
+        character_name: str | None = None,
         agent_mode: bool = False,
         incognito: bool = False,
         use_skills: bool = True,
-    ) -> Tuple[List[Dict[str, str]], List[Dict[str, Any]], List[Dict[str, str]]]:
+    ) -> tuple[list[dict[str, str]], list[dict[str, Any]], list[dict[str, str]]]:
         """Build the context preface for LLM calls.
 
         Returns:
@@ -306,7 +307,7 @@ class ChatProcessor:
                 logger.debug(f"Skills index unavailable: {e}")
                 idx = []
             if idx:
-                by_cat: Dict[str, list] = {}
+                by_cat: dict[str, list] = {}
                 for s in idx:
                     by_cat.setdefault(s.get("category") or "general", []).append(s)
                 lines = ["[Available skills — call manage_skills(action='view', name='...') to load one when relevant]"]

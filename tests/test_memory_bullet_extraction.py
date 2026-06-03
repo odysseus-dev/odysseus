@@ -16,8 +16,8 @@ exercises both copies so the two cannot drift back apart.
 """
 import pytest
 
-from src.memory import MemoryManager as SrcMemoryManager
 from services.memory.memory import MemoryManager as ServiceMemoryManager
+from src.memory import MemoryManager as SrcMemoryManager
 
 
 @pytest.mark.parametrize("manager_cls", [SrcMemoryManager, ServiceMemoryManager])

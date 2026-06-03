@@ -1,7 +1,7 @@
 # src/cleanup_service.py
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Tuple, Dict, Any, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +12,7 @@ def _utcnow() -> datetime:
     Mirrors the naive DateTime columns these values are compared against,
     without the deprecated stdlib UTC-now call (removed in Python 3.14).
     """
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class CleanupConfig:
@@ -25,7 +25,7 @@ class CleanupConfig:
     ESTIMATED_MESSAGE_SIZE_BYTES = 512
 
 
-def _apply_owner_filter(query, DbSession, owner: Optional[str]):
+def _apply_owner_filter(query, DbSession, owner: str | None):
     """Apply owner filtering to a session query.
 
     SECURITY: strict — the previous OR predicate let one user's cleanup
@@ -37,7 +37,7 @@ def _apply_owner_filter(query, DbSession, owner: Optional[str]):
     return query.filter(DbSession.owner == owner)
 
 
-async def archive_inactive_sessions(session_manager, owner: Optional[str] = None) -> int:
+async def archive_inactive_sessions(session_manager, owner: str | None = None) -> int:
     """
     Archive sessions that haven't been accessed in the configured number of days.
 
@@ -51,7 +51,8 @@ async def archive_inactive_sessions(session_manager, owner: Optional[str] = None
     cutoff_date = _utcnow() - timedelta(days=CleanupConfig.ARCHIVE_AFTER_DAYS)
     archived_count = 0
 
-    from src.database import SessionLocal, Session as DbSession
+    from src.database import Session as DbSession
+    from src.database import SessionLocal
     db = SessionLocal()
     try:
         q = db.query(DbSession).filter(
@@ -78,7 +79,7 @@ async def archive_inactive_sessions(session_manager, owner: Optional[str] = None
 
     return archived_count
 
-async def cleanup_old_sessions(session_manager, owner: Optional[str] = None) -> Tuple[int, float]:
+async def cleanup_old_sessions(session_manager, owner: str | None = None) -> tuple[int, float]:
     """
     Delete old sessions based on specific criteria.
 
@@ -93,7 +94,9 @@ async def cleanup_old_sessions(session_manager, owner: Optional[str] = None) -> 
     deleted_count = 0
     space_freed = 0
 
-    from src.database import SessionLocal, Session as DbSession, ChatMessage as DbChatMessage
+    from src.database import ChatMessage as DbChatMessage
+    from src.database import Session as DbSession
+    from src.database import SessionLocal
     db = SessionLocal()
     try:
         recent_q = db.query(DbSession).order_by(DbSession.created_at.desc())
@@ -158,7 +161,7 @@ async def cleanup_old_sessions(session_manager, owner: Optional[str] = None) -> 
 
     return deleted_count, 0.0
 
-async def get_cleanup_preview(owner: Optional[str] = None) -> Dict[str, Any]:
+async def get_cleanup_preview(owner: str | None = None) -> dict[str, Any]:
     """
     Get a preview of what would be cleaned up without making changes.
 
@@ -176,7 +179,8 @@ async def get_cleanup_preview(owner: Optional[str] = None) -> Dict[str, Any]:
     estimated_space_freed = 0
     preserved_sessions = []
 
-    from src.database import SessionLocal, Session as DbSession
+    from src.database import Session as DbSession
+    from src.database import SessionLocal
     db = SessionLocal()
     try:
         archive_q = db.query(DbSession).filter(
@@ -265,7 +269,7 @@ async def get_cleanup_preview(owner: Optional[str] = None) -> Dict[str, Any]:
         "estimated_space_freed_mb": round(estimated_space_freed / (1024 * 1024), 2)
     }
 
-async def cleanup_sessions(session_manager, owner: Optional[str] = None) -> Tuple[int, int, float]:
+async def cleanup_sessions(session_manager, owner: str | None = None) -> tuple[int, int, float]:
     """
     Perform complete cleanup operations with error recovery.
 

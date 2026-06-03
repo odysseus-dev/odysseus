@@ -25,7 +25,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -42,7 +41,6 @@ except Exception:  # pragma: no cover
 
 
 from src.upload_handler import UploadHandler  # noqa: E402
-
 
 N_WRITERS = 10
 
@@ -99,7 +97,7 @@ def test_concurrent_inserts_lose_entries(tmp_path):
     with concurrent.futures.ThreadPoolExecutor(max_workers=N_WRITERS) as pool:
         list(pool.map(insert, range(N_WRITERS)))
 
-    with open(db_path, "r", encoding="utf-8") as f:
+    with open(db_path, encoding="utf-8") as f:
         final = json.load(f)
     assert len(final) == N_WRITERS, (
         f"Expected {N_WRITERS} entries, got {len(final)}. The lock+atomic-write "
@@ -130,7 +128,7 @@ def test_save_upload_concurrent_retains_all_entries(tmp_path):
         list(pool.map(upload_one, range(N_WRITERS)))
 
     db_path = _db_path(handler)
-    with open(db_path, "r", encoding="utf-8") as f:
+    with open(db_path, encoding="utf-8") as f:
         final = json.load(f)
     assert len(final) == N_WRITERS, (
         f"save_upload lost {N_WRITERS - len(final)}/{N_WRITERS} entries under "
@@ -208,7 +206,7 @@ async def test_duplicate_vs_insert_race_preserves_both(tmp_path):
             f"iter {iteration}: duplicate should resolve to the seed's id"
         )
 
-        with open(db_path, "r", encoding="utf-8") as f:
+        with open(db_path, encoding="utf-8") as f:
             final = json.load(f)
 
         assert len(final) == 2, (
@@ -334,7 +332,7 @@ def test_smoke_duplicate_upload(tmp_path):
     assert second["is_duplicate"] is True
     assert second["id"] == first["id"]
 
-    with open(_db_path(handler), "r", encoding="utf-8") as f:
+    with open(_db_path(handler), encoding="utf-8") as f:
         final = json.load(f)
     assert len(final) == 1, f"Duplicate upload should not add a new row, got {len(final)}"
 
@@ -363,7 +361,7 @@ def test_duplicate_upload_ignores_stale_missing_file(tmp_path):
     assert second["id"] != first["id"]
     assert os.path.exists(second["path"])
 
-    with open(_db_path(handler), "r", encoding="utf-8") as f:
+    with open(_db_path(handler), encoding="utf-8") as f:
         final = json.load(f)
     ids = {row.get("id") for row in final.values()}
     assert first["id"] not in ids

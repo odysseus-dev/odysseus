@@ -61,7 +61,7 @@ async def run_document_tidy(owner: str) -> str:
       fingerprint (ignoring volatile upload/annotation ids). The most complete
       copy (longest real content, then most recent) is kept; the rest deleted.
     """
-    from core.database import SessionLocal, Document, Session as DbSession
+    from core.database import Document, SessionLocal
 
     db = SessionLocal()
     try:

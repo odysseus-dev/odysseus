@@ -142,8 +142,8 @@ def test_blocks_netrc():
 
 def test_allows_project_data(tmp_path):
     """Paths under project data/ must resolve cleanly."""
-    from src.tool_execution import _resolve_tool_path
     from src.constants import DATA_DIR
+    from src.tool_execution import _resolve_tool_path
     target = os.path.join(DATA_DIR, "test-confinement-ok.txt")
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(target, "w") as f:

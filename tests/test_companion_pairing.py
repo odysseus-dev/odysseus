@@ -75,7 +75,6 @@ import companion.routes as R  # noqa: E402
 from companion.routes import mint_pairing_token, setup_companion_routes  # noqa: E402
 from core.middleware import require_admin  # noqa: E402
 
-
 # --- token minting: shown once, hashed at rest -----------------------------
 
 def test_mint_token_returns_raw_once_and_stores_only_a_hash():

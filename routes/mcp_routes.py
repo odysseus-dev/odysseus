@@ -1,14 +1,15 @@
 # routes/mcp_routes.py
 """MCP (Model Context Protocol) server management routes."""
-import json
-import os
-import uuid
-import urllib.parse
 import html
-from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse, HTMLResponse
+import json
 import logging
+import os
+import urllib.parse
+import uuid
+
 import httpx
+from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from core.database import McpServer, SessionLocal
 from core.middleware import require_admin

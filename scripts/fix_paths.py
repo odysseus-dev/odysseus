@@ -1,5 +1,4 @@
 import fileinput
-import sys
 
 # Read app.py and replace the BASE_DIR line
 for line in fileinput.input('app.py', inplace=True):

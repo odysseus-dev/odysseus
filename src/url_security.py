@@ -6,7 +6,6 @@ import ipaddress
 import socket
 from urllib.parse import urlparse
 
-
 _INTERNAL_HOSTNAMES = {
     "localhost",
     "metadata",

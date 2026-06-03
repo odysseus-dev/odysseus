@@ -7,25 +7,25 @@ Connects to local Dovecot IMAP and reads from the AI summary cache.
 """
 
 import asyncio
-import imaplib
-import smtplib
 import email
 import email.header
 import email.utils
-from email.message import EmailMessage
-import re
 import html
+import imaplib
 import json
-import sqlite3
-import sys
 import os
 import os.path
+import re
+import smtplib
+import sqlite3
+import sys
+from datetime import datetime
+from email.message import EmailMessage
 from pathlib import Path
-from datetime import datetime, timedelta
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import TextContent, Tool
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

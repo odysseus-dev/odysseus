@@ -8,10 +8,10 @@ create/update/delete orchestration.
 from datetime import datetime
 
 from src.caldav_writeback import (
+    _stable_cal_id,
     build_event_ical,
     find_remote_calendar,
     push_event,
-    _stable_cal_id,
 )
 
 REMOTE_URL = "https://p69-caldav.icloud.com/123/calendars/home/"

@@ -72,7 +72,7 @@ def emit(obj, args) -> None:
     sys.stdout.write("\n")
 
 
-def fail(msg: str, code: int = 1) -> "None":
+def fail(msg: str, code: int = 1) -> None:
     """Print an error to stderr and exit non-zero. Doesn't return."""
     sys.stderr.write(f"error: {msg}\n")
     sys.exit(code)

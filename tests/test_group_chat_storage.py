@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 SOURCE = (
     Path(__file__).resolve().parent.parent / "static" / "js" / "group.js"
 ).read_text(encoding="utf-8")

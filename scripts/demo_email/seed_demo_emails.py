@@ -23,13 +23,13 @@ from __future__ import annotations
 
 import argparse
 import imaplib
+import os
 import sqlite3
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
 from pathlib import Path
-import os
 
 HOST = os.getenv("DEMO_IMAP_HOST", "localhost")
 PORT = int(os.getenv("DEMO_IMAP_PORT", "31143"))
@@ -97,7 +97,7 @@ def _ics(summary: str, start: datetime, mins: int) -> str:
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Odysseus Demo//EN\r\n"
         "METHOD:REQUEST\r\nBEGIN:VEVENT\r\n"
         f"UID:{make_msgid()}\r\n"
-        f"DTSTAMP:{datetime.now(timezone.utc).strftime(fmt)}\r\n"
+        f"DTSTAMP:{datetime.now(UTC).strftime(fmt)}\r\n"
         f"DTSTART:{start.strftime(fmt)}\r\nDTEND:{end.strftime(fmt)}\r\n"
         f"SUMMARY:{summary}\r\nLOCATION:Video call\r\n"
         "ORGANIZER;CN=Demo Team:mailto:calendar@dfx522.example\r\n"
@@ -113,7 +113,7 @@ def _msg(*, frm, to=None, subject, text, html=None, days_ago=0, hours_ago=0,
     m["From"] = frm
     m["To"] = to or f"You <{DEMO_OWNER_ADDR}>"
     m["Subject"] = subject
-    when = datetime.now(timezone.utc) - timedelta(days=days_ago, hours=hours_ago)
+    when = datetime.now(UTC) - timedelta(days=days_ago, hours=hours_ago)
     m["Date"] = formatdate(when.timestamp(), localtime=False)
     m["Message-ID"] = msg_id or make_msgid(domain="odysseus.local")
     if in_reply_to:
@@ -209,7 +209,7 @@ def build_dataset() -> list[dict]:
         pdf=_tiny_pdf("Invoice #DFX-2042 - $42.00"), pdf_name="invoice_DFX-2042.pdf"))
 
     # 5. Calendar invite (ICS attachment + explicit time in body).
-    nextmon = datetime.now(timezone.utc) + timedelta(days=(7 - datetime.now().weekday()) % 7 or 7)
+    nextmon = datetime.now(UTC) + timedelta(days=(7 - datetime.now().weekday()) % 7 or 7)
     nextmon = nextmon.replace(hour=10, minute=0, second=0, microsecond=0)
     add("INBOX", "", _msg(
         frm="Demo Team <calendar@dfx522.example>",
@@ -269,7 +269,7 @@ def _seed_cache() -> None:
     )
     summary = ("Greg needs the DeepSeek-V3 parameter count (total vs active) for a "
                "comparison slide. Quick factual lookup — answerable with a search.")
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     con = sqlite3.connect(str(CACHE_DB))
     try:
         con.execute("""CREATE TABLE IF NOT EXISTS email_ai_replies (

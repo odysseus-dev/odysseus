@@ -7,9 +7,9 @@ routes now call clear_active_document() on detach/delete; this pins that helper.
 """
 
 from src.tool_implementations import (
-    set_active_document,
-    get_active_document,
     clear_active_document,
+    get_active_document,
+    set_active_document,
 )
 
 

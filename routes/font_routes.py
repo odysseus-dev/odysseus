@@ -1,6 +1,7 @@
 """Custom font discovery — lists user-supplied font files in static/fonts/custom/."""
 import os
 import re
+
 from fastapi import APIRouter
 
 CUSTOM_FONTS_DIR = os.path.join("static", "fonts", "custom")

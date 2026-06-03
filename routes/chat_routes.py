@@ -2,47 +2,55 @@
 
 import asyncio
 import json
-import time
 import logging
+import time
+from collections.abc import AsyncGenerator
 from datetime import datetime
-from typing import Dict, Any, AsyncGenerator, List
+from typing import Any
 
-from fastapi import APIRouter, Request, HTTPException, Form, Query
+from fastapi import APIRouter, Form, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
-from core.models import ChatMessage
-from src.request_models import ChatRequest
-from src.llm_core import llm_call_async, stream_llm, stream_llm_with_fallback
-from src.agent_loop import stream_agent_loop
-from src import agent_runs
-from src.model_context import estimate_tokens
-from src.chat_helpers import coerce_message_and_session
-from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
-from src.prompt_security import untrusted_context_message
-from core.exceptions import SessionNotFoundError
-from src.auth_helpers import get_current_user
-from routes.session_routes import _verify_session_owner
-from routes.document_helpers import _owner_session_filter
-from core.database import SessionLocal, get_session_mode, set_session_mode
-from core.database import Session as DBSession, ChatMessage as DBChatMessage
-from core.database import Document as DBDocument, ModelEndpoint
-from routes.research_routes import _resolve_research_endpoint
-from routes.model_routes import _visible_models
-from routes.chat_helpers import (
-    resolve_session_auth,
-    build_chat_context,
-    save_assistant_response,
-    run_post_response_tasks,
-    clean_thinking_for_save,
-    _enforce_chat_privileges,
+from core.database import ChatMessage as DBChatMessage
+from core.database import Document as DBDocument
+from core.database import (
+    ModelEndpoint,
+    SessionLocal,
+    get_session_mode,
+    set_session_mode,
 )
+from core.database import Session as DBSession
+from core.exceptions import SessionNotFoundError
+from core.models import ChatMessage
+from routes.chat_helpers import (
+    _enforce_chat_privileges,
+    build_chat_context,
+    clean_thinking_for_save,
+    resolve_session_auth,
+    run_post_response_tasks,
+    save_assistant_response,
+)
+from routes.document_helpers import _owner_session_filter
+from routes.model_routes import _visible_models
+from routes.research_routes import _resolve_research_endpoint
+from routes.session_routes import _verify_session_owner
+from src import agent_runs
 from src.action_intents import message_needs_tools as _message_needs_tools
+from src.agent_loop import stream_agent_loop
+from src.auth_helpers import get_current_user
+from src.chat_helpers import coerce_message_and_session
+from src.endpoint_resolver import build_chat_url
+from src.endpoint_resolver import normalize_base as _normalize_base
+from src.llm_core import llm_call_async, stream_llm, stream_llm_with_fallback
+from src.model_context import estimate_tokens
+from src.prompt_security import untrusted_context_message
+from src.request_models import ChatRequest
 
 logger = logging.getLogger(__name__)
 
 # Track active streams for partial-save safety net
-_active_streams: Dict[str, dict] = {}
+_active_streams: dict[str, dict] = {}
 _IMAGE_MODEL_PREFIXES = ("gpt-image", "dall-e", "chatgpt-image")
 
 
@@ -245,8 +253,8 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     # POST /api/chat (non-streaming)
     # ------------------------------------------------------------------ #
-    @router.post("/api/chat", response_model=Dict[str, str])
-    async def chat_endpoint(request: Request, chat_request: ChatRequest) -> Dict[str, str]:
+    @router.post("/api/chat", response_model=dict[str, str])
+    async def chat_endpoint(request: Request, chat_request: ChatRequest) -> dict[str, str]:
         message = chat_request.message
         session = chat_request.session
         att_ids = chat_request.attachments or []
@@ -1081,7 +1089,7 @@ def setup_chat_routes(
     # no longer stops it (it's detached), so the Stop button must call this.
     # ------------------------------------------------------------------ #
     @router.post("/api/chat/stop/{session_id}")
-    async def chat_stop(request: Request, session_id: str) -> Dict[str, Any]:
+    async def chat_stop(request: Request, session_id: str) -> dict[str, Any]:
         _verify_session_owner(request, session_id)
         stopped = agent_runs.stop(session_id)
         return {"stopped": stopped}
@@ -1090,7 +1098,7 @@ def setup_chat_routes(
     # GET /api/chat/stream_status — check if a stream is active for a session
     # ------------------------------------------------------------------ #
     @router.get("/api/chat/stream_status/{session_id}")
-    async def chat_stream_status(request: Request, session_id: str) -> Dict[str, Any]:
+    async def chat_stream_status(request: Request, session_id: str) -> dict[str, Any]:
         _verify_session_owner(request, session_id)
         # A detached run can still be going even if _active_streams was popped;
         # report it as active so the client knows to reconnect via /resume.
@@ -1108,7 +1116,7 @@ def setup_chat_routes(
     # POST /api/inject_context
     # ------------------------------------------------------------------ #
     @router.post("/api/inject_context/{session_id}")
-    async def inject_context(request: Request, session_id: str, context: str = Form(...)) -> Dict[str, str]:
+    async def inject_context(request: Request, session_id: str, context: str = Form(...)) -> dict[str, str]:
         _verify_session_owner(request, session_id)
         try:
             sess = session_manager.get_session(session_id)
@@ -1127,7 +1135,7 @@ def setup_chat_routes(
         request: Request,
         q: str = Query("", min_length=0),
         limit: int = Query(20, ge=1, le=100),
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if not q or not q.strip():
             return []
 

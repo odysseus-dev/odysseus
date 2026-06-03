@@ -14,12 +14,14 @@ for mod in [
     if mod not in sys.modules:
         sys.modules[mod] = MagicMock()
 
+from types import SimpleNamespace
+
 import pytest
+
 import src.agent_tools
+from src.tool_execution import execute_tool_block
 from src.tool_parsing import parse_tool_blocks
 from src.tool_schemas import function_call_to_tool_block
-from src.tool_execution import execute_tool_block
-from types import SimpleNamespace
 
 
 def test_parse_xml_unknown_tool_returns_none():

@@ -18,7 +18,6 @@ unchanged. That lets legacy rows coexist with new ones until a
 single migration pass rewrites them.
 """
 
-import os
 import logging
 from pathlib import Path
 

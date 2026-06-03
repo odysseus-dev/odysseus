@@ -15,9 +15,9 @@ Requires: faiss-cpu, chromadb-client, and the embedding endpoint to be running.
 """
 
 import json
+import logging
 import os
 import sys
-import logging
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -62,8 +62,8 @@ def _rag_docstore(data):
 def migrate_memories():
     """Migrate memory vectors from FAISS to ChromaDB."""
     from src.chroma_client import get_chroma_client
-    from src.embeddings import get_embedding_client
     from src.constants import DATA_DIR
+    from src.embeddings import get_embedding_client
 
     ids_path = os.path.join(DATA_DIR, "memory_vectors", "ids.json")
     memory_path = os.path.join(DATA_DIR, "memory.json")

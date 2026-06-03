@@ -1,5 +1,5 @@
-import ipaddress
 import importlib.util
+import ipaddress
 import sys
 import types
 from pathlib import Path

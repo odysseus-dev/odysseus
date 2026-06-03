@@ -1,11 +1,12 @@
 # routes/upload_routes.py
+import asyncio
+import json
+import logging
 import os
 import time
-import json
-import asyncio
-from fastapi import APIRouter, Request, File, UploadFile, HTTPException
-from typing import List
-import logging
+
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+
 from core.middleware import require_admin
 from src.auth_helpers import get_current_user
 from src.upload_handler import count_recent_uploads
@@ -16,13 +17,13 @@ router = APIRouter(prefix="/api/upload", tags=["upload"])
 
 def setup_upload_routes(upload_handler):
     """Setup upload routes with the provided handler"""
-    
+
     @router.post("")
-    async def api_upload(request: Request, files: List[UploadFile] = File(...)):
+    async def api_upload(request: Request, files: list[UploadFile] = File(...)):
         """Upload files with enhanced security and organization."""
         if not files:
             raise HTTPException(400, "No files uploaded")
-            
+
         client_ip = request.client.host if request.client else "unknown"
         out = []
 
@@ -41,7 +42,7 @@ def setup_upload_routes(upload_handler):
                 status_code=429,
                 detail=f"Maximum concurrent uploads ({upload_handler.max_concurrent_uploads}) exceeded"
             )
-        
+
         for u in files:
             try:
                 meta = upload_handler.save_upload(u, client_ip, owner=get_current_user(request))
@@ -61,12 +62,12 @@ def setup_upload_routes(upload_handler):
             except Exception as e:
                 logger.error(f"Failed to process upload {u.filename}: {str(e)}")
                 continue
-        
+
         if not out:
             raise HTTPException(500, "All file uploads failed")
-            
+
         return {"files": out}
-    
+
     @router.post("/cleanup")
     async def manual_cleanup(request: Request):
         """Manually trigger cleanup of old uploads."""
@@ -92,8 +93,9 @@ def setup_upload_routes(upload_handler):
         if not upload_handler.validate_upload_id(file_id):
             raise HTTPException(400, "Invalid file ID")
         # Search upload directories for the file
-        from src.constants import UPLOAD_DIR
         import mimetypes as _mt
+
+        from src.constants import UPLOAD_DIR
         path = os.path.join(UPLOAD_DIR, file_id)
         if not os.path.exists(path):
             for root, dirs, files in os.walk(UPLOAD_DIR):
@@ -251,5 +253,5 @@ def setup_upload_routes(upload_handler):
         while True:
             await asyncio.sleep(3600)
             upload_handler.cleanup_rate_limits()
-    
+
     return router, periodic_rate_limit_cleanup

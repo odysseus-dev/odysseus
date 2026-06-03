@@ -9,38 +9,39 @@ The LLM decides when to use tools by writing fenced code blocks.
 import asyncio
 import collections
 import json
+import logging
 import re
 import time
-import logging
-from typing import AsyncGenerator, List, Dict, Optional, Set
+from collections.abc import AsyncGenerator
+from datetime import UTC
 
-from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
-from src.model_context import estimate_tokens
-from src.settings import get_setting
-from src.prompt_security import untrusted_context_message
-from src.tool_security import blocked_tools_for_owner
 from src.agent_tools import (
-    parse_tool_blocks,
-    strip_tool_blocks,
-    execute_tool_block,
-    format_tool_result,
-    set_active_document,
-    set_active_model,
-    function_call_to_tool_block,
-    get_mcp_manager,
     FUNCTION_TOOL_SCHEMAS,
+    MAX_AGENT_ROUNDS,
     TOOL_TAGS,
     ToolBlock,
-    MAX_AGENT_ROUNDS,
+    execute_tool_block,
+    format_tool_result,
+    function_call_to_tool_block,
+    get_mcp_manager,
+    parse_tool_blocks,
+    set_active_document,
+    set_active_model,
+    strip_tool_blocks,
 )
+from src.llm_core import _is_ollama_native_url, stream_llm_with_fallback
+from src.model_context import estimate_tokens
+from src.prompt_security import untrusted_context_message
+from src.settings import get_setting
+from src.tool_security import blocked_tools_for_owner
 
 logger = logging.getLogger(__name__)
 
 
-def _load_mcp_disabled_map() -> Dict[str, set]:
+def _load_mcp_disabled_map() -> dict[str, set]:
     """Load per-server disabled tool sets from the database."""
     from core.database import McpServer, SessionLocal
-    disabled_map: Dict[str, set] = {}
+    disabled_map: dict[str, set] = {}
     db = SessionLocal()
     try:
         for srv in db.query(McpServer).all():
@@ -491,7 +492,7 @@ _ADMIN_KEYWORDS = [
     "note", "notes", "todo", "todos", "reminder", "reminders",
 ]
 
-def _detect_admin_intent(messages: List[Dict]) -> bool:
+def _detect_admin_intent(messages: list[dict]) -> bool:
     """Check if the last user message suggests admin/management tool usage."""
     for msg in reversed(messages):
         if msg.get("role") == "user":
@@ -503,7 +504,7 @@ def _detect_admin_intent(messages: List[Dict]) -> bool:
     return False
 
 
-def _extract_last_user_message(messages: List[Dict]) -> str:
+def _extract_last_user_message(messages: list[dict]) -> str:
     """Return the most recent user message as plain text."""
     for msg in reversed(messages):
         if msg.get("role") == "user":
@@ -514,7 +515,7 @@ def _extract_last_user_message(messages: List[Dict]) -> str:
     return ""
 
 
-def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_chars: int = 600) -> str:
+def _recent_context_for_retrieval(messages: list[dict], max_user: int = 3, max_chars: int = 600) -> str:
     """Build the tool-retrieval query from the last few USER turns, not just
     the latest one.
 
@@ -541,17 +542,17 @@ def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_c
     return "\n".join(collected)[:max_chars]
 
 def _build_system_prompt(
-    messages: List[Dict],
+    messages: list[dict],
     model: str,
     active_document,
     mcp_mgr,
-    disabled_tools: Optional[Set[str]] = None,
+    disabled_tools: set[str] | None = None,
     needs_admin: bool = False,
-    relevant_tools: Optional[Set[str]] = None,
-    mcp_disabled_map: Optional[Dict[str, set]] = None,
+    relevant_tools: set[str] | None = None,
+    mcp_disabled_map: dict[str, set] | None = None,
     compact: bool = False,
-    owner: Optional[str] = None,
-) -> List[Dict]:
+    owner: str | None = None,
+) -> list[dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
 
@@ -561,7 +562,8 @@ def _build_system_prompt(
     # Skills UI takes effect without a restart (busts the prompt cache).
     # Hash the full dict so content edits (not just key add/remove) bust it.
     try:
-        import hashlib as _hl, json as _json
+        import hashlib as _hl
+        import json as _json
         _ov_sig = _hl.sha256(_json.dumps(get_builtin_overrides() or {}, sort_keys=True).encode()).hexdigest()
     except Exception:
         _ov_sig = ""
@@ -602,9 +604,9 @@ def _build_system_prompt(
     # May 19, 2026). System TZ-local so calendar/email date math
     # matches what the user sees.
     try:
-        from datetime import datetime as _dt, timezone as _tz
+        from datetime import datetime as _dt
         _now = _dt.now().astimezone()
-        _utc = _dt.now(_tz.utc)
+        _utc = _dt.now(UTC)
         _off = _now.strftime('%z')  # e.g. +0900
         _off_fmt = (f"{_off[:3]}:{_off[3:]}" if _off else "+00:00")
         agent_prompt = (
@@ -1090,7 +1092,7 @@ def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num
 
 
 def _append_tool_results(
-    messages: List[Dict],
+    messages: list[dict],
     round_response: str,
     native_tool_calls: list,
     tool_results: list,
@@ -1166,7 +1168,7 @@ def _append_tool_results(
 
 
 def _compute_final_metrics(
-    messages: List[Dict],
+    messages: list[dict],
     full_response: str,
     total_duration: float,
     time_to_first_token,
@@ -1178,7 +1180,7 @@ def _compute_final_metrics(
     round_texts: list,
     model: str = "",
     last_round_input_tokens: int = 0,
-    prep_timings: Optional[Dict[str, float]] = None,
+    prep_timings: dict[str, float] | None = None,
     backend_gen_tps: float = 0,
     backend_prefill_tps: float = 0,
 ) -> dict:
@@ -1342,20 +1344,20 @@ def _empty_response_fallback(
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
-    messages: List[Dict],
-    headers: Optional[Dict] = None,
+    messages: list[dict],
+    headers: dict | None = None,
     temperature: float = 0.3,
     max_tokens: int = 4096,
-    prompt_type: Optional[str] = None,
+    prompt_type: str | None = None,
     max_rounds: int = MAX_AGENT_ROUNDS,
     max_tool_calls: int = 0,
     context_length: int = 0,
     active_document=None,
-    session_id: Optional[str] = None,
-    disabled_tools: Optional[Set[str]] = None,
-    owner: Optional[str] = None,
-    relevant_tools: Optional[Set[str]] = None,
-    fallbacks: Optional[List[tuple]] = None,
+    session_id: str | None = None,
+    disabled_tools: set[str] | None = None,
+    owner: str | None = None,
+    relevant_tools: set[str] | None = None,
+    fallbacks: list[tuple] | None = None,
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -1370,7 +1372,7 @@ async def stream_agent_loop(
     """
 
     mcp_mgr = get_mcp_manager()
-    prep_timings: Dict[str, float] = {}
+    prep_timings: dict[str, float] = {}
     disabled_tools = set(disabled_tools or [])
     public_blocked_tools = blocked_tools_for_owner(owner)
     if public_blocked_tools:
@@ -1396,7 +1398,7 @@ async def stream_agent_loop(
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
     if not _relevant_tools:
         try:
-            from src.tool_index import get_tool_index, ALWAYS_AVAILABLE
+            from src.tool_index import ALWAYS_AVAILABLE, get_tool_index
             tool_idx = get_tool_index()
             if tool_idx:
                 if mcp_mgr:
@@ -1405,7 +1407,7 @@ async def stream_agent_loop(
                             asyncio.to_thread(tool_idx.index_mcp_tools, mcp_mgr, _mcp_disabled_map),
                             timeout=_TOOL_SELECTION_TIMEOUT_SECONDS,
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning(
                             "[tool-rag] MCP tool indexing exceeded %.1fs; continuing without reindex",
                             _TOOL_SELECTION_TIMEOUT_SECONDS,
@@ -1417,7 +1419,7 @@ async def stream_agent_loop(
                             timeout=_TOOL_SELECTION_TIMEOUT_SECONDS,
                         )
                         logger.info(f"[tool-rag] Retrieved tools for query: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning(
                             "[tool-rag] Retrieval exceeded %.1fs; falling back to always-available tools",
                             _TOOL_SELECTION_TIMEOUT_SECONDS,
@@ -1458,9 +1460,10 @@ async def stream_agent_loop(
     # serve command — `--enable-auto-tool-choice` flips it on. UI can
     # also toggle per endpoint). NULL = unknown, fall through to the
     # keyword heuristic + host check.
-    _endpoint_supports: Optional[bool] = None
+    _endpoint_supports: bool | None = None
     try:
-        from core.database import SessionLocal as _SL, ModelEndpoint as _ME
+        from core.database import ModelEndpoint as _ME
+        from core.database import SessionLocal as _SL
         _db = _SL()
         try:
             _ep = _db.query(_ME).filter(_ME.base_url == endpoint_url).first()
@@ -1520,8 +1523,8 @@ async def stream_agent_loop(
 
     _t3 = time.time()
     try:
+        from src.context_budget import DEFAULT_HARD_MAX, compute_input_token_budget
         from src.context_compactor import trim_for_context
-        from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX
         from src.settings import is_setting_overridden
 
         soft_budget = int(get_setting("agent_input_token_budget", 6000) or 0)

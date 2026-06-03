@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 STYLE_CSS = Path(__file__).resolve().parents[1] / "static" / "style.css"
 
 

@@ -9,13 +9,15 @@ don't regress. Specifically:
   anonymous/no-owner callers.
 """
 
+import asyncio
 import os
 import sys
 import types
-import asyncio
-import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+
+import pytest
+
 
 # Stub `core.database` / `core.auth` before the route modules import them.
 # (Same trick as test_null_owner_gates.py — the real modules instantiate
@@ -299,7 +301,8 @@ def test_pop_notifications_owner_filtered():
     # Build a minimal scheduler instance that we can hit directly.
     # Reuse the real class so the test catches future regressions of
     # the filter logic.
-    import sys, types
+    import sys
+    import types
     from unittest.mock import MagicMock as _MM
     # `task_scheduler` pulls in lots of helpers — stub the ones it uses.
     for s in ["src.builtin_actions", "src.ai_interaction", "src.endpoint_resolver",

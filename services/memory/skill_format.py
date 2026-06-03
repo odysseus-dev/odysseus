@@ -51,7 +51,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ def _parse_scalar(raw: str) -> Any:
     return raw
 
 
-def _split_top_level(s: str, sep: str) -> List[str]:
+def _split_top_level(s: str, sep: str) -> list[str]:
     """Split `s` on `sep` ignoring separators inside [] or quotes."""
     out, buf, depth, quote = [], [], 0, None
     for ch in s:
@@ -138,7 +138,7 @@ def _split_top_level(s: str, sep: str) -> List[str]:
     return out
 
 
-def parse_frontmatter(text: str) -> tuple[Dict[str, Any], str]:
+def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     """Pull the YAML frontmatter out of a SKILL.md and return (fm, body)."""
     if not text.startswith("---"):
         return {}, text
@@ -147,8 +147,8 @@ def parse_frontmatter(text: str) -> tuple[Dict[str, Any], str]:
         return {}, text
     fm_text = text[3:end].lstrip("\n")
     body = text[end + 4:].lstrip("\n")
-    fm: Dict[str, Any] = {}
-    pending_key: Optional[str] = None
+    fm: dict[str, Any] = {}
+    pending_key: str | None = None
     for line in fm_text.splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
             continue
@@ -186,7 +186,7 @@ def _emit_scalar(v: Any) -> str:
     return s
 
 
-def _as_list(v: Any) -> List[str]:
+def _as_list(v: Any) -> list[str]:
     if v is None:
         return []
     if isinstance(v, list):
@@ -201,7 +201,7 @@ def _as_float(v: Any, default: float = 0.8) -> float:
         return default
 
 
-def emit_frontmatter(fm: Dict[str, Any]) -> str:
+def emit_frontmatter(fm: dict[str, Any]) -> str:
     lines = []
     for k, v in fm.items():
         if v is None or v == [] or v == "":
@@ -230,7 +230,7 @@ _KEY_TO_HEADING = {
 }
 
 
-def parse_body(body: str) -> Dict[str, Any]:
+def parse_body(body: str) -> dict[str, Any]:
     """Split a SKILL.md body into known sections.
 
     Returns:
@@ -247,7 +247,7 @@ def parse_body(body: str) -> Dict[str, Any]:
     if not body or not body.strip():
         return out
 
-    sections: List[tuple[Optional[str], List[str]]] = [(None, [])]
+    sections: list[tuple[str | None, list[str]]] = [(None, [])]
     for line in body.splitlines():
         m = re.match(r"^##\s+(.*?)\s*$", line)
         if m:
@@ -271,10 +271,10 @@ def parse_body(body: str) -> Dict[str, Any]:
     return out
 
 
-def _parse_list_lines(text: str) -> List[str]:
+def _parse_list_lines(text: str) -> list[str]:
     """Pull bullet/numbered lines out of a section body. Plain paragraphs are
     treated as a single entry."""
-    items: List[str] = []
+    items: list[str] = []
     for line in (text or "").splitlines():
         s = line.strip()
         if not s:
@@ -290,8 +290,8 @@ def _parse_list_lines(text: str) -> List[str]:
     return items
 
 
-def emit_body(sections: Dict[str, Any]) -> str:
-    parts: List[str] = []
+def emit_body(sections: dict[str, Any]) -> str:
+    parts: list[str] = []
     when = (sections.get("when_to_use") or "").strip()
     if when:
         parts.append(f"## {_KEY_TO_HEADING['when_to_use']}\n\n{when}")
@@ -322,33 +322,33 @@ class Skill:
     description: str = ""
     version: str = "1.0.0"
     category: str = "general"
-    tags: List[str] = field(default_factory=list)
-    platforms: List[str] = field(default_factory=list)
-    requires_toolsets: List[str] = field(default_factory=list)
-    fallback_for_toolsets: List[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    platforms: list[str] = field(default_factory=list)
+    requires_toolsets: list[str] = field(default_factory=list)
+    fallback_for_toolsets: list[str] = field(default_factory=list)
     status: str = "draft"                              # draft | published
     confidence: float = 0.8
     source: str = "learned"
-    teacher_model: Optional[str] = None
-    owner: Optional[str] = None
+    teacher_model: str | None = None
+    owner: str | None = None
     created: str = ""                                  # ISO8601
     when_to_use: str = ""
-    procedure: List[str] = field(default_factory=list)
-    pitfalls: List[str] = field(default_factory=list)
-    verification: List[str] = field(default_factory=list)
+    procedure: list[str] = field(default_factory=list)
+    pitfalls: list[str] = field(default_factory=list)
+    verification: list[str] = field(default_factory=list)
     body_extra: str = ""
     # Sidecar (not persisted in SKILL.md)
     uses: int = 0
-    last_used: Optional[int] = None
+    last_used: int | None = None
     # File path on disk (set when read)
-    path: Optional[str] = None
+    path: str | None = None
 
     # ----------------------------------------------------------------------
     # Serialization
     # ----------------------------------------------------------------------
 
-    def to_frontmatter(self) -> Dict[str, Any]:
-        fm: Dict[str, Any] = {
+    def to_frontmatter(self) -> dict[str, Any]:
+        fm: dict[str, Any] = {
             "name": self.name,
             "description": self.description,
             "version": self.version,
@@ -366,7 +366,7 @@ class Skill:
         fm["created"] = self.created or _now_iso()
         return fm
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         d = {
             "id": self.name,        # slug doubles as id
             "name": self.name,
@@ -400,7 +400,7 @@ class Skill:
         return d
 
     @classmethod
-    def from_markdown(cls, text: str, *, path: Optional[str] = None) -> "Skill":
+    def from_markdown(cls, text: str, *, path: str | None = None) -> Skill:
         fm, body = parse_frontmatter(text)
         sections = parse_body(body)
         raw_name = fm.get("name")

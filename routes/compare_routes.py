@@ -1,13 +1,13 @@
 # routes/compare_routes.py
 """Model A/B comparison routes."""
 import json
-import uuid
-import random
-from datetime import datetime
-from fastapi import APIRouter, Form, HTTPException, Request
-from typing import List
-from pydantic import BaseModel
 import logging
+import random
+import uuid
+from datetime import datetime
+
+from fastapi import APIRouter, Form, HTTPException, Request
+from pydantic import BaseModel
 
 from core.database import Comparison, SessionLocal
 from core.session_manager import SessionManager
@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/compare", tags=["compare"])
 
 class RecordVoteRequest(BaseModel):
     prompt: str
-    models: List[str]
+    models: list[str]
     winner: str           # model name or "tie"
     is_blind: bool = True
 

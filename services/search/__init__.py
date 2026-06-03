@@ -1,5 +1,13 @@
 """Search service — web search with SearXNG."""
 
+from .analytics import (
+    NetworkError,
+    ParseError,
+    RateLimitError,
+    SearchEngineError,
+    get_search_stats,
+)
+from .content import fetch_webpage_content
 from .core import (
     comprehensive_web_search,
     get_search_config,
@@ -7,10 +15,8 @@ from .core import (
     searxng_search_results,
     update_search_config,
 )
-from .content import fetch_webpage_content
-from .providers import searxng_search, searxng_search_api, PROVIDER_INFO
-from .analytics import get_search_stats, SearchEngineError, NetworkError, ParseError, RateLimitError
-from .service import SearchService, SearchResult, SearchResponse
+from .providers import PROVIDER_INFO, searxng_search, searxng_search_api
+from .service import SearchResponse, SearchResult, SearchService
 
 __all__ = [
     # Service interface (preferred)

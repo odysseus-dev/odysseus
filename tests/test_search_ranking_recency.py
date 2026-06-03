@@ -6,10 +6,10 @@ once neighbouring code becomes timezone-aware. It now uses naive UTC and is a
 module-level, time-injectable function.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import services.search.ranking as live_ranking
-from services.search.ranking import recency_score, _utcnow_naive, rank_search_results
+from services.search.ranking import _utcnow_naive, rank_search_results, recency_score
 
 
 def test_fresh_result_scores_one():
@@ -36,7 +36,7 @@ def test_default_now_is_naive_utc():
     # and UTC-based (3.14-safe, no datetime.utcnow()).
     now = _utcnow_naive()
     assert now.tzinfo is None
-    reference = datetime.now(timezone.utc).replace(tzinfo=None)
+    reference = datetime.now(UTC).replace(tzinfo=None)
     assert abs((now - reference).total_seconds()) < 5
 
 

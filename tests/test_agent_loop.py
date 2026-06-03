@@ -16,11 +16,10 @@ for mod in [
         sys.modules[mod] = MagicMock()
 
 from src.agent_loop import (
-    _detect_admin_intent,
-    _compute_final_metrics,
     _append_tool_results,
+    _compute_final_metrics,
+    _detect_admin_intent,
 )
-
 
 # ---------------------------------------------------------------------------
 # _detect_admin_intent

@@ -1,23 +1,24 @@
-from pydantic import BaseModel, Field, field_validator
-from typing import Optional, List, Dict, Any
 from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, Field, field_validator
 
 
 # Request Models
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=50000, description="Chat message")
     session: str = Field(..., description="Session ID")
-    attachments: Optional[List[str]] = Field(default=[], description="Attachment IDs")
-    use_web: Optional[bool] = Field(default=False, description="Enable web search")
-    use_research: Optional[bool] = Field(default=False, description="Enable deep research")
-    time_filter: Optional[str] = Field(default=None, description="Time filter for search")
-    preset_id: Optional[str] = Field(default=None, description="Preset identifier")
-    
+    attachments: list[str] | None = Field(default=[], description="Attachment IDs")
+    use_web: bool | None = Field(default=False, description="Enable web search")
+    use_research: bool | None = Field(default=False, description="Enable deep research")
+    time_filter: str | None = Field(default=None, description="Time filter for search")
+    preset_id: str | None = Field(default=None, description="Preset identifier")
+
     @field_validator('message')
     @classmethod
     def clean_message(cls, v):
         return v.strip()
-    
+
     @field_validator('time_filter')
     @classmethod
     def validate_time_filter(cls, v):
@@ -27,17 +28,17 @@ class ChatRequest(BaseModel):
 
 
 class SessionCreateRequest(BaseModel):
-    name: Optional[str] = Field(default="", max_length=200, description="Session name")
+    name: str | None = Field(default="", max_length=200, description="Session name")
     endpoint_url: str = Field(..., description="LLM endpoint URL")
-    model: Optional[str] = Field(default="", description="Model ID")
-    rag: Optional[bool] = Field(default=False, description="Enable RAG")
+    model: str | None = Field(default="", description="Model ID")
+    rag: bool | None = Field(default=False, description="Enable RAG")
 
 
 class MemoryAddRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=5000, description="Memory text")
     category: str = Field(default="fact", description="Memory category")
     source: str = Field(default="user", description="Memory source")
-    session_id: Optional[str] = Field(default=None, description="Associated session ID")
+    session_id: str | None = Field(default=None, description="Associated session ID")
 
     @field_validator('category')
     @classmethod
@@ -49,7 +50,7 @@ class MemoryAddRequest(BaseModel):
 
 class MemoryUpdateRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=5000, description="Updated memory text")
-    category: Optional[str] = Field(default=None, pattern="^(fact|contact|task|preference|identity|project|goal)$", description="Memory category")
+    category: str | None = Field(default=None, pattern="^(fact|contact|task|preference|identity|project|goal)$", description="Memory category")
 
 
 class PresetUpdateRequest(BaseModel):
@@ -106,7 +107,7 @@ class DirectoryRequest(BaseModel):
 class ErrorResponse(BaseModel):
     error: str = Field(..., description="Error code")
     message: str = Field(..., description="Error message")
-    details: Optional[Dict[str, Any]] = Field(default=None, description="Additional error details")
+    details: dict[str, Any] | None = Field(default=None, description="Additional error details")
 
 
 class UploadResponse(BaseModel):
@@ -133,4 +134,4 @@ class MemoryResponse(BaseModel):
     category: str = Field(..., description="Memory category")
     source: str = Field(..., description="Memory source")
     timestamp: int = Field(..., description="Unix timestamp")
-    session_id: Optional[str] = Field(default=None, description="Associated session")
+    session_id: str | None = Field(default=None, description="Associated session")

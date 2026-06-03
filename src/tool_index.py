@@ -6,11 +6,10 @@ embed them in a ChromaDB collection and retrieve only the top-K
 relevant ones per user message.
 """
 
-import logging
 import hashlib
+import logging
 import re
 import time
-from typing import Dict, List, Optional, Set
 
 try:
     import numpy as np
@@ -58,7 +57,7 @@ COLLECTION_NAME = "odysseus_tool_index"
 # ── Tool description registry ──
 # Each tool gets a searchable description that helps retrieval.
 # These are richer than the system prompt one-liners — they're for embedding.
-BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
+BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "bash": "Run shell commands on the server. Install packages, check files, git operations, curl, system info, process management, networking.",
     "python": "Execute Python code for computation, data processing, math, scripting, parsing, API calls. Not for writing code for the user.",
     "web_search": "Quick single web lookup for a fact, current event, or doc mid-task. NOT for 'research X' / 'do research on X' requests — those are deep-research jobs (use trigger_research). web_search = one query; trigger_research = a full researched report in the sidebar.",
@@ -146,7 +145,7 @@ class ToolIndex:
     def healthy(self):
         return self._healthy
 
-    def _embed(self, texts: List[str]) -> List[List[float]]:
+    def _embed(self, texts: list[str]) -> list[list[float]]:
         vecs = self._embedder.encode(texts, normalize_embeddings=True)
         if np is not None:
             return np.array(vecs, dtype=np.float32).tolist()
@@ -193,7 +192,7 @@ class ToolIndex:
         ).hexdigest()
         logger.info(f"Indexed {len(docs)} built-in tools")
 
-    def index_mcp_tools(self, mcp_mgr, disabled_map: Optional[Dict] = None):
+    def index_mcp_tools(self, mcp_mgr, disabled_map: dict | None = None):
         """Index MCP tool descriptions. Call after MCP servers connect/disconnect."""
         if not mcp_mgr:
             return
@@ -257,7 +256,7 @@ class ToolIndex:
         )
         logger.info(f"Indexed {len(docs)} MCP tools")
 
-    def retrieve(self, query: str, k: int = 8) -> List[str]:
+    def retrieve(self, query: str, k: int = 8) -> list[str]:
         """Retrieve the top-K most relevant tool names for a query."""
         try:
             query_embedding = self._embed([query])
@@ -429,8 +428,8 @@ class ToolIndex:
     }
 
     def get_tools_for_query(
-        self, query: str, k: int = 8, always_include: Optional[Set[str]] = None
-    ) -> Set[str]:
+        self, query: str, k: int = 8, always_include: set[str] | None = None
+    ) -> set[str]:
         """Get the set of tool names to include for a given user query."""
         base = set(always_include or ALWAYS_AVAILABLE)
         retrieved = self.retrieve(query, k=k)
@@ -456,12 +455,12 @@ class ToolIndex:
 
 # ── Singleton ──
 
-_tool_index: Optional[ToolIndex] = None
+_tool_index: ToolIndex | None = None
 _last_attempt = 0.0
 _RETRY_INTERVAL = 30.0
 
 
-def get_tool_index() -> Optional[ToolIndex]:
+def get_tool_index() -> ToolIndex | None:
     """Get or create the singleton ToolIndex. Returns None if unavailable."""
     global _tool_index, _last_attempt
 

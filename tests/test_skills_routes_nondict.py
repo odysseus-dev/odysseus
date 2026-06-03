@@ -4,7 +4,7 @@ _skill_test_task did `skill.get(...)` and _should_check_retrieval_precision did
 `skill.get("tags")`; a skill row that loaded as a bare string/None raised
 AttributeError. They now treat a non-dict as empty / not-applicable.
 """
-from routes.skills_routes import _skill_test_task, _should_check_retrieval_precision
+from routes.skills_routes import _should_check_retrieval_precision, _skill_test_task
 
 
 def test_non_dict_skill_does_not_crash():

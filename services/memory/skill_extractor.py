@@ -8,7 +8,6 @@ we ask the LLM to distill the approach into a reusable skill.
 
 import json
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +70,7 @@ async def maybe_extract_skill(
     headers: dict,
     round_count: int,
     tool_count: int,
-    owner: Optional[str] = None,
+    owner: str | None = None,
 ):
     """Extract a skill if the agent run was complex enough."""
     if not model:

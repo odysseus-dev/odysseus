@@ -1,5 +1,5 @@
-import sys
 import json
+import sys
 from datetime import datetime
 
 # conftest.py stubs src.database with a fake module; webhook_manager imports
@@ -8,6 +8,7 @@ if "src.database" in sys.modules:
     del sys.modules["src.database"]
 
 import pytest
+
 from src.webhook_manager import validate_webhook_url
 
 

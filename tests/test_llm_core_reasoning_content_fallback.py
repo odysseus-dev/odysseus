@@ -15,7 +15,6 @@ import pytest
 
 from src import llm_core
 
-
 # ---------------------------------------------------------------------------
 # Helpers: fake httpx responses for the non-streaming llm_call* paths
 # ---------------------------------------------------------------------------
@@ -109,7 +108,6 @@ for _mod in [
         sys.modules[_mod] = MagicMock()
 
 from src.agent_loop import _empty_response_fallback  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # 4. Reasoning-only round: generic error is suppressed

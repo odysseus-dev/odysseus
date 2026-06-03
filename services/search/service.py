@@ -2,7 +2,7 @@
 """Search service — clean interface for web search."""
 
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Any
+from typing import Any
 
 from . import (
     comprehensive_web_search,
@@ -17,14 +17,14 @@ class SearchResult:
     url: str
     title: str
     snippet: str
-    content: Optional[str] = None
+    content: str | None = None
 
 
 @dataclass
 class SearchResponse:
     """Response from a search query."""
     query: str
-    results: List[SearchResult]
+    results: list[SearchResult]
     total: int
     cached: bool = False
 
@@ -47,8 +47,8 @@ class SearchService:
     async def search(
         self,
         query: str,
-        depth: Optional[int] = None,
-        fetch_content: Optional[bool] = None,
+        depth: int | None = None,
+        fetch_content: bool | None = None,
     ) -> SearchResponse:
         """
         Search the web.
@@ -93,10 +93,10 @@ class SearchService:
             total=len(results),
         )
 
-    async def fetch_content(self, url: str) -> Optional[str]:
+    async def fetch_content(self, url: str) -> str | None:
         """Fetch content from a URL."""
         return await fetch_webpage_content(url)
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         """Get current search configuration."""
         return get_search_config()

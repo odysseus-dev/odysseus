@@ -8,11 +8,11 @@ Each service:
 - Can run in-process or as a standalone HTTP service
 """
 
-from .search import SearchService, SearchResult, SearchResponse
-from .docs import DocsService, DocChunk, IndexResult
-from .research import ResearchService, ResearchResult, ResearchSource
-from .memory import MemoryService, Memory, MemorySearchResult
-from .shell import ShellService, ShellResult
+from .docs import DocChunk, DocsService, IndexResult
+from .memory import Memory, MemorySearchResult, MemoryService
+from .research import ResearchResult, ResearchService, ResearchSource
+from .search import SearchResponse, SearchResult, SearchService
+from .shell import ShellResult, ShellService
 
 __all__ = [
     # Search

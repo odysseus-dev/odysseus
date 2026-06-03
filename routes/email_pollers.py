@@ -18,29 +18,38 @@ Pure helpers live in `email_helpers.py`. Routes themselves live in
 
 import email as email_mod
 import email.utils  # the `email` binding is referenced as email.utils.parseaddr inside the pass
-import smtplib
-import json
-import re
 import html
-import logging
 import inspect
+import json
+import logging
+import re
 from datetime import datetime
-
-from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-
-from src.llm_core import llm_call_async
+from email.mime.text import MIMEText
 
 from routes.email_helpers import (
-    _strip_think, _extract_reply, _apply_email_style_mechanics, _load_settings, _save_settings, _get_email_config,
+    _EMAIL_REPLY_SYS_PROMPT_BASE,
+    SCHEDULED_DB,
+    _apply_email_style_mechanics,
+    _attach_compose_uploads,
+    _cleanup_compose_uploads,
+    _decode_header,
+    _detect_sent_folder,
+    _detect_spam_folder,
+    _extract_attachment_text,
+    _extract_reply,
+    _extract_text,
+    _get_email_config,
+    _imap,
+    _imap_connect,
+    _imap_move,
+    _load_settings,
+    _q,
+    _save_settings,
     _send_smtp_message,
-    _imap_connect, _imap, _decode_header,
-    _detect_sent_folder, _detect_spam_folder, _imap_move,
-    _extract_attachment_text, _extract_text,
-    _pre_retrieve_context,
-    _attach_compose_uploads, _cleanup_compose_uploads, _q,
-    SCHEDULED_DB, _EMAIL_REPLY_SYS_PROMPT_BASE,
+    _strip_think,
 )
+from src.llm_core import llm_call_async
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +58,8 @@ def _owner_for_email_account(account_id: str | None) -> str:
     if not account_id:
         return ""
     try:
-        from core.database import SessionLocal as _SL, EmailAccount as _EA
+        from core.database import EmailAccount as _EA
+        from core.database import SessionLocal as _SL
         db = _SL()
         try:
             row = db.query(_EA.owner).filter(_EA.id == account_id).first()
@@ -138,7 +148,8 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
     # Multi-account fan-out: if the caller didn't pick an account, hit them all.
     if account_id is None:
         try:
-            from core.database import SessionLocal as _SL, EmailAccount as _EA
+            from core.database import EmailAccount as _EA
+            from core.database import SessionLocal as _SL
             db = _SL()
             try:
                 rows = (
@@ -175,9 +186,11 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
     Reads current settings flags."""
     import asyncio
     import sqlite3 as _sql3
+
     import requests as _req
+
     from src.endpoint_resolver import resolve_endpoint
-    from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
+    from src.llm_core import _restricts_temperature, _uses_max_completion_tokens
 
     settings = _load_settings()
     auto_sum = settings.get("email_auto_summarize", False)
@@ -555,7 +568,9 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                 ops = json.loads(jm.group())
                                 logger.info(f"[cal-extract] parsed {len(ops)} op(s)")
                                 if isinstance(ops, list) and ops:
-                                    from src.tool_implementations import do_manage_calendar
+                                    from src.tool_implementations import (
+                                        do_manage_calendar,
+                                    )
                                     for op in ops[:3]:
                                         action = (op.get("action") or "").lower()
                                         if action == "noop":
@@ -592,7 +607,9 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                             _dtend = op.get("end_date")
                                             if not _dtend:
                                                 try:
-                                                    from datetime import timedelta as _td3
+                                                    from datetime import (
+                                                        timedelta as _td3,
+                                                    )
                                                     _start_dt = datetime.fromisoformat(op["date"].replace("Z", ""))
                                                     _dtend = (_start_dt + _td3(hours=1)).isoformat()
                                                 except Exception:

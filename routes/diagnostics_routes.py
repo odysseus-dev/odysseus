@@ -1,13 +1,16 @@
 """Diagnostics routes — /api/db/stats, /api/rag/stats, /api/test/youtube, /api/test-research."""
 
 import logging
-from typing import Dict, Any
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, Form, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 
-from services.youtube.youtube_handler import extract_youtube_id, extract_transcript_async
 from core.constants import DEFAULT_HOST
 from core.middleware import require_admin
+from services.youtube.youtube_handler import (
+    extract_transcript_async,
+    extract_youtube_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +23,7 @@ def setup_diagnostics_routes(
     router = APIRouter(tags=["diagnostics"])
 
     @router.get("/api/db/stats")
-    async def get_database_stats(request: Request) -> Dict[str, Any]:
+    async def get_database_stats(request: Request) -> dict[str, Any]:
         require_admin(request)
         try:
             from core.database import get_detailed_stats
@@ -30,14 +33,14 @@ def setup_diagnostics_routes(
             raise HTTPException(500, "Failed to retrieve database statistics")
 
     @router.get("/api/rag/stats")
-    async def get_rag_stats(request: Request) -> Dict[str, Any]:
+    async def get_rag_stats(request: Request) -> dict[str, Any]:
         require_admin(request)
         if rag_available and rag_manager:
             return rag_manager.get_stats()
         return {"error": "RAG system not available"}
 
     @router.get("/api/test/youtube")
-    async def test_youtube(request: Request, url: str) -> Dict[str, Any]:
+    async def test_youtube(request: Request, url: str) -> dict[str, Any]:
         require_admin(request)
         try:
             video_id = extract_youtube_id(url)
@@ -58,7 +61,7 @@ def setup_diagnostics_routes(
             return {"error": str(e)}
 
     @router.post("/api/test-research")
-    async def test_research(request: Request, query: str = Form("What is machine learning?")) -> Dict[str, Any]:
+    async def test_research(request: Request, query: str = Form("What is machine learning?")) -> dict[str, Any]:
         require_admin(request)
         try:
             endpoint = f"http://{DEFAULT_HOST}:8000/v1/chat/completions"

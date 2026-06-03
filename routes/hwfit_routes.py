@@ -3,7 +3,6 @@ from copy import deepcopy
 
 from fastapi import APIRouter
 
-
 # Backends the manual hardware simulator accepts. Must stay a subset of what
 # services.hwfit.fit understands so a simulated box ranks like a real one:
 # "metal" routes through the Apple-Silicon path (GGUF-only, llama.cpp/Ollama),
@@ -115,8 +114,8 @@ def setup_hwfit_routes():
             pools) to target — empty/auto = the largest pool. vLLM can only
             tensor-parallel across identical GPUs, so we never mix pools.
         fresh=true bypasses the hardware-detection cache."""
-        from services.hwfit.hardware import detect_system
         from services.hwfit.fit import rank_models
+        from services.hwfit.hardware import detect_system
         from services.hwfit.models import get_models, model_catalog_path
         system = deepcopy(detect_system(host=host, ssh_port=ssh_port, platform=platform, fresh=fresh))
         if system.get("error"):

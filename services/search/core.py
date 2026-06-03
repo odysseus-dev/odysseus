@@ -4,47 +4,47 @@ import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List, Set
+from typing import Any
 from urllib.parse import urlparse
 
 from .analytics import (
     NetworkError,
     ParseError,
     RateLimitError,
-    error_logger,
     _record_query,
+    error_logger,
 )
 from .cache import (
     SEARCH_CACHE_DIR,
-    search_cache_index,
-    generate_cache_key,
     cleanup_cache,
+    generate_cache_key,
+    search_cache_index,
 )
-from .query import _cache_duration_for_query
-from .ranking import rank_search_results
+from .content import (
+    extract_key_points,
+    extract_quotes,
+    extract_statistics,
+    fetch_webpage_content,
+    get_tldr,
+)
 from .providers import (
-    searxng_search_api,
+    _get_provider_key,
+    _get_result_count,
+    _get_search_settings,
     brave_search,
     duckduckgo_search,
     google_pse_search,
-    tavily_search,
+    searxng_search_api,
     serper_search,
-    _get_search_settings,
-    _get_provider_key,
-    _get_result_count,
+    tavily_search,
 )
-from .content import (
-    fetch_webpage_content,
-    extract_key_points,
-    get_tldr,
-    extract_quotes,
-    extract_statistics,
-)
+from .query import _cache_duration_for_query
+from .ranking import rank_search_results
 
 logger = logging.getLogger(__name__)
 
 # ========= CONFIG =========
-SEARCH_CONFIG: Dict[str, Any] = {
+SEARCH_CONFIG: dict[str, Any] = {
     "primary_provider": "searxng",
 }
 
@@ -54,7 +54,7 @@ def _is_secret_key(name: str) -> bool:
     return name.endswith(("_api_key", "_key", "_token", "_secret"))
 
 
-def get_search_config() -> Dict[str, Any]:
+def get_search_config() -> dict[str, Any]:
     """Get current search configuration including active provider info.
 
     Never returns stored API keys: callers — including the unauthenticated
@@ -93,7 +93,7 @@ def update_search_config(api_key: str = None, **kwargs):
             SEARCH_CONFIG[k] = v
 
 
-def _call_provider(provider_name: str, query: str, count: int, time_filter: str = None) -> List[dict]:
+def _call_provider(provider_name: str, query: str, count: int, time_filter: str = None) -> list[dict]:
     """Call a search provider by name. Returns list of results or empty list."""
     if provider_name == "searxng":
         return searxng_search_api(query, count, time_filter=time_filter)
@@ -116,7 +116,7 @@ def _call_provider(provider_name: str, query: str, count: int, time_filter: str 
 _FALLBACK_ORDER = ["duckduckgo"]
 
 
-def _build_provider_chain(primary: str) -> List[str]:
+def _build_provider_chain(primary: str) -> list[str]:
     """Build ordered list: primary first, then configured/default fallbacks."""
     chain = [primary]
     settings = _get_search_settings()
@@ -148,7 +148,7 @@ def searxng_search_results(query: str, count: int = 10, time_filter: str = None)
     # Check cache
     if cache_file.exists():
         try:
-            with open(cache_file, "r", encoding="utf-8") as f:
+            with open(cache_file, encoding="utf-8") as f:
                 cached_data = json.load(f)
             expiry_raw = cached_data.get("expiry")
             expiry = datetime.fromisoformat(expiry_raw) if expiry_raw else None
@@ -173,7 +173,7 @@ def searxng_search_results(query: str, count: int = 10, time_filter: str = None)
 
     provider_chain = _build_provider_chain(search_provider)
 
-    results: List[dict] = []
+    results: list[dict] = []
     for provider_name in provider_chain:
         for attempt in range(2):
             try:
@@ -217,7 +217,7 @@ def searxng_search_results(query: str, count: int = 10, time_filter: str = None)
 # ----------------------------------------------------------------------
 # Cache invalidation
 # ----------------------------------------------------------------------
-def invalidate_search_cache(query: Optional[str] = None) -> None:
+def invalidate_search_cache(query: str | None = None) -> None:
     """Invalidate cached search results. None clears all, otherwise just the given query."""
     if query is None:
         for file in SEARCH_CACHE_DIR.glob("*.cache"):
@@ -252,10 +252,10 @@ def comprehensive_web_search(
     max_pages: int = 3,
     max_workers: int = 4,
     time_filter: str = None,
-    domain_whitelist: Optional[Set[str]] = None,
-    domain_blacklist: Optional[Set[str]] = None,
-    content_type: Optional[str] = None,
-    language: Optional[str] = None,
+    domain_whitelist: set[str] | None = None,
+    domain_blacklist: set[str] | None = None,
+    content_type: str | None = None,
+    language: str | None = None,
     min_content_length: int = 0,
     return_sources: bool = False,
 ):

@@ -17,14 +17,12 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
-
-from bs4 import BeautifulSoup
-
-from src.research_utils import strip_thinking
 from urllib.parse import urlparse
 
 import markdown
+from bs4 import BeautifulSoup
+
+from src.research_utils import strip_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +65,12 @@ def _md_to_html(md_text: str) -> str:
     return result
 
 
-def _extract_headings(md_text: str) -> List[Dict[str, str]]:
+def _extract_headings(md_text: str) -> list[dict[str, str]]:
     """Pull h2/h3 headings from markdown for table of contents."""
     if not isinstance(md_text, str):
         return []
     headings = []
-    seen_slugs: Dict[str, int] = {}
+    seen_slugs: dict[str, int] = {}
 
     def _plain_heading_text(text: str) -> str:
         text = text.strip().rstrip("#").strip()
@@ -109,7 +107,7 @@ def _extract_headings(md_text: str) -> List[Dict[str, str]]:
     return headings
 
 
-def _apply_heading_ids(report_html: str, headings: List[Dict[str, str]]) -> str:
+def _apply_heading_ids(report_html: str, headings: list[dict[str, str]]) -> str:
     """Force rendered h2/h3 IDs to match the generated sidebar links."""
     if not headings:
         return report_html
@@ -147,7 +145,7 @@ _IMG_OVERLAY_BTNS = (
 )
 
 
-def _inject_images(report_html: str, images: List[str]) -> Tuple[str, int]:
+def _inject_images(report_html: str, images: list[str]) -> tuple[str, int]:
     """Insert OG images between h2 sections as figures.
 
     Returns (html, consumed) where ``consumed`` is how many of ``images``
@@ -1106,7 +1104,7 @@ if (document.body.classList.contains('category-comparison')) {{
 # Public API
 # ---------------------------------------------------------------------------
 
-def _category_css(category: Optional[str]) -> str:
+def _category_css(category: str | None) -> str:
     if not category:
         return ""
     # Per-category palette overrides — applied BEFORE the structural rules so
@@ -1680,11 +1678,11 @@ def _is_icon_or_logo_url(url: str) -> bool:
 def generate_visual_report(
     question: str,
     report_markdown: str,
-    sources: Optional[List[Dict]] = None,
-    stats: Optional[Dict] = None,
-    category: Optional[str] = None,
-    session_id: Optional[str] = None,
-    hidden_images: Optional[List[str]] = None,
+    sources: list[dict] | None = None,
+    stats: dict | None = None,
+    category: str | None = None,
+    session_id: str | None = None,
+    hidden_images: list[str] | None = None,
 ) -> str:
     sources = sources or []
     stats = stats or {}

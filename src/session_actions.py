@@ -35,7 +35,9 @@ async def run_auto_sort(owner: str, skip_llm: bool = False) -> str:
 
     Returns a human-readable summary of what was done.
     """
-    from core.database import SessionLocal, Session as DbSession, ChatMessage as DbMsg
+    from core.database import ChatMessage as DbMsg
+    from core.database import Session as DbSession
+    from core.database import SessionLocal
     from src.llm_core import llm_call_async
     from src.task_endpoint import resolve_task_endpoint
 

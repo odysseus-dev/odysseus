@@ -6,22 +6,22 @@ import pytest
 from fastapi import HTTPException
 
 from routes.cookbook_helpers import (
-    _cached_model_scan_script,
     _append_llama_cpp_linux_accel_build_lines,
     _append_serve_exit_code_lines,
     _append_serve_preflight_exit_lines,
+    _cached_model_scan_script,
     _llama_cpp_rebuild_cmd,
     _local_tooling_path_export,
+    _ollama_bind_from_cmd,
     _pip_install_attempt,
     _pip_install_fallback_chain,
-    _ollama_bind_from_cmd,
     _safe_env_prefix,
-    _venv_safe_local_pip_install_cmd,
     _validate_gpus,
     _validate_repo_id,
     _validate_serve_cmd,
     _validate_serve_model_id,
     _validate_ssh_port,
+    _venv_safe_local_pip_install_cmd,
 )
 
 

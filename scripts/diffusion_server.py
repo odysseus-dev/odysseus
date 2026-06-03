@@ -7,10 +7,11 @@ Odysseus's image generation tool.
 Usage:
     python3 scripts/diffusion_server.py --model /path/to/model --port 8100
 """
-import os
-import sys
 import importlib
 import importlib.machinery
+import os
+import sys
+
 # Block xformers — create a fake module that reports as not installed
 _fake = type(sys)("xformers")
 _fake.__version__ = "0.0.0"
@@ -26,9 +27,8 @@ import io
 import json
 import logging
 import time
-from pathlib import Path
-
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import torch
 import uvicorn

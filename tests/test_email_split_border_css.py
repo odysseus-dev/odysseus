@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 CSS = (Path(__file__).parents[1] / "static" / "style.css").read_text(encoding="utf-8")
 
 

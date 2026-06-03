@@ -1,6 +1,6 @@
 """Tests for research_utils.py — thinking block stripping and quality filtering."""
 
-from src.research_utils import strip_thinking, is_low_quality
+from src.research_utils import is_low_quality, strip_thinking
 
 
 class TestStripThinking:

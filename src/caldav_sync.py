@@ -28,7 +28,7 @@ import ipaddress
 import logging
 import os
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
@@ -99,7 +99,7 @@ def _to_utc_naive(dt):
     All-day events stay as date and get widened to datetime here."""
     if isinstance(dt, datetime):
         if dt.tzinfo is not None:
-            return dt.astimezone(timezone.utc).replace(tzinfo=None), False
+            return dt.astimezone(UTC).replace(tzinfo=None), False
         return dt, False  # naive → treat as local
     # date-only (all-day)
     return datetime(dt.year, dt.month, dt.day), True
@@ -112,6 +112,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
     # the integrations form still works, sync just no-ops with an error.
     import caldav
     from caldav.lib.error import AuthorizationError, NotFoundError
+
     from core.database import CalendarCal, CalendarEvent, SessionLocal
 
     result = {"calendars": 0, "events": 0, "deleted": 0, "errors": []}

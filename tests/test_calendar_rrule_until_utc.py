@@ -26,7 +26,6 @@ from types import SimpleNamespace
 
 from tests.test_null_owner_gates import _import_calendar_helpers
 
-
 _MOCK_CAL = SimpleNamespace(name="Personal", color="#5b8abf")
 
 

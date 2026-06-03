@@ -13,9 +13,8 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import Optional, Dict
 
-from src.research_utils import strip_thinking, is_low_quality
+from src.research_utils import is_low_quality, strip_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -53,14 +52,14 @@ class ResearchHandler:
 
     def __init__(self):
         self._legacy_engine = None
-        self._active_tasks: Dict[str, dict] = {}
+        self._active_tasks: dict[str, dict] = {}
         self._initialize_legacy_engine()
         RESEARCH_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     def _initialize_legacy_engine(self):
         """Initialize the legacy research engine as a fallback."""
         try:
-            from research_engine import ResearchOrchestrator, Config
+            from research_engine import Config, ResearchOrchestrator
             config = Config(max_searches=12, max_content_per_page=15000)
             self._legacy_engine = ResearchOrchestrator(config)
             logger.info("Legacy ResearchOrchestrator initialized (fallback)")
@@ -158,7 +157,7 @@ class ResearchHandler:
 
     async def generate_plan(
         self, query: str, llm_endpoint: str, llm_model: str, llm_headers: dict = None,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Generate a research plan for user review before starting research."""
         try:
             from src.deep_research import RESEARCH_PLAN_PROMPT, current_date_context
@@ -320,7 +319,7 @@ class ResearchHandler:
                     _guarded_complete(session_id, result, sources, findings)
                 except Exception as cb_err:
                     logger.error(f"on_complete callback failed: {cb_err}")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error(f"Research hard timeout ({hard_timeout}s) for session {session_id}")
                 entry["status"] = "error"
                 # If we have partial results, save what we have
@@ -353,7 +352,7 @@ class ResearchHandler:
         entry["task"] = task
         return {"session_id": session_id, "status": "running", "query": query}
 
-    def get_status(self, session_id: str) -> Optional[dict]:
+    def get_status(self, session_id: str) -> dict | None:
         """Get current research status for a session."""
         avg = self.get_avg_duration()
         if session_id in self._active_tasks:
@@ -400,7 +399,7 @@ class ResearchHandler:
         entry["status"] = "cancelled"
         return True
 
-    def get_result(self, session_id: str) -> Optional[str]:
+    def get_result(self, session_id: str) -> str | None:
         """Get the completed research result."""
         if session_id in self._active_tasks:
             entry = self._active_tasks[session_id]
@@ -418,7 +417,7 @@ class ResearchHandler:
                 pass
         return None
 
-    def get_sources(self, session_id: str) -> Optional[list]:
+    def get_sources(self, session_id: str) -> list | None:
         """Get deduplicated source list from research findings."""
         # Check in-memory first
         if session_id in self._active_tasks:
@@ -438,7 +437,7 @@ class ResearchHandler:
                 pass
         return None
 
-    def get_raw_findings(self, session_id: str) -> Optional[list]:
+    def get_raw_findings(self, session_id: str) -> list | None:
         """Get raw per-source findings for display."""
         if session_id in self._active_tasks:
             entry = self._active_tasks[session_id]
@@ -495,7 +494,7 @@ class ResearchHandler:
             logger.warning(f"Failed to extract raw findings: {e}")
             return []
 
-    def get_avg_duration(self) -> Optional[float]:
+    def get_avg_duration(self) -> float | None:
         """Compute average research duration from completed results on disk."""
         durations = []
         try:
@@ -567,7 +566,7 @@ class ResearchHandler:
         except Exception as e:
             logger.error(f"Failed to save research result: {e}")
 
-    def _get_session_json(self, session_id: str) -> Optional[dict]:
+    def _get_session_json(self, session_id: str) -> dict | None:
         """Load the saved research JSON for a session, if it exists."""
         path = RESEARCH_DATA_DIR / f"{session_id}.json"
         if path.exists():
@@ -577,7 +576,7 @@ class ResearchHandler:
                 pass
         return None
 
-    def get_report_html(self, session_id: str) -> Optional[str]:
+    def get_report_html(self, session_id: str) -> str | None:
         """Generate the visual HTML report for a session (always fresh from JSON)."""
         json_path = RESEARCH_DATA_DIR / f"{session_id}.json"
         if not json_path.exists():
@@ -707,7 +706,6 @@ class ResearchHandler:
 
         try:
             from src.deep_research import DeepResearcher
-
             from src.settings import get_setting
             _max_report_tokens = int(get_setting("research_max_tokens", 16384))
             _extraction_timeout = _bounded_int(

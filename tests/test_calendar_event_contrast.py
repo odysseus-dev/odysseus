@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 CALENDAR_JS = ROOT / "static" / "js" / "calendar.js"
 STYLE_CSS = ROOT / "static" / "style.css"

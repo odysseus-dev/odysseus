@@ -6,15 +6,16 @@ import logging
 import re
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable, Dict, Tuple
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
     """Return naive UTC for task DB fields without using deprecated APIs."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 # ── Shared TTL cache (singleflight) ────────────────────────────────────────
@@ -22,12 +23,12 @@ def _utcnow() -> datetime:
 # external data (Miniflux unreads, MCP tool snapshots, etc.). This cache
 # deduplicates those fetches — in-flight requests for the same key await the
 # same underlying coroutine, and completed results are reused until TTL expiry.
-_shared_cache: Dict[Tuple, Tuple[float, Any]] = {}
-_shared_cache_pending: Dict[Tuple, asyncio.Future] = {}
+_shared_cache: dict[tuple, tuple[float, Any]] = {}
+_shared_cache_pending: dict[tuple, asyncio.Future] = {}
 _shared_cache_lock = asyncio.Lock()
 
 
-async def _cached(key: Tuple, ttl: float, fetch: Callable[[], Awaitable[Any]]) -> Any:
+async def _cached(key: tuple, ttl: float, fetch: Callable[[], Awaitable[Any]]) -> Any:
     """Return a cached result for `key` if fresh, else call `fetch()` and store.
 
     Concurrent callers for the same missing key share one `fetch()` call.
@@ -95,7 +96,7 @@ def compute_next_run(schedule: str, scheduled_time: str,
     if tz is not None:
         now_utc = after or _utcnow()
         if now_utc.tzinfo is None:
-            now_utc = now_utc.replace(tzinfo=timezone.utc)
+            now_utc = now_utc.replace(tzinfo=UTC)
         now = now_utc.astimezone(tz)
     else:
         now = after or _utcnow()
@@ -104,7 +105,7 @@ def compute_next_run(schedule: str, scheduled_time: str,
         """Convert a tz-aware datetime to naive UTC for DB storage."""
         if dt.tzinfo is None:
             return dt
-        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt.astimezone(UTC).replace(tzinfo=None)
 
     if schedule == "cron" and cron_expression:
         try:
@@ -379,7 +380,8 @@ class TaskScheduler:
         # in-process _executing set, and the same overdue task fires once per
         # poll until it completes.
         try:
-            from core.database import SessionLocal as _SL, ScheduledTask as _ST
+            from core.database import ScheduledTask as _ST
+            from core.database import SessionLocal as _SL
             db = _SL()
             try:
                 now = _utcnow()
@@ -407,7 +409,7 @@ class TaskScheduler:
         # the synthetic-owner seeding bug (we cleaned a manual instance of
         # it, but a stale code path or DB import could recreate it).
         try:
-            from core.database import SessionLocal, CrewMember, ScheduledTask
+            from core.database import CrewMember, ScheduledTask, SessionLocal
             db = SessionLocal()
             try:
                 from sqlalchemy import func
@@ -456,7 +458,7 @@ class TaskScheduler:
         # tasks land. Helps spot "all my tasks fire at 9am" patterns the user
         # may want to spread out.
         try:
-            from core.database import SessionLocal, ScheduledTask
+            from core.database import ScheduledTask, SessionLocal
             db = SessionLocal()
             try:
                 rows = db.query(ScheduledTask).filter(
@@ -464,7 +466,7 @@ class TaskScheduler:
                     ScheduledTask.trigger_type == "schedule",
                     ScheduledTask.next_run.isnot(None),
                 ).all()
-                buckets: Dict[str, list] = {}
+                buckets: dict[str, list] = {}
                 for r in rows:
                     if not r.next_run:
                         continue
@@ -503,7 +505,7 @@ class TaskScheduler:
         cross-delete other users' entries (review C4).
         """
         await asyncio.sleep(30)
-        from src.builtin_actions import action_ping_notes, TaskNoop
+        from src.builtin_actions import TaskNoop, action_ping_notes
         while self._running:
             owners = self._known_task_owners()
             for ow in (owners or [""]):
@@ -523,7 +525,7 @@ class TaskScheduler:
         configured SMTP "from" address — see review C3).
         """
         await asyncio.sleep(90)
-        from src.builtin_actions import action_ping_events, TaskNoop
+        from src.builtin_actions import TaskNoop, action_ping_events
         while self._running:
             owners = self._known_task_owners()
             for ow in (owners or [""]):
@@ -543,7 +545,7 @@ class TaskScheduler:
         rows could get the browser reminder while the backend email/ntfy
         scanner never ran for that owner.
         """
-        from core.database import SessionLocal, ScheduledTask, Note
+        from core.database import Note, ScheduledTask, SessionLocal
         db = SessionLocal()
         try:
             owners = set()
@@ -576,7 +578,8 @@ class TaskScheduler:
             # slept the full minute; now the loop wakes near the boundary.
             sleep_for = 60.0
             try:
-                from core.database import SessionLocal as _SL, ScheduledTask as _ST
+                from core.database import ScheduledTask as _ST
+                from core.database import SessionLocal as _SL
                 _db = _SL()
                 try:
                     next_run = _db.query(_ST.next_run).filter(
@@ -593,7 +596,7 @@ class TaskScheduler:
             await asyncio.sleep(sleep_for)
 
     async def _check_due_tasks(self):
-        from core.database import SessionLocal, ScheduledTask
+        from core.database import ScheduledTask, SessionLocal
         db = SessionLocal()
         try:
             now = _utcnow()
@@ -664,7 +667,7 @@ class TaskScheduler:
                     self._executing.discard(task_id)
 
     async def _execute_task_locked(self, task_id: str, run_id: str, *, release_executing: bool = True):
-        from core.database import SessionLocal, ScheduledTask, TaskRun
+        from core.database import ScheduledTask, SessionLocal, TaskRun
 
         db = SessionLocal()
         try:
@@ -974,7 +977,7 @@ class TaskScheduler:
     def _task_needs_model_slot(self, task_id: str) -> bool:
         """Only LLM/research/model-backed actions should wait in the model
         queue. Pure housekeeping actions can run immediately."""
-        from core.database import SessionLocal, ScheduledTask
+        from core.database import ScheduledTask, SessionLocal
 
         db = SessionLocal()
         try:
@@ -1089,21 +1092,18 @@ class TaskScheduler:
     async def _execute_checkin(self, task, crew, db, session_id: str,
                                endpoint_url: str, model: str) -> str:
         """Gather raw data from all integrations, hand it to the LLM to write the check-in."""
-        from src.tool_implementations import do_manage_notes
         from src.agent_tools import get_mcp_manager
+        from src.tool_implementations import do_manage_notes
 
         tz_name = _resolve_task_timezone(db, task)
         try:
             if tz_name:
                 from zoneinfo import ZoneInfo
-                from datetime import timezone, timedelta
-                now = _utcnow().replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name))
+                now = _utcnow().replace(tzinfo=UTC).astimezone(ZoneInfo(tz_name))
             else:
-                from datetime import timedelta
                 now = _utcnow()
             time_str = now.strftime("%A, %B %d %Y, %H:%M")
         except Exception:
-            from datetime import timedelta
             now = _utcnow()
             time_str = now.strftime("%H:%M UTC")
 
@@ -1112,7 +1112,8 @@ class TaskScheduler:
         # Calendar: today+tomorrow, this week, month ahead
         # Pull directly from DB so we can include event_type and importance.
         try:
-            from core.database import SessionLocal as _SL, CalendarEvent as _CE
+            from core.database import CalendarEvent as _CE
+            from core.database import SessionLocal as _SL
             _db = _SL()
             try:
                 for label, start, end in _digest_windows(now):
@@ -1159,6 +1160,7 @@ class TaskScheduler:
         # Auto-discover API integrations (Miniflux RSS, etc.).
         try:
             import httpx
+
             from src.integrations import load_integrations
             for integ in load_integrations():
                 if not integ.get("enabled"):
@@ -1271,7 +1273,8 @@ class TaskScheduler:
 
     async def _execute_llm_task(self, task, db) -> str:
         """Execute an LLM task with full tool access via the agent loop."""
-        from core.database import Session as DbSession, ChatMessage, CrewMember
+        from core.database import CrewMember
+        from core.database import Session as DbSession
 
         # If this task is wired to a CrewMember (personal assistant, custom
         # crew), prefer the crew member's persona/model/endpoint as overrides.
@@ -1336,8 +1339,7 @@ class TaskScheduler:
         try:
             if tz_name:
                 from zoneinfo import ZoneInfo
-                from datetime import timezone
-                now_local = _utcnow().replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name))
+                now_local = _utcnow().replace(tzinfo=UTC).astimezone(ZoneInfo(tz_name))
                 time_str = now_local.strftime("%A, %B %d %Y, %H:%M %Z")
             else:
                 time_str = _utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
@@ -1361,7 +1363,7 @@ class TaskScheduler:
         # Without this, all 40+ tools get sent and models hit their tool limit.
         relevant_tools = None
         try:
-            from src.tool_index import get_tool_index, ASSISTANT_ALWAYS_AVAILABLE
+            from src.tool_index import ASSISTANT_ALWAYS_AVAILABLE, get_tool_index
             tool_idx = get_tool_index()
             if tool_idx:
                 rag_tools = tool_idx.get_tools_for_query(task.prompt or "", k=8)
@@ -1407,7 +1409,8 @@ class TaskScheduler:
         actions cannot drift into hidden delivery paths that disagree with the
         task's visible output target.
         """
-        from core.database import Session as DbSession, ChatMessage, CrewMember
+        from core.database import ChatMessage, CrewMember
+        from core.database import Session as DbSession
 
         output = task.output_target or "session"
         if output.startswith("mcp__"):
@@ -1523,8 +1526,8 @@ class TaskScheduler:
             explicit = target
 
         try:
-            from routes.email_routes import _resolve_send_config
             from routes.email_helpers import _send_smtp_message
+            from routes.email_routes import _resolve_send_config
 
             cfg = _resolve_send_config(owner=task.owner or "")
             to_addr = explicit or cfg.get("from_address") or cfg.get("smtp_user") or ""
@@ -1564,8 +1567,8 @@ class TaskScheduler:
         # Resolve headers from the endpoint's API key
         headers = {}
         try:
-            from core.database import SessionLocal, ModelEndpoint
-            from src.endpoint_resolver import normalize_base, build_headers
+            from core.database import ModelEndpoint, SessionLocal
+            from src.endpoint_resolver import build_headers, normalize_base
             db2 = SessionLocal()
             try:
                 eps = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
@@ -1624,8 +1627,8 @@ class TaskScheduler:
         # asking it to summarize what it did. Guarantees output.
         if not full_text.strip():
             try:
-                from src.llm_core import llm_call_async_with_fallback
                 from src.endpoint_resolver import resolve_utility_fallback_candidates
+                from src.llm_core import llm_call_async_with_fallback
                 grace_context = "You ran out of steps. "
                 if tool_results:
                     grace_context += "Here's what your tools returned:\n" + "\n".join(tool_results[-5:])
@@ -1651,7 +1654,7 @@ class TaskScheduler:
 
     async def _execute_research_task(self, task, db) -> str:
         """Execute a deep research task using DeepResearcher."""
-        from core.database import Session as DbSession, ChatMessage
+        from core.database import Session as DbSession
         from src.deep_research import DeepResearcher
         from src.research_handler import RESEARCH_DATA_DIR, ResearchHandler
         from src.research_utils import strip_thinking
@@ -1686,7 +1689,7 @@ class TaskScheduler:
         headers = {}
         try:
             from core.database import ModelEndpoint
-            from src.endpoint_resolver import normalize_base, build_headers
+            from src.endpoint_resolver import build_headers, normalize_base
             db2 = db
             eps = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
             for ep in eps:
@@ -1915,7 +1918,7 @@ class TaskScheduler:
 
     async def ensure_defaults(self, owner: str):
         """Create default housekeeping tasks for this owner (idempotent per action)."""
-        from core.database import SessionLocal, ScheduledTask
+        from core.database import ScheduledTask, SessionLocal
         try:
             from routes.prefs_routes import _load_for_user
             _prefs = _load_for_user(owner) or {}
@@ -2115,7 +2118,7 @@ class TaskScheduler:
         if not owner or owner in {"internal-tool", "api", "demo", "system"}:
             logger.info(f"ensure_assistant_defaults: skip synthetic owner {owner!r}")
             return
-        from core.database import SessionLocal, CrewMember, ScheduledTask
+        from core.database import CrewMember, SessionLocal
         from core.database import Session as DbSession
 
         db = SessionLocal()

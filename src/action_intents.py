@@ -8,8 +8,8 @@ user asks how a feature works.
 from __future__ import annotations
 
 import re
-from typing import Iterable, Pattern
-
+from collections.abc import Iterable
+from re import Pattern
 
 _ACTION_QUESTION = r"\b(?:can|could|would|will)\s+you\s+"
 _PLEASE = r"^\s*(?:please\s+)?"

@@ -15,10 +15,10 @@ connection. The error-path cases fail against the old close()-inside-try
 pattern.
 """
 import ast
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Generator
 from unittest.mock import MagicMock
 
 

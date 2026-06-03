@@ -9,34 +9,33 @@ enabled tools, timezone, and the three check-in times/prompts/enabled flags.
 
 import json
 from datetime import datetime
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from core.database import SessionLocal, CrewMember, ScheduledTask
+from core.database import CrewMember, ScheduledTask, SessionLocal
 from src.auth_helpers import get_current_user
 from src.task_scheduler import compute_next_run
 
 
 class CheckInUpdate(BaseModel):
     id: str                               # ScheduledTask.id
-    name: Optional[str] = None
-    scheduled_time: Optional[str] = None  # "HH:MM"
-    prompt: Optional[str] = None
-    enabled: Optional[bool] = None        # maps to status "active"/"paused"
+    name: str | None = None
+    scheduled_time: str | None = None  # "HH:MM"
+    prompt: str | None = None
+    enabled: bool | None = None        # maps to status "active"/"paused"
 
 
 class AssistantSettingsUpdate(BaseModel):
-    name: Optional[str] = None
-    avatar: Optional[str] = None
-    personality: Optional[str] = None
-    model: Optional[str] = None
-    endpoint_url: Optional[str] = None
-    enabled_tools: Optional[list[str]] = None
-    allow_autonomous_email: Optional[bool] = None  # convenience toggle
-    timezone: Optional[str] = None
-    check_ins: Optional[list[CheckInUpdate]] = None
+    name: str | None = None
+    avatar: str | None = None
+    personality: str | None = None
+    model: str | None = None
+    endpoint_url: str | None = None
+    enabled_tools: list[str] | None = None
+    allow_autonomous_email: bool | None = None  # convenience toggle
+    timezone: str | None = None
+    check_ins: list[CheckInUpdate] | None = None
 
 
 _EMAIL_TOOLS = {"send_email", "reply_to_email"}
@@ -290,7 +289,7 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
     @router.get("/run-status/{task_id}")
     async def run_status(task_id: str, request: Request):
         """Check whether the most recent run of a task has finished."""
-        from core.database import TaskRun, ScheduledTask
+        from core.database import ScheduledTask, TaskRun
         user = _owner(request)
         db = SessionLocal()
         try:

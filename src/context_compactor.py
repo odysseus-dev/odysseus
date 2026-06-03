@@ -6,12 +6,12 @@ Summarizes older messages via the same LLM, preserving key context.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from src.model_context import get_context_length, estimate_tokens
-from src.llm_core import llm_call_async
-from src.endpoint_resolver import resolve_endpoint
 from core.models import ChatMessage
+from src.endpoint_resolver import resolve_endpoint
+from src.llm_core import llm_call_async
+from src.model_context import estimate_tokens, get_context_length
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ What is the system/code/task state right now? What was the last thing discussed?
 Keep the summary under 1000 tokens. Be dense — every token should carry information. Do not include pleasantries or meta-commentary."""
 
 
-def _sanitize_tool_messages(msgs: List[Dict]) -> List[Dict]:
+def _sanitize_tool_messages(msgs: list[dict]) -> list[dict]:
     """Drop orphaned `tool` messages and dangling assistant `tool_calls`.
 
     OpenAI's API requires every `role:"tool"` message to immediately
@@ -83,7 +83,7 @@ def _sanitize_tool_messages(msgs: List[Dict]) -> List[Dict]:
         all trimmed away (some providers reject unanswered tool_calls)
     """
     # Pass 1: drop orphan tool messages.
-    cleaned: List[Dict] = []
+    cleaned: list[dict] = []
     in_batch = False  # are we right after an assistant tool_calls (or mid-batch)?
     for m in msgs:
         role = m.get("role")
@@ -100,7 +100,7 @@ def _sanitize_tool_messages(msgs: List[Dict]) -> List[Dict]:
 
     # Pass 2: drop assistant tool_calls messages that have NO following
     # tool response (dangling) — walk backwards so we know what follows.
-    out: List[Dict] = []
+    out: list[dict] = []
     for i, m in enumerate(cleaned):
         if m.get("role") == "assistant" and m.get("tool_calls"):
             nxt = cleaned[i + 1] if i + 1 < len(cleaned) else None
@@ -146,7 +146,7 @@ def _truncate_text_to_token_budget(text: str, token_budget: int) -> str:
     return text[:head_len].rstrip() + notice + "\n\n" + text[-tail_len:].lstrip()
 
 
-def _truncate_message_to_token_budget(msg: Dict[str, Any], token_budget: int) -> Dict[str, Any]:
+def _truncate_message_to_token_budget(msg: dict[str, Any], token_budget: int) -> dict[str, Any]:
     """Return a copy of msg whose text content fits inside token_budget."""
     out = dict(msg)
     content = out.get("content", "")
@@ -171,7 +171,7 @@ def _truncate_message_to_token_budget(msg: Dict[str, Any], token_budget: int) ->
     return out
 
 
-def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: int = 512) -> List[Dict]:
+def trim_for_context(messages: list[dict], context_length: int, reserve_tokens: int = 512) -> list[dict]:
     """Trim system messages to fit within context_length.
 
     For small-context models, progressively strips:
@@ -264,8 +264,8 @@ async def maybe_compact(
     session,
     endpoint_url: str,
     model: str,
-    messages: List[Dict],
-    headers: Optional[Dict] = None,
+    messages: list[dict],
+    headers: dict | None = None,
 ) -> tuple:
     """Check context usage and compact if above threshold.
 

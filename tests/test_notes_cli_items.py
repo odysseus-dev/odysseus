@@ -6,7 +6,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 

@@ -2,7 +2,6 @@ import importlib.machinery
 import importlib.util
 from pathlib import Path
 
-
 _PATH = Path(__file__).resolve().parents[1] / "src" / "search" / "query.py"
 
 

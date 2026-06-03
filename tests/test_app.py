@@ -1,9 +1,10 @@
 """
 Basic tests for odysseus-ui application structure
 """
-import pytest
-import sys
 import os
+import sys
+
+import pytest
 
 # Add the project root to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -51,7 +52,7 @@ class TestImports:
 
     def test_constants_importable(self):
         """Test that constants module is importable"""
-        from src.constants import BASE_DIR, STATIC_DIR, SESSIONS_FILE, MEMORY_FILE
+        from src.constants import BASE_DIR, MEMORY_FILE, SESSIONS_FILE, STATIC_DIR
         assert BASE_DIR is not None
         assert STATIC_DIR is not None
 
@@ -63,9 +64,9 @@ class TestImports:
     def test_exceptions_importable(self):
         """Test that exceptions module is importable"""
         from src.exceptions import (
-            SessionNotFoundError,
             InvalidFileUploadError,
             LLMServiceError,
+            SessionNotFoundError,
             WebSearchError,
         )
         # These should be exception classes

@@ -12,8 +12,8 @@ The /unlock route previously did ``_run_bw(["unlock", req.master_password,
 vault) to any local user for the lifetime of the unlock subprocess.
 """
 
-import os
 import json
+import os
 import re
 import sys
 import types

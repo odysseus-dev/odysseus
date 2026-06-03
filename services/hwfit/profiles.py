@@ -17,9 +17,9 @@ whether it even loads) is what's computed from real numbers.
 
 from services.hwfit.models import (
     QUANT_BPP,
-    params_b,
     _active_params_b,
     is_prequantized,
+    params_b,
 )
 
 # GGUF KV-cache cost per token, in bytes-per-active-billion-param, by cache type.

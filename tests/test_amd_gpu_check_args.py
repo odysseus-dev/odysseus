@@ -1,7 +1,6 @@
 import subprocess
 from pathlib import Path
 
-
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check-docker-amd-gpu.sh"
 
 

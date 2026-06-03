@@ -15,9 +15,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-
 from fastapi import HTTPException
-
 
 # ---------------------------------------------------------------------------
 # Fixture: install per-test stubs via monkeypatch so they are torn down

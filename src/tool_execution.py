@@ -14,7 +14,8 @@ import logging
 import os
 import sys
 import time
-from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
 
@@ -198,8 +199,8 @@ async def _run_subprocess_streaming(
     proc: asyncio.subprocess.Process,
     *,
     timeout: float,
-    progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
-) -> Tuple[str, str, Optional[int], bool]:
+    progress_cb: Callable[[dict], Awaitable[None]] | None = None,
+) -> tuple[str, str, int | None, bool]:
     """Run a subprocess to completion, streaming progress.
 
     Reads stdout + stderr line-by-line into ring buffers so a
@@ -255,7 +256,7 @@ async def _run_subprocess_streaming(
     timed_out = False
     try:
         await asyncio.wait_for(proc.wait(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         timed_out = True
         try:
             proc.kill()
@@ -319,7 +320,7 @@ _ADMIN_TOOLS = {
 }
 
 
-def _owner_is_admin(owner: Optional[str]) -> bool:
+def _owner_is_admin(owner: str | None) -> bool:
     """Mirror route-level admin behavior for agent tool execution."""
     return owner_is_admin_or_single_user(owner)
 
@@ -339,7 +340,7 @@ _MCP_TOOL_MAP = {
 }
 
 
-def _parse_generate_image(content: str) -> Dict:
+def _parse_generate_image(content: str) -> dict:
     lines = content.strip().split("\n")
     args = {"prompt": lines[0].strip() if lines else ""}
     for i, key in enumerate(["model", "size", "quality"], 1):
@@ -348,7 +349,7 @@ def _parse_generate_image(content: str) -> Dict:
     return args
 
 
-def _parse_manage_memory(content: str) -> Dict:
+def _parse_manage_memory(content: str) -> dict:
     lines = content.strip().split("\n")
     action = lines[0].strip().lower() if lines else ""
     args = {"action": action}
@@ -369,12 +370,12 @@ def _parse_manage_memory(content: str) -> Dict:
     return args
 
 
-def _parse_write_file(content: str) -> Dict:
+def _parse_write_file(content: str) -> dict:
     lines = content.split("\n", 1)
     return {"path": lines[0].strip(), "content": lines[1] if len(lines) > 1 else ""}
 
 
-_MCP_ARG_PARSERS: Dict[str, callable] = {
+_MCP_ARG_PARSERS: dict[str, callable] = {
     "bash":           lambda c: {"command": c},
     "python":         lambda c: {"code": c},
     "web_search":     lambda c: {"query": c.split("\n")[0].strip()},
@@ -386,7 +387,7 @@ _MCP_ARG_PARSERS: Dict[str, callable] = {
 }
 
 
-def _build_mcp_args(tool: str, content: str) -> Dict:
+def _build_mcp_args(tool: str, content: str) -> dict:
     """Convert fenced-block text content to structured MCP arguments."""
     parser = _MCP_ARG_PARSERS.get(tool)
     return parser(content) if parser else {}
@@ -395,8 +396,8 @@ def _build_mcp_args(tool: str, content: str) -> Dict:
 async def _call_mcp_tool(
     tool: str,
     content: str,
-    progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
-) -> Dict:
+    progress_cb: Callable[[dict], Awaitable[None]] | None = None,
+) -> dict:
     """Route a legacy tool call through the MCP manager, with direct fallbacks."""
     mcp = get_mcp_manager()
     if not mcp:
@@ -435,8 +436,8 @@ def _split_bg_marker(content: str):
 async def _direct_fallback(
     tool: str,
     content: str,
-    progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
-) -> Optional[Dict]:
+    progress_cb: Callable[[dict], Awaitable[None]] | None = None,
+) -> dict | None:
     """In-process execution path for the eight tools that used to live as
     stdio MCP servers under mcp_servers/. Those servers were deleted in
     favor of native execution; this function is now the canonical path,
@@ -520,7 +521,7 @@ async def _direct_fallback(
             try:
                 # Run blocking read in a thread to keep the loop responsive
                 def _read():
-                    with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    with open(path, encoding="utf-8", errors="replace") as f:
                         return f.read(MAX_READ_CHARS + 1)
                 data = await asyncio.to_thread(_read)
             except FileNotFoundError:
@@ -642,7 +643,7 @@ async def _direct_fallback(
                     loop.run_in_executor(None, lambda: fetch_webpage_content(url, timeout=10)),
                     timeout=30,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return {"error": f"web_fetch: timed out fetching {url}", "exit_code": 1}
             except Exception as e:
                 # Direct URL fetches can hit bot protection / auth walls
@@ -681,11 +682,11 @@ async def _direct_fallback(
 
 async def execute_tool_block(
     block: Any,
-    session_id: Optional[str] = None,
-    disabled_tools: Optional[set] = None,
-    owner: Optional[str] = None,
-    progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
-) -> Tuple[str, Dict]:
+    session_id: str | None = None,
+    disabled_tools: set | None = None,
+    owner: str | None = None,
+    progress_cb: Callable[[dict], Awaitable[None]] | None = None,
+) -> tuple[str, dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
     `progress_cb` is forwarded to long-running subprocess tools
@@ -693,20 +694,43 @@ async def execute_tool_block(
     events while the command is in flight. Ignored by other tools.
     """
     from src.tool_implementations import (
-        do_create_document, do_update_document, do_edit_document,
-        do_suggest_document, do_search_chats, do_manage_tasks,
-        do_manage_skills, do_api_call, do_manage_endpoints,
-        do_manage_mcp, do_manage_webhooks, do_manage_tokens,
-        do_manage_documents, do_manage_settings, do_manage_notes,
-        do_manage_calendar,
-        do_download_model, do_serve_model, do_list_served_models, do_stop_served_model,
-        do_list_downloads, do_cancel_download, do_search_hf_models, do_list_cached_models,
-        do_list_serve_presets, do_serve_preset, do_adopt_served_model,
-        do_list_cookbook_servers,
-        do_edit_image, do_trigger_research, do_manage_research, do_resolve_contact,
-        do_manage_contact,
-        do_vault_search, do_vault_get, do_vault_unlock,
+        do_adopt_served_model,
+        do_api_call,
         do_app_api,
+        do_cancel_download,
+        do_create_document,
+        do_download_model,
+        do_edit_document,
+        do_edit_image,
+        do_list_cached_models,
+        do_list_cookbook_servers,
+        do_list_downloads,
+        do_list_serve_presets,
+        do_list_served_models,
+        do_manage_calendar,
+        do_manage_contact,
+        do_manage_documents,
+        do_manage_endpoints,
+        do_manage_mcp,
+        do_manage_notes,
+        do_manage_research,
+        do_manage_settings,
+        do_manage_skills,
+        do_manage_tasks,
+        do_manage_tokens,
+        do_manage_webhooks,
+        do_resolve_contact,
+        do_search_chats,
+        do_search_hf_models,
+        do_serve_model,
+        do_serve_preset,
+        do_stop_served_model,
+        do_suggest_document,
+        do_trigger_research,
+        do_update_document,
+        do_vault_get,
+        do_vault_search,
+        do_vault_unlock,
     )
 
     tool = block.tool_type
@@ -949,7 +973,7 @@ _FORMATTER_HANDLED_KEYS = {
 }
 
 
-def format_tool_result(description: str, result: Dict) -> str:
+def format_tool_result(description: str, result: dict) -> str:
     """Format a tool result into text for feeding back to the LLM."""
     parts = [f"### {description}"]
 

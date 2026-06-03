@@ -29,7 +29,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 # ── module-load stubbing (matches other tests in this repo) ──────────
 # Stub heavy deps so importing the skills manager doesn't pull DB / FastAPI.
 for _mod in ("sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext", "sqlalchemy.ext.declarative"):
@@ -39,8 +38,8 @@ for _mod in ("sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext", "sqlalchemy.ext.d
         except ImportError:
             sys.modules[_mod] = MagicMock()
 
-from services.memory.skills import SkillsManager  # noqa: E402
 from services.memory.skill_format import Skill, slugify  # noqa: E402
+from services.memory.skills import SkillsManager  # noqa: E402
 
 
 def _write_skill_md(skills_root: Path, category: str, name: str,

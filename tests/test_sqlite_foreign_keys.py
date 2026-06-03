@@ -1,16 +1,19 @@
+from datetime import datetime
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from core.database import Base, Session, ChatMessage
-from datetime import datetime
+
+from core.database import Base, ChatMessage, Session
+
 
 def test_sqlite_foreign_keys_cascade():
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
-    
+
     TestSessionLocal = sessionmaker(bind=engine)
     db = TestSessionLocal()
-    
+
     session_id = "test-session-123"
     s = Session(
         id=session_id,
@@ -21,18 +24,18 @@ def test_sqlite_foreign_keys_cascade():
         updated_at=datetime.utcnow()
     )
     m = ChatMessage(id="test-msg-123", session_id=session_id, role="user", content="test message")
-    
+
     db.add(s)
     db.add(m)
     db.commit()
-    
+
     assert db.query(Session).count() == 1
     assert db.query(ChatMessage).count() == 1
-    
+
     db.query(Session).filter(Session.id == session_id).delete()
     db.commit()
-    
+
     assert db.query(ChatMessage).count() == 0
-    
+
     db.close()
 

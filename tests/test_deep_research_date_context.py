@@ -11,9 +11,9 @@ import asyncio
 from datetime import datetime
 
 from src.deep_research import (
+    RESEARCH_PLAN_PROMPT,
     DeepResearcher,
     current_date_context,
-    RESEARCH_PLAN_PROMPT,
 )
 
 

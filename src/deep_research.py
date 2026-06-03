@@ -11,12 +11,11 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable, Dict, List, Optional, Set
-
-from src.research_utils import strip_thinking, is_low_quality
 
 from src.goal_based_extractor import EXTRACTOR_PROMPT
+from src.research_utils import is_low_quality, strip_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +188,7 @@ class DeepResearcher:
         self,
         llm_endpoint: str,
         llm_model: str,
-        llm_headers: Optional[Dict] = None,
+        llm_headers: dict | None = None,
         max_rounds: int = 8,
         max_time: int = 300,
         max_urls_per_round: int = 3,
@@ -200,9 +199,9 @@ class DeepResearcher:
         min_rounds: int = 2,
         max_empty_rounds: int = 2,
         synthesis_window: int = 10,
-        progress_callback: Optional[Callable] = None,
-        search_provider: Optional[str] = None,
-        category: Optional[str] = None,
+        progress_callback: Callable | None = None,
+        search_provider: str | None = None,
+        category: str | None = None,
     ):
         self.llm_endpoint = llm_endpoint
         self.llm_model = llm_model
@@ -222,14 +221,14 @@ class DeepResearcher:
         self._progress = progress_callback
         self._cancelled = False
         self._start_time: float = 0
-        self.queries_used: Set[str] = set()
-        self.urls_fetched: Set[str] = set()
+        self.queries_used: set[str] = set()
+        self.urls_fetched: set[str] = set()
         self.round_count: int = 0
         # Track which search providers actually returned results during the
         # run, in arrival order — surfaced in the visual report so users can
         # see whether searxng / brave / tavily etc. carried the work.
-        self.providers_used: List[str] = []
-        self.findings: List[Dict] = []
+        self.providers_used: list[str] = []
+        self.findings: list[dict] = []
         self.evolving_report: str = ""
         self.research_plan: str = ""
 
@@ -244,8 +243,8 @@ class DeepResearcher:
         self,
         question: str,
         prior_report: str = "",
-        prior_findings: Optional[List[Dict]] = None,
-        prior_urls: Optional[Set[str]] = None,
+        prior_findings: list[dict] | None = None,
+        prior_urls: set[str] | None = None,
     ) -> str:
         """Run iterative research and return a final report.
 
@@ -256,7 +255,7 @@ class DeepResearcher:
             prior_urls: URLs already visited (won't be re-fetched).
         """
         self._start_time = time.time()
-        findings: List[Dict] = list(prior_findings) if prior_findings else []
+        findings: list[dict] = list(prior_findings) if prior_findings else []
         report = prior_report or ""
 
         # PLAN: Analyze the question and create a research strategy
@@ -369,7 +368,7 @@ class DeepResearcher:
     # ------------------------------------------------------------------
     # LLM helper
     # ------------------------------------------------------------------
-    async def _llm(self, messages: List[Dict], temperature: float = 0.3,
+    async def _llm(self, messages: list[dict], temperature: float = 0.3,
                    max_tokens: int = 4096, timeout: int = 60) -> str:
         """Call the LLM asynchronously and strip thinking tags."""
         from src.llm_core import llm_call_async
@@ -414,7 +413,7 @@ class DeepResearcher:
             self._emit(phase="warning", message="Planning step failed, proceeding with direct search")
             return ""
 
-    async def _classify_category(self, question: str) -> Optional[str]:
+    async def _classify_category(self, question: str) -> str | None:
         """Fast LLM call to classify the research question into a category."""
         valid = ", ".join(CATEGORY_PROMPTS.keys())
         prompt = (
@@ -449,7 +448,7 @@ class DeepResearcher:
     # THINK: generate search queries
     # ------------------------------------------------------------------
     async def _generate_queries(self, question: str, report: str,
-                                round_num: int) -> List[str]:
+                                round_num: int) -> list[str]:
         if round_num == 1:
             num_queries = 4
             round_instruction = (
@@ -493,10 +492,10 @@ class DeepResearcher:
     # ------------------------------------------------------------------
     # SEARCH + EXTRACT
     # ------------------------------------------------------------------
-    async def _search_and_extract(self, queries: List[str],
-                                  question: str) -> List[Dict]:
+    async def _search_and_extract(self, queries: list[str],
+                                  question: str) -> list[dict]:
         """Search each query and extract relevant info from top results."""
-        all_findings: List[Dict] = []
+        all_findings: list[dict] = []
 
         # Search all queries in parallel
         search_tasks = [self._search(q) for q in queries]
@@ -526,7 +525,7 @@ class DeepResearcher:
         # slower and can trip the extraction timeout.
         semaphore = asyncio.Semaphore(self.extraction_concurrency)
 
-        async def _bounded_extract(result: Dict) -> Optional[Dict]:
+        async def _bounded_extract(result: dict) -> dict | None:
             async with semaphore:
                 return await self._fetch_and_extract(result["url"], question, result.get("title", ""))
 
@@ -542,11 +541,11 @@ class DeepResearcher:
 
         return all_findings
 
-    async def _search(self, query: str) -> List[Dict]:
+    async def _search(self, query: str) -> list[dict]:
         """Run a search query using the configured research search provider."""
         try:
+            from src.search.core import _build_provider_chain, _call_provider
             from src.search.providers import _get_search_settings
-            from src.search.core import _call_provider, _build_provider_chain
 
             settings = _get_search_settings()
             provider = (self.search_provider_override or "").strip()
@@ -592,7 +591,7 @@ class DeepResearcher:
             return []
 
     async def _fetch_and_extract(self, url: str, question: str,
-                                 title: str) -> Optional[Dict]:
+                                 title: str) -> dict | None:
         """Fetch a URL's content and use LLM to extract relevant info."""
         display = title or url
         self._emit(phase="reading", url=url, title=display,
@@ -652,7 +651,7 @@ class DeepResearcher:
     # ------------------------------------------------------------------
     # SYNTHESIZE
     # ------------------------------------------------------------------
-    async def _synthesize(self, question: str, findings: List[Dict],
+    async def _synthesize(self, question: str, findings: list[dict],
                           current_report: str) -> str:
         """LLM synthesizes all findings into an updated report."""
         # Format findings for the prompt
@@ -790,7 +789,7 @@ class DeepResearcher:
             text = re.sub(r'\s*```$', '', text)
         return text.strip()
 
-    def _parse_json_array(self, text: str) -> List[str]:
+    def _parse_json_array(self, text: str) -> list[str]:
         """Extract a JSON array of strings from LLM output."""
         text = self._strip_code_block(text)
         try:
@@ -849,7 +848,7 @@ class DeepResearcher:
         logger.warning(f"Could not parse JSON array from: {text[:200]}")
         return []
 
-    def _parse_json_object(self, text: str) -> Optional[Dict]:
+    def _parse_json_object(self, text: str) -> dict | None:
         """Extract a JSON object from LLM output."""
         text = self._strip_code_block(text)
         try:
@@ -867,7 +866,7 @@ class DeepResearcher:
 
         return None
 
-    def _format_findings(self, findings: List[Dict]) -> str:
+    def _format_findings(self, findings: list[dict]) -> str:
         """Format findings list into readable text for synthesis prompt."""
         parts = []
         for i, f in enumerate(findings, 1):
@@ -880,7 +879,7 @@ class DeepResearcher:
             parts.append(f"**Finding {i}** — [{title}]({url})\n{content}")
         return "\n\n".join(parts)
 
-    def _fallback_report(self, question: str, findings: List[Dict]) -> str:
+    def _fallback_report(self, question: str, findings: list[dict]) -> str:
         """Compile gathered findings into a basic report.
 
         Used when the LLM synthesis step produced no report (e.g. it timed out)
@@ -895,7 +894,7 @@ class DeepResearcher:
             f"{self._format_findings(findings)}"
         )
 
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> dict:
         """Return research statistics."""
         elapsed = time.time() - self._start_time if self._start_time else 0
         stats = {

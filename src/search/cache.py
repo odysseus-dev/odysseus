@@ -4,7 +4,6 @@ import hashlib
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +18,8 @@ SEARCH_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 CONTENT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Track cache size for LRU eviction
-search_cache_index: Dict[str, datetime] = {}
-content_cache_index: Dict[str, datetime] = {}
+search_cache_index: dict[str, datetime] = {}
+content_cache_index: dict[str, datetime] = {}
 
 # Cache metrics (shared across modules)
 cache_metrics = {"hits": 0, "misses": 0, "evictions": 0}
@@ -31,7 +30,7 @@ def generate_cache_key(data: str) -> str:
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
-def cleanup_cache(cache_dir: Path, cache_index: Dict[str, datetime], max_age: timedelta):
+def cleanup_cache(cache_dir: Path, cache_index: dict[str, datetime], max_age: timedelta):
     """Remove expired cache entries and enforce LRU policy."""
     current_time = datetime.now()
     files_in_dir = {f.name.split(".")[0]: f for f in cache_dir.glob("*.cache")}

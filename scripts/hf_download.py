@@ -9,10 +9,9 @@ Prints lines like:
     DONE /path/to/cached/model
 """
 import argparse
+import os
 import sys
 import time
-import os
-
 
 _last_print = {}
 

@@ -10,7 +10,6 @@ document.js is browser-coupled and not importable in pytest.
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 DOC_JS = (ROOT / "static/js/document.js").read_text()
 STYLE_CSS = (ROOT / "static/style.css").read_text()

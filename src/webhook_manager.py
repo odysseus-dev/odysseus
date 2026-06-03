@@ -7,8 +7,7 @@ import ipaddress
 import json
 import logging
 import re
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import httpx
@@ -39,7 +38,7 @@ _PRIVATE_NETWORKS = [
 
 def _utcnow() -> datetime:
     """Return naive UTC for existing DB columns while avoiding datetime.utcnow()."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _ip_is_private(addr: ipaddress._BaseAddress) -> bool:
@@ -149,13 +148,13 @@ class WebhookManager:
     def __init__(self, api_key_manager=None):
         # Disable redirects to prevent SSRF via redirect chains
         self._client = httpx.AsyncClient(timeout=10, follow_redirects=False)
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._api_key_manager = api_key_manager
 
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         self._loop = loop
 
-    def _decrypt_secret(self, encrypted: Optional[str]) -> Optional[str]:
+    def _decrypt_secret(self, encrypted: str | None) -> str | None:
         """Decrypt a webhook signing secret from DB storage."""
         if not encrypted:
             return None
@@ -194,12 +193,12 @@ class WebhookManager:
             decrypted_secret = self._decrypt_secret(wh.secret)
             asyncio.create_task(self._deliver(wh.id, wh.url, decrypted_secret, event, payload))
 
-    async def deliver_test(self, webhook_id: str, url: str, encrypted_secret: Optional[str]):
+    async def deliver_test(self, webhook_id: str, url: str, encrypted_secret: str | None):
         """Public method for the test-webhook route."""
         decrypted = self._decrypt_secret(encrypted_secret)
         await self._deliver(webhook_id, url, decrypted, "webhook.test", {"message": "Test ping from Odysseus"})
 
-    async def _deliver(self, webhook_id: str, url: str, secret: Optional[str], event: str, payload: dict):
+    async def _deliver(self, webhook_id: str, url: str, secret: str | None, event: str, payload: dict):
         """Internal delivery. Never call directly from outside this class (use deliver_test)."""
         # Re-validate URL at delivery time in case DB was tampered with
         try:

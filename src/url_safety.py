@@ -20,18 +20,18 @@ additionally reject all private and loopback targets (full SSRF lockdown).
 
 import ipaddress
 import socket
-from typing import Callable, List, Optional, Tuple
+from collections.abc import Callable
 from urllib.parse import urlparse
 
 ALLOWED_SCHEMES = ("http", "https")
 
 
-def _default_resolver(host: str) -> List[str]:
+def _default_resolver(host: str) -> list[str]:
     """Resolve a hostname to the list of IP strings it maps to (A + AAAA)."""
     return [info[4][0] for info in socket.getaddrinfo(host, None)]
 
 
-def _classify(ip: ipaddress._BaseAddress, *, block_private: bool) -> Optional[str]:
+def _classify(ip: ipaddress._BaseAddress, *, block_private: bool) -> str | None:
     """Return a rejection reason for an IP, or None if it is allowed."""
     # IPv4-mapped IPv6 (e.g. ::ffff:169.254.169.254) — judge the embedded v4.
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
@@ -49,8 +49,8 @@ def check_outbound_url(
     url: str,
     *,
     block_private: bool = False,
-    resolver: Optional[Callable[[str], List[str]]] = None,
-) -> Tuple[bool, str]:
+    resolver: Callable[[str], list[str]] | None = None,
+) -> tuple[bool, str]:
     """Validate a user-supplied outbound URL.
 
     Returns ``(ok, reason)``. ``ok`` is True only when the URL is safe to fetch.

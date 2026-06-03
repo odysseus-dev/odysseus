@@ -63,7 +63,7 @@ def find_admin_user() -> str | None:
     falling back to the first user."""
     auth_path = os.path.join("data", "auth.json")
     try:
-        with open(auth_path, "r", encoding="utf-8") as f:
+        with open(auth_path, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
         return None
@@ -85,7 +85,7 @@ def mint_token(owner: str, name: str = "companion") -> tuple[str, str]:
     are persisted. Mirrors routes/api_token_routes.py so cookie- and
     companion-minted tokens are indistinguishable to the auth middleware.
     """
-    from core.database import get_db_session, ApiToken
+    from core.database import ApiToken, get_db_session
 
     raw_token = "ody_" + secrets.token_urlsafe(32)
     token_hash = bcrypt.hashpw(raw_token.encode(), bcrypt.gensalt()).decode()

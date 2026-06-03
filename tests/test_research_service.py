@@ -11,11 +11,10 @@ import asyncio
 import pytest
 
 from services.research.service import (
-    ResearchService,
     ResearchResult,
+    ResearchService,
     ResearchSource,
 )
-
 
 # A faithful slice of what ResearchHandler._format_research_report emits.
 SAMPLE_REPORT = """---

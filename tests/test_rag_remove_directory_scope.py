@@ -20,10 +20,9 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
 import pytest
 
-import src.rag_vector as rag_vector
-import src.personal_docs as personal_docs
 import src.ai_interaction as ai
-
+import src.personal_docs as personal_docs
+import src.rag_vector as rag_vector
 
 # --------------------------------------------------------------------------- #
 # VectorRAG.remove_directory selection correctness (edit C)

@@ -1,13 +1,14 @@
 # routes/memory_routes.py
-from fastapi import APIRouter, Form, HTTPException, Request, UploadFile, File
-from typing import Dict, Any, Optional, List
 import json
+import logging
 import os
 import re
 import tempfile
 import time
 from datetime import datetime
-import logging
+from typing import Any
+
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 # Leading list-marker like "1.", "12)", or "3:" plus surrounding whitespace.
 # Strips one prefix per call so import-from-LLM-output doesn't leave the
@@ -21,14 +22,14 @@ def _strip_list_prefix(text: str) -> str:
         return text
     return _LIST_PREFIX_RE.sub("", text, count=1).strip()
 
-from services.memory import MemoryManager
-from core.session_manager import SessionManager
-from src.request_models import MemoryAddRequest
 from core.database import SessionLocal
-from src.llm_core import llm_call_async
+from core.session_manager import SessionManager
+from services.memory import MemoryManager
 from services.memory.memory_extractor import audit_memories
 from src.auth_helpers import get_current_user, require_user
 from src.endpoint_resolver import resolve_endpoint
+from src.llm_core import llm_call_async
+from src.request_models import MemoryAddRequest
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +37,10 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     """Set up memory-related routes."""
     router = APIRouter(prefix="/api/memory", tags=["memory"])
 
-    def _owner(request: Request) -> Optional[str]:
+    def _owner(request: Request) -> str | None:
         return get_current_user(request)
 
-    def _verify_memory_owner(memory: dict, user: Optional[str]):
+    def _verify_memory_owner(memory: dict, user: str | None):
         """Raise 404 if user doesn't own this memory.
 
         SECURITY: strict ownership — previously `mem_owner and mem_owner != user`
@@ -66,10 +67,10 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                                  for m in relevant]
         }
 
-    @router.post("/add", response_model=Dict[str, Any])
+    @router.post("/add", response_model=dict[str, Any])
     async def api_add_memory(
         request: Request,
-        memory_data: Optional[MemoryAddRequest] = None
+        memory_data: MemoryAddRequest | None = None
     ):
         """Add a new memory entry with optional category, source, and session reference."""
         from src.auth_helpers import require_privilege
@@ -189,7 +190,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         }
 
     @router.post("/extract")
-    async def extract_memory(request: Request, session: str = Form(...)) -> Dict[str, List[str]]:
+    async def extract_memory(request: Request, session: str = Form(...)) -> dict[str, list[str]]:
         """Analyze a session's chat history and return memory suggestions."""
         require_user(request)
         try:
@@ -240,9 +241,10 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         Uses the default model from settings, or falls back to a session's model.
         Returns before and after memory counts.
         """
-        from routes.model_routes import _load_settings, _normalize_base, build_chat_url
-        from core.database import ModelEndpoint
         import json as _json
+
+        from core.database import ModelEndpoint
+        from routes.model_routes import _load_settings, _normalize_base, build_chat_url
 
         endpoint_url = model = None
         headers = {}
@@ -334,7 +336,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                  raise HTTPException(404, "Session not found — needed for LLM config")
         else:
             endpoint_url, model, headers = resolve_endpoint("utility", owner=_owner(request))
-    
+
         if not endpoint_url or not model:
             raise HTTPException(400, "No LLM model configured. Set a default model in Settings.")
 

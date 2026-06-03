@@ -3,11 +3,11 @@ import builtins
 import pytest
 
 from src.markitdown_runtime import (
-    MARKITDOWN_MISSING,
     MARKITDOWN_EXTS,
+    MARKITDOWN_MISSING,
+    convert_to_markdown,
     is_markitdown_format,
     load_markitdown,
-    convert_to_markdown,
 )
 
 

@@ -11,18 +11,18 @@ from types import SimpleNamespace
 import pytest
 
 from routes.shell_routes import (
-    _find_line_break,
-    _running_in_container,
+    DOCKER_IN_CONTAINER_HINT,
     _docker_row_status,
+    _find_line_break,
     _package_installed_from_probe,
     _package_pip_update_status,
     _package_probe_script,
     _package_status_note,
     _prepend_user_install_bins_to_path,
     _reject_cross_site,
+    _running_in_container,
     _ssh_base_argv,
     _venv_activate_prefix,
-    DOCKER_IN_CONTAINER_HINT,
 )
 
 

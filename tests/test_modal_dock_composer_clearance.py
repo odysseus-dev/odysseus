@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 CSS = Path("static/style.css").read_text(encoding="utf-8")
 INIT_JS = Path("static/js/init.js").read_text(encoding="utf-8")
 

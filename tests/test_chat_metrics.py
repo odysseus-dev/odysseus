@@ -13,12 +13,11 @@ These tests lock in two things:
   2. _compute_final_metrics prefers the backend gen speed over wall-clock when
      present, tags tps_source accordingly, and surfaces prefill_tps.
 """
-import json
 import asyncio
+import json
 
 from src import llm_core
 from src.agent_loop import _compute_final_metrics
-
 
 # --- captured-stream harness (mirrors test_llm_core_streaming.py) -----------
 

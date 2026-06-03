@@ -39,7 +39,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -162,6 +161,7 @@ def _build_app_with_loopback_bypass(session_manager):
     treats as 'no filter' and returns cross-tenant topics.
     """
     from fastapi import FastAPI
+
     from routes.history_routes import setup_history_routes
 
     app = FastAPI()

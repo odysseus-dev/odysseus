@@ -5,9 +5,10 @@ Thin facade: DocsService lives here, RAGManager/VectorRAG are re-exported
 from the canonical implementations in src/.
 """
 
-from .service import DocsService, DocChunk, IndexResult
 from src.rag_manager import RAGManager
 from src.rag_vector import VectorRAG
+
+from .service import DocChunk, DocsService, IndexResult
 
 __all__ = [
     "DocsService",

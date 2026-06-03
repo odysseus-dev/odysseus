@@ -1,16 +1,19 @@
 """History routes — session history, truncation, fork, conversation topics."""
 
 import json
-import uuid
 import logging
-from typing import Dict, Any
+import uuid
+from datetime import UTC
+from typing import Any
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
+from core.database import ChatMessage as DbChatMessage
+from core.database import Session as DbSession
+from core.database import SessionLocal
 from core.models import ChatMessage
-from core.database import SessionLocal, ChatMessage as DbChatMessage, Session as DbSession
-from src.topic_analyzer import analyze_topics
 from routes.session_routes import _verify_session_owner
+from src.topic_analyzer import analyze_topics
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +22,7 @@ def setup_history_routes(session_manager) -> APIRouter:
     router = APIRouter(tags=["history"])
 
     @router.get("/api/history/{session_id}")
-    async def get_session_history(request: Request, session_id: str) -> Dict[str, Any]:
+    async def get_session_history(request: Request, session_id: str) -> dict[str, Any]:
         _verify_session_owner(request, session_id)
         try:
             session = session_manager.get_session(session_id)
@@ -176,8 +179,8 @@ def setup_history_routes(session_manager) -> APIRouter:
                 db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
                 if db_session:
                     db_session.message_count = len(session.history)
-                    from datetime import datetime, timezone
-                    db_session.updated_at = datetime.now(timezone.utc)
+                    from datetime import datetime
+                    db_session.updated_at = datetime.now(UTC)
 
                 db.commit()
                 return {"status": "ok", "deleted": deleted}
@@ -483,7 +486,7 @@ def setup_history_routes(session_manager) -> APIRouter:
             raise HTTPException(500, str(e))
 
     @router.get("/api/conversations/topics")
-    async def get_conversation_topics(request: Request) -> Dict[str, Any]:
+    async def get_conversation_topics(request: Request) -> dict[str, Any]:
         from src.auth_helpers import require_user
         user = require_user(request)
         try:
@@ -501,9 +504,9 @@ def setup_history_routes(session_manager) -> APIRouter:
             raise HTTPException(404, "Session not found")
 
         try:
-            from src.model_context import estimate_tokens, get_context_length
-            from src.llm_core import llm_call_async
             from src.endpoint_resolver import resolve_endpoint
+            from src.llm_core import llm_call_async
+            from src.model_context import estimate_tokens, get_context_length
 
             if len(session.history) < 6:
                 return {"status": "ok", "message": "Not enough messages to compact"}
@@ -577,8 +580,8 @@ def setup_history_routes(session_manager) -> APIRouter:
                 # Insert system summary (hidden, for AI context) and visible summary
                 import json as _json
                 import uuid
-                from datetime import datetime, timezone
-                now = datetime.now(timezone.utc)
+                from datetime import datetime
+                now = datetime.now(UTC)
                 db_sys_summary = DbChatMessage(
                     id=str(uuid.uuid4()),
                     session_id=session_id,
@@ -602,7 +605,7 @@ def setup_history_routes(session_manager) -> APIRouter:
                 db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
                 if db_session:
                     db_session.message_count = len(session.history)
-                    db_session.updated_at = datetime.now(timezone.utc)
+                    db_session.updated_at = datetime.now(UTC)
                 db.commit()
             finally:
                 db.close()

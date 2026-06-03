@@ -11,7 +11,8 @@ if not isinstance(sqlalchemy, _types.ModuleType):
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from core.database import Base, Session as DbSession
+from core.database import Base
+from core.database import Session as DbSession
 from src.task_scheduler import TaskScheduler
 
 # This test needs the real core.database (real SQLAlchemy Base/ChatMessage).

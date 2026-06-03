@@ -5,13 +5,13 @@ Vaultwarden / Bitwarden CLI integration — config and unlock endpoints.
 Stores the BW_SESSION key in data/vault.json with restrictive permissions.
 """
 
+import asyncio
 import json
 import logging
 import os
-import shutil
-import asyncio
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 

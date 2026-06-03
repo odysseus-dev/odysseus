@@ -17,7 +17,7 @@ close / navigation / refresh). It does NOT survive a server restart.
 import asyncio
 import json
 import logging
-from typing import AsyncGenerator, Dict, Optional
+from collections.abc import AsyncGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +29,11 @@ class _Run:
         self.buffer: list = []          # ordered SSE event strings (replay log)
         self.subscribers: set = set()   # one asyncio.Queue per connected client
         self.status: str = "running"    # running | done | error | stopped
-        self.task: Optional[asyncio.Task] = None
-        self.evict_task: Optional[asyncio.Task] = None
+        self.task: asyncio.Task | None = None
+        self.evict_task: asyncio.Task | None = None
 
 
-_RUNS: Dict[str, _Run] = {}
+_RUNS: dict[str, _Run] = {}
 
 # How long a FINISHED run (and its full replay buffer) is retained after the
 # last subscriber disconnects, so a reconnect within the window can still
@@ -80,13 +80,13 @@ def is_active(session_id: str) -> bool:
     return bool(r and r.status == "running")
 
 
-def get_status(session_id: str) -> Optional[str]:
+def get_status(session_id: str) -> str | None:
     r = _RUNS.get(session_id)
     return r.status if r else None
 
 
 async def _drain(session_id: str, agen: AsyncGenerator[str, None],
-                 prev_task: Optional[asyncio.Task] = None) -> None:
+                 prev_task: asyncio.Task | None = None) -> None:
     """Pull every event from the wrapped generator into the run buffer, fanning
     each out to live subscribers. Runs to completion regardless of subscribers."""
     run = _RUNS.get(session_id)
@@ -142,7 +142,7 @@ def start(session_id: str, agen: AsyncGenerator[str, None]) -> _Run:
     """Start a detached run draining `agen` for a session. If a run is already in
     flight for this session (e.g. a rapid double-send), it's cancelled first."""
     prev = _RUNS.get(session_id)
-    prev_task: Optional[asyncio.Task] = None
+    prev_task: asyncio.Task | None = None
     if prev:
         if prev.task and not prev.task.done():
             prev.task.cancel()

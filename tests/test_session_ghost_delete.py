@@ -16,8 +16,8 @@ so the real route + manager code can be imported under the MagicMock sqlalchemy
 stub from conftest.
 """
 
-import sys
 import importlib
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -48,7 +48,6 @@ finally:
             sys.modules[_name] = _val
 
 from fastapi import HTTPException  # noqa: E402
-
 
 _MISSING = object()
 

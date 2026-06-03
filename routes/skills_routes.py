@@ -9,31 +9,30 @@ The on-disk format is SKILL.md (frontmatter + structured body) under
 
 import logging
 import re
-from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from core.middleware import require_admin
 from services.memory.skills import SkillsManager
 from src.auth_helpers import get_current_user
-from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
 
 
 class SkillAddRequest(BaseModel):
     # New schema (preferred)
-    name: Optional[str] = Field(None, max_length=80)
-    description: Optional[str] = Field(None, max_length=200)
+    name: str | None = Field(None, max_length=80)
+    description: str | None = Field(None, max_length=200)
     category: str = Field("general", max_length=40)
-    tags: List[str] = Field(default_factory=list)
-    platforms: List[str] = Field(default_factory=list)
-    requires_toolsets: List[str] = Field(default_factory=list)
-    fallback_for_toolsets: List[str] = Field(default_factory=list)
-    when_to_use: Optional[str] = Field(None, max_length=2000)
-    procedure: List[str] = Field(default_factory=list)
-    pitfalls: List[str] = Field(default_factory=list)
-    verification: List[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    platforms: list[str] = Field(default_factory=list)
+    requires_toolsets: list[str] = Field(default_factory=list)
+    fallback_for_toolsets: list[str] = Field(default_factory=list)
+    when_to_use: str | None = Field(None, max_length=2000)
+    procedure: list[str] = Field(default_factory=list)
+    pitfalls: list[str] = Field(default_factory=list)
+    verification: list[str] = Field(default_factory=list)
     status: str = "draft"
     version: str = "1.0.0"
     confidence: float = 0.8
@@ -41,37 +40,37 @@ class SkillAddRequest(BaseModel):
     # them from auto-dedup and cap-eviction in add_skill. (The agent's own
     # skill writes go through do_manage_skills with source="learned".)
     source: str = "user"
-    teacher_model: Optional[str] = None
-    session_id: Optional[str] = None
+    teacher_model: str | None = None
+    session_id: str | None = None
 
     # Old schema (back-compat)
-    title: Optional[str] = Field(None, max_length=200)
-    problem: Optional[str] = Field(None, max_length=2000)
-    solution: Optional[str] = Field(None, max_length=5000)
-    steps: List[str] = Field(default_factory=list)
+    title: str | None = Field(None, max_length=200)
+    problem: str | None = Field(None, max_length=2000)
+    solution: str | None = Field(None, max_length=5000)
+    steps: list[str] = Field(default_factory=list)
 
 
 class SkillUpdateRequest(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    category: Optional[str] = None
-    tags: Optional[List[str]] = None
-    platforms: Optional[List[str]] = None
-    requires_toolsets: Optional[List[str]] = None
-    fallback_for_toolsets: Optional[List[str]] = None
-    when_to_use: Optional[str] = None
-    procedure: Optional[List[str]] = None
-    pitfalls: Optional[List[str]] = None
-    verification: Optional[List[str]] = None
-    status: Optional[str] = None
-    version: Optional[str] = None
-    confidence: Optional[float] = None
-    body_extra: Optional[str] = None
+    name: str | None = None
+    description: str | None = None
+    category: str | None = None
+    tags: list[str] | None = None
+    platforms: list[str] | None = None
+    requires_toolsets: list[str] | None = None
+    fallback_for_toolsets: list[str] | None = None
+    when_to_use: str | None = None
+    procedure: list[str] | None = None
+    pitfalls: list[str] | None = None
+    verification: list[str] | None = None
+    status: str | None = None
+    version: str | None = None
+    confidence: float | None = None
+    body_extra: str | None = None
     # Old shape
-    title: Optional[str] = None
-    problem: Optional[str] = None
-    solution: Optional[str] = None
-    steps: Optional[List[str]] = None
+    title: str | None = None
+    problem: str | None = None
+    solution: str | None = None
+    steps: list[str] | None = None
 
 
 def _skill_test_task(skill: dict) -> str:
@@ -92,7 +91,7 @@ def _skill_test_task(skill: dict) -> str:
 
 
 async def _eval_skill_run(skill_md: str, task: str, transcript: str,
-                          url: str, model: str, headers: Optional[dict]) -> dict:
+                          url: str, model: str, headers: dict | None) -> dict:
     """LLM-as-judge: grade a skill test run from its transcript. Advisory only.
 
     Robust against local reasoning models (strips <think>, lenient JSON,
@@ -100,6 +99,7 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
     """
     import json as _json
     import re as _re
+
     from src.llm_core import llm_call_async
 
     sys_prompt = (
@@ -246,13 +246,14 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
 
 
 async def _eval_skill_necessity(skill_md: str, others: list, url: str, model: str,
-                                headers: Optional[dict]) -> Optional[dict]:
+                                headers: dict | None) -> dict | None:
     """Advisory judge: is this skill worth keeping, or is it redundant / trivially
     unnecessary? Sees the OTHER skills' names+descriptions so it can spot
     duplicates. Returns {necessary, redundant_with, reason} or None. Never acts —
     purely a flag the UI surfaces."""
     import json as _json
     import re as _re
+
     from src.llm_core import llm_call_async
 
     catalog = "\n".join(f"- {o.get('name')}: {o.get('description', '')}" for o in others) or "(no other skills)"
@@ -327,7 +328,7 @@ def _should_check_retrieval_precision(skill: dict) -> bool:
 
 async def _eval_skill_retrieval_precision(skill_md: str, others: list,
                                           url: str, model: str,
-                                          headers: Optional[dict]) -> Optional[dict]:
+                                          headers: dict | None) -> dict | None:
     """Advisory judge: would this skill's metadata make retrieval over-select it?
 
     This is distinct from "does the procedure work?". It asks whether tags,
@@ -336,6 +337,7 @@ async def _eval_skill_retrieval_precision(skill_md: str, others: list,
     """
     import json as _json
     import re as _re
+
     from src.llm_core import llm_call_async
 
     catalog = "\n".join(f"- {o.get('name')}: {o.get('description', '')}" for o in others[:80]) or "(no other skills)"
@@ -399,6 +401,7 @@ async def _run_skill_test_job(key, name, md, task, url, model, headers, owner, s
     """Background coroutine: run the skill in an agent loop, capture a condensed
     log + transcript, then have the judge grade it. Writes into _skill_test_jobs."""
     import json as _json
+
     from src.agent_loop import stream_agent_loop
 
     job = _skill_test_jobs.get(key)
@@ -503,7 +506,7 @@ def _audit_auto_publish_policy(owner) -> tuple[bool, float]:
     return enabled, max(0.0, min(1.0, min_conf))
 
 
-def _skill_duplicate_blocker(skills_manager, name: str, owner) -> Optional[str]:
+def _skill_duplicate_blocker(skills_manager, name: str, owner) -> str | None:
     """Cheap duplicate guard matching the UI's duplicate grouping.
 
     The LLM necessity check catches semantic redundancy, but the UI also has a
@@ -587,8 +590,8 @@ def _audit_flag_text(*parts) -> str:
     return " ".join(text_parts).lower()
 
 
-def _audit_generic_blocker(skill: Optional[dict], necessity: Optional[dict],
-                           verdict_data: Optional[dict]) -> Optional[str]:
+def _audit_generic_blocker(skill: dict | None, necessity: dict | None,
+                           verdict_data: dict | None) -> str | None:
     """Return a short reason when a generic/trivial skill must stay draft."""
     generic_re = re.compile(
         r"\b(too[-\s]?generic|generic|trivial|capable assistant|without a saved|"
@@ -616,8 +619,8 @@ def _audit_generic_blocker(skill: Optional[dict], necessity: Optional[dict],
 
 
 def _audit_finalize_status(skills_manager, name: str, owner, verdict: str,
-                           confidence: Optional[float], necessity: Optional[dict] = None,
-                           verdict_data: Optional[dict] = None) -> str:
+                           confidence: float | None, necessity: dict | None = None,
+                           verdict_data: dict | None = None) -> str:
     """Apply the user's audit publishing policy.
 
     Audit is the final pass: skills that pass at/above the threshold are
@@ -652,7 +655,7 @@ def _audit_finalize_status(skills_manager, name: str, owner, verdict: str,
 def _apply_skill_md(skills_manager, name: str, md: str, owner) -> bool:
     """Parse + persist an edited SKILL.md. Returns True on success."""
     try:
-        from services.memory.skill_format import Skill, slugify
+        from services.memory.skill_format import Skill
         sk = Skill.from_markdown(md)
         # Pin the identity: the audit's fixer is now allowed to edit frontmatter
         # (tags/category/when_to_use/description), but it must NEVER rename the
@@ -676,6 +679,7 @@ def _apply_skill_md(skills_manager, name: str, md: str, owner) -> bool:
 async def _run_skill_test_once(md: str, task: str, url, model, headers, owner) -> tuple:
     """Run the skill once in the agent loop; return (transcript, verdict)."""
     import json as _json
+
     from src.agent_loop import stream_agent_loop
     transcript = []
     messages = [
@@ -712,6 +716,7 @@ async def _improve_skill_md(skill_md: str, verdict: dict, transcript: str, url, 
     """Have a model rewrite SKILL.md to fix the reviewer's issues. Returns the
     corrected markdown, or None if it couldn't produce a usable change."""
     import re as _re
+
     from src.llm_core import llm_call_async
     issues = "\n".join("- " + str(i) for i in (verdict.get("issues") or []))
     sys_prompt = (
@@ -998,8 +1003,9 @@ def _resolve_audit_models(owner=None):
     if not url or not model:
         raise ValueError("No model configured — set a Default or Utility model in Settings.")
     try:
-        from src.llm_core import list_model_ids
         import os as _os
+
+        from src.llm_core import list_model_ids
         _avail = list_model_ids(url, headers=headers)
         if _avail and model not in _avail:
             _base = _os.path.basename((model or "").rstrip("/"))
@@ -1023,7 +1029,7 @@ def _resolve_audit_models(owner=None):
 
 
 async def run_scheduled_skill_audit(skills_manager: SkillsManager,
-                                    owner: Optional[str] = None,
+                                    owner: str | None = None,
                                     max_skills: int = 8) -> dict:
     """Nightly audit pass. Audits the LEAST-recently-audited skills first and
     caps the batch so it rotates through the library over successive nights
@@ -1068,10 +1074,10 @@ async def run_scheduled_skill_audit(skills_manager: SkillsManager,
 def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
     router = APIRouter(prefix="/api/skills", tags=["skills"])
 
-    def _owner(request: Request) -> Optional[str]:
+    def _owner(request: Request) -> str | None:
         return get_current_user(request)
 
-    def _verify_owner(skill: dict, user: Optional[str]):
+    def _verify_owner(skill: dict, user: str | None):
         if user is None:
             return
         # SECURITY: strict check — previously `sk_owner and sk_owner != user`
@@ -1081,7 +1087,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         if skill.get("owner") != user:
             raise HTTPException(404, "Skill not found")
 
-    def _fire_skill_added(user: Optional[str]):
+    def _fire_skill_added(user: str | None):
         try:
             from src.event_bus import fire_event
             fire_event("skill_added", user)
@@ -1180,7 +1186,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         text = (body or {}).get("text", "")
         if not isinstance(text, str) or not text.strip():
             raise HTTPException(400, "text is required")
-        from src.settings import get_setting, save_settings, load_settings
+        from src.settings import load_settings, save_settings
         settings = load_settings()
         ov = settings.get("builtin_tool_overrides")
         if not isinstance(ov, dict):
@@ -1268,8 +1274,9 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         On completion it records the verdict and nudges the skill's confidence
         to match (pass→0.95, needs_work→0.6, fail→0.4; inconclusive/unknown leave
         it untouched). It never changes the skill's published/draft STATUS."""
-        import time as _time
         import asyncio as _asyncio
+        import time as _time
+
         from src.endpoint_resolver import resolve_endpoint
 
         user = _owner(request)

@@ -7,9 +7,9 @@ Usage:
     python scripts/claim_ownerless.py admin@example.com
 """
 
-import sys
-import os
 import json
+import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -41,7 +41,7 @@ def main():
         if not os.path.exists(path):
             print(f"  {label}: not found, skipping")
             continue
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             entries = json.load(f)
         count = claim_json_entries(entries, owner)
         if count:
@@ -50,7 +50,7 @@ def main():
         print(f"  {label}: claimed {count} entries")
 
     # 2. Database tables (sessions, gallery, comparisons, documents)
-    from core.database import SessionLocal, Session, Document
+    from core.database import Document, Session, SessionLocal
     try:
         from core.database import GalleryImage
     except ImportError:

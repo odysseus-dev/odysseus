@@ -1,12 +1,12 @@
 # src/document_processor.py
 """Document processing: PDF/OCR extraction, text file handling, image VL analysis, user content building."""
 
-import os
+import base64
 import logging
 import mimetypes
-import base64
+import os
 import tempfile
-from typing import List, Dict, Any
+from typing import Any
 
 from src.llm_core import llm_call
 
@@ -205,8 +205,8 @@ def _process_office_document(path: str, display_name: str) -> str:
     text, so a missing optional dependency never breaks the chat path.
     """
     from src.markitdown_runtime import (
-        is_markitdown_format,
         convert_to_markdown,
+        is_markitdown_format,
         load_markitdown,
     )
 
@@ -348,10 +348,10 @@ def build_user_content(
     upload_dir: str,
     upload_handler,
     session_id: str | None = None,
-    auto_opened_docs: list[Dict[str, Any]] | None = None,
+    auto_opened_docs: list[dict[str, Any]] | None = None,
     owner: str | None = None,
-    resolved_uploads: dict[str, Dict[str, Any]] | None = None,
-) -> str | List[Dict[str, Any]]:
+    resolved_uploads: dict[str, dict[str, Any]] | None = None,
+) -> str | list[dict[str, Any]]:
     """Build user content with attachments (text, images, audio, documents).
 
     If session_id is provided and an attached PDF contains AcroForm fields,
@@ -423,12 +423,12 @@ def build_user_content(
                 extracted_text = None
                 if session_id:
                     try:
-                        from src.pdf_forms import has_form_fields, extract_fields
                         from src.pdf_form_doc import (
-                            save_field_sidecar,
                             create_form_markdown_document,
                             create_plain_pdf_document,
+                            save_field_sidecar,
                         )
+                        from src.pdf_forms import extract_fields, has_form_fields
                         title = os.path.splitext(os.path.basename(path))[0]
                         # Pull the PDF prose once — used as either intro_text
                         # (form path) or the doc body (plain path).
@@ -497,7 +497,7 @@ def build_user_content(
                                     )
 
                         if doc_id and auto_opened_docs is not None:
-                            from src.database import SessionLocal, Document
+                            from src.database import Document, SessionLocal
                             _db = SessionLocal()
                             try:
                                 _d = _db.query(Document).filter(

@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Optional
+from typing import Any
 
 
-def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> None:
+def atomic_write_json(path: str, data: Any, *, indent: int | None = None) -> None:
     """Atomically persist `data` as JSON at `path`.
 
     The temp file uses the live PID as a suffix so two processes saving the

@@ -5,9 +5,9 @@ Singleton ChromaDB HTTP client.
 Connects to a ChromaDB instance running as a standalone service.
 """
 
+import logging
 import os
 import socket
-import logging
 
 logger = logging.getLogger(__name__)
 

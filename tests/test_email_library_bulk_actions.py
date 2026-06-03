@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 _REPO = Path(__file__).resolve().parents[1]
 _EMAIL_LIBRARY = _REPO / "static" / "js" / "emailLibrary.js"
 

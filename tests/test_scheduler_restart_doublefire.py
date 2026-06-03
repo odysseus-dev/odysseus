@@ -10,15 +10,18 @@ After the fix (start() advances overdue next_run to now + 60s), the regression
 test asserts the opposite: the task fires at most once across two consecutive
 polls.
 """
-import sys, types, asyncio
-from datetime import datetime, timedelta, timezone
+import asyncio
+import sys
+import types
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import MagicMock
-from sqlalchemy import create_engine, Column, String, DateTime, Integer, Boolean, Text
-from sqlalchemy.orm import sessionmaker, declarative_base
+
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 
 def _test_utcnow():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _stub_heavy():

@@ -45,12 +45,12 @@ if "core.database" not in sys.modules:
 import routes.model_routes as model_routes
 import src.endpoint_resolver as endpoint_resolver
 from routes.model_routes import (
-    _probe_endpoint,
-    _ping_endpoint,
-    _probe_single_model,
-    _classify_endpoint,
-    _rewrite_loopback_for_docker,
     _PROVIDER_CURATED,
+    _classify_endpoint,
+    _ping_endpoint,
+    _probe_endpoint,
+    _probe_single_model,
+    _rewrite_loopback_for_docker,
 )
 
 

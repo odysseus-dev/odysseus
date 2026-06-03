@@ -6,7 +6,7 @@ conversion (kept 09:00 wall clock). So the dedup query never matched the
 stored row and every re-import of a TZID event inserted a duplicate. The
 shared _ics_naive_dtstart helper now drives both.
 """
-from datetime import date, datetime, timezone, timedelta
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 
@@ -39,5 +39,5 @@ def test_all_day_date_becomes_midnight_datetime():
 def test_dedup_key_equals_storage_conversion():
     zi = pytest.importorskip("zoneinfo")
     dt_val = datetime(2026, 11, 1, 9, 30, tzinfo=zi.ZoneInfo("America/New_York"))
-    stored = dt_val.astimezone(timezone.utc).replace(tzinfo=None)
+    stored = dt_val.astimezone(UTC).replace(tzinfo=None)
     assert _ics_naive_dtstart(dt_val) == stored

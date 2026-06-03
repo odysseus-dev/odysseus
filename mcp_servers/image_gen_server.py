@@ -12,7 +12,7 @@ from pathlib import Path
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import TextContent, Tool
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -54,8 +54,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     try:
         import httpx
-        from src.settings import load_settings, get_setting
+
         from src.ai_interaction import _resolve_model
+        from src.settings import get_setting, load_settings
 
         if not get_setting("image_gen_enabled", True):
             return [TextContent(type="text", text="Error: Image generation is disabled by the administrator.")]
@@ -126,7 +127,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
                 # Save to gallery
                 try:
-                    from src.database import SessionLocal, GalleryImage
+                    from src.database import GalleryImage, SessionLocal
                     db = SessionLocal()
                     db.add(GalleryImage(
                         id=str(uuid.uuid4()),

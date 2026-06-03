@@ -2,16 +2,17 @@
 """Google Keep-style notes / checklists API."""
 
 import json
-import uuid
 import logging
-from typing import Dict, Any, Optional
+import uuid
+from datetime import UTC
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
-
-from core.database import SessionLocal, Note
-from src.auth_helpers import get_current_user
 from sqlalchemy.orm.attributes import flag_modified
+
+from core.database import Note, SessionLocal
+from src.auth_helpers import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -22,41 +23,41 @@ logger = logging.getLogger(__name__)
 
 class NoteCreate(BaseModel):
     title: str = ""
-    content: Optional[str] = None
-    items: Optional[list] = None
+    content: str | None = None
+    items: list | None = None
     note_type: str = "note"
-    color: Optional[str] = None
-    label: Optional[str] = None
+    color: str | None = None
+    label: str | None = None
     pinned: bool = False
-    due_date: Optional[str] = None
+    due_date: str | None = None
     source: str = "user"
-    session_id: Optional[str] = None
-    image_url: Optional[str] = None
-    repeat: Optional[str] = "none"
-    sort_order: Optional[int] = None
+    session_id: str | None = None
+    image_url: str | None = None
+    repeat: str | None = "none"
+    sort_order: int | None = None
 
 
 class NoteUpdate(BaseModel):
-    title: Optional[str] = None
-    content: Optional[str] = None
-    items: Optional[list] = None
-    note_type: Optional[str] = None
-    color: Optional[str] = None
-    label: Optional[str] = None
-    pinned: Optional[bool] = None
-    archived: Optional[bool] = None
-    due_date: Optional[str] = None
-    image_url: Optional[str] = None
-    repeat: Optional[str] = None
-    sort_order: Optional[int] = None
-    agent_session_id: Optional[str] = None
+    title: str | None = None
+    content: str | None = None
+    items: list | None = None
+    note_type: str | None = None
+    color: str | None = None
+    label: str | None = None
+    pinned: bool | None = None
+    archived: bool | None = None
+    due_date: str | None = None
+    image_url: str | None = None
+    repeat: str | None = None
+    sort_order: int | None = None
+    agent_session_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _note_to_dict(note: Note) -> Dict[str, Any]:
+def _note_to_dict(note: Note) -> dict[str, Any]:
     items = None
     if note.items:
         try:
@@ -140,7 +141,8 @@ async def dispatch_reminder(
     if cache_key:
         try:
             import json as _json
-            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+            from datetime import datetime as _dt
+            from datetime import timedelta as _td
             from pathlib import Path as _P
             _slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
             cache_path = _P(f"data/note_pings_{_slug}.json")
@@ -154,12 +156,12 @@ async def dispatch_reminder(
                     last = last.get("at")
                 last_dt = _dt.fromisoformat(str(last))
                 if last_dt.tzinfo is None:
-                    last_dt = last_dt.replace(tzinfo=_tz.utc)
+                    last_dt = last_dt.replace(tzinfo=UTC)
                 # Legacy cache values were plain timestamps and could be
                 # written by the frontend even when the email/ntfy send failed.
                 # Treat those as browser-only dedupe so email reminders can be
                 # retried by the backend scanner after a failed frontend path.
-                should_skip = last_dt >= _dt.now(_tz.utc) - _td(minutes=25)
+                should_skip = last_dt >= _dt.now(UTC) - _td(minutes=25)
                 if should_skip and channel in ("email", "ntfy"):
                     should_skip = last_channel == channel
                 if should_skip:
@@ -267,10 +269,11 @@ async def dispatch_reminder(
     email_error = ""
     if channel == "email":
         try:
-            from routes.email_routes import _get_email_config
-            from email.mime.text import MIMEText
-            from email.mime.multipart import MIMEMultipart
             from datetime import datetime as _dt
+            from email.mime.multipart import MIMEMultipart
+            from email.mime.text import MIMEText
+
+            from routes.email_routes import _get_email_config
             # `reminder_email_account_id` lets the user pick WHICH email
             # account to send reminders from (when they have several
             # configured in Integrations). Falls back to the default
@@ -279,8 +282,10 @@ async def dispatch_reminder(
             cfg = _get_email_config(account_id=_acc_id, owner=owner or "")
             if not (cfg.get("smtp_host") and cfg.get("smtp_user") and cfg.get("smtp_password")):
                 try:
-                    from core.database import SessionLocal as _SL, EmailAccount as _EA
                     from sqlalchemy import and_, or_
+
+                    from core.database import EmailAccount as _EA
+                    from core.database import SessionLocal as _SL
                     db = _SL()
                     try:
                         q = db.query(_EA).filter(_EA.enabled == True)  # noqa: E712
@@ -364,8 +369,9 @@ async def dispatch_reminder(
     ntfy_error = ""
     if channel == "ntfy":
         try:
-            from src.integrations import load_integrations
             import httpx
+
+            from src.integrations import load_integrations
             intg = next(
                 (i for i in load_integrations()
                  if i.get("preset") == "ntfy" and i.get("enabled", True) and i.get("base_url")),
@@ -418,7 +424,7 @@ async def dispatch_reminder(
     if (email_sent or ntfy_sent or browser_sent or local_browser_sent) and note_id:
         try:
             import json as _json
-            from datetime import datetime as _dt, timezone as _tz
+            from datetime import datetime as _dt
             from pathlib import Path as _P
             # Per-owner cache so the scanner's prune step on user A's run
             # doesn't drop user B's just-fired entry (review C4).
@@ -433,7 +439,7 @@ async def dispatch_reminder(
                 _cache = {}
             sent_channel = "email" if email_sent else "ntfy" if ntfy_sent else "browser"
             _cache[cache_key or str(note_id)] = {
-                "at": _dt.now(_tz.utc).isoformat(),
+                "at": _dt.now(UTC).isoformat(),
                 "channel": sent_channel,
             }
             _STATE.write_text(_json.dumps(_cache), encoding="utf-8")
@@ -464,15 +470,15 @@ def setup_note_routes(task_scheduler=None):
 
     router = APIRouter(prefix="/api/notes", tags=["notes"])
 
-    def _owner(request: Request) -> Optional[str]:
+    def _owner(request: Request) -> str | None:
         return get_current_user(request)
 
     # --- LIST ---
     @router.get("")
     def list_notes(
         request: Request,
-        archived: Optional[bool] = None,
-        label: Optional[str] = None,
+        archived: bool | None = None,
+        label: str | None = None,
     ):
         user = _owner(request)
         db = SessionLocal()

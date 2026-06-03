@@ -3,13 +3,13 @@
 import json
 import logging
 import os
-from typing import List, Optional
-from urllib.parse import urljoin, urlparse, parse_qs
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
 
 from src.constants import SEARXNG_INSTANCE
+
 from .analytics import RateLimitError, error_logger
 from .query import build_enhanced_query
 
@@ -105,7 +105,7 @@ def _get_safesearch_level() -> str:
     return aliases.get(raw, "strict")
 
 
-def _safesearch_for(provider: str) -> Optional[str]:
+def _safesearch_for(provider: str) -> str | None:
     """Translate the canonical SafeSearch level into provider-specific values."""
     level = _get_safesearch_level()
     if provider == "searxng":
@@ -135,7 +135,7 @@ _GENERAL_ENGINES = os.environ.get("SEARXNG_GENERAL_ENGINES", "bing,mojeek,presea
 
 
 def searxng_search_api(query: str, count: int = 10, categories: str = "general",
-                       time_filter: Optional[str] = None) -> List[dict]:
+                       time_filter: str | None = None) -> list[dict]:
     """Search using SearXNG JSON API. Returns list of {title, url, snippet}."""
     instance = _get_search_instance()
     api_key = ""
@@ -282,13 +282,13 @@ def searxng_search(query, max_results=10):
 
 # ── Brave ──
 
-def brave_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+def brave_search(query: str, count: int = 10, time_filter: str | None = None) -> list[dict]:
     """Search using Brave API with key from admin settings or env var."""
     api_key = _get_provider_key("brave") or os.environ.get("DATA_BRAVE_API_KEY") or ""
     return _brave_search_impl(query, count, time_filter, search_config={"brave_api_key": api_key})
 
 
-def _brave_search_impl(query: str, count: int, time_filter: Optional[str] = None, search_config: dict = None) -> List[dict]:
+def _brave_search_impl(query: str, count: int, time_filter: str | None = None, search_config: dict = None) -> list[dict]:
     """Core Brave API call. Returns a list of result dicts or an empty list on failure."""
     enhanced_query = build_enhanced_query(query, time_filter)
     config = search_config or {}
@@ -381,10 +381,10 @@ def _resolve_ddg_redirect(raw: str) -> str:
     return resolved
 
 
-def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+def duckduckgo_search(query: str, count: int = 10, time_filter: str | None = None) -> list[dict]:
     """Search using DuckDuckGo via the duckduckgo-search library. No API key needed."""
 
-    def _html_fallback() -> List[dict]:
+    def _html_fallback() -> list[dict]:
         try:
             response = httpx.get(
                 "https://html.duckduckgo.com/html/",
@@ -452,7 +452,7 @@ def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = 
 
 # ── Google Programmable Search Engine ──
 
-def google_pse_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+def google_pse_search(query: str, count: int = 10, time_filter: str | None = None) -> list[dict]:
     """Search using Google PSE (Custom Search JSON API).
 
     Requires two keys in settings:
@@ -522,7 +522,7 @@ def google_pse_search(query: str, count: int = 10, time_filter: Optional[str] = 
 
 # ── Tavily ──
 
-def tavily_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+def tavily_search(query: str, count: int = 10, time_filter: str | None = None) -> list[dict]:
     """Search using Tavily API. Requires search_api_key or TAVILY_API_KEY env var."""
     api_key = _get_provider_key("tavily") or os.environ.get("TAVILY_API_KEY", "")
     if not api_key:
@@ -580,7 +580,7 @@ def tavily_search(query: str, count: int = 10, time_filter: Optional[str] = None
 
 # ── Serper.dev ──
 
-def serper_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+def serper_search(query: str, count: int = 10, time_filter: str | None = None) -> list[dict]:
     """Search using Serper.dev API. Requires search_api_key or SERPER_API_KEY env var."""
     api_key = _get_provider_key("serper") or os.environ.get("SERPER_API_KEY", "")
     if not api_key:

@@ -20,10 +20,9 @@ Security invariant under test:
          (tests 4–5).
 """
 import sys
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Lightweight model/query stubs — no SQLAlchemy required.
@@ -79,8 +78,8 @@ def cleanup_imports(monkeypatch):
     monkeypatch.delitem(sys.modules, "src.cleanup_service", raising=False)
     monkeypatch.delitem(sys.modules, "routes.cleanup_routes", raising=False)
 
-    import src.cleanup_service as svc
     import routes.cleanup_routes as rts
+    import src.cleanup_service as svc
     return svc._apply_owner_filter, rts.setup_cleanup_routes
 
 

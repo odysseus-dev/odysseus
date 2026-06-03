@@ -3,10 +3,11 @@
 
 import io
 import logging
-import httpx
 import tempfile
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,7 @@ class STTService:
                 return None
         return self._whisper_model
 
-    def _transcribe_local(self, audio_bytes: bytes, language: str = "") -> Optional[str]:
+    def _transcribe_local(self, audio_bytes: bytes, language: str = "") -> str | None:
         model = self._get_whisper()
         if not model:
             return None
@@ -116,8 +117,8 @@ class STTService:
 
     # ── API endpoint ──
 
-    def _transcribe_api(self, audio_bytes: bytes, endpoint_id: str, model: str, language: str = "") -> Optional[str]:
-        from src.database import SessionLocal, ModelEndpoint
+    def _transcribe_api(self, audio_bytes: bytes, endpoint_id: str, model: str, language: str = "") -> str | None:
+        from src.database import ModelEndpoint, SessionLocal
 
         db = SessionLocal()
         try:
@@ -153,7 +154,7 @@ class STTService:
 
     # ── Public interface ──
 
-    def transcribe(self, audio_bytes: bytes) -> Optional[str]:
+    def transcribe(self, audio_bytes: bytes) -> str | None:
         settings = self._load_settings()
         if settings.get("stt_enabled") is False:
             return None
@@ -173,7 +174,7 @@ class STTService:
             logger.error(f"Unknown STT provider: {provider}")
             return None
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         settings = self._load_settings()
         provider = settings["stt_provider"]
         stt_enabled = settings.get("stt_enabled", False)

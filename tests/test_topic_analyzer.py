@@ -1,12 +1,16 @@
 """Tests for topic keyword matching (src/topic_analyzer.py)."""
+from datetime import datetime
 from types import SimpleNamespace
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from core.database import Base, Session as DbSession, ChatMessage as DbChatMessage
+
+from core.database import Base
+from core.database import ChatMessage as DbChatMessage
+from core.database import Session as DbSession
 from core.session_manager import SessionManager
 from src.topic_analyzer import analyze_topics
-from datetime import datetime
 
 
 def _sm(*messages):
@@ -39,14 +43,14 @@ def test_topic_analyzer_hydrates_sessions(monkeypatch):
     # 1. Create clean in-memory database
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=engine)
-    
+
     # 2. Create test session factory
     TestSessionLocal = sessionmaker(bind=engine)
-    
+
     # 3. Populate test database with a session and a message about Python
     db = TestSessionLocal()
     session_id = "session-1"
-    
+
     s = DbSession(
         id=session_id,
         name="Python chat",
@@ -64,32 +68,32 @@ def test_topic_analyzer_hydrates_sessions(monkeypatch):
         content="I love writing python code.",
         timestamp=datetime.utcnow()
     )
-    
+
     db.add(s)
     db.add(m)
     db.commit()
     db.close()
-    
+
     # 4. Patch SessionLocal to use our in-memory DB
-    import core.session_manager
     import core.database
+    import core.session_manager
     monkeypatch.setattr(core.session_manager, "SessionLocal", TestSessionLocal)
     monkeypatch.setattr(core.database, "SessionLocal", TestSessionLocal)
-    
+
     # 5. Initialize the real SessionManager and load metadata (seeds sessions with empty history)
     sm = SessionManager()
-    
+
     # Verify that the session is in sm.sessions, and its history is currently empty
     assert session_id in sm.sessions
     assert len(sm.sessions[session_id].history) == 0
-    
+
     # 6. Execute the topic analysis
     res = analyze_topics(sm, owner="alice")
-    
+
     # 7. Assertions
     # There should be 1 topic found (Technology, since "python" / "code" are keywords)
     assert res["total_topics"] > 0
-    
+
     # Check that the topic is Technology
     tech_topic = next((t for t in res["topics"] if t["topic"] == "Technology"), None)
     assert tech_topic is not None

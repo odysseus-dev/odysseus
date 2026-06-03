@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 COOKBOOK_RUNNING = ROOT / "static" / "js" / "cookbookRunning.js"
 

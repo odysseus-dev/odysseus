@@ -1,9 +1,9 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import core.session_manager as SM
 from core.models import ChatMessage
 from core.session_manager import SessionManager
-import core.session_manager as SM
 
 
 def _manager_with(sessions):

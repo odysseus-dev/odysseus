@@ -3,7 +3,7 @@
 import pytest
 
 import src.model_context as model_context
-from src.model_context import _is_local_endpoint, estimate_tokens, _lookup_known
+from src.model_context import _is_local_endpoint, _lookup_known, estimate_tokens
 
 
 class TestIsLocalEndpoint:

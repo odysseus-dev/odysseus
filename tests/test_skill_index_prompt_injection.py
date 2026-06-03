@@ -25,7 +25,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 # ── module-load stubbing ─────────────────────────────────────────────────
 for _mod in [
     "sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext", "sqlalchemy.ext.declarative",

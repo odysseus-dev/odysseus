@@ -40,7 +40,6 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
-
 # Point every data-dir-using dependency (core.database, secret_storage,
 # routes.email_helpers, ...) at a per-process tmp dir BEFORE any
 # `from routes...` import runs. Without this the SQLAlchemy engine

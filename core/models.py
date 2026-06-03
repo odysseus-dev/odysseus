@@ -6,7 +6,7 @@ These are simple datacontainers. All persistence is handled by SessionManager.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from .session_manager import SessionManager
@@ -26,9 +26,9 @@ class ChatMessage:
     """A single chat message."""
     role: str
     content: str
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dict for API responses."""
         result = {"role": self.role, "content": self.content}
         if self.metadata:
@@ -49,9 +49,9 @@ class Session:
     model: str
     rag: bool = False
     archived: bool = False
-    headers: Optional[Dict[str, str]] = None
-    history: List[ChatMessage] = None
-    owner: Optional[str] = None
+    headers: dict[str, str] | None = None
+    history: list[ChatMessage] = None
+    owner: str | None = None
     is_important: bool = False
     message_count: int = 0
 
@@ -75,7 +75,7 @@ class Session:
         if _session_manager:
             _session_manager._persist_message(self.id, message)
 
-    def get_context_messages(self) -> List[Dict[str, Any]]:
+    def get_context_messages(self) -> list[dict[str, Any]]:
         """Get messages in format for LLM API."""
         return [msg.to_dict() for msg in self.history]
 

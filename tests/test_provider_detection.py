@@ -8,8 +8,7 @@ look-alike host, must not be misclassified.
 """
 import pytest
 
-from src import llm_core
-from src import endpoint_resolver
+from src import endpoint_resolver, llm_core
 from src.endpoint_resolver import build_chat_url, build_models_url
 
 

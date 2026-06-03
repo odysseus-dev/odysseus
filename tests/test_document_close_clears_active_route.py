@@ -15,18 +15,18 @@ while completing reliably everywhere.
 import tempfile
 import uuid
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
-from unittest.mock import MagicMock
 
 import core.database as cdb
 import routes.document_routes as droutes
 from core.database import Document
 from core.database import Session as DbSession
 from routes.document_helpers import DocumentPatch
-from src.tool_implementations import set_active_document, get_active_document
+from src.tool_implementations import get_active_document, set_active_document
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _ENGINE = create_engine(

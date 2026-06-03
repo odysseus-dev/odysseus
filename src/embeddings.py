@@ -25,9 +25,9 @@ if os.name == "nt":
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 import logging
-import numpy as np
+
 import httpx
-from typing import List, Optional
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +38,13 @@ _DEFAULT_FASTEMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 class EmbeddingClient:
     """Drop-in replacement for SentenceTransformer.encode() using an HTTP API."""
 
-    def __init__(self, url: Optional[str] = None, model: Optional[str] = None):
+    def __init__(self, url: str | None = None, model: str | None = None):
         self.url = url or os.getenv(
             "EMBEDDING_URL",
             f"http://{os.getenv('LLM_HOST', 'localhost')}:11434/v1/embeddings",
         )
         self.model = model or os.getenv("EMBEDDING_MODEL", _DEFAULT_MODEL)
-        self._dim: Optional[int] = None
+        self._dim: int | None = None
         # Short connect timeout so a DOWN embedding endpoint (e.g. Ollama not
         # running on :11434) fast-fails to the local FastEmbed fallback instead
         # of stalling startup ~30s per probe. Read stays generous for a real
@@ -62,7 +62,7 @@ class EmbeddingClient:
         return self._dim
 
     def encode(
-        self, texts: List[str], normalize_embeddings: bool = True
+        self, texts: list[str], normalize_embeddings: bool = True
     ) -> np.ndarray:
         """Encode texts via the API. Returns (N, dim) float32 array."""
         if not texts:
@@ -101,7 +101,7 @@ class EmbeddingClient:
 class FastEmbedClient:
     """Local embedding client using fastembed (ONNX). No external service needed."""
 
-    def __init__(self, model: Optional[str] = None):
+    def __init__(self, model: str | None = None):
         try:
             from fastembed import TextEmbedding
         except ImportError as e:
@@ -132,7 +132,8 @@ class FastEmbedClient:
         # which load fine). Best-effort; only ever removes a verifiably dead link.
         if os.name == "nt":
             try:
-                import glob, shutil
+                import glob
+                import shutil
                 for _onnx in glob.glob(os.path.join(cache_dir, "**", "*.onnx"), recursive=True):
                     if os.path.islink(_onnx) and not os.path.exists(_onnx):
                         _root = _onnx
@@ -151,7 +152,7 @@ class FastEmbedClient:
                 logger.debug("embedding cache symlink-heal skipped: %s", _e)
         kwargs = {"model_name": self.model, "cache_dir": cache_dir}
         self._embedding = TextEmbedding(**kwargs)
-        self._dim: Optional[int] = None
+        self._dim: int | None = None
         self.url = "local://fastembed"
         logger.info(f"FastEmbed loaded model={self.model}")
 
@@ -164,7 +165,7 @@ class FastEmbedClient:
         return self._dim
 
     def encode(
-        self, texts: List[str], normalize_embeddings: bool = True
+        self, texts: list[str], normalize_embeddings: bool = True
     ) -> np.ndarray:
         """Encode texts locally. Returns (N, dim) float32 array."""
         if not texts:

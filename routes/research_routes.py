@@ -7,13 +7,13 @@ import re
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from src.endpoint_resolver import resolve_endpoint
+
 from src.auth_helpers import _auth_disabled, get_current_user
+from src.endpoint_resolver import resolve_endpoint
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
 
@@ -194,7 +194,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     @router.get("/api/research/library")
     async def research_library(
         request: Request,
-        search: Optional[str] = Query(None),
+        search: str | None = Query(None),
         sort: str = Query("recent"),
         limit: int = Query(50),
         archived: bool = Query(False),
@@ -313,13 +313,13 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         query: str
         # max_rounds=0 means "Auto" — let the AI decide when to stop, capped at 20.
         max_rounds: int = Field(default=0, ge=0, le=20)
-        search_provider: Optional[str] = None
-        endpoint_id: Optional[str] = None
-        model: Optional[str] = None
+        search_provider: str | None = None
+        endpoint_id: str | None = None
+        model: str | None = None
         max_time: int = Field(default=300, ge=60, le=1800)
-        extraction_timeout: Optional[int] = Field(default=None, ge=15, le=3600)
-        extraction_concurrency: Optional[int] = Field(default=None, ge=1, le=12)
-        category: Optional[str] = None
+        extraction_timeout: int | None = Field(default=None, ge=15, le=3600)
+        extraction_concurrency: int | None = Field(default=None, ge=1, le=12)
+        category: str | None = None
 
     @router.post("/api/research/start")
     async def research_start(body: ResearchStartRequest, request: Request):
@@ -334,7 +334,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     try:
                         privs = auth_mgr.get_privileges(tool_owner) or {}
                         if not privs.get("can_use_research", True):
-                            raise HTTPException(403, f"Your account is not allowed to can use research.")
+                            raise HTTPException(403, "Your account is not allowed to can use research.")
                     except HTTPException:
                         raise
                     except Exception:
@@ -343,9 +343,12 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         session_id = f"rp-{uuid.uuid4().hex[:12]}"
 
         if body.endpoint_id:
-            from src.database import SessionLocal
-            from src.database import ModelEndpoint
-            from src.endpoint_resolver import normalize_base, build_chat_url, build_headers
+            from src.database import ModelEndpoint, SessionLocal
+            from src.endpoint_resolver import (
+                build_chat_url,
+                build_headers,
+                normalize_base,
+            )
             db = SessionLocal()
             try:
                 ep = db.query(ModelEndpoint).filter(
@@ -381,9 +384,12 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             if not ep_url:
                 ep_url, ep_model, ep_headers = resolve_endpoint("chat")
             if not ep_url:
-                from src.database import SessionLocal
-                from src.database import ModelEndpoint
-                from src.endpoint_resolver import normalize_base, build_chat_url, build_headers
+                from src.database import ModelEndpoint, SessionLocal
+                from src.endpoint_resolver import (
+                    build_chat_url,
+                    build_headers,
+                    normalize_base,
+                )
                 db = SessionLocal()
                 try:
                     ep = db.query(ModelEndpoint).filter(
@@ -555,9 +561,12 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             _merge(*resolve_endpoint("utility"))
         if not ep_url or not ep_model:
             # Last resort: any enabled endpoint
-            from src.database import SessionLocal
-            from src.database import ModelEndpoint
-            from src.endpoint_resolver import normalize_base, build_chat_url, build_headers
+            from src.database import ModelEndpoint, SessionLocal
+            from src.endpoint_resolver import (
+                build_chat_url,
+                build_headers,
+                normalize_base,
+            )
             db = SessionLocal()
             try:
                 ep = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).first()

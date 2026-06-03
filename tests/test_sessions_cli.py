@@ -2,8 +2,7 @@ import importlib.machinery
 import importlib.util
 import sys
 from pathlib import Path
-from types import ModuleType
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 
 def _load_sessions_cli(monkeypatch):

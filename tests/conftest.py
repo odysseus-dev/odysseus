@@ -1,8 +1,8 @@
 """Shared test configuration — ensure project root is on sys.path and stub heavy deps."""
-import sys
-import os
-import types
 import importlib.util
+import os
+import sys
+import types
 from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

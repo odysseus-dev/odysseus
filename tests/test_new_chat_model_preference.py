@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 APP_JS = Path("static/app.js")
 
 

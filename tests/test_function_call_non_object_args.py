@@ -15,6 +15,7 @@ for mod in [
         sys.modules[mod] = MagicMock()
 
 import pytest
+
 import src.agent_tools  # noqa: F401
 from src.tool_schemas import function_call_to_tool_block
 

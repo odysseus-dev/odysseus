@@ -7,8 +7,8 @@ The accumulator must give each parallel call its own slot (otherwise they
 collide into slot 0, overwriting the first call's name and concatenating —
 corrupting — its arguments) and must preserve extra_content per call.
 """
-import json
 import asyncio
+import json
 
 from src import llm_core
 

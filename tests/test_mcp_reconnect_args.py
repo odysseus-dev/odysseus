@@ -2,8 +2,8 @@
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 def test_reconnect_passes_full_server_config():

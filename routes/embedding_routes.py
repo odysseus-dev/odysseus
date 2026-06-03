@@ -1,12 +1,14 @@
 # routes/embedding_routes.py
 """Routes for managing local fastembed embedding models and custom endpoints."""
-import os
-import json
-import shutil
-import logging
 import asyncio
+import json
+import logging
+import os
+import shutil
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Form, Depends
+
+from fastapi import APIRouter, Depends, Form, HTTPException
+
 from core.constants import BASE_DIR
 from core.middleware import require_admin
 

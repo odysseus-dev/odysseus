@@ -7,9 +7,8 @@ only explicit /api or /api/... paths (and ollama.com) are native Ollama.
 """
 import pytest
 
-from src import llm_core, endpoint_resolver
+from src import endpoint_resolver, llm_core
 from src.endpoint_resolver import build_chat_url
-
 
 # ---------------------------------------------------------------------------
 # Helpers

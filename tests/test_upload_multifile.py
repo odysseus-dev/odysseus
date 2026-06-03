@@ -20,8 +20,8 @@ from pathlib import Path
 import pytest
 from fastapi import APIRouter
 
-from src.upload_handler import count_recent_uploads, UploadHandler
 import routes.upload_routes as up
+from src.upload_handler import UploadHandler, count_recent_uploads
 
 _REPO = Path(__file__).resolve().parent.parent
 

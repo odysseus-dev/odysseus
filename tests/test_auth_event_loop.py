@@ -11,13 +11,14 @@ The fix offloads the bcrypt-bearing AuthManager calls via asyncio.to_thread.
 This test asserts those calls run on a worker thread, not the loop thread; it
 fails if they are awaited inline again.
 """
+import asyncio
 import os
 import sys
 import types
-import asyncio
-import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+
+import pytest
 
 
 # Stub `core.auth` / `core.database` before importing the route module.
@@ -73,7 +74,7 @@ def _event_loop_stubs(monkeypatch):
     monkeypatch.setitem(sys.modules, "core.auth", auth)
 
 
-from routes.auth_routes import setup_auth_routes, LoginRequest
+from routes.auth_routes import LoginRequest, setup_auth_routes
 
 
 def _login_endpoint(auth_manager):

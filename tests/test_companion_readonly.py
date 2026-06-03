@@ -6,10 +6,10 @@ rule can't silently regress. A bearer token for owner A must never see owner B's
 rows, and legacy null-owner rows must not widen a token's access.
 """
 
+import json
 import os
 import sys
 import types
-import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -26,7 +26,7 @@ if "core.database" not in sys.modules:
     sys.modules["core.database"] = _db
 
 import companion.routes as companion_routes
-from companion.routes import setup_companion_routes, token_owner, owner_can_see
+from companion.routes import owner_can_see, setup_companion_routes, token_owner
 
 
 def _request(**state):

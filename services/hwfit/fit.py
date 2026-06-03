@@ -1,9 +1,15 @@
 import re
 
 from services.hwfit.models import (
-    params_b, estimate_memory_gb, infer_use_case,
-    get_models, is_prequantized, _active_params_b, QUANT_BYTES_PER_PARAM,
-    QUANT_SPEED_MULT, QUANT_QUALITY_PENALTY,
+    QUANT_BYTES_PER_PARAM,
+    QUANT_QUALITY_PENALTY,
+    QUANT_SPEED_MULT,
+    _active_params_b,
+    estimate_memory_gb,
+    get_models,
+    infer_use_case,
+    is_prequantized,
+    params_b,
 )
 
 GPU_BANDWIDTH = {

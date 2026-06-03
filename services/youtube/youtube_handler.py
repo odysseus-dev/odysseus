@@ -10,7 +10,7 @@ import shutil
 import sys
 import urllib.parse
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ def is_youtube_url(url: str) -> bool:
     return "youtube.com" in url or "youtu.be" in url
 
 
-def extract_youtube_id(url: str) -> Optional[str]:
+def extract_youtube_id(url: str) -> str | None:
     """Extract YouTube video ID from various URL formats."""
     if not isinstance(url, str):
         return None
@@ -83,7 +83,7 @@ def extract_youtube_id(url: str) -> Optional[str]:
 
 async def extract_transcript_async(
     url: str, video_id: str, max_retries: int = 3
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Async YouTube transcript extraction with retries.
 
@@ -139,7 +139,7 @@ async def extract_transcript_async(
 
 
 def format_transcript_for_context(
-    transcript_data: Dict[str, Any], url: str,
+    transcript_data: dict[str, Any], url: str,
     title: str = "", channel: str = ""
 ) -> str:
     """Format transcript data for inclusion in LLM context."""
@@ -185,7 +185,7 @@ def format_transcript_for_context(
 
 async def fetch_youtube_comments(
     video_id: str, max_comments: int = 25, timeout: int = 30
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Fetch top comments for a YouTube video using yt-dlp.
 
     Returns dict with 'success', 'comments' list, 'error'.
@@ -237,7 +237,7 @@ async def fetch_youtube_comments(
         return {"success": True, "comments": comments, "count": len(comments),
                 "title": title, "channel": channel}
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(f"Comment fetch timed out for {video_id}")
         return {"success": False, "error": "Comment fetch timed out", "comments": []}
     except FileNotFoundError:
@@ -248,7 +248,7 @@ async def fetch_youtube_comments(
         return {"success": False, "error": str(e), "comments": []}
 
 
-def format_comments_for_context(comments_data: Dict[str, Any], url: str) -> str:
+def format_comments_for_context(comments_data: dict[str, Any], url: str) -> str:
     """Format YouTube comments for inclusion in LLM context."""
     if not comments_data.get("success") or not comments_data.get("comments"):
         return ""

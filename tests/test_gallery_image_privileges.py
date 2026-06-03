@@ -1,7 +1,6 @@
 import ast
 from pathlib import Path
 
-
 GATED_IMAGE_FUNCTIONS = {
     "gallery_ai_upscale",
     "gallery_style_transfer",

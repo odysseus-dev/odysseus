@@ -12,9 +12,7 @@ import sys
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, Depends
-
-from src.auth_helpers import require_user
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from core.middleware import require_admin
@@ -28,18 +26,39 @@ from core.platform_compat import (
     which_tool,
 )
 from routes.shell_routes import TMUX_LOG_DIR
+from src.auth_helpers import require_user
 
 logger = logging.getLogger(__name__)
 
 from routes.cookbook_helpers import (
-    _SSH_PORT_RE, _REMOTE_HOST_RE, _SESSION_ID_RE,
-    _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_remote_host, _validate_token,
-    _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,
-    _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
-    _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
-    _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
-    _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache, _venv_safe_local_pip_install_cmd,
-    ModelDownloadRequest, ServeRequest,
+    _REMOTE_HOST_RE,
+    _SESSION_ID_RE,
+    _SSH_PORT_RE,
+    ModelDownloadRequest,
+    ServeRequest,
+    _append_llama_cpp_linux_accel_build_lines,
+    _append_serve_exit_code_lines,
+    _append_serve_preflight_exit_lines,
+    _bash_squote,
+    _cached_model_scan_script,
+    _local_tooling_path_export,
+    _ollama_bind_from_cmd,
+    _parse_serve_phase,
+    _pip_install_fallback_chain,
+    _pip_install_no_cache,
+    _ps_squote,
+    _safe_env_prefix,
+    _shell_path,
+    _validate_gpus,
+    _validate_include,
+    _validate_local_dir,
+    _validate_remote_host,
+    _validate_repo_id,
+    _validate_serve_cmd,
+    _validate_serve_model_id,
+    _validate_ssh_port,
+    _validate_token,
+    _venv_safe_local_pip_install_cmd,
 )
 
 _HF_TOKEN_STATUS_SNIPPET = (
@@ -758,7 +777,8 @@ def setup_cookbook_routes() -> APIRouter:
     def _auto_register_image_endpoint(req: ServeRequest, remote: str | None) -> str | None:
         """Register a diffusion model as an image endpoint so it appears in the model selector."""
         import re
-        from core.database import SessionLocal, ModelEndpoint
+
+        from core.database import ModelEndpoint, SessionLocal
 
         # Parse port from command (--port NNNN), default 8100 for diffusion_server
         port_match = re.search(r'--port\s+(\d+)', req.cmd)
@@ -821,7 +841,8 @@ def setup_cookbook_routes() -> APIRouter:
         so registering immediately (before the server finishes loading) is safe.
         """
         import re
-        from core.database import SessionLocal, ModelEndpoint
+
+        from core.database import ModelEndpoint, SessionLocal
 
         # Port: an explicit --port wins. Otherwise fall back by backend — Ollama
         # is the only server in our generated commands that omits --port.
@@ -1345,7 +1366,7 @@ def setup_cookbook_routes() -> APIRouter:
             output = stdout.decode() + stderr.decode()
             ok = "OK" in output
             return {"ok": ok, "output": output.strip(), "platform": platform}
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {"ok": False, "error": "Setup timed out (120s)", "platform": platform}
         except Exception as e:
             return {"ok": False, "error": str(e), "platform": platform}
@@ -1367,7 +1388,7 @@ def setup_cookbook_routes() -> APIRouter:
             )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             return None, "nvidia-smi timed out"
         if proc.returncode != 0:
@@ -1396,7 +1417,7 @@ def setup_cookbook_routes() -> APIRouter:
             )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             return None, "GPU probe timed out"
         if proc.returncode != 0:
@@ -1703,7 +1724,7 @@ def setup_cookbook_routes() -> APIRouter:
                 err = (stderr.decode("utf-8", errors="replace") or "").strip()[:200]
                 return {"ok": False, "error": err or f"kill returned {proc.returncode}"}
             return {"ok": True, "pid": req.pid, "signal": sig}
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {"ok": False, "error": "kill command timed out"}
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
@@ -1828,6 +1849,7 @@ def setup_cookbook_routes() -> APIRouter:
         pipeline: HF pipeline_tag filter (text-generation, text-to-image, etc.).
         """
         import re
+
         import httpx
 
         # Fetch a larger pool so we have enough to filter from (we drop ~80%)
@@ -2145,7 +2167,7 @@ def setup_cookbook_routes() -> APIRouter:
                     status = "completed" if exit_code == 0 else "error"
                 elif has_exit and "unrecognized arguments" in lower:
                     status = "error"
-                elif has_error and not ("application startup complete" in lower):
+                elif has_error and "application startup complete" not in lower:
                     status = "error"
                 elif task_type == "download" and ("100%" in full_snapshot or "DOWNLOAD_OK" in full_snapshot):
                     # Only download tasks treat 100% as "completed".

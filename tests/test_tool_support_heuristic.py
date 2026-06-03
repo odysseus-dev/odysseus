@@ -7,6 +7,7 @@ Verifies two critical cases:
      allow-list (_API_HOSTS), so cloud deepseek users keep working.
 """
 import pytest
+
 from src.agent_loop import _API_HOSTS
 
 

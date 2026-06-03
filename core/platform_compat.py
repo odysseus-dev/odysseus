@@ -13,12 +13,10 @@ Design rules:
 
 from __future__ import annotations
 
-import os
 import ntpath
+import os
 import shutil
 import subprocess
-from pathlib import Path
-from typing import List, Optional
 
 IS_WINDOWS = os.name == "nt"
 IS_POSIX = not IS_WINDOWS
@@ -61,7 +59,7 @@ def detached_popen_kwargs() -> dict:
     return {"start_new_session": True}
 
 
-def pid_alive(pid: Optional[int]) -> bool:
+def pid_alive(pid: int | None) -> bool:
     """True if a process with ``pid`` is currently running.
 
     POSIX uses the classic ``os.kill(pid, 0)`` probe. That is **unsafe on
@@ -98,7 +96,7 @@ def pid_alive(pid: Optional[int]) -> bool:
         return False
 
 
-def kill_process_tree(pid: Optional[int]) -> None:
+def kill_process_tree(pid: int | None) -> None:
     """Terminate ``pid`` and all of its descendants.
 
     POSIX: signal the whole process group (``killpg``), falling back to a plain
@@ -131,7 +129,7 @@ def kill_process_tree(pid: Optional[int]) -> None:
 
 
 # ── Shell / executable resolution ───────────────────────────────────────────
-_BASH_CACHE: Optional[str] = None
+_BASH_CACHE: str | None = None
 _BASH_PROBED = False
 
 # Common Git-for-Windows install locations to probe when bash isn't on PATH.
@@ -151,15 +149,15 @@ _WINDOWS_BASH_RELATIVE_PATHS = (
 )
 
 
-def _windows_bash_fallbacks() -> List[str]:
-    roots: List[str] = []
+def _windows_bash_fallbacks() -> list[str]:
+    roots: list[str] = []
     for env_name in _WINDOWS_BASH_ROOT_ENV_VARS:
         base = os.environ.get(env_name)
         if base:
             roots.append(ntpath.join(base, "Git"))
     roots.extend(_WINDOWS_BASH_DEFAULT_ROOTS)
 
-    paths: List[str] = []
+    paths: list[str] = []
     seen = set()
     for root in roots:
         for rel in _WINDOWS_BASH_RELATIVE_PATHS:
@@ -171,7 +169,7 @@ def _windows_bash_fallbacks() -> List[str]:
     return paths
 
 
-def find_bash() -> Optional[str]:
+def find_bash() -> str | None:
     """Locate a real ``bash`` interpreter, or None.
 
     On Windows this is typically Git Bash / WSL. Many Odysseus features (the
@@ -197,7 +195,7 @@ def has_bash() -> bool:
     return find_bash() is not None
 
 
-def which_tool(name: str) -> Optional[str]:
+def which_tool(name: str) -> str | None:
     """``shutil.which`` that also tries Windows executable suffixes.
 
     On Windows, Node/npm shims are ``npx.cmd``/``npm.cmd`` and binaries end in
@@ -215,7 +213,7 @@ def which_tool(name: str) -> Optional[str]:
     return None
 
 
-def run_script_argv(script_path) -> List[str]:
+def run_script_argv(script_path) -> list[str]:
     """argv to execute a shell *script file*.
 
     Prefers bash (so existing ``.sh`` wrappers work verbatim, including on

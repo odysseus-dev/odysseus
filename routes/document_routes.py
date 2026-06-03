@@ -1,14 +1,14 @@
 """Document routes — CRUD for living documents with version history."""
 
-import uuid
 import logging
-from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional
+import uuid
+from datetime import UTC, datetime
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form
-
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from sqlalchemy import func
-from core.database import SessionLocal, Document, DocumentVersion
+
+from core.database import Document, DocumentVersion, SessionLocal
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user
 
@@ -32,18 +32,25 @@ def _aggregate_language_facets(lang_rows):
 
 
 from routes.document_helpers import (
-    DocumentCreate, DocumentUpdate, DocumentPatch,
-    _doc_to_dict, _version_to_dict,
-    _verify_doc_owner, _owner_session_filter,
-    _slug, _resolve_user_upload_path, _assert_pdf_marker_upload_owned, _derive_title,
     _PDF_RENDER_SCALE,
+    DocumentCreate,
+    DocumentPatch,
+    DocumentUpdate,
+    _assert_pdf_marker_upload_owned,
+    _derive_title,
+    _doc_to_dict,
+    _owner_session_filter,
+    _resolve_user_upload_path,
+    _slug,
+    _verify_doc_owner,
+    _version_to_dict,
 )
 
 
 def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     router = APIRouter(tags=["documents"])
 
-    def _locate_current_user_upload(request: Request, upload_id: str, user: Optional[str]):
+    def _locate_current_user_upload(request: Request, upload_id: str, user: str | None):
         if upload_handler is None:
             return None
         auth_manager = getattr(getattr(request.app, "state", None), "auth_manager", None)
@@ -59,7 +66,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/document ----
     @router.post("/api/document")
-    async def create_document(request: Request, req: DocumentCreate) -> Dict[str, Any]:
+    async def create_document(request: Request, req: DocumentCreate) -> dict[str, Any]:
         from src.auth_helpers import require_privilege
         user = require_privilege(request, "can_use_documents")
         db = SessionLocal()
@@ -90,7 +97,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # to markdown for prose.
             language = req.language
             if not language:
-                from src.tool_implementations import _looks_like_email_document, _sniff_doc_language
+                from src.tool_implementations import (
+                    _looks_like_email_document,
+                    _sniff_doc_language,
+                )
                 language = _sniff_doc_language(req.content)
             else:
                 from src.tool_implementations import _looks_like_email_document
@@ -144,8 +154,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     async def import_pdf(
         request: Request,
         file: UploadFile = File(...),
-        session_id: Optional[str] = Form(None),
-    ) -> Dict[str, Any]:
+        session_id: str | None = Form(None),
+    ) -> dict[str, Any]:
         """Upload a PDF and create the matching Document.
 
         Detects AcroForm fields — if any, creates a form-backed markdown doc
@@ -153,17 +163,16 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         with a `pdf_source` marker so the viewer renders the pages without
         overlays.
         """
-        from src.constants import UPLOAD_DIR
-        from src.pdf_forms import has_form_fields, extract_fields
-        from src.pdf_form_doc import (
-            save_field_sidecar,
-            create_form_markdown_document,
-            create_plain_pdf_document,
-        )
-        from src.document_processor import _process_pdf, strip_pdf_content_marker
         import os
 
         from src.auth_helpers import require_privilege
+        from src.document_processor import _process_pdf, strip_pdf_content_marker
+        from src.pdf_form_doc import (
+            create_form_markdown_document,
+            create_plain_pdf_document,
+            save_field_sidecar,
+        )
+        from src.pdf_forms import extract_fields, has_form_fields
         user = require_privilege(request, "can_use_documents")
 
         # session_id is optional — a library import isn't tied to a chat. When
@@ -250,13 +259,13 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     @router.get("/api/documents/library")
     async def documents_library(
         request: Request,
-        search: Optional[str] = Query(None),
-        language: Optional[str] = Query(None),
+        search: str | None = Query(None),
+        language: str | None = Query(None),
         sort: str = Query("recent"),
         offset: int = Query(0, ge=0),
         limit: int = Query(20, ge=1, le=50),
         archived: bool = Query(False),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -354,7 +363,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- GET /api/documents/{session_id} ----
     @router.get("/api/documents/{session_id}")
-    async def list_documents(request: Request, session_id: str) -> List[Dict[str, Any]]:
+    async def list_documents(request: Request, session_id: str) -> list[dict[str, Any]]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -378,7 +387,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- GET /api/document/{doc_id} ----
     @router.get("/api/document/{doc_id}")
-    async def get_document(request: Request, doc_id: str) -> Dict[str, Any]:
+    async def get_document(request: Request, doc_id: str) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -392,7 +401,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/document/{doc_id}/archive — soft-archive / restore ----
     @router.post("/api/document/{doc_id}/archive")
-    async def archive_document(request: Request, doc_id: str, archived: bool = Query(True)) -> Dict[str, Any]:
+    async def archive_document(request: Request, doc_id: str, archived: bool = Query(True)) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -408,7 +417,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/document/{doc_id}/extract-pdf-text ----
     @router.post("/api/document/{doc_id}/extract-pdf-text")
-    async def extract_pdf_text(request: Request, doc_id: str) -> Dict[str, Any]:
+    async def extract_pdf_text(request: Request, doc_id: str) -> dict[str, Any]:
         """Re-run pypdf+VL text extraction against the PDF linked to this doc
         and merge the result into the doc's markdown content. Idempotent — the
         existing body (everything below the title heading) is replaced.
@@ -417,6 +426,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         text extraction was wired, plus for scanned/image-only PDFs where the
         VL model picks up text the basic pypdf path missed."""
         import re
+
         from src.document_processor import _process_pdf, strip_pdf_content_marker
         from src.pdf_form_doc import find_source_upload_id
 
@@ -492,6 +502,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             import io
             import re
             import zipfile
+
             from fastapi import Response
             docs = db.query(Document).filter(Document.id.in_(ids)).all()
             buf = io.BytesIO()
@@ -531,7 +542,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     VERSION_COALESCE_SECONDS = 60
 
     @router.put("/api/document/{doc_id}")
-    async def update_document(request: Request, doc_id: str, req: DocumentUpdate) -> Dict[str, Any]:
+    async def update_document(request: Request, doc_id: str, req: DocumentUpdate) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -551,12 +562,12 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 DocumentVersion.document_id == doc_id,
             ).order_by(DocumentVersion.version_number.desc()).first()
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             coalesced = False
             if latest_ver and latest_ver.source == "user":
                 ver_time = latest_ver.created_at
                 if ver_time.tzinfo is None:
-                    ver_time = ver_time.replace(tzinfo=timezone.utc)
+                    ver_time = ver_time.replace(tzinfo=UTC)
                 age = (now - ver_time).total_seconds()
                 if age < VERSION_COALESCE_SECONDS:
                     # Update the existing version in-place
@@ -593,7 +604,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- PATCH /api/document/{doc_id} — metadata only ----
     @router.patch("/api/document/{doc_id}")
-    async def patch_document(request: Request, doc_id: str, req: DocumentPatch) -> Dict[str, Any]:
+    async def patch_document(request: Request, doc_id: str, req: DocumentPatch) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -630,7 +641,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- DELETE /api/document/{doc_id} — soft delete ----
     @router.delete("/api/document/{doc_id}")
-    async def delete_document(request: Request, doc_id: str) -> Dict[str, str]:
+    async def delete_document(request: Request, doc_id: str) -> dict[str, str]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -658,7 +669,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- GET /api/document/{doc_id}/versions ----
     @router.get("/api/document/{doc_id}/versions")
-    async def list_versions(request: Request, doc_id: str) -> List[Dict[str, Any]]:
+    async def list_versions(request: Request, doc_id: str) -> list[dict[str, Any]]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -682,7 +693,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- GET /api/document/{doc_id}/version/{num} ----
     @router.get("/api/document/{doc_id}/version/{num}")
-    async def get_version(request: Request, doc_id: str, num: int) -> Dict[str, Any]:
+    async def get_version(request: Request, doc_id: str, num: int) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -702,7 +713,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/document/{doc_id}/restore/{num} ----
     @router.post("/api/document/{doc_id}/restore/{num}")
-    async def restore_version(request: Request, doc_id: str, num: int) -> Dict[str, Any]:
+    async def restore_version(request: Request, doc_id: str, num: int) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -743,7 +754,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/documents/tidy — clean up broken/empty documents ----
     @router.post("/api/documents/tidy")
-    async def tidy_documents(request: Request) -> Dict[str, Any]:
+    async def tidy_documents(request: Request) -> dict[str, Any]:
         """Fix empty titles and remove broken/empty documents (user's docs only)."""
         user = get_current_user(request)
         db = SessionLocal()
@@ -762,6 +773,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # Same junk-detection logic as the scheduled tidy_documents
             # action (src/document_actions.py). Keep these two in sync.
             import re as _re
+
             from src.document_actions import _JUNK_TITLES
 
             to_delete = []
@@ -846,12 +858,12 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/documents/ai-tidy — AI-powered cleanup of junk/test documents ----
     @router.post("/api/documents/ai-tidy")
-    async def ai_tidy_documents(request: Request) -> Dict[str, Any]:
+    async def ai_tidy_documents(request: Request) -> dict[str, Any]:
         """Use AI to judge if documents are junk/test/accidental, then delete them.
         Caches verdicts so previously-reviewed docs are skipped."""
-        from src.task_endpoint import resolve_task_endpoint
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
+        from src.task_endpoint import resolve_task_endpoint
 
         user = get_current_user(request)
         url, model, headers = resolve_task_endpoint()
@@ -943,14 +955,17 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/document/{doc_id}/export-pdf/preview ----
     @router.post("/api/document/{doc_id}/export-pdf/preview")
-    async def export_pdf_preview(doc_id: str, request: Request) -> Dict[str, Any]:
+    async def export_pdf_preview(doc_id: str, request: Request) -> dict[str, Any]:
         """Return the field-value mapping that would be written to the PDF.
 
         Frontend shows this in a confirmation modal so the user can spot/fix
         any wrong values before triggering the actual download.
         """
-        from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, load_field_sidecar
-        from src.constants import UPLOAD_DIR
+        from src.pdf_form_doc import (
+            find_source_upload_id,
+            load_field_sidecar,
+            parse_markdown_to_values,
+        )
 
         user = get_current_user(request)
         db = SessionLocal()
@@ -1006,7 +1021,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- GET /api/document/{doc_id}/render-pages ----
     @router.get("/api/document/{doc_id}/render-pages")
-    async def render_pages(doc_id: str, request: Request) -> Dict[str, Any]:
+    async def render_pages(doc_id: str, request: Request) -> dict[str, Any]:
         """Return per-page metadata for the interactive PDF view.
 
         Each page entry has its rendered-image dimensions (matching what
@@ -1014,8 +1029,11 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         on that page with their rects translated to image-pixel coordinates.
         Frontend overlays HTML form controls at those positions.
         """
-        from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, load_field_sidecar
-        from src.constants import UPLOAD_DIR
+        from src.pdf_form_doc import (
+            find_source_upload_id,
+            load_field_sidecar,
+            parse_markdown_to_values,
+        )
 
         user = get_current_user(request)
         db = SessionLocal()
@@ -1036,7 +1054,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             values = parse_markdown_to_values(doc.current_content or "")
 
             # Group fields by page
-            by_page: Dict[int, list] = {}
+            by_page: dict[int, list] = {}
             for f in schema:
                 by_page.setdefault(f["page"], []).append(f)
 
@@ -1082,8 +1100,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         """Render one page of the source PDF as a PNG (no values stamped — the
         frontend overlays HTML form inputs on top)."""
         from fastapi.responses import Response
+
         from src.pdf_form_doc import find_source_upload_id
-        from src.constants import UPLOAD_DIR
 
         user = get_current_user(request)
         db = SessionLocal()
@@ -1120,7 +1138,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/document/{doc_id}/ai-fill-annotations ----
     @router.post("/api/document/{doc_id}/ai-fill-annotations")
-    async def ai_fill_annotations(doc_id: str, request: Request) -> Dict[str, Any]:
+    async def ai_fill_annotations(doc_id: str, request: Request) -> dict[str, Any]:
         """Ask a vision-capable LLM to locate fillable areas on a flat PDF and
         propose annotation values for each, given a free-form user instruction.
 
@@ -1130,11 +1148,12 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         """
         import base64
         import json
+
         import fitz
-        from src.pdf_form_doc import find_source_upload_id
-        from src.constants import UPLOAD_DIR
-        from src.document_processor import _resolve_vl_model, _load_vl_settings
+
+        from src.document_processor import _load_vl_settings, _resolve_vl_model
         from src.llm_core import llm_call_async
+        from src.pdf_form_doc import find_source_upload_id
 
         body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
         instruction = (body or {}).get("instruction", "").strip()
@@ -1271,12 +1290,17 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         import base64
         import os
         import tempfile
+
         from fastapi.responses import FileResponse
         from starlette.background import BackgroundTask
-        from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, parse_markdown_annotations
-        from src.pdf_forms import fill_fields, stamp_annotations
-        from src.constants import UPLOAD_DIR
+
         from core.database import Signature
+        from src.pdf_form_doc import (
+            find_source_upload_id,
+            parse_markdown_annotations,
+            parse_markdown_to_values,
+        )
+        from src.pdf_forms import fill_fields, stamp_annotations
 
         # Track temp files for this request so they get unlinked AFTER
         # the response is fully sent (BackgroundTask runs post-send).
@@ -1366,12 +1390,18 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         import base64
         import os
         import tempfile
+
         from fastapi.responses import FileResponse
         from starlette.background import BackgroundTask
-        from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, load_field_sidecar, parse_markdown_annotations
-        from src.pdf_forms import fill_fields, stamp_signatures, stamp_annotations
-        from src.constants import UPLOAD_DIR
+
         from core.database import Signature
+        from src.pdf_form_doc import (
+            find_source_upload_id,
+            load_field_sidecar,
+            parse_markdown_annotations,
+            parse_markdown_to_values,
+        )
+        from src.pdf_forms import fill_fields, stamp_annotations, stamp_signatures
 
         _to_unlink: list[str] = []
         def _cleanup_temps():
@@ -1503,22 +1533,25 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         doc was created via /api/email/attachment-as-doc). Otherwise 400.
         """
         import base64
-        import tempfile
-        import shutil
-        import uuid as _uuid
         import email as _email_mod
-        from src.pdf_form_doc import (
-            find_source_upload_id, parse_markdown_to_values,
-            load_field_sidecar, parse_markdown_annotations,
-        )
-        from src.pdf_forms import fill_fields, stamp_signatures, stamp_annotations
-        from src.constants import UPLOAD_DIR
-        from core.database import Signature
+        import os as _os
+        import shutil
+        import tempfile
+        import uuid as _uuid
+
         # COMPOSE_UPLOADS_DIR lives in email_routes — re-derive here so we
         # don't import from a routes file (cycle-prone). Same env override
         # as email_routes (ODYSSEUS_MAIL_ATTACHMENTS_DIR).
         from pathlib import Path as _Path
-        import os as _os
+
+        from core.database import Signature
+        from src.pdf_form_doc import (
+            find_source_upload_id,
+            load_field_sidecar,
+            parse_markdown_annotations,
+            parse_markdown_to_values,
+        )
+        from src.pdf_forms import fill_fields, stamp_annotations, stamp_signatures
         _DATA_DIR = _Path(__file__).resolve().parent.parent / "data"
         _BASE = _os.environ.get("ODYSSEUS_MAIL_ATTACHMENTS_DIR", str(_DATA_DIR / "mail-attachments"))
         _COMPOSE_DIR = _Path(_BASE) / "_compose"
@@ -1636,7 +1669,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # 3) Fetch the source email's headers so we can build a clean reply
             #    context (To/Subject/In-Reply-To/References).
             try:
-                from routes.email_routes import _imap, _decode_header
+                from routes.email_routes import _decode_header, _imap
             except Exception:
                 _imap = None
                 _decode_header = lambda x: x or ""

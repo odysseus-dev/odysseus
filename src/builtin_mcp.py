@@ -5,11 +5,11 @@ Auto-registration of built-in MCP servers on startup.
 Each server runs as a stdio subprocess managed by McpManager.
 """
 
+import asyncio
 import logging
 import os
 import shutil
 import sys
-import asyncio
 
 from core.platform_compat import IS_WINDOWS, which_tool
 
@@ -212,7 +212,7 @@ async def _is_npx_package_cached(npx_path, package_spec, timeout_s=5):
         return False
     try:
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             proc.kill()
             await proc.wait()

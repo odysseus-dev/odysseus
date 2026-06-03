@@ -10,9 +10,8 @@ through the standard agent_tools.py pipeline.
 
 import json
 import logging
-import uuid
 import time
-from typing import Dict, Optional, Tuple
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +54,13 @@ def set_rag_manager(rag_mgr, personal_docs_mgr=None):
 # Model resolution
 # ---------------------------------------------------------------------------
 
-from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url, build_headers, build_models_url
+from datetime import UTC
+
+from src.endpoint_resolver import build_chat_url, build_headers, build_models_url
+from src.endpoint_resolver import normalize_base as _normalize_base
 
 
-def _resolve_model(spec: str) -> Tuple[str, str, Dict]:
+def _resolve_model(spec: str) -> tuple[str, str, dict]:
     """Resolve a model specifier to (endpoint_url, model_id, headers).
 
     Accepts:
@@ -68,8 +70,9 @@ def _resolve_model(spec: str) -> Tuple[str, str, Dict]:
     Raises ValueError if model not found.
     """
     import httpx
-    from src.database import SessionLocal, ModelEndpoint
-    from src.llm_core import _detect_provider, ANTHROPIC_MODELS
+
+    from src.database import ModelEndpoint, SessionLocal
+    from src.llm_core import ANTHROPIC_MODELS, _detect_provider
 
     spec = spec.strip()
     target_endpoint_name = None
@@ -141,7 +144,7 @@ def _resolve_model(spec: str) -> Tuple[str, str, Dict]:
 # Tool implementations
 # ---------------------------------------------------------------------------
 
-async def do_chat_with_model(content: str, session_id: Optional[str] = None) -> Dict:
+async def do_chat_with_model(content: str, session_id: str | None = None) -> dict:
     """Send a message to a specific model and return its response.
 
     Content format:
@@ -190,7 +193,7 @@ _TEACHER_SYSTEM_PROMPT = (
 )
 
 
-async def do_ask_teacher(content: str, session_id: Optional[str] = None) -> Dict:
+async def do_ask_teacher(content: str, session_id: str | None = None) -> dict:
     """Ask a more capable model for help.
 
     Content format:
@@ -235,7 +238,7 @@ async def do_ask_teacher(content: str, session_id: Optional[str] = None) -> Dict
         return {"error": f"Teacher call failed ({model_spec}): {e}"}
 
 
-async def do_second_opinion(content: str, session_id: Optional[str] = None) -> Dict:
+async def do_second_opinion(content: str, session_id: str | None = None) -> dict:
     """Get a second opinion from another model, then have the original model
     evaluate the feedback and produce a unified version.
 
@@ -379,7 +382,7 @@ async def do_second_opinion(content: str, session_id: Optional[str] = None) -> D
     }
 
 
-async def do_create_session(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_create_session(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """Create a new chat session.
 
     Content format:
@@ -430,7 +433,7 @@ async def do_create_session(content: str, session_id: Optional[str] = None, owne
         return {"error": f"Failed to create session: {e}"}
 
 
-async def do_list_sessions(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_list_sessions(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """List sessions sorted by most-recently-active first.
 
     Output includes a relative "last active" timestamp per row so the
@@ -445,8 +448,10 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
     keyword = content.strip().lower() if content.strip() else None
 
     try:
-        from core.database import SessionLocal, Session as DbSession
-        from datetime import datetime, timezone
+        from datetime import datetime
+
+        from core.database import Session as DbSession
+        from core.database import SessionLocal
 
         # Pull every session's last_accessed from the DB so we can sort
         # by recency. In-memory sessions hold name + model + msg_count;
@@ -481,7 +486,7 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
             now = datetime.utcnow()
             try:
                 if ts.tzinfo is not None:
-                    now = datetime.now(timezone.utc)
+                    now = datetime.now(UTC)
                 diff = (now - ts).total_seconds()
             except Exception:
                 return 'unknown'
@@ -517,15 +522,15 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
         return {"error": str(e)}
 
 
-async def do_send_to_session(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_send_to_session(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """Send a message to an existing session and get a response.
 
     Content format:
       Line 1: session_id
       Line 2+: message
     """
-    from src.llm_core import llm_call_async
     from core.models import ChatMessage
+    from src.llm_core import llm_call_async
 
     if not _session_manager:
         return {"error": "Session manager not available"}
@@ -577,14 +582,14 @@ async def do_send_to_session(content: str, session_id: Optional[str] = None, own
         return {"error": f"Failed to send to session: {e}"}
 
 
-async def stream_ai_tool(tool: str, content: str, session_id: Optional[str] = None, owner: Optional[str] = None):
+async def stream_ai_tool(tool: str, content: str, session_id: str | None = None, owner: str | None = None):
     """Dispatcher for streaming AI tools. Yields events as async generator."""
     # Fallback: run non-streaming and yield final result
     desc, result = await dispatch_ai_tool(tool, content, session_id, owner=owner)
     yield {"_final": True, "desc": desc, "result": result}
 
 
-async def do_pipeline(content: str, session_id: Optional[str] = None) -> Dict:
+async def do_pipeline(content: str, session_id: str | None = None) -> dict:
     """Execute a multi-step pipeline where each model's output feeds the next.
 
     Content format (JSON):
@@ -697,7 +702,7 @@ async def do_pipeline(content: str, session_id: Optional[str] = None) -> Dict:
 # Session management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_session(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_manage_session(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """Manage sessions: rename, archive, delete, important, truncate, fork.
 
     Content format:
@@ -708,7 +713,8 @@ async def do_manage_session(content: str, session_id: Optional[str] = None, owne
     if not _session_manager:
         return {"error": "Session manager not available"}
 
-    from src.database import SessionLocal, Session as DbSession
+    from src.database import Session as DbSession
+    from src.database import SessionLocal
 
     # Accept BOTH the structured JSON args the tool schema advertises
     # ({action, session_id, value}) AND the legacy line-based format
@@ -924,7 +930,7 @@ async def do_manage_session(content: str, session_id: Optional[str] = None, owne
 # Memory management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_memory(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_manage_memory(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """Manage memories: list, add, edit, delete, search.
 
     Content format:
@@ -1091,14 +1097,15 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
 # List models tool
 # ---------------------------------------------------------------------------
 
-async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict:
+async def do_list_models(content: str, session_id: str | None = None) -> dict:
     """List all available models across configured endpoints.
 
     Content = optional filter keyword.
     """
     import httpx
-    from src.database import SessionLocal, ModelEndpoint
-    from src.llm_core import _detect_provider, ANTHROPIC_MODELS
+
+    from src.database import ModelEndpoint, SessionLocal
+    from src.llm_core import ANTHROPIC_MODELS, _detect_provider
 
     keyword = content.strip().lower() if content.strip() else None
 
@@ -1159,7 +1166,7 @@ async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict
 # RAG management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_rag(content: str, session_id: Optional[str] = None) -> Dict:
+async def do_manage_rag(content: str, session_id: str | None = None) -> dict:
     """Manage RAG indexed documents: list, add_directory, remove_directory.
 
     Content format:
@@ -1250,7 +1257,7 @@ async def do_manage_rag(content: str, session_id: Optional[str] = None) -> Dict:
 # UI control tool (returns events for frontend to apply)
 # ---------------------------------------------------------------------------
 
-async def do_ui_control(content: str, session_id: Optional[str] = None) -> Dict:
+async def do_ui_control(content: str, session_id: str | None = None) -> dict:
     """Control frontend UI: toggle settings, switch model, change theme.
 
     Content format:
@@ -1331,7 +1338,8 @@ async def do_ui_control(content: str, session_id: Optional[str] = None) -> Dict:
 
         # Update current session's model if we have a session
         if session_id and _session_manager:
-            from src.database import SessionLocal as SL2, Session as DbSess2
+            from src.database import Session as DbSess2
+            from src.database import SessionLocal as SL2
             db2 = SL2()
             try:
                 db_s = db2.query(DbSess2).filter(DbSess2.id == session_id).first()
@@ -1541,7 +1549,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None) -> Dict:
 # Image generation
 # ---------------------------------------------------------------------------
 
-async def do_generate_image(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_generate_image(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """Generate an image using an image-capable model (e.g. gpt-image-1).
 
     Content format:
@@ -1551,8 +1559,9 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
       Line 4: quality (optional, defaults to medium — options: low, medium, high, auto)
     """
     import base64
-    import httpx
     from pathlib import Path
+
+    import httpx
 
     lines = content.strip().split("\n")
     prompt = lines[0].strip() if lines else ""
@@ -1588,8 +1597,9 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
         # Fallback: find any locally registered image-type endpoint
         if not model_spec:
             try:
-                from src.database import SessionLocal, ModelEndpoint
                 import httpx as _req
+
+                from src.database import ModelEndpoint, SessionLocal
                 _idb = SessionLocal()
                 try:
                     _img_eps = _idb.query(ModelEndpoint).filter(
@@ -1682,7 +1692,8 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
             def _save_to_gallery(filename: str) -> str:
                 """Insert a GalleryImage row and return the new id (or '')."""
                 try:
-                    from src.database import SessionLocal as _GallerySL, GalleryImage
+                    from src.database import GalleryImage
+                    from src.database import SessionLocal as _GallerySL
                     new_id = str(uuid.uuid4())
                     _gdb = _GallerySL()
                     _gdb.add(GalleryImage(
@@ -1753,8 +1764,8 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
 # ---------------------------------------------------------------------------
 
 async def dispatch_ai_tool(
-    tool: str, content: str, session_id: Optional[str] = None, owner: Optional[str] = None
-) -> Tuple[str, Dict]:
+    tool: str, content: str, session_id: str | None = None, owner: str | None = None
+) -> tuple[str, dict]:
     """Dispatch an AI interaction tool. Returns (description, result_dict)."""
 
     if tool == "chat_with_model":

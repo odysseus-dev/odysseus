@@ -8,8 +8,8 @@ import importlib.machinery
 import importlib.util
 import sys
 import types
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 ROOT = Path(__file__).resolve().parents[1]

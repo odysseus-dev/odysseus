@@ -1,17 +1,19 @@
 # routes/session_routes.py
-import re
 import html
 import json
+import logging
+import re
 import uuid
 from datetime import datetime
-from fastapi import APIRouter, Form, HTTPException, Response, Request
-import logging
 
-from core.session_manager import SessionManager
+from fastapi import APIRouter, Form, HTTPException, Request, Response
+
+from core.database import Document, GalleryImage, SessionLocal
+from core.database import Session as DbSession
 from core.models import ChatMessage
+from core.session_manager import SessionManager
+from src.auth_helpers import effective_user, get_current_user
 from src.request_models import SessionResponse
-from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
-from src.auth_helpers import get_current_user, effective_user
 
 
 def _sanitize_export_filename(name: str) -> str:
@@ -133,7 +135,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     REQUEST_TIMEOUT = config.get("REQUEST_TIMEOUT", 20)
     OPENAI_API_KEY = config.get("OPENAI_API_KEY")
     SESSIONS_FILE = config.get("SESSIONS_FILE")
-    
+
     @router.get("/sessions")
     def list_sessions(request: Request):
         user = effective_user(request)
@@ -147,7 +149,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         # purge exists only to catch ghosts the frontend missed (tab close,
         # crash). Only clean up rows old enough to be definitely orphaned.
         try:
-            from datetime import datetime as _dt, timedelta as _td
+            from datetime import datetime as _dt
+            from datetime import timedelta as _td
             _cutoff = _dt.utcnow() - _td(minutes=10)
             _purge_db = SessionLocal()
             try:
@@ -232,7 +235,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     and (s.name or "").strip() not in ("Nobody", "Incognito")]
 
         return sessions
-    
+
     @router.post("/session", response_model=SessionResponse)
     def create_session(
         request: Request,
@@ -301,8 +304,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             chat_ids = [m for m in ids if not any(p in m.lower() for p in _NON_CHAT)]
             model_to_use = (chat_ids or ids)[0]
         else:
-            from src.llm_core import list_model_ids
             import os as _os
+
+            from src.llm_core import list_model_ids
             req_base = _os.path.basename(model_to_use.rstrip("/"))
             avail = list_model_ids(endpoint_url, timeout=REQUEST_TIMEOUT,
                                    headers=validation_headers)
@@ -318,7 +322,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     raise HTTPException(400,
                                         f"Model not found at server. Available: {', '.join(avail)}")
                 model_to_use = found
-        
+
         sid = str(uuid.uuid4())
         user = effective_user(request)
         session = session_manager.create_session(
@@ -353,7 +357,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             model=model_to_use,
             rag=str(rag).lower() == "true" if rag else False,
             archived=False
-        )    
+        )
     @router.patch("/session/{sid}")
     def rename_session(
         request: Request, sid: str,
@@ -431,7 +435,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             result["model"] = model
             result["endpoint_url"] = endpoint_url
         return result
-    
+
     @router.post("/session/{sid}/inject_messages")
     async def inject_messages(request: Request, sid: str):
         """Bulk-inject messages into a session's history (for group chat sync)."""
@@ -512,7 +516,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     "message": "Failed to delete session"
                 }
             )
-    
+
     @router.delete("/sessions/all")
     def delete_all_sessions(request: Request):
         """Admin only: permanently delete ALL sessions and their messages."""
@@ -543,7 +547,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         try:
             # First check if session exists
             session_manager.get_session(sid)
-            
+
             # Archive the session
             db = SessionLocal()
             try:
@@ -552,16 +556,16 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     db_session.archived = True
                     db_session.updated_at = datetime.utcnow()
                     db.commit()
-                    
+
                     # Update in memory if it exists
                     if sid in session_manager.sessions:
                         session_manager.sessions[sid].archived = True
-                        
+
                     logger.info(f"Archived session {sid}")
                     return {"status": "archived"}
                 else:
                     raise HTTPException(404, f"Session {sid} not found")
-                    
+
             except HTTPException:
                 raise
             except Exception as e:
@@ -573,7 +577,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
 
         except KeyError:
             raise HTTPException(404, f"Session '{sid}' not found")
-    
+
     @router.post("/session/{sid}/unarchive")
     def unarchive_session(request: Request, sid: str):
         """Restore an archived session back to the active session list."""
@@ -656,7 +660,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         except KeyError:
             raise HTTPException(404, f"Session {sid} not found")
         return {"history": [msg.to_dict() for msg in session.history]}
-    
+
     @router.get("/session/{sid}/export")
     def export_session(request: Request, sid: str, fmt: str = "md", filename: str = ""):
         """Export conversation history as a downloadable file.
@@ -746,7 +750,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             media_type="text/markdown",
             headers={"Content-Disposition": f"attachment; filename={out_name}"},
         )
-    
+
     @router.post("/sessions/save")
     def sessions_save_now(request: Request):
         user = effective_user(request)
@@ -754,7 +758,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             raise HTTPException(401, "Not authenticated")
         session_manager.save_sessions()
         return {"ok": True, "path": SESSIONS_FILE}
-    
+
     @router.post("/session/openai")
     def create_session_openai(
         request: Request,
@@ -779,7 +783,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         from src.event_bus import fire_event
         fire_event("session_created", user)
         return {"id": sid, "name": "", "model": model}
-    
+
     @router.post("/session/{session_id}/important")
     async def mark_session_important(request: Request, session_id: str, important: bool = Form(True)):
         """Mark a session as important to protect it from automatic cleanup."""

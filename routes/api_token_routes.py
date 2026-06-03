@@ -4,9 +4,9 @@ import secrets
 import uuid
 
 import bcrypt
-from fastapi import APIRouter, HTTPException, Request, Form
+from fastapi import APIRouter, Form, HTTPException, Request
 
-from core.database import get_db_session, ApiToken
+from core.database import ApiToken, get_db_session
 from core.middleware import require_admin
 from src.auth_helpers import get_current_user
 

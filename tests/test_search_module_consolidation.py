@@ -26,8 +26,8 @@ def test_src_search_providers_aliases_services_providers():
 
 
 def test_src_search_package_exports_still_resolve():
-    import src.search as search
     import services.search as service_search
+    import src.search as search
 
     assert search.comprehensive_web_search is service_search.comprehensive_web_search
     assert search.searxng_search_results is service_search.searxng_search_results

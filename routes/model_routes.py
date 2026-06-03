@@ -1,30 +1,36 @@
 # routes/model_routes.py
 """Routes for model and provider management."""
+import json
+import logging
 import os
 import re
-import uuid
-import json
 import socket
 import time as _time
-import logging
-import httpx
+import uuid
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import Any
 from urllib.parse import urlparse, urlunparse
-from fastapi import APIRouter, HTTPException, Form, Query, Body, Request
-from pydantic import BaseModel
+
+import httpx
+from fastapi import APIRouter, Body, Form, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from core.database import SessionLocal, ModelEndpoint, Session as DbSession
+from pydantic import BaseModel
+
+from core.database import ModelEndpoint, SessionLocal
+from core.database import Session as DbSession
 from core.middleware import require_admin
-from src.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS
-from src.settings import load_settings as _load_settings, save_settings as _save_settings
+from src.auth_helpers import _auth_disabled, owner_filter
+from src.endpoint_resolver import (
+    build_chat_url,
+    build_headers,
+    build_models_url,
+)
 from src.endpoint_resolver import (
     normalize_base as _normalize_base,
-    build_chat_url,
-    build_models_url,
-    build_headers,
 )
-from src.auth_helpers import _auth_disabled, owner_filter
+from src.llm_core import ANTHROPIC_MODELS, _detect_provider, _host_match
+from src.settings import load_settings as _load_settings
+from src.settings import save_settings as _save_settings
 
 logger = logging.getLogger(__name__)
 
@@ -377,7 +383,11 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
     _test_tools = [{"type": "function", "function": {"name": "test", "description": "Test tool", "parameters": {"type": "object", "properties": {}}}}] if with_tools else None
 
     if provider == "anthropic":
-        from src.llm_core import _normalize_anthropic_url, _build_anthropic_headers, _build_anthropic_payload
+        from src.llm_core import (
+            _build_anthropic_headers,
+            _build_anthropic_payload,
+            _normalize_anthropic_url,
+        )
         target_url = _normalize_anthropic_url(base)
         auth_headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         h = _build_anthropic_headers(auth_headers)
@@ -394,7 +404,7 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
         target_url = build_chat_url(base)
         h = build_headers(api_key, base)
         h["Content-Type"] = "application/json"
-        from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
+        from src.llm_core import _restricts_temperature, _uses_max_completion_tokens
         _max_key = "max_completion_tokens" if _uses_max_completion_tokens(model_id) else "max_tokens"
         payload = {"model": model_id, "messages": messages, _max_key: 5}
         # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature, so a
@@ -457,7 +467,7 @@ def _classify_endpoint(base_url: str) -> str:
 
 
 
-def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
+def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> list[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
     For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
     from src.endpoint_resolver import resolve_url
@@ -542,7 +552,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     return []
 
 
-def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> Dict[str, Any]:
+def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> dict[str, Any]:
     """Reachability probe that does not require installed/listed models."""
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
@@ -567,7 +577,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
     )
 
     url = base + "/models"
-    last_error: Optional[str] = None
+    last_error: str | None = None
     try:
         r = httpx.get(url, headers=headers, timeout=timeout)
         if 300 <= r.status_code < 400:
@@ -609,7 +619,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
 
 
 
-def _model_endpoint_error_message(base_url: str, ping: Dict[str, Any] = None) -> str:
+def _model_endpoint_error_message(base_url: str, ping: dict[str, Any] = None) -> str:
     """Return a provider-aware error message for failed endpoint probes."""
     ping = ping or {}
     error = ping.get("error")
@@ -906,7 +916,7 @@ def setup_model_routes(model_discovery):
     # short enough that a freshly-killed local server shows as offline
     # within ~8s of the user noticing.
     _LOCAL_PROBE_TTL = 8.0
-    _local_probe_cache: Dict[str, Any] = {"data": None, "time": 0.0}
+    _local_probe_cache: dict[str, Any] = {"data": None, "time": 0.0}
 
     @router.get("/model-endpoints/probe-local")
     async def probe_local_endpoints(request: Request):
@@ -932,7 +942,7 @@ def setup_model_routes(model_discovery):
         finally:
             db.close()
 
-        async def _probe_one(ep_id: str, base: str, api_key: Optional[str]) -> Dict[str, Any]:
+        async def _probe_one(ep_id: str, base: str, api_key: str | None) -> dict[str, Any]:
             t0 = _time.time()
             try:
                 models = _probe_endpoint(base, api_key, timeout=2.5)
@@ -951,7 +961,7 @@ def setup_model_routes(model_discovery):
             *[_probe_one(eid, base, key) for eid, base, key in local_eps],
             return_exceptions=False,
         )
-        results: Dict[str, Any] = {}
+        results: dict[str, Any] = {}
         for (eid, _, _), r in zip(local_eps, results_list):
             results[eid] = r
 
@@ -1067,7 +1077,7 @@ def setup_model_routes(model_discovery):
             db.close()
 
     @router.get("/probe")
-    def probe_models(request: Request, endpoint_id: Optional[str] = Query(None)):
+    def probe_models(request: Request, endpoint_id: str | None = Query(None)):
         """Probe individual models with a tiny completion request. Streams SSE results."""
         require_admin(request)
         db = SessionLocal()
@@ -1158,7 +1168,7 @@ def setup_model_routes(model_discovery):
     # ---- Admin: model endpoints CRUD ----
 
     @router.get("/model-endpoints")
-    def list_model_endpoints(request: Request) -> List[Dict[str, Any]]:
+    def list_model_endpoints(request: Request) -> list[dict[str, Any]]:
         require_admin(request)
         db = SessionLocal()
         try:
@@ -1502,7 +1512,6 @@ def setup_model_routes(model_discovery):
 
     @router.get("/default-chat")
     def get_default_chat(request: Request):
-        import json as _json
         # SECURITY: resolve the default endpoint + model from the CALLER's
         # per-user prefs ONLY. We deliberately do NOT fall back to the
         # global `default_model` / `default_endpoint_id` in settings.json
@@ -1609,7 +1618,7 @@ def setup_model_routes(model_discovery):
     async def toggle_model_endpoint(ep_id: str, request: Request):
         require_admin(request)
         # Optional JSON body for field-targeted updates. No body → toggle is_enabled (legacy behaviour).
-        body: Dict[str, Any] = {}
+        body: dict[str, Any] = {}
         try:
             if int(request.headers.get("content-length") or 0) > 0:
                 body = await request.json()
@@ -1683,7 +1692,8 @@ def setup_model_routes(model_discovery):
     def _clear_user_prefs_for_endpoint(ep_id: str) -> int:
         """Clear per-user endpoint selections and fallback chains."""
         try:
-            from routes.prefs_routes import _load as _load_prefs, _save as _save_prefs
+            from routes.prefs_routes import _load as _load_prefs
+            from routes.prefs_routes import _save as _save_prefs
             all_prefs = _load_prefs()
             cleared_users = _clear_user_pref_endpoint_refs(all_prefs, ep_id)
             if cleared_users:

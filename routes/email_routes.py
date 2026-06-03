@@ -13,44 +13,73 @@ handlers need. The split is mechanical — no behavior change.
 """
 
 import asyncio
-import sqlite3 as _sql3
 import email as email_mod
 import email.header
 import email.utils
-import smtplib
-import json
-import re
 import html
-from html.parser import HTMLParser as _HTMLParser
+import json
 import logging
+import re
+import smtplib
+import sqlite3 as _sql3
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from html.parser import HTMLParser as _HTMLParser
 from pathlib import Path
 
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-
-from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPException, Depends, Request
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
 
-from src.llm_core import llm_call_async
-
 from routes.email_helpers import (
-    _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
-    _q, _attach_compose_uploads, _cleanup_compose_uploads,
-    _load_settings, _save_settings, _get_email_config,
-    _send_smtp_message, _smtp_security_mode,
-    _IMAP_TIMEOUT_SECONDS, _open_imap_connection,
-    _imap_connect, _imap, _decode_header, _detect_sent_folder, _detect_drafts_folder,
-    _extract_attachment_text, _list_attachments_from_msg,
-    _extract_attachment_to_disk, _extract_html, _extract_text,
-    _fetch_sender_thread_context, _pre_retrieve_context,
-    _EMAIL_REPLY_SYS_PROMPT_BASE, _POOL_HOOKS,
-    SendEmailRequest, ExtractStyleRequest,
-    ATTACHMENTS_DIR, COMPOSE_UPLOADS_DIR, SCHEDULED_DB,
+    _EMAIL_REPLY_SYS_PROMPT_BASE,
+    _IMAP_TIMEOUT_SECONDS,
+    _POOL_HOOKS,
+    COMPOSE_UPLOADS_DIR,
+    SCHEDULED_DB,
+    ExtractStyleRequest,
+    SendEmailRequest,
+    _apply_email_style_mechanics,
+    _assert_owns_account,
+    _attach_compose_uploads,
+    _cleanup_compose_uploads,
+    _decode_header,
+    _detect_drafts_folder,
+    _detect_sent_folder,
+    _extract_attachment_text,
+    _extract_attachment_to_disk,
+    _extract_html,
+    _extract_reply,
+    _extract_text,
+    _fetch_sender_thread_context,
+    _get_email_config,
+    _imap,
+    _imap_connect,
+    _list_attachments_from_msg,
+    _load_settings,
+    _open_imap_connection,
+    _pre_retrieve_context,
+    _q,
+    _save_settings,
+    _send_smtp_message,
+    _smtp_security_mode,
+    _strip_think,
     attachment_extract_dir,
+    require_owner,
+    require_user,
 )
 from routes.email_pollers import _start_poller
+from src.llm_core import llm_call_async
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +89,8 @@ ODYSSEUS_MAIL_ORIGIN = "odysseus-ui"
 def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[str]:
     aliases = [owner or ""]
     try:
-        from core.database import SessionLocal as _SL, EmailAccount as _EA
+        from core.database import EmailAccount as _EA
+        from core.database import SessionLocal as _SL
         db = _SL()
         try:
             resolved_account_id = account_id
@@ -264,8 +294,10 @@ def _resolve_send_config(account_id: str | None = None, owner: str = "") -> dict
     if account_id:
         raise ValueError(f"Email account {cfg.get('account_name') or account_id} has no SMTP configured")
     try:
-        from core.database import SessionLocal as _SL, EmailAccount as _EA
         from sqlalchemy import and_, or_
+
+        from core.database import EmailAccount as _EA
+        from core.database import SessionLocal as _SL
         db = _SL()
         try:
             q = db.query(_EA).filter(_EA.enabled == True)  # noqa: E712
@@ -471,8 +503,8 @@ def setup_email_routes():
     #   4. Prefetch task: after a list load, kick off background reads of
     #      the top-N visible UIDs so clicks land in the read cache.
     import asyncio as _asyncio
-    import time as _time
     import threading as _threading
+    import time as _time
 
     _LIST_CACHE = {}  # key → (expires_at, response_dict)
     _LIST_TTL = 8.0
@@ -649,13 +681,15 @@ def setup_email_routes():
             elif filter_ == "pending_30d":
                 # "What's pending in the last month" — UNANSWERED + delivered
                 # within the last 30 days. SINCE takes a DD-Mon-YYYY date.
-                from datetime import datetime as _dt, timedelta as _td
+                from datetime import datetime as _dt
+                from datetime import timedelta as _td
                 _since = (_dt.utcnow() - _td(days=30)).strftime("%d-%b-%Y")
                 status, data = _imap_uid_search(conn, f'(UNANSWERED SINCE "{_since}"{from_clause})')
             elif filter_ == "stale_30d":
                 # "What's been sitting too long" — UNANSWERED + delivered
                 # MORE than 30 days ago. BEFORE excludes the cutoff date itself.
-                from datetime import datetime as _dt, timedelta as _td
+                from datetime import datetime as _dt
+                from datetime import timedelta as _td
                 _before = (_dt.utcnow() - _td(days=30)).strftime("%d-%b-%Y")
                 status, data = _imap_uid_search(conn, f'(UNANSWERED BEFORE "{_before}"{from_clause})')
             elif filter_ and filter_.startswith("tag:"):
@@ -878,8 +912,7 @@ def setup_email_routes():
                         # Normalise tz-naive parses to UTC so timestamp() is
                         # deterministic across hosts.
                         if parsed_date and parsed_date.tzinfo is None:
-                            from datetime import timezone as _tz
-                            parsed_date = parsed_date.replace(tzinfo=_tz.utc)
+                            parsed_date = parsed_date.replace(tzinfo=UTC)
                         iso_date = parsed_date.isoformat() if parsed_date else ""
                         date_epoch = parsed_date.timestamp() if parsed_date else 0.0
                         is_read = "\\Seen" in flags
@@ -1113,8 +1146,7 @@ def setup_email_routes():
                         cc_str = _decode_header(msg.get("Cc", ""))
                         parsed_date = email.utils.parsedate_to_datetime(date_str) if date_str else None
                         if parsed_date and parsed_date.tzinfo is None:
-                            from datetime import timezone as _tz
-                            parsed_date = parsed_date.replace(tzinfo=_tz.utc)
+                            parsed_date = parsed_date.replace(tzinfo=UTC)
                         iso_date = parsed_date.isoformat() if parsed_date else ""
                         date_epoch = parsed_date.timestamp() if parsed_date else 0.0
                         ct = msg.get("Content-Type", "")
@@ -1476,7 +1508,8 @@ def setup_email_routes():
                 if not doc_id_to_tag:
                     return
                 try:
-                    from src.database import SessionLocal as _SL, Document as _Doc
+                    from src.database import Document as _Doc
+                    from src.database import SessionLocal as _SL
                     _db = _SL()
                     try:
                         d = _db.query(_Doc).filter(_Doc.id == doc_id_to_tag).first()
@@ -1500,7 +1533,8 @@ def setup_email_routes():
             _doc_user = _gcu(request)
             def _resolve_doc_session():
                 try:
-                    from src.database import SessionLocal as _SL, Session as _Sess
+                    from src.database import Session as _Sess
+                    from src.database import SessionLocal as _SL
                     _db = _SL()
                     try:
                         _q2 = _db.query(_Sess)
@@ -1518,13 +1552,14 @@ def setup_email_routes():
             # ── PDF path (existing) ────────────────────────────────────
             if ext == ".pdf":
                 import shutil as _shutil
+
                 from src.constants import UPLOAD_DIR
-                from src.pdf_forms import has_form_fields, extract_fields
                 from src.pdf_form_doc import (
-                    save_field_sidecar,
                     create_form_markdown_document,
                     create_plain_pdf_document,
+                    save_field_sidecar,
                 )
+                from src.pdf_forms import extract_fields, has_form_fields
 
                 upload_id = f"{uuid.uuid4().hex}.pdf"
                 today = datetime.utcnow().strftime("%Y/%m/%d")
@@ -1598,7 +1633,9 @@ def setup_email_routes():
                     lines.append("")
                 content = "\n".join(lines).strip() or f"_(empty {base})_"
 
-                from src.database import SessionLocal as _SL, Document as _Doc, DocumentVersion as _DV
+                from src.database import Document as _Doc
+                from src.database import DocumentVersion as _DV
+                from src.database import SessionLocal as _SL
                 doc_id = str(uuid.uuid4())
                 ver_id = str(uuid.uuid4())
                 _db = _SL()
@@ -1625,7 +1662,9 @@ def setup_email_routes():
                     content = filepath.read_text(encoding="utf-8", errors="replace")
                 except Exception as e:
                     return {"error": f"Failed to read text file: {e}", "filename": base}
-                from src.database import SessionLocal as _SL, Document as _Doc, DocumentVersion as _DV
+                from src.database import Document as _Doc
+                from src.database import DocumentVersion as _DV
+                from src.database import SessionLocal as _SL
                 doc_id = str(uuid.uuid4())
                 ver_id = str(uuid.uuid4())
                 _db = _SL()
@@ -1979,12 +2018,12 @@ def setup_email_routes():
             # Validate parseable + reject past times (the poller fires
             # anything in the past immediately on the next tick — a
             # 1970-dated schedule would deliver right now).
-            from datetime import datetime as _dt, timezone as _tz
+            from datetime import datetime as _dt
             try:
                 parsed_at = _dt.fromisoformat(send_at.replace("Z", "+00:00"))
             except ValueError:
                 return {"success": False, "error": "send_at must be ISO8601"}
-            now_utc = _dt.now(_tz.utc) if parsed_at.tzinfo else _dt.utcnow()
+            now_utc = _dt.now(UTC) if parsed_at.tzinfo else _dt.utcnow()
             # Tiny 30s grace so a user clicking Send right at the chosen
             # minute doesn't trip the past-time guard.
             if parsed_at < now_utc:
@@ -1996,7 +2035,7 @@ def setup_email_routes():
             # hours early, and a "Z" suffix compares after the fractional
             # seconds of the poller timestamp.
             if parsed_at.tzinfo:
-                parsed_at = parsed_at.astimezone(_tz.utc).replace(tzinfo=None)
+                parsed_at = parsed_at.astimezone(UTC).replace(tzinfo=None)
             send_at = parsed_at.isoformat()
 
             sid = _uuid.uuid4().hex[:16]
@@ -2453,9 +2492,10 @@ def setup_email_routes():
     async def summarize_email(data: dict, owner: str = Depends(require_owner)):
         """Generate a quick AI summary of an email body."""
         try:
-            from src.endpoint_resolver import resolve_endpoint
-            from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
             import requests as _req
+
+            from src.endpoint_resolver import resolve_endpoint
+            from src.llm_core import _restricts_temperature, _uses_max_completion_tokens
 
             body = data.get("body", "")
             subject = data.get("subject", "")
@@ -2623,7 +2663,8 @@ def setup_email_routes():
                     # chat-completions URL the chat path uses verbatim — so use
                     # those directly rather than rebuilding via a nonexistent
                     # `api_key` field.
-                    from core.database import SessionLocal as _SL, Session as _CS
+                    from core.database import Session as _CS
+                    from core.database import SessionLocal as _SL
                     _db = _SL()
                     sess = _db.query(_CS).filter(_CS.id == session_id, _CS.owner == owner).first()
                     if sess and sess.endpoint_url:
@@ -2734,11 +2775,11 @@ def setup_email_routes():
             # user's Utility / Default endpoints AND their configured
             # fallback chains. Dedupe by url+model so we don't retry
             # the same broken endpoint.
-            from src.llm_core import llm_call_async_with_fallback
             from src.endpoint_resolver import (
-                resolve_utility_fallback_candidates,
                 resolve_chat_fallback_candidates,
+                resolve_utility_fallback_candidates,
             )
+            from src.llm_core import llm_call_async_with_fallback
             _seen = set()
             _candidates = []
             def _add(_url, _model, _headers):
@@ -2852,8 +2893,9 @@ def setup_email_routes():
         _save_settings(settings)
 
         # Credentials go into the default account row
-        from core.database import SessionLocal, EmailAccount
         import uuid as _uuid
+
+        from core.database import EmailAccount, SessionLocal
         db = SessionLocal()
         try:
             q = db.query(EmailAccount).filter(EmailAccount.is_default == True)  # noqa: E712
@@ -2899,8 +2941,8 @@ def setup_email_routes():
 
     @router.get("/urgency-state")
     async def get_email_urgency_state(owner: str = Depends(require_user)):
-        from pathlib import Path as _P
         import json as _json
+        from pathlib import Path as _P
         _slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
         path = _P(f"data/email_urgency_state_{_slug}.json")
         if not path.exists():
@@ -2922,8 +2964,9 @@ def setup_email_routes():
     @router.get("/accounts")
     async def list_email_accounts(owner: str = Depends(require_user)):
         """List all email accounts with credentials masked."""
-        from core.database import SessionLocal, EmailAccount
         from sqlalchemy import and_, or_
+
+        from core.database import EmailAccount, SessionLocal
         db = SessionLocal()
         try:
             out = []
@@ -2964,9 +3007,10 @@ def setup_email_routes():
     @router.post("/accounts")
     async def create_email_account(data: dict, owner: str = Depends(require_owner)):
         """Create a new email account."""
-        from core.database import SessionLocal, EmailAccount
-        from src.secret_storage import encrypt as _enc
         import uuid as _uuid
+
+        from core.database import EmailAccount, SessionLocal
+        from src.secret_storage import encrypt as _enc
         name = (data.get("name") or "").strip()
         if not name:
             return {"ok": False, "error": "name required"}
@@ -3015,7 +3059,7 @@ def setup_email_routes():
         """Update an email account. Passwords only overwrite if non-empty."""
         # Path param account_id — dep validated via Query, re-check the path-param value.
         _assert_owns_account(account_id, owner)
-        from core.database import SessionLocal, EmailAccount
+        from core.database import EmailAccount, SessionLocal
         db = SessionLocal()
         try:
             row = db.get(EmailAccount, account_id)
@@ -3048,7 +3092,7 @@ def setup_email_routes():
     @router.delete("/accounts/{account_id}")
     async def delete_email_account(account_id: str, owner: str = Depends(require_user)):
         _assert_owns_account(account_id, owner)
-        from core.database import SessionLocal, EmailAccount
+        from core.database import EmailAccount, SessionLocal
         db = SessionLocal()
         try:
             row = db.get(EmailAccount, account_id)
@@ -3099,7 +3143,7 @@ def setup_email_routes():
         acc_id = body.get("account_id")
         if acc_id:
             _assert_owns_account(acc_id, owner)
-            from core.database import SessionLocal, EmailAccount
+            from core.database import EmailAccount, SessionLocal
             from src.secret_storage import decrypt as _decrypt
             db = SessionLocal()
             try:
@@ -3193,7 +3237,7 @@ def setup_email_routes():
     @router.post("/accounts/{account_id}/set-default")
     async def set_default_account(account_id: str, owner: str = Depends(require_user)):
         _assert_owns_account(account_id, owner)
-        from core.database import SessionLocal, EmailAccount
+        from core.database import EmailAccount, SessionLocal
         db = SessionLocal()
         try:
             row = db.get(EmailAccount, account_id)

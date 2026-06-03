@@ -1,22 +1,25 @@
 """Gallery routes — browsable library for photos and AI-generated images."""
 
-import os
 import hashlib
 import logging
+import os
 import re
 import uuid
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from core.database import SessionLocal, GalleryImage, GalleryAlbum, ModelEndpoint
+from core.database import GalleryAlbum, GalleryImage, ModelEndpoint, SessionLocal
 from core.database import Session as DbSession
-from src.auth_helpers import get_current_user, require_privilege
-
 from routes.gallery_helpers import (
-    GalleryPatch, _extract_exif, _image_to_dict, _owner_filter, _human_size,
+    GalleryPatch,
+    _extract_exif,
+    _human_size,
+    _image_to_dict,
+    _owner_filter,
 )
+from src.auth_helpers import get_current_user, require_privilege
 
 logger = logging.getLogger(__name__)
 
@@ -139,8 +142,9 @@ def setup_gallery_routes() -> APIRouter:
             # Refresh dimensions in case the editor resized the canvas.
             # updated_at auto-bumps via TimestampMixin's onupdate hook.
             try:
-                from PIL import Image
                 from io import BytesIO
+
+                from PIL import Image
                 with Image.open(BytesIO(content)) as new_im:
                     img.width = new_im.width
                     img.height = new_im.height
@@ -186,9 +190,10 @@ def setup_gallery_routes() -> APIRouter:
     async def gallery_rotate(request: Request, image_id: str):
         """Rotate an image by ±90° or 180°. Updates the file on disk and the
         width/height in the DB. Body: {angle: 90 | -90 | 180}."""
-        from pathlib import Path
-        from PIL import Image
         from io import BytesIO
+        from pathlib import Path
+
+        from PIL import Image
 
         data = await request.json()
         try:
@@ -242,7 +247,9 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/gallery/ai-upscale")
     async def gallery_ai_upscale(request: Request):
         """AI upscale using img2img with the diffusion server."""
-        import base64, httpx
+        import base64
+
+        import httpx
 
         require_privilege(request, "can_generate_images")
         form = await request.form()
@@ -285,7 +292,9 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/gallery/style-transfer")
     async def gallery_style_transfer(request: Request):
         """Style transfer using img2img with the diffusion server."""
-        import base64, httpx
+        import base64
+
+        import httpx
 
         require_privilege(request, "can_generate_images")
         form = await request.form()
@@ -329,7 +338,7 @@ def setup_gallery_routes() -> APIRouter:
 
     # ---- GET /api/gallery/tags ----
     @router.get("/api/gallery/tags")
-    async def gallery_tags(request: Request) -> Dict[str, Any]:
+    async def gallery_tags(request: Request) -> dict[str, Any]:
         """Return distinct tags across all active gallery images."""
         user = get_current_user(request)
         db = SessionLocal()
@@ -353,16 +362,16 @@ def setup_gallery_routes() -> APIRouter:
     @router.get("/api/gallery/library")
     async def gallery_library(
         request: Request,
-        search: Optional[str] = Query(None),
-        tag: Optional[str] = Query(None),
-        model: Optional[str] = Query(None),
-        album: Optional[str] = Query(None),
+        search: str | None = Query(None),
+        tag: str | None = Query(None),
+        model: str | None = Query(None),
+        album: str | None = Query(None),
         favorites: bool = Query(False),
         sort: str = Query("recent"),
-        seed: Optional[int] = Query(None),
+        seed: int | None = Query(None),
         offset: int = Query(0, ge=0),
         limit: int = Query(24, ge=1, le=100),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -575,7 +584,7 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/gallery/ai-tag-batch")
     async def ai_tag_batch(
         request: Request,
-        album_id: Optional[str] = Query(None),
+        album_id: str | None = Query(None),
         limit: int = Query(200),
     ):
         user = get_current_user(request)
@@ -597,7 +606,7 @@ def setup_gallery_routes() -> APIRouter:
 
     # ---- GET /api/gallery/{image_id} ----
     @router.get("/api/gallery/{image_id}")
-    async def get_gallery_image(request: Request, image_id: str) -> Dict[str, Any]:
+    async def get_gallery_image(request: Request, image_id: str) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -618,7 +627,7 @@ def setup_gallery_routes() -> APIRouter:
 
     # ---- PATCH /api/gallery/{image_id} ----
     @router.patch("/api/gallery/{image_id}")
-    async def patch_gallery_image(request: Request, image_id: str, req: GalleryPatch) -> Dict[str, Any]:
+    async def patch_gallery_image(request: Request, image_id: str, req: GalleryPatch) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -717,7 +726,7 @@ def setup_gallery_routes() -> APIRouter:
     # Leaves `ai_tags` intact. Use after a bug populated user-tags with
     # AI-suggested values you never added.
     @router.post("/api/gallery/clear-user-tags")
-    async def clear_gallery_user_tags(request: Request) -> Dict[str, Any]:
+    async def clear_gallery_user_tags(request: Request) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -741,7 +750,7 @@ def setup_gallery_routes() -> APIRouter:
     # Leaves user `tags` intact. Use when AI-suggested tags like "dog" /
     # "woman" have leaked into the gallery and you want them gone.
     @router.post("/api/gallery/clear-ai-tags")
-    async def clear_gallery_ai_tags(request: Request, image_id: Optional[str] = Query(None)) -> Dict[str, Any]:
+    async def clear_gallery_ai_tags(request: Request, image_id: str | None = Query(None)) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -767,7 +776,7 @@ def setup_gallery_routes() -> APIRouter:
     # tag from `tags` that also appears in `ai_tags` (case-insensitive).
     # Returns how many rows were touched + how many tags removed.
     @router.post("/api/gallery/dedupe-tags")
-    async def dedupe_gallery_tags(request: Request) -> Dict[str, Any]:
+    async def dedupe_gallery_tags(request: Request) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -802,7 +811,7 @@ def setup_gallery_routes() -> APIRouter:
 
     # ---- DELETE /api/gallery/{image_id} ----
     @router.delete("/api/gallery/{image_id}")
-    async def delete_gallery_image(request: Request, image_id: str) -> Dict[str, str]:
+    async def delete_gallery_image(request: Request, image_id: str) -> dict[str, str]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -829,9 +838,11 @@ def setup_gallery_routes() -> APIRouter:
             # tool events AND a "Generated image for: …" body, drop the
             # whole row so there's no remnant.
             try:
-                from core.database import ChatMessage as _ChatMessage
-                from sqlalchemy import or_ as _or
                 import json as _json
+
+                from sqlalchemy import or_ as _or
+
+                from core.database import ChatMessage as _ChatMessage
                 # Match by image_id OR by filename — older messages
                 # (saved before we threaded image_id through the SSE)
                 # only carry image_url containing the filename.
@@ -982,7 +993,8 @@ def setup_gallery_routes() -> APIRouter:
             # So we convert the incoming PNG mask into an alpha-channel PNG.
             if not api_key:
                 raise HTTPException(400, "OpenAI endpoint has no api_key stored — edit it in Endpoints settings.")
-            import base64, io
+            import base64
+            import io
             try:
                 from PIL import Image
             except ImportError:
@@ -1116,7 +1128,9 @@ def setup_gallery_routes() -> APIRouter:
         original and regenerates `strength` fraction. With strength ~0.4
         you get edge blending + lighting unification while keeping the
         composition recognisable."""
-        import httpx, base64 as _b64
+        import base64 as _b64
+
+        import httpx
         require_privilege(request, "can_generate_images")
         body = await request.json()
 
@@ -1316,8 +1330,10 @@ def setup_gallery_routes() -> APIRouter:
         image_b64 = body.get("image")
         amount = body.get("amount", 50) / 100.0
 
+        import base64
+        import io
+
         from PIL import Image, ImageFilter
-        import base64, io
 
         img_bytes = base64.b64decode(image_b64)
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -1346,9 +1362,11 @@ def setup_gallery_routes() -> APIRouter:
             strength = 0.5
         strength = max(0.0, min(1.0, strength))
         try:
-            import base64, io
-            from PIL import Image
+            import base64
+            import io
+
             import numpy as np
+            from PIL import Image
         except ImportError as e:
             raise HTTPException(500, f"Server missing dependency: {e}")
         # Decode source image (RGB; Real-ESRGAN doesn't preserve alpha).
@@ -1396,9 +1414,11 @@ def setup_gallery_routes() -> APIRouter:
             scale = 2
         scale = 2 if scale not in (2, 4) else scale
         try:
-            import base64, io
-            from PIL import Image
+            import base64
+            import io
+
             import numpy as np
+            from PIL import Image
         except ImportError as e:
             raise HTTPException(500, f"Server missing dependency: {e}")
         img_bytes = base64.b64decode(image_b64)
@@ -1447,8 +1467,10 @@ def setup_gallery_routes() -> APIRouter:
         image_b64 = body.get("image")
         hint_b64 = body.get("hint_mask")
 
+        import base64
+        import io
+
         from PIL import Image
-        import base64, io
 
         img_bytes = base64.b64decode(image_b64)
         img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
@@ -1530,17 +1552,21 @@ def setup_gallery_routes() -> APIRouter:
         if not image_b64:
             raise HTTPException(400, "No image provided")
 
-        import base64, io, tempfile, os
-        from PIL import Image, ImageFilter, ImageEnhance
+        import base64
+        import io
+        import os
+        import tempfile
+
         import numpy as np
+        from PIL import Image, ImageEnhance, ImageFilter
 
         img_bytes = base64.b64decode(image_b64)
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
 
         # Try GFPGAN first (AI face restoration)
         try:
-            from gfpgan import GFPGANer
             import cv2
+            from gfpgan import GFPGANer
 
             model_path = os.path.join(tempfile.gettempdir(), "gfpgan_models")
             os.makedirs(model_path, exist_ok=True)
@@ -1696,8 +1722,10 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/gallery/{image_id}/ai-tag")
     async def ai_tag_image(request: Request, image_id: str):
         """Send image to vision model for auto-tagging."""
-        import base64, httpx
+        import base64
         from pathlib import Path
+
+        import httpx
 
         user = get_current_user(request)
         db = SessionLocal()
@@ -1729,7 +1757,11 @@ def setup_gallery_routes() -> APIRouter:
                 return {"error": "No vision-capable endpoint configured"}
 
             # Call vision model — format differs between Anthropic and OpenAI
-            from src.llm_core import _detect_provider, _restricts_temperature, _uses_max_completion_tokens
+            from src.llm_core import (
+                _detect_provider,
+                _restricts_temperature,
+                _uses_max_completion_tokens,
+            )
             provider = _detect_provider(chat_url)
             tag_prompt = (
                 "Analyze this photo. Return ONLY a comma-separated list of tags. "

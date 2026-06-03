@@ -4,12 +4,11 @@ import copy
 import io
 import ipaddress
 import json
+import logging
 import os
 import re
-import logging
 import socket
 from datetime import datetime, timedelta
-from typing import List
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -18,9 +17,9 @@ from bs4 import BeautifulSoup
 from .analytics import RateLimitError, error_logger
 from .cache import (
     CONTENT_CACHE_DIR,
+    cleanup_cache,
     content_cache_index,
     generate_cache_key,
-    cleanup_cache,
 )
 
 logger = logging.getLogger(__name__)
@@ -138,7 +137,7 @@ def _extract_og_image(soup: BeautifulSoup) -> str:
     return ""
 
 
-def _extract_lists(soup: BeautifulSoup) -> List[List[str]]:
+def _extract_lists(soup: BeautifulSoup) -> list[list[str]]:
     """Return a list of lists, each inner list representing a <ul>/<ol>."""
     all_lists = []
     for lst in soup.find_all(["ul", "ol"]):
@@ -148,7 +147,7 @@ def _extract_lists(soup: BeautifulSoup) -> List[List[str]]:
     return all_lists
 
 
-def _extract_tables(soup: BeautifulSoup) -> List[List[List[str]]]:
+def _extract_tables(soup: BeautifulSoup) -> list[list[list[str]]]:
     """Return a list of tables, each table is a list of rows, each row a list of cell texts."""
     tables_data = []
     for table in soup.find_all("table"):
@@ -162,7 +161,7 @@ def _extract_tables(soup: BeautifulSoup) -> List[List[List[str]]]:
     return tables_data
 
 
-def _extract_code_blocks(soup: BeautifulSoup) -> List[str]:
+def _extract_code_blocks(soup: BeautifulSoup) -> list[str]:
     """Collect text from <pre> and <code> blocks."""
     blocks = []
     for tag in soup.find_all(["pre", "code"]):
@@ -220,7 +219,7 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
     # Check cache
     if cache_file.exists():
         try:
-            with open(cache_file, "r", encoding="utf-8") as f:
+            with open(cache_file, encoding="utf-8") as f:
                 cached_data = json.load(f)
             timestamp = datetime.fromisoformat(cached_data["timestamp"])
             if datetime.now() - timestamp < timedelta(hours=2):
@@ -364,9 +363,9 @@ def _cache_result(cache_file, cache_key: str, result: dict, url: str):
 # ----------------------------------------------------------------------
 # Content summarization helpers
 # ----------------------------------------------------------------------
-def extract_key_points(text: str) -> List[str]:
+def extract_key_points(text: str) -> list[str]:
     """Pull out bullet-style key points from a block of text."""
-    points: List[str] = []
+    points: list[str] = []
     bullet_pat = re.compile(r"^\s*[-*•]\s+(.*)")
     numbered_pat = re.compile(r"^\s*\d+[\.\)]\s+(.*)")
     for line in text.splitlines():
@@ -383,14 +382,14 @@ def get_tldr(text: str, max_sentences: int = 3) -> str:
     return " ".join(selected)
 
 
-def extract_quotes(text: str) -> List[str]:
+def extract_quotes(text: str) -> list[str]:
     """Return quoted excerpts that are at least 15 characters long."""
     # Backreference the opening quote so the closing quote must match it —
     # otherwise `"text'` (open double, close single) is treated as a quote.
     return [m.group(2).strip() for m in re.finditer(r'(["\'])([^"\']{15,}?)\1', text)]
 
 
-def extract_statistics(text: str) -> List[str]:
+def extract_statistics(text: str) -> list[str]:
     """Find numbers, percentages, dates and simple measurements."""
     # Match a comma-grouped number (1,000,000) OR a plain digit run (50000) —
     # the old `\d{1,3}(?:,\d{3})*` matched only the first 3 digits of a

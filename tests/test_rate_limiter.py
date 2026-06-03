@@ -1,5 +1,6 @@
 """Tests for the RateLimiter — pure in-memory, no server needed."""
 import time
+
 import pytest
 
 from src.rate_limiter import RateLimiter

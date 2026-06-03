@@ -5,8 +5,8 @@ a `fallback` event must be emitted so the switch is never masked under the
 selected model's name (which is how a misconfigured provider can look like it
 works while a different model silently answers).
 """
-import json
 import asyncio
+import json
 
 from src import llm_core
 

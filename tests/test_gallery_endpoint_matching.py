@@ -1,14 +1,15 @@
 import ast
 from pathlib import Path
 
+
 def test_gallery_url_normalization_bug():
     # Read and parse the actual source file
     source_path = Path("routes/gallery_routes.py")
     assert source_path.exists(), "gallery_routes.py could not be found"
-    
+
     source = source_path.read_text(encoding="utf-8")
     tree = ast.parse(source)
-    
+
     # Locate the comparison node within harmonize_image that references ep.base_url and base
     compare_node = None
     for node in ast.walk(tree):
@@ -17,13 +18,13 @@ def test_gallery_url_normalization_bug():
             if "ep.base_url" in segment and "base" in segment and "_norm_url" not in segment:
                 compare_node = node
                 break
-                
+
     assert compare_node is not None, "Could not find the ep.base_url vs base comparison inside gallery_routes.py"
-    
+
     # Compile the compare node into an expression
     expr = ast.Expression(body=compare_node)
     compiled_code = compile(expr, "<string>", "eval")
-    
+
     def check_match(ep_url: str, base_url: str) -> bool:
         class MockEP:
             def __init__(self, url):

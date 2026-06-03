@@ -12,25 +12,24 @@ and `email_pollers.py` (the background loops):
     - Pydantic models, shared constants, scheduled-DB bootstrap
 """
 
-import os
-import imaplib
-import smtplib
 import email as email_mod
 import email.header
 import email.utils
-import json
-import re
 import html
+import imaplib
+import json
 import logging
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
 import mimetypes
+import os
+import re
+import smtplib
+from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 
-from fastapi import Query, HTTPException, Request
+from fastapi import HTTPException, Query, Request
 from pydantic import BaseModel
-from typing import Optional, List
 
 from src.auth_helpers import _auth_disabled, get_current_user
 from src.secret_storage import decrypt as _decrypt
@@ -82,12 +81,14 @@ def _strip_think(text: str) -> str:
     """
     if not text:
         return ""
-    from src.text_helpers import strip_think as _central, _THINK_CLOSED_RE, _THINK_OPEN_RE, _THINK_TAG_RE
+    from src.text_helpers import _THINK_CLOSED_RE, _THINK_OPEN_RE, _THINK_TAG_RE
+    from src.text_helpers import strip_think as _central
     had_think = bool(_THINK_CLOSED_RE.search(text) or _THINK_OPEN_RE.search(text) or _THINK_TAG_RE.search(text))
     return _central(text, prose=had_think, prompt_echo=True)
 
 
 import re as _re_reply
+
 # Accept REPLY / SUMMARY / OUTPUT as the opening fence so the same extractor
 # serves replies and summaries (any fenced final-output block).
 _REPLY_OPEN_RE = _re_reply.compile(r"<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+", _re_reply.I)
@@ -189,7 +190,8 @@ def _assert_owns_account(account_id: str, owner: str) -> None:
     if not account_id or not owner:
         return
     try:
-        from core.database import SessionLocal as _SL, EmailAccount as _EA
+        from core.database import EmailAccount as _EA
+        from core.database import SessionLocal as _SL
         db = _SL()
         try:
             row = db.query(_EA).filter(_EA.id == account_id).first()
@@ -449,7 +451,8 @@ def _init_scheduled_db():
         ).fetchall()
         if legacy_accounts:
             try:
-                from core.database import SessionLocal as _SL, EmailAccount as _EA
+                from core.database import EmailAccount as _EA
+                from core.database import SessionLocal as _SL
                 _db = _SL()
                 try:
                     for (acct_id,) in legacy_accounts:
@@ -527,7 +530,9 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
     `owner` from the route's auth dependency to scope the lookup.
     """
     import os
-    from core.database import SessionLocal as _SL, EmailAccount as _EA
+
+    from core.database import EmailAccount as _EA
+    from core.database import SessionLocal as _SL
 
     def _owner_or_matching_legacy_account(query):
         if not owner:
@@ -618,7 +623,8 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
 def _list_email_accounts() -> list[dict]:
     """Return all enabled accounts in creation order. Used by background loops
     that iterate over every account (auto-summarize, urgency, etc.)."""
-    from core.database import SessionLocal as _SL, EmailAccount as _EA
+    from core.database import EmailAccount as _EA
+    from core.database import SessionLocal as _SL
     try:
         db = _SL()
         try:
@@ -688,7 +694,6 @@ def _imap_connect(account_id: str | None = None, owner: str = ""):
 
 
 from contextlib import contextmanager
-
 
 # Filled in by setup_email_routes() once its closure-scoped pool helpers are
 # defined. Keyed so we can swap them out in tests.
@@ -1366,25 +1371,25 @@ _EMAIL_REPLY_SYS_PROMPT_BASE = (
 
 class SendEmailRequest(BaseModel):
     to: str
-    cc: Optional[str] = None
-    bcc: Optional[str] = None
+    cc: str | None = None
+    bcc: str | None = None
     subject: str
     body: str
     # WYSIWYG compose sends the rendered HTML here; the server sanitizes it and
     # uses it for the text/html part (body stays the plain-text fallback). When
     # absent, the server renders markdown from `body` instead.
-    body_html: Optional[str] = None
-    in_reply_to: Optional[str] = None
-    references: Optional[str] = None
+    body_html: str | None = None
+    in_reply_to: str | None = None
+    references: str | None = None
     # List of uploaded attachment tokens (filenames in COMPOSE_UPLOADS_DIR)
-    attachments: Optional[List[str]] = None
+    attachments: list[str] | None = None
     # Which account to send from. None = default account.
-    account_id: Optional[str] = None
+    account_id: str | None = None
     # Internal marker for Odysseus-generated mail (e.g. reminder, scheduled).
-    odysseus_kind: Optional[str] = None
+    odysseus_kind: str | None = None
     # If true, /send waits for SMTP + Sent append and returns the sent UID.
     wait_for_delivery: bool = False
 
 
 class ExtractStyleRequest(BaseModel):
-    sample_count: Optional[int] = 20
+    sample_count: int | None = 20

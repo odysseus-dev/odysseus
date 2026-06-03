@@ -30,23 +30,22 @@ if "core.database" not in sys.modules:
 import routes.model_routes as model_routes
 import src.endpoint_resolver as endpoint_resolver
 from routes.model_routes import (
-    _match_provider_curated,
-    _curate_models,
-    _visible_models,
-    _normalize_model_ids,
-    _is_chat_model,
-    _classify_endpoint,
-    _probe_endpoint,
-    _truthy,
-    _speech_settings_using_endpoint,
-    _clear_speech_settings_for_endpoint,
-    _endpoint_settings_using_endpoint,
-    _clear_endpoint_settings_for_endpoint,
-    _clear_user_pref_endpoint_refs,
     _PROVIDER_CURATED,
+    _classify_endpoint,
+    _clear_endpoint_settings_for_endpoint,
+    _clear_speech_settings_for_endpoint,
+    _clear_user_pref_endpoint_refs,
+    _curate_models,
+    _endpoint_settings_using_endpoint,
+    _is_chat_model,
+    _match_provider_curated,
+    _normalize_model_ids,
+    _probe_endpoint,
+    _speech_settings_using_endpoint,
+    _truthy,
+    _visible_models,
 )
 from src.llm_core import ANTHROPIC_MODELS
-
 
 # ── speech endpoint settings ──
 

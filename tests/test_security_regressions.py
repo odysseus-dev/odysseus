@@ -11,13 +11,12 @@
 These are pure-function tests — no FastAPI app boot, no DB.
 """
 
+import json
 import sys
 import types
-import json
 from pathlib import Path
 
 import pytest
-
 
 # ── prompt-injection context wrapper ────────────────────────────
 
@@ -348,9 +347,9 @@ def test_chat_preprocess_does_not_surface_cross_owner_attachment(tmp_path, monke
     for mod_name in ("src.chat_handler", "routes.chat_helpers"):
         sys.modules.pop(mod_name, None)
     _stub_core_database_for_route_imports(monkeypatch)
+    from src import settings
     from src.chat_handler import ChatHandler
     from src.upload_handler import UploadHandler
-    from src import settings
 
     upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
     handler = UploadHandler(str(tmp_path), str(upload_dir))
@@ -407,6 +406,7 @@ def test_pdf_marker_write_rejects_cross_owner_upload(tmp_path, monkeypatch):
     sys.modules.pop("routes.document_helpers", None)
     _stub_core_database_for_route_imports(monkeypatch)
     from fastapi import HTTPException
+
     from routes.document_helpers import _assert_pdf_marker_upload_owned
 
     upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
@@ -650,6 +650,7 @@ def test_require_user_localhost_bypass_still_rejects_lan(monkeypatch):
 def test_require_admin_rejects_unconfigured_public_api(monkeypatch):
     """First-run API mode must not treat "no users yet" as admin access."""
     from fastapi import HTTPException
+
     from core.middleware import require_admin
 
     monkeypatch.delenv("AUTH_ENABLED", raising=False)
@@ -853,6 +854,7 @@ def test_web_fetch_guard_blocks_redirect_into_private(monkeypatch):
     # A public URL that 302-redirects to an internal address must be blocked
     # at the redirect hop, not followed.
     import httpx
+
     from src.search import content
 
     monkeypatch.setattr(content, "_resolve_hostname_ips",
@@ -879,7 +881,7 @@ def test_web_fetch_guard_blocks_redirect_into_private(monkeypatch):
 
 def _import_attachment_extract_dir():
     sys.modules.pop("routes.email_helpers", None)
-    from routes.email_helpers import attachment_extract_dir, ATTACHMENTS_DIR
+    from routes.email_helpers import ATTACHMENTS_DIR, attachment_extract_dir
     return attachment_extract_dir, ATTACHMENTS_DIR
 
 

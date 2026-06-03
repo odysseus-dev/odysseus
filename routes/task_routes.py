@@ -5,57 +5,57 @@ import logging
 import secrets
 import uuid
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from core.database import SessionLocal, ScheduledTask, TaskRun
-from src.auth_helpers import get_current_user
-from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
+from core.database import ScheduledTask, SessionLocal, TaskRun
 from routes.prefs_routes import _load_for_user, _save_for_user
+from src.auth_helpers import get_current_user
+from src.task_scheduler import HOUSEKEEPING_DEFAULTS, compute_next_run
 
 logger = logging.getLogger(__name__)
 
 
 class TaskCreate(BaseModel):
-    name: Optional[str] = None
-    prompt: Optional[str] = None
+    name: str | None = None
+    prompt: str | None = None
     task_type: str = "llm"                        # "llm" | "action" | "research"
-    action: Optional[str] = None                  # builtin action name
-    schedule: Optional[str] = None                # "once" | "daily" | "weekly" | "monthly" | "cron"
+    action: str | None = None                  # builtin action name
+    schedule: str | None = None                # "once" | "daily" | "weekly" | "monthly" | "cron"
     scheduled_time: str = "09:00"                 # HH:MM
-    scheduled_day: Optional[int] = None           # day-of-week (0=Mon) or day-of-month
-    scheduled_date: Optional[str] = None          # ISO datetime for "once"
-    cron_expression: Optional[str] = None         # cron string e.g. "*/5 * * * *"
+    scheduled_day: int | None = None           # day-of-week (0=Mon) or day-of-month
+    scheduled_date: str | None = None          # ISO datetime for "once"
+    cron_expression: str | None = None         # cron string e.g. "*/5 * * * *"
     trigger_type: str = "schedule"                # "schedule" | "event" | "webhook"
-    trigger_event: Optional[str] = None           # e.g. "session_created"
-    trigger_count: Optional[int] = None           # fire every N events
+    trigger_event: str | None = None           # e.g. "session_created"
+    trigger_count: int | None = None           # fire every N events
     output_target: str = "session"
-    model: Optional[str] = None
-    endpoint_url: Optional[str] = None
-    then_task_id: Optional[str] = None            # chain: run this task after success
-    notifications_enabled: Optional[bool] = None  # None lets action-specific defaults apply
+    model: str | None = None
+    endpoint_url: str | None = None
+    then_task_id: str | None = None            # chain: run this task after success
+    notifications_enabled: bool | None = None  # None lets action-specific defaults apply
 
 
 class TaskUpdate(BaseModel):
-    name: Optional[str] = None
-    prompt: Optional[str] = None
-    task_type: Optional[str] = None
-    action: Optional[str] = None
-    schedule: Optional[str] = None
-    scheduled_time: Optional[str] = None
-    scheduled_day: Optional[int] = None
-    scheduled_date: Optional[str] = None
-    cron_expression: Optional[str] = None
-    trigger_type: Optional[str] = None
-    trigger_event: Optional[str] = None
-    trigger_count: Optional[int] = None
-    output_target: Optional[str] = None
-    model: Optional[str] = None
-    endpoint_url: Optional[str] = None
-    then_task_id: Optional[str] = None
-    notifications_enabled: Optional[bool] = None
+    name: str | None = None
+    prompt: str | None = None
+    task_type: str | None = None
+    action: str | None = None
+    schedule: str | None = None
+    scheduled_time: str | None = None
+    scheduled_day: int | None = None
+    scheduled_date: str | None = None
+    cron_expression: str | None = None
+    trigger_type: str | None = None
+    trigger_event: str | None = None
+    trigger_count: int | None = None
+    output_target: str | None = None
+    model: str | None = None
+    endpoint_url: str | None = None
+    then_task_id: str | None = None
+    notifications_enabled: bool | None = None
 
 
 def _display_task_name(t: ScheduledTask) -> str:
@@ -181,8 +181,8 @@ def setup_task_routes(task_scheduler) -> APIRouter:
     async def _generate_task_name(prompt: str) -> str:
         """Use LLM to generate a short task name from the prompt."""
         try:
-            from src.llm_core import llm_call_async
             from core.database import Session as DbSession
+            from src.llm_core import llm_call_async
             db = SessionLocal()
             try:
                 recent = db.query(DbSession).filter(
@@ -211,7 +211,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             return first[:50] if first else "Untitled Task"
 
     @router.get("")
-    async def list_tasks(request: Request, status: Optional[str] = None,
+    async def list_tasks(request: Request, status: str | None = None,
                          include_last_run: bool = False):
         user = _owner(request)
         if user:
@@ -456,6 +456,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
         import sqlite3
         from pathlib import Path
+
         from routes.email_helpers import SCHEDULED_DB
 
         cleared = {}
@@ -907,16 +908,18 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
     # --- PARSE NATURAL LANGUAGE → TASK DRAFT (AI) ---
     @router.post("/parse")
-    async def parse_task(request: Request) -> Dict[str, Any]:
+    async def parse_task(request: Request) -> dict[str, Any]:
         """Turn a free-form description ("every weekday at 7am research the top
         AI news and summarize it") into a structured task draft the frontend
         can pre-fill the form with. Returns a draft only — the user reviews and
         saves it, so a misread schedule never goes live unreviewed."""
+        import json as _json
+        import re as _re
+        from datetime import datetime as _dt
+
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
         from src.text_helpers import strip_think as _strip_think
-        import json as _json, re as _re
-        from datetime import datetime as _dt
 
         body = await request.json()
         desc = (body.get("description") or "").strip()
@@ -970,7 +973,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             if not isinstance(draft, dict):
                 raise ValueError("not an object")
             # Whitelist + light validation so the frontend gets clean fields.
-            out: Dict[str, Any] = {}
+            out: dict[str, Any] = {}
             if draft.get("task_type") in ("llm", "research"):
                 out["task_type"] = draft["task_type"]
             else:

@@ -4,7 +4,7 @@ Importing src.cleanup_service is cheap and dependency-free: its only module-leve
 imports are logging/datetime/typing, and the `from src.database import ...` calls are
 lazy (inside the functions), so no DB/sqlalchemy stack is pulled in here.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 from src.cleanup_service import _utcnow
 
@@ -13,7 +13,7 @@ def test_utcnow_returns_naive_utc():
     now = _utcnow()
     # Must be naive to match the naive DateTime columns this module compares against.
     assert now.tzinfo is None
-    ref = datetime.now(timezone.utc).replace(tzinfo=None)
+    ref = datetime.now(UTC).replace(tzinfo=None)
     assert abs((ref - now).total_seconds()) < 5
 
 

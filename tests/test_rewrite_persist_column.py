@@ -17,7 +17,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 import core.database as cdb
-from core.database import ChatMessage as DBChatMessage, Session as DbSession
+from core.database import ChatMessage as DBChatMessage
+from core.database import Session as DbSession
 
 
 def test_chatmessage_has_timestamp_not_created_at():

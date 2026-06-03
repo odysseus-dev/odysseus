@@ -1,33 +1,41 @@
 """Authentication routes — login, logout, signup, status, user management."""
 
-from fastapi import APIRouter, Request, Response, HTTPException
-from pydantic import BaseModel
-from typing import Optional
 import asyncio
 import logging
 import os
 
+from fastapi import APIRouter, HTTPException, Request, Response
+from pydantic import BaseModel
+
 from core.auth import AuthManager
+from src.integrations import (
+    INTEGRATION_PRESETS,
+    add_integration,
+    delete_integration,
+    execute_api_call,
+    get_integration,
+    load_integrations,
+    mask_integration_secret,
+    migrate_from_settings,
+    update_integration,
+)
 from src.rate_limiter import RateLimiter
-from src.settings_scrub import scrub_settings
 from src.settings import (
-    load_settings as _load_settings,
-    save_settings as _save_settings,
-    load_features as _load_features,
-    save_features as _save_features,
     DEFAULT_SETTINGS,
 )
-from src.integrations import (
-    load_integrations,
-    add_integration,
-    update_integration,
-    delete_integration,
-    get_integration,
-    mask_integration_secret,
-    execute_api_call,
-    INTEGRATION_PRESETS,
-    migrate_from_settings,
+from src.settings import (
+    load_features as _load_features,
 )
+from src.settings import (
+    load_settings as _load_settings,
+)
+from src.settings import (
+    save_features as _save_features,
+)
+from src.settings import (
+    save_settings as _save_settings,
+)
+from src.settings_scrub import scrub_settings
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +44,7 @@ class LoginRequest(BaseModel):
     username: str
     password: str
     remember: bool = True
-    totp_code: Optional[str] = None
+    totp_code: str | None = None
 
 
 class SetupRequest(BaseModel):
@@ -80,7 +88,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     _signup_limiter = RateLimiter(max_requests=3, window_seconds=300)
     _setup_limiter = RateLimiter(max_requests=3, window_seconds=300)
 
-    def _get_current_user(request: Request) -> Optional[str]:
+    def _get_current_user(request: Request) -> str | None:
         token = request.cookies.get(SESSION_COOKIE)
         return auth_manager.get_username_for_token(token)
 
@@ -204,7 +212,10 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(500, "Failed to generate secret")
         uri = auth_manager.totp_get_provisioning_uri(user, secret)
         # Generate QR code as base64 PNG
-        import qrcode, io, base64
+        import base64
+        import io
+
+        import qrcode
         qr = qrcode.make(uri, box_size=6, border=2)
         buf = io.BytesIO()
         qr.save(buf, format="PNG")
@@ -298,6 +309,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         # access to its sessions, docs, email accounts, tasks, etc.
         try:
             from sqlalchemy import func
+
             from core.database import Base, SessionLocal
             db = SessionLocal()
             try:
@@ -322,7 +334,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
 
         # Per-user prefs are JSON-backed, not SQL-backed.
         try:
-            from routes.prefs_routes import _load as _load_prefs, _save as _save_prefs
+            from routes.prefs_routes import _load as _load_prefs
+            from routes.prefs_routes import _save as _save_prefs
             prefs = _load_prefs()
             users = prefs.get("_users") if isinstance(prefs, dict) else None
             if isinstance(users, dict):
@@ -498,8 +511,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         # subscriber app is wired up correctly, this is what the green
         # checkmark + a phone ping confirms together.
         if preset == "ntfy":
-            import httpx
             from urllib.parse import urlparse
+
+            import httpx
             # Strip any path/query the user accidentally pasted in the
             # base URL (e.g. `http://host:8091/odysseus`) — otherwise
             # the topic gets appended after the path and we publish to

@@ -5,9 +5,10 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request, Response
+
 from core.middleware import require_admin
 from src.auth_helpers import get_current_user
-from src.settings import load_settings, save_settings, load_features, save_features
+from src.settings import load_features, load_settings, save_features, save_settings
 
 logger = logging.getLogger(__name__)
 

@@ -1,15 +1,16 @@
 # routes/personal_routes.py
 """Routes for personal documents management."""
-import os
 import logging
+import os
 import uuid
-from typing import List, Tuple
-from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Depends
-from src.request_models import DirectoryRequest
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+
 from core.constants import BASE_DIR, PERSONAL_DIR
-from src.rag_singleton import get_rag_manager
-from src.auth_helpers import get_current_user, require_user
 from core.middleware import require_admin
+from src.auth_helpers import get_current_user, require_user
+from src.rag_singleton import get_rag_manager
+from src.request_models import DirectoryRequest
 from src.upload_handler import secure_filename
 
 UPLOADS_DIR = os.path.join(BASE_DIR, "data", "personal_uploads")
@@ -31,7 +32,7 @@ def _personal_upload_dir_for_owner(owner: str | None) -> str:
     return upload_dir
 
 
-def _unique_personal_upload_path(upload_dir: str, original_name: str | None) -> Tuple[str, str, str]:
+def _unique_personal_upload_path(upload_dir: str, original_name: str | None) -> tuple[str, str, str]:
     """Build a collision-resistant upload path while preserving a display name."""
     safe_name = secure_filename(os.path.basename(original_name or "upload"))
     if not safe_name or safe_name.startswith("."):
@@ -82,19 +83,19 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
         if not in_base:
             raise HTTPException(403, "Directory must be inside personal documents")
         return resolved
-    
+
     @router.get("")
     def api_personal_list(owner: str = Depends(require_user), _admin: None = Depends(require_admin)):
         """Enhanced version that includes directories"""
         files = [{"name": f["name"], "size": f["size"], "path": f.get("path", "")} for f in personal_docs_manager.index]
         directories = personal_docs_manager.get_indexed_directories() if hasattr(personal_docs_manager, "get_indexed_directories") else []
         return {"files": files, "directories": directories}
-    
+
     @router.post("/reload")
     def api_personal_reload(owner: str = Depends(require_user), _admin: None = Depends(require_admin)):
         personal_docs_manager.refresh_index()
         return {"ok": True, "count": len(personal_docs_manager.index)}
-    
+
     @router.post("/add_directory")
     async def add_directory_to_rag(
         request: Request,
@@ -113,25 +114,25 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
         directory = directory_request.directory
         try:
             directory = _resolve_allowed_personal_dir(directory)
-            
+
             # Security check - ensure directory exists and is accessible
             if not os.path.exists(directory):
                 raise HTTPException(404, f"Directory not found: {directory}")
-            
+
             if not os.path.isdir(directory):
                 raise HTTPException(400, f"Path is not a directory: {directory}")
-            
+
             logger.info(f"Adding directory to RAG: {directory}")
-            
+
             # Use the RAGManager to index the directory
             rag = _rag()
             if rag:
                 result = rag.index_personal_documents(directory, owner=owner)
-                
+
                 if result["success"]:
                     # Also update the personal_docs_manager to track this directory
                     personal_docs_manager.add_directory(directory, index=False)
-                    
+
                     return {
                         "success": True,
                         "message": f"Successfully indexed {result['indexed_count']} chunks from {directory}",
@@ -143,13 +144,13 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
                     raise HTTPException(500, result.get("message", "Failed to index directory"))
             else:
                 raise HTTPException(503, "RAG system is not available")
-                
+
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Error adding directory to RAG: {e}")
             raise HTTPException(500, f"Failed to add directory: {str(e)}")
-    
+
     @router.delete("/remove_directory")
     async def remove_directory_from_rag(directory: str = Query(...), owner: str = Depends(require_user), _admin: None = Depends(require_admin)):
         """
@@ -190,9 +191,9 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
         except Exception as e:
             logger.error(f"Error removing directory from RAG: {e}")
             raise HTTPException(500, f"Failed to remove directory: {str(e)}")
-    
+
     @router.post("/upload")
-    async def upload_files_to_rag(request: Request, files: List[UploadFile] = File(...)):
+    async def upload_files_to_rag(request: Request, files: list[UploadFile] = File(...)):
         """Upload files directly into RAG. Supports text and PDF."""
         user = get_current_user(request)
         rag = _rag()

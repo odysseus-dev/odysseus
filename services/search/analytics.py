@@ -4,7 +4,7 @@ import json
 import logging
 from collections import Counter
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any
 
 from .cache import cache_metrics
 
@@ -45,7 +45,7 @@ class RateLimitError(SearchEngineError):
 # ----------------------------------------------------------------------
 # Analytics helpers
 # ----------------------------------------------------------------------
-def _default_analytics() -> Dict[str, Any]:
+def _default_analytics() -> dict[str, Any]:
     return {
         "total_queries": 0,
         "successful_queries": 0,
@@ -56,14 +56,14 @@ def _default_analytics() -> Dict[str, Any]:
     }
 
 
-def _load_analytics() -> Dict[str, Any]:
+def _load_analytics() -> dict[str, Any]:
     """Load analytics data from the JSON file, creating defaults if missing."""
     if not ANALYTICS_FILE.exists():
         default = _default_analytics()
         _save_analytics(default)
         return default
     try:
-        with open(ANALYTICS_FILE, "r", encoding="utf-8") as f:
+        with open(ANALYTICS_FILE, encoding="utf-8") as f:
             data = json.load(f)
         # Merge over defaults so a file written by an older schema (or a
         # partial write) still has every counter — _record_query indexes
@@ -77,7 +77,7 @@ def _load_analytics() -> Dict[str, Any]:
         return _default_analytics()
 
 
-def _save_analytics(data: Dict[str, Any]) -> None:
+def _save_analytics(data: dict[str, Any]) -> None:
     """Persist analytics data to the JSON file."""
     try:
         with open(ANALYTICS_FILE, "w", encoding="utf-8") as f:
@@ -112,7 +112,7 @@ def _record_query(query: str, success: bool, cache_hit: bool) -> None:
     _save_analytics(analytics)
 
 
-def get_search_stats() -> Dict[str, Any]:
+def get_search_stats() -> dict[str, Any]:
     """Return aggregated search analytics."""
     analytics = _load_analytics()
     total = analytics.get("total_queries", 0) or 1

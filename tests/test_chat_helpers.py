@@ -1,4 +1,5 @@
 import pytest
+
 from routes.chat_helpers import needs_auto_name
 
 

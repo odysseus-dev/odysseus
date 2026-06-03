@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -58,7 +58,7 @@ async def test_scheduled_email_routes_are_owner_scoped(tmp_path, monkeypatch):
     list_scheduled = _route_endpoint(router, "/api/email/scheduled", "GET")
     cancel_scheduled = _route_endpoint(router, "/api/email/scheduled/{sid}", "DELETE")
 
-    send_at = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    send_at = (datetime.now(UTC) + timedelta(days=1)).isoformat()
     alice = await schedule_email(
         {"to": "a@example.com", "body": "alice body", "send_at": send_at},
         owner="alice",

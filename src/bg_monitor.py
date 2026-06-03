@@ -74,8 +74,8 @@ async def _run_followup(rec: dict) -> bool:
     """Re-invoke the agent in the job's session with the result. Returns True
     if the follow-up completed (or there's nothing to do) — i.e. it's safe to
     mark followed_up. Returns False to retry on the next tick."""
-    from src.ai_interaction import get_session_manager
     from core.models import ChatMessage
+    from src.ai_interaction import get_session_manager
 
     sm = get_session_manager()
     if not sm:

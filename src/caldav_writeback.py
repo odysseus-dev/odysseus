@@ -18,7 +18,7 @@ network.
 
 import asyncio
 import logging
-from datetime import timezone
+from datetime import UTC
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,8 @@ def build_event_ical(ev: dict) -> str:
     dtend (datetime), all_day (bool), is_utc (bool), rrule (str).
     Mirrors how the pull path interprets is_utc/all_day so a round-trip is stable.
     """
-    from icalendar import Calendar, Event as iEvent
+    from icalendar import Calendar
+    from icalendar import Event as iEvent
     from icalendar.prop import vRecur
 
     cal = Calendar()
@@ -59,8 +60,8 @@ def build_event_ical(ev: dict) -> str:
         ve.add("dtend", dtend.date())
     elif ev.get("is_utc"):
         # Stored as naive-UTC instants — re-attach UTC so the server gets a Z time.
-        ve.add("dtstart", dtstart.replace(tzinfo=timezone.utc))
-        ve.add("dtend", dtend.replace(tzinfo=timezone.utc))
+        ve.add("dtstart", dtstart.replace(tzinfo=UTC))
+        ve.add("dtend", dtend.replace(tzinfo=UTC))
     else:
         # Legacy naive-local ("floating") time — emit without a TZ.
         ve.add("dtstart", dtstart)

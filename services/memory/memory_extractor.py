@@ -15,7 +15,6 @@ import json
 import logging
 import os
 import re
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -51,14 +50,14 @@ def _memory_dicts(entries):
 def _load_tidy_state(memory_manager) -> dict:
     path = _tidy_state_path(memory_manager)
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 
-def _save_tidy_state(memory_manager, owner: Optional[str], fingerprint: str) -> None:
+def _save_tidy_state(memory_manager, owner: str | None, fingerprint: str) -> None:
     path = _tidy_state_path(memory_manager)
     state = _load_tidy_state(memory_manager)
     state[owner or ""] = {"fingerprint": fingerprint}
@@ -234,7 +233,7 @@ async def extract_and_store(
     memory_vector,
     endpoint_url: str,
     model: str,
-    headers: Optional[dict] = None,
+    headers: dict | None = None,
 ):
     """Extract facts from recent conversation and store them.
 
@@ -409,8 +408,8 @@ async def audit_memories(
     memory_vector,
     endpoint_url: str,
     model: str,
-    headers: Optional[dict] = None,
-    owner: Optional[str] = None,
+    headers: dict | None = None,
+    owner: str | None = None,
 ):
     """Send all memories to the LLM for deduplication and consolidation.
 

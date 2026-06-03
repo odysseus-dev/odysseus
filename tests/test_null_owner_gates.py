@@ -14,9 +14,11 @@ Pattern under test (multi-tenant deploy):
 import os
 import sys
 import types
-import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+
+import pytest
+
 
 # `tests/conftest.py` stubs the heavy optional deps. We additionally
 # stub `core.database` here because the real module instantiates
@@ -58,7 +60,6 @@ def _null_owner_stubs(monkeypatch):
         monkeypatch.setitem(sys.modules, "src.webhook_manager", wm)
 
 from fastapi import HTTPException
-
 
 # ---------------------------------------------------------------------------
 # calendar._get_or_404_calendar / _get_or_404_event

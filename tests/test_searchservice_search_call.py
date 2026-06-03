@@ -21,7 +21,7 @@ broken public API method. This test drives it with a stubbed search backend.
 import asyncio
 
 from services.search import service as search_service
-from services.search.service import SearchService, SearchResponse
+from services.search.service import SearchResponse, SearchService
 
 
 def test_search_returns_structured_results(monkeypatch):

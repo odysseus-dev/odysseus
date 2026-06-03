@@ -1,9 +1,9 @@
 # services/memory/service.py
 """Memory service — persistent memory storage and retrieval."""
 
-from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
 import os
+from dataclasses import dataclass, field
+from typing import Any
 
 from .memory import MemoryManager
 from .memory_vector import MemoryVectorStore
@@ -15,14 +15,14 @@ class Memory:
     id: str
     text: str
     timestamp: int
-    session_id: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    session_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class MemorySearchResult:
     """Result of memory search."""
-    memories: List[Memory]
+    memories: list[Memory]
     query: str
     total: int
 
@@ -43,7 +43,7 @@ class MemoryService:
             os.path.join(data_dir, "memory_vectors")
         ) else None
 
-    async def remember(self, text: str, session_id: Optional[str] = None) -> Memory:
+    async def remember(self, text: str, session_id: str | None = None) -> Memory:
         """
         Store a new memory.
 
@@ -54,8 +54,8 @@ class MemoryService:
         Returns:
             Created Memory object
         """
-        import uuid
         import time
+        import uuid
 
         memory_id = str(uuid.uuid4())[:8]
         timestamp = int(time.time())
@@ -120,7 +120,7 @@ class MemoryService:
         ]
         return MemorySearchResult(memories=memories, query=query, total=len(memories))
 
-    def get_all(self, limit: int = 100) -> List[Memory]:
+    def get_all(self, limit: int = 100) -> list[Memory]:
         """Get all memories."""
         memories = self.manager.get_memories(limit=limit)
         return [
