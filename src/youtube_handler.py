@@ -263,6 +263,8 @@ def format_comments_for_context(comments_data: Dict[str, Any], url: str) -> str:
     ctx += f"URL: {url}\n\n"
 
     for i, c in enumerate(comments, 1):
+        if not isinstance(c, dict):
+            continue
         likes = c.get("likes", 0)
         likes_str = f" [{likes} likes]" if likes else ""
         ctx += f"{i}. @{c['author']}{likes_str}: {c['text']}\n\n"
