@@ -95,6 +95,8 @@ If not found:
 }
 ```
 
+**See also**: `daily-review-skill.md` for a complete daily review workflow that extends this example with grouping, prioritization, and presentation best practices.
+
 ## Example 3: Research to execution
 
 **User:** Convert this market research into a launch checklist.
