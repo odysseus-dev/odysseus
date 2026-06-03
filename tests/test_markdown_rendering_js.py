@@ -18,7 +18,7 @@ def node_available():
         pytest.skip("node binary not on PATH")
 
 
-def _run_markdown_case(markdown: str) -> str:
+def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)"):
     script = textwrap.dedent(
         r"""
         import fs from 'node:fs';
@@ -54,9 +54,9 @@ def _run_markdown_case(markdown: str) -> str:
         const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
         const mod = await import(moduleUrl);
         const input = JSON.parse(process.argv[1]);
-        console.log(JSON.stringify({ html: mod.mdToHtml(input) }));
+        console.log(JSON.stringify({ html: __RENDER_EXPR__ }));
         """
-    )
+    ).replace("__RENDER_EXPR__", render_expr)
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script, json.dumps(markdown)],
         cwd=_REPO,
@@ -99,3 +99,51 @@ def test_table_separator_row_not_rendered_as_data(node_available):
     assert "<th" in html
     assert "<td" in html
     assert "---" not in html
+
+
+def test_process_with_thinking_handles_gemma4_thought_channel(node_available):
+    html = _run_markdown_case(
+        "<|channel>thought\ninternal reasoning<channel|>Final answer.",
+        "mod.processWithThinking(input)",
+    )
+
+    assert "thinking-section" in html
+    assert "internal reasoning" in html
+    assert "Final answer." in html
+    assert "&lt;|channel&gt;" not in html
+    assert "<|channel>" not in html
+
+
+def test_process_with_thinking_strips_empty_gemma4_thought_channel(node_available):
+    html = _run_markdown_case(
+        "<|channel>thought\n<channel|>Final answer.",
+        "mod.processWithThinking(input)",
+    )
+
+    assert "thinking-section" not in html
+    assert "Final answer." in html
+    assert "&lt;|channel&gt;" not in html
+    assert "<|channel>" not in html
+
+
+def test_process_with_thinking_unwraps_gemma4_response_channel(node_available):
+    html = _run_markdown_case(
+        "<|channel>thought\ninternal reasoning<channel|><|channel>response\nFinal answer.<channel|>",
+        "mod.processWithThinking(input)",
+    )
+
+    assert "thinking-section" in html
+    assert "internal reasoning" in html
+    assert "Final answer." in html
+    assert "&lt;|channel&gt;" not in html
+    assert "<|channel>" not in html
+
+
+def test_extract_thinking_blocks_handles_thought_tag(node_available):
+    result = _run_markdown_case(
+        "<thought>internal reasoning</thought>Final answer.",
+        "mod.extractThinkingBlocks(input)",
+    )
+
+    assert result["thinkingBlocks"] == ["internal reasoning"]
+    assert result["content"] == "Final answer."

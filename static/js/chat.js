@@ -1099,7 +1099,7 @@ import createResearchSynapse from './researchSynapse.js';
       let _measureDiv = null;
 
       function _replyAfterClosedThinking(text) {
-        const closeRe = /<\/think(?:ing)?>/gi;
+        const closeRe = /<\/(?:think(?:ing)?|thought)>|<channel\|>/gi;
         let match = null;
         let last = null;
         while ((match = closeRe.exec(text || '')) !== null) last = match;
@@ -1126,7 +1126,7 @@ import createResearchSynapse from './researchSynapse.js';
             replyTrimmed = (replyText || '').trim();
           } else {
             // Non-tag: check for garbled <think> (reasoning\n<think>reply)
-            const _gm = dt.match(/^[\s\S]+?<think(?:ing)?>\s*([\s\S]*?)(?:<\/think(?:ing)?>)?\s*$/i);
+            const _gm = dt.match(/^[\s\S]+?<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*([\s\S]*?)(?:<\/(?:think(?:ing)?|thought)>)?\s*$/i);
             if (_gm && _gm[1].trim()) {
               replyTrimmed = _gm[1].trim();
             } else {
@@ -1167,8 +1167,11 @@ import createResearchSynapse from './researchSynapse.js';
         const prevLen = contentEl._prevTextLen || 0;
         // If thinking is still streaming (unclosed <think>), show indicator instead of raw text
         if (markdownModule.hasUnclosedThinkTag && markdownModule.hasUnclosedThinkTag(dt)) {
-          const thinkStart = dt.search(/<think(?:ing)?>/i);
-          const thinkContent = dt.substring(thinkStart).replace(/<think(?:ing)?>/i, '').trim();
+          const thinkStart = dt.search(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought/i);
+          const thinkContent = dt.substring(Math.max(thinkStart, 0))
+            .replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought\s*\n?/i, '')
+            .replace(/<channel\|>/gi, '')
+            .trim();
           const lines = thinkContent.split('\n').length;
           // Don't show beforeThink text during streaming — it'll appear in the final render
           // This prevents the "split into two" duplication
@@ -1427,7 +1430,7 @@ import createResearchSynapse from './researchSynapse.js';
                 // Detect non-tag thinking patterns: "Thinking:", "Thinking Process:", Gemma-style reasoning
                 // These patterns don't use <think> tags, so we simulate unclosed thinking during streaming
                 const _replyPrefixes = ['Hey', 'Hi ', 'Hi!', 'Hello', 'Sure', 'Yes', 'No ', 'No,', 'Yo', 'OK', 'Here', 'Absolutely', 'Of course', 'Great', 'Alright', 'Thanks', 'Welcome', 'Good ', "I'm happy", "I'd be"];
-                if (!hasUnclosedThink && !roundText.includes('<think')) {
+                if (!hasUnclosedThink && !/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought/i.test(roundText)) {
                   const _trimmedRT = roundText.trimStart();
                   const _isReasoning = markdownModule.startsWithReasoningPrefix(_trimmedRT);
                   if (_isReasoning) {
@@ -1453,10 +1456,10 @@ import createResearchSynapse from './researchSynapse.js';
                     }
                   }
                 }
-                if (!hasUnclosedThink && /^<think(?:ing)?>\s*<\/think(?:ing)?>/i.test(roundText)) {
+                if (!hasUnclosedThink && /^<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*<\/(?:think(?:ing)?|thought)>/i.test(roundText)) {
                   // Empty <think></think> — the model likely put thinking outside the tags
-                  const afterEmpty = roundText.replace(/^<think(?:ing)?>\s*<\/think(?:ing)?>/i, '').trim();
-                  const closeTags = (afterEmpty.match(/<\/think(?:ing)?>/gi) || []).length;
+                  const afterEmpty = roundText.replace(/^<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*<\/(?:think(?:ing)?|thought)>/i, '').trim();
+                  const closeTags = (afterEmpty.match(/<\/(?:think(?:ing)?|thought)>/gi) || []).length;
                   if (closeTags === 0 && afterEmpty.length > 0) {
                     hasUnclosedThink = true; // still waiting for real closing tag
                   }
@@ -1465,13 +1468,13 @@ import createResearchSynapse from './researchSynapse.js';
                 // Only applies when there's a second </think> later (model leaked thinking outside tags)
                 // Do NOT trigger if the text after </think> contains tool calls (that's real content)
                 if (!hasUnclosedThink && isThinking) {
-                  const _thinkMatch = roundText.match(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/i);
+                  const _thinkMatch = roundText.match(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i);
                   const _thinkLen = _thinkMatch ? _thinkMatch[1].trim().length : 0;
                   if (_thinkLen < 20) {
-                    const _afterClose = roundText.replace(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/i, '').trim();
+                    const _afterClose = roundText.replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i, '').trim();
                     // Only keep waiting if there's trailing text that looks like thinking (not tool calls)
                     const _hasToolCall = /```(?:bash|python|web_search|read_file|write_file|create_document|edit_document|manage_|generate_image)/i.test(_afterClose);
-                    const _hasOrphanClose = /<\/think(?:ing)?>/i.test(_afterClose);
+                    const _hasOrphanClose = /<\/(?:think(?:ing)?|thought)>/i.test(_afterClose);
                     if (!_hasToolCall && (_hasOrphanClose || (Date.now() - thinkingStartTime) < 500)) {
                       hasUnclosedThink = true; // keep waiting for real </think>
                     }
@@ -1528,8 +1531,12 @@ import createResearchSynapse from './researchSynapse.js';
                   }
                 } else if (hasUnclosedThink && isThinking) {
                   if (_liveThinkInner) {
-                    // Extract raw thinking text (strip all <think>/<thinking> open/close tags and prefixes)
-                    var thinkText = roundText.replace(/<\/?think(?:ing)?>/gi, '');
+                    // Extract raw thinking text (strip known thinking wrappers and prefixes)
+                    var thinkText = roundText
+                      .replace(/<\/?(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi, '')
+                      .replace(/<\|channel>thought\s*\n?/gi, '')
+                      .replace(/<\|channel>response\s*\n?/gi, '')
+                      .replace(/<channel\|>/gi, '');
                     thinkText = thinkText.replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
                     _liveThinkInner.innerHTML = markdownModule.mdToHtml(thinkText);
                     // Keep thinking box scrolled to bottom
@@ -2354,8 +2361,8 @@ import createResearchSynapse from './researchSynapse.js';
               _finalReply = (_extracted.content || '').trim();
             } else {
               // Non-tag thinking: extract reply from raw text
-              // Handle garbled <think> tag: "Thinking: reasoning\n<think>reply"
-              const _garbledMatch = finalDisplay.match(/^[\s\S]+?<think(?:ing)?>\s*([\s\S]*?)(?:<\/think(?:ing)?>)?\s*$/i);
+              // Handle garbled thinking tag: "Thinking: reasoning\n<think>reply"
+              const _garbledMatch = finalDisplay.match(/^[\s\S]+?<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*([\s\S]*?)(?:<\/(?:think(?:ing)?|thought)>)?\s*$/i);
               if (_garbledMatch && _garbledMatch[1].trim()) {
                 _finalReply = _garbledMatch[1].trim();
               } else {
@@ -2404,8 +2411,8 @@ import createResearchSynapse from './researchSynapse.js';
           _body4b.innerHTML = _sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded2) : _sourcesHtml;
         } else if (roundHolder !== holder) {
           // Check if there's thinking content worth showing
-          const _thinkMatch = roundText.match(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/i);
-          if (_thinkMatch && _thinkMatch[1].trim()) {
+          const _thinkingOnly = markdownModule.extractThinkingBlocks(roundText);
+          if (_thinkingOnly.thinkingBlocks?.length && !_thinkingOnly.content) {
             // Show thinking in a collapsed section even if no visible reply text
             const _body4c = roundHolder.querySelector('.body');
             if (_body4c) _body4c.innerHTML = markdownModule.processWithThinking(roundText);
@@ -4339,9 +4346,10 @@ import createResearchSynapse from './researchSynapse.js';
       // never closes (so it would otherwise hide the whole answer). Peel all of
       // those off so what's left is just the rewritten text.
       const _stripThink = (t) => {
-        t = t.replace(/<think>[\s\S]*?<\/think>/gi, '');   // complete blocks
-        if (/<\/think>/i.test(t)) t = t.replace(/^[\s\S]*?<\/think>/i, '');  // reasoning w/o opener
-        return t.replace(/<\/?think>/gi, '').trim();        // any orphan tag
+        t = markdownModule.normalizeThinkingMarkup(t || '');
+        t = t.replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>[\s\S]*?<\/(?:think(?:ing)?|thought)>/gi, '');   // complete blocks
+        if (/<\/(?:think(?:ing)?|thought)>/i.test(t)) t = t.replace(/^[\s\S]*?<\/(?:think(?:ing)?|thought)>/i, '');  // reasoning w/o opener
+        return t.replace(/<\/?(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi, '').trim();        // any orphan tag
       };
       newText = _stripThink(newText);
 
