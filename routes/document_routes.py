@@ -246,6 +246,213 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         finally:
             db.close()
 
+
+    # ---- POST /api/documents/import-folder ----
+    @router.post("/api/documents/import-folder")
+    async def import_document_folder(
+        request: Request,
+        files: List[UploadFile] = File(...),
+        relative_paths: Optional[List[str]] = Form(None),
+        session_id: Optional[str] = Form(None),
+    ) -> Dict[str, Any]:
+        import os
+        import posixpath
+
+        from src.auth_helpers import require_privilege
+
+        user = require_privilege(request, "can_use_documents")
+
+        if not files:
+            raise HTTPException(400, "No files uploaded")
+
+        if session_id:
+            db = SessionLocal()
+            try:
+                sess = db.query(DbSession).filter(DbSession.id == session_id).first()
+                if not sess:
+                    raise HTTPException(404, "Session not found")
+                if user and sess.owner and sess.owner != user:
+                    raise HTTPException(403, "Cannot import into another user's session")
+            finally:
+                db.close()
+
+        ext_to_lang = {
+            ".py": "python", ".js": "javascript", ".jsx": "javascript",
+            ".ts": "typescript", ".tsx": "typescript", ".html": "html",
+            ".htm": "html", ".css": "css", ".md": "markdown",
+            ".markdown": "markdown", ".json": "json", ".yml": "yaml",
+            ".yaml": "yaml", ".sh": "bash", ".bash": "bash",
+            ".sql": "sql", ".rs": "rust", ".go": "go", ".java": "java",
+            ".c": "c", ".h": "c", ".cpp": "cpp", ".hpp": "cpp",
+            ".cc": "cpp", ".cxx": "cpp", ".rb": "ruby", ".php": "php",
+            ".xml": "xml", ".svg": "xml", ".toml": "toml", ".ini": "ini",
+            ".txt": "text", ".log": "text", ".csv": "csv", ".tsv": "csv",
+        }
+        spreadsheet_exts = {".xlsx", ".xls", ".ods"}
+        image_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+        binary_exts = {
+            ".ico", ".svgz",
+            ".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz",
+            ".exe", ".dll", ".so", ".dylib", ".bin", ".dat",
+            ".mp3", ".wav", ".ogg", ".mp4", ".mov", ".avi", ".mkv", ".webm",
+            ".ttf", ".otf", ".woff", ".woff2",
+        }
+        max_text_bytes = 10 * 1024 * 1024
+        rels = list(relative_paths or [])
+
+        def _clean_relative_path(idx: int, file: UploadFile) -> str:
+            raw = rels[idx] if idx < len(rels) else ""
+            raw = raw or file.filename or f"file-{idx + 1}"
+            raw = posixpath.normpath(raw.replace("\\", "/").lstrip("/"))
+            if raw in ("", "."):
+                raw = file.filename or f"file-{idx + 1}"
+            parts = [p for p in raw.split("/") if p and p not in (".", "..")]
+            return "/".join(parts) or (file.filename or f"file-{idx + 1}")
+
+        def _title_from_path(path: str) -> str:
+            folder, filename = posixpath.split(path)
+            stem, _ext = os.path.splitext(filename)
+            name = stem or filename or "Untitled"
+            return f"{folder}/{name}" if folder else name
+
+        def _error(path: str, reason: str) -> Dict[str, Any]:
+            return {"path": path, "error": reason}
+
+        def _retitle_pdf_doc(doc_id: Optional[str], title: str) -> Optional[Dict[str, Any]]:
+            if not doc_id:
+                return None
+            db = SessionLocal()
+            try:
+                doc = db.query(Document).filter(Document.id == doc_id).first()
+                if not doc:
+                    return None
+                _verify_doc_owner(db, doc, user)
+                if title and doc.title != title:
+                    doc.title = title
+                    db.commit()
+                    db.refresh(doc)
+                return _doc_to_dict(doc)
+            finally:
+                db.close()
+
+        def _md_escape(value: str) -> str:
+            return (value or '').replace('\\', '\\\\').replace('[', '\\[').replace(']', '\\]').replace('(', '\\(').replace(')', '\\)')
+
+        def _attr_escape(value: str) -> str:
+            return (value or '').replace('&', '&amp;').replace('\"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
+
+        async def _create_image_document(file: UploadFile, rel_path: str, title: str) -> Dict[str, Any]:
+            if upload_handler is None:
+                raise HTTPException(500, 'Upload handler not configured')
+            client_ip = request.client.host if request.client else 'unknown'
+            try:
+                await file.seek(0)
+            except Exception:
+                pass
+            meta = upload_handler.save_upload(file, client_ip, owner=user)
+            upload_id = meta['id']
+            name = meta.get('original_name') or meta.get('name') or rel_path
+            mime = meta.get('mime') or 'image/*'
+            width = meta.get('width')
+            height = meta.get('height')
+            content = f"# {title}\n\n![{_md_escape(name)}](/api/upload/{upload_id})\n\n"
+            content += f"<!-- image_source upload_id=\"{upload_id}\" filename=\"{_attr_escape(name)}\" mime=\"{_attr_escape(mime)}\" -->\n"
+            if width and height:
+                content += f"\n_Image size: {width} × {height}_\n"
+            req = DocumentCreate(
+                session_id=session_id,
+                title=title,
+                language='image',
+                content=content,
+            )
+            created = await create_document(request, req)
+            created['relative_path'] = rel_path
+            created['upload_id'] = upload_id
+            created['mime'] = mime
+            if width and height:
+                created['width'] = width
+                created['height'] = height
+            return created
+
+        documents: List[Dict[str, Any]] = []
+        errors: List[Dict[str, Any]] = []
+
+        for idx, file in enumerate(files):
+            rel_path = _clean_relative_path(idx, file)
+            title = _title_from_path(rel_path)
+            ext = os.path.splitext(rel_path)[1].lower()
+
+            try:
+                if ext in spreadsheet_exts:
+                    errors.append(_error(rel_path, "Spreadsheet folder import is not supported yet"))
+                    continue
+                if ext in image_exts:
+                    documents.append(await _create_image_document(file, rel_path, title))
+                    continue
+                if ext in binary_exts:
+                    errors.append(_error(rel_path, "Unsupported binary file type"))
+                    continue
+
+                if ext == ".pdf":
+                    try:
+                        await file.seek(0)
+                    except Exception:
+                        pass
+                    imported = await import_pdf(request, file=file, session_id=session_id)
+                    doc_id = imported.get("id") or imported.get("doc_id")
+                    doc_payload = _retitle_pdf_doc(doc_id, title) or imported
+                    doc_payload["relative_path"] = rel_path
+                    documents.append(doc_payload)
+                    continue
+
+                if ext and ext not in ext_to_lang:
+                    errors.append(_error(rel_path, "Unsupported document type"))
+                    continue
+
+                try:
+                    await file.seek(0)
+                except Exception:
+                    pass
+                raw = await file.read()
+                if len(raw) > max_text_bytes:
+                    errors.append(_error(rel_path, "Text file is too large"))
+                    continue
+                if b"\x00" in raw[:4096]:
+                    errors.append(_error(rel_path, "File appears to be binary"))
+                    continue
+
+                try:
+                    content = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    try:
+                        content = raw.decode("utf-8-sig")
+                    except UnicodeDecodeError:
+                        content = raw.decode("latin-1", errors="replace")
+
+                req = DocumentCreate(
+                    session_id=session_id,
+                    title=title,
+                    language=ext_to_lang.get(ext) or None,
+                    content=content,
+                )
+                created = await create_document(request, req)
+                created["relative_path"] = rel_path
+                documents.append(created)
+            except HTTPException as exc:
+                detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+                errors.append(_error(rel_path, detail))
+            except Exception as exc:
+                logger.exception("Folder document import failed for %s", rel_path)
+                errors.append(_error(rel_path, str(exc)))
+
+        return {
+            "ok": bool(documents),
+            "documents": documents,
+            "errors": errors,
+            "imported": len(documents),
+            "failed": len(errors),
+        }
+
     # ---- GET /api/documents/library ----
     @router.get("/api/documents/library")
     async def documents_library(

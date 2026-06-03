@@ -67,7 +67,7 @@ import * as Modals from './modalManager.js';
       'php', 'ruby', 'sql', 'java', 'go', 'rust',
       'c', 'cpp', 'c++', 'csharp', 'c#',
       'yaml', 'json', 'css',
-      'ini', 'toml',
+      'ini', 'toml', 'image',
     ].includes(lang) || _isRenderLang(lang);
   };
 
@@ -152,10 +152,105 @@ import * as Modals from './modalManager.js';
       openPanel,
       addDocToTabs,
       syncDocIndicator: _syncDocIndicator,
+      importFromDevice: () => _importFromDevice(),
+      importFolderFromDevice: () => _importFromDevice({ directory: true }),
     });
+    _ensureFolderUploadLibraryUi();
     _maybeOpenDocFromHash();
     window.addEventListener('hashchange', _maybeOpenDocFromHash);
   }
+
+
+  // ---- Library import UI ----
+  function _ensureFolderUploadLibraryUi() {
+    const iconFile = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 18v-6"/><path d="M9 15l3 3 3-3"/></svg>';
+    const iconImage = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
+    const iconPdf = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M7.5 17h2a1.5 1.5 0 0 0 0-3h-2v5"/><path d="M13 14v5"/><path d="M13 14h1.5a1.5 1.5 0 0 1 0 3H13"/></svg>';
+    const iconCode = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
+    const iconFolder = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5V18a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-7.3L9.8 5.1A2 2 0 0 0 8.4 4H5a2 2 0 0 0-2 2v1.5z"/><path d="M12 11v5"/><path d="M9.5 13.5 12 11l2.5 2.5"/></svg>';
+    const iconFolders = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 8.5V18a2 2 0 0 0 2 2H17"/><path d="M5 6.5V17a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9.5a2 2 0 0 0-2-2h-6.4l-1.7-1.7A2 2 0 0 0 9.5 5H7a2 2 0 0 0-2 1.5z"/><path d="M13 11v5"/><path d="M10.5 13.5 13 11l2.5 2.5"/></svg>';
+
+    const closeMenu = () => document.getElementById('doclib-import-menu')?.remove();
+    const menuItem = (icon, label, sublabel, fn) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'doclib-import-menu-item';
+      item.style.cssText = 'width:100%;display:flex;gap:10px;align-items:center;text-align:left;background:none;border:0;color:var(--fg);padding:8px 10px;border-radius:8px;cursor:pointer;font:inherit;';
+      item.innerHTML = `<span style="display:inline-flex;opacity:.72;flex:0 0 auto;">${icon}</span><span style="display:flex;flex-direction:column;gap:1px;"><span>${label}</span><span style="font-size:11px;opacity:.58;line-height:1.2;">${sublabel}</span></span>`;
+      item.addEventListener('mouseenter', () => { item.style.background = 'color-mix(in srgb,var(--fg) 8%,transparent)'; });
+      item.addEventListener('mouseleave', () => { item.style.background = 'none'; });
+      item.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        closeMenu();
+        fn();
+      });
+      return item;
+    };
+    const menuDivider = () => {
+      const div = document.createElement('div');
+      div.style.cssText = 'height:1px;margin:5px 4px;background:color-mix(in srgb,var(--border) 70%,transparent);';
+      return div;
+    };
+
+    const showImportMenu = (anchor) => {
+      const existing = document.getElementById('doclib-import-menu');
+      if (existing) { existing.remove(); return; }
+
+      const rect = anchor.getBoundingClientRect();
+      const menu = document.createElement('div');
+      menu.id = 'doclib-import-menu';
+      menu.setAttribute('role', 'menu');
+      menu.style.cssText = 'position:fixed;min-width:210px;max-width:min(260px,calc(100vw - 16px));background:var(--panel);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.28);padding:6px;z-index:10000;';
+      menu.appendChild(menuItem(iconFile, 'Import files', 'Select one or more files', () => _importFromDevice({ kind: 'supported' })));
+      menu.appendChild(menuItem(iconFolder, 'Import folder', 'Import one folder', () => _importFromDevice({ directory: true, kind: 'supported' })));
+      document.body.appendChild(menu);
+
+      const top = Math.min(window.innerHeight - menu.offsetHeight - 8, rect.bottom + 6);
+      const left = Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8, rect.left));
+      menu.style.top = `${Math.max(8, top)}px`;
+      menu.style.left = `${left}px`;
+
+      setTimeout(() => {
+        const onDocClick = (e) => {
+          if (!menu.contains(e.target) && !anchor.contains(e.target)) closeMenu();
+        };
+        const onKey = (e) => { if (e.key === 'Escape') closeMenu(); };
+        document.addEventListener('click', onDocClick, { once: true, capture: true });
+        document.addEventListener('keydown', onKey, { once: true });
+      }, 0);
+    };
+
+    const wireImportButton = () => {
+      const oldFolderBtn = document.getElementById('doclib-import-folder-btn');
+      if (oldFolderBtn) oldFolderBtn.remove();
+
+      const fileBtn = document.getElementById('doclib-import-file-btn');
+      const emptyImport = document.querySelector('[data-doclib-import]');
+      const target = fileBtn || emptyImport;
+      if (!target || target._odysseusUnifiedImportWired) return;
+
+      target._odysseusUnifiedImportWired = true;
+      target.setAttribute('aria-haspopup', 'menu');
+      target.title = 'Import files or folders';
+      target.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+        showImportMenu(target);
+      }, true);
+    };
+
+    wireImportButton();
+    if (!document._odysseusDocFolderUploadObserver) {
+      document._odysseusDocFolderUploadObserver = new MutationObserver(wireImportButton);
+      document._odysseusDocFolderUploadObserver.observe(document.body, {
+        childList: true,
+        subtree: true,
+      });
+    }
+  }
+
 
   /** Update overflow-doc-btn accent indicator, toolbar indicator, and session list icon */
   function _syncDocIndicator() {
@@ -568,6 +663,36 @@ import * as Modals from './modalManager.js';
     const c = content || '';
     return /<!--\s*pdf_form_source\s+upload_id="[^"]+"/.test(c)
         || /<!--\s*pdf_source\s+upload_id="[^"]+"/.test(c);
+  }
+
+
+  function _isImageBackedDoc(content) {
+    const c = content || '';
+    return /<!--\s*image_source\s+upload_id="[^"]+"/.test(c)
+        || /!\[[^\]]*\]\((?:[^)]*\/api\/upload\/[^)]+)\)/.test(c);
+  }
+
+  function _parseImageSource(content) {
+    const c = content || '';
+    const marker = c.match(/<!--\s*image_source\s+upload_id="([^"]+)"(?:\s+filename="([^"]*)")?(?:\s+mime="([^"]*)")?/);
+    if (marker) {
+      return {
+        uploadId: marker[1],
+        filename: (marker[2] || '').replace(/\\([\[\]\(\)])/g, '$1'),
+        mime: marker[3] || '',
+        url: `${API_BASE}/api/upload/${encodeURIComponent(marker[1])}`,
+      };
+    }
+    const mdImg = c.match(/!\[[^\]]*\]\(([^)]*\/api\/upload\/([^)?#]+)[^)]*)\)/);
+    if (mdImg) {
+      return {
+        uploadId: decodeURIComponent(mdImg[2] || ''),
+        filename: '',
+        mime: '',
+        url: mdImg[1].startsWith('http') ? mdImg[1] : `${API_BASE}${mdImg[1].startsWith('/') ? '' : '/'}${mdImg[1]}`,
+      };
+    }
+    return null;
   }
 
   // Force the on-screen keyboard down on touch. Firefox mobile ignores a plain
@@ -2090,10 +2215,12 @@ import * as Modals from './modalManager.js';
     const _mdPreview = document.getElementById('doc-md-preview');
     const _csvPreview = document.getElementById('doc-csv-preview');
     const _htmlPreview = document.getElementById('doc-html-preview');
+    const _imagePreview = document.getElementById('doc-image-view');
     const _outputPanel = document.getElementById('doc-run-output');
     const _mdActive = _mdPreview && _mdPreview.style.display !== 'none';
     const _csvActive = _csvPreview && _csvPreview.style.display !== 'none';
     const _htmlActive = _htmlPreview && _htmlPreview.style.display !== 'none';
+    const _imageActive = _imagePreview && _imagePreview.style.display !== 'none';
     const _outputActive = _outputPanel && _outputPanel.style.display !== 'none';
 
     let show = false;
@@ -2116,6 +2243,9 @@ import * as Modals from './modalManager.js';
         if (lang === 'csv') {
           icon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>';
           title = 'Table view';
+        } else if (lang === 'image') {
+          icon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
+          title = 'Image view';
         } else if (_isRenderLang(lang)) {
           icon = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
           title = 'Preview';
@@ -2137,7 +2267,7 @@ import * as Modals from './modalManager.js';
         const codeIco = (lang === 'csv')
           ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>'
           : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
-        const codeTitle = (lang === 'csv') ? 'Edit' : 'Edit code';
+        const codeTitle = (lang === 'csv' || lang === 'image') ? 'Edit' : 'Edit code';
         if (codeBtn.dataset.lastIcon !== lang) {
           codeBtn.innerHTML = codeIco;
           codeBtn.title = codeTitle;
@@ -2151,6 +2281,7 @@ import * as Modals from './modalManager.js';
       // for runnable langs = output panel open.
       let _viewActive = false;
       if (lang === 'csv') _viewActive = _csvActive;
+      else if (lang === 'image') _viewActive = _imageActive;
       else if (_isRenderLang(lang)) _viewActive = _htmlActive;
       else _viewActive = _outputActive;
       const _codeBtn2 = renderToggle.querySelector('[data-renderview="code"]');
@@ -2170,6 +2301,8 @@ import * as Modals from './modalManager.js';
       actionBtn.innerHTML = _csvActive ? _penIco : '<span style="font-size:12px;font-weight:600;">⊞</span>';
       actionBtn.title = _csvActive ? 'Edit' : 'Table View';
       if (_csvActive) actionBtn.classList.add('active');
+    } else if (lang === 'image') {
+      show = false;
     } else if (_isRenderLang(lang)) {
       // SVG/HTML/XML use the segmented Code </> | Run ▶ light-switch toggle
       // (like markdown's edit/preview switch) instead of the single button.
@@ -3558,13 +3691,22 @@ import * as Modals from './modalManager.js';
     // as email source mode, so clear it before showing the rich email body;
     // otherwise the source wrapper can reappear over the composer.
     const isEmail = doc.language === 'email';
+    const isImageDoc = doc.language === 'image' || _isImageBackedDoc(doc.content || '');
     if (isEmail) {
       _setMarkdownPreviewActive(false, { remember: false });
+      _setImageViewActive(false, { remember: false });
       _showEmailFields(doc);
     } else {
       _hideEmailFields();
-      const wantsMarkdownPreview = (doc.language || 'markdown') === 'markdown' && doc._markdownPreviewActive === true;
-      _setMarkdownPreviewActive(wantsMarkdownPreview, { remember: false });
+      if (isImageDoc) {
+        if (langSelect) langSelect.value = 'image';
+        _setMarkdownPreviewActive(false, { remember: false });
+        _setImageViewActive(true, { remember: false });
+      } else {
+        _setImageViewActive(false, { remember: false });
+        const wantsMarkdownPreview = (doc.language || 'markdown') === 'markdown' && doc._markdownPreviewActive === true;
+        _setMarkdownPreviewActive(wantsMarkdownPreview, { remember: false });
+      }
     }
 
     // Hide version panel on switch
@@ -3836,6 +3978,7 @@ import * as Modals from './modalManager.js';
           <option value="php">php</option>
           <option value="csv">csv</option>
           <option value="email">email</option>
+          <option value="image">image</option>
           <option value="pdf">pdf</option>
         </select>
         <!-- Close + Copy/Export moved to the bottom action footer (#doc-actions-footer)
@@ -3946,6 +4089,7 @@ import * as Modals from './modalManager.js';
       <div id="doc-md-preview" class="doc-md-preview" style="display:none"></div>
       <div id="doc-csv-preview" class="doc-csv-preview" style="display:none"></div>
       <iframe id="doc-html-preview" class="doc-html-preview" sandbox="allow-scripts allow-modals" style="display:none"></iframe>
+      <div id="doc-image-view" class="doc-image-view" style="display:none;width:100%;flex:1;min-height:0;overflow:auto;background:color-mix(in srgb,var(--panel) 92%,#000);padding:18px;box-sizing:border-box;"></div>
       <div id="doc-pdf-view" style="display:none;width:100%;flex:1;min-height:0;overflow:auto;background:#525659;padding:20px 0;position:relative;">
         <div id="doc-pdf-save-pill" style="display:none;position:absolute;top:8px;right:14px;padding:4px 10px;border-radius:12px;font-size:11px;z-index:5;pointer-events:none;background:transparent;color:transparent;"></div>
       </div>
@@ -4349,6 +4493,8 @@ import * as Modals from './modalManager.js';
       }
       // If switching away from html, exit HTML preview
       if (!_isRenderLang(lang)) exitHtmlPreview();
+      if (lang !== 'image') _setImageViewActive(false, { remember: false });
+      else _setImageViewActive(true, { remember: false });
       // Show/hide email fields
       if (lang === 'email') {
         const doc = activeDocId && docs.get(activeDocId);
@@ -4499,6 +4645,7 @@ import * as Modals from './modalManager.js';
       const lang = (document.getElementById('doc-language-select')?.value || '').toLowerCase();
       if (lang === 'markdown') toggleMarkdownPreview();
       else if (lang === 'csv') toggleCsvPreview();
+      else if (lang === 'image') toggleImageView();
       else if (_isRenderLang(lang)) toggleHtmlPreview();
       else {
         // Runnable language — toggle output
@@ -4535,6 +4682,10 @@ import * as Modals from './modalManager.js';
         const csv = document.getElementById('doc-csv-preview');
         const isOn = csv && csv.style.display !== 'none';
         if (wantRun !== isOn) toggleCsvPreview();
+      } else if (lang === 'image') {
+        const img = document.getElementById('doc-image-view');
+        const isOn = img && img.style.display !== 'none';
+        if (wantRun !== isOn) toggleImageView();
       } else if (_isRenderLang(lang)) {
         const htmlPrev = document.getElementById('doc-html-preview');
         const isOn = htmlPrev && htmlPrev.style.display !== 'none';
@@ -8198,88 +8349,399 @@ import * as Modals from './modalManager.js';
     URL.revokeObjectURL(a.href);
   }
 
-  // "Import from device" — open a file picker, upload, and immediately open
-  // the resulting doc in THIS panel (vs. dumping it in the library and
-  // making the user click through). Mirrors the library's extension logic
-  // for text/code; routes PDFs through the dedicated import-pdf endpoint
-  // that handles AcroForm fields. Spreadsheets fall back to the library
-  // flow which already knows how to split sheets.
-  function _importFromDevice() {
+  async function _importFoldersFromDevice(opts = {}) {
+    if (!window.showDirectoryPicker) {
+      if (uiModule && uiModule.showError) {
+        uiModule.showError('This browser can only import one folder at a time from the button. Choose Folder, then run Import again for another folder.');
+      }
+      return _importFromDevice({ directory: true });
+    }
+
+    const currentSessionId = () => (
+      (sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId())
+      || _lastSessionId
+      || ''
+    );
+    const kind = (opts && opts.kind) || 'supported';
+    const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
+    const PDF_EXTS = new Set(['.pdf']);
+    const DOC_EXTS = new Set(['.txt', '.log', '.md', '.markdown', '.csv', '.tsv', '.json', '.xml', '.yaml', '.yml', '.html', '.htm', '.css', '.js', '.jsx', '.ts', '.tsx', '.py', '.sh', '.bash', '.sql', '.rs', '.go', '.java', '.c', '.cpp', '.h', '.hpp', '.rb', '.php', '.toml', '.ini']);
+    const extOf = (name = '') => {
+      const i = name.lastIndexOf('.');
+      return i >= 0 ? name.slice(i).toLowerCase() : '';
+    };
+    const matchesKind = (file) => {
+      const ext = extOf(file.webkitRelativePath || file.name || '');
+      const mime = (file.type || '').toLowerCase();
+      if (kind === 'images') return IMAGE_EXTS.has(ext) || mime.startsWith('image/');
+      if (kind === 'pdfs') return PDF_EXTS.has(ext) || mime === 'application/pdf';
+      if (kind === 'documents') return DOC_EXTS.has(ext) || (!ext && mime.startsWith('text/'));
+      return IMAGE_EXTS.has(ext) || PDF_EXTS.has(ext) || DOC_EXTS.has(ext);
+    };
+    const withRelativePath = (file, relPath) => {
+      try {
+        Object.defineProperty(file, 'webkitRelativePath', { value: relPath, configurable: true });
+        return file;
+      } catch (_) {
+        const copy = new File([file], file.name || relPath.split('/').pop() || 'file', {
+          type: file.type || '',
+          lastModified: file.lastModified || Date.now(),
+        });
+        try { Object.defineProperty(copy, 'webkitRelativePath', { value: relPath, configurable: true }); } catch (_) {}
+        return copy;
+      }
+    };
+    const walkDirectory = async (handle, prefix, out) => {
+      for await (const [name, entry] of handle.entries()) {
+        const path = prefix ? `${prefix}/${name}` : name;
+        if (entry.kind === 'file') {
+          const file = await entry.getFile();
+          out.push(withRelativePath(file, path));
+        } else if (entry.kind === 'directory') {
+          await walkDirectory(entry, path, out);
+        }
+      }
+    };
+    const postFolderBatch = async (files) => {
+      const fd = new FormData();
+      const sid = currentSessionId();
+      if (sid) fd.append('session_id', sid);
+      for (const file of files) {
+        fd.append('files', file, file.name || 'file');
+        fd.append('relative_paths', (file.webkitRelativePath || file.name || '').replace(/\\/g, '/'));
+      }
+      const r = await fetch(`${API_BASE}/api/documents/import-folder`, {
+        method: 'POST',
+        body: fd,
+        credentials: 'same-origin',
+      });
+      if (!r.ok) {
+        let msg = 'Folder import failed';
+        try {
+          const data = await r.json();
+          msg = data.detail || data.error || msg;
+        } catch (_) {
+          try { msg = await r.text() || msg; } catch (_) {}
+        }
+        throw new Error(msg);
+      }
+      return r.json();
+    };
+
+    const importedDocIds = [];
+    const failures = [];
+    let selectedFolders = 0;
+
+    while (true) {
+      let handle;
+      try {
+        handle = await window.showDirectoryPicker({ mode: 'read' });
+      } catch (err) {
+        if (!selectedFolders && err && err.name !== 'AbortError') throw err;
+        break;
+      }
+
+      selectedFolders += 1;
+      const rootName = handle.name || `folder-${selectedFolders}`;
+      const files = [];
+      await walkDirectory(handle, rootName, files);
+      const skippedByType = files.filter(f => !matchesKind(f));
+      const importFiles = files.filter(matchesKind);
+      for (const f of skippedByType) failures.push({ name: f.webkitRelativePath || f.name || 'unknown file', message: 'Skipped by selected import type' });
+
+      if (importFiles.length) {
+        if (uiModule && uiModule.showToast) {
+          uiModule.showToast(`Importing ${importFiles.length} file${importFiles.length === 1 ? '' : 's'} from ${rootName}…`);
+        }
+        try {
+          const data = await postFolderBatch(importFiles);
+          const sid = currentSessionId();
+          for (const doc of data.documents || []) {
+            const docId = doc.id || doc.doc_id;
+            if (!docId) continue;
+            addDocToTabs(doc, doc.session_id || sid);
+            importedDocIds.push(docId);
+          }
+          for (const err of data.errors || []) {
+            failures.push({ name: err.path || err.file || 'unknown file', message: err.error || err.reason || 'Import failed' });
+          }
+        } catch (err) {
+          failures.push({ name: rootName, message: err.message || String(err) });
+        }
+      }
+
+      if (!window.confirm('Import another folder?')) break;
+    }
+
+    if (importedDocIds.length) {
+      if (!isOpen) openPanel();
+      renderTabs();
+      _syncDocIndicator();
+      switchToDoc(importedDocIds[0]);
+      if (uiModule && uiModule.showToast) {
+        uiModule.showToast(`Imported ${importedDocIds.length} document${importedDocIds.length === 1 ? '' : 's'}`);
+      }
+    }
+    if (failures.length && uiModule && uiModule.showError) {
+      const names = failures.slice(0, 4).map(f => f.name).join(', ');
+      const suffix = failures.length > 4 ? ` and ${failures.length - 4} more` : '';
+      uiModule.showError(`Skipped/failed ${failures.length} file${failures.length === 1 ? '' : 's'}: ${names}${suffix}`);
+    }
+  }
+
+  // Import from device.
+  function _importFromDevice(opts = {}) {
+    const options = (opts && typeof opts === 'object') ? opts : {};
+    const pickDirectory = !!options.directory;
+    const kind = options.kind || 'supported';
     const EXT_TO_LANG = {
       '.py':'python','.js':'javascript','.ts':'typescript','.html':'html','.htm':'html',
-      '.css':'css','.md':'markdown','.json':'json','.yml':'yaml','.yaml':'yaml',
+      '.css':'css','.md':'markdown','.markdown':'markdown','.json':'json','.yml':'yaml','.yaml':'yaml',
       '.sh':'bash','.bash':'bash','.sql':'sql','.rs':'rust','.go':'go',
       '.java':'java','.c':'c','.cpp':'cpp','.h':'c','.hpp':'cpp',
       '.rb':'ruby','.php':'php','.xml':'xml','.toml':'toml','.ini':'ini',
       '.txt':'','.log':'','.csv':'csv','.tsv':'csv','.jsx':'javascript','.tsx':'typescript',
     };
+    const SPREADSHEET_EXTS = new Set(['.xlsx', '.xls', '.ods']);
+    const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
+    const KNOWN_BINARY_EXTS = new Set([
+      '.ico', '.svgz',
+      '.zip', '.7z', '.rar', '.tar', '.gz', '.bz2', '.xz',
+      '.exe', '.dll', '.so', '.dylib', '.bin', '.dat',
+      '.mp3', '.wav', '.ogg', '.mp4', '.mov', '.avi', '.mkv', '.webm',
+      '.ttf', '.otf', '.woff', '.woff2',
+    ]);
+    const DOC_ACCEPT = [
+      '.txt', '.log', '.md', '.markdown', '.csv', '.tsv', '.json', '.xml', '.yaml', '.yml',
+      '.html', '.htm', '.css', '.js', '.jsx', '.ts', '.tsx', '.py', '.sh', '.bash',
+      '.sql', '.rs', '.go', '.java', '.c', '.cpp', '.h', '.hpp', '.rb', '.php',
+      '.toml', '.ini', 'text/*',
+    ].join(',');
+    const IMAGE_ACCEPT = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', 'image/*'].join(',');
+    const PDF_ACCEPT = ['.pdf', 'application/pdf'].join(',');
+    const TEXT_ACCEPT = ['.pdf', DOC_ACCEPT, IMAGE_ACCEPT].join(',');
+    const ACCEPT_BY_KIND = {
+      supported: TEXT_ACCEPT,
+      images: IMAGE_ACCEPT,
+      pdfs: PDF_ACCEPT,
+      documents: DOC_ACCEPT,
+    };
+
+    const _extOf = (name = '') => {
+      const dotIdx = name.lastIndexOf('.');
+      return dotIdx >= 0 ? name.slice(dotIdx).toLowerCase() : '';
+    };
+    const _matchesImportKind = (file) => {
+      const ext = _extOf(file.webkitRelativePath || file.name || '');
+      const mime = (file.type || '').toLowerCase();
+      if (kind === 'images') return IMAGE_EXTS.has(ext) || mime.startsWith('image/');
+      if (kind === 'pdfs') return ext === '.pdf' || mime === 'application/pdf';
+      if (kind === 'documents') return EXT_TO_LANG[ext] !== undefined || (!ext && mime.startsWith('text/'));
+      return ext === '.pdf' || IMAGE_EXTS.has(ext) || EXT_TO_LANG[ext] !== undefined;
+    };
+    const _baseTitleFor = (file) => {
+      const rel = (file.webkitRelativePath || file.name || '').replace(/\\/g, '/');
+      const path = rel || file.name || 'Untitled';
+      const lastSlash = path.lastIndexOf('/');
+      const lastDot = path.lastIndexOf('.');
+      // For folders, preserve the relative path in the title, minus the file extension.
+      return lastDot > lastSlash ? path.slice(0, lastDot) : path;
+    };
+    const _readTextFile = (file) => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result || '');
+      reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
+      reader.readAsText(file);
+    });
+    const _currentSessionId = () => (
+      (sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId())
+      || _lastSessionId
+      || ''
+    );
+    const _fetchAndOpenImportedDoc = async (docId, fallbackTitle) => {
+      const sid = _currentSessionId();
+      try {
+        const dr = await fetch(`${API_BASE}/api/document/${docId}`, { credentials: 'same-origin' });
+        const full = dr.ok ? await dr.json() : { id: docId, title: fallbackTitle };
+        addDocToTabs(full, full.session_id || sid);
+        return full.id || docId;
+      } catch (_) {
+        addDocToTabs({ id: docId, title: fallbackTitle }, sid);
+        return docId;
+      }
+    };
+    const _importOneDeviceFile = async (file) => {
+      const name = file.name || '';
+      const ext = _extOf(name);
+      const title = _baseTitleFor(file);
+      const mime = (file.type || '').toLowerCase();
+      const isPdf = ext === '.pdf' || mime === 'application/pdf';
+      const isImage = IMAGE_EXTS.has(ext) || mime.startsWith('image/');
+
+      if (isImage) {
+        const batch = await _importBatchDeviceFiles([file]);
+        if (batch.failures && batch.failures.length) {
+          throw batch.failures[0].error || new Error('Image import failed');
+        }
+        const docId = batch.importedDocIds && batch.importedDocIds[0];
+        if (!docId) throw new Error('Image import succeeded but no document id was returned');
+        return docId;
+      }
+
+      if (SPREADSHEET_EXTS.has(ext)) {
+        throw new Error('Spreadsheet imports still need the library sheet-split flow');
+      }
+      if (pickDirectory && KNOWN_BINARY_EXTS.has(ext)) {
+        throw new Error('Skipped unsupported binary file');
+      }
+
+      let docId = null;
+      if (isPdf) {
+        const fd = new FormData();
+        fd.append('file', file);
+        const sid = _currentSessionId();
+        if (sid) fd.append('session_id', sid);
+        const r = await fetch(`${API_BASE}/api/documents/import-pdf`, {
+          method: 'POST',
+          body: fd,
+          credentials: 'same-origin',
+        });
+        if (!r.ok) throw new Error('PDF import failed');
+        const j = await r.json();
+        docId = j.doc_id || j.id;
+      } else {
+        const content = await _readTextFile(file);
+        const lang = EXT_TO_LANG[ext] !== undefined ? EXT_TO_LANG[ext] : null;
+        const sid = _currentSessionId();
+        const body = { title, language: lang, content };
+        if (sid) body.session_id = sid;
+        const r = await fetch(`${API_BASE}/api/document`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) throw new Error('Import failed');
+        const j = await r.json();
+        docId = j.id || j.doc_id;
+      }
+
+      if (!docId) throw new Error('Import succeeded but no document id was returned');
+      return _fetchAndOpenImportedDoc(docId, title);
+    };
+
+    const _importBatchDeviceFiles = async (files) => {
+      const sid = _currentSessionId();
+      const fd = new FormData();
+      if (sid) fd.append('session_id', sid);
+      for (const file of files) {
+        fd.append('files', file, file.name || 'file');
+        fd.append('relative_paths', (file.webkitRelativePath || file.name || '').replace(/\\/g, '/'));
+      }
+
+      const r = await fetch(`${API_BASE}/api/documents/import-folder`, {
+        method: 'POST',
+        body: fd,
+        credentials: 'same-origin',
+      });
+      if (!r.ok) {
+        let msg = 'Folder import failed';
+        try {
+          const data = await r.json();
+          msg = data.detail || data.error || msg;
+        } catch (_) {
+          try { msg = await r.text() || msg; } catch (_) {}
+        }
+        throw new Error(msg);
+      }
+
+      const data = await r.json();
+      const importedDocIds = [];
+      const failures = [];
+      for (const doc of data.documents || []) {
+        const docId = doc.id || doc.doc_id;
+        if (!docId) continue;
+        addDocToTabs(doc, doc.session_id || sid);
+        importedDocIds.push(docId);
+      }
+      for (const err of data.errors || []) {
+        failures.push({
+          file: { name: err.path || err.file || 'unknown file', webkitRelativePath: err.path || '' },
+          error: new Error(err.error || err.reason || 'Import failed'),
+        });
+      }
+      return { importedDocIds, failures };
+    };
+
     const fi = document.createElement('input');
     fi.type = 'file';
+    fi.multiple = true;
+    fi.accept = ACCEPT_BY_KIND[kind] || TEXT_ACCEPT;
+    if (pickDirectory) {
+      fi.webkitdirectory = true;
+      fi.directory = true;
+      fi.setAttribute('webkitdirectory', '');
+      fi.setAttribute('directory', '');
+    }
     fi.style.display = 'none';
     fi.addEventListener('change', async () => {
-      const file = fi.files?.[0];
-      if (!file) return;
-      const name = file.name;
-      const dotIdx = name.lastIndexOf('.');
-      const ext = dotIdx >= 0 ? name.slice(dotIdx).toLowerCase() : '';
-      const baseTitle = dotIdx > 0 ? name.slice(0, dotIdx) : name;
-      const isSpreadsheet = ['.xlsx','.xls','.ods'].includes(ext);
-      const isPdf = ext === '.pdf';
-      // Spreadsheets need the library's per-sheet split — defer to it.
-      if (isSpreadsheet) {
+      const selectedFiles = Array.from(fi.files || []).filter(f => f && f.name);
+      const skippedByType = selectedFiles.filter(f => !_matchesImportKind(f));
+      const files = selectedFiles.filter(_matchesImportKind);
+      if (files.length === 0) {
+        if (skippedByType.length && uiModule && uiModule.showError) uiModule.showError('No files matched that import type.');
+        fi.remove();
+        return;
+      }
+
+      if (!pickDirectory && files.length === 1 && SPREADSHEET_EXTS.has(_extOf(files[0].name))) {
+        fi.value = '';
+        fi.remove();
         openLibrary();
         requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById('doclib-import-file-btn')?.click()));
         return;
       }
+
+      let importedDocIds = [];
+      let failures = skippedByType.map(file => ({ file, error: new Error('Skipped by selected import type') }));
       try {
-        let docId = null;
-        if (isPdf) {
-          const fd = new FormData();
-          fd.append('file', file);
-          const sid = (sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId()) || _lastSessionId || '';
-          if (sid) fd.append('session_id', sid);
-          const r = await fetch(`${API_BASE}/api/documents/import-pdf`, { method: 'POST', body: fd, credentials: 'same-origin' });
-          if (!r.ok) throw new Error('PDF import failed');
-          const j = await r.json();
-          docId = j.doc_id || j.id;
+        if (pickDirectory || files.length > 1) {
+          if (uiModule && uiModule.showToast) {
+            uiModule.showToast(`Importing ${files.length} file${files.length === 1 ? '' : 's'}…`);
+          }
+          const batch = await _importBatchDeviceFiles(files);
+          importedDocIds = batch.importedDocIds || [];
+          failures = failures.concat(batch.failures || []);
         } else {
-          const content = await new Promise((res, rej) => {
-            const reader = new FileReader();
-            reader.onload = () => res(reader.result || '');
-            reader.onerror = () => rej(reader.error);
-            reader.readAsText(file);
-          });
-          const lang = EXT_TO_LANG[ext] !== undefined ? EXT_TO_LANG[ext] : null;
-          const sid = (sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId()) || _lastSessionId || '';
-          const body = { title: baseTitle, language: lang, content };
-          if (sid) body.session_id = sid;
-          const r = await fetch(`${API_BASE}/api/document`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify(body),
-          });
-          if (!r.ok) throw new Error('Import failed');
-          const j = await r.json();
-          docId = j.id || j.doc_id;
-        }
-        if (docId) {
-          // Fetch the full doc so addDocToTabs has the proper content +
-          // language fields (it's used downstream by switchToDoc).
-          try {
-            const dr = await fetch(`${API_BASE}/api/document/${docId}`, { credentials: 'same-origin' });
-            const full = dr.ok ? await dr.json() : { id: docId, title: baseTitle };
-            const sid = (sessionModule && sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId()) || _lastSessionId || '';
-            addDocToTabs(full, full.session_id || sid);
-            switchToDoc(full.id || docId);
-          } catch (_) {
-            // Fallback — at least try to switch (may fail silently if not loaded).
-            addDocToTabs({ id: docId, title: baseTitle }, _lastSessionId || '');
-            switchToDoc(docId);
+          for (const file of files) {
+            try {
+              const docId = await _importOneDeviceFile(file);
+              importedDocIds.push(docId);
+            } catch (err) {
+              failures.push({ file, error: err });
+            }
           }
         }
-      } catch (err) {
-        if (uiModule && uiModule.showError) uiModule.showError('Import failed: ' + (err.message || err));
+
+        if (importedDocIds.length) {
+          if (!isOpen) openPanel();
+          renderTabs();
+          _syncDocIndicator();
+          // Open the first imported doc so folder uploads do not end on a random
+          // later file, while all imported docs are still available as tabs.
+          switchToDoc(importedDocIds[0]);
+        }
+
+        if (uiModule && uiModule.showToast && importedDocIds.length) {
+          uiModule.showToast(`Imported ${importedDocIds.length} document${importedDocIds.length === 1 ? '' : 's'}`);
+        }
+        if (failures.length) {
+          const names = failures.slice(0, 4).map(f => f.file.webkitRelativePath || f.file.name).join(', ');
+          const suffix = failures.length > 4 ? ` and ${failures.length - 4} more` : '';
+          if (uiModule && uiModule.showError) {
+            uiModule.showError(`Skipped/failed ${failures.length} file${failures.length === 1 ? '' : 's'}: ${names}${suffix}`);
+          }
+        }
       } finally {
         fi.value = '';
         fi.remove();
@@ -8287,6 +8749,14 @@ import * as Modals from './modalManager.js';
     });
     document.body.appendChild(fi);
     fi.click();
+  }
+
+  export function importFromDevice() {
+    return _importFromDevice();
+  }
+
+  export function importFolderFromDevice() {
+    return _importFromDevice({ directory: true });
   }
 
   function showExportMenu(e, anchorRect) {
@@ -8331,7 +8801,8 @@ import * as Modals from './modalManager.js';
     // ("bring something IN" vs "send something OUT"), and the footer was
     // getting too cramped for dedicated icons.
     options.push({ label: 'Import from library', fn: () => openLibrary() });
-    options.push({ label: 'Import from device', fn: () => _importFromDevice(), _divider: true });
+    options.push({ label: 'Import from device', fn: () => _importFromDevice() });
+    options.push({ label: 'Import folder from device', fn: () => _importFromDevice({ directory: true }), _divider: true });
     if (isForm) options.push({ label: 'Filled PDF (.pdf)', fn: _downloadFilledPdf });
     options.push(
       { label: 'Export Markdown', fn: exportDocument },
@@ -8537,6 +9008,94 @@ import * as Modals from './modalManager.js';
     if (mdToolbar?._syncOverflow) requestAnimationFrame(mdToolbar._syncOverflow);
   }
 
+  function _setImageViewActive(active, { remember = true } = {}) {
+    const view = document.getElementById('doc-image-view');
+    const wrap = document.getElementById('doc-editor-wrap');
+    if (!view || !wrap) return;
+
+    if (active) {
+      const doc = activeDocId && docs.get(activeDocId);
+      const src = _parseImageSource(doc?.content || document.getElementById('doc-editor-textarea')?.value || '');
+      const mdPrev = document.getElementById('doc-md-preview');
+      if (mdPrev) mdPrev.style.display = 'none';
+      const csvPrev = document.getElementById('doc-csv-preview');
+      if (csvPrev) csvPrev.style.display = 'none';
+      const htmlPrev = document.getElementById('doc-html-preview');
+      if (htmlPrev) htmlPrev.style.display = 'none';
+      const pdfPane = document.getElementById('doc-pdf-view');
+      if (pdfPane) pdfPane.style.display = 'none';
+      if (!src) {
+        view.innerHTML = '<div style="opacity:.7;text-align:center;padding:42px;">No image source found in this document.</div>';
+      } else {
+        const title = doc?.title || src.filename || 'Image';
+        const safeTitle = _escHtml(String(title));
+        const safeFile = _escHtml(String(src.filename || title));
+        const safeMime = _escHtml(String(src.mime || 'image'));
+        const safeUrl = String(src.url || '');
+        const attrTitle = safeTitle.replace(/"/g, '&quot;');
+        view.innerHTML = `
+          <div style="display:flex;align-items:center;gap:8px;margin:0 auto 12px;max-width:1100px;">
+            <div style="min-width:0;flex:1;">
+              <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${safeTitle}</div>
+              <div style="font-size:11px;opacity:.58;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${safeFile}${safeMime ? ' · ' + safeMime : ''}</div>
+            </div>
+            <button type="button" class="confirm-btn confirm-btn-secondary" data-img-action="copy" style="padding:4px 9px;font-size:12px;">Copy URL</button>
+            <button type="button" class="confirm-btn confirm-btn-secondary" data-img-action="open" style="padding:4px 9px;font-size:12px;">Open</button>
+            <button type="button" class="confirm-btn confirm-btn-primary" data-img-action="download" style="padding:4px 9px;font-size:12px;">Download</button>
+          </div>
+          <div style="max-width:1100px;margin:0 auto;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:repeating-conic-gradient(color-mix(in srgb,var(--fg) 4%,transparent) 0% 25%,transparent 0% 50%) 50% / 22px 22px;display:flex;align-items:center;justify-content:center;min-height:240px;">
+            <img src="${safeUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}" alt="${attrTitle}" style="display:block;max-width:100%;height:auto;max-height:calc(100vh - 260px);object-fit:contain;background:transparent;" />
+          </div>
+        `;
+        view.querySelector('[data-img-action="copy"]')?.addEventListener('click', async () => {
+          const absolute = new URL(src.url, window.location.origin).href;
+          try {
+            if (uiModule && uiModule.copyToClipboard) await uiModule.copyToClipboard(absolute);
+            else await navigator.clipboard.writeText(absolute);
+          } catch (_) {}
+        });
+        view.querySelector('[data-img-action="open"]')?.addEventListener('click', () => {
+          window.open(src.url, '_blank', 'noopener');
+        });
+        view.querySelector('[data-img-action="download"]')?.addEventListener('click', () => {
+          const a = document.createElement('a');
+          a.href = src.url;
+          a.download = src.filename || `${(doc?.title || 'image').replace(/[^a-zA-Z0-9_\-. ]/g, '_')}.png`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        });
+      }
+      view.style.display = '';
+      wrap.style.display = 'none';
+    } else {
+      view.style.display = 'none';
+      view.innerHTML = '';
+      const md = document.getElementById('doc-md-preview');
+      const csv = document.getElementById('doc-csv-preview');
+      const html = document.getElementById('doc-html-preview');
+      const pdf = document.getElementById('doc-pdf-view');
+      const otherActive = (md && md.style.display !== 'none')
+        || (csv && csv.style.display !== 'none')
+        || (html && html.style.display !== 'none')
+        || (pdf && pdf.style.display !== 'none');
+      const isEmailDoc = docs.get(activeDocId)?.language === 'email';
+      const richEmailBody = document.getElementById('doc-email-richbody');
+      if (!otherActive && !(isEmailDoc && richEmailBody && richEmailBody.style.display !== 'none')) {
+        wrap.style.display = '';
+      }
+    }
+    if (remember && activeDocId && docs.has(activeDocId)) {
+      docs.get(activeDocId)._imageViewActive = !!active;
+    }
+    _syncHeaderActions();
+  }
+
+  function toggleImageView() {
+    const view = document.getElementById('doc-image-view');
+    _setImageViewActive(!(view && view.style.display !== 'none'));
+  }
+
   /** Toggle markdown preview */
   function _setMarkdownPreviewActive(active, { remember = true } = {}) {
     const preview = document.getElementById('doc-md-preview');
@@ -8545,6 +9104,8 @@ import * as Modals from './modalManager.js';
     if (!preview || !wrap || !textarea) return;
 
     if (active) {
+      const imgView = document.getElementById('doc-image-view');
+      if (imgView) { imgView.style.display = 'none'; imgView.innerHTML = ''; }
       const md = textarea.value || '';
       if (markdownModule && markdownModule.mdToHtml) {
         preview.innerHTML = markdownModule.mdToHtml(md);
