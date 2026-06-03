@@ -103,9 +103,14 @@ def cmd_list(args) -> None:
     end = _parse_dt(args.end) if args.end else (start + timedelta(days=30))
     db = SessionLocal()
     try:
+        # Overlap semantics, matching routes/calendar_routes.py: an event
+        # belongs in [start, end) if it starts before the window ends AND
+        # ends after the window begins. Filtering on dtstart alone dropped
+        # events that began before the window but are still in progress
+        # inside it (e.g. an all-day or multi-day event listed mid-span).
         q = db.query(CalendarEvent).filter(
-            CalendarEvent.dtstart >= start,
             CalendarEvent.dtstart < end,
+            CalendarEvent.dtend > start,
         )
         if args.calendar:
             cal = db.query(CalendarCal).filter(CalendarCal.name == args.calendar).first()
