@@ -21,6 +21,143 @@ from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_u
 MAX_OUTPUT_CHARS = 10_000
 MAX_READ_CHARS = 20_000
 
+# ---------------------------------------------------------------------------
+# Path confinement for read_file / write_file
+# ---------------------------------------------------------------------------
+# read_file + write_file are admin-only tools, but the path the agent
+# supplies is model-controlled. Prompt-injection in an admin's chat can
+# weaponise "read /etc/shadow" or "write ~/.ssh/authorized_keys" without
+# the admin noticing.
+#
+# Policy:
+#   1. Sensitive-subpath deny list — checked FIRST. Blocks .ssh,
+#      .gnupg, shell rc files, token/env files even if the root above
+#      them is on the allowlist.
+#   2. Allowlist — only the directories the agent legitimately needs
+#      (project data/, system tmp). $HOME is NOT on the default list.
+#   3. Opt-in extra roots — admin can add broader roots via the
+#      "tool_path_extra_roots" setting (list of path strings).
+# ---------------------------------------------------------------------------
+
+_SENSITIVE_BASENAMES: set[str] = {
+    ".ssh", ".gnupg", ".gitconfig",
+    ".bashrc", ".bash_profile", ".bash_logout",
+    ".zshrc", ".zprofile", ".zshenv",
+    ".profile", ".tcshrc", ".cshrc",
+    ".env", ".netrc",
+}
+
+_SENSITIVE_FILE_PATTERNS: tuple[str, ...] = (
+    "authorized_keys", "id_rsa", "id_ed25519", "id_ecdsa",
+    "known_hosts",
+)
+
+
+def _is_sensitive_path(resolved: str) -> bool:
+    """Return True if *resolved* falls under a sensitive directory or
+    matches a sensitive filename — regardless of what root it sits under.
+    """
+    parts = resolved.split(os.sep)
+    filenames: set[str] = {parts[-1]} if parts else set()
+
+    # Check if any path component is a sensitive directory.
+    for part in parts:
+        if part in _SENSITIVE_BASENAMES:
+            return True
+
+    # Check filename against known sensitive files.
+    for pat in _SENSITIVE_FILE_PATTERNS:
+        if pat in filenames:
+            return True
+
+    return False
+
+
+def _tool_path_roots() -> list[str]:
+    """Return the list of directory roots that read_file / write_file
+    may touch. Default: project data/ + system temp dirs. Extra roots
+    are loaded from the ``tool_path_extra_roots`` setting.
+    """
+    roots: list[str] = []
+
+    # Project data directory — the agent's primary workspace.
+    from src.constants import DATA_DIR
+    roots.append(DATA_DIR)
+
+    # /tmp (and its macOS realpath /private/tmp).
+    roots.append("/tmp")
+    try:
+        private_tmp = os.path.realpath("/tmp")
+        if private_tmp != "/tmp":
+            roots.append(private_tmp)
+    except OSError:
+        pass
+
+    # $TMPDIR — per-user temp root on macOS (e.g. /var/folders/.../T/).
+    tmpdir = os.environ.get("TMPDIR")
+    if tmpdir:
+        roots.append(tmpdir)
+
+    # Opt-in extra roots from settings.
+    try:
+        from src.settings import get_setting
+        extra = get_setting("tool_path_extra_roots")
+        if isinstance(extra, list):
+            roots.extend(str(r) for r in extra if r)
+    except Exception:
+        pass
+
+    # Deduplicate; resolve symlinks so containment is unambiguous.
+    seen: set[str] = set()
+    out: list[str] = []
+    for r in roots:
+        try:
+            real = os.path.realpath(r)
+        except OSError:
+            continue
+        if real in seen:
+            continue
+        seen.add(real)
+        out.append(real)
+    return out
+
+
+def _resolve_tool_path(raw_path: str) -> str:
+    """Resolve and confine a model-supplied path.
+
+    Order of checks:
+      1. Non-empty path.
+      2. Sensitive-subpath deny list (blocks .ssh, .gnupg, etc.
+         even when the root is on the allowlist).
+      3. Allowlist containment (must land under one of the roots).
+
+    Returns the realpath on success. Raises ValueError on rejection.
+    Symlinks are resolved before comparison.
+    """
+    if raw_path is None or not str(raw_path).strip():
+        raise ValueError("path is required")
+    expanded = os.path.expanduser(str(raw_path).strip())
+    resolved = os.path.realpath(expanded)
+
+    if _is_sensitive_path(resolved):
+        raise ValueError(
+            f"path '{raw_path}' is inside a sensitive directory "
+            f"(e.g. .ssh, .gnupg) or matches a sensitive filename"
+        )
+
+    for root in _tool_path_roots():
+        if resolved == root:
+            return resolved
+        try:
+            common = os.path.commonpath([resolved, root])
+        except ValueError:
+            continue
+        if common == root:
+            return resolved
+    raise ValueError(
+        f"path '{raw_path}' is outside the allowed roots"
+    )
+
 # Bash + python tools used to share a single 60s timeout. That's
 # enough for one-shot commands but starves real workloads (pip
 # install, ffmpeg conversions, etc.) — and worse, the agent saw the
@@ -168,6 +305,7 @@ async def _run_subprocess_streaming(
     )
 
 _ADMIN_TOOLS = {
+    "app_api",
     "manage_endpoints",
     "manage_mcp",
     "manage_webhooks",
@@ -175,6 +313,7 @@ _ADMIN_TOOLS = {
     "manage_settings",
     "download_model",
     "serve_model",
+    "serve_preset",
     "stop_served_model",
     "cancel_download",
 }
@@ -373,9 +512,11 @@ async def _direct_fallback(
             return {"output": output or "(no output)", "exit_code": rc or 0}
 
         if tool == "read_file":
-            path = content.split("\n", 1)[0].strip()
-            if not path:
-                return {"error": "read_file: path required", "exit_code": 1}
+            raw_path = content.split("\n", 1)[0].strip()
+            try:
+                path = _resolve_tool_path(raw_path)
+            except ValueError as e:
+                return {"error": f"read_file: {e}", "exit_code": 1}
             try:
                 # Run blocking read in a thread to keep the loop responsive
                 def _read():
@@ -395,13 +536,14 @@ async def _direct_fallback(
 
         if tool == "write_file":
             lines = content.split("\n", 1)
-            path = lines[0].strip()
+            raw_path = lines[0].strip()
             body = lines[1] if len(lines) > 1 else ""
-            if not path:
-                return {"error": "write_file: path required", "exit_code": 1}
+            try:
+                path = _resolve_tool_path(raw_path)
+            except ValueError as e:
+                return {"error": f"write_file: {e}", "exit_code": 1}
             try:
                 def _write():
-                    import os
                     d = os.path.dirname(path)
                     if d:
                         os.makedirs(d, exist_ok=True)
@@ -502,6 +644,11 @@ async def _direct_fallback(
                 )
             except asyncio.TimeoutError:
                 return {"error": f"web_fetch: timed out fetching {url}", "exit_code": 1}
+            except Exception as e:
+                # Direct URL fetches can hit bot protection / auth walls
+                # (e.g. eBay 403). Treat that as a tool failure the model can
+                # reason around, not an uncaught chat-stream 500.
+                return {"error": f"web_fetch: {url}: {e}", "exit_code": 1}
             err = result.get("error")
             text = (result.get("content") or "").strip()
             title = result.get("title") or ""
@@ -651,15 +798,15 @@ async def execute_tool_block(
     elif tool == "create_document":
         title = content.split("\n")[0].strip()[:60]
         desc = f"create_document: {title}"
-        result = await do_create_document(content, session_id=session_id)
+        result = await do_create_document(content, session_id=session_id, owner=owner)
     elif tool == "update_document":
         desc = f"update_document: {content.split(chr(10))[0][:60]}"
-        result = await do_update_document(content)
+        result = await do_update_document(content, owner=owner)
     elif tool == "edit_document":
-        result = await do_edit_document(content)
+        result = await do_edit_document(content, owner=owner)
         desc = f"edit_document: {result.get('title', '')}"
     elif tool == "suggest_document":
-        result = await do_suggest_document(content)
+        result = await do_suggest_document(content, owner=owner)
         desc = f"suggest_document: {result.get('count', 0)} suggestions"
     elif tool == "search_chats":
         query = content.split("\n")[0].strip()
@@ -783,7 +930,7 @@ async def execute_tool_block(
             result = {"error": "MCP manager not available", "exit_code": 1}
     else:
         desc = f"unknown: {tool}"
-        result = {"error": f"Unknown tool type: {tool}"}
+        result = {"error": f"Unknown tool type: {tool}", "exit_code": 1}
 
     logger.info(f"Tool executed: {desc} -> exit_code={result.get('exit_code', 'n/a')}")
     return desc, result

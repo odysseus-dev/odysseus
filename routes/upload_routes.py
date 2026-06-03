@@ -8,6 +8,7 @@ from typing import List
 import logging
 from core.middleware import require_admin
 from src.auth_helpers import get_current_user
+from src.upload_handler import count_recent_uploads
 
 logger = logging.getLogger(__name__)
 
@@ -24,15 +25,18 @@ def setup_upload_routes(upload_handler):
             
         client_ip = request.client.host if request.client else "unknown"
         out = []
-        
-        # Limit concurrent uploads per IP
-        ip_upload_count = sum(
-            1 for f in files 
-            if client_ip in upload_handler.upload_rate_log and 
-            any(now > time.time() - 10 for now in upload_handler.upload_rate_log[client_ip][-len(files):])
+
+        # Limit concurrent uploads per IP. Count genuine recent upload events —
+        # NOT the number of files in this batch. The previous check summed over
+        # `files`, so a single multi-file request counted itself as N concurrent
+        # uploads and tripped the limit (issue #1346: "attach more than one file
+        # → the model doesn't even see them"). save_upload still enforces the
+        # per-minute sliding-window rate limit per file.
+        recent_uploads = count_recent_uploads(
+            upload_handler.upload_rate_log.get(client_ip, []), time.time()
         )
-        
-        if ip_upload_count >= upload_handler.max_concurrent_uploads:
+
+        if recent_uploads >= upload_handler.max_concurrent_uploads:
             raise HTTPException(
                 status_code=429,
                 detail=f"Maximum concurrent uploads ({upload_handler.max_concurrent_uploads}) exceeded"

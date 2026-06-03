@@ -2,30 +2,55 @@ services:
   odysseus:
     build: .
     ports:
-      - "${APP_PORT:-7000}:7000"
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
     volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
+      - ./data:/app/data:z
+      - ./logs:/app/logs:z
       # Cookbook remote-server SSH identity. Odysseus can generate a key here;
       # add the shown public key to each remote server's authorized_keys.
-      - ./data/ssh:/app/.ssh
+      - ./data/ssh:/app/.ssh:z
       # Cookbook local model cache. Inside Docker, "Local" means the Odysseus
       # container, so persist its HuggingFace cache under ./data/huggingface.
-      - ./data/huggingface:/app/.cache/huggingface
+      - ./data/huggingface:/app/.cache/huggingface:z
       # Cookbook-installed Python CLIs/packages (vLLM, llama-cpp-python, etc.)
       # land under /app/.local for the odysseus user. Persist them so a
       # container recreate does not silently remove installed serve engines.
-      - ./data/local:/app/.local
+      - ./data/local:/app/.local:z
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.
       - "host.docker.internal:host-gateway"
-    env_file:
-      - .env
     environment:
+      - LLM_HOST=${LLM_HOST:-localhost}
+      - LLM_HOSTS=${LLM_HOSTS:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
+      - RESEARCH_LLM_ENDPOINT=${RESEARCH_LLM_ENDPOINT:-}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
       - SEARXNG_INSTANCE=http://searxng:8080
       - CHROMADB_HOST=chromadb
       - CHROMADB_PORT=8000
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      - LOCALHOST_BYPASS=${LOCALHOST_BYPASS:-false}
+      - ODYSSEUS_ADMIN_USER=${ODYSSEUS_ADMIN_USER:-admin}
+      - ODYSSEUS_ADMIN_PASSWORD=${ODYSSEUS_ADMIN_PASSWORD:-}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost,http://127.0.0.1}
+      - SECURE_COOKIES=${SECURE_COOKIES:-false}
+      - EMBEDDING_URL=${EMBEDDING_URL:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
+      - FASTEMBED_MODEL=${FASTEMBED_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      - FASTEMBED_CACHE_PATH=${FASTEMBED_CACHE_PATH:-}
+      - CLEANUP_INTERVAL_HOURS=${CLEANUP_INTERVAL_HOURS:-24}
+      - ODYSSEUS_INPROCESS_POLLERS=${ODYSSEUS_INPROCESS_POLLERS:-1}
+      - ODYSSEUS_INPROCESS_TASKS=${ODYSSEUS_INPROCESS_TASKS:-1}
+      - ODYSSEUS_SCRIPT_HOST=${ODYSSEUS_SCRIPT_HOST:-localhost}
+      - DATA_BRAVE_API_KEY=${DATA_BRAVE_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      - GOOGLE_PSE_CX=${GOOGLE_PSE_CX:-}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
+      - SERPER_API_KEY=${SERPER_API_KEY:-}
       # PUID / PGID — the user/group the container drops to before
       # running uvicorn (entrypoint also chowns /app/data + /app/logs
       # to match, so bind-mounted files stay editable from the host).
@@ -54,7 +79,12 @@ services:
     restart: unless-stopped
 
   searxng:
-    image: docker.io/searxng/searxng:latest
+    # Pinned, not :latest — odysseus waits on searxng's healthcheck
+    # (depends_on: condition: service_healthy), so a broken upstream `latest`
+    # tag blocks the whole app from starting. 2026.6.2 crashes on boot with
+    # `KeyError: 'default_doi_resolver'`, failing the healthcheck (issue #1414).
+    # Bump this deliberately after verifying a newer tag boots clean.
+    image: docker.io/searxng/searxng:2026.5.31-7159b8aed
     entrypoint:
       - /bin/sh
       - -c
@@ -72,10 +102,24 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - searxng-data:/etc/searxng
-      - ./config/searxng/settings.yml:/tmp/searxng-settings.yml.template:ro
+      - ./config/searxng/settings.yml:/tmp/searxng-settings.yml.template:ro,z
     environment:
       - SEARXNG_BASE_URL=http://localhost:8080/
       - SEARXNG_SECRET=${SEARXNG_SECRET:-}
+    # The official searxng image runs as the non-root `searxng` user, but its
+    # entrypoint still needs to chown /etc/searxng on first boot, drop privs via
+    # su-exec, and (with our wrapper above) write settings.yml into the named
+    # volume. Without these capabilities the wrapper aborts at the redirection
+    # with EACCES and the container fails its healthcheck with permission
+    # errors during setup. Mirrors the cap set recommended by the upstream
+    # searxng-docker compose file. See issue #721.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+      - DAC_OVERRIDE
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=5).read(1)\""]
       interval: 5s

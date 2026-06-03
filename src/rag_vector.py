@@ -7,6 +7,7 @@ configurable embedding endpoint via EMBEDDING_URL env var.
 """
 
 import os
+import hashlib
 import re
 import logging
 import numpy as np
@@ -24,6 +25,16 @@ VECTOR_WEIGHT = 0.7
 KEYWORD_WEIGHT = 0.3
 
 COLLECTION_NAME = "odysseus_rag"
+
+
+def _generate_doc_id(text: str, owner: str = "") -> str:
+    # Owner-scope the id so two owners can index byte-identical chunks
+    # without the second one's add early-returning on the first's id and
+    # being silently dropped from their owner-filtered search results.
+    # Empty owner reproduces the legacy text-only id so the unowned/base
+    # index keeps its existing ids and isn't re-churned.
+    key = f"{owner}\x00{text}" if owner else text
+    return f"doc_{hashlib.sha256(key.encode('utf-8')).hexdigest()[:16]}"
 
 
 class VectorRAG:
@@ -99,7 +110,7 @@ class VectorRAG:
             return False
 
         try:
-            doc_id = f"doc_{hash(text) % 10**16}"
+            doc_id = _generate_doc_id(text, metadata.get("owner") or "")
             # Check if already exists
             existing = self._collection.get(ids=[doc_id])
             if existing["ids"]:
@@ -135,7 +146,7 @@ class VectorRAG:
             new_metas = []
             new_ids = []
             for t, m in valid:
-                doc_id = f"doc_{hash(t) % 10**16}"
+                doc_id = _generate_doc_id(t, m.get("owner") or "")
                 existing = self._collection.get(ids=[doc_id])
                 if not existing["ids"]:
                     new_texts.append(t)

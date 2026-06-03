@@ -42,7 +42,7 @@ _SOTA_HOSTS = frozenset({
     "api.together.xyz", "api.fireworks.ai",
     "api.perplexity.ai", "api.x.ai",
     "generativelanguage.googleapis.com", "api.groq.com",
-    "openrouter.ai", "ollama.com",
+    "openrouter.ai", "ollama.com", "api.venice.ai",
 })
 
 
@@ -327,7 +327,7 @@ def _extract_skill_json(teacher_response: str) -> Optional[Dict[str, Any]]:
     treated as "teacher declined to write a skill", per the prompt
     contract.
     """
-    if not teacher_response:
+    if not isinstance(teacher_response, str) or not teacher_response:
         return None
     import json
     m = re.search(r"```(?:json)?\s*\n(\{[\s\S]*?\})\s*\n```", teacher_response)

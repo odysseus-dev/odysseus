@@ -8,6 +8,7 @@ import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
 import { PROMPT_TEMPLATES, getAllPresets } from './presets.js';
 import { sortModelObjects } from './modelSort.js';
+import Storage from './storage.js';
 
 let API_BASE = '';
 let _active = false;
@@ -57,7 +58,7 @@ function _initGroupTab() {
       });
     });
     _modelsCache = sortModelObjects(result);
-    return result;
+    return _modelsCache;
   }
 
   function _render() {
@@ -409,7 +410,7 @@ export async function showModelPicker() {
         });
       });
       _cachedModels = sortModelObjects(result);
-      return result;
+      return _cachedModels;
     }
 
     async function render(filter) {
@@ -546,7 +547,8 @@ export async function startGroup(models, parentSessionId) {
     _parentSessionId = pdata.id;
     // Register as group session for sidebar icon
     try {
-      const gids = JSON.parse(localStorage.getItem('odysseus-group-sessions') || '[]');
+      const storedGroupSessions = Storage.getJSON('odysseus-group-sessions', []);
+      const gids = Array.isArray(storedGroupSessions) ? storedGroupSessions : [];
       if (!gids.includes(_parentSessionId)) { gids.push(_parentSessionId); localStorage.setItem('odysseus-group-sessions', JSON.stringify(gids)); }
     } catch (e) {}
   } catch (e) {

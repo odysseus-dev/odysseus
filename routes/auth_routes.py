@@ -3,11 +3,13 @@
 from fastapi import APIRouter, Request, Response, HTTPException
 from pydantic import BaseModel
 from typing import Optional
+import asyncio
 import logging
 import os
 
 from core.auth import AuthManager
 from src.rate_limiter import RateLimiter
+from src.settings_scrub import scrub_settings
 from src.settings import (
     load_settings as _load_settings,
     save_settings as _save_settings,
@@ -21,6 +23,7 @@ from src.integrations import (
     update_integration,
     delete_integration,
     get_integration,
+    mask_integration_secret,
     execute_api_call,
     INTEGRATION_PRESETS,
     migrate_from_settings,
@@ -64,6 +67,8 @@ class DeleteUserRequest(BaseModel):
 class RenameUserRequest(BaseModel):
     username: str
 
+class SetOpenRegistrationRequest(BaseModel):
+    enabled: bool
 
 SESSION_COOKIE = "odysseus_session"
 
@@ -88,7 +93,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, "Already configured")
         if len(body.password) < 8:
             raise HTTPException(400, "Password must be at least 8 characters")
-        ok = auth_manager.setup(body.username, body.password)
+        ok = await asyncio.to_thread(auth_manager.setup, body.username, body.password)
         if not ok:
             raise HTTPException(500, "Setup failed")
         return {"ok": True, "message": "Admin account created"}
@@ -106,7 +111,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, "Password must be at least 8 characters")
         if len(body.username.strip()) < 1:
             raise HTTPException(400, "Username is required")
-        ok = auth_manager.create_user(body.username, body.password, is_admin=False)
+        ok = await asyncio.to_thread(auth_manager.create_user, body.username, body.password, is_admin=False)
         if not ok:
             raise HTTPException(409, "Username already taken")
         return {"ok": True, "message": "Account created"}
@@ -117,7 +122,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(429, "Too many requests — try again later")
         # Verify password first
         username = body.username.strip().lower()
-        if not auth_manager.verify_password(username, body.password):
+        if not await asyncio.to_thread(auth_manager.verify_password, username, body.password):
             raise HTTPException(401, "Invalid credentials")
         # Check 2FA if enabled
         if auth_manager.totp_enabled(username):
@@ -127,7 +132,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             if not auth_manager.totp_verify(username, body.totp_code):
                 raise HTTPException(401, "Invalid 2FA code")
         # All checks passed — create session
-        token = auth_manager.create_session(username, body.password)
+        token = await asyncio.to_thread(auth_manager.create_session, username, body.password)
         if not token:
             raise HTTPException(401, "Invalid credentials")
         cookie_kwargs = dict(
@@ -175,9 +180,11 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(401, "Not authenticated")
         if len(body.new_password) < 8:
             raise HTTPException(400, "Password must be at least 8 characters")
-        ok = auth_manager.change_password(user, body.current_password, body.new_password)
+        current_token = request.cookies.get(SESSION_COOKIE)
+        ok = await asyncio.to_thread(auth_manager.change_password, user, body.current_password, body.new_password)
         if not ok:
             raise HTTPException(400, "Current password is incorrect")
+        await asyncio.to_thread(auth_manager.revoke_user_sessions, user, current_token)
         return {"ok": True}
 
     # ------------------------------------------------------------------
@@ -290,6 +297,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         # owner-scoped DB rows before changing auth so the account keeps
         # access to its sessions, docs, email accounts, tasks, etc.
         try:
+            from sqlalchemy import func
             from core.database import Base, SessionLocal
             db = SessionLocal()
             try:
@@ -299,7 +307,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                         continue
                     (
                         db.query(model)
-                        .filter(model.owner == old_username)
+                        .filter(func.lower(model.owner) == old_username)
                         .update({"owner": new_username}, synchronize_session=False)
                     )
                 db.commit()
@@ -317,9 +325,15 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             from routes.prefs_routes import _load as _load_prefs, _save as _save_prefs
             prefs = _load_prefs()
             users = prefs.get("_users") if isinstance(prefs, dict) else None
-            if isinstance(users, dict) and old_username in users and new_username not in users:
-                users[new_username] = users.pop(old_username)
-                _save_prefs(prefs)
+            if isinstance(users, dict):
+                prefs_key = next(
+                    (k for k in users if str(k).strip().lower() == old_username),
+                    None,
+                )
+                new_taken = any(str(k).strip().lower() == new_username for k in users)
+                if prefs_key is not None and not new_taken:
+                    users[new_username] = users.pop(prefs_key)
+                    _save_prefs(prefs)
         except Exception as e:
             logger.warning("Failed to rename user prefs %s -> %s: %s", old_username, new_username, e)
 
@@ -328,14 +342,30 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, "Cannot rename user")
         return {"ok": True, "username": new_username, "renamed_self": old_username == user}
 
-    @router.post("/signup-toggle")
+    @router.post("/signup-toggle", deprecated=True)
     async def toggle_signup(request: Request):
-        """Toggle open registration on/off. Admin only."""
+        """
+        Toggle open registration on/off. Admin only.
+
+        DEPRECATED: This endpoint uses toggle semantics which can lead to unsafe state changes.
+        Use PUT /open-signup instead.
+
+        This endpoint is kept for backward compatibility and may be removed in future versions.
+        """
         user = _get_current_user(request)
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
         auth_manager.signup_enabled = not auth_manager.signup_enabled
         return {"ok": True, "signup_enabled": auth_manager.signup_enabled}
+
+    @router.put("/open-signup")
+    async def set_signup_enabled(body: SetOpenRegistrationRequest, request: Request):
+        """Set open signup enabled state. Admin only."""
+        user = _get_current_user(request)
+        if not user or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+        auth_manager.signup_enabled = body.enabled
+        return {"ok": True,"signup_enabled": auth_manager.signup_enabled}
 
     @router.delete("/users")
     async def admin_delete_user(body: DeleteUserRequest, request: Request):
@@ -370,29 +400,6 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
 
     # ---- App settings (admin-managed) ----
 
-    _SECRET_KEY_PATTERNS = ("_api_key", "_password", "_secret", "_token", "_key")
-
-    def _is_secret_key(name: str) -> bool:
-        n = (name or "").lower()
-        if n in ("google_pse_cx",):  # public identifier, not a secret
-            return False
-        return any(n.endswith(p) or n == p.lstrip("_") for p in _SECRET_KEY_PATTERNS)
-
-    def _scrub_settings(settings: dict) -> dict:
-        """Return a copy of settings with secret-shaped values masked.
-
-        Frontend reads /settings without auth for things like keybinds + TTS
-        prefs. Secrets (search-provider keys, IMAP/SMTP passwords) must NOT
-        be exposed to non-admin callers.
-        """
-        scrubbed = {}
-        for k, v in (settings or {}).items():
-            if _is_secret_key(k) and isinstance(v, str) and v:
-                scrubbed[k] = ""  # presence preserved, value blanked
-            else:
-                scrubbed[k] = v
-        return scrubbed
-
     @router.get("/settings")
     async def get_settings(request: Request):
         """Returns app settings. Admins get the full set; non-admins get
@@ -402,7 +409,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         settings = _load_settings()
         if user and auth_manager.is_admin(user):
             return settings
-        return _scrub_settings(settings)
+        return scrub_settings(settings)
 
     @router.post("/settings")
     async def set_settings(request: Request):
@@ -431,12 +438,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(403, "Admin only")
         items = load_integrations()
         # Mask API keys for frontend display
-        safe = []
-        for item in items:
-            copy = dict(item)
-            if copy.get("api_key"):
-                copy["api_key"] = copy["api_key"][:4] + "****"
-            safe.append(copy)
+        safe = [mask_integration_secret(item) for item in items]
         return {"integrations": safe}
 
     @router.get("/integrations/presets")
@@ -452,7 +454,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(403, "Admin only")
         body = await request.json()
         item = add_integration(body)
-        return {"ok": True, "integration": item}
+        return {"ok": True, "integration": mask_integration_secret(item)}
 
     @router.put("/integrations/{integration_id}")
     async def update_integration_route(integration_id: str, request: Request):
@@ -464,7 +466,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         item = update_integration(integration_id, body)
         if not item:
             raise HTTPException(404, "Integration not found")
-        return {"ok": True, "integration": item}
+        return {"ok": True, "integration": mask_integration_secret(item)}
 
     @router.delete("/integrations/{integration_id}")
     async def delete_integration_route(integration_id: str, request: Request):

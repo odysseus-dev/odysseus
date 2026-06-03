@@ -7,6 +7,7 @@ import markdownModule from './markdown.js';
 import * as spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { sortModelIds } from './modelSort.js';
+import { ordinalSuffix } from './util/ordinal.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -23,7 +24,7 @@ const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'S
 
 async function _fetchTasks() {
   try {
-    const res = await fetch(`${API_BASE}/api/tasks?include_last_run=true`, { credentials: 'same-origin' });
+    const res = await fetch(`${API_BASE}/api/tasks`, { credentials: 'same-origin' });
     const data = await res.json();
     _tasks = data.tasks || [];
   } catch (e) {
@@ -123,6 +124,21 @@ async function _runNow(id, force = false) {
       if (data && data.detail) msg = data.detail;
     } catch (_) {}
     if (res.status === 409) msg = 'Task is already running';
+    throw new Error(msg);
+  }
+}
+
+async function _stopTask(id) {
+  const res = await fetch(`${API_BASE}/api/tasks/${id}/stop`, {
+    method: 'POST',
+    credentials: 'same-origin',
+  });
+  if (!res.ok) {
+    let msg = `Failed to stop task (${res.status})`;
+    try {
+      const data = await res.json();
+      if (data && data.detail) msg = data.detail;
+    } catch (_) {}
     throw new Error(msg);
   }
 }
@@ -229,7 +245,7 @@ function _scheduleLabel(task) {
   }
   if (task.schedule === 'monthly') {
     const d = task.scheduled_day ?? 1;
-    const suffix = d === 1 ? 'st' : d === 2 ? 'nd' : d === 3 ? 'rd' : 'th';
+    const suffix = ordinalSuffix(d);
     return `Monthly on ${d}${suffix} at ${localTime}`;
   }
   return task.schedule || '—';
@@ -332,6 +348,27 @@ function _taskIcon(task) {
     path = task.task_type === 'action' ? _TASK_ICONS._action_default : _TASK_ICONS._llm_default;
   }
   return `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4;flex-shrink:0;position:relative;top:-4px;">${path}</svg>`;
+}
+
+const _MODEL_BACKED_ACTIONS = new Set([
+  'summarize_emails',
+  'draft_email_replies',
+  'extract_email_events',
+  'classify_events',
+  'mark_email_boundaries',
+  'learn_sender_signatures',
+  'check_email_urgency',
+  'test_skills',
+  'audit_skills',
+  'consolidate_memory',
+]);
+
+function _taskAiMark(task) {
+  const kind = task?.task_type || task?.kind || '';
+  const action = task?.action || '';
+  const aiAction = _MODEL_BACKED_ACTIONS.has(action);
+  if (!(kind === 'llm' || kind === 'research' || task?.model || task?.endpointUrl || aiAction)) return '';
+  return '<svg class="task-ai-mark" width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-label="Uses model" title="Uses model"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>';
 }
 
 // ---- Custom pickers ----
@@ -568,6 +605,19 @@ function _renderTaskChips() {
   for (const c of cats) mkChip(`${c} (${counts[c]})`, c, _taskFilter === c);
 }
 
+const _TASK_CACHE_LABELS = {
+  summarize_emails: 'email summaries',
+  draft_email_replies: 'AI reply drafts',
+  extract_email_events: 'email calendar cache',
+  mark_email_boundaries: 'email boundaries',
+  learn_sender_signatures: 'sender signatures',
+  check_email_urgency: 'email tags',
+};
+
+function _taskClearCacheLabel(taskOrEntry) {
+  return _TASK_CACHE_LABELS[taskOrEntry?.action || ''] || '';
+}
+
 function _renderList() {
   const list = document.getElementById('tasks-list');
   if (!list) return;
@@ -628,14 +678,14 @@ function _renderList() {
     const titleRow = document.createElement('div');
     titleRow.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;';
     const statusBadge = task.status === 'paused'
-      ? `<span class="task-status-badge task-paused-badge" data-task-status-action="resume" title="Click to resume" style="position:relative;top:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg> paused</span>`
+      ? `<span class="task-status-badge task-state-badge task-paused-badge" data-task-status-action="resume" title="Paused - click to resume" style="position:relative;top:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="7 4 19 12 7 20 7 4"/></svg><span class="task-state-label">paused</span></span>`
       : task.status === 'active'
-        ? `<span class="task-status-badge task-active-badge" data-task-status-action="pause" title="Click to pause" style="position:relative;top:4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><polygon points="7 4 19 12 7 20 7 4"/></svg> active</span>`
+        ? `<span class="task-status-badge task-state-badge task-active-badge" data-task-status-action="pause" title="Active - click to pause" style="position:relative;top:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg><span class="task-state-label">active</span></span>`
         : '';
     const builtinBadge = task.is_builtin
       ? `<span class="task-builtin-badge${task.is_modified ? ' modified' : ''}" title="${task.is_modified ? 'Built-in task — edited from its default' : 'Built-in task'}">built-in${task.is_modified ? ' · edited' : ''}</span>`
       : '';
-    titleRow.innerHTML = `${_taskIcon(task)}<span class="memory-item-title">${_esc(task.name)}</span>${builtinBadge}<span style="flex:1;"></span>${statusBadge}`;
+    titleRow.innerHTML = `${_taskIcon(task)}<span class="memory-item-title">${_esc(task.name)}</span>${_taskAiMark(task)}${builtinBadge}<span style="flex:1;"></span>${statusBadge}`;
 
     // ... menu button (hover to show)
     const actionsWrap = document.createElement('div');
@@ -659,6 +709,9 @@ function _renderList() {
       if (task.is_builtin && task.is_modified) {
         items.push({ label: 'Revert to default', icon: '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>', action: () => _doRevert(task.id) });
       }
+      if (_taskClearCacheLabel(task)) {
+        items.push({ label: 'Clear cache', icon: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>', action: () => _doClearTaskCache(task.id, _taskClearCacheLabel(task)) });
+      }
       items.push({ label: 'Delete', icon: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>', action: () => _doDelete(task.id), danger: true });
       _showTaskDropdown(menuBtn, items);
     });
@@ -667,10 +720,10 @@ function _renderList() {
     // manual triggering. Hidden for completed tasks (same gate as before).
     if (task.status !== 'completed') {
       const runBtn = document.createElement('button');
-      runBtn.className = 'memory-item-btn task-card-run-btn';
+      runBtn.className = 'task-status-badge task-run-now-badge task-card-run-btn';
       runBtn.title = 'Run now';
-      runBtn.style.cssText = 'position:relative;top:4px;margin-right:4px;display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 6px;';
-      runBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Run</span>';
+      runBtn.style.cssText = 'position:relative;top:1px;margin-right:4px;';
+      runBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Run</span>';
       runBtn.addEventListener('click', (e) => { e.stopPropagation(); _doRunNow(task.id); });
       actionsWrap.insertBefore(runBtn, menuBtn);
     }
@@ -1578,6 +1631,25 @@ async function _doRevert(id) {
   } catch (e) { if (uiModule) uiModule.showError(e.message); }
 }
 
+async function _doClearTaskCache(id, label = 'cache') {
+  const ok = uiModule?.styledConfirm
+    ? await uiModule.styledConfirm(`Clear cached ${label} for this task?`, { confirmText: 'Clear' })
+    : confirm(`Clear cached ${label} for this task?`);
+  if (!ok) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/tasks/${encodeURIComponent(id)}/clear-cache`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+    const n = Object.values(data.cleared || {}).reduce((a, b) => a + Number(b || 0), 0) + Number(data.files || 0);
+    if (uiModule) uiModule.showToast(`Cleared ${label}${n ? ` (${n})` : ''}`);
+  } catch (e) {
+    if (uiModule) uiModule.showError(`Clear cache failed: ${e.message || e}`);
+  }
+}
+
 async function _doToggleAll() {
   // If any task is active → pause all. Else resume all paused tasks.
   const hasActive = _tasks.some(t => t.status === 'active');
@@ -1680,10 +1752,6 @@ async function _renderActivityView() {
 
   document.getElementById('tasks-activity-refresh').addEventListener('click', _renderActivityView);
 
-  // Loading placeholder matches the document library: app whirlpool + label.
-  const _actList = document.getElementById('tasks-activity-list');
-  if (_actList) _actList.appendChild(spinnerModule.createLoadingRow('Loading…'));
-
   // Solo filter: clicking a chip shows ONLY that group (a category, or
   // Errors). Clicking the active chip again clears the filter (show all).
   // At most one chip is active at a time. _solo holds the active key, or null.
@@ -1771,6 +1839,14 @@ async function _renderActivityView() {
   const searchEl = document.getElementById('tasks-activity-search');
   if (searchEl) searchEl.addEventListener('input', () => { _afQuery = searchEl.value; _buildChips(); _applyFilter(); });
 
+  const _actList = document.getElementById('tasks-activity-list');
+  if (_activityEntries.length) {
+    _buildChips();
+    _applyFilter();
+  } else if (_actList) {
+    _actList.appendChild(spinnerModule.createLoadingRow('Loading…'));
+  }
+
   try {
     const res = await fetch(`${API_BASE}/api/tasks/runs/recent?limit=100`, { credentials: 'same-origin' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1796,6 +1872,7 @@ async function _renderActivityView() {
         kind: r.task_type || 'llm',
         taskName: r.task_name || (r.task_type === 'action' ? (r.action || 'Action') : 'Task'),
         taskId: r.task_id,
+        action: r.action || '',
         result: resultText,
         prompt: '',
         ts: r.finished_at || r.started_at,
@@ -1916,9 +1993,9 @@ function _wireActivityRows(list) {
   // counter). No-op when there's nothing to tick.
   _startActivityTimers(list);
   list.querySelectorAll('.task-log-row').forEach(row => {
-    // Click anywhere on the (non-running, non-skipped) row to toggle expand.
+    // Click anywhere on the row to toggle expand.
     // Buttons inside still get their own handlers via stopPropagation.
-    if (!row.classList.contains('is-running') && !row.classList.contains('is-skipped')) {
+    if (!row.classList.contains('is-skipped')) {
       row.addEventListener('click', () => row.classList.toggle('expanded'));
     }
     row.querySelector('.task-log-row-toggle')?.addEventListener('click', (e) => {
@@ -1943,6 +2020,25 @@ function _wireActivityRows(list) {
       const entry = _activityEntries[idx];
       if (entry?.taskId) _doRunNow(entry.taskId, true);
     });
+    row.querySelector('.task-log-stop')?.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const idx = parseInt(row.dataset.entryIdx, 10);
+      const entry = _activityEntries[idx];
+      if (!entry?.taskId) return;
+      try {
+        await _stopTask(entry.taskId);
+        uiModule.showToast('Task stopped');
+        _renderActivityView();
+      } catch (err) {
+        uiModule.showError(err.message || 'Failed to stop task');
+      }
+    });
+    row.querySelector('.task-log-run-again')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = parseInt(row.dataset.entryIdx, 10);
+      const entry = _activityEntries[idx];
+      if (entry?.taskId) _doRunNow(entry.taskId);
+    });
     row.querySelector('.task-log-copy')?.addEventListener('click', (e) => {
       e.stopPropagation();
       const idx = parseInt(row.dataset.entryIdx, 10);
@@ -1953,6 +2049,12 @@ function _wireActivityRows(list) {
         uiModule.copyToClipboard(txt);
         uiModule.showToast('Log copied');
       } catch (_) { uiModule.showError('Copy failed'); }
+    });
+    row.querySelector('.task-log-clear-cache')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = parseInt(row.dataset.entryIdx, 10);
+      const entry = _activityEntries[idx];
+      if (entry?.taskId) _doClearTaskCache(entry.taskId, _taskClearCacheLabel(entry));
     });
   });
 }
@@ -2113,13 +2215,11 @@ function _renderActivityEntry(entry) {
   const statusDot = `<span class="task-log-status task-log-status-${status}" title="${status}"></span>`;
   // Render the result through markdown so code blocks, lists, links look right.
   let resultHtml;
-  // Running / queued rows: body stays empty — the status now lives on the
-  // right side of the head row ("Running <whirlpool>"), wired below.
   const _isRunning = entry.status === 'running' || entry.status === 'queued';
   // Skipped (noop) rows: render as a slim, dimmed one-liner — no body, no
   // actions, just `· name · skipped — reason · time`. CSS via .is-skipped.
   const _isSkipped = entry.status === 'skipped';
-  if (_isRunning) {
+  if (_isRunning && !(entry.result || '').trim()) {
     resultHtml = '';
   } else {
     try {
@@ -2154,7 +2254,9 @@ function _renderActivityEntry(entry) {
   const hue = _categoryHue(entry.taskName, entry.kind);
   // CSS vars feed the colored title + accent stripe.
   const styleVars = `--cat-hue:${hue};`;
+  const _runningPlaceholder = /^(Starting…|Starting\.\.\.|_Running…_|_Running\.\.\._|_Queued\b)/i.test((entry.result || '').trim());
   const hasResult = !!(entry.result && entry.result.trim() && entry.status !== 'running' && entry.status !== 'queued');
+  const hasRunningProgress = !!(entry.result && entry.result.trim() && !_runningPlaceholder && (entry.status === 'running' || entry.status === 'queued'));
   // "Open in chat" only makes sense for runs whose result is a real assistant
   // message (Prompt / Research tasks). Action/event runs are just log lines
   // (e.g. "No recent emails", "Tidied N memories") — for those, replace the
@@ -2179,6 +2281,19 @@ function _renderActivityEntry(entry) {
          Copy log
        </button>`;
   }
+  const clearLabel = _taskClearCacheLabel(entry);
+  if (hasResult && clearLabel && entry.taskId) {
+    actionBtn += `<button class="task-log-clear-cache" type="button" title="Clear cached ${_escHtml(clearLabel)} for this task">
+         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg>
+         Clear cache
+       </button>`;
+  }
+  if (hasResult && entry.taskId) {
+    actionBtn += `<button class="task-log-run-again" type="button" title="Run this task again">
+         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+         Run again
+       </button>`;
+  }
   // Running rows replace the relative-time on the right with "Running NN" + a
   // live whirlpool spinner. Queued shows "Queued" the same way (no timer —
   // hasn't actually started yet). The elapsed counter ticks every second via
@@ -2186,12 +2301,14 @@ function _renderActivityEntry(entry) {
   let rightHtml;
   if (_isRunning) {
     const isQueued = entry.status === 'queued';
-    const label = isQueued ? 'Queued' : 'Running';
     // Initial elapsed for the first paint; the 1s interval below keeps it live.
     const startMs = entry.ts ? new Date(entry.ts).getTime() : Date.now();
+    const stale = !isQueued && (Date.now() - startMs) > 30 * 60 * 1000;
+    const label = isQueued ? 'Queued' : stale ? 'Still running' : 'Running';
     const elapsedInit = isQueued ? '' : `<span class="task-log-running-elapsed" data-since="${startMs}">${_fmtElapsed(Date.now() - startMs)}</span>`;
-    const forceBtn = isQueued && entry.taskId ? `<button class="task-log-force-run" type="button" title="Start now in parallel, bypassing the queue" style="border:0;background:transparent;box-shadow:none;margin-left:5px;padding:0;width:12px;height:12px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;line-height:1;color:inherit;opacity:.8;"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" style="display:block;"><polygon points="6 4 20 12 6 20 6 4"/></svg></button>` : '';
-    rightHtml = `<span class="task-log-running-inline"><span class="task-log-running-label">${label}</span>${elapsedInit}<span data-spin-here="1"></span>${forceBtn}</span>`;
+    const forceBtn = isQueued && entry.taskId ? `<button class="task-log-force-run" type="button" title="Start now in parallel, bypassing the queue"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg><span>Start now</span></button>` : '';
+    const stopBtn = entry.taskId ? `<button class="task-log-stop" type="button" title="Stop this task"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></button>` : '';
+    rightHtml = `<span class="task-log-running-inline"><span class="task-log-running-label">${label}</span>${elapsedInit}<span data-spin-here="1"></span>${forceBtn}${stopBtn}</span>`;
   } else {
     rightHtml = `<span class="task-log-time" title="${_escHtml(tsAbs)}">${_escHtml(tsLabel)}</span>`;
   }
@@ -2205,10 +2322,10 @@ function _renderActivityEntry(entry) {
       <div class="task-log-row is-skipped" data-kind="${_escHtml(entry.kind)}" data-entry-idx="${entryIdx}" style="${styleVars}">
         <div class="task-log-row-head">
           ${statusDot}
-          <span class="task-log-name">${_escHtml(entry.taskName)}</span>
+          <span class="task-log-task-icon">${_taskIcon({ action: entry.action, task_type: entry.kind })}</span>
+          <span class="task-log-name">${_escHtml(entry.taskName)}</span>${_taskAiMark(entry)}
           ${repeatBadge}
           <span class="task-log-skipped-reason">skipped${reason ? ' — ' + _escHtml(reason) : ''}</span>
-          <span style="flex:1"></span>
           <span class="task-log-time" title="${_escHtml(tsAbs)}">${_escHtml(tsLabel)}</span>
         </div>
       </div>
@@ -2218,12 +2335,13 @@ function _renderActivityEntry(entry) {
     <div class="task-log-row${long ? ' is-long' : ''}${_isRunning ? ' is-running' : ''}" data-kind="${_escHtml(entry.kind)}" data-entry-idx="${entryIdx}" style="${styleVars}">
       <div class="task-log-row-head">
         ${statusDot}
-        <span class="task-log-name">${_escHtml(entry.taskName)}</span>
+        <span class="task-log-task-icon">${_taskIcon({ action: entry.action, task_type: entry.kind })}</span>
+        <span class="task-log-name">${_escHtml(entry.taskName)}</span>${_taskAiMark(entry)}
         ${repeatBadge}
         <span style="flex:1"></span>
         ${rightHtml}
       </div>
-      ${_isRunning ? '' : `<div class="task-log-row-body">${resultHtml}</div>`}
+      ${(_isRunning && !hasRunningProgress) ? '' : `<div class="task-log-row-body">${resultHtml}</div>`}
       ${promptHtml}
       <div class="task-log-row-actions">
         ${long ? '<button class="task-log-row-toggle" type="button">Show more</button>' : '<span></span>'}
@@ -2308,7 +2426,7 @@ function _renderMainView() {
       <p class="memory-desc" style="position:relative;top:-4px;">Scheduled prompts and actions that run automatically. Results appear in a dedicated session.</p>
       <div class="memory-toolbar">
         <div class="memory-category-filters" style="display:flex;align-items:center;gap:6px;">
-          <select class="memory-sort-select" id="tasks-sort" style="position:relative;top:-4px;width:86px;font-size:11px;height:24px;">
+          <select class="memory-sort-select" id="tasks-sort" aria-label="Sort tasks" title="Sort tasks" style="position:relative;top:-4px;width:86px;font-size:11px;height:24px;">
             <option value="recent">Recent</option>
             <option value="name">A–Z</option>
             <option value="status">Status</option>

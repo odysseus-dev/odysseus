@@ -74,6 +74,42 @@ export function _calBgCss(c, fallback) {
   return c || fallback || 'var(--accent)';
 }
 
+function _hexToRgb(c) {
+  if (typeof c !== 'string') return null;
+  const m = c.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (!m) return null;
+  const hex = m[1].length === 3
+    ? m[1].split('').map(ch => ch + ch).join('')
+    : m[1];
+  return {
+    r: parseInt(hex.slice(0, 2), 16),
+    g: parseInt(hex.slice(2, 4), 16),
+    b: parseInt(hex.slice(4, 6), 16),
+  };
+}
+
+function _relativeLuminance({ r, g, b }) {
+  return [r, g, b].map(v => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  }).reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0);
+}
+
+function _contrastRatio(a, b) {
+  const light = Math.max(a, b);
+  const dark = Math.min(a, b);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+export function _calReadableTextColor(bg) {
+  const rgb = _hexToRgb(bg);
+  if (!rgb) return 'var(--fg)';
+  const lum = _relativeLuminance(rgb);
+  const white = _contrastRatio(lum, 1);
+  const ink = _contrastRatio(lum, 0.006);
+  return ink >= white ? '#111820' : '#ffffff';
+}
+
 // ── date helpers ──
 
 // `YYYY-MM-DD` string from a Date.
