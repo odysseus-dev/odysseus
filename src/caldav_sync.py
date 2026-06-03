@@ -237,6 +237,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
 
                         existing = pending.get(uid_val) or db.query(CalendarEvent).filter(
                             CalendarEvent.uid == uid_val,
+                            CalendarEvent.calendar_id == local_cal.id,
                         ).first()
                         if existing:
                             existing.calendar_id = local_cal.id
