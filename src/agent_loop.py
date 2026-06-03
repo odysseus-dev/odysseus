@@ -475,6 +475,28 @@ _ADMIN_SCHEMA_NAMES = frozenset([
 ])
 _TOOL_SELECTION_TIMEOUT_SECONDS = 1.5
 
+
+def _select_api_tool_schemas(function_schemas, mcp_schemas, relevant_tools, needs_admin):
+    """Pick the tool schemas to send an API/function-calling model.
+
+    Builtin schemas are trimmed to the RAG-selected ``relevant_tools`` (or admin-
+    gated when no RAG set is available), but the MCP schemas are ALWAYS appended.
+    MCP tools are integrations the user explicitly installed — a small, deliberate
+    set, not part of the large builtin catalog the RAG exists to trim. Filtering
+    them by query relevance dropped connected MCP tools whenever the message didn't
+    semantically match their description, so the agent reported "no MCP server with
+    that name or tool installed" even though the server was connected (#1789).
+    """
+    if relevant_tools:
+        base = [s for s in function_schemas
+                if s.get("function", {}).get("name") in relevant_tools]
+    elif needs_admin:
+        base = list(function_schemas)
+    else:
+        base = [s for s in function_schemas
+                if s.get("function", {}).get("name") not in _ADMIN_SCHEMA_NAMES]
+    return base + list(mcp_schemas)
+
 # Admin tool keywords — if the last user message contains any of these, include admin tools
 _ADMIN_KEYWORDS = [
     "session", "sessions", "chat", "chats", "conversation", "conversations",
@@ -1629,23 +1651,11 @@ async def stream_agent_loop(
             # write the answer instead of flailing further.
             all_tool_schemas = []
         elif _is_api_model:
-            # Filter schemas by RAG-selected tools (if available)
-            if _relevant_tools:
-                base_schemas = [
-                    s for s in FUNCTION_TOOL_SCHEMAS
-                    if s.get("function", {}).get("name") in _relevant_tools
-                ]
-                _mcp_filtered = [
-                    s for s in mcp_schemas
-                    if s.get("function", {}).get("name") in _relevant_tools
-                ]
-                all_tool_schemas = base_schemas + _mcp_filtered
-            else:
-                base_schemas = FUNCTION_TOOL_SCHEMAS if _needs_admin else [
-                    s for s in FUNCTION_TOOL_SCHEMAS
-                    if s.get("function", {}).get("name") not in _ADMIN_SCHEMA_NAMES
-                ]
-                all_tool_schemas = base_schemas + mcp_schemas
+            # Filter builtin schemas by RAG-selected tools, but ALWAYS include MCP
+            # schemas — see _select_api_tool_schemas (#1789).
+            all_tool_schemas = _select_api_tool_schemas(
+                FUNCTION_TOOL_SCHEMAS, mcp_schemas, _relevant_tools, _needs_admin,
+            )
             if disabled_tools:
                 all_tool_schemas = [
                     t for t in all_tool_schemas
