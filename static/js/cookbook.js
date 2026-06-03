@@ -264,6 +264,8 @@ export function _detectBackend(model) {
   const isAppleSilicon = ['metal', 'mps', 'apple'].includes(sysBackend);
   const _nm = `${model.repo_id || ''} ${model.path || ''} ${model.name || ''}`.toLowerCase();
   if (/\bmlx\b|mlx-|_mlx/i.test(_nm) || q.startsWith('MLX')) {
+    // MLX-format repos are served by an MLX engine (mlx-lm/oMLX) on Apple Silicon.
+    if (_isMetal()) return { backend: 'mlx', label: 'MLX' };
     return { backend: 'unsupported', label: 'Unsupported' };
   }
   const isAwqLike = /^AWQ|^GPTQ|^NVFP4/.test(q) || ['FP8', 'FP4', 'MXFP4', 'NF4', 'INT4', 'INT8', 'W4A16', 'W8A8', 'W8A16'].includes(q) || /\b(awq|gptq|fp8|fp4|nvfp4|mxfp4|nf4|int4|int8|w4a16|w8a8|w8a16)\b/i.test(_nm);
@@ -350,6 +352,36 @@ function _buildEnvPrefixWindows() {
   if (_envState.gpus) parts.push('$env:CUDA_VISIBLE_DEVICES=' + _psQuote(_envState.gpus));
   if (parts.length === 0) return '';
   return parts.join('; ') + ';';
+}
+
+// MLX serving engines. Every one speaks the OpenAI-compatible /v1 protocol, so
+// only the launch command differs — Odysseus talks to all of them as `openai`.
+// Add a new engine by adding a row here (+ its binary to the serve allow-list).
+export const MLX_ENGINES = {
+  mlx_lm: {
+    label: 'MLX (mlx-lm)',
+    // Apple's official single-model server. --model takes the model dir/repo
+    // (serveModel is already resolved to the local path for cached models).
+    // KMP_DUPLICATE_LIB_OK sidesteps an OpenMP double-init crash on macOS and
+    // is a harmless no-op when there is no libomp conflict.
+    cmd: (f, modelName) =>
+      `KMP_DUPLICATE_LIB_OK=TRUE mlx_lm.server --model ${modelName} --host 127.0.0.1 --port ${f.port || '8080'}`,
+  },
+  omlx: {
+    label: 'oMLX',
+    // Serves a whole model DIRECTORY (auto-discovers subdirs); the client picks
+    // the model via the request `model` field. --model-dir is the parent dir.
+    cmd: (f, modelName) => {
+      const dir = (f._mlx_model_dir && f._mlx_model_dir.trim()) || '~/models';
+      let c = `omlx serve --model-dir ${dir} --port ${f.port || '8000'}`;
+      if (f.max_seqs && f.max_seqs.toString().trim()) c += ` --max-concurrent-requests ${f.max_seqs.toString().trim()}`;
+      return c;
+    },
+  },
+};
+
+function _buildMlxServeCmd(f, modelName) {
+  return (MLX_ENGINES[f.mlx_engine] || MLX_ENGINES.mlx_lm).cmd(f, modelName);
 }
 
 export function _buildServeCmd(f, modelName, backend) {
@@ -494,6 +526,9 @@ export function _buildServeCmd(f, modelName, backend) {
     const bindHost = _envState.remoteHost ? '0.0.0.0' : '127.0.0.1';
     const hostEnv = ollamaPort !== '11434' ? `OLLAMA_HOST=${bindHost}:${ollamaPort} ` : '';
     cmd = `${hostEnv}ollama serve`;
+  } else if (backend === 'mlx') {
+    // Pluggable MLX engine (mlx-lm default, oMLX optional) — see MLX_ENGINES.
+    cmd = _buildMlxServeCmd(f, modelName);
   } else if (backend === 'diffusers') {
     const gpuStr = f.gpus?.trim();
     if (gpuStr) cmd += `CUDA_VISIBLE_DEVICES=${gpuStr} `;
@@ -1632,6 +1667,7 @@ function _renderRecipes() {
   html += '<option value="llamacpp">llama.cpp</option>';
   html += '<option value="vllm">vLLM</option>';
   html += '<option value="sglang">SGLang</option>';
+  html += '<option value="mlx">MLX</option>';
   html += '</select>';
   html += '<span class="hwfit-help-chip hwfit-help-chip-inline hwfit-engine-help" title="Rule of thumb: GGUF on single GPU / CPU+RAM → llama.cpp (or Ollama). Safetensors on multi-GPU NVIDIA → vLLM. SGLang is a vLLM-class alternative, sometimes faster on big-MoE / long-context.">?</span>';
   html += '</span>';

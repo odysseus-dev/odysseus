@@ -344,7 +344,7 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
     # Determine which quant to evaluate at
     native_quant_prefixes = (
         "AWQ-", "GPTQ-", "FP8", "FP4", "NVFP4", "MXFP4", "NF4",
-        "INT4", "INT8", "W4A16", "W8A8", "W8A16",
+        "INT4", "INT8", "W4A16", "W8A8", "W8A16", "mlx-",
     )
 
     if preq:
@@ -570,7 +570,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
     # If user picked a native prequantized format, filter to only those models.
     filter_native = quant and any(quant.startswith(p) for p in (
         "AWQ-", "GPTQ-", "FP8", "FP4", "NVFP4", "MXFP4", "NF4",
-        "INT4", "INT8", "W4A16", "W8A8", "W8A16",
+        "INT4", "INT8", "W4A16", "W8A8", "W8A16", "mlx-",
     ))
 
     system_backend = (system.get("backend") or "").lower()
@@ -590,9 +590,10 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
     for m in models:
         native_q = _native_quant(m)
 
-        # MLX needs the mlx_lm runtime, which Odysseus does not generate serve
-        # commands for. Hide it on every backend, including Metal.
-        if native_q.startswith("mlx-") or "mlx" in (m.get("name") or "").lower():
+        # MLX runs only on Apple Silicon (via the oMLX serve backend). Show MLX
+        # on Metal; hide it everywhere else (CUDA/ROCm/CPU can't run MLX).
+        is_mlx = native_q.startswith("mlx-") or "mlx" in (m.get("name") or "").lower()
+        if is_mlx and not apple_silicon:
             continue
 
         # ROCm support for vLLM/SGLang quantized safetensors is too brittle to
@@ -603,19 +604,19 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
         if rocm and is_prequantized(m) and not filter_native:
             continue
 
-        # On Apple Silicon the only serving engines are llama.cpp and Ollama,
-        # both GGUF-only (vLLM/SGLang are CUDA/ROCm and don't run on macOS). So
-        # a model is Metal-servable ONLY if it ships a real GGUF. Drop everything
-        # else — raw safetensors repos (which the catalog still tags with a
-        # default GGUF quant) and vLLM-only AWQ/GPTQ/FP8 builds alike. Without
-        # this the Cookbook recommends models the Mac can't run; on CUDA these
-        # stay visible because vLLM serves safetensors directly.
+        # On Apple Silicon the serving engines are llama.cpp/Ollama (GGUF) and
+        # oMLX (MLX). So a model is Metal-servable only if it ships a real GGUF
+        # or is an MLX build. Drop everything else — raw safetensors repos (which
+        # the catalog still tags with a default GGUF quant) and vLLM-only
+        # AWQ/GPTQ/FP8 builds alike. On CUDA these stay visible because vLLM
+        # serves safetensors directly.
         #
-        # Consumer AMD (RDNA) is the same story: GGUF via llama.cpp is the
-        # servable path, so a model needs a real GGUF to be recommended.
-        # Otherwise the Cookbook rates vLLM-only AWQ/GPTQ builds "GOOD" on a
-        # Radeon that can't actually serve them.
-        if (apple_silicon or consumer_amd) and not (m.get("is_gguf") or m.get("gguf_sources")):
+        # Consumer AMD (RDNA) stays GGUF-only: llama.cpp is the servable path,
+        # so a model needs a real GGUF to be recommended.
+        servable_metal = m.get("is_gguf") or m.get("gguf_sources") or (apple_silicon and is_mlx)
+        if apple_silicon and not servable_metal:
+            continue
+        if consumer_amd and not (m.get("is_gguf") or m.get("gguf_sources")):
             continue
 
         # Format filter: AWQ tab -> only AWQ models, FP4 tab -> FP4-family models, etc.
@@ -625,6 +626,8 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
             if quant == "FP4" and native_q not in ("FP4", "NVFP4", "MXFP4", "NF4"):
                 continue
             if quant.startswith("AWQ") and not native_q.startswith("AWQ"):
+                continue
+            if quant.startswith("mlx-") and not native_q.startswith("mlx-"):
                 continue
             if quant.startswith("GPTQ") and not native_q.startswith("GPTQ"):
                 continue

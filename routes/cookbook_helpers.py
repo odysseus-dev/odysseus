@@ -4,9 +4,11 @@ Extracted from cookbook_routes.py; the routes module imports the symbols it need
 import logging
 import ntpath
 import os
+import platform
 import posixpath
 import re
 import shlex
+import sys
 
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -438,6 +440,8 @@ _SERVE_CMD_ALLOWLIST = {
     "python", "python3",
     "sglang", "lmdeploy",
     "node", "npx",
+    "omlx",  # oMLX — MLX inference server (Apple Silicon, OpenAI-compatible)
+    "mlx_lm.server",  # Apple's official MLX server (single-model, OpenAI-compatible)
 }
 
 
@@ -501,6 +505,33 @@ def _check_serve_binary(seg: str) -> None:
             400,
             f"cmd binary '{base or '(empty)'}' is not allowed. Must start with one of: "
             f"{', '.join(sorted(_SERVE_CMD_ALLOWLIST))}",
+        )
+
+
+def _is_apple_silicon() -> bool:
+    """True on local Apple-Silicon macOS (the only place MLX/oMLX can run)."""
+    return sys.platform == "darwin" and platform.machine() == "arm64"
+
+
+def _guard_mlx_platform(cmd: str | None, remote_host: str | None) -> None:
+    """Reject an MLX serve command (oMLX or mlx-lm) on a non-Apple-Silicon LOCAL
+    host. MLX has no CUDA/CPU fallback. Remote hosts are trusted to be Macs (the
+    SSH target is the user's call); only the local machine is gated.
+    """
+    if not cmd:
+        return
+    try:
+        tokens = shlex.split(cmd)
+    except ValueError:
+        return
+    # Skip leading env-var assignments (e.g. KMP_DUPLICATE_LIB_OK=TRUE mlx_lm.server).
+    env_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+    binary = next((os.path.basename(t) for t in tokens if not env_re.match(t)), "")
+    if binary in ("omlx", "mlx_lm.server") and not remote_host and not _is_apple_silicon():
+        raise HTTPException(
+            400,
+            "MLX (oMLX / mlx-lm) only runs on Apple Silicon. Serve it on a "
+            "local arm64 Mac or a remote Mac host.",
         )
 
 
@@ -706,6 +737,9 @@ def _parse_serve_phase(snapshot: str, task_type: str = "serve") -> dict:
             "reqs": reqs,
         }
     if "Application startup complete" in flat:
+        return {"phase": "ready", "status": "ready"}
+    # mlx-lm's built-in server (Apple's official MLX server) prints this on bind.
+    if re.search(r'Starting httpd at .*? on port\s+\d+', flat):
         return {"phase": "ready", "status": "ready"}
     if re.search(r'Ollama API ready on port\s+\d+', flat, re.I):
         return {"phase": "ready", "status": "ready"}

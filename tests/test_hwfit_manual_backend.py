@@ -67,19 +67,20 @@ def test_manual_ram_mode_wipes_gpu_and_unified_flag():
     assert "unified_memory" not in s
 
 
-def test_simulated_metal_box_only_recommends_gguf():
+def test_simulated_metal_box_only_recommends_gguf_or_mlx():
     """End-to-end: a simulated Metal box must rank exactly like a real Mac —
-    only models shipping a servable GGUF (llama.cpp/Ollama) survive. Before
-    'metal' was accepted, this box ranked as CUDA and surfaced safetensors-only
-    repos the Mac can't serve."""
+    only models shipping a servable GGUF (llama.cpp/Ollama) or an MLX build
+    (oMLX) survive. Before 'metal' was accepted, this box ranked as CUDA and
+    surfaced safetensors-only repos the Mac can't serve."""
     system = _apply_manual_hardware(
         {"backend": "cuda", "available_ram_gb": 32.0, "total_ram_gb": 64.0},
         manual_mode="gpu", manual_vram_gb="48", manual_backend="metal",
     )
     catalog = {m["name"]: m for m in get_models()}
-    unservable = [
-        r["name"] for r in rank_models(system, limit=900)
-        if not (catalog.get(r["name"], {}).get("is_gguf")
-                or catalog.get(r["name"], {}).get("gguf_sources"))
-    ]
-    assert unservable == [], f"{len(unservable)} non-GGUF models on simulated Metal, e.g. {unservable[:3]}"
+    unservable = []
+    for r in rank_models(system, limit=900):
+        c = catalog.get(r["name"], {})
+        is_mlx = str(r.get("quant", "")).startswith("mlx-") or "mlx" in r["name"].lower()
+        if not (c.get("is_gguf") or c.get("gguf_sources") or is_mlx):
+            unservable.append(r["name"])
+    assert unservable == [], f"{len(unservable)} non-servable on simulated Metal, e.g. {unservable[:3]}"

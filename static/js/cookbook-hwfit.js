@@ -489,7 +489,14 @@ export async function _hwfitFetch(fresh = false) {
   }
   try {
     const sortBy = document.getElementById('hwfit-sort')?.value || 'score';
-    const quantPref = document.getElementById('hwfit-quant')?.value || '';
+    let quantPref = document.getElementById('hwfit-quant')?.value || '';
+    // oMLX serves MLX builds, whose quants are mlx-Nbit. The engine selects the
+    // format; the quant tier selects the bit-width — so map e.g. Q4 -> mlx-4bit.
+    // Native (no quant) shows all MLX bit-widths via the client-side view filter.
+    if ((document.getElementById('hwfit-engine')?.value || '') === 'mlx' && quantPref) {
+      const _b = quantPref.match(/(\d+)/);
+      quantPref = _b ? `mlx-${_b[1]}bit` : '';
+    }
     const targetCtx = _ctxValue();
     // Get active GPU count from toggles
     const toggleContainer = document.getElementById('hwfit-gpu-toggles');
@@ -1286,6 +1293,14 @@ export function _hwfitInit() {
   // list, so just re-render from cache instead of re-probing hardware.
   const engine = document.getElementById('hwfit-engine');
   if (engine) engine.addEventListener('change', () => {
+    // oMLX re-maps the quant to mlx-Nbit server-side, so switching to or away
+    // from it must re-probe; every other engine is a pure client-side filter.
+    const isMlx = engine.value === 'mlx';
+    if (isMlx || engine.dataset.wasMlx === '1') {
+      engine.dataset.wasMlx = isMlx ? '1' : '';
+      _hwfitFetch();
+      return;
+    }
     const list = document.getElementById('hwfit-list');
     if (list && _hwfitCache && Array.isArray(_hwfitCache.models)) {
       _hwfitRenderList(list, _applyEngineFilter(_hwfitCache.models));

@@ -54,6 +54,12 @@ function _repoLooksGgufLike(model, repo) {
 }
 
 function _serveBackendWarning(model, repo, backend, fields = {}) {
+  if (backend === 'mlx' && !_isMetal()) {
+    return {
+      title: 'MLX needs Apple Silicon',
+      body: 'MLX runs only on Apple Silicon (Metal). On this machine, use vLLM/SGLang (CUDA/ROCm) or llama.cpp/Ollama (GGUF) instead.',
+    };
+  }
   const awqLike = _repoLooksAwqLike(model, repo);
   const ggufLike = _repoLooksGgufLike(model, repo);
   if (awqLike && (backend === 'llamacpp' || backend === 'ollama')) {
@@ -126,6 +132,7 @@ async function _fetchServeRuntimePackage(panel, backend) {
     sglang: 'sglang',
     llamacpp: 'llama_cpp',
     diffusers: 'diffusers',
+    mlx: 'omlx',
   };
   const packageName = packageByBackend[backend];
   if (!packageName) return null;
@@ -144,7 +151,7 @@ async function _fetchServeRuntimePackage(panel, backend) {
 }
 
 function _runtimeNoteText(backend, pkg, target) {
-  const labels = { vllm: 'vLLM', sglang: 'SGLang', llamacpp: 'llama.cpp', diffusers: 'Diffusers' };
+  const labels = { vllm: 'vLLM', sglang: 'SGLang', llamacpp: 'llama.cpp', diffusers: 'Diffusers', mlx: 'MLX' };
   const label = labels[backend] || backend;
   if (!pkg) return `${label} readiness unavailable for ${target.label}.`;
   const note = pkg.status_note || pkg.update_note || '';
@@ -513,7 +520,7 @@ function _rerenderCachedModels() {
       const detectedBackend = _detectBackend(m).backend;
       const _allowedBackends = new Set(_isWindows()
         ? ['llamacpp']
-        : (_isMetal() ? ['llamacpp', 'ollama'] : ['vllm', 'sglang', 'llamacpp', 'ollama', 'diffusers']));
+        : (_isMetal() ? ['llamacpp', 'ollama', 'mlx'] : ['vllm', 'sglang', 'llamacpp', 'ollama', 'diffusers']));
       const defaultBackend = (ss._forceBackend && ss.backend && _allowedBackends.has(ss.backend))
         ? ss.backend
         : detectedBackend;
@@ -575,10 +582,11 @@ function _rerenderCachedModels() {
         ? [['llamacpp','llama.cpp']]
         : _isMetal()
         // Diffusers (diffusion_server.py) is CUDA-only — omit it on Metal.
-        ? [['llamacpp','llama.cpp'],['ollama','Ollama']]
+        ? [['llamacpp','llama.cpp'],['ollama','Ollama'],['mlx','MLX']]
         : [['vllm','vLLM'],['sglang','SGLang'],['llamacpp','llama.cpp'],['ollama','Ollama'],['diffusers','Diffusers']];
       const backendOpts = _backendChoices.map(([v,l]) => `<option value="${v}"${defaultBackend===v?' selected':''}>${l}</option>`).join('');
       panelHtml += `<label>${_l('Backend','Inference engine: vLLM, SGLang, llama.cpp, Ollama, or Diffusers')}<select class="hwfit-sf" data-field="backend">${backendOpts}</select></label>`;
+      panelHtml += `<label class="hwfit-backend-mlx">${_l('MLX Engine','Which MLX server to launch. mlx-lm = the official single-model server (no extra install). oMLX = continuous batching + multi-model serving from a directory.')}<select class="hwfit-sf" data-field="mlx_engine"><option value="mlx_lm"${sv('mlx_engine','mlx_lm')==='mlx_lm'?' selected':''}>MLX (mlx-lm)</option><option value="omlx"${sv('mlx_engine','mlx_lm')==='omlx'?' selected':''}>oMLX</option></select></label>`;
       panelHtml += `<input type="hidden" class="hwfit-sf" data-field="host" value="${esc(_es.remoteHost || '')}" />`;
       panelHtml += `<label>${_l('venv','Path to Python venv or conda env activate script')}<input type="text" class="hwfit-sf hwfit-sf-wide" data-field="venv" value="${esc(sv('venv', _es.envPath || _srvVenv || ''))}" placeholder="~/venv" /></label>`;
       const defaultPort = defaultBackend === 'ollama' ? '11434' : _nextAvailablePort();
@@ -777,6 +785,11 @@ function _rerenderCachedModels() {
         if (f.reasoning_parser) {
           const _rpEl2 = panel.querySelector('[data-field="reasoning_parser"]');
           f._reasoning_parser_value = _rpEl2?.dataset?.parser || 'qwen3';
+        }
+        if (backend === 'mlx') {
+          // oMLX serves the parent directory; mlx-lm takes the resolved model
+          // path (serveModel). Provide the parent dir for the oMLX engine.
+          f._mlx_model_dir = m.path ? String(m.path).replace(/\/+$/, '') : '~/models';
         }
         let cmd = _buildServeCmd(f, serveModel, backend);
         if (f.extra && f.extra.trim()) cmd += ' ' + f.extra.trim();

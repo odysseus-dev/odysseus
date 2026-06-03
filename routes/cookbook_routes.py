@@ -40,6 +40,7 @@ from routes.cookbook_helpers import (
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
     _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
+    _guard_mlx_platform,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -905,6 +906,7 @@ def setup_cookbook_routes() -> APIRouter:
             local=not bool(req.remote_host),
             in_venv=sys.prefix != sys.base_prefix,
         )
+        _guard_mlx_platform(req.cmd, req.remote_host)
         is_pip_install = bool(req.cmd and "pip install" in req.cmd)
         if is_pip_install:
             # Keep big dependency wheel builds (vLLM, …) off the home filesystem's

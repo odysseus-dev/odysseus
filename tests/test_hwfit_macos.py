@@ -35,13 +35,12 @@ def _fake_sysctl(brand="Apple M2 Pro", memsize_gb=32, wired_mb=None):
     return run
 
 
-def test_mlx_models_hidden_on_metal():
-    """MLX-quantized models can't be served by llama.cpp or Ollama (the only
-    Metal-capable engines Odysseus generates), so they must never be recommended
-    on Apple Silicon — even though the catalog tags them as Apple-only."""
+def test_mlx_models_shown_on_metal():
+    """MLX-quantized models ARE now servable on Apple Silicon via oMLX, so they
+    must be recommended on Metal (the reverse of the old llama.cpp-only rule)."""
     results = rank_models(_metal_system(), limit=900)
     mlx = [m for m in results if str(m.get("quant", "")).startswith("mlx-")]
-    assert mlx == [], f"MLX models surfaced but cannot be served: {[m['name'] for m in mlx]}"
+    assert mlx, "MLX models should now surface on Metal (oMLX backend)"
 
 
 def _cuda_system():
@@ -57,17 +56,39 @@ def test_mlx_hidden_on_cuda_backend_unchanged():
     assert mlx == []
 
 
-def test_only_gguf_models_recommended_on_metal():
-    """llama.cpp and Ollama (the only Metal engines) need GGUF. Safetensors-only
-    repos — incl. vLLM-only AWQ/GPTQ/FP8 — can't be served on Metal, so every
-    model recommended on Apple Silicon must ship a servable GGUF."""
+def test_mlx_quant_filter_surfaces_all_mlx_bitwidths_on_metal():
+    """Picking the MLX quant filter surfaces MLX models at their native
+    bit-widths and excludes every non-MLX format."""
+    res = rank_models(_metal_system(), use_case="general", limit=900, quant="mlx-")
+    assert res, "MLX quant filter returned nothing on Metal"
+    assert all(str(r.get("quant", "")).startswith("mlx-") for r in res)
+
+
+def test_mlx_quant_filter_empty_off_metal():
+    """MLX is Apple-Silicon-only, so the MLX quant filter shows nothing on CUDA."""
+    assert rank_models(_cuda_system(), use_case="general", limit=900, quant="mlx-") == []
+
+
+def test_mlx_quant_filter_respects_bit_width_on_metal():
+    """oMLX + a specific bit tier (the UI maps Q4 -> mlx-4bit) returns only that
+    bit-width, so the engine and quant filters compose correctly."""
+    res = rank_models(_metal_system(), use_case="general", limit=900, quant="mlx-4bit")
+    assert res, "mlx-4bit returned nothing on Metal"
+    assert all(r.get("quant") == "mlx-4bit" for r in res)
+
+
+def test_only_gguf_or_mlx_models_recommended_on_metal():
+    """On Apple Silicon the servable formats are GGUF (llama.cpp/Ollama) and
+    MLX (oMLX). Everything else (raw safetensors, vLLM-only AWQ/GPTQ/FP8) stays
+    filtered out."""
     catalog = {m["name"]: m for m in get_models()}
-    unservable = [
-        r["name"] for r in rank_models(_metal_system(), limit=900)
-        if not (catalog.get(r["name"], {}).get("is_gguf")
-                or catalog.get(r["name"], {}).get("gguf_sources"))
-    ]
-    assert unservable == [], f"{len(unservable)} non-GGUF models on Metal, e.g. {unservable[:3]}"
+    unservable = []
+    for r in rank_models(_metal_system(), limit=900):
+        c = catalog.get(r["name"], {})
+        is_mlx = str(r.get("quant", "")).startswith("mlx-") or "mlx" in r["name"].lower()
+        if not (c.get("is_gguf") or c.get("gguf_sources") or is_mlx):
+            unservable.append(r["name"])
+    assert unservable == [], f"{len(unservable)} non-servable on Metal, e.g. {unservable[:3]}"
 
 
 def test_qwen_catalog_entries_point_at_verified_gguf_repos():
