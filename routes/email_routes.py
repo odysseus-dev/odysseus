@@ -2954,6 +2954,8 @@ def setup_email_routes():
                     "from_address": r.from_address or "",
                     "has_imap_password": bool(r.imap_password),
                     "has_smtp_password": bool(r.smtp_password),
+                    "auth_type": getattr(r, "auth_type", "password") or "password",
+                    "oauth_provider": getattr(r, "oauth_provider", "") or "",
                 })
             return {"accounts": out}
         finally:

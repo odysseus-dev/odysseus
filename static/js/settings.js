@@ -3257,7 +3257,7 @@ async function initUnifiedIntegrations() {
     for (const acc of (emailAccountsRes.accounts || [])) {
       const label = acc.name + (acc.is_default ? ' (default)' : '');
       const detail = [acc.from_address || acc.imap_user, acc.imap_host].filter(Boolean).join(' — ');
-      items.push({ type: 'email', id: acc.id, name: label, detail, enabled: acc.enabled !== false, data: acc });
+      items.push({ type: 'email', id: acc.id, name: label, detail, enabled: acc.enabled !== false, auth_type: acc.auth_type || 'password', oauth_provider: acc.oauth_provider || '', data: acc });
     }
     // MCP servers
     const mcpList = Array.isArray(mcpRes) ? mcpRes : (mcpRes.servers || []);
@@ -3294,7 +3294,7 @@ async function initUnifiedIntegrations() {
     return `<div class="intg-card" data-intg-id="${item.id}" data-intg-type="${item.type}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:color-mix(in srgb, var(--fg) 3%, transparent);margin-bottom:6px;cursor:pointer;transition:all 0.15s;" title="Click to edit">
       <span style="opacity:0.6;flex-shrink:0">${t.icon}</span>
       <div style="flex:1;min-width:0">
-        <div style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px">${item.name} <span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 5px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 50%, transparent);border-radius:3px;color:var(--accent, var(--red));background:color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);">${t.label}</span></div>
+        <div style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px">${item.name} <span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 5px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 50%, transparent);border-radius:3px;color:var(--accent, var(--red));background:color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);">${t.label}</span>${item.auth_type === 'oauth2' ? `<span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 5px;border:1px solid color-mix(in srgb, var(--green,#50fa7b) 50%, transparent);border-radius:3px;color:var(--green,#50fa7b);background:color-mix(in srgb, var(--green,#50fa7b) 12%, transparent);">OAuth</span>` : ''}</div>
         <div style="font-size:11px;opacity:0.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.detail || ''}</div>
       </div>
       ${statusDot}
