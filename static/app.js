@@ -2692,9 +2692,11 @@ function initializeEventListeners() {
       if (!content || !header) return;
       let dragX, dragY, startLeft, startTop, dragging = false;
 
-      // Reset to flex-centered position each time modal opens
+      // Only recenter on open; drag class changes must keep fixed coordinates.
+      let wasHidden = m.classList.contains('hidden');
       new MutationObserver(() => {
-        if (!m.classList.contains('hidden')) {
+        const isHidden = m.classList.contains('hidden');
+        if (wasHidden && !isHidden) {
           content.style.position = '';
           content.style.left = '';
           content.style.top = '';
@@ -2702,6 +2704,7 @@ function initializeEventListeners() {
           content.style.bottom = '';
           content.style.margin = '';
         }
+        wasHidden = isHidden;
       }).observe(m, { attributes: true, attributeFilter: ['class'] });
 
       function startDrag(clientX, clientY) {
