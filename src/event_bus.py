@@ -9,12 +9,23 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 _task_scheduler = None
+
+
+def _utcnow_naive() -> datetime:
+    """Naive UTC ``now``, replacing the deprecated ``datetime.utcnow()``.
+
+    ``ScheduledTask.next_run`` is a naive column and the scheduler compares it
+    against naive UTC, so this keeps the timestamp shape identical while dropping
+    the call removed in Python 3.14 — switching to an aware datetime here would
+    make the ``next_run`` comparison below raise ``TypeError`` (#1116).
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def set_task_scheduler(scheduler):
@@ -101,11 +112,11 @@ async def _handle_event(event_name: str, owner: Optional[str] = None):
                 # behind a model call, `next_run <= now` makes the trigger
                 # survive reboot instead of losing the event after the counter
                 # has already reset.
-                task.next_run = datetime.utcnow()
+                task.next_run = _utcnow_naive()
                 db.commit()
                 # Fire the task
                 if _task_scheduler:
-                    if task.next_run and task.next_run > datetime.utcnow():
+                    if task.next_run and task.next_run > _utcnow_naive():
                         logger.info(
                             f"Event '{event_name}' reached task '{task.name}', "
                             f"but it is already deferred until {task.next_run}"
