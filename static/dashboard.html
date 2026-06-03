@@ -1209,6 +1209,47 @@ html, body {
     color: #333;
   }
 }
+
+/* Widget Manager styles */
+.widget-btn {
+  padding: 6px 14px;
+  background: var(--ps2-panel);
+  border: 1px solid var(--theme-accent, rgba(0,102,255,0.3));
+  border-radius: 4px;
+  color: var(--ps2-chrome);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  cursor: pointer;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+.widget-btn:hover {
+  border-color: var(--theme-accent);
+  box-shadow: 0 0 .2rem #fff,
+              0 0 .4rem #fff,
+              0 0 2rem var(--theme-accent, var(--ps2-blue)),
+              0 0 0.8rem var(--theme-accent, var(--ps2-blue)),
+              inset 0 0 0.6rem rgba(0,102,255,0.2);
+  animation: neonPulsate 2.5s infinite alternate;
+}
+.widget-modal { display:none;position:fixed;inset:0;z-index:500;align-items:center;justify-content:center; }
+.widget-modal.open { display:flex; }
+.widget-backdrop { position:absolute;inset:0;background:rgba(0,0,0,0.5);backdrop-filter:blur(4px); }
+.widget-box { position:relative;width:min(420px,90vw);background:rgba(10,20,50,0.95);border:1px solid rgba(0,102,255,0.3);border-radius:12px;padding:20px;box-shadow:0 16px 64px rgba(0,0,0,0.6);backdrop-filter:blur(20px); }
+.widget-grid { display:grid;grid-template-columns:1fr 1fr;gap:6px; }
+.widget-option { display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid rgba(255,255,255,0.05);border-radius:4px;cursor:pointer;font-family:var(--font-mono);font-size:9px;color:rgba(200,208,224,0.6);transition:all 0.2s;background:transparent; }
+.widget-option:hover { border-color:var(--theme-accent,#06f);background:rgba(0,102,255,0.1);color:var(--ps2-chrome); }
+.widget-option.active { border-color:rgba(0,255,136,0.3); }
+.widget-option.active .widget-opt-toggle { color:var(--neon-green); }
+.widget-opt-icon { font-size:16px;flex-shrink:0; }
+.widget-opt-name { flex:1;letter-spacing:1px; }
+.widget-opt-desc { font-size:8px;color:rgba(200,208,224,0.3);flex:0 0 80px;text-align:right; }
+.widget-opt-toggle { font-size:10px;width:12px;text-align:center; }
+.widget-hint { font-family:var(--font-mono);font-size:9px;color:rgba(200,208,224,0.4); }
+.widget-footer { font-family:var(--font-mono);font-size:9px;color:rgba(200,208,224,0.3); }
+.embed-widget { position:fixed;right:20px;z-index:150;pointer-events:auto;background:rgba(5,20,60,0.75);border:1px solid rgba(0,102,255,0.2);border-radius:8px;overflow:hidden;backdrop-filter:blur(16px) saturate(180%);box-shadow:0 4px 24px rgba(0,0,0,0.4);display:none;width:360px;height:220px; }
+.embed-header { padding:6px 12px;font-family:var(--font-mono);font-size:10px;letter-spacing:2px;color:var(--neon-cyan);background:rgba(0,20,60,0.5);border-bottom:1px solid rgba(0,102,255,0.1); }
+.embed-frame { width:100%;height:100%;border:none;background:#050510; }
 </style>
 </head>
 <body>
@@ -1379,6 +1420,18 @@ html, body {
   </div>
 </div>
 
+<!-- Widget Manager -->
+<button class="theme-btn" id="widget-btn" title="Widget Manager" style="position:fixed;top:16px;right:110px;z-index:300;pointer-events:auto;opacity:0;transition:opacity 1s ease 3s">🧩 WIDGETS</button>
+<div id="widget-modal" class="widget-modal">
+  <div class="widget-backdrop"></div>
+  <div class="widget-box">
+    <h3 style="font-family:var(--font-display);font-size:14px;letter-spacing:3px;color:var(--neon-cyan);margin-bottom:8px;text-align:center">🧩 WIDGET MANAGER</h3>
+    <p class="widget-hint" style="text-align:center;font-family:var(--font-mono);font-size:9px;color:rgba(200,208,224,0.4);margin-bottom:16px">Toggle dashboard panels on/off</p>
+    <div class="widget-grid" id="widget-grid"></div>
+    <div class="widget-footer" style="text-align:center;margin-top:16px;font-family:var(--font-mono);font-size:9px;color:rgba(200,208,224,0.3)">Settings saved automatically</div>
+  </div>
+</div>
+
 <script>
 (function() {
 'use strict';
@@ -1387,39 +1440,91 @@ html, body {
    CONFIGURATION
    ═══════════════════════════════════════════════════════════ */
 
+var CADDY_PATH = {
+  odysseus: '/odysseus/', mcp: '/bridge/', ollama: '/ollama/',
+  searxng: '/search/', memory: '/memory/', gateway: '/gateway/',
+  cost: '/cost/', workflows: '/workflows/', weather: '/weather/',
+  automation: '/automation/', monitor: '/monitor/', secrets: '/secrets/',
+  media: '/media/', news: '/news/', ntfy: '/notify/', metrics: '/metrics/',
+};
+
 var SERVICES = [
-  { id: 'odysseus',     name: 'Odysseus',       group: 'core',   port: 7000,  icon: '🧠', desc: 'AI workspace — the brain',              color: '#ff6b9d' },
-  { id: 'swarm',        name: 'Swarm Manager',   group: 'core',   port: 7000,  icon: '🐝', desc: 'Agent orchestration hive',              color: '#ffd93d' },
-  { id: 'mcp',          name: 'MCP Bridge',      group: 'core',   port: 8378,  icon: '🌉', desc: 'Protocol gateway',                      color: '#6bcb77' },
-  { id: 'ollama',       name: 'Ollama',           group: 'infra',  port: 11434, icon: '🦙', desc: 'Local LLM inference engine',             color: '#9b59b6' },
-  { id: 'chroma',       name: 'ChromaDB',         group: 'infra',  port: 8100,  icon: '💎', desc: 'Vector memory crystal',                  color: '#00bcd4' },
-  { id: 'searxng',      name: 'SearXNG',          group: 'infra',  port: 8080,  icon: '🔍', desc: 'Search oracle',                          color: '#ff9800' },
-  { id: 'memory',       name: 'Nexus Memory',     group: 'nexus',  port: 8010,  icon: '🧬', desc: 'Agent neural pathways',                  color: '#e91e63' },
-  { id: 'gateway',      name: 'Nexus Gateway',    group: 'nexus',  port: 8082,  icon: '🚪', desc: 'Auth & routing gate',                    color: '#4caf50' },
-  { id: 'cost',         name: 'Nexus Cost',       group: 'nexus',  port: 8199,  icon: '💰', desc: 'Resource ledger',                        color: '#ffc107' },
-  { id: 'workflows',    name: 'Nexus Workflows',  group: 'nexus',  port: 7800,  icon: '⚙️', desc: 'Task automation engine',                 color: '#607d8b' },
-  { id: 'weather',      name: 'Nexus Weather',    group: 'nexus',  port: 8085,  icon: '☀️', desc: 'Environmental sensors',                  color: '#ffeb3b' },
-  { id: 'automation',   name: 'Nexus Automation', group: 'nexus',  port: 8090,  icon: '🤖', desc: 'IoT command center',                     color: '#00bcd4' },
-  { id: 'security',     name: 'Nexus Security',   group: 'nexus',  port: 8443,  icon: '🛡️', desc: 'Digital fortress',                       color: '#f44336' },
-  { id: 'monitor',      name: 'Nexus Monitor',    group: 'nexus',  port: 8099,  icon: '🛰️', desc: 'Overwatch system',                       color: '#3f51b5' },
-  { id: 'secrets',      name: 'Nexus Secrets',    group: 'nexus',  port: 7438,  icon: '🔒', desc: 'Vault of keys',                          color: '#795548' },
-  { id: 'media',        name: 'Duinn Media',      group: 'nexus',  port: 8096,  icon: '🎬', desc: 'Media stream hub',                       color: '#e040fb' },
-  { id: 'news',         name: 'Nexus News',       group: 'nexus',  port: 8100,  icon: '📰', desc: 'Information feed',                       color: '#009688' },
-  { id: 'ntfy',         name: 'ntfy',              group: 'infra',  port: 8091,  icon: '🔔', desc: 'Signal beacon',                          color: '#ff5722' },
-  { id: 'metrics',      name: 'Nexus Metrics',    group: 'nexus',  port: 9100,  icon: '📊', desc: 'Vital signs monitor',                    color: '#8bc34a' },
-  { id: 'pi',           name: 'Pi Hub',           group: 'pi',     port: null,  icon: '🍓', desc: 'Edge node — Raspberry Pi',               color: '#e91e63' },
+  { id: 'odysseus',     name: 'Odysseus',       group: 'core',   port: 7000,  healthPath: '/api/health',           icon: '🧠', desc: 'AI workspace — the brain',              color: '#ff6b9d' },
+  { id: 'swarm',        name: 'Swarm Manager',   group: 'core',   port: 7000,  healthPath: '/api/health',           icon: '🐝', desc: 'Agent orchestration hive',              color: '#ffd93d' },
+  { id: 'mcp',          name: 'MCP Bridge',      group: 'core',   port: 8378,                                   icon: '🌉', desc: 'Protocol gateway',                      color: '#6bcb77' },
+  { id: 'ollama',       name: 'Ollama',           group: 'infra',  port: 11434,                                  icon: '🦙', desc: 'Local LLM inference engine',             color: '#9b59b6' },
+  { id: 'chroma',       name: 'ChromaDB',         group: 'infra',  port: 8100,  healthPath: '/api/v2/heartbeat',    icon: '💎', desc: 'Vector memory crystal',                  color: '#00bcd4' },
+  { id: 'searxng',      name: 'SearXNG',          group: 'infra',  port: 8080,  healthPath: '/',                     icon: '🔍', desc: 'Search oracle',                          color: '#ff9800' },
+  { id: 'memory',       name: 'Nexus Memory',     group: 'nexus',  port: 8010,                                   icon: '🧬', desc: 'Agent neural pathways',                  color: '#e91e63' },
+  { id: 'gateway',      name: 'Nexus Gateway',    group: 'nexus',  port: 8082,                                   icon: '🚪', desc: 'Auth & routing gate',                    color: '#4caf50' },
+  { id: 'cost',         name: 'Nexus Cost',       group: 'nexus',  port: 8199,                                   icon: '💰', desc: 'Resource ledger',                        color: '#ffc107' },
+  { id: 'workflows',    name: 'Nexus Workflows',  group: 'nexus',  port: 7800,                                   icon: '⚙️', desc: 'Task automation engine',                 color: '#607d8b' },
+  { id: 'weather',      name: 'Nexus Weather',    group: 'nexus',  port: 8085,  healthPath: '/',                    icon: '☀️', desc: 'Environmental sensors',                  color: '#ffeb3b' },
+  { id: 'automation',   name: 'Nexus Automation', group: 'nexus',  port: 8090,  healthPath: '/',                     icon: '🤖', desc: 'IoT command center',                     color: '#00bcd4' },
+  { id: 'security',     name: 'Nexus Security',   group: 'nexus',  port: 8443,  healthPath: '/',                     icon: '🛡️', desc: 'Digital fortress',                       color: '#f44336' },
+  { id: 'monitor',      name: 'Nexus Monitor',    group: 'nexus',  port: 8099,                                   icon: '🛰️', desc: 'Overwatch system',                       color: '#3f51b5' },
+  { id: 'secrets',      name: 'Nexus Secrets',    group: 'nexus',  port: 7438,  healthPath: '/',                     icon: '🔒', desc: 'Vault of keys',                          color: '#795548' },
+  { id: 'media',        name: 'Duinn Media',      group: 'nexus',  port: 8096,  healthPath: '/',                     icon: '🎬', desc: 'Media stream hub',                       color: '#e040fb' },
+  { id: 'news',         name: 'Nexus News',       group: 'nexus',  port: 8101,                                   icon: '📰', desc: 'Information feed',                       color: '#009688' },
+  { id: 'ntfy',         name: 'ntfy',              group: 'infra',  port: 8091,  healthPath: '/v1/health',          icon: '🔔', desc: 'Signal beacon',                          color: '#ff5722' },
+  { id: 'metrics',      name: 'Nexus Metrics',    group: 'nexus',  port: 9100,                                   icon: '📊', desc: 'Vital signs monitor',                    color: '#8bc34a' },
+  { id: 'pi',           name: 'Pi Hub',           group: 'pi',     port: 8086,  healthPath: '/api/pi/ping',         icon: '🍓', desc: 'Edge node — Raspberry Pi',               color: '#e91e63' },
 ];
 
 var AGENTS = [
-  { id: 'owl',       name: 'OWL',       role: 'Core AI',        color: '#00e5ff', startX: 400, startY: 300, targetService: 'odysseus' },
-  { id: 'researcher', name: 'Researcher', role: 'Web Scanner',   color: '#ff6b9d', startX: 200, startY: 200, targetService: 'searxng' },
-  { id: 'coder',     name: 'Coder',      role: 'Code Gen',       color: '#6bcb77', startX: 600, startY: 400, targetService: 'ollama' },
-  { id: 'guard',     name: 'Guard',      role: 'Security',       color: '#ff3366', startX: 300, startY: 500, targetService: 'security' },
-  { id: 'scribe',    name: 'Scribe',     role: 'Memory Keeper',  color: '#ffd93d', startX: 500, startY: 200, targetService: 'memory' },
-  { id: 'scout',     name: 'Scout',      role: 'Explorer',       color: '#ff9800', startX: 150, startY: 400, targetService: 'news' },
-  { id: 'keeper',    name: 'Keeper',     role: 'Vault Master',   color: '#9b59b6', startX: 700, startY: 300, targetService: 'secrets' },
-  { id: 'weaver',    name: 'Weaver',     role: 'Workflow Engine', color: '#607d8b', startX: 350, startY: 150, targetService: 'workflows' },
+  { id: 'owl',       name: 'OWL',       role: 'Core AI Orchestrator', color: '#00e5ff', startX: 400, startY: 300, targetService: 'odysseus' },
+  { id: 'researcher', name: 'Researcher', role: 'Web Intelligence',   color: '#ff6b9d', startX: 200, startY: 200, targetService: 'searxng' },
+  { id: 'coder',     name: 'Coder',      role: 'Code Generation',     color: '#6bcb77', startX: 600, startY: 400, targetService: 'ollama' },
+  { id: 'guard',     name: 'Guard',      role: 'Security Monitoring', color: '#ff3366', startX: 300, startY: 500, targetService: 'security' },
+  { id: 'scribe',    name: 'Scribe',     role: 'Memory Indexing',     color: '#ffd93d', startX: 500, startY: 200, targetService: 'memory' },
+  { id: 'scout',     name: 'Scout',      role: 'News Aggregation',    color: '#ff9800', startX: 150, startY: 400, targetService: 'news' },
+  { id: 'keeper',    name: 'Keeper',     role: 'Secrets Management',  color: '#9b59b6', startX: 700, startY: 300, targetService: 'secrets' },
+  { id: 'weaver',    name: 'Weaver',     role: 'Workflow Engine',     color: '#607d8b', startX: 350, startY: 150, targetService: 'workflows' },
 ];
+
+// Realistic task descriptions per agent role — shown in text bubbles while working
+var AGENT_TASKS = {
+  'owl': [
+    'Routing queries to LLM...', 'Orchestrating agent pipeline...', 'Processing semantic search...',
+    'Aggregating service health...', 'Synthesizing response...', 'Balancing load across workers...',
+    'Analyzing request patterns...', 'Running intent classification...', 'Updating context window...'
+  ],
+  'researcher': [
+    'Scanning web sources...', 'Extracting relevant passages...', 'Cross-referencing results...',
+    'Fetching latest publications...', 'Building citation graph...', 'Summarizing findings...',
+    'Checking source credibility...', 'Running deep search...', 'Indexing new content...'
+  ],
+  'coder': [
+    'Generating API endpoints...', 'Reviewing PR #142...', 'Refactoring legacy code...',
+    'Running test suite...', 'Writing documentation...', 'Fixing lint errors...',
+    'Optimizing query performance...', 'Building type definitions...', 'Deploying hotfix...'
+  ],
+  'guard': [
+    'Scanning network ports...', 'Analyzing auth logs...', 'Checking for intrusion patterns...',
+    'Validating API tokens...', 'Monitoring rate limits...', 'Reviewing firewall rules...',
+    'Auditing user permissions...', 'Detecting anomaly spikes...', 'Running vulnerability scan...'
+  ],
+  'scribe': [
+    'Consolidating memory fragments...', 'Building knowledge graph...', 'Pruning stale vectors...',
+    'Indexing recent conversations...', 'Backing up memory store...', 'Deduplicating embedding clusters...',
+    'Running memory compaction...', 'Tagging semantic relationships...', 'Updating recall cache...'
+  ],
+  'scout': [
+    'Fetching RSS feeds...', 'Parsing news articles...', 'Classifying headlines...',
+    'Monitoring social signals...', 'Checking weather alerts...', 'Aggregating tech headlines...',
+    'Tracking market trends...', 'Curating daily briefing...', 'Scanning for alerts...'
+  ],
+  'keeper': [
+    'Rotating API keys...', 'Verifying secret integrity...', 'Auditing access logs...',
+    'Updating vault policies...', 'Checking certificate expiry...', 'Encrypting sensitive data...',
+    'Running compliance check...', 'Backing up credential store...', 'Reviewing access grants...'
+  ],
+  'weaver': [
+    'Executing backup workflow...', 'Triggering nightly build...', 'Monitoring job queue...',
+    'Orchestrating data pipeline...', 'Running scheduled tasks...', 'Coordinating microservices...',
+    'Handling webhook events...', 'Processing event queue...', 'Fanning out sub-agents...'
+  ]
+};
 
 /* ═══════════════════════════════════════════════════════════
    STATE
@@ -1785,6 +1890,7 @@ function enterGameWorld() {
   document.getElementById('agent-cards').classList.add('visible');
   try { updateRain(); } catch(e) {}
   addFeedItem('<span class="agent">System</span> — Dashboard loaded');
+  if (typeof initWidgets === 'function') setTimeout(initWidgets, 100);
 }
 
 function hideBootScreen() {
@@ -1799,9 +1905,49 @@ function hideBootScreen() {
 }
 
 function runBoot() {
-  // Always skip boot — go straight to game world
-  document.getElementById('boot-screen').style.display = 'none';
-  enterGameWorld();
+  // PS2-style boot sequence — show the animation, require key press
+  bootRunning = true;
+  state.bootProgress = 0;
+  startMatrixRain();
+  resizeBoot();
+  initBootParticles();
+  drawBoot();
+
+  var bs = document.getElementById('boot-screen');
+  var bar = document.getElementById('boot-bar');
+  var statusEl = document.getElementById('boot-status');
+  bs.style.display = '';
+  bs.classList.remove('fade-out');
+
+  // Typewriter + progress bar sequence
+  var msgIdx = 0;
+  var progress = 0;
+  var bootInterval = setInterval(function() {
+    if (msgIdx < bootMessages.length) {
+      typewriterBootMessage(statusEl, bootMessages[msgIdx], 30);
+      msgIdx++;
+      progress += Math.random() * 8 + 5;
+      if (progress > 100) progress = 100;
+      bar.style.width = progress + '%';
+    }
+    if (progress >= 100) {
+      clearInterval(bootInterval);
+      statusEl.textContent = '▶ PRESS ANY KEY TO ENTER THE GRID';
+      statusEl.style.color = 'var(--neon-cyan)';
+      statusEl.style.cursor = 'pointer';
+      statusEl.classList.remove('boot-status-typewriter');
+      statusEl.style.borderRight = 'none';
+
+      function enterHandler() {
+        hideBootScreen();
+        setTimeout(enterGameWorld, 1500);
+        document.removeEventListener('keydown', enterHandler);
+        document.removeEventListener('click', enterHandler);
+      }
+      document.addEventListener('keydown', enterHandler);
+      document.addEventListener('click', enterHandler);
+    }
+  }, 1200);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1886,7 +2032,11 @@ function initAgents() {
       xp: 0,
       socialTarget: null,
       socialTimer: 0,
-      relationships: {}
+      relationships: {},
+      tasks: AGENT_TASKS[a.id] || ['Working...'],
+      currentTask: 0,
+      tasksCompleted: 0,
+      taskProgress: 0
     };
   });
 
@@ -2127,23 +2277,21 @@ function updateAgents(dt) {
       var needAvg = Object.keys(agent.needs).reduce(function(sum, k) { return sum + agent.needs[k]; }, 0) / 5;
       agent.mood = agent.mood * 0.95 + needAvg * 0.05;
 
-      // === THE SIMS: Bubble based on lowest need ===
+      // === PRODUCTIVE WORK: Task description bubbles ===
       agent.bubbleTimer -= sdt;
       if (agent.bubbleTimer <= 0) {
-        var lowest = null, lowestVal = 100;
-        Object.keys(agent.needs).forEach(function(k) {
-          if (agent.needs[k] < lowestVal) { lowestVal = agent.needs[k]; lowest = k; }
-        });
-        var bubbleIcons = {
-          energy: '😴', social: '💬', fun: '🎮', hygiene: '🚿', hunger: '🍔'
-        };
-        if (lowestVal < 35) {
-          agent.bubble = bubbleIcons[lowest] || '❗';
+        if (agent.state === 'working' && agent.tasks && agent.currentTask !== undefined) {
+          agent.bubble = agent.tasks[agent.currentTask];
           agent.bubbleTimer = 3 + Math.random() * 2;
-        } else if (Math.random() > 0.7) {
-          var randomBubbles = ['💡', '🎵', '✨', '💭', '😊', '🔥'];
-          agent.bubble = randomBubbles[Math.floor(Math.random() * randomBubbles.length)];
-          agent.bubbleTimer = 2 + Math.random() * 2;
+        } else if (agent.state === 'walking') {
+          agent.bubble = 'Moving to ' + (agent.target ? agent.target.service.name : 'next station') + '...';
+          agent.bubbleTimer = 2;
+        } else if (agent.state === 'idle' && agent.actionQueue.length > 0) {
+          agent.bubble = agent.actionQueue[0];
+          agent.bubbleTimer = 2;
+        } else if (Math.random() > 0.85) {
+          agent.bubble = '⚡';
+          agent.bubbleTimer = 1.5;
         } else {
           agent.bubble = null;
           agent.bubbleTimer = 1;
@@ -2263,9 +2411,30 @@ function updateAgents(dt) {
 
     if (agent.state === 'working') {
       agent.workTimer -= sdt;
+      agent.taskProgress += sdt;
+      // Advance through task list
+      if (agent.taskProgress > 2) {
+        agent.taskProgress = 0;
+        agent.currentTask = (agent.currentTask + 1) % agent.tasks.length;
+        agent.tasksCompleted++;
+        // Spawn completion particles when a task is done
+        if (agent.target) {
+          spawnParticles(
+            agent.target.x + agent.target.w / 2,
+            agent.target.y - 10,
+            agent.def.color,
+            6
+          );
+        }
+        if (agent.tasksCompleted % 3 === 0) {
+          addFeedItem('<span class="agent">' + agent.def.name + '</span> completed <span class="up">' + agent.tasks[agent.currentTask] + '</span>');
+        }
+      }
       if (agent.workTimer <= 0) {
         agent.state = 'idle';
         agent.waitTimer = 1 + Math.random() * 3;
+        agent.bubble = '✅ Done!';
+        agent.bubbleTimer = 1.5;
       }
     }
   });
@@ -2753,10 +2922,13 @@ function showInfo(service) {
     return a.target && a.target.service.id === service.id;
   });
 
+  var caddyPath = CADDY_PATH[service.id];
   var html = '<div class="info-row"><span class="info-label">Status</span>' +
     '<span class="info-value" style="color:' + statusColor + '">' + statusText + '</span></div>' +
     '<div class="info-row"><span class="info-label">Port</span>' +
     '<span class="info-value">:' + (service.port || 'N/A') + '</span></div>' +
+    (caddyPath ? '<div class="info-row"><span class="info-label">Open</span>' +
+    '<span class="info-value"><a href="' + caddyPath + '" target="_blank" style="color:var(--neon-cyan);text-decoration:none">' + caddyPath + ' ↗</a></span></div>' : '') +
     '<div class="info-row"><span class="info-label">Group</span>' +
     '<span class="info-value">' + service.group + '</span></div>' +
     '<div class="info-row"><span class="info-label">Description</span>' +
@@ -2766,7 +2938,11 @@ function showInfo(service) {
     html += '<div style="margin-top:12px;font-size:11px;color:rgba(200,208,224,0.5);letter-spacing:1px">AGENTS</div>';
     agentsHere.forEach(function(a) {
       html += '<div class="info-row"><span class="info-value" style="color:' + a.def.color + '">' +
-        a.def.name + '</span><span class="info-label">' + a.def.role + ' — ' + a.state + '</span></div>';
+        a.def.name + '</span><span class="info-label">' + a.def.role + ' — ' + a.tasksCompleted + ' tasks</span></div>';
+      // Current task
+      if (a.tasks && a.tasks[a.currentTask]) {
+        html += '<div style="margin:4px 0;font-size:10px;color:var(--neon-cyan)">⚡ ' + a.tasks[a.currentTask] + '</div>';
+      }
       // Sims: show needs
       if (a.needs) {
         html += '<div style="margin:4px 0 8px;font-size:10px">';
@@ -2802,7 +2978,7 @@ function showInfo(service) {
 function checkHealth(s) {
   var url;
   if (s.port === null) return Promise.resolve('unknown');
-  url = 'http://localhost:' + s.port + '/health';
+  url = 'http://localhost:' + s.port + (s.healthPath || '/health');
   var controller = new AbortController();
   var timeout = setTimeout(function() { controller.abort(); }, 4000);
   return fetch(url, { method: 'GET', mode: 'no-cors', signal: controller.signal })
@@ -2810,27 +2986,75 @@ function checkHealth(s) {
     .catch(function() { clearTimeout(timeout); return 'down'; });
 }
 
+function fetchUmbrellaStatus() {
+  var controller = new AbortController();
+  var timeout = setTimeout(function() { controller.abort(); }, 5000);
+  return fetch(UMBRELLA_URL + '/status', { method: 'GET', signal: controller.signal })
+    .then(function(r) { clearTimeout(timeout); return r.json(); })
+    .catch(function(e) { clearTimeout(timeout); throw e; });
+}
+
 function pollHealth() {
-  Promise.all(SERVICES.map(function(s) {
-    return checkHealth(s).then(function(status) {
-      var prev = state.healthStatus[s.id];
-      state.healthStatus[s.id] = status;
-      // Detect state changes for activity feed
-      if (prev && prev !== status) {
-        if (status === 'up') {
-          addFeedItem('<span class="svc">' + s.icon + ' ' + s.name + '</span> is <span class="up">back online</span>');
-        } else if (status === 'down') {
-          addFeedItem('<span class="svc">' + s.icon + ' ' + s.name + '</span> went <span class="down">offline</span>');
-        }
+  fetchUmbrellaStatus()
+    .then(function(data) {
+      umbrellaCache.data = data;
+      umbrellaCache.lastFetch = Date.now();
+      // Populate healthStatus from umbrella
+      var prev = JSON.parse(JSON.stringify(state.healthStatus));
+      if (data.services) {
+        data.services.forEach(function(svc) {
+          state.healthStatus[svc.id] = svc.status || 'unknown';
+        });
+      } else if (data.health) {
+        Object.keys(data.health).forEach(function(id) {
+          state.healthStatus[id] = data.health[id].status || 'unknown';
+        });
       }
+      // Detect state changes for activity feed
+      SERVICES.forEach(function(s) {
+        var p = prev[s.id];
+        var c = state.healthStatus[s.id];
+        if (p && p !== c) {
+          if (c === 'up') {
+            addFeedItem('<span class="svc">' + s.icon + ' ' + s.name + '</span> is <span class="up">back online</span>');
+          } else if (c === 'down') {
+            addFeedItem('<span class="svc">' + s.icon + ' ' + s.name + '</span> went <span class="down">offline</span>');
+          }
+        }
+      });
+      // Update metrics from umbrella
+      if (data.metrics) {
+        realMetrics.cpu = data.metrics.cpu || realMetrics.cpu;
+        realMetrics.memory = data.metrics.memory || realMetrics.memory;
+        realMetrics.disk = data.metrics.disk || realMetrics.disk;
+        realMetrics.tasksCompleted = data.metrics.services_up || realMetrics.tasksCompleted;
+        realMetrics.uptimeHrs = data.uptime_seconds ? Math.floor(data.uptime_seconds / 3600) : realMetrics.uptimeHrs;
+      }
+      renderStrip();
+      renderUptimeBar();
+    })
+    .catch(function() {
+      // Umbrella down — fall back to direct health checks
+      Promise.all(SERVICES.map(function(s) {
+        return checkHealth(s).then(function(status) {
+          var prevStatus = state.healthStatus[s.id];
+          state.healthStatus[s.id] = status;
+          if (prevStatus && prevStatus !== status) {
+            if (status === 'up') {
+              addFeedItem('<span class="svc">' + s.icon + ' ' + s.name + '</span> is <span class="up">back online</span>');
+            } else if (status === 'down') {
+              addFeedItem('<span class="svc">' + s.icon + ' ' + s.name + '</span> went <span class="down">offline</span>');
+            }
+          }
+        });
+      })).then(function() {
+        renderStrip();
+        renderUptimeBar();
+      }).catch(function() {
+        renderStrip();
+        renderUptimeBar();
+      });
     });
-  })).then(function() {
-    renderStrip();
-    renderUptimeBar();
-  }).catch(function() {
-    renderStrip();
-    renderUptimeBar();
-  });
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -3099,6 +3323,9 @@ function renderCmdResults(query) {
   if (!q || 'help'.includes(q) || 'keyboard'.includes(q) || 'shortcut'.includes(q)) {
     items.push({ icon: '⌨️', name: 'Keyboard Shortcuts', desc: 'Show all shortcuts', badge: 'ACTION', action: function() { document.getElementById('help-overlay').classList.toggle('open'); } });
   }
+  if (!q || 'widget'.includes(q) || 'panel'.includes(q) || 'toggle'.includes(q)) {
+    items.push({ icon: '🧩', name: 'Widget Manager', desc: 'Toggle dashboard panels', badge: 'ACTION', action: function() { document.getElementById('widget-btn').click(); } });
+  }
   if (!q || 'owl'.includes(q) || 'center'.includes(q)) {
     items.push({ icon: '🦉', name: 'Center on OWL', desc: 'Find the core AI agent', badge: 'ACTION', action: function() { centerOnOwl(); } });
   }
@@ -3176,6 +3403,7 @@ document.querySelector('.feed-header').addEventListener('click', function() {
    ═══════════════════════════════════════════════════════════ */
 function renderAgentCards() {
   var container = document.getElementById('agent-cards');
+  var uData = umbrellaCache.data;
   if (container.children.length === 0) {
     // Build cards once
     state.agents.forEach(function(a) {
@@ -3192,13 +3420,34 @@ function renderAgentCards() {
       container.appendChild(card);
     });
   } else {
-    // Update status text
+    // Update status text with task info and real agent health from umbrella
     state.agents.forEach(function(a) {
       var el = document.getElementById('agent-status-' + a.def.id);
       if (el) {
+        // Check umbrella health for this agent's service
+        var agentHealth = null;
+        if (uData && uData.health && uData.health[a.def.targetService]) {
+          agentHealth = uData.health[a.def.targetService].status;
+        } else if (state.healthStatus[a.def.targetService]) {
+          agentHealth = state.healthStatus[a.def.targetService];
+        }
         var statusText = a.state;
-        if (a.state === 'working' && a.target) statusText = '→ ' + a.target.service.name;
-        if (a.state === 'walking' && a.target) statusText = 'walking to ' + a.target.service.name;
+        if (agentHealth === 'down') {
+          statusText = 'OFFLINE';
+          el.style.color = 'var(--neon-pink)';
+        } else if (a.state === 'working' && a.target) {
+          var taskName = a.tasks && a.tasks[a.currentTask] ? a.tasks[a.currentTask].substring(0, 20) + '...' : a.target.service.name;
+          statusText = a.tasksCompleted + ' tasks @ ' + a.target.service.name;
+          el.style.color = '';
+        } else if (a.state === 'walking' && a.target) {
+          statusText = '→ ' + a.target.service.name;
+          el.style.color = '';
+        } else if (a.state === 'working' && a.bubble) {
+          statusText = a.bubble.substring(0, 18) + '...';
+          el.style.color = '';
+        } else {
+          el.style.color = '';
+        }
         el.textContent = statusText;
       }
     });
@@ -3264,10 +3513,13 @@ function updateBuildingTooltip(e) {
     var a = state.agents[j];
     if (Math.abs(wx - a.x) < 15 && Math.abs(wy - a.y) < 20) {
       tooltip.querySelector('.tt-name').textContent = '🤖 ' + a.def.name;
-      tooltip.querySelector('.tt-desc').textContent = a.def.role;
+      tooltip.querySelector('.tt-desc').textContent = a.def.role + ' · Lv.' + a.skillLevel + ' · ' + a.tasksCompleted + ' tasks';
       var statusText = a.state;
-      if (a.state === 'working' && a.target) statusText = 'Working at ' + a.target.service.name;
-      if (a.state === 'walking' && a.target) statusText = 'Heading to ' + a.target.service.name;
+      if (a.state === 'working' && a.target) {
+        var bubbleText = a.bubble || a.tasks[a.currentTask] || '';
+        statusText = bubbleText.substring(0, 30);
+      }
+      if (a.state === 'walking' && a.target) statusText = '→ ' + a.target.service.name;
       tooltip.querySelector('.tt-status').innerHTML = '<span style="color:' + a.def.color + '">' + statusText + '</span>';
       tooltip.style.display = 'block';
       tooltip.style.left = (e.clientX + 16) + 'px';
@@ -4117,61 +4369,243 @@ function drawWeather(ctx) {
   }
 }
 
+// Cache real metrics from nexus services
+var realMetrics = {
+  cpu: 0, memory: 0, disk: 0, tasksCompleted: 0, uptimeHrs: 0
+};
+
+var UMBRELLA_URL = 'http://localhost:8456';
+var umbrellaCache = { lastFetch: 0, data: null };
+
 function updateSimCityPanel() {
-  // Population: count agents + tasks completed
-  var pop = state.agents.length;
-  document.getElementById('sc-pop').textContent = pop;
+  var uData = umbrellaCache.data;
+  var uSC = uData && uData.simcity ? uData.simcity : null;
 
-  // Resource bars based on service health
-  var upCount = 0, totalCount = 0;
-  SERVICES.forEach(function(s) {
-    if (s.port !== null) {
-      totalCount++;
-      if (state.healthStatus[s.id] === 'up') upCount++;
-    }
-  });
-  var healthPct = totalCount > 0 ? Math.round(upCount / totalCount * 100) : 0;
+  // Population: use umbrella data if available, else agents count
+  var pop = uSC ? uSC.population : state.agents.length;
+  document.getElementById('sc-pop').textContent = pop + ' 👷';
 
-  document.getElementById('sc-power').style.width = healthPct + '%';
-  document.getElementById('sc-power-val').textContent = healthPct + '%';
-  document.getElementById('sc-data').style.width = Math.min(100, healthPct + 10) + '%';
-  document.getElementById('sc-data-val').textContent = Math.min(100, healthPct + 10) + '%';
-  document.getElementById('sc-network').style.width = Math.max(0, healthPct - 5) + '%';
-  document.getElementById('sc-network-val').textContent = Math.max(0, healthPct - 5) + '%';
+  // Health percentage from umbrella or computed
+  var healthPct;
+  if (uData && uData.metrics && uData.metrics.health_pct !== undefined) {
+    healthPct = uData.metrics.health_pct;
+  } else {
+    var upCount = 0, totalCount = 0;
+    SERVICES.forEach(function(s) {
+      if (s.port !== null) {
+        totalCount++;
+        if (state.healthStatus[s.id] === 'up') upCount++;
+      }
+    });
+    healthPct = totalCount > 0 ? Math.round(upCount / totalCount * 100) : 0;
+  }
 
-  // Zone counts
-  var zones = { core: 0, infra: 0, nexus: 0, pi: 0 };
-  SERVICES.forEach(function(s) { zones[s.group] = (zones[s.group] || 0) + 1; });
+  // POWER = system CPU
+  var cpuVal = uData && uData.metrics ? uData.metrics.cpu : realMetrics.cpu;
+  var powerVal = Math.min(100, Math.round((cpuVal || 50) * 0.6 + healthPct * 0.4));
+  document.getElementById('sc-power').style.width = powerVal + '%';
+  document.getElementById('sc-power-val').textContent = powerVal + '%';
+
+  // DATA = memory usage + services up
+  var memVal = uData && uData.metrics ? uData.metrics.memory : realMetrics.memory;
+  var dataVal = Math.min(100, Math.round((memVal || 50) * 0.5 + healthPct * 0.3 + Math.min(realMetrics.tasksCompleted, 50) * 0.4));
+  document.getElementById('sc-data').style.width = dataVal + '%';
+  document.getElementById('sc-data-val').textContent = dataVal + '%';
+
+  // NETWORK = health + activity
+  var netVal = Math.round(healthPct * 0.8 + Math.min(realMetrics.tasksCompleted * 2, 20));
+  document.getElementById('sc-network').style.width = netVal + '%';
+  document.getElementById('sc-network-val').textContent = netVal + '%';
+
+  // Zone counts from umbrella or local
+  var zones = uSC ? uSC.zones : { core: 0, infra: 0, nexus: 0, pi: 0 };
+  if (!uSC) {
+    zones = { core: 0, infra: 0, nexus: 0, pi: 0 };
+    SERVICES.forEach(function(s) { zones[s.group] = (zones[s.group] || 0) + 1; });
+  }
   Object.keys(zones).forEach(function(z) {
     var el = document.getElementById('sc-zone-' + z + '-n');
     if (el) el.textContent = zones[z];
   });
 
-  // RCI demand
-  var infraDemand = Math.max(0, 100 - healthPct);
-  var connDemand = Math.round(healthPct * 0.8);
-  var intelDemand = Math.round(healthPct * 0.6);
+  // RCI demand from umbrella or local
+  var rci = uSC ? uSC.rci : null;
+  var infraDemand, connDemand, intelDemand;
+  if (rci) {
+    infraDemand = Math.max(5, rci.residential || 50);
+    connDemand = Math.max(5, rci.commercial || 50);
+    intelDemand = Math.max(5, rci.industrial || 50);
+  } else {
+    infraDemand = Math.max(5, Math.round(realMetrics.cpu || 50));
+    connDemand = Math.max(5, Math.round(100 - (realMetrics.memory || 50)));
+    intelDemand = Math.max(5, Math.round(realMetrics.tasksCompleted * 5));
+  }
   var totalRCI = infraDemand + connDemand + intelDemand || 1;
   document.getElementById('sc-rci-r').style.flex = infraDemand / totalRCI;
   document.getElementById('sc-rci-c').style.flex = connDemand / totalRCI;
   document.getElementById('sc-rci-i').style.flex = intelDemand / totalRCI;
 
-  // Happiness
+  // Happiness from umbrella or local
+  var happyScore = uSC ? uSC.happiness : Math.round((healthPct + Math.min(realMetrics.uptimeHrs * 2, 30) + realMetrics.tasksCompleted) / 3);
   var happyIcon = document.getElementById('sc-happy-icon');
   var happyText = document.getElementById('sc-happy-text');
-  if (healthPct >= 90) {
+  if (happyScore >= 85) {
     happyIcon.textContent = '😊';
-    happyText.textContent = 'City is thriving!';
-  } else if (healthPct >= 70) {
+    happyText.textContent = 'Productivity at peak!';
+  } else if (happyScore >= 65) {
     happyIcon.textContent = '😐';
-    happyText.textContent = 'City is stable';
-  } else if (healthPct >= 50) {
+    happyText.textContent = 'Agents are busy';
+  } else if (happyScore >= 45) {
     happyIcon.textContent = '😟';
-    happyText.textContent = 'Citizens worried';
+    happyText.textContent = 'Some services degraded';
   } else {
     happyIcon.textContent = '😡';
-    happyText.textContent = 'City in crisis!';
+    happyText.textContent = 'System under load!';
   }
+}
+
+// Fetch real metrics — umbrella first, then direct fallbacks
+function fetchRealMetrics() {
+  // Umbrella already provides metrics via /status (polled in pollHealth)
+  // This function handles direct fallbacks for when umbrella is down
+  if (umbrellaCache.data && umbrellaCache.data.metrics) {
+    var m = umbrellaCache.data.metrics;
+    realMetrics.cpu = m.cpu || realMetrics.cpu;
+    realMetrics.memory = m.memory || realMetrics.memory;
+    realMetrics.disk = m.disk || realMetrics.disk;
+    realMetrics.tasksCompleted = m.services_up || realMetrics.tasksCompleted;
+    return; // umbrella data is fresh enough
+  }
+
+  // Fallback: direct fetch from nexus-monitor and nexus-metrics
+  fetch('http://localhost:8099/api/status')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.services) {
+        realMetrics.uptimeHrs = data.services.length > 0 ? 1 : 0;
+      }
+    })
+    .catch(function() {});
+
+  fetch('http://localhost:9100/metrics')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.metrics) {
+        realMetrics.cpu = data.metrics.cpu_cpu_percent_overall || realMetrics.cpu;
+        var memPct = data.metrics.memory_mem_percent;
+        if (memPct !== undefined) realMetrics.memory = memPct;
+        realMetrics.tasksCompleted = Math.floor((data.metrics.process_process_count || 0) / 10);
+      }
+    })
+    .catch(function() {});
+}
+
+/* ═══════════════════════════════════════════════════════════
+   WIDGET MANAGER — Customizable panels & embed widgets
+   ═══════════════════════════════════════════════════════════ */
+
+var WIDGET_DEFS = [
+  { id: 'simcity-panel',  name: 'SimCity Panel',    icon: '📊', desc: 'Resource bars, zones, RCI', embed: false },
+  { id: 'activity-feed',  name: 'Activity Feed',    icon: '⚡', desc: 'Real-time service events',  embed: false },
+  { id: 'agent-cards',    name: 'Agent Cards',      icon: '🤖', desc: 'Agent roster & status',    embed: false },
+  { id: 'minimap',        name: 'Minimap',          icon: '🗺️', desc: 'World overview',          embed: false },
+  { id: 'lofi-player',    name: 'Lofi Player',      icon: '♫',  desc: 'Ambient audio toggle',    embed: false },
+  { id: 'theme-switcher', name: 'Theme Switcher',   icon: '🎨', desc: 'Game theme selector',     embed: false },
+  { id: 'hud-strip',      name: 'Status Strip',     icon: '📡', desc: 'Service health bar',      embed: false },
+  { id: 'uptime-bar',     name: 'Uptime Bar',       icon: '📈', desc: 'Top status indicator',    embed: false },
+  { id: 'embed-pi',       name: 'Pi Dashboard',     icon: '🍓', desc: 'Raspberry Pi Homer UI',   embed: true },
+  { id: 'embed-monitor',  name: 'Nexus Monitor',    icon: '🛰️', desc: 'Service monitor',         embed: true },
+];
+
+var widgetState = {};
+
+function loadWidgetState() {
+  try { var s = JSON.parse(localStorage.getItem('duinn-widgets')); if (s) widgetState = s; } catch(e) {}
+  WIDGET_DEFS.forEach(function(w) {
+    if (widgetState[w.id] === undefined) widgetState[w.id] = w.id !== 'embed-pi' && w.id !== 'embed-monitor';
+  });
+}
+
+function saveWidgetState() {
+  localStorage.setItem('duinn-widgets', JSON.stringify(widgetState));
+}
+
+function isWidgetVisible(id) { return widgetState[id] !== false; }
+
+function toggleWidget(id) {
+  widgetState[id] = !isWidgetVisible(id);
+  saveWidgetState();
+  applyWidgetVisibility();
+  renderWidgetManager();
+}
+
+function applyWidgetVisibility() {
+  WIDGET_DEFS.forEach(function(w) {
+    var el = document.getElementById(w.id);
+    if (!el) return;
+    if (w.embed) {
+      el.style.display = isWidgetVisible(w.id) ? 'block' : 'none';
+    } else {
+      el.style.display = isWidgetVisible(w.id) ? '' : 'none';
+    }
+  });
+  var strip = document.querySelector('.hud-strip');
+  if (strip) strip.style.display = isWidgetVisible('hud-strip') ? '' : 'none';
+}
+
+function renderWidgetManager() {
+  var grid = document.getElementById('widget-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  WIDGET_DEFS.forEach(function(w) {
+    var opt = document.createElement('div');
+    opt.className = 'widget-option' + (isWidgetVisible(w.id) ? ' active' : '');
+    opt.innerHTML = '<span class="widget-opt-icon">' + w.icon + '</span><span class="widget-opt-name">' + w.name + '</span><span class="widget-opt-desc">' + w.desc + '</span><span class="widget-opt-toggle">' + (isWidgetVisible(w.id) ? '●' : '○') + '</span>';
+    opt.addEventListener('click', function() { toggleWidget(w.id); });
+    grid.appendChild(opt);
+  });
+}
+
+function initWidgets() {
+  loadWidgetState();
+
+  // Create embed widget containers
+  var embeds = [
+    { id: 'embed-pi', title: '🍓 Pi Dashboard', src: 'http://100.108.225.22:8085' },
+    { id: 'embed-monitor', title: '🛰️ Nexus Monitor', src: '/monitor/' },
+  ];
+  embeds.forEach(function(e) {
+    if (!document.getElementById(e.id)) {
+      var div = document.createElement('div');
+      div.id = e.id;
+      div.className = 'embed-widget';
+      div.innerHTML = '<div class="embed-header">' + e.title + '</div><iframe src="' + e.src + '" class="embed-frame" loading="lazy" sandbox="allow-scripts allow-same-origin"></iframe>';
+      document.body.appendChild(div);
+    }
+  });
+
+  // Position embed widgets
+  var piEl = document.getElementById('embed-pi');
+  if (piEl) { piEl.style.cssText = piEl.style.cssText + 'width:360px;height:220px;bottom:300px;'; }
+  var monEl = document.getElementById('embed-monitor');
+  if (monEl) { monEl.style.cssText = monEl.style.cssText + 'width:360px;height:220px;bottom:60px;'; }
+
+  applyWidgetVisibility();
+  renderWidgetManager();
+
+  // Wire up button
+  var btn = document.getElementById('widget-btn');
+  if (btn) {
+    btn.addEventListener('click', function() {
+      document.getElementById('widget-modal').classList.toggle('open');
+      renderWidgetManager();
+    });
+  }
+
+  // Close on backdrop click
+  document.getElementById('widget-modal').addEventListener('click', function(e) {
+    if (e.target.classList.contains('widget-backdrop')) this.classList.remove('open');
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -4237,6 +4671,10 @@ function init() {
   // Health polling
   pollHealth();
   setInterval(pollHealth, 30000);
+
+  // Real metrics polling
+  fetchRealMetrics();
+  setInterval(fetchRealMetrics, 15000);
 
   // Handle resize (debounced)
   var resizeTimer;
