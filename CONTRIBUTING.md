@@ -63,6 +63,20 @@ Good pull requests usually include:
 
 Please keep PRs small. Large PRs that mix unrelated cleanup, formatting, refactors, and behavior changes are much harder to review.
 
+Always link the issue your PR fixes (`Fixes #123`). PRs with no linked issue are hard to triage and may be closed.
+
+### Keeping your PR mergeable
+
+`main` moves quickly, so the most common reason a finished, correct PR stalls is a **stale branch**. Before opening a PR — and again after each round of review — rebase onto the latest `main` and confirm your diff contains only your own files:
+
+```bash
+git fetch origin
+git rebase origin/main
+git diff origin/main..HEAD --name-only   # should list ONLY the files you intended to change
+```
+
+If that command lists files you never touched, your branch is stale and is silently reverting already-merged work — rebase until the list is clean. A clean two-dot diff is the difference between a quick review and a back-and-forth.
+
 ## Issue Reports
 
 For bugs, include:
