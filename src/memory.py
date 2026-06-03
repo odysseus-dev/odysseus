@@ -51,6 +51,8 @@ class MemoryManager:
         memories = []
         
         for msg in chat_history:
+            if not isinstance(msg, dict):
+                continue
             if msg.get("role") == "assistant":
                 content = str(msg.get("content", ""))
                 lines = content.split('\n')
