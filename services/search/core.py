@@ -49,9 +49,16 @@ SEARCH_CONFIG: Dict[str, Any] = {
 }
 
 
+_SENSITIVE_KEYS = {"brave_api_key", "google_api_key", "google_pse_key",
+                    "tavily_api_key", "serper_api_key", "api_key"}
+
+
 def get_search_config() -> Dict[str, Any]:
-    """Get current search configuration including active provider info."""
+    """Get current search configuration including active provider info.
+    Sensitive keys (API keys) are stripped from the response."""
     config = SEARCH_CONFIG.copy()
+    for k in _SENSITIVE_KEYS:
+        config.pop(k, None)
     settings = _get_search_settings()
     provider = settings.get("search_provider", "searxng")
     config["active_provider"] = provider
