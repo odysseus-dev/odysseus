@@ -319,28 +319,32 @@ function _useSvgEmoji() {
 function _shouldStripEmoji() {
   return typeof document !== 'undefined' && document.body?.classList.contains('emoji-killer');
 }
-/** Remove all Extended_Pictographic characters from HTML text nodes, skipping <code>/<pre>. */
+/** Remove all Extended_Pictographic characters from HTML via DOM traversal.
+ *  Skips <code>/<pre> to preserve code content. Uses DOMParser instead of
+ *  regex-split to handle attributes containing > and malformed markup safely. */
 export function stripAllEmoji(html) {
   if (!html || !_EMOJI_RE.test(html)) return html;
-  const parts = html.split(/(<[^>]*>)/);
-  let codeDepth = 0;
-  for (let i = 0; i < parts.length; i++) {
-    if (i % 2 === 1) {
-      const t = parts[i].toLowerCase();
-      if (/^<(pre|code)[\s>]/.test(t)) codeDepth++;
-      else if (/^<\/(pre|code)\s*>/.test(t)) codeDepth = Math.max(0, codeDepth - 1);
-      continue;
-    }
-    if (codeDepth === 0 && _EMOJI_RE.test(parts[i])) {
-      if (!_emojiSeg) { parts[i] = parts[i].replace(/\p{Extended_Pictographic}/gu, ''); continue; }
-      let out = '';
-      for (const { segment } of _emojiSeg.segment(parts[i])) {
-        out += _EMOJI_RE.test(segment) ? '' : segment;
+  var doc = new DOMParser().parseFromString(html, 'text/html');
+  var walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, null, false);
+  var nodes = [];
+  while (walker.nextNode()) {
+    var p = walker.currentNode.parentElement;
+    if (p && (p.tagName === 'CODE' || p.tagName === 'PRE')) continue;
+    if (_EMOJI_RE.test(walker.currentNode.textContent)) nodes.push(walker.currentNode);
+  }
+  for (var i = 0; i < nodes.length; i++) {
+    var text = nodes[i].textContent;
+    if (!_emojiSeg) {
+      nodes[i].textContent = text.replace(/\p{Extended_Pictographic}/gu, '');
+    } else {
+      var out = '';
+      for (var s of _emojiSeg.segment(text)) {
+        out += _EMOJI_RE.test(s.segment) ? '' : s.segment;
       }
-      parts[i] = out;
+      nodes[i].textContent = out;
     }
   }
-  return parts.join('');
+  return doc.body.innerHTML;
 }
 
 export function svgifyEmoji(html) {
