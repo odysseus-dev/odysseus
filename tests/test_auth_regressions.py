@@ -66,21 +66,27 @@ def _ensure_stub(name: str, **attrs):
         setattr(parent, child_name, mod)
     return mod
 
-_ensure_stub("core.database",
-    SessionLocal=MagicMock(), ScheduledTask=MagicMock(), TaskRun=MagicMock(),
-    ModelEndpoint=MagicMock(), Session=MagicMock(), ChatMessage=MagicMock(),
-    CalendarCal=MagicMock(), CalendarEvent=MagicMock(),
-    Document=MagicMock(), DocumentVersion=MagicMock(),
-    GalleryImage=MagicMock(), GalleryAlbum=MagicMock(), Note=MagicMock(),
-    McpServer=MagicMock(),
-)
-_ensure_stub("core.auth", AuthManager=MagicMock())
-_ensure_stub("src.endpoint_resolver",
-    resolve_endpoint=MagicMock(return_value=("", "", {})),
-    normalize_base=MagicMock(),
-    build_chat_url=MagicMock(),
-    build_headers=MagicMock(),
-)
+@pytest.fixture(autouse=True)
+def _auth_regressions_stubs(monkeypatch):
+    db = _ensure_stub("core.database",
+        SessionLocal=MagicMock(), ScheduledTask=MagicMock(), TaskRun=MagicMock(),
+        ModelEndpoint=MagicMock(), Session=MagicMock(), ChatMessage=MagicMock(),
+        CalendarCal=MagicMock(), CalendarEvent=MagicMock(),
+        Document=MagicMock(), DocumentVersion=MagicMock(),
+        GalleryImage=MagicMock(), GalleryAlbum=MagicMock(), Note=MagicMock(),
+        McpServer=MagicMock(),
+    )
+    auth = _ensure_stub("core.auth", AuthManager=MagicMock())
+    ep = _ensure_stub("src.endpoint_resolver",
+        resolve_endpoint=MagicMock(return_value=("", "", {})),
+        normalize_base=MagicMock(),
+        build_chat_url=MagicMock(),
+        build_headers=MagicMock(),
+    )
+    monkeypatch.setitem(sys.modules, "core.database", db)
+    monkeypatch.setitem(sys.modules, "core.auth", auth)
+    monkeypatch.setitem(sys.modules, "src.endpoint_resolver", ep)
+
 
 from fastapi import HTTPException
 

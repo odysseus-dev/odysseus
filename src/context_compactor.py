@@ -15,6 +15,26 @@ from core.models import ChatMessage
 
 logger = logging.getLogger(__name__)
 
+
+def _content_as_text(content: Any) -> str:
+    """Flatten a message's content to plain text.
+
+    Handles the three shapes that flow through history: a plain string, a
+    multimodal list of content blocks (vision/image attachments), and None
+    (assistant turns that carried only native tool_calls persist content as
+    None). Returns "" for anything without text so callers can safely slice
+    the result.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            b.get("text", "") for b in content
+            if isinstance(b, dict) and b.get("text")
+        )
+    return ""
+
+
 COMPACT_THRESHOLD = 0.85  # Trigger compaction at 85% of context window
 SUMMARY_MAX_TOKENS = 1024
 SMALL_CONTEXT_LIMIT = 8192  # Models with context <= this get aggressive trimming
@@ -96,6 +116,8 @@ def _sanitize_tool_messages(msgs: List[Dict]) -> List[Dict]:
 
 
 def _message_text_token_estimate(text: str) -> int:
+    if not isinstance(text, str):
+        return 4
     return int(len(text) * 0.3) + 4
 
 
@@ -104,6 +126,11 @@ def _truncate_text_to_token_budget(text: str, token_budget: int) -> str:
     if token_budget <= 32:
         return "[Current user message omitted: it exceeded the model context window.]"
 
+    if not isinstance(text, str):
+        # This helper is typed/used as text downstream, so return an empty
+        # string rather than the raw non-string (which would move the crash
+        # into the caller that concatenates/measures the result).
+        return ""
     # Match src.model_context.estimate_tokens' rough chars * 0.3 estimate.
     max_chars = max(200, int((token_budget - 16) / 0.3))
     if len(text) <= max_chars:
@@ -274,7 +301,7 @@ async def maybe_compact(
 
     # Build the text to summarize
     convo_text = "\n".join(
-        f"{msg['role'].upper()}: {msg.get('content', '')[:2000]}"
+        f"{msg.get('role', 'user').upper()}: {_content_as_text(msg.get('content'))[:2000]}"
         for msg in older
     )
 

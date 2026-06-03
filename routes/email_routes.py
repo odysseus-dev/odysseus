@@ -322,6 +322,20 @@ def _apply_odysseus_headers(msg, kind: str | None = None, ref_id: str | None = N
         msg["X-Odysseus-Ref"] = re.sub(r"[^A-Za-z0-9_.:-]", "-", ref_id)[:128]
 
 
+def _envelope_recipients(*fields: str) -> list:
+    """Extract bare SMTP envelope addresses from one or more To/Cc/Bcc header
+    strings. A naive `field.split(",")` corrupts display names that contain a
+    comma (e.g. `"Smith, John" <john@corp.com>`, the canonical Outlook form):
+    it splits into `"Smith` and `John" <john@corp.com>`, breaking delivery.
+    email.utils.getaddresses parses the address grammar correctly."""
+    out = []
+    for _name, addr in email.utils.getaddresses([f for f in fields if f]):
+        addr = (addr or "").strip()
+        if addr:
+            out.append(addr)
+    return out
+
+
 def _md_to_email_html(text: str) -> str:
     """Render the compose markdown body to a SAFE HTML fragment for the email's
     text/html part. Everything is HTML-escaped FIRST (so a pasted <script> /
@@ -1943,11 +1957,7 @@ def setup_email_routes():
             outer.attach(body_container)
             _attach_compose_uploads(outer, attachments)
 
-        recipients = [r.strip() for r in to.split(",") if r.strip()]
-        if cc:
-            recipients.extend([r.strip() for r in cc.split(",") if r.strip()])
-        if bcc:
-            recipients.extend([r.strip() for r in bcc.split(",") if r.strip()])
+        recipients = _envelope_recipients(to, cc, bcc)
 
         _send_smtp_message(cfg, cfg["from_address"], recipients, outer.as_string())
 
@@ -1979,6 +1989,15 @@ def setup_email_routes():
             # minute doesn't trip the past-time guard.
             if parsed_at < now_utc:
                 return {"success": False, "error": "send_at must be in the future"}
+            # Normalize to naive UTC before storing: the poller selects due
+            # rows with a lexicographic string compare against a naive
+            # datetime.utcnow().isoformat(), so storing the raw client string
+            # makes "+02:00" schedules fire hours late, negative offsets fire
+            # hours early, and a "Z" suffix compares after the fractional
+            # seconds of the poller timestamp.
+            if parsed_at.tzinfo:
+                parsed_at = parsed_at.astimezone(_tz.utc).replace(tzinfo=None)
+            send_at = parsed_at.isoformat()
 
             sid = _uuid.uuid4().hex[:16]
             conn = sqlite3.connect(SCHEDULED_DB)
@@ -2152,12 +2171,9 @@ def setup_email_routes():
             outer.attach(body_container)
             _attach_compose_uploads(outer, req.attachments)
 
-        # Build recipient list
-        recipients = [r.strip() for r in req.to.split(",") if r.strip()]
-        if req.cc:
-            recipients.extend([r.strip() for r in req.cc.split(",") if r.strip()])
-        if req.bcc:
-            recipients.extend([r.strip() for r in req.bcc.split(",") if r.strip()])
+        # Build recipient list (parse the address grammar so display names with
+        # commas don't get split into broken envelope addresses)
+        recipients = _envelope_recipients(req.to, req.cc, req.bcc)
 
         # Serialize what the background task needs so the request object can be GC'd
         outer_bytes = outer.as_bytes()

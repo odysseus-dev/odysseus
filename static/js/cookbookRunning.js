@@ -7,6 +7,7 @@
 import uiModule from './ui.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
 import { registerMenuDismiss } from './escMenuStack.js';
+import { computeProgressSignal } from './cookbookProgressSignal.js';
 
 // Human-friendly badge label for a task's internal status. Avoids surfacing
 // the word "error" in the sidebar — a server the user stopped or one that
@@ -34,13 +35,34 @@ function _taskBadge(task) {
   return { text: _statusLabel(task.status, task.type), cls: 'cookbook-task-' + task.status };
 }
 
+// A download task whose tmux output still shows an active per-shard line
+// (e.g. "model-00012-of-00082.safetensors: 56%|") is NOT actually finished —
+// the cookbook just lost track. The clear pill becomes a "reconnect" affordance
+// in that case (click → revive the row + reattach the poll loop).
+function _downloadOutputLooksActive(task) {
+  if (!task || task.type !== 'download') return false;
+  const out = task.output || '';
+  if (!out) return false;
+  if (out.includes('DOWNLOAD_OK') || out.includes('DOWNLOAD_FAILED')) return false;
+  // An active shard line: filename + a colon + a percentage that isn't 100%.
+  // We catch any in-flight shard or "Downloading 'X' to ..." line (no %).
+  return /model-\d+-of-\d+\.[a-z]+:\s+(?!100%)\d+%/i.test(out)
+      || /Downloading\s+'[^']+'\s+to\s+'[^']*\.incomplete'/i.test(out);
+}
+
 function _canClearTask(task) {
   if (!task || task.status === 'running') return false;
   if (task.type === 'serve' && (task.status === 'ready' || task._serveReady)) return false;
+  // If the tmux output still shows an in-flight download, the task isn't
+  // actually finished — hide the clear/check pill so it doesn't show on a
+  // task that's still doing work. (The next render will reflect this and
+  // ideally the self-heal flips status back to running.)
+  if (_downloadOutputLooksActive(task)) return false;
   return ['done', 'stopped', 'error', 'crashed', 'failed'].includes(task.status);
 }
 
 function _clearPillLabel(task) {
+  if (_downloadOutputLooksActive(task)) return 'reconnect';
   return 'clear';
 }
 
@@ -1536,7 +1558,16 @@ export function _renderRunningTab() {
 
   const tasks = _loadTasks();
   const hasContent = tasks.length > 0;
-  const activeCount = tasks.filter(t => t.status === 'running' || t.status === 'queued').length;
+  // Count anything that's really active: explicit 'running'/'queued' status,
+  // OR a download whose tmux output is still showing live shard progress.
+  // Without the output check, a task whose status got stuck at 'done' /
+  // 'crashed' (before auto-reconnect catches it) would read as "Running 0"
+  // even when the model is actively downloading on the host.
+  const activeCount = tasks.filter(t =>
+    t.status === 'running'
+    || t.status === 'queued'
+    || _downloadOutputLooksActive(t)
+  ).length;
   const activeCountHtml = activeCount ? ` <span class="cookbook-tab-count">${activeCount}</span>` : '';
 
   let tabBar = body.querySelector('.cookbook-tabs');
@@ -1705,6 +1736,9 @@ export function _renderRunningTab() {
       const running = _loadTasks().filter(t => (t.remoteHost || '') === host && t.status === 'running');
       if (!running.length) { uiModule.showToast(`Nothing running on ${_serverName(host)}`); return; }
       if (!await window.styledConfirm(`Stop ${running.length} running task${running.length > 1 ? 's' : ''} on ${_serverName(host)}?`, { confirmText: 'Stop all' })) return;
+      // Mark every task as user-stopped BEFORE firing the kills so that the
+      // download auto-retry logic never restarts a task the user just stopped.
+      running.forEach(t => _updateTask(t.sessionId, { _userStopped: true }));
       // Reuse each task's own Stop action so it does the full teardown
       // (send C-c, drop the endpoint, mark stopped) consistently.
       running.forEach(t => {
@@ -1801,7 +1835,7 @@ export function _renderRunningTab() {
         <span class="cookbook-task-status ${_bdg.cls}"${_bdgTitle}>${esc(_bdg.text)}</span>
         <button class="cookbook-task-menu-btn" title="Actions">&#8942;</button>
       </div>
-      <div class="cookbook-task-sub"><span class="cookbook-task-session">${esc(task.sessionId)}</span><span class="cookbook-task-uptime" style="display:${((task.type === 'serve' || task.type === 'download') && task.status === 'running') ? '' : 'none'}"></span></div>
+      <div class="cookbook-task-sub"><span class="cookbook-task-session">${esc(task.sessionId)}</span><span class="cookbook-task-uptime" style="display:${((task.type === 'serve' || task.type === 'download') && task.status === 'running') ? '' : 'none'}"></span>${(task.type === 'download') ? `<span class="cookbook-task-dldir" title="Download destination" style="font-size:9px;color:var(--fg-muted);font-family:'Fira Code',monospace;opacity:0.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40ch;">Dir: ${esc(task.payload?.local_dir || '~/.cache/huggingface/hub')}</span>` : ''}</div>
       <div class="cookbook-output-wrap cookbook-task-collapsible${_mobileCollapseDefault ? ' cookbook-task-collapsed' : ''}"><pre class="cookbook-output-pre">${esc(task.output || '')}</pre><button type="button" class="copy-code cookbook-output-copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
     `;
 
@@ -1820,9 +1854,31 @@ export function _renderRunningTab() {
         const h = Math.floor(secs / 3600);
         const m = Math.floor((secs % 3600) / 60);
         const s = secs % 60;
-        _uptimeEl.textContent = h > 0
+        const _timer = h > 0
           ? `${_prefix}: ${h}h ${String(m).padStart(2,'0')}m`
           : `${_prefix}: ${m}m ${String(s).padStart(2,'0')}s`;
+        // ETA — only for downloads, only when we have a meaningful overall %.
+        // Reads the badge text (which already shows the true overall % we
+        // compute in the live-polling block) and back-derives a remaining-time
+        // estimate from elapsed/done. Hidden until pct >= 3% so the early-job
+        // wild estimates don't show.
+        let _eta = '';
+        if (task.type === 'download') {
+          const _badge = el.querySelector('.cookbook-task-status');
+          const _m = _badge && /^(\d+)%/.exec(_badge.textContent || '');
+          const _pct = _m ? parseInt(_m[1], 10) : 0;
+          if (_pct >= 3 && _pct < 100 && secs > 5) {
+            const _totalSec = Math.round(secs * (100 / _pct));
+            const _remain = Math.max(0, _totalSec - secs);
+            const _eh = Math.floor(_remain / 3600);
+            const _em = Math.floor((_remain % 3600) / 60);
+            const _es = _remain % 60;
+            _eta = _eh > 0
+              ? ` · ETA ${_eh}h ${String(_em).padStart(2,'0')}m`
+              : (_em > 0 ? ` · ETA ${_em}m ${String(_es).padStart(2,'0')}s` : ` · ETA ${_es}s`);
+          }
+        }
+        _uptimeEl.textContent = _timer + _eta;
       }, 1000);
     }
 
@@ -1870,6 +1926,39 @@ export function _renderRunningTab() {
     if (_clearChk) {
       _clearChk.addEventListener('click', (e) => {
         e.stopPropagation();
+        // If the output still shows an active shard line, the task isn't
+        // actually finished — clicking is "reconnect" (flip back to running
+        // + let _reconnectTask reattach to the live tmux session), not
+        // "clear". The pill label already reflects this via _clearPillLabel.
+        if (_downloadOutputLooksActive(task)) {
+          const _fresh = _loadTasks();
+          const _ft = _fresh.find(t => t.sessionId === task.sessionId);
+          if (_ft) {
+            _ft.status = 'running';
+            _ft._selfHealed = true;
+            _saveTasks(_fresh);
+          }
+          // Visually flip without waiting for a full re-render — same path the
+          // self-heal uses on cookbook open.
+          const _chk = el.querySelector('.cookbook-task-check');
+          if (_chk) _chk.style.display = 'none';
+          const _wave = el.querySelector('.cookbook-task-wave');
+          if (_wave) _wave.style.display = '';
+          const _up = el.querySelector('.cookbook-task-uptime');
+          if (_up) _up.style.display = '';
+          el.dataset.status = 'running';
+          _renderRunningTab();
+          return;
+        }
+        // Otherwise: real clear. Kill the tmux session as belt-and-suspenders,
+        // then animate out + remove the row.
+        try {
+          fetch('/api/shell/exec', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${task.sessionId}`) }),
+          }).catch(() => {});
+        } catch {}
         _animateOutThenRemove(el, task.sessionId);
       });
     }
@@ -2166,6 +2255,7 @@ export function _renderRunningTab() {
       const badge = el.querySelector('.cookbook-task-status');
       if (badge) { badge.textContent = 'stopping...'; badge.className = 'cookbook-task-status cookbook-task-stopping'; }
       el.dataset.status = 'stopped';
+      _updateTask(task.sessionId, { _userStopped: true });
       const outputText = el.querySelector('.cookbook-output-pre')?.textContent || task.output || '';
       // Drop the model endpoint so the picker stops listing it.
       if (task.type === 'serve' && task.payload) {
@@ -2439,7 +2529,11 @@ async function _reconnectTask(el, task) {
             // back to %/aggregate only when no byte counter is present.
             const _byteMatches = [...snapshot.matchAll(/([\d.]+\s?[KMGT])B?\s*\/\s*[\d.]+\s?[KMGT]B?/gi)];
             const _bytes = _byteMatches.length ? _byteMatches[_byteMatches.length - 1][1].replace(/\s/g, '') : null;
-            const curProgress = _bytes || (_dlAgg != null ? String(_dlAgg) : (lastPct || '0'));
+            // When there's no byte counter (pip resolve / native build phase of a
+            // dependency install), key off the output tail so new build lines count
+            // as progress — otherwise a long quiet build is falsely declared stale
+            // and restarted mid-build, looping forever (#1568).
+            const curProgress = computeProgressSignal(_bytes, _dlAgg, lastPct, snapshot);
             const _fetchPctMatches = [...snapshot.matchAll(/Fetching\s+\d+\s+files:\s*(\d+)%/g)];
             const _fetchPct = _fetchPctMatches.length ? parseInt(_fetchPctMatches[_fetchPctMatches.length - 1][1]) : null;
             const _startupStalled = !_bytes && ((_dlAgg === 0) || (_fetchPct === 0)) && curProgress === '0';
@@ -2508,12 +2602,37 @@ async function _reconnectTask(el, task) {
               break;
             }
 
+            // When the snapshot includes a shard-of-N marker (e.g.
+            // "model-00006-of-00082.safetensors"), TRUE overall progress is
+            // ((shard-1) + currentShardFraction) / totalShards. Before, _dlAgg
+            // (hf_transfer's per-current-shard aggregate, e.g. 53% of shard 6)
+            // was treated as overall and the row read "53%" while only 5 of
+            // 82 shards were actually done.
+            const _shardPat = [...snapshot.matchAll(/model-(\d+)-of-(\d+)\.(?:safetensors|bin)/g)];
+            const _lastShard = _shardPat.length ? _shardPat[_shardPat.length - 1] : null;
+            const _curShardNum = _lastShard ? parseInt(_lastShard[1], 10) : null;
+            const _totalShards = _lastShard ? parseInt(_lastShard[2], 10) : null;
+            const _useShardAgg = _curShardNum && _totalShards && _totalShards > 1;
+
             // HF's own "Fetching N files: X%" aggregate counts ALL files,
             // including ones already finished in a previous session (resume) —
             // so on a resumed download it reflects the true overall progress,
             // whereas completed/totalFiles only see this session's files (→ 0%).
             // Take the higher of the two so resume doesn't read as 0%.
-            if (_dlAgg != null) {
+            if (_useShardAgg) {
+              // Multi-shard download: compute TRUE overall as completed shards
+              // plus the current shard's fraction. _dlAgg / lastPct represent
+              // *this shard's* progress, not the whole download.
+              const curShardFrac = (_dlAgg != null)
+                ? _dlAgg / 100
+                : (lastPct ? parseInt(lastPct, 10) / 100 : 0);
+              let overallPct = Math.round((((_curShardNum - 1) + curShardFrac) / _totalShards) * 100);
+              if (_fetchPct != null) overallPct = Math.max(overallPct, _fetchPct);
+              let text = `${overallPct}%`;
+              if (lastSpeed) text += ` · ${lastSpeed}`;
+              badge.textContent = text;
+              badge.className = 'cookbook-task-status cookbook-task-running';
+            } else if (_dlAgg != null) {
               // Real aggregate byte progress — most accurate; take the max of all signals.
               let pct = _dlAgg;
               if (_fetchPct != null) pct = Math.max(pct, _fetchPct);
@@ -2549,7 +2668,7 @@ async function _reconnectTask(el, task) {
               const _accessDenied = /Access to model.*is restricted|gated repo|GatedRepoError|401 Unauthorized|403 Forbidden|not in the authorized list|awaiting a review|must (?:be authenticated|have access)/i.test(snapshot);
               const _dlKey = task.payload?.repo_id || task.name;
               const _dlN = _dlRetryCount.get(_dlKey) || 0;
-              if (!_accessDenied && task.type === 'download' && task.payload && _dlN < _DL_MAX_AUTO_RETRY) {
+              if (!_accessDenied && !task._userStopped && task.type === 'download' && task.payload && _dlN < _DL_MAX_AUTO_RETRY) {
                 // Auto-retry: kill the dead session and re-launch (resumes from
                 // the cached .incomplete files) after a short delay.
                 _dlRetryCount.set(_dlKey, _dlN + 1);
@@ -2918,9 +3037,84 @@ function _refreshServerDots() {
   _syncSettingsServerDots(byKey);
 }
 
+// Self-heal: scan persisted download tasks marked done/error/crashed and
+// check whether their tmux session is still alive on the host. If yes —
+// the task isn't actually finished, the cookbook just lost the in-flight
+// status during restart — flip status back to 'running' so _reconnectTask
+// picks it up. The one-shot guard is enforced by callers (open path) or
+// time-throttled inside (background-monitor path).
+let _selfHealRan = false;
+let _selfHealLastTs = 0;
+export async function _selfHealStaleTasks(opts = {}) {
+  // Open-path call: one-shot per page load.
+  if (opts.oneShot) {
+    if (_selfHealRan) return;
+    _selfHealRan = true;
+  } else {
+    // Background-monitor call: throttle to once every 8s (the bg monitor
+    // itself fires every 10s, so this almost always fires too, but the
+    // guard keeps a fast manual call from doubling up).
+    const now = Date.now();
+    if (now - _selfHealLastTs < 8000) return;
+    _selfHealLastTs = now;
+  }
+  const tasks = _loadTasks();
+  const candidates = tasks.filter(t =>
+    t.type === 'download'
+    && ['done', 'error', 'crashed', 'stopped'].includes(t.status)
+    && t.sessionId
+    && !String(t.sessionId).startsWith('queue-')
+  );
+  if (!candidates.length) return;
+  let flipped = 0;
+  for (const t of candidates) {
+    try {
+      const res = await fetch('/api/shell/exec', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: _tmuxCmd(t, `has-session -t ${t.sessionId}`), timeout: 5 }),
+      });
+      const data = await res.json();
+      if (data.exit_code === 0) {
+        // Session still alive → the task is actually still running.
+        const fresh = _loadTasks();
+        const ft = fresh.find(x => x.sessionId === t.sessionId);
+        if (ft && ft.status !== 'running') {
+          ft.status = 'running';
+          ft._selfHealed = true;
+          _saveTasks(fresh);
+          flipped++;
+          const _el = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
+          if (_el) {
+            const _chk = _el.querySelector('.cookbook-task-check');
+            if (_chk) _chk.style.display = 'none';
+            const _wave = _el.querySelector('.cookbook-task-wave');
+            if (_wave) _wave.style.display = '';
+            const _up = _el.querySelector('.cookbook-task-uptime');
+            if (_up) _up.style.display = '';
+            _el.dataset.status = 'running';
+          }
+        }
+      }
+    } catch { /* network blip — skip this one */ }
+  }
+  if (flipped) {
+    console.log(`[cookbook] auto-reconnect: revived ${flipped} task(s) whose tmux session was still alive`);
+    _renderRunningTab();
+  }
+}
+
 export function _startBackgroundMonitor() {
   if (_bgMonitorInterval) return;
-  _bgMonitorInterval = setInterval(() => { _pollBackgroundStatus(); _checkServeReachability(); }, BG_MONITOR_INTERVAL_MS);
+  _bgMonitorInterval = setInterval(() => {
+    _pollBackgroundStatus();
+    _checkServeReachability();
+    // Auto-reconnect: every cycle, look for download tasks marked finished/
+    // crashed/etc. whose tmux session is actually still running, and flip
+    // them back to running. Internally throttled to 8s so a manual call from
+    // the open path or a fast invocation doesn't double up.
+    _selfHealStaleTasks().catch(() => {});
+  }, BG_MONITOR_INTERVAL_MS);
   _pollBackgroundStatus();
   _checkServeReachability();
 }

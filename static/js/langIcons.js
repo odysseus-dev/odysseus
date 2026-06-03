@@ -175,8 +175,8 @@ export function langIcon(lang, size = 14, opts = {}) {
   const key = String(lang).toLowerCase();
   const inner = ICONS[key] || ICONS[ALIASES[key]] || '';
   if (!inner) return '';
-  const cls = opts.className ? ` class="${opts.className}"` : '';
-  const style = opts.style ? ` style="${opts.style}"` : '';
+  const cls = (opts && opts.className) ? ` class="${opts.className}"` : '';
+  const style = (opts && opts.style) ? ` style="${opts.style}"` : '';
   return (
     `<svg${cls}${style} width="${size}" height="${size}" viewBox="0 0 24 24" ` +
     `fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">` +
