@@ -134,6 +134,7 @@ DEFAULT_SETTINGS = {
     # Max relevant skills injected into the prompt for one request. The skills
     # library can grow beyond this; cleanup/retirement is an explicit review flow.
     "skill_max_injected": 3,
+    "agent_prompt_profile": "auto",
     # Reminders
     "reminder_channel": "browser",   # "browser" | "email" | "ntfy"
     "reminder_llm_synthesis": False,
@@ -195,6 +196,23 @@ def load_settings() -> dict:
 
 def save_settings(settings: dict):
     """Persist settings to disk (atomic; see core.atomic_io)."""
+    # Warn if user forces full prompt mode on a low-RAM system
+    profile = settings.get("agent_prompt_profile")
+    if profile == "full":
+        try:
+            from services.hwfit.hardware import _get_ram_gb
+            ram = _get_ram_gb()
+            if 0.0 < ram < 16.0:
+                logger.warning(
+                    f"[Hardware Warning] Available system memory ({ram:.1f} GB) is not optimal "
+                    f"for the 'full' tool context profile. Running extensive tool prompts on "
+                    f"low-RAM systems can cause memory pressure and slow execution. "
+                    f"We politely recommend sticking to the 'auto' profile to ensure "
+                    f"adaptive resource management."
+                )
+        except Exception:
+            pass
+
     from core.atomic_io import atomic_write_json
     atomic_write_json(SETTINGS_FILE, settings, indent=2)
     _invalidate_caches()

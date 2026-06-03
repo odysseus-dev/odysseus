@@ -378,6 +378,70 @@ def get_builtin_overrides() -> dict:
         return {}
 
 
+def _make_compact_section(name: str, text: str) -> str:
+    """Strip detailed guidelines and examples from tool documentation to save context tokens."""
+    lines = text.split("\n")
+    result_lines = []
+    
+    # 1. Gather the first code block
+    in_code_block = False
+    code_block_captured = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            if not code_block_captured:
+                result_lines.append(line)
+                if in_code_block:
+                    code_block_captured = True
+                in_code_block = not in_code_block
+        elif in_code_block:
+            result_lines.append(line)
+            
+    # 2. Extract first description sentence
+    in_code_block = False
+    code_block_captured = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            if not code_block_captured:
+                if in_code_block:
+                    code_block_captured = True
+                in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            continue
+        if stripped and re.match(r'^[A-Za-z]', stripped):
+            if any(stripped.startswith(w) for w in ["Or ", "Example:", "For ", "SANDBOX "]):
+                continue
+            sentences = re.split(r'\.\s+', stripped)
+            if sentences:
+                desc_summary = sentences[0]
+                if not desc_summary.endswith("."):
+                    desc_summary += "."
+                result_lines.append(desc_summary)
+                break
+                
+    return "\n".join(result_lines)
+
+
+def _detect_system_ram_gb() -> float:
+    """Detect total system memory in GB, falling back gracefully if OS constraints exist."""
+    try:
+        from services.hwfit.hardware import _get_ram_gb
+        return _get_ram_gb()
+    except Exception:
+        import os
+        try:
+            if hasattr(os, "sysconf"):
+                pages = os.sysconf("SC_PHYS_PAGES")
+                page_size = os.sysconf("SC_PAGE_SIZE")
+                if pages and page_size:
+                    return (pages * page_size) / (1024**3)
+        except Exception:
+            pass
+    return 16.0
+
+
 def _section_text(name: str, default: str) -> str:
     """Effective TOOL_SECTIONS text for a tool — user override if set,
     else the shipped default."""
@@ -386,7 +450,7 @@ def _section_text(name: str, default: str) -> str:
     return val if isinstance(val, str) and val.strip() else default
 
 
-def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool = False) -> str:
+def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool = False, compact_descriptions: bool = False) -> str:
     """Build the system prompt with only the specified tools included."""
     disabled = disabled_tools or set()
     included = tool_names - disabled
@@ -411,6 +475,8 @@ def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool 
         if name not in included:
             continue
         section = _section_text(name, _default_section)
+        if compact_descriptions:
+            section = _make_compact_section(name, section)
         if section.startswith("```") or section.startswith("-"):
             if section.startswith("- "):
                 one_liners.append(section)
@@ -550,6 +616,7 @@ def _build_system_prompt(
     relevant_tools: Optional[Set[str]] = None,
     mcp_disabled_map: Optional[Dict[str, set]] = None,
     compact: bool = False,
+    compact_descriptions: bool = False,
     owner: Optional[str] = None,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
@@ -565,7 +632,7 @@ def _build_system_prompt(
         _ov_sig = _hl.sha256(_json.dumps(get_builtin_overrides() or {}, sort_keys=True).encode()).hexdigest()
     except Exception:
         _ov_sig = ""
-    cache_key = (frozenset(disabled_tools or []), bool(mcp_mgr), needs_admin, _rt_key, compact, _ov_sig)
+    cache_key = (frozenset(disabled_tools or []), bool(mcp_mgr), needs_admin, _rt_key, compact, compact_descriptions, _ov_sig)
     if _cached_base_prompt and _cached_base_prompt_key == cache_key and not active_document:
         agent_prompt = _cached_base_prompt
         # Skill index is user-editable (name + description), so it must never
@@ -575,6 +642,7 @@ def _build_system_prompt(
         _, _skill_index_block = _bbp_recompute(
             disabled_tools, mcp_mgr, needs_admin, relevant_tools,
             mcp_disabled_map=mcp_disabled_map, compact=compact,
+            compact_descriptions=compact_descriptions,
         )
     else:
         agent_prompt, _skill_index_block = _build_base_prompt(
@@ -584,6 +652,7 @@ def _build_system_prompt(
             relevant_tools,
             mcp_disabled_map=mcp_disabled_map,
             compact=compact,
+            compact_descriptions=compact_descriptions,
         )
         if not active_document:
             _cached_base_prompt = agent_prompt
@@ -971,6 +1040,7 @@ def _build_base_prompt(
     relevant_tools=None,
     mcp_disabled_map=None,
     compact: bool = False,
+    compact_descriptions: bool = False,
 ):
     """Build the agent prompt with only relevant tools included.
 
@@ -988,7 +1058,7 @@ def _build_base_prompt(
         tool_names = set(ALWAYS_AVAILABLE) | set(relevant_tools)
         if needs_admin:
             tool_names |= _ADMIN_TOOLS
-        agent_prompt = _assemble_prompt(tool_names, disabled, compact=compact)
+        agent_prompt = _assemble_prompt(tool_names, disabled, compact=compact, compact_descriptions=compact_descriptions)
     else:
         # Fallback: full prompt (RAG unavailable)
         agent_prompt = AGENT_SYSTEM_PROMPT
@@ -999,10 +1069,12 @@ def _build_base_prompt(
                 "chat_with_model", "ask_teacher", "list_models",
             }
             agent_prompt = _assemble_prompt(
-                set(TOOL_SECTIONS.keys()) - mgmt_tools, disabled, compact=compact
+                set(TOOL_SECTIONS.keys()) - mgmt_tools, disabled, compact=compact, compact_descriptions=compact_descriptions
             )
         elif compact:
             agent_prompt = _assemble_prompt(set(TOOL_SECTIONS.keys()), disabled, compact=True)
+        elif compact_descriptions:
+            agent_prompt = _assemble_prompt(set(TOOL_SECTIONS.keys()), disabled, compact_descriptions=True)
 
     # Inject the Level-0 skill index — one line per skill so the agent
     # knows what canonical procedures exist. Includes published skills
@@ -1392,6 +1464,44 @@ async def stream_agent_loop(
     # If caller provided a pre-computed set (e.g. task_scheduler), use that.
     _relevant_tools = relevant_tools
     _t1 = time.time()
+    
+    # Resolve the prompt profile settings & system RAM requirements
+    profile = get_setting("agent_prompt_profile", "auto")
+    compact_descriptions = False
+    compact_always_available = False
+    distance_threshold = None
+    retrieval_k = 8
+    
+    try:
+        detected_ram = _detect_system_ram_gb()
+    except Exception:
+        detected_ram = 16.0
+    is_low_ram = 0.0 < detected_ram < 16.0
+    
+    if profile == "compact":
+        compact_descriptions = True
+        compact_always_available = True
+        distance_threshold = 0.5
+        retrieval_k = 4
+    elif profile == "auto":
+        is_local = False
+        if endpoint_url:
+            is_local = any(h in endpoint_url for h in ("localhost", "127.0.0.1", "host.docker.internal"))
+        if is_local or is_low_ram:
+            compact_descriptions = True
+            compact_always_available = True
+            distance_threshold = 0.5
+            retrieval_k = 4
+    elif profile == "full":
+        if is_low_ram:
+            logger.warning(
+                "[Hardware Constraint] Running 'full' tool prompt profile on a low-RAM system (%s GB). "
+                "This may lead to memory constraints or context window exhaustion. "
+                "For optimal local-first performance, we recommend setting 'agent_prompt_profile' to 'auto' "
+                "in your settings to enable dynamic context compaction.",
+                round(detected_ram, 1)
+            )
+
     if _relevant_tools:
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
     if not _relevant_tools:
@@ -1413,7 +1523,13 @@ async def stream_agent_loop(
                 if _retrieval_query:
                     try:
                         _relevant_tools = await asyncio.wait_for(
-                            asyncio.to_thread(tool_idx.get_tools_for_query, _retrieval_query, 8),
+                            asyncio.to_thread(
+                                tool_idx.get_tools_for_query,
+                                _retrieval_query,
+                                k=retrieval_k,
+                                distance_threshold=distance_threshold,
+                                compact_always_available=compact_always_available,
+                            ),
                             timeout=_TOOL_SELECTION_TIMEOUT_SECONDS,
                         )
                         logger.info(f"[tool-rag] Retrieved tools for query: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
@@ -1431,10 +1547,13 @@ async def stream_agent_loop(
     # instead of sending ALL tools (which overwhelms the model).
     if not _relevant_tools and _retrieval_query:
         from src.tool_index import ALWAYS_AVAILABLE, ToolIndex
-        _relevant_tools = set(ALWAYS_AVAILABLE)
+        if compact_always_available:
+            _relevant_tools = {"bash", "python", "web_search", "read_file", "app_api"}
+        else:
+            _relevant_tools = set(ALWAYS_AVAILABLE)
         ql = _retrieval_query.lower()
         for keywords, tools in ToolIndex._KEYWORD_HINTS.items():
-            if any(kw in ql for kw in keywords):
+            if any(re.search(rf"\b{re.escape(kw)}\b", ql) for kw in keywords):
                 _relevant_tools.update(tools)
         # Always include core document/memory tools
         _relevant_tools.update({"create_document", "manage_memory", "manage_notes"})
@@ -1514,6 +1633,7 @@ async def stream_agent_loop(
         needs_admin=_needs_admin, relevant_tools=_relevant_tools,
         mcp_disabled_map=_mcp_disabled_map,
         compact=_is_api_model,
+        compact_descriptions=compact_descriptions,
         owner=owner,
     )
     prep_timings["prompt_build"] = time.time() - _t2

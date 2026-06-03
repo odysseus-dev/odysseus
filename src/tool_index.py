@@ -257,7 +257,7 @@ class ToolIndex:
         )
         logger.info(f"Indexed {len(docs)} MCP tools")
 
-    def retrieve(self, query: str, k: int = 8) -> List[str]:
+    def retrieve(self, query: str, k: int = 8, distance_threshold: Optional[float] = None) -> List[str]:
         """Retrieve the top-K most relevant tool names for a query."""
         try:
             query_embedding = self._embed([query])
@@ -270,10 +270,19 @@ class ToolIndex:
                 return []
 
             tool_names = []
-            for meta_list in results["metadatas"]:
-                for meta in meta_list:
+            metadatas = results.get("metadatas", [])
+            distances = results.get("distances", [])
+
+            for i, meta_list in enumerate(metadatas):
+                dist_list = distances[i] if i < len(distances) else []
+                for j, meta in enumerate(meta_list):
                     name = meta.get("tool_name", "")
-                    if name and name not in tool_names:
+                    if not name:
+                        continue
+                    if distance_threshold is not None and j < len(dist_list):
+                        if dist_list[j] > distance_threshold:
+                            continue
+                    if name not in tool_names:
                         tool_names.append(name)
             return tool_names
         except Exception as e:
@@ -429,11 +438,22 @@ class ToolIndex:
     }
 
     def get_tools_for_query(
-        self, query: str, k: int = 8, always_include: Optional[Set[str]] = None
+        self,
+        query: str,
+        k: int = 8,
+        always_include: Optional[Set[str]] = None,
+        distance_threshold: Optional[float] = None,
+        compact_always_available: bool = False,
     ) -> Set[str]:
         """Get the set of tool names to include for a given user query."""
-        base = set(always_include or ALWAYS_AVAILABLE)
-        retrieved = self.retrieve(query, k=k)
+        if always_include is not None:
+            base = set(always_include)
+        elif compact_always_available:
+            base = {"bash", "python", "web_search", "read_file", "app_api"}
+        else:
+            base = set(ALWAYS_AVAILABLE)
+
+        retrieved = self.retrieve(query, k=k, distance_threshold=distance_threshold)
         base.update(retrieved)
         # Keyword-based force-include for common intents. Match on word
         # boundaries, not raw substrings, so short hints like "fix", "line",
