@@ -868,6 +868,31 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         raise HTTPException(502, f"Unexpected schema from {target_url}: {str(data)[:400]}")
 
 
+def _dedupe_candidates(candidates):
+    """Filter malformed entries and drop a later repeat of an already-seen
+    ``(url, model)`` route, preserving order (first occurrence wins).
+
+    The chain is the primary target followed by the configured fallbacks, so a
+    fallback that repeats the session's current model — a common misconfiguration,
+    since callers prepend the live ``(url, model)`` to ``default_model_fallbacks``
+    — would otherwise make the chain re-attempt the very route that just failed:
+    a wasted round-trip plus a spurious ``fallback`` notice for a switch that did
+    not happen. Headers are not part of the key; the first tuple (with its
+    headers) is the one kept.
+    """
+    seen = set()
+    out = []
+    for c in candidates or []:
+        if not c or not c[0] or not c[1]:
+            continue
+        key = (c[0], c[1])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(c)
+    return out
+
+
 def llm_call_with_fallback(candidates, messages, **kwargs) -> str:
     """Sync `llm_call` with an ordered fallback chain.
 
@@ -876,7 +901,7 @@ def llm_call_with_fallback(candidates, messages, **kwargs) -> str:
     the next candidate. The dead-host cooldown inside `llm_call` makes repeat
     attempts at an offline primary effectively free.
     """
-    cands = [c for c in (candidates or []) if c and c[0] and c[1]]
+    cands = _dedupe_candidates(candidates)
     if not cands:
         raise HTTPException(503, "No model endpoint configured")
     last_err = None
@@ -893,7 +918,7 @@ def llm_call_with_fallback(candidates, messages, **kwargs) -> str:
 
 async def llm_call_async_with_fallback(candidates, messages, **kwargs) -> str:
     """Async variant of `llm_call_with_fallback` — same semantics."""
-    cands = [c for c in (candidates or []) if c and c[0] and c[1]]
+    cands = _dedupe_candidates(candidates)
     if not cands:
         raise HTTPException(503, "No model endpoint configured")
     last_err = None
@@ -1430,7 +1455,7 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
 
     Yields the same SSE chunk protocol as stream_llm.
     """
-    cands = [c for c in (candidates or []) if c and c[0] and c[1]]
+    cands = _dedupe_candidates(candidates)
     if not cands:
         yield f'event: error\ndata: {json.dumps({"error": "No model endpoint configured", "status": 503})}\n\n'
         return
