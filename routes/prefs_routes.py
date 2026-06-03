@@ -4,6 +4,7 @@ import os
 from typing import Optional
 from fastapi import APIRouter, Request
 from src.auth_helpers import get_current_user
+from core.atomic_io import atomic_write_json
 
 PREFS_FILE = os.path.join("data", "user_prefs.json")
 
@@ -19,9 +20,7 @@ def _load():
 
 
 def _save(prefs):
-    os.makedirs(os.path.dirname(PREFS_FILE), exist_ok=True)
-    with open(PREFS_FILE, "w", encoding="utf-8") as f:
-        json.dump(prefs, f, indent=2)
+    atomic_write_json(PREFS_FILE, prefs, indent=2)
 
 
 def _load_for_user(user: Optional[str] = None) -> dict:
