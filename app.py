@@ -42,6 +42,7 @@ import secrets
 from datetime import datetime
 from typing import Dict
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -74,6 +75,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ========= APP =========
+# Lifespan is defined below (after all helpers it references are in scope)
+# and passed to FastAPI so we can use the modern context-manager lifecycle
+# instead of the deprecated @app.on_event("startup"/"shutdown") decorators.
 app = FastAPI(
     title="AI Chat Application",
     description="Comprehensive AI chat with memory, research, and multi-modal capabilities",
@@ -805,8 +809,19 @@ async def runtime_info() -> Dict[str, object]:
 
 # ========= LIFECYCLE =========
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def _lifespan(app):
+    """Modern lifespan context manager replacing deprecated @app.on_event."""
+    # ── STARTUP ──
+    await _startup_event()
+    yield
+    # ── SHUTDOWN ──
+    await _shutdown_event()
+
+app.router.lifespan_context = _lifespan
+
+
+async def _startup_event():
     global upload_cleanup_task
     logger.info("Application starting up...")
     webhook_manager.set_loop(asyncio.get_running_loop())
@@ -1030,8 +1045,7 @@ async def startup_event():
     _startup_tasks.append(asyncio.create_task(_skill_audit_nightly_loop()))
     logger.info("Application startup complete")
 
-@app.on_event("shutdown")
-async def shutdown_event():
+async def _shutdown_event():
     logger.info("Application shutting down...")
     if upload_cleanup_task:
         upload_cleanup_task.cancel()
