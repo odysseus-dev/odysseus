@@ -1,0 +1,39 @@
+name: Sync fork with upstream
+
+on:
+  schedule:
+    # Run every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # Allow manual trigger from Actions tab
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/pewdiepie-archdaemon/odysseus.git
+
+      - name: Fetch upstream
+        run: git fetch upstream main
+
+      - name: Rebase onto upstream/main
+        run: |
+          git checkout main
+          git rebase upstream/main
+
+      - name: Force push rebased main
+        run: git push origin main --force-with-lease
