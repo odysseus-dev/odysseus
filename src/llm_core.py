@@ -1395,7 +1395,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                 j = json.loads(data)
                                 # Usage chunk (from stream_options)
                                 _choices = j.get("choices") or []
-                                _delta0 = _choices[0].get("delta") if _choices else None
+                                _delta0 = _choices[0].get("delta") if (_choices and _choices[0] is not None) else None
                                 # Capture usage whenever the chunk carries it and
                                 # the delta has no actual output. Some gateways /
                                 # local servers attach usage to the FINAL delta,
@@ -1424,7 +1424,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                             _usage_data["prefill_tps"] = round(_tm["prompt_per_second"], 2)
                                     yield f'data: {json.dumps({"type": "usage", "data": _usage_data})}\n\n'
                                 elif "choices" in j:
-                                    delta = j["choices"][0].get("delta") or {}
+                                    delta = (j["choices"][0] or {}).get("delta") or {}
                                     if isinstance(delta, dict):
                                         # Text content
                                         # Reasoning tokens (VLLM --reasoning-parser, e.g. Qwen3/DeepSeek-R1, Nemotron). vLLM 0.20.2 / NIM emit the field as `reasoning`; older builds use `reasoning_content`. Accept either.
