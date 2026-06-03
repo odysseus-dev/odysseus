@@ -22,7 +22,11 @@ import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
 import createResearchSynapse from './researchSynapse.js';
   const RESEARCH_TIMEOUT_MS = 360000;
-  const DEFAULT_TIMEOUT_MS = 120000;
+  // 240s (was 120s): this bounds time-to-first-response. A slow local model
+  // doing prompt-eval on a long context, or an occasionally-slow API, can take
+  // >2min to start streaming — 120s aborted working requests ("works then boom
+  // timeout"). 4min headroom; a genuinely dead endpoint still fails fast on connect.
+  const DEFAULT_TIMEOUT_MS = 240000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 
   let API_BASE = '';
@@ -862,30 +866,15 @@ import createResearchSynapse from './researchSynapse.js';
                 const latency = status.latency_ms ? ` (${status.latency_ms}ms)` : '';
                 spinner.updateMessage(`Endpoint online${latency}; waiting for first token`);
               } else {
-                // Probe confirms the endpoint isn't responding. Don't
-                // sit on a hung fetch — give the user 5s to read the
-                // status, then auto-abort with reason='offline' so the
-                // catch handler shows a clean "switch model" message
-                // instead of leaving the spinner spinning forever.
+                // A busy single-slot local model can't answer this probe while
+                // it's mid-generation, so it reads as "offline" — a false
+                // positive that used to auto-abort a stream the model was
+                // actually still working on (you'd see "[timed out]" then the
+                // real answer on refresh). Don't abort on the probe anymore;
+                // just inform. A genuinely dead endpoint is still caught by the
+                // request timeout below.
                 if (status.error) console.warn('Model endpoint probe failed:', status.error);
-                let _countdown = 5;
-                spinner.updateMessage(`Endpoint offline — cancelling in ${_countdown}s`);
-                const _tick = setInterval(() => {
-                  _countdown--;
-                  if (!spinner || !spinner.element || (currentAbort && currentAbort.signal.aborted) || accumulated) {
-                    clearInterval(_tick);
-                    return;
-                  }
-                  if (_countdown > 0) {
-                    spinner.updateMessage(`Endpoint offline — cancelling in ${_countdown}s`);
-                  } else {
-                    clearInterval(_tick);
-                    if (currentAbort && !currentAbort.signal.aborted) {
-                      currentAbort._reason = 'offline';
-                      currentAbort.abort();
-                    }
-                  }
-                }, 1000);
+                spinner.updateMessage('Model busy — still working');
               }
             } catch (e) {
               if (e && e.name !== 'AbortError' && spinner && spinner.element && !accumulated) {
