@@ -1,0 +1,86 @@
+name: ci / quality gate
+
+# Parallel hard-blocking quality gate (TOOL-04, D-01..D-05). One independent job per
+# gate (D-02); each is a separate required status check in branch protection so a single
+# failure blocks merge (D-01). Mirrors the house Actions conventions from the two
+# doc-check workflows (name "ci / <thing>", runs-on ubuntu-latest, actions/checkout@v4,
+# minimal permissions) — those two workflows are intentionally NOT modified (D-05).
+
+on:
+  pull_request:
+  push:
+    branches: [main] # D-03
+
+permissions:
+  contents: read # scope minimal — read-only; no write token (T-05-03, ASVS V14)
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8
+        with: { version: "0.11.18", enable-cache: true } # D-04
+      - run: uv pip install --system ruff==0.15.15
+      - run: ruff check --output-format=github .
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8
+        with: { version: "0.11.18", enable-cache: true }
+      - run: uv pip install --system ruff==0.15.15
+      - run: ruff format --check .
+
+  mypy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8
+        with: { version: "0.11.18", enable-cache: true }
+      # mypy needs the deps installed to resolve imports it does NOT ignore.
+      - run: uv pip install --system --require-hashes -r requirements.lock # D-04 (T-05-02)
+      - run: uv pip install --system mypy==2.1.0
+      - run: mypy --no-incremental --config-file pyproject.toml .
+
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8
+        with: { version: "0.11.18", enable-cache: true }
+      - run: uv pip install --system --require-hashes -r requirements.lock # T-05-02
+      - run: uv pip install --system pytest-cov
+      - run: pytest # asyncio_mode=auto already configured in pyproject.toml
+
+  bandit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8
+        with: { version: "0.11.18", enable-cache: true }
+      - run: uv pip install --system bandit==1.9.4
+      - run: bandit -c pyproject.toml -r app.py src routes core mcp_servers companion services
+
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8
+        with: { version: "0.11.18", enable-cache: true }
+      - run: uv pip install --system pip-audit==2.10.0
+      # Audit the hashed lock on every PR + push:main (T-05-SC). Add
+      # `--ignore-vuln GHSA-...` here (one per documented-triaged CVE in
+      # .planning/scorecard/security-triage.md) only for non-applicable findings.
+      - run: pip-audit -r requirements.lock
+
+  scorecard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v8
+        with: { version: "0.11.18", enable-cache: true }
+      - run: uv pip install --system --require-hashes -r requirements.lock # T-05-02
+      - run: uv pip install --system ruff==0.15.15 mypy==2.1.0 bandit==1.9.4 pytest-cov
+      - run: python scripts/scorecard.py --check # ratchet: nonzero exit on any regression (D-11)
