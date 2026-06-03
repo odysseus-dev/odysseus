@@ -280,10 +280,14 @@ def _native_quant(model):
         return "FP8"
     if "gptq" in text:
         m = re.search(r"(?:gptq|int|w)(?:[-_]?)(\d{1,2})(?:bit)?", text)
-        return f"GPTQ-{m.group(1)}bit" if m else "GPTQ"
+        # Canonical catalog label is "GPTQ-Int4"/"GPTQ-Int8" (see models.py
+        # QUANT_BPP / QUANT_QUALITY_PENALTY keys); "GPTQ-4bit" misses both
+        # maps, so BPP and the quality penalty silently fall to defaults.
+        return f"GPTQ-Int{m.group(1)}" if m else "GPTQ-Int4"
     if "awq" in text:
         m = re.search(r"(?:awq|int|w)(?:[-_]?)(\d{1,2})(?:bit)?", text)
-        return f"AWQ-{m.group(1)}bit" if m else "AWQ"
+        # Catalog keys are "AWQ-4bit"/"AWQ-8bit"; bare "AWQ" misses the maps.
+        return f"AWQ-{m.group(1)}bit" if m else "AWQ-4bit"
     if "mlx" in text:
         m = re.search(r"mlx[-_]?(\d{1,2})bit", text)
         return f"mlx-{m.group(1)}bit" if m else native_quant
