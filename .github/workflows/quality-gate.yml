@@ -5,6 +5,14 @@ name: ci / quality gate
 # failure blocks merge (D-01). Mirrors the house Actions conventions from the two
 # doc-check workflows (name "ci / <thing>", runs-on ubuntu-latest, actions/checkout@v4,
 # minimal permissions) — those two workflows are intentionally NOT modified (D-05).
+#
+# Each job creates a uv-managed virtualenv and installs into it. We do NOT use
+# `uv pip install --system`: the GitHub runner's system Python is PEP-668
+# externally-managed, so a `--system` install is refused. The `.venv` is added to
+# PATH so subsequent `run` steps invoke the pinned tools directly. setup-uv is pinned
+# to an exact tag — since v8.0.0 ("immutable releases and secure tags") the action no
+# longer publishes a floating `v8` major alias, and exact-pinning matches this phase's
+# supply-chain intent.
 
 on:
   pull_request:
@@ -19,12 +27,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # setup-uv pinned to an exact tag: since v8.0.0 ("immutable releases and secure
-      # tags") the action no longer publishes a floating `v8` major alias, so `@v8`
-      # does not resolve. Exact-pinning also matches this phase's supply-chain intent.
       - uses: astral-sh/setup-uv@v8.2.0
         with: { version: "0.11.18", enable-cache: true } # D-04
-      - run: uv pip install --system ruff==0.15.15
+      - run: |
+          uv venv --python 3.12
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - run: uv pip install ruff==0.15.15
       - run: ruff check --output-format=github .
 
   format:
@@ -33,7 +41,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v8.2.0
         with: { version: "0.11.18", enable-cache: true }
-      - run: uv pip install --system ruff==0.15.15
+      - run: |
+          uv venv --python 3.12
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - run: uv pip install ruff==0.15.15
       - run: ruff format --check .
 
   mypy:
@@ -42,9 +53,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v8.2.0
         with: { version: "0.11.18", enable-cache: true }
+      - run: |
+          uv venv --python 3.12
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       # mypy needs the deps installed to resolve imports it does NOT ignore.
-      - run: uv pip install --system --require-hashes -r requirements.lock # D-04 (T-05-02)
-      - run: uv pip install --system mypy==2.1.0
+      - run: uv pip install --require-hashes -r requirements.lock # D-04 (T-05-02)
+      - run: uv pip install mypy==2.1.0
       - run: mypy --no-incremental --config-file pyproject.toml .
 
   pytest:
@@ -53,8 +67,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v8.2.0
         with: { version: "0.11.18", enable-cache: true }
-      - run: uv pip install --system --require-hashes -r requirements.lock # T-05-02
-      - run: uv pip install --system pytest-cov
+      - run: |
+          uv venv --python 3.12
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - run: uv pip install --require-hashes -r requirements.lock # T-05-02
+      - run: uv pip install pytest-cov
       - run: pytest # asyncio_mode=auto already configured in pyproject.toml
 
   bandit:
@@ -63,7 +80,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v8.2.0
         with: { version: "0.11.18", enable-cache: true }
-      - run: uv pip install --system bandit==1.9.4
+      - run: |
+          uv venv --python 3.12
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - run: uv pip install bandit==1.9.4
       - run: bandit -c pyproject.toml -r app.py src routes core mcp_servers companion services
 
   pip-audit:
@@ -72,7 +92,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v8.2.0
         with: { version: "0.11.18", enable-cache: true }
-      - run: uv pip install --system pip-audit==2.10.0
+      - run: |
+          uv venv --python 3.12
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - run: uv pip install pip-audit==2.10.0
       # Audit the hashed lock on every PR + push:main (T-05-SC). Add
       # `--ignore-vuln GHSA-...` here (one per documented-triaged CVE in
       # .planning/scorecard/security-triage.md) only for non-applicable findings.
@@ -84,6 +107,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v8.2.0
         with: { version: "0.11.18", enable-cache: true }
-      - run: uv pip install --system --require-hashes -r requirements.lock # T-05-02
-      - run: uv pip install --system ruff==0.15.15 mypy==2.1.0 bandit==1.9.4 pytest-cov
+      - run: |
+          uv venv --python 3.12
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - run: uv pip install --require-hashes -r requirements.lock # T-05-02
+      - run: uv pip install ruff==0.15.15 mypy==2.1.0 bandit==1.9.4 pytest-cov
       - run: python scripts/scorecard.py --check # ratchet: nonzero exit on any regression (D-11)
