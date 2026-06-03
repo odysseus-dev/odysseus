@@ -32,7 +32,7 @@ from src.endpoint_resolver import resolve_endpoint
 
 logger = logging.getLogger(__name__)
 
-def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionManager, memory_vector=None):
+def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionManager, memory_vector=None, graph_store=None):
     """Set up memory-related routes."""
     router = APIRouter(prefix="/api/memory", tags=["memory"])
 
@@ -526,6 +526,13 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         # Sync vector index
         if memory_vector and memory_vector.healthy:
             memory_vector.remove(memory_id)
+        # Cascade-delete any graph edges introduced by this memory so the
+        # knowledge graph stays consistent with the JSON store.
+        if graph_store is not None and getattr(graph_store, "healthy", False):
+            try:
+                graph_store.delete_by_memory(memory_id)
+            except Exception as e:
+                logger.warning(f"Graph cascade delete failed for {memory_id}: {e}")
         return {"ok": True, "message": "Memory deleted successfully"}
 
     return router

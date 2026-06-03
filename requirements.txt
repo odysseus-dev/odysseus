@@ -17,6 +17,10 @@ numpy
 # ChromaDB service); fastembed runs local ONNX embeddings.
 chromadb-client
 fastembed
+# Embedded graph database for the user knowledge graph (services/memory/graph_store.py).
+# Stores typed entities (Person, Place, Organization, ...) and relationships
+# extracted from chat. Local-only, no server process — persists to data/graph/.
+kuzu
 youtube-transcript-api
 # Markdown rendering for research reports (src/visual_report.py).
 # Imported at module-top so it's a hard core dep, not optional.

@@ -235,6 +235,7 @@ async def extract_and_store(
     endpoint_url: str,
     model: str,
     headers: Optional[dict] = None,
+    graph_store=None,
 ):
     """Extract facts from recent conversation and store them.
 
@@ -388,6 +389,34 @@ async def extract_and_store(
             except Exception:
                 logger.debug("memory_added event dispatch failed", exc_info=True)
             logger.info(f"Auto-extracted {added} memories from session")
+
+            # Knowledge-graph pass — runs in the same background task so a
+            # graph failure never poisons the flat-text extraction above. The
+            # graph is a secondary index; if it's unhealthy, callers still
+            # get full recall via the JSON store and vector search.
+            if graph_store is not None and getattr(graph_store, "healthy", False):
+                try:
+                    from services.memory.triple_extractor import (
+                        extract_triples_async,
+                        ingest_triples,
+                    )
+                    triples = await extract_triples_async(
+                        stripped_recent, endpoint_url, model, headers=headers,
+                    )
+                    if triples:
+                        # Attribute each triple to the most recently added
+                        # memory id for this turn — gives us a provenance
+                        # anchor for delete-cascade without per-triple
+                        # round-trips back to memory.json.
+                        recent_ids = [e["id"] for e in existing[-added:]]
+                        provenance = recent_ids[-1] if recent_ids else None
+                        edges = ingest_triples(
+                            graph_store, _owner, triples,
+                            source_memory_id=provenance,
+                        )
+                        logger.info("Graph ingested %d edges from %d triples", edges, len(triples))
+                except Exception as e:
+                    logger.warning("Graph triple ingestion failed: %s", e)
 
             global _extractions_since_audit
             _extractions_since_audit += added

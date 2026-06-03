@@ -829,6 +829,7 @@ def run_post_response_tasks(
     skills_manager=None,
     owner: str = None,
     extract_skills: bool = True,
+    graph_store=None,
 ):
     """Fire background tasks after a completed response: memory extraction, webhooks, auto-name, skill extraction."""
     # Memory extraction — only every 4th message pair to avoid excess LLM calls
@@ -843,6 +844,7 @@ def run_post_response_tasks(
         asyncio.create_task(extract_and_store(
             sess, memory_manager, memory_vector,
             t_url, t_model, t_headers,
+            graph_store=graph_store,
         ))
 
     # Skill extraction from complex agent runs. Only when the user actually

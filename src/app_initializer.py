@@ -73,6 +73,20 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
         logger.warning(f"MemoryVectorStore DEGRADED: {e}")
         memory_vector = None
 
+    # Knowledge graph (Kuzu, embedded). Optional — extraction and chat work
+    # without it; this is a secondary index for structured queries like
+    # "who do I know in Paris?". If kuzu isn't installed, GraphStore quietly
+    # reports unhealthy and every call is a no-op.
+    graph_store = None
+    try:
+        from services.memory import GraphStore
+        graph_store = GraphStore(DATA_DIR)
+        if not graph_store.healthy:
+            graph_store = None
+    except Exception as e:
+        logger.warning(f"GraphStore DEGRADED: {e}")
+        graph_store = None
+
     # Initialize processors
     chat_processor = ChatProcessor(memory_manager, personal_docs_manager, memory_vector=memory_vector, skills_manager=skills_manager)
     research_handler = ResearchHandler()
@@ -99,6 +113,7 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
     return {
         "memory_manager": memory_manager,
         "memory_vector": memory_vector,
+        "graph_store": graph_store,
         "skills_manager": skills_manager,
         "session_manager": session_manager,
         "upload_handler": upload_handler,

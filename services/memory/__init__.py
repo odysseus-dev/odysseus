@@ -4,6 +4,7 @@
 from .service import MemoryService, Memory, MemorySearchResult
 from .memory import MemoryManager
 from .memory_vector import MemoryVectorStore
+from .graph_store import GraphStore
 
 __all__ = [
     "MemoryService",
@@ -11,4 +12,5 @@ __all__ = [
     "MemorySearchResult",
     "MemoryManager",
     "MemoryVectorStore",
+    "GraphStore",
 ]

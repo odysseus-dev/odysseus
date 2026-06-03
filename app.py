@@ -471,6 +471,7 @@ from src.assistant_log import set_session_manager as _set_asst_sm
 _set_asst_sm(session_manager)
 memory_manager    = components["memory_manager"]
 memory_vector     = components.get("memory_vector")
+graph_store       = components.get("graph_store")
 upload_handler    = components["upload_handler"]
 personal_docs_mgr = components["personal_docs_manager"]
 api_key_manager   = components["api_key_manager"]
@@ -537,9 +538,14 @@ app.include_router(setup_admin_wipe_routes(session_manager))
 
 # Memory
 from routes.memory_routes import setup_memory_routes
-app.include_router(setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector))
+app.include_router(setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector, graph_store=graph_store))
 from routes.skills_routes import setup_skills_routes
 app.include_router(setup_skills_routes(skills_manager))
+
+# Knowledge graph (Kuzu) — secondary index for typed entities and relationships
+# extracted from chat. Routes always mount; they 503 if the graph is unhealthy.
+from routes.graph_routes import setup_graph_routes
+app.include_router(setup_graph_routes(graph_store))
 
 # Chat
 from routes.chat_routes import setup_chat_routes
@@ -549,6 +555,7 @@ app.include_router(setup_chat_routes(
     memory_vector=memory_vector,
     webhook_manager=webhook_manager,
     skills_manager=skills_manager,
+    graph_store=graph_store,
 ))
 
 # Research (background deep-research tasks)
