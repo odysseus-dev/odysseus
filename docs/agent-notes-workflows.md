@@ -196,3 +196,17 @@ List all incomplete checklist items.
 3. **Keep checklists focused**: One checklist per project or client works better than many small ones
 4. **Use append_item for growth**: Adding items to existing checklists is better than creating scattered new notes
 5. **List open daily**: Use `list_open` to generate daily action summaries
+
+## Structured workflow: Action Plan
+
+For a complete 7-step workflow that converts notes into actionable checklists, see `action-plan-workflow-skill.md`. That workflow covers:
+
+1. Identify objective
+2. Extract decisions
+3. Extract open loops
+4. Create or update checklist
+5. Add due dates only when explicit
+6. Ask before scheduling recurring tasks
+7. Summarize next 3 actions
+
+Use this workflow when users ask to "turn this into actions", "extract decisions", or "what are the next steps?"
