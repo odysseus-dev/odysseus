@@ -58,6 +58,9 @@ export function makeWindowDraggable(modal, options = {}) {
   const content = options.content;
   const header = options.header;
   if (!content || !header) return;
+  // Flag so the legacy generic modal-drag in app.js leaves this one alone —
+  // double-wiring fights over the inline position and the window drifts.
+  if (modal) modal.dataset.sharedDrag = '1';
   const fsClass = options.fsClass || null;
   const onEnterFullscreen = options.onEnterFullscreen || null;
   const onExitFullscreen = options.onExitFullscreen || null;

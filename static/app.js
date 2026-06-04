@@ -2694,6 +2694,9 @@ function initializeEventListeners() {
 
       // Reset to flex-centered position each time modal opens
       new MutationObserver(() => {
+        // windowDrag-managed modals position themselves; this reset would fire
+        // mid-drag (on the modal-dragging class) and yank them off the cursor.
+        if (m.dataset.sharedDrag) return;
         if (!m.classList.contains('hidden')) {
           content.style.position = '';
           content.style.left = '';
@@ -2717,6 +2720,7 @@ function initializeEventListeners() {
       }
 
       header.addEventListener('mousedown', (e) => {
+        if (m.dataset.sharedDrag) return;  // handled by windowDrag.js
         if (e.target.closest('.close-btn')) return;
         e.preventDefault();
         startDrag(e.clientX, e.clientY);
@@ -2739,6 +2743,7 @@ function initializeEventListeners() {
       // the swipe-dismiss gesture.
       if (window.innerWidth > 768) {
         header.addEventListener('touchstart', (e) => {
+          if (m.dataset.sharedDrag) return;  // handled by windowDrag.js
           if (e.target.closest('.close-btn')) return;
           const t = e.touches[0];
           startDrag(t.clientX, t.clientY);
