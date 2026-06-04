@@ -298,6 +298,30 @@ function initAddUser() {
 /* ═══════════════════════════════════════════
    SERVICES TAB — Endpoints
    ═══════════════════════════════════════════ */
+// Render an empty-endpoint hint with "Cookbook" as a working link. The hint
+// text arrives as plain ping_error from the backend; escape it all, then link
+// the literal word so non-technical users can click straight to the fix.
+function _emptyHintHtml(text) {
+  return esc(String(text)).replace(
+    'Cookbook',
+    '<a href="/cookbook" class="adm-open-cookbook" style="color:var(--accent);text-decoration:underline;">Cookbook</a>'
+  );
+}
+
+// One delegated handler for every place the hint renders (test result, add
+// toasts, endpoint rows — rows re-render on refresh, so per-render binding
+// would leak or miss). Closes Settings, then opens Cookbook the same way
+// cookbook-diagnosis.js does, with the sidebar button as fallback.
+document.addEventListener('click', (e) => {
+  const link = e.target.closest('.adm-open-cookbook');
+  if (!link) return;
+  e.preventDefault();
+  try { settingsModule.close(); } catch (_) { /* settings may not be open */ }
+  const cookbook = window.cookbookModule;
+  if (cookbook && typeof cookbook.open === 'function') cookbook.open();
+  else el('tool-cookbook-btn')?.click();
+});
+
 function _isLocalEndpoint(url) {
   if (!url) return false;
   try {
@@ -431,7 +455,7 @@ async function loadEndpoints() {
             </div>
           </div>
           <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${ep.has_key ? ' (key set)' : ''}</div>
-          ${ep.status === 'empty' && ep.ping_error ? `<div class="admin-ep-detail" style="opacity:0.75;">${esc(ep.ping_error)}</div>` : ''}
+          ${ep.status === 'empty' && ep.ping_error ? `<div class="admin-ep-detail" style="opacity:0.75;">${_emptyHintHtml(ep.ping_error)}</div>` : ''}
           ${hasModels ? `<div class="mcp-tools-panel hidden" data-adm-ep-models-panel="${ep.id}"></div>` : ''}
         </div>`;
     });
@@ -794,7 +818,7 @@ function initEndpointForm() {
 
   function _renderEndpointTestResult(msg, res, d) {
     if (res.ok && d.status === 'empty') {
-      msg.textContent = 'Online — ' + (d.ping_error || 'no models found');
+      msg.innerHTML = 'Online — ' + (d.ping_error ? _emptyHintHtml(d.ping_error) : 'no models found');
       msg.className = 'admin-success';
       return;
     }
@@ -905,7 +929,7 @@ function initEndpointForm() {
           msg.textContent = 'Added (endpoint offline — will retry on next load)';
           msg.className = 'admin-error';
         } else if (d.status === 'empty') {
-          msg.textContent = 'Added — ' + (d.ping_error || 'endpoint reachable, no models found');
+          msg.innerHTML = 'Added — ' + (d.ping_error ? _emptyHintHtml(d.ping_error) : 'endpoint reachable, no models found');
           msg.className = 'admin-success';
         } else {
           msg.textContent = `Added — found ${count} model${count !== 1 ? 's' : ''}`;
@@ -974,11 +998,13 @@ function initEndpointForm() {
           await loadEndpoints();
           await _selectAddedModelInChat(d);
           const count = (d.models || []).length;
-          msg.textContent = d.status === 'empty'
-            ? 'Added — ' + (d.ping_error || 'Ollama is running, no models pulled yet')
-            : d.online
-            ? `Added — found ${count} model${count !== 1 ? 's' : ''}`
-            : 'Added (offline — will retry on next load)';
+          if (d.status === 'empty') {
+            msg.innerHTML = 'Added — ' + (d.ping_error ? _emptyHintHtml(d.ping_error) : 'Ollama is running, no models pulled yet');
+          } else {
+            msg.textContent = d.online
+              ? `Added — found ${count} model${count !== 1 ? 's' : ''}`
+              : 'Added (offline — will retry on next load)';
+          }
           msg.className = d.online ? 'admin-success' : 'admin-error';
         } else { msg.textContent = d.detail || 'Failed'; msg.className = 'admin-error'; }
       } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
