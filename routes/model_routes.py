@@ -716,6 +716,24 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     return []
 
 
+def _is_codex_runtime_base(base_url: str) -> bool:
+    from src.codex_runtime import is_codex_runtime_url
+    return is_codex_runtime_url(base_url)
+
+
+def _models_probe_candidates(base_url: str, model_ids: List[str]) -> tuple[List[str], int]:
+    if _is_codex_runtime_base(base_url):
+        return list(model_ids or []), 0
+    models = [m for m in (model_ids or []) if _is_chat_model(m)]
+    return models, len(model_ids or []) - len(models)
+
+
+def _probe_model_availability(base_url: str, api_key: str, model_id: str, *, timeout: int = 8, with_tools: bool = False) -> dict:
+    if _is_codex_runtime_base(base_url):
+        return {"status": "ok", "latency_ms": 0, "source": "codex_runtime"}
+    return _probe_single_model(base_url, api_key, model_id, timeout=timeout, with_tools=with_tools)
+
+
 def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> Dict[str, Any]:
     """Reachability probe that does not require installed/listed models."""
     from src.endpoint_resolver import resolve_url
@@ -1288,7 +1306,7 @@ def setup_model_routes(model_discovery):
 
                 base = _normalize_base(ep_data["base_url"])
                 _with_tools = item.get("with_tools", False)
-                result = _probe_single_model(base, ep_data.get("api_key"), model_id, timeout=8, with_tools=_with_tools)
+                result = _probe_model_availability(base, ep_data.get("api_key"), model_id, timeout=8, with_tools=_with_tools)
                 result["model"] = model_id
                 result["endpoint_id"] = ep_id
                 results.append(result)
@@ -1344,13 +1362,12 @@ def setup_model_routes(model_discovery):
                     yield f"data: {json.dumps({'type': 'probe_start', 'endpoint': ep['name'], 'model_count': 0, 'error': 'No models found or endpoint offline'})}\n\n"
                     continue
 
-                models = [m for m in all_models if _is_chat_model(m)]
-                skipped = len(all_models) - len(models)
+                models, skipped = _models_probe_candidates(base, all_models)
                 yield f"data: {json.dumps({'type': 'probe_start', 'endpoint': ep['name'], 'model_count': len(models), 'skipped': skipped})}\n\n"
 
                 for model_id in models:
                     total += 1
-                    result = _probe_single_model(base, ep.get("api_key"), model_id, timeout=8)
+                    result = _probe_model_availability(base, ep.get("api_key"), model_id, timeout=8)
                     result["type"] = "probe_result"
                     result["endpoint"] = ep["name"]
                     result["model"] = model_id
@@ -1672,15 +1689,14 @@ def setup_model_routes(model_discovery):
 
         base = _normalize_base(ep_data["base_url"])
         all_models = _probe_endpoint(base, ep_data["api_key"])
-        chat_models = [m for m in all_models if _is_chat_model(m)]
-        skipped = len(all_models) - len(chat_models)
+        chat_models, skipped = _models_probe_candidates(base, all_models)
 
         def _stream():
             yield f"data: {json.dumps({'type': 'probe_start', 'endpoint': ep_data['name'], 'model_count': len(chat_models), 'skipped': skipped})}\n\n"
             failed = []
             ok_count = 0
             for mid in chat_models:
-                result = _probe_single_model(base, ep_data["api_key"], mid, timeout=8)
+                result = _probe_model_availability(base, ep_data["api_key"], mid, timeout=8)
                 result["model"] = mid
                 result["type"] = "probe_result"
                 result["endpoint"] = ep_data["name"]
