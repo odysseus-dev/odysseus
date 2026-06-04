@@ -886,7 +886,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                 if is_spam and auto_spam and spam_folder:
                                     if _imap_move(uid, spam_folder, account_id=account_id, owner=account_owner):
                                         moved_to = spam_folder
-                                        logger.info(f"Auto-spam moved uid={uid.decode()} to {spam_folder}: {spam_reason}")
+                                        logger.info(f"Auto-spam moved uid={uid.decode() if isinstance(uid, bytes) else str(uid)} to {spam_folder}: {spam_reason}")
 
                                 _c = _sql3.connect(SCHEDULED_DB)
                                 _c.execute("""
@@ -894,7 +894,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                     (message_id, owner, uid, folder, subject, sender, tags, spam_verdict,
                                      spam_reason, moved_to, model_used, created_at)
                                     VALUES (?, ?, ?, 'INBOX', ?, ?, ?, ?, ?, ?, ?, ?)
-                                """, (message_id, account_owner or "", uid.decode(), subject, sender,
+                                """, (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid), subject, sender,
                                       json.dumps(tags), 1 if is_spam else 0,
                                       spam_reason, moved_to, model, datetime.utcnow().isoformat()))
                                 _c.commit()

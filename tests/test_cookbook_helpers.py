@@ -16,6 +16,7 @@ from routes.cookbook_helpers import (
     _pip_install_fallback_chain,
     _ollama_bind_from_cmd,
     _safe_env_prefix,
+    _user_shell_path_bootstrap,
     _venv_safe_local_pip_install_cmd,
     _validate_gpus,
     _validate_repo_id,
@@ -258,6 +259,17 @@ def test_pip_install_attempt_surfaces_stderr_on_failure():
     assert "nonexistent" in combined.lower() or result.returncode != 0
 
 
+def test_local_tooling_path_export_converts_windows_paths_for_bash():
+    line = _local_tooling_path_export(r"C:\Users\Jane Dev\.venv\Scripts\python.exe")
+    assert line == 'export PATH="/c/Users/Jane Dev/.venv/Scripts:$PATH"'
+    assert "C:" not in line
+
+
+def test_user_shell_path_bootstrap_falls_back_to_python_on_windows_bash():
+    script = "\n".join(_user_shell_path_bootstrap())
+    assert 'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }' in script
+
+
 def test_serve_preflight_failure_keeps_tmux_pane_visible():
     """Dependency preflight failures should remain visible in tmux output.
 
@@ -288,6 +300,17 @@ def test_serve_runner_preserves_command_exit_code():
     assert "ODYSSEUS_CMD_EXIT=$?" in script
     assert 'echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="' in script
     assert 'echo "=== Process exited with code $? ==="' not in script
+
+
+def test_pip_serve_runner_emits_download_ok_before_exit_marker():
+    """Dependency installs run through the serve wrapper need the download marker."""
+    runner_lines = ["python3 -m pip install llama-cpp-python"]
+    _append_serve_exit_code_lines(runner_lines, keep_shell_open=False, is_pip_install=True)
+    script = "\n".join(runner_lines)
+
+    assert 'echo "DOWNLOAD_OK"' in script
+    assert script.index('echo "DOWNLOAD_OK"') < script.index("=== Process exited with code")
+    assert 'exit "$ODYSSEUS_CMD_EXIT"' in script
 
 
 def test_validate_serve_cmd_accepts_vllm_kv_cache_dtype():
@@ -408,6 +431,13 @@ def test_llama_cpp_linux_bootstrap_nvcc_without_cudart_warns_and_falls_back():
     no_toolchain_warn = 'WARNING: no HIP/CUDA toolchain found'
     assert cpu_cmake in script
     assert script.index(cpu_cmake) < script.index(no_toolchain_warn)
+
+
+def test_llama_cpp_linux_bootstrap_uses_single_shell_continuations():
+    runner_lines = []
+    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+
+    assert not any(line.endswith("\\\\") for line in runner_lines)
 
 
 def test_llama_cpp_linux_bootstrap_keeps_cpu_fallback_when_no_gpu_toolchain():

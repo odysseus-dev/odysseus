@@ -2,9 +2,11 @@
 import asyncio
 import json
 import sys
+import threading
+import time
 import types
-from types import SimpleNamespace
 from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -28,7 +30,9 @@ if "core.database" not in sys.modules:
     sys.modules["core.database"] = _core_db
 
 import routes.model_routes as model_routes
+import src.database as src_database
 import src.endpoint_resolver as endpoint_resolver
+import src.llm_core as llm_core
 from routes.model_routes import (
     _match_provider_curated,
     _curate_models,
@@ -36,7 +40,11 @@ from routes.model_routes import (
     _normalize_model_ids,
     _is_chat_model,
     _classify_endpoint,
+    _effective_endpoint_kind,
     _probe_endpoint,
+    _ping_endpoint,
+    _parse_model_list,
+    _normalize_refresh_mode,
     _truthy,
     _speech_settings_using_endpoint,
     _clear_speech_settings_for_endpoint,
@@ -304,6 +312,54 @@ class TestClassifyEndpoint:
     def test_malformed_url(self):
         assert _classify_endpoint("not-a-url") == "api"
 
+    def test_tailscale_auto_is_local(self):
+        assert _classify_endpoint("http://100.117.136.97:34521/v1") == "local"
+
+    def test_tailscale_proxy_override_is_api(self):
+        assert _classify_endpoint("http://100.117.136.97:34521/v1", "proxy") == "api"
+
+    def test_tailscale_api_override_is_api(self):
+        assert _classify_endpoint("http://100.117.136.97:34521/v1", "api") == "api"
+
+    def test_public_local_override_is_local(self):
+        assert _classify_endpoint("https://api.openai.com/v1", "local") == "local"
+
+    def test_keyed_legacy_v1_endpoint_is_effective_proxy(self):
+        ep = SimpleNamespace(endpoint_kind="auto", api_key="fake-key")
+        assert _effective_endpoint_kind(ep, "http://100.117.136.97:34521/v1") == "proxy"
+
+    def test_proxy_refresh_mode_defaults_manual(self):
+        assert _normalize_refresh_mode("", "proxy") == "manual"
+        assert _normalize_refresh_mode("auto", "proxy") == "manual"
+        assert _normalize_refresh_mode("manual", "proxy") == "manual"
+        assert _normalize_refresh_mode("auto", "api") == "auto"
+
+    def test_parse_model_list_accepts_json_and_text(self):
+        assert _parse_model_list('["a", "b", "a"]') == ["a", "b"]
+        assert _parse_model_list("a, b\nc") == ["a", "b", "c"]
+
+    def test_ping_endpoint_does_not_request_models_for_openai_style_proxy(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        seen = []
+
+        def fake_head(*args, **kwargs):
+            raise AssertionError("generic proxy health check should not use HEAD")
+
+        def fake_get(url, headers=None, timeout=None):
+            seen.append(("GET", url))
+            request = httpx.Request("GET", url)
+            return httpx.Response(200, request=request)
+
+        monkeypatch.setattr(model_routes.httpx, "head", fake_head)
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+
+        result = _ping_endpoint("http://100.117.136.97:34521/v1", "fake-key", timeout=1)
+
+        assert result["reachable"] is True
+        assert result["status_code"] == 200
+        assert seen == [("GET", "http://100.117.136.97:34521/v1")]
+        assert all(not url.endswith("/models") for _, url in seen)
+
 
 # ── setup probing ──
 
@@ -534,75 +590,49 @@ if "python_multipart" not in sys.modules:
         sys.modules["python_multipart"] = _mp_stub
 
 
-class _PinnedFakeQuery:
-    def __init__(self, rows):
-        self.rows = list(rows)
-
-    def filter(self, *conditions):
-        return self
-
-    def order_by(self, *args):
-        return self
-
-    def first(self):
-        return self.rows[0] if self.rows else None
-
-    def all(self):
-        return list(self.rows)
-
-
-class _PinnedFakeDb:
-    def __init__(self, rows):
-        self.rows = rows
-        self.added = []
-        self.committed = 0
-
-    def query(self, model):
-        return _PinnedFakeQuery(self.rows)
-
-    def add(self, row):
-        self.added.append(row)
-
-    def commit(self):
-        self.committed += 1
-
-    def close(self):
-        pass
-
-
-class _FakeCol:
-    """Column stand-in: every comparison/operator just returns itself so the
-    dedupe query expressions evaluate without a real SQLAlchemy column."""
-
-    __hash__ = None
-
-    def __eq__(self, other):
-        return self
-
-    def is_(self, other):
-        return self
+class _RouteCondition:
+    def __init__(self, op, field, value):
+        self.op = op
+        self.field = field
+        self.value = value
 
     def __or__(self, other):
-        return self
+        return ("or", self, other)
+
+
+class _RouteColumn:
+    def __init__(self, name):
+        self.name = name
+
+    def __eq__(self, value):
+        return _RouteCondition("eq", self.name, value)
+
+    def is_(self, value):
+        return _RouteCondition("eq", self.name, value)
 
     def desc(self):
         return self
 
 
-class _RecordingEndpoint:
+class _RouteModelEndpoint:
     """ModelEndpoint stand-in that stores constructor kwargs as attributes.
 
     Class-level fake columns let it double as the query class in the dedupe
     lookup; instance attributes (set in __init__) shadow them per-row.
     """
 
-    id = _FakeCol()
-    base_url = _FakeCol()
-    owner = _FakeCol()
+    id = _RouteColumn("id")
+    base_url = _RouteColumn("base_url")
+    is_enabled = _RouteColumn("is_enabled")
+    owner = _RouteColumn("owner")
+    created_at = _RouteColumn("created_at")
 
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
             setattr(self, key, value)
+
+
+_RecordingEndpoint = _RouteModelEndpoint
 
 
 class _PinnedFakeRequest:
@@ -635,6 +665,13 @@ def _make_endpoint(**kwargs):
         pinned_models=None,
         model_type="llm",
         supports_tools=None,
+        endpoint_kind="auto",
+        model_refresh_mode="auto",
+        model_refresh_interval=None,
+        model_refresh_timeout=None,
+        owner=None,
+        created_at=None,
+        updated_at=None,
     )
     base.update(kwargs)
     return SimpleNamespace(**base)
@@ -676,7 +713,7 @@ def test_get_models_returns_pinned_when_probe_empty(monkeypatch):
     monkeypatch.setattr(model_routes, "_probe_endpoint", lambda *a, **k: [])
     endpoint = _get_route("/api/model-endpoints/{ep_id}/models", "GET")
 
-    result = endpoint("ep1", _PinnedFakeRequest())
+    result = endpoint("ep1", _PinnedFakeRequest(), SimpleNamespace(headers={}))
 
     ids = [row["id"] for row in result]
     assert ids == ["deploy-1"]
@@ -730,6 +767,10 @@ def _create_form_kwargs(**overrides):
         skip_probe="true",  # avoid any network probe in unit tests
         require_models="false",
         model_type="llm",
+        endpoint_kind="auto",
+        model_refresh_mode="",
+        model_refresh_interval="",
+        model_refresh_timeout="",
         supports_tools="",
         pinned_models="",
         container_local="false",
@@ -772,6 +813,7 @@ def test_post_creates_endpoint_with_pinned_models(monkeypatch):
 
 def test_post_dedupe_existing_merges_and_returns_pinned(monkeypatch):
     existing = _make_endpoint(
+        base_url="http://host:1234/v1",
         cached_models=json.dumps(["m1"]),
         hidden_models=None,
         pinned_models=json.dumps(["old-pin"]),
@@ -798,6 +840,7 @@ def test_post_dedupe_existing_merges_and_returns_pinned(monkeypatch):
 
 def test_post_dedupe_existing_does_not_clobber_pinned_when_omitted(monkeypatch):
     existing = _make_endpoint(
+        base_url="http://host:1234/v1",
         cached_models=json.dumps(["m1"]),
         pinned_models=json.dumps(["keep-me"]),
     )
@@ -814,3 +857,464 @@ def test_post_dedupe_existing_does_not_clobber_pinned_when_omitted(monkeypatch):
     assert json.loads(existing.pinned_models) == ["keep-me"]
     assert result["pinned_models"] == ["keep-me"]
     assert db.committed == 0  # nothing to persist
+class _RouteQuery:
+    def __init__(self, rows):
+        self.rows = list(rows)
+
+    def filter(self, *conditions):
+        for condition in conditions:
+            if isinstance(condition, _RouteCondition) and condition.op == "eq":
+                self.rows = [row for row in self.rows if getattr(row, condition.field, None) == condition.value]
+            elif isinstance(condition, tuple) and condition and condition[0] == "or":
+                keep = []
+                for row in self.rows:
+                    matched = False
+                    for part in condition[1:]:
+                        if isinstance(part, _RouteCondition) and part.op == "eq":
+                            matched = matched or (getattr(row, part.field, None) == part.value)
+                    if matched:
+                        keep.append(row)
+                self.rows = keep
+        return self
+
+    def order_by(self, *args, **kwargs):
+        return self
+
+    def all(self):
+        return list(self.rows)
+
+    def first(self):
+        return self.rows[0] if self.rows else None
+
+
+class _RouteDb:
+    def __init__(self, rows):
+        self.rows = rows
+        self.added = []
+        self.committed = 0
+        self.commits = 0
+        self.closed = False
+
+    def query(self, model):
+        return _RouteQuery(self.rows)
+
+    def commit(self):
+        self.committed += 1
+        self.commits += 1
+
+    def close(self):
+        self.closed = True
+
+    def add(self, row):
+        self.rows.append(row)
+        self.added.append(row)
+
+
+_PinnedFakeDb = _RouteDb
+
+
+class _ImmediateThread:
+    def __init__(self, target, daemon=None):
+        self.target = target
+
+    def start(self):
+        self.target()
+
+
+def _wait_for(predicate, timeout=2.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return bool(predicate())
+
+
+def _route_endpoint(router, path, method="GET"):
+    for route in router.routes:
+        if getattr(route, "path", "") == path and method in getattr(route, "methods", set()):
+            return route.endpoint
+    raise AssertionError(f"{method} {path} route not found")
+
+
+def _route_ep(
+    id,
+    base_url,
+    *,
+    cached_models=None,
+    endpoint_kind="auto",
+    api_key=None,
+    name=None,
+    pinned_models=None,
+    refresh_mode="auto",
+    refresh_timeout=None,
+):
+    return SimpleNamespace(
+        id=id,
+        name=name or id,
+        base_url=base_url,
+        api_key=api_key,
+        is_enabled=True,
+        cached_models=json.dumps(cached_models) if cached_models is not None else None,
+        hidden_models=None,
+        pinned_models=json.dumps(pinned_models) if pinned_models is not None else None,
+        model_type="llm",
+        endpoint_kind=endpoint_kind,
+        model_refresh_mode=refresh_mode,
+        model_refresh_interval=None,
+        model_refresh_timeout=refresh_timeout,
+        supports_tools=None,
+        owner=None,
+        created_at=None,
+        updated_at=None,
+    )
+
+
+def _route_request():
+    return SimpleNamespace(
+        state=SimpleNamespace(current_user=None),
+        app=SimpleNamespace(state=SimpleNamespace(auth_manager=None)),
+    )
+
+
+def test_api_models_returns_cached_proxy_models_without_refresh_probe(monkeypatch):
+    row = _route_ep(
+        "proxy",
+        "http://100.117.136.97:34521/v1",
+        cached_models=["cached-model"],
+        endpoint_kind="proxy",
+        api_key="fake-key",
+        refresh_mode="manual",
+    )
+    db = _RouteDb([row])
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "_auth_disabled", lambda: True)
+    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+
+    def fail_probe(*args, **kwargs):
+        raise AssertionError("/models probe should not run for cached manual proxy")
+
+    monkeypatch.setattr(model_routes, "_probe_endpoint", fail_probe)
+    monkeypatch.setattr(threading, "Thread", _ImmediateThread)
+
+    result = _route_endpoint(router, "/api/models")(_route_request())
+
+    assert result["items"][0]["models"] == ["cached-model"]
+    assert result["items"][0]["category"] == "api"
+    assert result["items"][0]["endpoint_kind"] == "proxy"
+    assert "offline" not in result["items"][0]
+    assert json.loads(row.cached_models) == ["cached-model"]
+
+
+@pytest.mark.asyncio
+async def test_probe_local_skips_tailscale_proxy_endpoint(monkeypatch):
+    proxy = _route_ep(
+        "proxy",
+        "http://100.117.136.97:34521/v1",
+        cached_models=["cached-model"],
+        endpoint_kind="proxy",
+        api_key="fake-key",
+    )
+    local = _route_ep("local", "http://127.0.0.1:8000/v1", endpoint_kind="local")
+    db = _RouteDb([proxy, local])
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+    monkeypatch.setattr(model_routes, "_probe_endpoint", lambda *a, **k: (_ for _ in ()).throw(AssertionError("full probe should not run")))
+
+    pinged = []
+
+    def fake_ping(base_url, api_key=None, timeout=1.5):
+        pinged.append(base_url)
+        return {"reachable": True, "status_code": 404, "error": "HTTP 404"}
+
+    monkeypatch.setattr(model_routes, "_ping_endpoint", fake_ping)
+
+    result = await _route_endpoint(router, "/api/model-endpoints/probe-local")(_route_request())
+
+    assert set(result) == {"local"}
+    assert pinged == ["http://127.0.0.1:8000/v1"]
+
+
+def test_background_refresh_deduplicates_same_base_url(monkeypatch):
+    ep1 = _route_ep("a", "http://127.0.0.1:8000/v1", endpoint_kind="local")
+    ep2 = _route_ep("b", "http://127.0.0.1:8000/v1", endpoint_kind="local")
+    db = _RouteDb([ep1, ep2])
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "_auth_disabled", lambda: True)
+    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+
+    calls = []
+    probe_done = threading.Event()
+
+    def fake_probe(base_url, api_key=None, timeout=2):
+        calls.append(base_url)
+        probe_done.set()
+        return ["live-model"]
+
+    monkeypatch.setattr(model_routes, "_probe_endpoint", fake_probe)
+
+    _route_endpoint(router, "/api/models")(_route_request(), refresh=True)
+
+    assert probe_done.wait(2)
+    assert _wait_for(lambda: ep1.cached_models and ep2.cached_models)
+    assert calls == ["http://127.0.0.1:8000/v1"]
+    assert json.loads(ep1.cached_models) == ["live-model"]
+    assert json.loads(ep2.cached_models) == ["live-model"]
+
+
+def test_background_refresh_failure_keeps_existing_cached_models(monkeypatch):
+    ep = _route_ep(
+        "local",
+        "http://127.0.0.1:8000/v1",
+        cached_models=["cached-model"],
+        endpoint_kind="local",
+    )
+    db = _RouteDb([ep])
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "_auth_disabled", lambda: True)
+    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+    probe_done = threading.Event()
+
+    def fake_probe(*args, **kwargs):
+        probe_done.set()
+        return []
+
+    monkeypatch.setattr(model_routes, "_probe_endpoint", fake_probe)
+
+    result = _route_endpoint(router, "/api/models")(_route_request(), refresh=True)
+
+    assert probe_done.wait(2)
+    assert _wait_for(lambda: db.commits > 0)
+    assert result["items"][0]["models"] == ["cached-model"]
+    assert json.loads(ep.cached_models) == ["cached-model"]
+
+
+def test_llm_core_list_model_ids_uses_cached_configured_proxy(monkeypatch):
+    ep = _route_ep(
+        "proxy",
+        "http://100.117.136.97:34521/v1",
+        cached_models=["cached-model", "hidden-model"],
+        endpoint_kind="proxy",
+    )
+    ep.hidden_models = json.dumps(["hidden-model"])
+    db = _RouteDb([ep])
+
+    monkeypatch.setattr(src_database, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(src_database, "SessionLocal", lambda: db)
+    monkeypatch.setattr(llm_core.httpx, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("/models should not be fetched")))
+
+    assert llm_core.list_model_ids("http://100.117.136.97:34521/v1/chat/completions", timeout=1) == ["cached-model"]
+
+
+def test_explicit_proxy_test_fetches_models_with_long_timeout(monkeypatch):
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+    monkeypatch.setattr(model_routes, "_ping_endpoint", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ping should not run when model listing succeeds")))
+
+    calls = []
+    returned = ["NVIDIA NIM/openai/gpt-oss-120b", "mistral/mistral-small-2603"]
+
+    def fake_probe(base_url, api_key=None, timeout=2):
+        calls.append({"base_url": base_url, "api_key": api_key, "timeout": timeout})
+        return returned
+
+    monkeypatch.setattr(model_routes, "_probe_endpoint", fake_probe)
+
+    result = _route_endpoint(router, "/api/model-endpoints/test", "POST")(
+        _route_request(),
+        base_url="http://100.117.136.97:34521/v1",
+        api_key="fake-key",
+        endpoint_kind="proxy",
+    )
+
+    assert result["online"] is True
+    assert result["status"] == "online"
+    assert result["models"] == returned
+    assert calls == [{
+        "base_url": "http://100.117.136.97:34521/v1",
+        "api_key": "fake-key",
+        "timeout": 30.0,
+    }]
+
+
+def test_explicit_proxy_add_fetches_and_caches_models_with_long_timeout(monkeypatch):
+    db = _RouteDb([])
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: {})
+    monkeypatch.setattr(model_routes, "_save_settings", lambda settings: None)
+    monkeypatch.setattr("src.auth_helpers.get_current_user", lambda request: None)
+    monkeypatch.setattr(model_routes, "_ping_endpoint", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ping should not run when model listing succeeds")))
+
+    calls = []
+    returned = ["NVIDIA NIM/openai/gpt-oss-120b", "mistral/mistral-small-2603"]
+
+    def fake_probe(base_url, api_key=None, timeout=2):
+        calls.append({"base_url": base_url, "api_key": api_key, "timeout": timeout})
+        return returned
+
+    monkeypatch.setattr(model_routes, "_probe_endpoint", fake_probe)
+
+    result = _route_endpoint(router, "/api/model-endpoints", "POST")(
+        _route_request(),
+        name="Bifrost",
+        base_url="http://100.117.136.97:34521/v1",
+        api_key="fake-key",
+        skip_probe="true",
+        require_models="false",
+        model_type="llm",
+        endpoint_kind="proxy",
+        model_refresh_mode="manual",
+        model_refresh_interval="",
+        model_refresh_timeout="",
+        supports_tools="",
+        container_local="false",
+        shared="true",
+    )
+
+    assert result["online"] is True
+    assert result["status"] == "online"
+    assert result["models"] == returned
+    assert calls == [{
+        "base_url": "http://100.117.136.97:34521/v1",
+        "api_key": "fake-key",
+        "timeout": 30.0,
+    }]
+    assert len(db.rows) == 1
+    assert json.loads(db.rows[0].cached_models) == returned
+    assert db.rows[0].endpoint_kind == "proxy"
+    assert db.rows[0].model_refresh_mode == "manual"
+
+
+def test_manual_refresh_uses_long_timeout_and_saves_full_model_list(monkeypatch):
+    ep = _route_ep(
+        "proxy",
+        "http://100.117.136.97:34521/v1",
+        cached_models=["cached-model"],
+        endpoint_kind="proxy",
+        api_key="fake-key",
+        refresh_mode="manual",
+    )
+    db = _RouteDb([ep])
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+
+    calls = []
+    refreshed = ["cached-model", "mistral/mistral-small-2603", "provider/nested/model/id"]
+
+    def fake_probe(base_url, api_key=None, timeout=2):
+        calls.append({"base_url": base_url, "api_key": api_key, "timeout": timeout})
+        return refreshed
+
+    monkeypatch.setattr(model_routes, "_probe_endpoint", fake_probe)
+
+    response = SimpleNamespace(headers={})
+    result = _route_endpoint(router, "/api/model-endpoints/{ep_id}/models")(
+        "proxy",
+        _route_request(),
+        response,
+        refresh=True,
+        refresh_timeout=60,
+    )
+
+    assert [m["id"] for m in result] == refreshed
+    assert calls == [{
+        "base_url": "http://100.117.136.97:34521/v1",
+        "api_key": "fake-key",
+        "timeout": 60.0,
+    }]
+    assert json.loads(ep.cached_models) == refreshed
+    assert db.commits == 1
+    assert response.headers["X-Model-Refresh-Status"] == "refreshed"
+    assert response.headers["X-Model-Refresh-Count"] == "3"
+
+
+def test_manual_refresh_defaults_to_proxy_long_timeout(monkeypatch):
+    ep = _route_ep(
+        "proxy",
+        "https://proxy.example.test/v1",
+        cached_models=["cached-model"],
+        endpoint_kind="proxy",
+        refresh_mode="manual",
+    )
+    db = _RouteDb([ep])
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+
+    timeouts = []
+
+    def fake_probe(base_url, api_key=None, timeout=2):
+        timeouts.append(timeout)
+        return ["cached-model", "new-model"]
+
+    monkeypatch.setattr(model_routes, "_probe_endpoint", fake_probe)
+
+    response = SimpleNamespace(headers={})
+    _route_endpoint(router, "/api/model-endpoints/{ep_id}/models")(
+        "proxy",
+        _route_request(),
+        response,
+        refresh=True,
+    )
+
+    assert timeouts == [30.0]
+    assert json.loads(ep.cached_models) == ["cached-model", "new-model"]
+
+
+def test_manual_refresh_timeout_keeps_cached_models_and_warns(monkeypatch):
+    ep = _route_ep(
+        "proxy",
+        "http://100.117.136.97:34521/v1",
+        cached_models=["cached-model"],
+        endpoint_kind="proxy",
+        api_key="fake-key",
+        refresh_mode="manual",
+    )
+    db = _RouteDb([ep])
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+
+    def fake_probe(base_url, api_key=None, timeout=2):
+        raise httpx.TimeoutException("timed out")
+
+    monkeypatch.setattr(model_routes, "_probe_endpoint", fake_probe)
+
+    response = SimpleNamespace(headers={})
+    result = _route_endpoint(router, "/api/model-endpoints/{ep_id}/models")(
+        "proxy",
+        _route_request(),
+        response,
+        refresh=True,
+        refresh_timeout=60,
+    )
+
+    assert [m["id"] for m in result] == ["cached-model"]
+    assert json.loads(ep.cached_models) == ["cached-model"]
+    assert db.commits == 0
+    assert response.headers["X-Model-Refresh-Status"] == "failed"
+    assert "kept cached models" in response.headers["X-Model-Refresh-Warning"]

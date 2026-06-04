@@ -210,7 +210,9 @@ async function _buildCompareUI() {
     for (let i = 0; i < n; i++) {
       const m = state._selectedModels[i];
       const fd = new FormData();
-      fd.append('name', '[CMP] ' + modelShorts[i]);
+      // Blind mode: name the session by its neutral slot so the sidebar /
+      // GET /api/sessions can't de-anonymize the comparison (issue #1285).
+      fd.append('name', '[CMP] ' + (state._blindMode ? 'Model ' + _slotChar(i) : modelShorts[i]));
       fd.append('endpoint_url', m.endpoint || '');
       fd.append('model', m.model || '');
       if (m.endpointId) {

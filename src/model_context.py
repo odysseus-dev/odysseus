@@ -6,6 +6,7 @@ Provides token estimation for context usage tracking.
 """
 
 import logging
+import sys
 from typing import Dict, List, Optional
 
 from urllib.parse import urlparse
@@ -21,8 +22,55 @@ _PRIVATE_PREFIXES = ("10.", "172.16.", "172.17.", "172.18.", "172.19.",
                      "172.30.", "172.31.", "192.168.", "100.")
 
 
+def _normalize_base_for_compare(url: str) -> str:
+    url = (url or "").strip().rstrip("/")
+    for suffix in ("/chat/completions", "/models", "/completions", "/v1/messages"):
+        if url.endswith(suffix):
+            url = url[: -len(suffix)].rstrip("/")
+    return url
+
+
+def _configured_endpoint_kind(url: str) -> Optional[str]:
+    """Return configured endpoint kind for a chat/base URL when available."""
+    target = _normalize_base_for_compare(url)
+    if not target:
+        return None
+    if "core.database" not in sys.modules:
+        return None
+    try:
+        from core.database import SessionLocal, ModelEndpoint
+        db = SessionLocal()
+        try:
+            rows = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+            for ep in rows:
+                base = _normalize_base_for_compare(getattr(ep, "base_url", "") or "")
+                if not base:
+                    continue
+                if target != base and not target.startswith(base + "/"):
+                    continue
+                kind = (getattr(ep, "endpoint_kind", None) or "auto").strip().lower()
+                if kind in ("local", "api", "proxy"):
+                    return kind
+                if getattr(ep, "api_key", None):
+                    parsed = urlparse(base)
+                    host = (parsed.hostname or "").lower()
+                    path = (parsed.path or "").rstrip("/")
+                    if parsed.port != 11434 and "ollama" not in host and (path.endswith("/v1") or "/openai" in path):
+                        return "proxy"
+                return "auto"
+        finally:
+            db.close()
+    except Exception:
+        return None
+
+
 def _is_local_endpoint(url: str) -> bool:
     """Check if URL points to a local/private/tailscale address."""
+    kind = _configured_endpoint_kind(url)
+    if kind in ("api", "proxy"):
+        return False
+    if kind == "local":
+        return True
     try:
         host = urlparse(url).hostname or ""
         return host in _LOCAL_HOSTS or host.startswith(_PRIVATE_PREFIXES)
@@ -170,6 +218,7 @@ def get_context_length(endpoint_url: str, model: str) -> int:
     or context_window fields. Caches result per model ID.
     Falls back to DEFAULT_CONTEXT if unavailable.
     """
+    configured_kind = _configured_endpoint_kind(endpoint_url)
     is_local = _is_local_endpoint(endpoint_url)
     if not is_local and model in _context_cache:
         return _context_cache[model]
@@ -178,7 +227,7 @@ def get_context_length(endpoint_url: str, model: str) -> int:
     # Only cache non-default values to allow retry on next request.
     # Local endpoints can restart with a different --max-model-len while keeping
     # the same model id, so always re-query them instead of serving stale cache.
-    if not is_local and ctx != DEFAULT_CONTEXT:
+    if not is_local and (ctx != DEFAULT_CONTEXT or configured_kind in ("api", "proxy")):
         _context_cache[model] = ctx
     logger.info(f"Context length for {model}: {ctx}")
     return ctx
@@ -207,6 +256,16 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
     """Query the model API for context length."""
     known = _lookup_known(model)
     api_ctx = None
+    configured_kind = _configured_endpoint_kind(endpoint_url)
+
+    # Large OpenAI-compatible proxies can make /models expensive. If the
+    # endpoint is explicitly configured as API/proxy, prefer known context
+    # metadata (or the default) over downloading the full catalog.
+    if configured_kind in ("api", "proxy"):
+        if known:
+            logger.info(f"Using known context window for {model}: {known}")
+            return known
+        return DEFAULT_CONTEXT
 
     # Try llama.cpp /slots endpoint first — reports actual serving context
     if _is_local_endpoint(endpoint_url):

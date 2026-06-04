@@ -342,6 +342,14 @@ class ModelEndpoint(TimestampMixin, Base):
     cached_models = Column(Text, nullable=True)    # JSON list of last-known model IDs (avoids probe on list)
     pinned_models = Column(Text, nullable=True)    # JSON list of admin-pinned model IDs (manual, may not appear in /v1/models)
     model_type = Column(String, nullable=True, default="llm")  # "llm" or "image"
+    # auto = classify by URL; local = self-hosted server; api/proxy = external
+    # OpenAI-compatible API even when reachable through a private/tailnet IP.
+    endpoint_kind = Column(String, nullable=True, default="auto")
+    # auto = background refresh with TTL/backoff; manual/disabled = cached-first
+    # only unless an explicit endpoint probe is requested.
+    model_refresh_mode = Column(String, nullable=True, default="auto")
+    model_refresh_interval = Column(Integer, nullable=True, default=None)
+    model_refresh_timeout = Column(Integer, nullable=True, default=None)
     # Whether models on this endpoint accept OpenAI-style function
     # schemas + emit `tool_calls`. Auto-detected at Cookbook auto-
     # register time from `--enable-auto-tool-choice` in the serve cmd;
@@ -808,6 +816,29 @@ def _migrate_add_model_type_column():
         conn.close()
     except Exception as e:
         logging.getLogger(__name__).warning(f"model_type migration failed: {e}")
+
+def _migrate_add_model_endpoint_refresh_columns():
+    """Add endpoint classification / refresh policy columns if missing."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(model_endpoints)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "endpoint_kind" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN endpoint_kind TEXT DEFAULT 'auto'")
+        if columns and "model_refresh_mode" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN model_refresh_mode TEXT DEFAULT 'auto'")
+        if columns and "model_refresh_interval" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN model_refresh_interval INTEGER")
+        if columns and "model_refresh_timeout" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN model_refresh_timeout INTEGER")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"model_endpoints refresh-policy migration failed: {e}")
 
 def _migrate_add_task_run_model_column():
     """Add model column to task_runs if it doesn't exist (records which model ran)."""
@@ -1539,6 +1570,7 @@ def init_db():
     _migrate_add_pinned_models_column()
     _migrate_add_notes_sort_order()
     _migrate_add_model_type_column()
+    _migrate_add_model_endpoint_refresh_columns()
     _migrate_add_model_endpoint_owner_column()
     _migrate_add_supports_tools_column()
     _migrate_add_task_run_model_column()

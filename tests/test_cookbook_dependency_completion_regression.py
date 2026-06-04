@@ -28,6 +28,15 @@ def test_background_status_poll_reconciles_into_local_tasks():
     assert "completedDeps.forEach(t => _refreshDepsAfterInstall(t));" in source
 
 
+def test_local_windows_session_commands_use_local_powershell_log_dir():
+    source = _read("static/js/cookbookRunning.js")
+
+    assert "const host = task.remoteHost;" in source
+    assert "host ? '$env:TEMP\\\\odysseus-sessions' : '$env:TEMP\\\\odysseus-tmux'" in source
+    assert "return host ? `ssh ${pf}${host}" in source
+    assert ": `powershell -Command \"${ps}\"`;" in source
+
+
 def test_dependency_install_payload_keeps_env_path_for_refresh():
     source = _read("static/js/cookbook.js")
 

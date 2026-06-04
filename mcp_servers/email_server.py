@@ -666,7 +666,7 @@ def _read_email(uid=None, message_id=None, folder="INBOX", account=None):
         conn.logout()
         return {"error": "No UID or Message-ID provided"}
 
-    status, msg_data = conn.uid("FETCH", _b(uid), "(RFC822)")
+    status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
     if status != "OK":
         conn.logout()
         return {"error": f"Failed to fetch email UID {uid}"}
@@ -855,7 +855,7 @@ def _reply_to_email(uid, body, folder="INBOX", reply_all=False, account=None):
     """Reply to an existing email by UID. Threads via In-Reply-To/References."""
     conn = _imap_connect(account)
     conn.select(folder, readonly=True)
-    status, msg_data = conn.uid("FETCH", _b(uid), "(RFC822)")
+    status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
     conn.logout()
     if status != "OK" or not msg_data or not msg_data[0]:
         return {"error": f"Failed to fetch email UID {uid}"}
@@ -1033,7 +1033,7 @@ def _download_attachment(uid, index, folder="INBOX", account=None):
     """Extract a specific attachment to disk and return its local path."""
     conn = _imap_connect(account)
     conn.select(folder, readonly=True)
-    status, msg_data = conn.uid("FETCH", _b(uid), "(RFC822)")
+    status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
     conn.logout()
     if status != "OK":
         return {"error": f"Failed to fetch email UID {uid}"}
