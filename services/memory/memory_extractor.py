@@ -192,11 +192,19 @@ def _fallback_memory_candidates(messages) -> list[dict]:
             if place:
                 add(f"User lives in {place}.", "identity")
 
-        m = re.search(r"\bi (?:prefer|like|love|hate|do not like|don't like)\s+([^.!?\n]{4,100})", text, re.I)
+        m = re.search(r"\bi (prefer|like|love|hate|do not like|don't like)\s+([^.!?\n]{4,100})", text, re.I)
         if m:
-            preference = _clean_memory_value(m.group(1), 100)
+            preference = _clean_memory_value(m.group(2), 100)
             if preference:
-                add(f"User prefers {preference}.", "preference")
+                # The same pattern catches likes and dislikes; keep the stored
+                # sentiment faithful instead of recording every match as a
+                # preference ("I hate cilantro" must not become "User prefers
+                # cilantro").
+                verb = m.group(1).lower()
+                if verb in ("hate", "do not like", "don't like"):
+                    add(f"User dislikes {preference}.", "preference")
+                else:
+                    add(f"User prefers {preference}.", "preference")
 
         m = re.search(
             r"\bi (?:(?:want|would like|plan|hope) to|wanna) "
