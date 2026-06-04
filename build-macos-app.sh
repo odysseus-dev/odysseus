@@ -195,10 +195,14 @@ mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 rm -f "$DIST/$APP_NAME.dmg"
-if hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DIST/$APP_NAME.dmg" >/dev/null 2>&1; then
+DMG_STATUS="skipped"
+if ! command -v hdiutil >/dev/null 2>&1; then
+  echo "  dmg:        skipped (hdiutil unavailable)"
+elif hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DIST/$APP_NAME.dmg" >/dev/null 2>&1; then
   echo "  dmg:        created"
+  DMG_STATUS="created"
 else
-  echo "  dmg:        skipped (hdiutil unavailable here)"
+  echo "  dmg:        skipped (hdiutil failed)"
   rm -f "$DIST/$APP_NAME.dmg"
 fi
 rm -rf "$STAGE"
@@ -206,7 +210,13 @@ rm -rf "$STAGE"
 echo
 echo "Done:"
 echo "  $APP"
-echo "  $DIST/$APP_NAME.dmg"
+if [ "$DMG_STATUS" = "created" ]; then
+  echo "  $DIST/$APP_NAME.dmg"
+fi
 echo
 echo "Run it:  open '$APP'"
-echo "Install:  open '$DIST/$APP_NAME.dmg'  (drag Odysseus to Applications)"
+if [ "$DMG_STATUS" = "created" ]; then
+  echo "Install:  open '$DIST/$APP_NAME.dmg'  (drag Odysseus to Applications)"
+else
+  echo "Install:  copy '$APP' into /Applications"
+fi
