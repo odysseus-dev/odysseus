@@ -1,20 +1,17 @@
 #!/bin/bash
-set -e
+# install-service.sh — DEPRECATED.
+#
+# Use ./odysseus.sh --install-service instead. Same code path, with the
+# same .service file getting written into /etc/systemd/system/.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SERVICE_FILE="$SCRIPT_DIR/odysseus-ui.service"
 
-if [ ! -f "$SERVICE_FILE" ]; then
-  echo "Error: odysseus-ui.service not found in $SCRIPT_DIR"
-  exit 1
+if [ -n "$ODYSSEUS_LEGACY_ENTRY" ]; then
+  # Re-entrant from odysseus.sh — just run the original install script.
+  exec "$SCRIPT_DIR/scripts/legacy/linux-systemd-install.sh" "$@"
 fi
 
-echo "Installing Odysseus UI service..."
-echo "Make sure you've edited odysseus-ui.service with your username and paths first!"
-echo ""
-
-sudo cp "$SERVICE_FILE" /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable odysseus-ui
-sudo systemctl start odysseus-ui
-sudo systemctl status odysseus-ui
+echo "▶ install-service.sh is deprecated — use ./odysseus.sh --install-service"
+echo "  (forwarding; this shim will be removed in a future release)"
+echo
+exec "$SCRIPT_DIR/odysseus.sh" --install-service "$@"
