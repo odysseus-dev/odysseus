@@ -8,6 +8,8 @@ Supports fenced code blocks, [TOOL_CALL] blocks, and XML-style <invoke> blocks.
 import re
 import json
 import logging
+import ast
+import shlex
 from typing import List, Optional
 
 from src.agent_tools import ToolBlock, TOOL_TAGS
@@ -52,6 +54,20 @@ _XML_PARAM_RE = re.compile(
 _TOOL_CODE_RE = re.compile(
     r"<tool_code>\s*\{([\s\S]*?)\}\s*</tool_code>",
     re.IGNORECASE,
+)
+
+# Pattern 6: bare function-style calls some local models emit even after being
+# shown fenced examples, e.g. `web_fetch("https://example.com")` or
+# `web_search(query="latest CUDA news")`.
+_FUNCTION_STYLE_RE = re.compile(
+    r"(?m)^\s*([A-Za-z_]\w*)\s*\((.*?)\)\s*$",
+    re.DOTALL,
+)
+
+# Pattern 7: bare command-style calls emitted by some local instruct models:
+# `web_fetch url="https://example.com"` or `web_search query="CUDA news"`.
+_COMMAND_STYLE_RE = re.compile(
+    r"(?m)^\s*([A-Za-z_]\w*)\s+([A-Za-z_]\w*\s*=.+?)\s*$",
 )
 
 # Pattern 5: DeepSeek DSML markup leaking into content. When deepseek
@@ -329,6 +345,79 @@ def _parse_tool_code_block(raw: str) -> Optional[ToolBlock]:
     return None
 
 
+def _parse_function_style_call(tool_name: str, raw_args: str) -> Optional[ToolBlock]:
+    """Parse a bare `tool_name(...)` call into a ToolBlock.
+
+    This is intentionally narrow: it only accepts known tools/aliases and
+    Python-literal arguments, so normal prose containing parentheses is ignored.
+    """
+    normalized = tool_name.lower()
+    mapped = _TOOL_NAME_MAP.get(normalized) or (normalized if normalized in TOOL_TAGS else None)
+    if not mapped:
+        return None
+
+    try:
+        expr = ast.parse(f"f({raw_args})", mode="eval")
+    except SyntaxError:
+        return None
+    call = expr.body
+    if not isinstance(call, ast.Call):
+        return None
+
+    args = {}
+    if call.args:
+        if len(call.args) != 1:
+            return None
+        value = ast.literal_eval(call.args[0])
+        if isinstance(value, dict):
+            args.update(value)
+        elif mapped == "web_search":
+            args["query"] = str(value)
+        elif mapped == "web_fetch":
+            args["url"] = str(value)
+        elif mapped == "bash":
+            args["command"] = str(value)
+        elif mapped == "python":
+            args["code"] = str(value)
+        elif mapped == "read_file":
+            args["path"] = str(value)
+        else:
+            return None
+    for kw in call.keywords:
+        if kw.arg is None:
+            return None
+        args[kw.arg] = ast.literal_eval(kw.value)
+
+    from src.tool_schemas import function_call_to_tool_block
+    return function_call_to_tool_block(mapped, json.dumps(args))
+
+
+def _parse_command_style_call(tool_name: str, raw_args: str) -> Optional[ToolBlock]:
+    """Parse `tool key=value` calls into a ToolBlock."""
+    normalized = tool_name.lower()
+    mapped = _TOOL_NAME_MAP.get(normalized) or (normalized if normalized in TOOL_TAGS else None)
+    if not mapped:
+        return None
+
+    try:
+        tokens = shlex.split(raw_args)
+    except ValueError:
+        return None
+
+    args = {}
+    for token in tokens:
+        if "=" not in token:
+            return None
+        key, value = token.split("=", 1)
+        key = key.strip()
+        if not key:
+            return None
+        args[key] = value
+
+    from src.tool_schemas import function_call_to_tool_block
+    return function_call_to_tool_block(mapped, json.dumps(args))
+
+
 def parse_tool_blocks(text: str) -> List[ToolBlock]:
     """Extract executable tool blocks from LLM response text.
 
@@ -393,6 +482,20 @@ def parse_tool_blocks(text: str) -> List[ToolBlock]:
             if block:
                 blocks.append(block)
 
+    # Pattern 6: bare function-style tool calls
+    if not blocks:
+        for m in _FUNCTION_STYLE_RE.finditer(text):
+            block = _parse_function_style_call(m.group(1), m.group(2))
+            if block:
+                blocks.append(block)
+
+    # Pattern 7: bare command-style tool calls
+    if not blocks:
+        for m in _COMMAND_STYLE_RE.finditer(text):
+            block = _parse_command_style_call(m.group(1), m.group(2))
+            if block:
+                blocks.append(block)
+
     return blocks
 
 
@@ -405,6 +508,8 @@ def strip_tool_blocks(text: str) -> str:
     cleaned = _TOOL_CALL_RE.sub('', cleaned)
     cleaned = _XML_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _TOOL_CODE_RE.sub('', cleaned)
+    cleaned = _FUNCTION_STYLE_RE.sub('', cleaned)
+    cleaned = _COMMAND_STYLE_RE.sub('', cleaned)
     # Strip bare <invoke> blocks not wrapped in <tool_call>
     cleaned = re.sub(r'<invoke\s+name=["\'].*?</invoke>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)

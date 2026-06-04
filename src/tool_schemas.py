@@ -1110,6 +1110,8 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             content = str(queries)
         else:
             content = args.get("query", "")
+    elif tool_type == "web_fetch":
+        content = args.get("url", "")
     elif tool_type == "read_file":
         content = args.get("path", "")
     elif tool_type == "write_file":
