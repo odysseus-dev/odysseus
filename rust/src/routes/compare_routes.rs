@@ -106,15 +106,56 @@ async fn start_comparison(
     let sid_a = uuid::Uuid::new_v4().to_string();
     let sid_b = uuid::Uuid::new_v4().to_string();
 
+    // Blind mapping: randomly assign left/right.
+    //
+    // `blind = str(is_blind).lower() == "true"`. Computed BEFORE the session loop
+    // (issue #1285) so the helper-session NAMES can be blinded by slot rather than
+    // leaking the real model.
+    let blind = is_blind_raw.to_lowercase() == "true";
+    // `mapping = {"left": "a", "right": "b"}`; if blind and `random() > 0.5`, swap.
+    // `random.random()` is `[0.0, 1.0)`; `rand::Rng::gen::<f64>()` is the same range,
+    // so the `> 0.5` comparison has identical probability semantics.
+    let mapping: Value = if blind {
+        use rand::Rng;
+        if rand::thread_rng().gen::<f64>() > 0.5 {
+            json!({"left": "b", "right": "a"})
+        } else {
+            json!({"left": "a", "right": "b"})
+        }
+    } else {
+        json!({"left": "a", "right": "b"})
+    };
+
+    // Map session IDs to left/right based on blind mapping.
+    let left_is_a = mapping["left"] == json!("a");
+    let right_is_a = mapping["right"] == json!("a");
+    let session_left = if left_is_a { &sid_a } else { &sid_b };
+    let session_right = if right_is_a { &sid_a } else { &sid_b };
+
+    // In blind mode, name the helper sessions by their neutral slot
+    // ("Model A" / "Model B") instead of the real model. Otherwise the session
+    // name leaks the model in the sidebar and GET /api/sessions, de-anonymizing
+    // the comparison before the user votes (issue #1285).
+    //
+    // `slot_name = {session_left: "Model A", session_right: "Model B"}`.
+    let mut slot_name: HashMap<&str, &str> = HashMap::new();
+    slot_name.insert(session_left.as_str(), "Model A");
+    slot_name.insert(session_right.as_str(), "Model B");
+
     // Create ephemeral sessions (prefixed `[CMP]`).
     for (sid, model, endpoint) in [
         (&sid_a, &model_a, &endpoint_a),
         (&sid_b, &model_b, &endpoint_b),
     ] {
-        // `name=f"[CMP] {model.split('/')[-1]}"` — the segment after the last `/`
-        // (the whole string when there is no `/`).
-        let short = model.rsplit('/').next().unwrap_or(model);
-        let name = format!("[CMP] {short}");
+        // `name = f"[CMP] {slot_name[sid]}" if blind else f"[CMP] {model.split('/')[-1]}"`
+        // — blind mode uses the neutral slot label; otherwise the segment after the
+        // last `/` (the whole string when there is no `/`).
+        let name = if blind {
+            format!("[CMP] {}", slot_name[sid.as_str()])
+        } else {
+            let short = model.rsplit('/').next().unwrap_or(model);
+            format!("[CMP] {short}")
+        };
         if let Err(e) =
             s.sessions
                 .create_session(sid, &name, endpoint, model, false, user.as_deref())
@@ -160,24 +201,6 @@ async fn start_comparison(
         }
     }
 
-    // Blind mapping: randomly assign left/right.
-    //
-    // `blind = str(is_blind).lower() == "true"`.
-    let blind = is_blind_raw.to_lowercase() == "true";
-    // `mapping = {"left": "a", "right": "b"}`; if blind and `random() > 0.5`, swap.
-    // `random.random()` is `[0.0, 1.0)`; `rand::Rng::gen::<f64>()` is the same range,
-    // so the `> 0.5` comparison has identical probability semantics.
-    let mapping: Value = if blind {
-        use rand::Rng;
-        if rand::thread_rng().gen::<f64>() > 0.5 {
-            json!({"left": "b", "right": "a"})
-        } else {
-            json!({"left": "a", "right": "b"})
-        }
-    } else {
-        json!({"left": "a", "right": "b"})
-    };
-
     // Store comparison record.
     let blind_mapping = serde_json::to_string(&mapping).unwrap_or_else(|_| "{}".to_string());
     let conn = session_local()?;
@@ -204,20 +227,36 @@ async fn start_comparison(
     )
     .map_err(db_500)?;
 
-    // Map session IDs to left/right based on blind mapping.
-    let left_is_a = mapping["left"] == json!("a");
-    let right_is_a = mapping["right"] == json!("a");
-    let session_left = if left_is_a { &sid_a } else { &sid_b };
-    let session_right = if right_is_a { &sid_a } else { &sid_b };
+    // In blind mode, withhold the model identities AND the left/right mapping from
+    // the response. The client already knows model_a/model_b (it sent them), so
+    // returning either would defeat blind mode. They are revealed by
+    // POST /api/compare/{id}/vote once the user has voted (#1285).
+    //
+    // `"model_left": None if blind else (...)`, `"mapping": None if blind else mapping`.
+    let model_left: Value = if blind {
+        Value::Null
+    } else if left_is_a {
+        json!(model_a)
+    } else {
+        json!(model_b)
+    };
+    let model_right: Value = if blind {
+        Value::Null
+    } else if right_is_a {
+        json!(model_a)
+    } else {
+        json!(model_b)
+    };
+    let mapping_out: Value = if blind { Value::Null } else { mapping };
 
     Ok(Json(json!({
         "id": comp_id,
         "session_left": session_left,
         "session_right": session_right,
-        "model_left": if left_is_a { &model_a } else { &model_b },
-        "model_right": if right_is_a { &model_a } else { &model_b },
+        "model_left": model_left,
+        "model_right": model_right,
         "is_blind": blind,
-        "mapping": mapping,
+        "mapping": mapping_out,
     }))
     .into_response())
 }
@@ -635,6 +674,72 @@ mod tests {
         // No slash -> the whole string.
         let plain = "gpt-4o".rsplit('/').next().unwrap();
         assert_eq!(format!("[CMP] {plain}"), "[CMP] gpt-4o");
+    }
+
+    #[test]
+    fn blind_mode_session_name_uses_neutral_slot_not_model() {
+        // Issue #1285: in blind mode the helper-session name must be the neutral
+        // slot ("Model A"/"Model B") keyed by session id, NOT the real model — so
+        // the sidebar / GET /api/sessions can't de-anonymize the comparison.
+        let sid_a = "sid-a".to_string();
+        let sid_b = "sid-b".to_string();
+        // A swapped mapping (random() > 0.5): left -> b, right -> a.
+        let mapping = json!({"left": "b", "right": "a"});
+        let left_is_a = mapping["left"] == json!("a");
+        let right_is_a = mapping["right"] == json!("a");
+        let session_left = if left_is_a { &sid_a } else { &sid_b };
+        let session_right = if right_is_a { &sid_a } else { &sid_b };
+
+        let mut slot_name: HashMap<&str, &str> = HashMap::new();
+        slot_name.insert(session_left.as_str(), "Model A");
+        slot_name.insert(session_right.as_str(), "Model B");
+
+        // With the swap, sid_b is the left slot ("Model A") and sid_a the right
+        // ("Model B"). The name carries the slot, never the real model.
+        assert_eq!(format!("[CMP] {}", slot_name["sid-b"]), "[CMP] Model A");
+        assert_eq!(format!("[CMP] {}", slot_name["sid-a"]), "[CMP] Model B");
+        // Neither name contains the model identity placeholder a/the real model.
+        assert!(!slot_name["sid-a"].contains("claude"));
+    }
+
+    #[test]
+    fn blind_mode_response_withholds_model_identities_and_mapping() {
+        // Issue #1285: the /start response must blank model_left/model_right/mapping
+        // in blind mode (revealed only at /vote).
+        let model_a = "anthropic/claude".to_string();
+        let model_b = "openai/gpt".to_string();
+        let mapping = json!({"left": "b", "right": "a"});
+        let left_is_a = mapping["left"] == json!("a");
+        let right_is_a = mapping["right"] == json!("a");
+
+        for blind in [true, false] {
+            let model_left: Value = if blind {
+                Value::Null
+            } else if left_is_a {
+                json!(model_a)
+            } else {
+                json!(model_b)
+            };
+            let model_right: Value = if blind {
+                Value::Null
+            } else if right_is_a {
+                json!(model_a)
+            } else {
+                json!(model_b)
+            };
+            let mapping_out: Value = if blind { Value::Null } else { mapping.clone() };
+
+            if blind {
+                assert_eq!(model_left, Value::Null);
+                assert_eq!(model_right, Value::Null);
+                assert_eq!(mapping_out, Value::Null);
+            } else {
+                // Non-blind: identities and mapping are returned as before.
+                assert_eq!(model_left, json!("openai/gpt")); // left -> b
+                assert_eq!(model_right, json!("anthropic/claude")); // right -> a
+                assert_eq!(mapping_out, mapping);
+            }
+        }
     }
 
     #[test]

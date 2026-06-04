@@ -630,6 +630,209 @@ fn truthy(value: Option<&str>) -> bool {
     )
 }
 
+// ===========================================================================
+// Proxy/API endpoint classification + refresh policy (a2e691d).
+//
+// Large OpenAI-compatible proxy endpoints expose hundreds of models and make
+// `/v1/models` slow. These helpers add an explicit kind ("local"/"api"/"proxy")
+// and refresh-mode ("auto"/"manual"/"disabled") so proxies are cached-first,
+// excluded from aggressive local probing, and keep their cached list on failure.
+// ===========================================================================
+
+/// `_ENDPOINT_KINDS`.
+const ENDPOINT_KINDS: &[&str] = &["auto", "local", "api", "proxy"];
+
+/// `_normalize_endpoint_kind(value)` — coerce a kind string into the known set,
+/// defaulting to "auto".
+fn normalize_endpoint_kind(value: Option<&str>) -> String {
+    // kind = str(value or "auto").strip().lower()
+    let raw = value.map(|s| s.trim()).unwrap_or("");
+    let kind = if raw.is_empty() { "auto".to_string() } else { raw.to_lowercase() };
+    if ENDPOINT_KINDS.contains(&kind.as_str()) {
+        kind
+    } else {
+        "auto".to_string()
+    }
+}
+
+/// `_normalize_refresh_mode(value, endpoint_kind="auto")` — coerce a refresh-mode
+/// string. Proxies default to "manual" cached-first; others to "auto".
+fn normalize_refresh_mode(value: Option<&str>, endpoint_kind: &str) -> String {
+    // mode = str(value or "").strip().lower()
+    let mode = value.map(|s| s.trim().to_lowercase()).unwrap_or_default();
+    let kind = normalize_endpoint_kind(Some(endpoint_kind));
+    if mode == "manual" || mode == "disabled" {
+        return mode;
+    }
+    if mode == "auto" && kind != "proxy" {
+        return "auto".to_string();
+    }
+    // Proxies default to manual cached-first behavior. Normal local/API
+    // endpoints keep automatic bounded refreshes.
+    if kind == "proxy" {
+        "manual".to_string()
+    } else {
+        "auto".to_string()
+    }
+}
+
+/// `_endpoint_kind(ep)` — the endpoint's stored kind, normalized.
+fn endpoint_kind_of(ep: &Endpoint) -> String {
+    normalize_endpoint_kind(ep.endpoint_kind.as_deref())
+}
+
+/// `_endpoint_refresh_mode(ep, endpoint_kind=None)` — the endpoint's stored refresh
+/// mode, normalized against the (effective or stored) kind.
+fn endpoint_refresh_mode(ep: &Endpoint, endpoint_kind: Option<&str>) -> String {
+    let kind = match endpoint_kind {
+        Some(k) => k.to_string(),
+        None => endpoint_kind_of(ep),
+    };
+    normalize_refresh_mode(ep.model_refresh_mode.as_deref(), &kind)
+}
+
+/// `_endpoint_refresh_interval(ep, category)` — background refresh interval (sec):
+/// stored value (>=30) or the category default (60 local / 3600 api).
+fn endpoint_refresh_interval(ep: &Endpoint, category: &str) -> f64 {
+    let val = ep.model_refresh_interval.unwrap_or(0);
+    if val > 0 {
+        return std::cmp::max(30, val) as f64;
+    }
+    if category == "local" {
+        60.0
+    } else {
+        3600.0
+    }
+}
+
+/// `_endpoint_refresh_timeout(ep, category)` — background probe timeout (sec):
+/// stored value clamped to [1, 30] or the category default (2.5 local / 2.0 api).
+fn endpoint_refresh_timeout(ep: &Endpoint, category: &str) -> f64 {
+    let val = ep.model_refresh_timeout.unwrap_or(0);
+    if val > 0 {
+        return val.clamp(1, 30) as f64;
+    }
+    if category == "local" {
+        2.5
+    } else {
+        2.0
+    }
+}
+
+/// `_manual_refresh_timeout(ep, category, requested=None)` — timeout for explicit
+/// user-triggered model-list refreshes. A large proxy may legitimately need
+/// 15-30s; background refreshes stay short.
+fn manual_refresh_timeout(ep: &Endpoint, category: &str, requested: Option<i64>) -> f64 {
+    if let Some(v) = parse_positive_int_from_opt(requested, 1, 60) {
+        return v as f64;
+    }
+    let stored = parse_positive_int_from_opt(ep.model_refresh_timeout, 1, 60);
+    if category == "local" {
+        match stored {
+            Some(v) => v as f64,
+            None => endpoint_refresh_timeout(ep, category),
+        }
+    } else {
+        // float(max(stored or 30, 30))
+        std::cmp::max(stored.unwrap_or(30), 30) as f64
+    }
+}
+
+/// `_parse_positive_int(raw, minimum, maximum)` over a raw string. Returns `None`
+/// when unparseable or below `minimum`; clamps to `maximum`.
+fn parse_positive_int(raw: Option<&str>, minimum: i64, maximum: i64) -> Option<i64> {
+    let s = raw?.trim();
+    let val: i64 = s.parse().ok()?;
+    if val < minimum {
+        return None;
+    }
+    Some(std::cmp::min(val, maximum))
+}
+
+/// `_parse_positive_int` over an already-numeric value (a DB column / query int).
+/// `int(str(raw).strip())` round-trips an integer unchanged, so this applies the
+/// same `minimum`/`maximum` gate directly.
+fn parse_positive_int_from_opt(raw: Option<i64>, minimum: i64, maximum: i64) -> Option<i64> {
+    let val = raw?;
+    if val < minimum {
+        return None;
+    }
+    Some(std::cmp::min(val, maximum))
+}
+
+/// `_explicit_model_list_timeout(base_url, endpoint_kind="auto", requested=None)` —
+/// timeout for explicit user-triggered model-list fetches during setup. proxy/API
+/// endpoints get the long 30s budget; locals stay tight.
+fn explicit_model_list_timeout(base_url: &str, endpoint_kind: &str, requested: Option<i64>) -> f64 {
+    if let Some(v) = parse_positive_int_from_opt(requested, 1, 60) {
+        return v as f64;
+    }
+    let kind = normalize_endpoint_kind(Some(endpoint_kind));
+    let category = classify_endpoint_kind(base_url, &kind);
+    if kind == "api" || kind == "proxy" || category == "api" {
+        return 30.0;
+    }
+    if is_ollama_base(base_url) {
+        3.0
+    } else {
+        2.0
+    }
+}
+
+/// `_cached_model_ids(ep)` — sanitized cached-model IDs.
+fn cached_model_ids(ep: &Endpoint) -> Vec<String> {
+    normalize_model_ids(&opt_str_to_value(ep.cached_models.as_deref()))
+}
+
+/// `_hidden_model_ids(ep)` — sanitized hidden-model IDs as a set.
+fn hidden_model_ids(ep: &Endpoint) -> HashSet<String> {
+    normalize_model_ids(&opt_str_to_value(ep.hidden_models.as_deref()))
+        .into_iter()
+        .collect()
+}
+
+/// `getattr(ep, col, None)` → a JSON value for `_parse_model_list` (Python `None`
+/// when the column is NULL).
+fn opt_str_to_value(s: Option<&str>) -> Value {
+    match s {
+        Some(s) => Value::String(s.to_string()),
+        None => Value::Null,
+    }
+}
+
+/// `_is_ollama_base(base_url)` — True for port-11434 / Ollama-named bases.
+fn is_ollama_base(base_url: &str) -> bool {
+    let (host, port) = parsed_host_port(base_url);
+    if port == Some(11434) || host.contains("ollama") {
+        return true;
+    }
+    // except Exception: "ollama" in (base_url or "").lower()
+    if host.is_empty() {
+        return base_url.to_lowercase().contains("ollama");
+    }
+    false
+}
+
+/// `_effective_endpoint_kind(ep, base_url)` — explicit kind, with a legacy proxy
+/// heuristic for keyed `/v1` (or `/openai`) URLs.
+fn effective_endpoint_kind(ep: &Endpoint, base_url: &str) -> String {
+    let kind = endpoint_kind_of(ep);
+    if kind != "auto" {
+        return kind;
+    }
+    let has_key = ep.api_key.as_deref().map(|k| !k.is_empty()).unwrap_or(false);
+    if has_key && !is_ollama_base(base_url) {
+        let path = url::Url::parse(base_url)
+            .ok()
+            .map(|u| u.path().trim_end_matches('/').to_string())
+            .unwrap_or_default();
+        if path.ends_with("/v1") || path.contains("/openai") {
+            return "proxy".to_string();
+        }
+    }
+    "auto".to_string()
+}
+
 // Prefixes/substrings for models that are NOT chat-completions-capable
 const NON_CHAT_PREFIXES: &[&str] = &[
     "dall-e", "tts-", "whisper", "text-embedding", "embedding",
@@ -873,10 +1076,19 @@ fn matches_tailscale(host: &str) -> bool {
     }
 }
 
-/// `_classify_endpoint(base_url)` — return 'local' if the endpoint URL points to a
-/// private/local address, else 'api'. Includes the Tailscale CGNAT range
-/// (100.64.0.0/10).
-fn classify_endpoint(base_url: &str) -> &'static str {
+/// `_classify_endpoint(base_url, endpoint_kind="auto")` — return 'local' if the
+/// endpoint URL points to a private/local address, else 'api'. An explicit kind
+/// short-circuits the URL heuristic (a2e691d): "local" forces 'local', "api"/
+/// "proxy" force 'api'. Includes the Tailscale CGNAT range (100.64.0.0/10).
+fn classify_endpoint_kind(base_url: &str, endpoint_kind: &str) -> &'static str {
+    // kind = _normalize_endpoint_kind(endpoint_kind)
+    let kind = normalize_endpoint_kind(Some(endpoint_kind));
+    if kind == "local" {
+        return "local";
+    }
+    if kind == "api" || kind == "proxy" {
+        return "api";
+    }
     // host = urlparse(base_url).hostname or ""
     let host = url::Url::parse(base_url)
         .ok()
@@ -889,6 +1101,14 @@ fn classify_endpoint(base_url: &str) -> &'static str {
         return "local";
     }
     "api"
+}
+
+/// `_classify_endpoint(base_url)` with the default `endpoint_kind="auto"`. Retained
+/// for the `"auto"`-kind callers/tests; handler call sites now pass the effective
+/// kind via [`classify_endpoint_kind`].
+#[allow(dead_code)]
+fn classify_endpoint(base_url: &str) -> &'static str {
+    classify_endpoint_kind(base_url, "auto")
 }
 
 // ---------------------------------------------------------------------------
@@ -1182,88 +1402,61 @@ impl PingResult {
     }
 }
 
+/// `_result_from_response(r)` — the nested classifier in `_ping_endpoint`
+/// (a2e691d). Only 2xx is reachable; 3xx is a redirect-fail (with the Odysseus
+/// `/login` special-case); everything else is `HTTP {code}`.
+fn result_from_response(code: u16, location: &str) -> PingResult {
+    if (300..400).contains(&code) {
+        if location.starts_with("/login") || location.contains("/login") {
+            return PingResult {
+                reachable: false,
+                status_code: Some(code),
+                error: Some(
+                    "That is Odysseus, not a model server. Use the Ollama URL, usually http://host.docker.internal:11434/v1 in Docker.".to_string(),
+                ),
+            };
+        }
+        return PingResult {
+            reachable: false,
+            status_code: Some(code),
+            error: Some(format!("HTTP {code} redirect")),
+        };
+    }
+    if (200..300).contains(&code) {
+        return PingResult {
+            reachable: true,
+            status_code: Some(code),
+            error: None,
+        };
+    }
+    PingResult {
+        reachable: false,
+        status_code: Some(code),
+        error: Some(format!("HTTP {code}")),
+    }
+}
+
 /// `_ping_endpoint(base_url, api_key=None, timeout=1.5)` — reachability probe that
-/// does not require installed/listed models.
-// `last_error` is a Python-style accumulator: the OpenAI-path error is recorded
-// then overwritten by the Ollama-fallback error if that path runs, so an early
-// assignment can be dead on the fallback path (intentional parity).
+/// does not require installed/listed models. a2e691d made this cheap: it probes
+/// native `/api/version`/`/api/tags` for Ollama-style bases, then falls back to a
+/// plain `GET base` health check — it never uses the (potentially huge) `/models`
+/// catalog as a generic health check.
+// `last_error` is a Python-style accumulator overwritten across fallback paths, so
+// some assignments can be dead depending on which path returns first.
 #[allow(unused_assignments)]
 async fn ping_endpoint(base_url: &str, api_key: Option<&str>, timeout_ms: u64) -> PingResult {
     // base = resolve_url(_normalize_base(base_url))
     let base = resolve_url(&normalize_base(Some(base_url)));
-    // headers = {}; if api_key: headers["Authorization"] = f"Bearer {api_key}"
-    let auth_key = api_key.filter(|k| !k.is_empty());
+    // headers = build_headers(api_key, base)
+    let headers = build_headers(api_key, &base);
 
     // looks_like_ollama = port == 11434 or "ollama" in hostname
     let (host, port) = parsed_host_port(&base);
     let looks_like_ollama = port == Some(11434) || host.contains("ollama");
 
-    let url = format!("{base}/models");
     let mut last_error: Option<String> = None;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(timeout_ms))
-        // httpx defaults to follow_redirects=False; surface 3xx redirects as-is.
-        .redirect(reqwest::redirect::Policy::none())
-        .build();
-    match client {
-        Ok(c) => {
-            let mut req = c.get(&url);
-            if let Some(k) = auth_key {
-                req = req.header("Authorization", format!("Bearer {k}"));
-            }
-            match req.send().await {
-                Ok(r) => {
-                    let code = r.status().as_u16();
-                    if (300..400).contains(&code) {
-                        // loc = r.headers.get("location", "")
-                        let loc = r
-                            .headers()
-                            .get("location")
-                            .and_then(|v| v.to_str().ok())
-                            .unwrap_or("")
-                            .to_string();
-                        if loc.starts_with("/login") || loc.contains("/login") {
-                            return PingResult {
-                                reachable: false,
-                                status_code: Some(code),
-                                error: Some(
-                                    "That is Odysseus, not a model server. Use the Ollama URL, usually http://host.docker.internal:11434/v1 in Docker.".to_string(),
-                                ),
-                            };
-                        }
-                        return PingResult {
-                            reachable: false,
-                            status_code: Some(code),
-                            error: Some(format!("HTTP {code} redirect")),
-                        };
-                    }
-                    if code < 400 {
-                        return PingResult {
-                            reachable: true,
-                            status_code: Some(code),
-                            error: None,
-                        };
-                    }
-                    if code < 500 && !looks_like_ollama {
-                        return PingResult {
-                            reachable: false,
-                            status_code: Some(code),
-                            error: Some(format!("HTTP {code}")),
-                        };
-                    }
-                    last_error = Some(format!("HTTP {code}"));
-                }
-                Err(e) => {
-                    last_error = Some(truncate_chars(&e.to_string(), 120));
-                }
-            }
-        }
-        Err(e) => {
-            last_error = Some(truncate_chars(&e.to_string(), 120));
-        }
-    }
 
-    // Native Ollama paths fallback.
+    // Native Ollama paths first (no /models dependency).
     if looks_like_ollama {
         // root = base; strip a trailing /v1 or /api
         let mut root = base.clone();
@@ -1283,14 +1476,12 @@ async fn ping_endpoint(base_url: &str, api_key: Option<&str>, timeout_ms: u64) -
                 Ok(c) => match c.get(&probe_url).send().await {
                     Ok(r) => {
                         let code = r.status().as_u16();
-                        if code < 400 {
-                            return PingResult {
-                                reachable: true,
-                                status_code: Some(code),
-                                error: None,
-                            };
+                        let loc = header_location(&r);
+                        let result = result_from_response(code, &loc);
+                        if result.reachable {
+                            return result;
                         }
-                        last_error = Some(format!("HTTP {code}"));
+                        last_error = result.error;
                     }
                     Err(e) => {
                         last_error = Some(truncate_chars(&e.to_string(), 120));
@@ -1303,11 +1494,48 @@ async fn ping_endpoint(base_url: &str, api_key: Option<&str>, timeout_ms: u64) -
         }
     }
 
+    // Plain GET base health check (with provider headers).
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(timeout_ms))
+        // httpx defaults to follow_redirects=False; surface 3xx redirects as-is.
+        .redirect(reqwest::redirect::Policy::none())
+        .build();
+    match client {
+        Ok(c) => {
+            let mut req = c.get(&base);
+            for (k, v) in &headers {
+                req = req.header(k, v);
+            }
+            match req.send().await {
+                Ok(r) => {
+                    let code = r.status().as_u16();
+                    let loc = header_location(&r);
+                    return result_from_response(code, &loc);
+                }
+                Err(e) => {
+                    last_error = Some(truncate_chars(&e.to_string(), 120));
+                }
+            }
+        }
+        Err(e) => {
+            last_error = Some(truncate_chars(&e.to_string(), 120));
+        }
+    }
+
     PingResult {
         reachable: false,
         status_code: None,
         error: last_error,
     }
+}
+
+/// `r.headers.get("location", "")`.
+fn header_location(r: &reqwest::Response) -> String {
+    r.headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string()
 }
 
 /// `_model_endpoint_error_message(base_url, ping=None)` — provider-aware error
@@ -1356,11 +1584,103 @@ struct CacheEntry {
     time: f64,
 }
 
-/// `_probe_failures` — `ep_id → (last_fail_ts, consecutive_fails)`.
-static PROBE_FAILURES: Lazy<Mutex<HashMap<String, (f64, i64)>>> =
+/// Per-base model-list refresh state (a2e691d), keyed by `_refresh_key(base,
+/// api_key)`. Replaces the old `_probe_failures` ep-id map: tracks a per-base
+/// single-flight `inflight` flag, last success/failure timestamps, and a
+/// consecutive `fail_count` so repeated picker/API opens don't start duplicate
+/// `/models` probes and slow/offline providers get an exponential cooldown.
+#[derive(Default, Clone)]
+struct RefreshState {
+    inflight: bool,
+    last_success: f64,
+    last_failure: f64,
+    fail_count: i64,
+    /// Captured for parity with the Python dict; not read back currently.
+    #[allow(dead_code)]
+    last_attempt: f64,
+}
+/// `_refresh_state` — module-instance refresh-state map.
+static REFRESH_STATE: Lazy<Mutex<HashMap<String, RefreshState>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 /// `_refresh_inflight = {"v": False}` — coarse single-flight guard.
 static REFRESH_INFLIGHT: Lazy<Mutex<bool>> = Lazy::new(|| Mutex::new(false));
+/// `_REFRESH_FAILURE_BASE` / `_REFRESH_FAILURE_MAX` — exponential backoff bounds.
+const REFRESH_FAILURE_BASE: f64 = 300.0;
+const REFRESH_FAILURE_MAX: f64 = 3600.0;
+
+/// `_refresh_key(base, api_key)` — `f"{base.rstrip('/')}\x00{api_key or ''}"`.
+fn refresh_key(base: &str, api_key: Option<&str>) -> String {
+    format!("{}\x00{}", base.trim_end_matches('/'), api_key.unwrap_or(""))
+}
+
+/// `_failure_delay(fails)` — exponential backoff cooldown (sec) after `fails`
+/// consecutive failures.
+fn failure_delay(fails: i64) -> f64 {
+    if fails <= 0 {
+        return 0.0;
+    }
+    let factor = 2f64.powi((fails - 1).max(0) as i32);
+    (REFRESH_FAILURE_BASE * factor).min(REFRESH_FAILURE_MAX)
+}
+
+/// The grouping info returned by `_should_refresh_endpoint` (the Python `info`
+/// dict), plus the should-refresh decision.
+struct RefreshInfo {
+    id: String,
+    base: String,
+    api_key: Option<String>,
+    key: String,
+    timeout: f64,
+}
+
+/// `_should_refresh_endpoint(ep, now, force=False)` — `(should_refresh, info)`.
+/// Proxy/manual/disabled endpoints are skipped unless forced; failing bases get a
+/// backoff cooldown; cached bases respect the per-category refresh interval.
+fn should_refresh_endpoint(ep: &Endpoint, now: f64, force: bool) -> (bool, RefreshInfo) {
+    let base = normalize_base(Some(ep.base_url.as_str()));
+    let kind = effective_endpoint_kind(ep, &base);
+    let category = classify_endpoint_kind(&base, &kind);
+    let mode = endpoint_refresh_mode(ep, Some(&kind));
+    let cached = cached_model_ids(ep);
+    let key = refresh_key(&base, ep.api_key.as_deref());
+    let state = REFRESH_STATE.lock().unwrap().get(&key).cloned().unwrap_or_default();
+
+    let info = RefreshInfo {
+        id: ep.id.clone(),
+        base: base.clone(),
+        api_key: ep.api_key.clone(),
+        key: key.clone(),
+        timeout: endpoint_refresh_timeout(ep, category),
+    };
+    if base.is_empty() {
+        return (false, info);
+    }
+    if state.inflight {
+        return (false, info);
+    }
+    if (mode == "manual" || mode == "disabled") && !force {
+        return (false, info);
+    }
+    let fails = state.fail_count;
+    if fails > 0 && !force && now - state.last_failure < failure_delay(fails) {
+        return (false, info);
+    }
+    if !cached.is_empty() && !force {
+        let interval = endpoint_refresh_interval(ep, category);
+        // last_good = last_success or updated_at or created_at
+        let mut last_good = state.last_success;
+        if last_good == 0.0 {
+            last_good = ep.updated_at_ts;
+        }
+        if last_good == 0.0 {
+            last_good = ep.created_at_ts;
+        }
+        if last_good != 0.0 && now - last_good < interval {
+            return (false, info);
+        }
+    }
+    (true, info)
+}
 
 /// `_local_probe_cache = {"data": None, "time": 0.0}`.
 static LOCAL_PROBE_CACHE: Lazy<Mutex<Option<CacheEntry>>> = Lazy::new(|| Mutex::new(None));
@@ -1409,6 +1729,19 @@ struct Endpoint {
     model_type: Option<String>,
     supports_tools: Option<bool>,
     pinned_models: Option<String>,
+    /// `endpoint_kind` column ("auto"/"local"/"api"/"proxy") — proxy/API
+    /// classification + refresh policy added by a2e691d.
+    endpoint_kind: Option<String>,
+    /// `model_refresh_mode` column ("auto"/"manual"/"disabled").
+    model_refresh_mode: Option<String>,
+    /// `model_refresh_interval` column (seconds; NULL → category default).
+    model_refresh_interval: Option<i64>,
+    /// `model_refresh_timeout` column (seconds; NULL → category default).
+    model_refresh_timeout: Option<i64>,
+    /// `updated_at` / `created_at` epoch seconds — the `_should_refresh_endpoint`
+    /// `last_good` fallback when no in-memory success timestamp exists yet.
+    updated_at_ts: f64,
+    created_at_ts: f64,
 }
 
 /// Decode the encrypted `api_key` column → the decrypted value (`None`/`""` →
@@ -1432,6 +1765,12 @@ type EndpointTuple = (
     Option<String>,
     Option<bool>,
     Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
 );
 
 fn row_to_endpoint(t: EndpointTuple) -> Endpoint {
@@ -1446,11 +1785,19 @@ fn row_to_endpoint(t: EndpointTuple) -> Endpoint {
         model_type: t.7,
         supports_tools: t.8,
         pinned_models: t.9,
+        endpoint_kind: t.10,
+        model_refresh_mode: t.11,
+        model_refresh_interval: t.12,
+        model_refresh_timeout: t.13,
+        updated_at_ts: stored_ts(t.14.as_deref()),
+        created_at_ts: stored_ts(t.15.as_deref()),
     }
 }
 
 const ENDPOINT_COLS: &str =
-    "id, name, base_url, api_key, is_enabled, hidden_models, cached_models, model_type, supports_tools, pinned_models";
+    "id, name, base_url, api_key, is_enabled, hidden_models, cached_models, model_type, \
+     supports_tools, pinned_models, endpoint_kind, model_refresh_mode, model_refresh_interval, \
+     model_refresh_timeout, updated_at, created_at";
 
 fn map_endpoint_row(r: &rusqlite::Row) -> rusqlite::Result<EndpointTuple> {
     Ok((
@@ -1464,7 +1811,31 @@ fn map_endpoint_row(r: &rusqlite::Row) -> rusqlite::Result<EndpointTuple> {
         r.get(7)?,
         r.get(8)?,
         r.get(9)?,
+        r.get(10)?,
+        r.get(11)?,
+        r.get(12)?,
+        r.get(13)?,
+        r.get(14)?,
+        r.get(15)?,
     ))
+}
+
+/// `_ts(value)` over a stored SQLite datetime string → epoch seconds (`0.0` when
+/// NULL/unparseable). Python calls `value.timestamp()` on the SQLAlchemy-read
+/// `datetime` (naive *local*); the Rust port normalizes stored datetimes to naive
+/// UTC everywhere (see `pydatetime`), so this parses as UTC. The value is only used
+/// as a recency-comparison fallback against `time.time()` for `last_good`.
+fn stored_ts(stored: Option<&str>) -> f64 {
+    let s = match stored {
+        Some(s) if !s.is_empty() => s,
+        _ => return 0.0,
+    };
+    let parsed = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f")
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S"));
+    match parsed {
+        Ok(dt) => dt.and_utc().timestamp() as f64 + (dt.and_utc().timestamp_subsec_micros() as f64 / 1e6),
+        Err(_) => 0.0,
+    }
 }
 
 /// `db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()` — all
@@ -1550,14 +1921,14 @@ fn fetch_models(owner: &str, is_admin: bool) -> Value {
         let base = normalize_base(Some(&ep.base_url));
         let provider = _detect_provider(&base);
         // Use cached models
-        let mut model_ids = parse_str_list(&ep.cached_models);
+        let mut model_ids = cached_model_ids(ep);
         let ep_model_type = ep
             .model_type
             .clone()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "llm".to_string());
         // Filter out hidden (probe-failed) models
-        let hidden: HashSet<String> = parse_str_list(&ep.hidden_models).into_iter().collect();
+        let hidden: HashSet<String> = hidden_model_ids(ep);
         model_ids.retain(|m| !hidden.contains(m));
         // Build correct URL based on provider. Codex schemes (`codex:` /
         // `codex-responses:`) are NOT HTTP bases — they are routing sentinels the
@@ -1576,7 +1947,8 @@ fn fetch_models(owner: &str, is_admin: bool) -> Value {
         } else {
             format!("{base}/chat/completions")
         };
-        let category = classify_endpoint(&base);
+        let kind = effective_endpoint_kind(ep, &base);
+        let category = classify_endpoint_kind(&base, &kind);
 
         if !model_ids.is_empty() {
             let curated_key = match_provider_curated(&base, None);
@@ -1592,6 +1964,7 @@ fn fetch_models(owner: &str, is_admin: bool) -> Value {
                 "endpoint_id": ep.id,
                 "endpoint_name": ep.name,
                 "category": category,
+                "endpoint_kind": kind,
                 "model_type": ep_model_type,
             }));
         } else {
@@ -1607,6 +1980,7 @@ fn fetch_models(owner: &str, is_admin: bool) -> Value {
                 "endpoint_id": ep.id,
                 "endpoint_name": ep.name,
                 "category": category,
+                "endpoint_kind": kind,
                 "model_type": ep_model_type,
                 "offline": true,
             }));
@@ -1625,9 +1999,11 @@ fn last_segment(mid: &str) -> String {
 // `_refresh_caches_bg` — background re-probe of all endpoints.
 // ===========================================================================
 
-/// `_refresh_caches_bg()` — background task: re-probe all endpoints in PARALLEL
-/// with a tight timeout, skipping endpoints that have been failing repeatedly.
-fn refresh_caches_bg() {
+/// `_refresh_caches_bg(force=False)` — background task: safely refresh model caches
+/// with per-base single-flight (a2e691d). The public `/api/models` path stays
+/// cached-first. This refresh NEVER clears a non-empty cached model list on
+/// timeout/failure, and proxy/manual endpoints are skipped unless `force`.
+fn refresh_caches_bg(force: bool) {
     {
         let mut inflight = REFRESH_INFLIGHT.lock().unwrap();
         if *inflight {
@@ -1637,68 +2013,124 @@ fn refresh_caches_bg() {
     }
 
     tokio::spawn(async move {
-        // The Python body is wrapped in try/finally(reset inflight); we mirror with
-        // an inner async fn and always reset the flag after.
-        let _ = do_refresh().await;
+        // try/finally: always reset every per-base `inflight` flag + the coarse guard.
+        let _ = do_refresh(force).await;
+        {
+            let mut state = REFRESH_STATE.lock().unwrap();
+            for st in state.values_mut() {
+                st.inflight = false;
+            }
+        }
         *REFRESH_INFLIGHT.lock().unwrap() = false;
-        invalidate_models_cache();
     });
 }
 
 /// The `_do()` inner body of `_refresh_caches_bg`.
-async fn do_refresh() {
+/// One per-base probe job: `(refresh_key, base_url, api_key, timeout_secs, endpoint_ids)`.
+type ProbeInput = (String, String, Option<String>, f64, Vec<String>);
+
+async fn do_refresh(force: bool) {
     // endpoints = db.query(ModelEndpoint).filter(is_enabled == True).all()
     let endpoints = all_enabled_endpoints();
-    // Skip endpoints that have failed 3+ times in a row in the last 5 min
     let now = now_seconds();
-    let mut to_probe: Vec<(String, String, Option<String>)> = Vec::new();
-    {
-        let failures = PROBE_FAILURES.lock().unwrap();
-        for ep in &endpoints {
-            let (ts, fails) = failures.get(&ep.id).copied().unwrap_or((0.0, 0));
-            if fails >= 3 && (now - ts) < 300.0 {
-                continue;
-            }
-            to_probe.push((ep.id.clone(), ep.base_url.clone(), ep.api_key.clone()));
+
+    // Group eligible endpoints by base+key (per-base single-flight). The Python
+    // `groups` dict keeps insertion order; an IndexMap preserves that.
+    struct Group {
+        base: String,
+        api_key: Option<String>,
+        timeout: f64,
+        endpoint_ids: Vec<String>,
+    }
+    let mut groups: IndexMap<String, Group> = IndexMap::new();
+    for ep in &endpoints {
+        let (ok, info) = should_refresh_endpoint(ep, now, force);
+        if !ok {
+            continue;
         }
+        groups
+            .entry(info.key.clone())
+            .or_insert_with(|| Group {
+                base: info.base.clone(),
+                api_key: info.api_key.clone(),
+                timeout: info.timeout,
+                endpoint_ids: Vec::new(),
+            })
+            .endpoint_ids
+            .push(info.id.clone());
     }
 
-    if to_probe.is_empty() {
+    if groups.is_empty() {
         return;
     }
 
-    // Bounded parallelism — 8 concurrent probes (the Python ThreadPoolExecutor with
-    // max_workers=min(8, len)). We bound concurrency with a buffered futures stream.
+    // Mark each group inflight before probing.
+    {
+        let mut state = REFRESH_STATE.lock().unwrap();
+        for key in groups.keys() {
+            let st = state.entry(key.clone()).or_default();
+            st.inflight = true;
+            st.last_attempt = now;
+        }
+    }
+
+    // Bounded parallelism — min(4, len) concurrent probes (the Python
+    // ThreadPoolExecutor with max_workers=min(4, len(groups))).
     use futures_util::stream::{self, StreamExt};
-    let max_workers = std::cmp::min(8, to_probe.len());
-    let results: Vec<(String, Vec<String>)> = stream::iter(to_probe)
-        .map(|(ep_id, base_url, api_key)| async move {
-            let base = normalize_base(Some(&base_url));
-            let ids = probe_endpoint(&base, api_key.as_deref(), 2).await;
-            (ep_id, ids)
+    let max_workers = std::cmp::min(4, groups.len());
+    let probe_inputs: Vec<ProbeInput> = groups
+        .into_iter()
+        .map(|(key, g)| (key, g.base, g.api_key, g.timeout, g.endpoint_ids))
+        .collect();
+    // (key, endpoint_ids, ids)
+    let results: Vec<(String, Vec<String>, Vec<String>)> = stream::iter(probe_inputs)
+        .map(|(key, base, api_key, timeout, endpoint_ids)| async move {
+            // timeout=data.get("timeout") or 2 — round to whole seconds for the probe.
+            let to = if timeout > 0.0 { timeout.round() as u64 } else { 2 };
+            let ids = probe_endpoint(&base, api_key.as_deref(), to).await;
+            (key, endpoint_ids, ids)
         })
         .buffer_unordered(max_workers)
         .collect()
         .await;
 
-    // Persist results + update the failure map.
+    // Persist results + update per-base refresh state. NEVER overwrite a non-empty
+    // cached list when the probe returns nothing (cached-models preservation).
+    let mut changed = false;
     let conn = match session_local() {
         Ok(c) => c,
         Err(_) => return,
     };
-    let mut failures = PROBE_FAILURES.lock().unwrap();
-    for (ep_id, ids) in results {
-        if !ids.is_empty() {
-            let cached = serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string());
-            let _ = conn.execute(
-                "UPDATE model_endpoints SET cached_models = ?2 WHERE id = ?1",
-                rusqlite::params![ep_id, cached],
-            );
-            failures.remove(&ep_id);
-        } else {
-            let prev = failures.get(&ep_id).copied().unwrap_or((0.0, 0));
-            failures.insert(ep_id, (now_seconds(), prev.1 + 1));
+    {
+        let mut state = REFRESH_STATE.lock().unwrap();
+        for (key, endpoint_ids, ids) in results {
+            let st = state.entry(key).or_default();
+            if !ids.is_empty() {
+                let cached = serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string());
+                for ep_id in &endpoint_ids {
+                    if conn
+                        .execute(
+                            "UPDATE model_endpoints SET cached_models = ?2 WHERE id = ?1",
+                            rusqlite::params![ep_id, cached],
+                        )
+                        .map(|n| n > 0)
+                        .unwrap_or(false)
+                    {
+                        changed = true;
+                    }
+                }
+                st.last_success = now_seconds();
+                st.fail_count = 0;
+                st.last_failure = 0.0;
+            } else {
+                st.last_failure = now_seconds();
+                st.fail_count += 1;
+            }
+            st.inflight = false;
         }
+    }
+    if changed {
+        invalidate_models_cache();
     }
 }
 
@@ -1778,7 +2210,7 @@ async fn api_models(
         },
     );
     // Kick off background refresh to update caches from live endpoints
-    refresh_caches_bg();
+    refresh_caches_bg(refresh);
     Ok(Json(result).into_response())
 }
 
@@ -1800,14 +2232,16 @@ async fn probe_local_endpoints(
         }
     }
 
-    // local_eps = [(ep.id, _normalize_base(ep.base_url), ep.api_key) for ep in
-    //   endpoints if _classify_endpoint(_normalize_base(ep.base_url)) == "local"]
+    // local_eps: endpoints classified local under their effective kind. proxy/API
+    // endpoints (incl. the keyed-/v1 legacy heuristic) are excluded from this
+    // aggressive local reachability sweep (a2e691d).
     let endpoints = all_enabled_endpoints();
     let local_eps: Vec<(String, String, Option<String>)> = endpoints
         .into_iter()
         .filter_map(|ep| {
             let base = normalize_base(Some(&ep.base_url));
-            if classify_endpoint(&base) == "local" {
+            let kind = effective_endpoint_kind(&ep, &base);
+            if classify_endpoint_kind(&base, &kind) == "local" {
                 Some((ep.id, base, ep.api_key))
             } else {
                 None
@@ -1815,22 +2249,44 @@ async fn probe_local_endpoints(
         })
         .collect();
 
-    // asyncio.gather(*[_probe_one(...) for ...]) — concurrent 1.5s /models probes.
+    // Group by base+key so co-located endpoints share one ping (the Python
+    // `grouped` dict, insertion-ordered).
+    struct LocalGroup {
+        base: String,
+        api_key: Option<String>,
+        endpoint_ids: Vec<String>,
+    }
+    let mut grouped: IndexMap<String, LocalGroup> = IndexMap::new();
+    for (ep_id, base, api_key) in local_eps {
+        let key = refresh_key(&base, api_key.as_deref());
+        grouped
+            .entry(key)
+            .or_insert_with(|| LocalGroup {
+                base: base.clone(),
+                api_key: api_key.clone(),
+                endpoint_ids: Vec::new(),
+            })
+            .endpoint_ids
+            .push(ep_id);
+    }
+
+    // asyncio.gather(*[_probe_one(data) for data in grouped.values()]) — concurrent
+    // 1.5s cheap reachability pings (no /models catalog fetch).
     use futures_util::future::join_all;
-    let futures = local_eps.iter().map(|(eid, base, key)| {
-        let eid = eid.clone();
-        let base = base.clone();
-        let key = key.clone();
-        async move {
-            let v = probe_local_one(&base, key.as_deref()).await;
-            (eid, v)
-        }
+    let order: Vec<String> = grouped.keys().cloned().collect();
+    let futures = order.iter().map(|key| {
+        let g = &grouped[key];
+        let base = g.base.clone();
+        let api_key = g.api_key.clone();
+        async move { probe_local_one(&base, api_key.as_deref()).await }
     });
     let results_list = join_all(futures).await;
 
     let mut results = Map::new();
-    for (eid, v) in results_list {
-        results.insert(eid, v);
+    for (key, v) in order.iter().zip(results_list) {
+        for eid in &grouped[key].endpoint_ids {
+            results.insert(eid.clone(), v.clone());
+        }
     }
     let data = Value::Object(results);
 
@@ -1841,42 +2297,19 @@ async fn probe_local_endpoints(
     Ok(Json(data).into_response())
 }
 
-/// `_probe_one(ep_id, base, api_key)` (the async closure in `probe_local`).
+/// `_probe_one(data)` (the async closure in `probe_local`). a2e691d switched this
+/// to a cheap `_ping_endpoint` reachability check (1.5s) instead of a `/models`
+/// catalog fetch, so large proxies no longer make local probing slow.
 async fn probe_local_one(base: &str, api_key: Option<&str>) -> Value {
-    // url = base.rstrip("/") + "/models"
-    let url = format!("{}/models", base.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(1500))
-        // httpx defaults to follow_redirects=False; surface 3xx as-is.
-        .redirect(reqwest::redirect::Policy::none())
-        .build();
-    let client = match client {
-        Ok(c) => c,
-        Err(e) => {
-            return json!({"alive": false, "latency_ms": Value::Null, "status_code": Value::Null, "error": truncate_chars(&e.to_string(), 120)});
-        }
-    };
-    let mut req = client.get(&url);
-    if let Some(k) = api_key.filter(|k| !k.is_empty()) {
-        req = req.header("Authorization", format!("Bearer {k}"));
-    }
     let t0 = std::time::Instant::now();
-    match req.send().await {
-        Ok(r) => {
-            let lat = t0.elapsed().as_millis() as i64;
-            let code = r.status().as_u16();
-            let alive = code < 400;
-            json!({
-                "alive": alive,
-                "latency_ms": lat,
-                "status_code": code,
-                "error": if alive { Value::Null } else { json!(format!("HTTP {code}")) },
-            })
-        }
-        Err(e) => {
-            json!({"alive": false, "latency_ms": Value::Null, "status_code": Value::Null, "error": truncate_chars(&e.to_string(), 120)})
-        }
-    }
+    let ping = ping_endpoint(base, api_key, 1500).await;
+    let lat = t0.elapsed().as_millis() as i64;
+    json!({
+        "alive": ping.reachable,
+        "latency_ms": lat,
+        "status_code": match ping.status_code { Some(c) => json!(c), None => Value::Null },
+        "error": match ping.error { Some(e) => json!(e), None => Value::Null },
+    })
 }
 
 /// `@router.get("/ping")` — probe all enabled endpoints and return status +
@@ -1893,99 +2326,43 @@ async fn ping_endpoints(
     for ep in &endpoints {
         let base = normalize_base(Some(&ep.base_url));
         let provider = _detect_provider(&base);
+        // a2e691d: stop hitting /models per endpoint here (slow for large proxies).
+        // Use a uniform cheap reachability ping + the persisted cached count, so a
+        // usable endpoint with cached models still reports online even when the
+        // health probe momentarily fails.
+        let kind = effective_endpoint_kind(ep, &base);
+        let cached_count = cached_model_ids(ep).len();
         let mut entry = Map::new();
         entry.insert("id".to_string(), json!(ep.id));
         entry.insert("name".to_string(), json!(ep.name));
         entry.insert("base_url".to_string(), json!(base));
         entry.insert("provider".to_string(), json!(provider));
-        entry.insert("category".to_string(), json!(classify_endpoint(&base)));
+        entry.insert("category".to_string(), json!(classify_endpoint_kind(&base, &kind)));
+        entry.insert("endpoint_kind".to_string(), json!(kind));
 
-        if provider == "anthropic" {
-            // Anthropic has no /models endpoint; just check connectivity
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(5))
-                // httpx defaults to follow_redirects=False; surface 3xx as-is.
-                .redirect(reqwest::redirect::Policy::none())
-                .build();
-            let t0 = std::time::Instant::now();
-            let probe = match client {
-                Ok(c) => c.get(base.trim_end_matches('/')).send().await,
-                Err(e) => Err(e),
-            };
-            match probe {
-                Ok(_) => {
-                    entry.insert("latency_ms".to_string(), json!(t0.elapsed().as_millis() as i64));
-                    entry.insert("status".to_string(), json!("online"));
-                    entry.insert("model_count".to_string(), json!(ANTHROPIC_MODELS.len()));
-                }
-                Err(e) => {
-                    entry.insert("latency_ms".to_string(), Value::Null);
-                    entry.insert("status".to_string(), json!("offline"));
-                    entry.insert("error".to_string(), json!(e.to_string()));
-                    entry.insert("model_count".to_string(), json!(0));
-                }
-            }
+        let t0 = std::time::Instant::now();
+        let ping = ping_endpoint(&base, ep.api_key.as_deref(), 1500).await;
+        entry.insert("latency_ms".to_string(), json!(t0.elapsed().as_millis() as i64));
+        entry.insert(
+            "status".to_string(),
+            json!(if ping.reachable || cached_count > 0 { "online" } else { "offline" }),
+        );
+        entry.insert(
+            "error".to_string(),
+            match ping.error {
+                Some(e) => json!(e),
+                None => Value::Null,
+            },
+        );
+        // model_count = cached_count or (len(ANTHROPIC_MODELS) if anthropic else 0)
+        let model_count = if cached_count > 0 {
+            cached_count
+        } else if provider == "anthropic" {
+            ANTHROPIC_MODELS.len()
         } else {
-            // url = build_models_url(base); headers = build_headers(ep.api_key, base)
-            let url = build_models_url(&base);
-            let h = build_headers(ep.api_key.as_deref(), &base);
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(5))
-                // httpx defaults to follow_redirects=False; surface 3xx as-is.
-                .redirect(reqwest::redirect::Policy::none())
-                .build();
-            let t0 = std::time::Instant::now();
-            let probe = match client {
-                Ok(c) => {
-                    let mut req = c.get(&url);
-                    for (k, v) in &h {
-                        req = req.header(k, v);
-                    }
-                    req.send().await
-                }
-                Err(e) => Err(e),
-            };
-            // The latency is stamped right after the request returns (Python sets it
-            // before raise_for_status, so an HTTP error still carries latency).
-            match probe {
-                Ok(r) => {
-                    entry.insert("latency_ms".to_string(), json!(t0.elapsed().as_millis() as i64));
-                    let status = r.status();
-                    if status.is_client_error() || status.is_server_error() {
-                        // r.raise_for_status() → except path (latency already set)
-                        entry.insert("status".to_string(), json!("offline"));
-                        entry.insert("error".to_string(), json!(format!("HTTP {}", status.as_u16())));
-                        entry.insert("model_count".to_string(), json!(0));
-                    } else {
-                        match r.json::<Value>().await {
-                            Ok(data) => {
-                                // OpenAI format, then Ollama-names fallback.
-                                let mut models = extract_data_ids(&data);
-                                if models.is_empty() {
-                                    models = extract_ollama_names(&data);
-                                }
-                                entry.insert("status".to_string(), json!("online"));
-                                entry.insert("model_count".to_string(), json!(models.len()));
-                            }
-                            Err(e) => {
-                                entry.insert("status".to_string(), json!("offline"));
-                                entry.insert("error".to_string(), json!(e.to_string()));
-                                entry.insert("model_count".to_string(), json!(0));
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    // if "latency_ms" not in entry: entry["latency_ms"] = None
-                    if !entry.contains_key("latency_ms") {
-                        entry.insert("latency_ms".to_string(), Value::Null);
-                    }
-                    entry.insert("status".to_string(), json!("offline"));
-                    entry.insert("error".to_string(), json!(e.to_string()));
-                    entry.insert("model_count".to_string(), json!(0));
-                }
-            }
-        }
+            0
+        };
+        entry.insert("model_count".to_string(), json!(model_count));
         results.push(Value::Object(entry));
     }
 
@@ -2216,8 +2593,8 @@ async fn list_model_endpoints(
     let mut results: Vec<Value> = Vec::new();
     for r in &rows {
         // Use cached model list to avoid slow probe on every load
-        let all_models = parse_str_list(&r.cached_models);
-        let hidden: HashSet<String> = parse_str_list(&r.hidden_models).into_iter().collect();
+        let all_models = cached_model_ids(r);
+        let hidden: HashSet<String> = hidden_model_ids(r);
         let pinned = normalize_model_ids_opt(r.pinned_models.as_deref());
         let visible = visible_models(
             r.cached_models.as_deref(),
@@ -2239,6 +2616,8 @@ async fn list_model_endpoints(
             }
             ping = Some(p);
         }
+        let base = normalize_base(Some(&r.base_url));
+        let kind = effective_endpoint_kind(r, &base);
         results.push(json!({
             "id": r.id,
             "name": r.name,
@@ -2253,6 +2632,11 @@ async fn list_model_endpoints(
             "ping_error": ping.as_ref().and_then(|p| p.error.clone()),
             "model_type": r.model_type.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| "llm".to_string()),
             "supports_tools": r.supports_tools,
+            "endpoint_kind": kind,
+            "category": classify_endpoint_kind(&base, &kind),
+            "model_refresh_mode": endpoint_refresh_mode(r, Some(&kind)),
+            "model_refresh_interval": r.model_refresh_interval,
+            "model_refresh_timeout": r.model_refresh_timeout,
         }));
     }
     Ok(Json(Value::Array(results)).into_response())
@@ -2280,6 +2664,10 @@ async fn create_model_endpoint(
     let skip_probe = form_get(&f, "skip_probe", "false");
     let require_models = form_get(&f, "require_models", "false");
     let model_type = form_get(&f, "model_type", "llm");
+    let endpoint_kind_form = form_get(&f, "endpoint_kind", "auto");
+    let model_refresh_mode_form = form_get(&f, "model_refresh_mode", "");
+    let model_refresh_interval_form = form_get(&f, "model_refresh_interval", "");
+    let model_refresh_timeout_form = form_get(&f, "model_refresh_timeout", "");
     let supports_tools = form_get(&f, "supports_tools", "");
     let pinned_models_raw = form_get(&f, "pinned_models", "");
     let container_local = form_get(&f, "container_local", "false");
@@ -2307,8 +2695,19 @@ async fn create_model_endpoint(
             .to_string();
     }
 
+    let requested_kind = normalize_endpoint_kind(Some(&endpoint_kind_form));
+    let refresh_mode = normalize_refresh_mode(Some(&model_refresh_mode_form), &requested_kind);
+    let refresh_interval = parse_positive_int(Some(&model_refresh_interval_form), 30, 86400);
+    let refresh_timeout = parse_positive_int(Some(&model_refresh_timeout_form), 1, 60);
     let require_model_list = truthy(Some(&require_models));
-    let should_probe = require_model_list || !truthy(Some(&skip_probe));
+    // Proxy/API endpoints always probe at setup so the admin can intentionally
+    // import a large model list (with the long explicit timeout), even when the
+    // form would otherwise skip probing.
+    let should_probe = require_model_list
+        || requested_kind == "api"
+        || requested_kind == "proxy"
+        || !truthy(Some(&skip_probe));
+    let explicit_timeout = explicit_model_list_timeout(&base_url, &requested_kind, refresh_timeout);
 
     let api_key_opt = if api_key.trim().is_empty() {
         None
@@ -2328,34 +2727,125 @@ async fn create_model_endpoint(
         }
     };
     if let Some(existing) = dedup_lookup_endpoint(&base_url, caller.as_deref()) {
-        // Persist any incoming pinned IDs onto the existing row. An empty/omitted
-        // form field must not wipe previously pinned IDs.
-        let incoming_pinned = normalize_model_ids(&Value::String(pinned_models_raw.clone()));
+        let existing_view = existing.as_endpoint_view();
+        let mut changed = false;
+        // Mutable working copies of the columns this branch may update.
         let mut existing_pinned_raw = existing.pinned_models.clone();
+        let mut existing_kind_db = existing.endpoint_kind.clone();
+        let mut existing_mode_db = existing.model_refresh_mode.clone();
+        let mut existing_interval_db = existing.model_refresh_interval;
+        let mut existing_timeout_db = existing.model_refresh_timeout;
+        let mut existing_api_key_plain = existing.api_key.clone();
+        let mut existing_api_key_enc: Option<String> = existing
+            .api_key
+            .as_deref()
+            .filter(|k| !k.is_empty())
+            .map(crate::src::secret_storage::encrypt);
+        let mut existing_cached_db = existing.cached_models.clone();
+
+        // Persist any incoming pinned IDs. An empty/omitted form field must not
+        // wipe previously pinned IDs.
+        let incoming_pinned = normalize_model_ids(&Value::String(pinned_models_raw.clone()));
         if !incoming_pinned.is_empty() {
             let prev = normalize_model_ids_opt(existing.pinned_models.as_deref());
             let merged = merge_model_ids(&[&prev, &incoming_pinned]);
-            let merged_raw = if merged.is_empty() {
+            existing_pinned_raw = if merged.is_empty() {
                 None
             } else {
                 Some(serde_json::to_string(&merged).unwrap_or_else(|_| "[]".to_string()))
             };
+            changed = true;
+        }
+        // Kind to use when probing the existing row.
+        let existing_kind_for_probe = if requested_kind != "auto" {
+            requested_kind.clone()
+        } else {
+            effective_endpoint_kind(&existing_view, &base_url)
+        };
+        // Only set kind when the caller is explicit and the row is still "auto".
+        if requested_kind != "auto" && endpoint_kind_of(&existing_view) == "auto" {
+            existing_kind_db = Some(requested_kind.clone());
+            changed = true;
+        }
+        // Set refresh mode when the form provided one, or a proxy's stored mode
+        // differs from the (default-derived) refresh_mode.
+        if !model_refresh_mode_form.is_empty()
+            || (requested_kind == "proxy"
+                && endpoint_refresh_mode(&existing_view, Some(&requested_kind)) != refresh_mode)
+        {
+            existing_mode_db = Some(refresh_mode.clone());
+            changed = true;
+        }
+        if let Some(iv) = refresh_interval {
+            existing_interval_db = Some(iv);
+            changed = true;
+        }
+        if let Some(to) = refresh_timeout {
+            existing_timeout_db = Some(to);
+            changed = true;
+        }
+        // Fill in a missing key (never overwrite an existing one here).
+        let incoming_key = api_key.trim();
+        if !incoming_key.is_empty() && existing.api_key.as_deref().unwrap_or("").is_empty() {
+            existing_api_key_plain = Some(incoming_key.to_string());
+            existing_api_key_enc = Some(crate::src::secret_storage::encrypt(incoming_key));
+            changed = true;
+        }
+        // Optionally (re)probe to refresh the cached model list — with the long
+        // explicit timeout so a large proxy can finish.
+        if should_probe {
+            let probe_key = if !incoming_key.is_empty() {
+                Some(incoming_key.to_string())
+            } else {
+                existing_api_key_plain.clone().filter(|k| !k.is_empty())
+            };
+            let to = explicit_model_list_timeout(&base_url, &existing_kind_for_probe, refresh_timeout);
+            let probed = probe_endpoint(&base_url, probe_key.as_deref(), to.round() as u64).await;
+            if !probed.is_empty() {
+                existing_cached_db = Some(serde_json::to_string(&probed).unwrap_or_else(|_| "[]".to_string()));
+                changed = true;
+            }
+        }
+        if changed {
             let conn = session_local().map_err(db_err)?;
             conn.execute(
-                "UPDATE model_endpoints SET pinned_models = ?2 WHERE id = ?1",
-                rusqlite::params![existing.id, merged_raw],
+                "UPDATE model_endpoints SET pinned_models = ?2, endpoint_kind = ?3, \
+                 model_refresh_mode = ?4, model_refresh_interval = ?5, model_refresh_timeout = ?6, \
+                 api_key = ?7, cached_models = ?8 WHERE id = ?1",
+                rusqlite::params![
+                    existing.id,
+                    existing_pinned_raw,
+                    existing_kind_db,
+                    existing_mode_db,
+                    existing_interval_db,
+                    existing_timeout_db,
+                    existing_api_key_enc,
+                    existing_cached_db,
+                ],
             )
             .map_err(db_err)?;
-            existing_pinned_raw = merged_raw;
             invalidate_models_cache();
+            *LOCAL_PROBE_CACHE.lock().unwrap() = None;
         }
+        // Re-read derived state from the (possibly) updated columns.
+        let updated_view = Endpoint {
+            cached_models: existing_cached_db.clone(),
+            pinned_models: existing_pinned_raw.clone(),
+            endpoint_kind: existing_kind_db.clone(),
+            model_refresh_mode: existing_mode_db.clone(),
+            model_refresh_interval: existing_interval_db,
+            model_refresh_timeout: existing_timeout_db,
+            api_key: existing_api_key_plain.clone(),
+            ..existing_view
+        };
         let existing_pinned = normalize_model_ids_opt(existing_pinned_raw.as_deref());
+        let existing_kind = effective_endpoint_kind(&updated_view, &existing.base_url);
         return Ok(Json(json!({
             "id": existing.id,
             "name": existing.name,
             "base_url": existing.base_url,
             "models": visible_models(
-                existing.cached_models.as_deref(),
+                existing_cached_db.as_deref(),
                 existing.hidden_models.as_deref(),
                 existing_pinned_raw.as_deref(),
             ),
@@ -2363,24 +2853,24 @@ async fn create_model_endpoint(
             "online": true,
             "status": "online",
             "existing": true,
+            "endpoint_kind": existing_kind,
+            "category": classify_endpoint_kind(&existing.base_url, &existing_kind),
         }))
         .into_response());
     }
 
-    // Quick model list fetch — 3s timeout for Ollama-ish endpoints, else 1s.
-    let probe_timeout = if base_url.contains(":11434") || base_url.to_lowercase().contains("ollama") {
-        3
-    } else {
-        1
-    };
+    // Model list fetch with the explicit (per-kind) timeout — a proxy/API gets a
+    // 30s budget so a large catalog can be imported intentionally; locals stay tight.
     let model_ids: Vec<String> = if should_probe {
-        probe_endpoint(&base_url, api_key_opt.as_deref(), probe_timeout).await
+        probe_endpoint(&base_url, api_key_opt.as_deref(), explicit_timeout.round() as u64).await
     } else {
         Vec::new()
     };
     let mut ping = PingResult::new(false, None);
-    if should_probe && model_ids.is_empty() {
-        ping = ping_endpoint(&base_url, api_key_opt.as_deref(), probe_timeout * 1000).await;
+    if (should_probe || requested_kind == "api" || requested_kind == "proxy") && model_ids.is_empty() {
+        // ping cap stays short (min(explicit_timeout, 2.0)) — reachability only.
+        let ping_to = explicit_timeout.min(2.0);
+        ping = ping_endpoint(&base_url, api_key_opt.as_deref(), (ping_to * 1000.0).round() as u64).await;
     }
     if require_model_list && model_ids.is_empty() {
         return Err(HttpException::new(
@@ -2445,9 +2935,26 @@ async fn create_model_endpoint(
         let st_val: Option<i64> = st.map(|b| if b { 1 } else { 0 });
         conn.execute(
             "INSERT INTO model_endpoints \
-               (id, name, base_url, api_key, is_enabled, model_type, cached_models, pinned_models, supports_tools, owner, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
-            rusqlite::params![ep_id, name_trim, base_url, enc_key, mtype, cached, pinned_db, st_val, owner_val, now],
+               (id, name, base_url, api_key, is_enabled, model_type, endpoint_kind, \
+                model_refresh_mode, model_refresh_interval, model_refresh_timeout, \
+                cached_models, pinned_models, supports_tools, owner, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14)",
+            rusqlite::params![
+                ep_id,
+                name_trim,
+                base_url,
+                enc_key,
+                mtype,
+                requested_kind,
+                refresh_mode,
+                refresh_interval,
+                refresh_timeout,
+                cached,
+                pinned_db,
+                st_val,
+                owner_val,
+                now
+            ],
         )
         .map_err(db_err)?;
 
@@ -2490,6 +2997,8 @@ async fn create_model_endpoint(
         "online": online,
         "status": status,
         "ping_error": ping.error,
+        "endpoint_kind": requested_kind,
+        "category": classify_endpoint_kind(&base_url, &requested_kind),
     }))
     .into_response())
 }
@@ -2505,7 +3014,41 @@ struct DedupEndpoint {
     cached_models: Option<String>,
     hidden_models: Option<String>,
     pinned_models: Option<String>,
+    /// DECRYPTED api_key (NULL/"" → None), like [`Endpoint::api_key`].
+    api_key: Option<String>,
+    endpoint_kind: Option<String>,
+    model_refresh_mode: Option<String>,
+    model_refresh_interval: Option<i64>,
+    model_refresh_timeout: Option<i64>,
 }
+
+impl DedupEndpoint {
+    /// Build a thin [`Endpoint`] view for the `_endpoint_kind` / `_effective_endpoint_kind`
+    /// / `_endpoint_refresh_mode` helpers, which read only kind/refresh/api_key fields.
+    fn as_endpoint_view(&self) -> Endpoint {
+        Endpoint {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            base_url: self.base_url.clone(),
+            api_key: self.api_key.clone(),
+            is_enabled: true,
+            hidden_models: self.hidden_models.clone(),
+            cached_models: self.cached_models.clone(),
+            model_type: None,
+            supports_tools: None,
+            pinned_models: self.pinned_models.clone(),
+            endpoint_kind: self.endpoint_kind.clone(),
+            model_refresh_mode: self.model_refresh_mode.clone(),
+            model_refresh_interval: self.model_refresh_interval,
+            model_refresh_timeout: self.model_refresh_timeout,
+            updated_at_ts: 0.0,
+            created_at_ts: 0.0,
+        }
+    }
+}
+
+const DEDUP_COLS: &str = "id, name, base_url, cached_models, hidden_models, pinned_models, \
+     api_key, endpoint_kind, model_refresh_mode, model_refresh_interval, model_refresh_timeout";
 
 fn dedup_lookup_endpoint(base_url: &str, caller: Option<&str>) -> Option<DedupEndpoint> {
     let conn = session_local().ok()?;
@@ -2517,6 +3060,11 @@ fn dedup_lookup_endpoint(base_url: &str, caller: Option<&str>) -> Option<DedupEn
             cached_models: r.get(3)?,
             hidden_models: r.get(4)?,
             pinned_models: r.get(5)?,
+            api_key: decrypt_key(r.get(6)?),
+            endpoint_kind: r.get(7)?,
+            model_refresh_mode: r.get(8)?,
+            model_refresh_interval: r.get(9)?,
+            model_refresh_timeout: r.get(10)?,
         })
     };
     // (owner IS NULL) OR (owner == caller). When caller is None, the second clause
@@ -2524,10 +3072,11 @@ fn dedup_lookup_endpoint(base_url: &str, caller: Option<&str>) -> Option<DedupEn
     match caller {
         Some(c) => conn
             .query_row(
-                "SELECT id, name, base_url, cached_models, hidden_models, pinned_models \
-                 FROM model_endpoints \
-                 WHERE base_url = ?1 AND (owner IS NULL OR owner = ?2) \
-                 ORDER BY owner DESC LIMIT 1",
+                &format!(
+                    "SELECT {DEDUP_COLS} FROM model_endpoints \
+                     WHERE base_url = ?1 AND (owner IS NULL OR owner = ?2) \
+                     ORDER BY owner DESC LIMIT 1"
+                ),
                 rusqlite::params![base_url, c],
                 map,
             )
@@ -2535,10 +3084,11 @@ fn dedup_lookup_endpoint(base_url: &str, caller: Option<&str>) -> Option<DedupEn
             .ok()?,
         None => conn
             .query_row(
-                "SELECT id, name, base_url, cached_models, hidden_models, pinned_models \
-                 FROM model_endpoints \
-                 WHERE base_url = ?1 AND owner IS NULL \
-                 ORDER BY owner DESC LIMIT 1",
+                &format!(
+                    "SELECT {DEDUP_COLS} FROM model_endpoints \
+                     WHERE base_url = ?1 AND owner IS NULL \
+                     ORDER BY owner DESC LIMIT 1"
+                ),
                 rusqlite::params![base_url],
                 map,
             )
@@ -2563,6 +3113,8 @@ async fn test_model_endpoint(
         None => return Err(missing_form_field("base_url")),
     };
     let api_key = form_get(&f, "api_key", "");
+    let endpoint_kind_form = form_get(&f, "endpoint_kind", "auto");
+    let model_refresh_timeout_form = form_get(&f, "model_refresh_timeout", "");
 
     let mut base_url = normalize_base(Some(&base_url_raw));
     if base_url.is_empty() {
@@ -2570,21 +3122,23 @@ async fn test_model_endpoint(
     }
     base_url = resolve_url(&base_url);
     base_url = rewrite_loopback_for_docker(&base_url, false);
-    let probe_timeout = if base_url.contains(":11434") || base_url.to_lowercase().contains("ollama") {
-        3
-    } else {
-        2
-    };
+    // Use the explicit per-kind model-list timeout so a manual Test of a large
+    // proxy gets the long budget (a2e691d).
+    let requested_kind = normalize_endpoint_kind(Some(&endpoint_kind_form));
+    let configured_timeout = parse_positive_int(Some(&model_refresh_timeout_form), 1, 60);
+    let probe_timeout = explicit_model_list_timeout(&base_url, &requested_kind, configured_timeout);
     let api_key_opt = if api_key.trim().is_empty() {
         None
     } else {
         Some(api_key.trim().to_string())
     };
-    let models = probe_endpoint(&base_url, api_key_opt.as_deref(), probe_timeout).await;
+    let models = probe_endpoint(&base_url, api_key_opt.as_deref(), probe_timeout.round() as u64).await;
     let ping = if !models.is_empty() {
         PingResult::new(true, None)
     } else {
-        ping_endpoint(&base_url, api_key_opt.as_deref(), probe_timeout * 1000).await
+        // ping cap stays short (min(probe_timeout, 2.0)).
+        let ping_to = probe_timeout.min(2.0);
+        ping_endpoint(&base_url, api_key_opt.as_deref(), (ping_to * 1000.0).round() as u64).await
     };
     let status = if !models.is_empty() {
         "online"
@@ -2600,6 +3154,8 @@ async fn test_model_endpoint(
         "ping_error": ping.error,
         "models": models,
         "count": models.len(),
+        "endpoint_kind": requested_kind,
+        "category": classify_endpoint_kind(&base_url, &requested_kind),
     }))
     .into_response())
 }
@@ -2641,22 +3197,26 @@ async fn probe_endpoint_models(
             yield sse_bytes(&format!("data: {}\n\n", Value::Object(result)));
         }
 
-        // Update hidden_models and cached_models in DB
+        // Update hidden_models and cached_models in DB. a2e691d: only overwrite
+        // cached_models when the probe found models — never clear a usable cached
+        // list because a probe momentarily failed.
         if let Ok(conn) = session_local() {
             let hidden_val: Option<String> = if failed.is_empty() {
                 None
             } else {
                 Some(serde_json::to_string(&failed).unwrap_or_else(|_| "[]".to_string()))
             };
-            let cached_val: Option<String> = if all_models.is_empty() {
-                None
-            } else {
-                Some(serde_json::to_string(&all_models).unwrap_or_else(|_| "[]".to_string()))
-            };
             let _ = conn.execute(
-                "UPDATE model_endpoints SET hidden_models = ?2, cached_models = ?3 WHERE id = ?1",
-                rusqlite::params![ep_id_for_stream, hidden_val, cached_val],
+                "UPDATE model_endpoints SET hidden_models = ?2 WHERE id = ?1",
+                rusqlite::params![ep_id_for_stream, hidden_val],
             );
+            if !all_models.is_empty() {
+                let cached_val = serde_json::to_string(&all_models).unwrap_or_else(|_| "[]".to_string());
+                let _ = conn.execute(
+                    "UPDATE model_endpoints SET cached_models = ?2 WHERE id = ?1",
+                    rusqlite::params![ep_id_for_stream, cached_val],
+                );
+            }
         }
         invalidate_models_cache();
 
@@ -2667,29 +3227,60 @@ async fn probe_endpoint_models(
 
 /// `@router.get("/model-endpoints/{ep_id}/models")` — list all discovered models
 /// for an endpoint with hidden/visible state.
+///
+/// a2e691d made this cached-first: a normal open serves the persisted cached list
+/// (no blocking probe). Only `?refresh=true` triggers a live `_probe_endpoint`,
+/// with the longer `_manual_refresh_timeout` so a large proxy can finish. A failed
+/// refresh keeps the cached list and reports the failure via response headers.
 async fn list_endpoint_models(
     State(state): State<AppState>,
     headers: HeaderMap,
     user: Option<Extension<CurrentUser>>,
     Path(ep_id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
 ) -> Result<Response, HttpException> {
     require_admin(&state, &headers, user.as_ref().map(|Extension(u)| u))?;
+    // refresh: bool = False (FastAPI lax bool coercion).
+    let refresh = query_bool(&q, "refresh", false)?;
+    // refresh_timeout: Optional[int] = Query(None, ge=1, le=60).
+    let refresh_timeout = query_ranged_int_opt(&q, "refresh_timeout", 1, 60)?;
+
     let ep = endpoint_by_id(&ep_id).ok_or_else(|| HttpException::new(404, "Endpoint not found"))?;
-    let hidden: HashSet<String> = parse_str_list(&ep.hidden_models).into_iter().collect();
-    // Try live probe, fall back to cached. Pinned IDs are admin-entered and persist
-    // regardless of probe results — never overwritten here.
-    let mut all_models = probe_endpoint(&ep.base_url, ep.api_key.as_deref(), 3).await;
-    if !all_models.is_empty() {
-        if let Ok(conn) = session_local() {
-            let cached = serde_json::to_string(&all_models).unwrap_or_else(|_| "[]".to_string());
-            let _ = conn.execute(
-                "UPDATE model_endpoints SET cached_models = ?2 WHERE id = ?1",
-                rusqlite::params![ep_id, cached],
-            );
+    let hidden: HashSet<String> = hidden_model_ids(&ep);
+    // Cached-first: serve the persisted list unless an explicit refresh is asked.
+    let mut all_models = cached_model_ids(&ep);
+
+    // Response headers set on the refresh path (X-Model-Refresh-*).
+    let mut extra_headers: Vec<(&'static str, String)> = Vec::new();
+    if refresh {
+        let base = normalize_base(Some(&ep.base_url));
+        let kind = effective_endpoint_kind(&ep, &base);
+        let category = classify_endpoint_kind(&base, &kind);
+        let timeout = manual_refresh_timeout(&ep, category, refresh_timeout);
+        // _probe_endpoint never raises here; an empty result models the Python
+        // try/except fallthrough (`probed = []`).
+        let probed = probe_endpoint(&base, ep.api_key.as_deref(), timeout.round() as u64).await;
+        if !probed.is_empty() {
+            all_models = probed.clone();
+            if let Ok(conn) = session_local() {
+                let cached = serde_json::to_string(&all_models).unwrap_or_else(|_| "[]".to_string());
+                let _ = conn.execute(
+                    "UPDATE model_endpoints SET cached_models = ?2 WHERE id = ?1",
+                    rusqlite::params![ep_id, cached],
+                );
+            }
+            invalidate_models_cache();
+            extra_headers.push(("X-Model-Refresh-Status", "refreshed".to_string()));
+            extra_headers.push(("X-Model-Refresh-Count", probed.len().to_string()));
+        } else {
+            extra_headers.push(("X-Model-Refresh-Status", "failed".to_string()));
+            extra_headers.push((
+                "X-Model-Refresh-Warning",
+                "Model refresh failed or returned no models; kept cached models.".to_string(),
+            ));
         }
-    } else {
-        all_models = parse_str_list(&ep.cached_models);
     }
+
     let pinned = normalize_model_ids_opt(ep.pinned_models.as_deref());
     let pinned_set: HashSet<String> = pinned.iter().cloned().collect();
     let merged = merge_model_ids(&[&all_models, &pinned]);
@@ -2704,7 +3295,13 @@ async fn list_endpoint_models(
             })
         })
         .collect();
-    Ok(Json(Value::Array(out)).into_response())
+    let mut response = Json(Value::Array(out)).into_response();
+    for (name, value) in extra_headers {
+        if let Ok(hv) = axum::http::HeaderValue::from_str(&value) {
+            response.headers_mut().insert(name, hv);
+        }
+    }
+    Ok(response)
 }
 
 /// `@router.patch("/model-endpoints/{ep_id}/models")` — bulk update hidden and/or
@@ -3011,6 +3608,12 @@ async fn toggle_model_endpoint(
         .filter(|k| !k.is_empty())
         .map(crate::src::secret_storage::encrypt);
     let mut new_base_url = ep.base_url.clone();
+    // Proxy/API classification + refresh policy columns (a2e691d) default to the
+    // existing stored values; each changes only when its key is present.
+    let mut new_endpoint_kind_db = ep.endpoint_kind.clone();
+    let mut new_refresh_mode_db = ep.model_refresh_mode.clone();
+    let mut new_refresh_interval_db = ep.model_refresh_interval;
+    let mut new_refresh_timeout_db = ep.model_refresh_timeout;
 
     if !body.is_empty() {
         if let Some(v) = body.get("supports_tools") {
@@ -3054,6 +3657,26 @@ async fn toggle_model_endpoint(
                 Some(serde_json::to_string(&pinned).unwrap_or_else(|_| "[]".to_string()))
             };
         }
+        if body.contains_key("endpoint_kind") {
+            let v = body.get("endpoint_kind").and_then(|v| v.as_str());
+            new_endpoint_kind_db = Some(normalize_endpoint_kind(v));
+        }
+        if body.contains_key("model_refresh_mode") {
+            // _normalize_refresh_mode(body.get("model_refresh_mode"), _endpoint_kind(ep))
+            // — uses the row's stored kind, which reflects any endpoint_kind just set
+            // above (Python mutates ep.endpoint_kind in place).
+            let v = body.get("model_refresh_mode").and_then(|v| v.as_str());
+            let stored_kind = normalize_endpoint_kind(new_endpoint_kind_db.as_deref());
+            new_refresh_mode_db = Some(normalize_refresh_mode(v, &stored_kind));
+        }
+        if body.contains_key("model_refresh_interval") {
+            let v = body.get("model_refresh_interval").map(json_to_string);
+            new_refresh_interval_db = parse_positive_int(v.as_deref(), 30, 86400);
+        }
+        if body.contains_key("model_refresh_timeout") {
+            let v = body.get("model_refresh_timeout").map(json_to_string);
+            new_refresh_timeout_db = parse_positive_int(v.as_deref(), 1, 60);
+        }
         // Allow in-place API-key rotation / base-url correction without nuking
         // session state. Empty string means "clear it".
         if let Some(Value::String(s)) = body.get("api_key") {
@@ -3086,7 +3709,9 @@ async fn toggle_model_endpoint(
     let st_val: Option<i64> = new_supports_tools.map(|b| if b { 1 } else { 0 });
     conn.execute(
         "UPDATE model_endpoints SET is_enabled = ?2, supports_tools = ?3, name = ?4, \
-         model_type = ?5, pinned_models = ?6, api_key = ?7, base_url = ?8 WHERE id = ?1",
+         model_type = ?5, pinned_models = ?6, api_key = ?7, base_url = ?8, \
+         endpoint_kind = ?9, model_refresh_mode = ?10, model_refresh_interval = ?11, \
+         model_refresh_timeout = ?12 WHERE id = ?1",
         rusqlite::params![
             ep_id,
             if new_is_enabled { 1 } else { 0 },
@@ -3096,6 +3721,10 @@ async fn toggle_model_endpoint(
             new_pinned_db,
             new_api_key_db,
             new_base_url,
+            new_endpoint_kind_db,
+            new_refresh_mode_db,
+            new_refresh_interval_db,
+            new_refresh_timeout_db,
         ],
     )
     .map_err(db_err)?;
@@ -3109,8 +3738,27 @@ async fn toggle_model_endpoint(
         "model_type": new_model_type,
         "base_url": new_base_url,
         "pinned_models": normalize_model_ids_opt(new_pinned_db.as_deref()),
+        // getattr(ep, col, None) or "auto" — empty string also falls back.
+        "endpoint_kind": new_endpoint_kind_db.as_deref().filter(|s| !s.is_empty()).unwrap_or("auto"),
+        "model_refresh_mode": new_refresh_mode_db.as_deref().filter(|s| !s.is_empty()).unwrap_or("auto"),
+        "model_refresh_interval": new_refresh_interval_db,
+        "model_refresh_timeout": new_refresh_timeout_db,
     }))
     .into_response())
+}
+
+/// `str(raw).strip()` over a JSON value, for `_parse_positive_int(body.get(...))`.
+/// Integers render without a decimal point; a string passes through; other JSON
+/// renders close enough that `_parse_positive_int`'s `int(...)` parse still fails
+/// (returning `None`), matching Python.
+fn json_to_string(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        Value::Bool(b) => if *b { "True".to_string() } else { "False".to_string() },
+        Value::Null => "None".to_string(),
+        other => other.to_string(),
+    }
 }
 
 /// Python `bool(v)` over a JSON value (used for `is_enabled`): None/false/0/""/
@@ -3382,6 +4030,60 @@ fn query_bool(q: &HashMap<String, String>, name: &str, default: bool) -> Result<
             }
         }
     }
+}
+
+/// `param: Optional[int] = Query(None, ge=lo, le=hi)` — Pydantic v2 ranged optional
+/// int. Missing → `None`; a non-integer is a `422` `int_parsing`; out-of-range is a
+/// `422` `greater_than_equal` / `less_than_equal`.
+fn query_ranged_int_opt(
+    q: &HashMap<String, String>,
+    name: &str,
+    lo: i64,
+    hi: i64,
+) -> Result<Option<i64>, HttpException> {
+    let raw = match q.get(name) {
+        None => return Ok(None),
+        Some(r) => r,
+    };
+    let parsed: i64 = match raw.trim().parse() {
+        Ok(v) => v,
+        Err(_) => {
+            return Err(HttpException::with_detail(
+                422,
+                json!([{
+                    "type": "int_parsing",
+                    "loc": ["query", name],
+                    "msg": "Input should be a valid integer, unable to parse string as an integer",
+                    "input": raw,
+                }]),
+            ))
+        }
+    };
+    if parsed < lo {
+        return Err(HttpException::with_detail(
+            422,
+            json!([{
+                "type": "greater_than_equal",
+                "loc": ["query", name],
+                "msg": format!("Input should be greater than or equal to {lo}"),
+                "input": raw,
+                "ctx": {"ge": lo},
+            }]),
+        ));
+    }
+    if parsed > hi {
+        return Err(HttpException::with_detail(
+            422,
+            json!([{
+                "type": "less_than_equal",
+                "loc": ["query", name],
+                "msg": format!("Input should be less than or equal to {hi}"),
+                "input": raw,
+                "ctx": {"le": hi},
+            }]),
+        ));
+    }
+    Ok(Some(parsed))
 }
 
 /// Collect all `multipart/form-data` (or `x-www-form-urlencoded`) fields into a
@@ -3707,5 +4409,221 @@ mod tests {
         let chain = settings.get("default_model_fallbacks").unwrap().as_array().unwrap();
         assert_eq!(chain.len(), 1);
         assert_eq!(chain[0].get("endpoint_id").unwrap(), &json!("ep2"));
+    }
+
+    // ---- a2e691d: proxy/API classification + refresh policy ----
+
+    /// Build a bare `Endpoint` for the kind/refresh helpers; only the fields a test
+    /// exercises are set.
+    fn ep_fixture(
+        base_url: &str,
+        api_key: Option<&str>,
+        endpoint_kind: Option<&str>,
+        refresh_mode: Option<&str>,
+    ) -> Endpoint {
+        Endpoint {
+            id: "ep".to_string(),
+            name: "n".to_string(),
+            base_url: base_url.to_string(),
+            api_key: api_key.map(String::from),
+            is_enabled: true,
+            hidden_models: None,
+            cached_models: None,
+            model_type: None,
+            supports_tools: None,
+            pinned_models: None,
+            endpoint_kind: endpoint_kind.map(String::from),
+            model_refresh_mode: refresh_mode.map(String::from),
+            model_refresh_interval: None,
+            model_refresh_timeout: None,
+            updated_at_ts: 0.0,
+            created_at_ts: 0.0,
+        }
+    }
+
+    #[test]
+    fn normalize_endpoint_kind_clamps_to_known_set() {
+        assert_eq!(normalize_endpoint_kind(Some(" Proxy ")), "proxy");
+        assert_eq!(normalize_endpoint_kind(Some("LOCAL")), "local");
+        assert_eq!(normalize_endpoint_kind(Some("api")), "api");
+        assert_eq!(normalize_endpoint_kind(Some("")), "auto");
+        assert_eq!(normalize_endpoint_kind(None), "auto");
+        assert_eq!(normalize_endpoint_kind(Some("garbage")), "auto");
+    }
+
+    #[test]
+    fn normalize_refresh_mode_proxy_defaults_manual() {
+        // explicit manual/disabled always win
+        assert_eq!(normalize_refresh_mode(Some("manual"), "auto"), "manual");
+        assert_eq!(normalize_refresh_mode(Some("disabled"), "proxy"), "disabled");
+        // "auto" for a non-proxy stays auto
+        assert_eq!(normalize_refresh_mode(Some("auto"), "local"), "auto");
+        // "auto" for a proxy becomes manual (cached-first)
+        assert_eq!(normalize_refresh_mode(Some("auto"), "proxy"), "manual");
+        // empty/unknown: proxy -> manual, others -> auto
+        assert_eq!(normalize_refresh_mode(Some(""), "proxy"), "manual");
+        assert_eq!(normalize_refresh_mode(None, "api"), "auto");
+        assert_eq!(normalize_refresh_mode(Some("???"), "proxy"), "manual");
+    }
+
+    #[test]
+    fn classify_endpoint_kind_explicit_overrides_url() {
+        // explicit kind short-circuits the URL heuristic
+        assert_eq!(classify_endpoint_kind("https://api.openai.com/v1", "local"), "local");
+        assert_eq!(classify_endpoint_kind("http://localhost:11434/v1", "api"), "api");
+        assert_eq!(classify_endpoint_kind("http://localhost:11434/v1", "proxy"), "api");
+        // "auto" falls back to the URL heuristic
+        assert_eq!(classify_endpoint_kind("http://localhost:11434/v1", "auto"), "local");
+        assert_eq!(classify_endpoint_kind("https://api.openai.com/v1", "auto"), "api");
+    }
+
+    #[test]
+    fn effective_endpoint_kind_keyed_v1_is_proxy() {
+        // explicit kind is returned verbatim
+        let ep = ep_fixture("https://api.openai.com/v1", Some("k"), Some("api"), None);
+        assert_eq!(effective_endpoint_kind(&ep, "https://api.openai.com/v1"), "api");
+        // auto + api_key + /v1 path -> proxy heuristic
+        let ep = ep_fixture("https://proxy.example.com/v1", Some("k"), None, None);
+        assert_eq!(effective_endpoint_kind(&ep, "https://proxy.example.com/v1"), "proxy");
+        // auto + api_key + /openai path -> proxy
+        let ep = ep_fixture("https://gw.example.com/openai/deployments", Some("k"), None, None);
+        assert_eq!(
+            effective_endpoint_kind(&ep, "https://gw.example.com/openai/deployments"),
+            "proxy"
+        );
+        // no key -> stays auto
+        let ep = ep_fixture("https://proxy.example.com/v1", None, None, None);
+        assert_eq!(effective_endpoint_kind(&ep, "https://proxy.example.com/v1"), "auto");
+        // keyed Ollama is NOT treated as a proxy
+        let ep = ep_fixture("http://localhost:11434/v1", Some("k"), None, None);
+        assert_eq!(effective_endpoint_kind(&ep, "http://localhost:11434/v1"), "auto");
+    }
+
+    #[test]
+    fn parse_positive_int_gates_and_clamps() {
+        assert_eq!(parse_positive_int(Some(" 45 "), 1, 60), Some(45));
+        assert_eq!(parse_positive_int(Some("100"), 1, 60), Some(60)); // clamp to max
+        assert_eq!(parse_positive_int(Some("0"), 1, 60), None); // below min
+        assert_eq!(parse_positive_int(Some(""), 1, 60), None);
+        assert_eq!(parse_positive_int(Some("abc"), 1, 60), None);
+        assert_eq!(parse_positive_int(None, 1, 60), None);
+    }
+
+    #[test]
+    fn explicit_model_list_timeout_long_for_proxy_and_api() {
+        // explicit kind proxy/api -> 30s
+        assert_eq!(explicit_model_list_timeout("https://x/v1", "proxy", None), 30.0);
+        assert_eq!(explicit_model_list_timeout("https://x/v1", "api", None), 30.0);
+        // auto on a cloud URL classifies api -> 30s
+        assert_eq!(explicit_model_list_timeout("https://api.openai.com/v1", "auto", None), 30.0);
+        // auto on a local Ollama base -> 3s
+        assert_eq!(explicit_model_list_timeout("http://localhost:11434/v1", "auto", None), 3.0);
+        // auto on a plain local base -> 2s
+        assert_eq!(explicit_model_list_timeout("http://127.0.0.1:8000/v1", "auto", None), 2.0);
+        // an explicit requested timeout wins
+        assert_eq!(explicit_model_list_timeout("https://x/v1", "proxy", Some(12)), 12.0);
+    }
+
+    #[test]
+    fn manual_refresh_timeout_proxy_floor_30() {
+        // proxy/api endpoint with no stored/requested timeout -> at least 30s
+        let ep = ep_fixture("https://proxy/v1", Some("k"), Some("proxy"), None);
+        assert_eq!(manual_refresh_timeout(&ep, "api", None), 30.0);
+        // a requested override wins
+        assert_eq!(manual_refresh_timeout(&ep, "api", Some(45)), 45.0);
+        // local endpoint with no stored timeout -> category default (2.5)
+        let ep_local = ep_fixture("http://localhost:11434/v1", None, Some("local"), None);
+        assert_eq!(manual_refresh_timeout(&ep_local, "local", None), 2.5);
+    }
+
+    #[test]
+    fn endpoint_refresh_interval_defaults_by_category() {
+        let ep = ep_fixture("https://x/v1", None, None, None);
+        assert_eq!(endpoint_refresh_interval(&ep, "local"), 60.0);
+        assert_eq!(endpoint_refresh_interval(&ep, "api"), 3600.0);
+        // stored value >=30 wins; below 30 floors to 30.
+        let mut ep2 = ep_fixture("https://x/v1", None, None, None);
+        ep2.model_refresh_interval = Some(120);
+        assert_eq!(endpoint_refresh_interval(&ep2, "api"), 120.0);
+        ep2.model_refresh_interval = Some(5);
+        assert_eq!(endpoint_refresh_interval(&ep2, "api"), 30.0);
+    }
+
+    #[test]
+    fn failure_delay_exponential_capped() {
+        assert_eq!(failure_delay(0), 0.0);
+        assert_eq!(failure_delay(1), 300.0);
+        assert_eq!(failure_delay(2), 600.0);
+        assert_eq!(failure_delay(3), 1200.0);
+        // capped at REFRESH_FAILURE_MAX (3600).
+        assert_eq!(failure_delay(10), 3600.0);
+    }
+
+    #[test]
+    fn refresh_key_combines_base_and_key() {
+        assert_eq!(refresh_key("https://x/v1/", Some("abc")), "https://x/v1\x00abc");
+        assert_eq!(refresh_key("https://x/v1", None), "https://x/v1\x00");
+        // different keys -> distinct refresh state.
+        assert_ne!(refresh_key("https://x/v1", Some("a")), refresh_key("https://x/v1", Some("b")));
+    }
+
+    #[test]
+    fn is_ollama_base_matches_port_and_name() {
+        assert!(is_ollama_base("http://localhost:11434/v1"));
+        assert!(is_ollama_base("http://ollama.internal:9999/v1"));
+        assert!(!is_ollama_base("https://api.openai.com/v1"));
+    }
+
+    #[test]
+    fn should_refresh_skips_proxy_unless_forced() {
+        let _g = crate::core::database::DB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        REFRESH_STATE.lock().unwrap().clear();
+        // A proxy (manual mode) is skipped on a normal refresh...
+        let proxy = ep_fixture("https://proxy.example.com/v1", Some("k"), Some("proxy"), None);
+        let (ok, _) = should_refresh_endpoint(&proxy, 1000.0, false);
+        assert!(!ok);
+        // ...but a forced refresh still runs it.
+        let (ok_forced, info) = should_refresh_endpoint(&proxy, 1000.0, true);
+        assert!(ok_forced);
+        assert_eq!(info.timeout, 2.0); // api category default
+
+        // A local auto endpoint with no cache refreshes immediately.
+        REFRESH_STATE.lock().unwrap().clear();
+        let local = ep_fixture("http://localhost:11434/v1", None, Some("local"), None);
+        let (ok_local, info_local) = should_refresh_endpoint(&local, 1000.0, false);
+        assert!(ok_local);
+        assert_eq!(info_local.timeout, 2.5); // local category default
+    }
+
+    #[test]
+    fn should_refresh_respects_failure_cooldown_and_interval() {
+        let _g = crate::core::database::DB_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let local = ep_fixture("http://127.0.0.1:8000/v1", None, Some("local"), None);
+        let key = refresh_key(&normalize_base(Some(&local.base_url)), local.api_key.as_deref());
+
+        // Recent failure within the backoff window -> skipped (not forced).
+        REFRESH_STATE.lock().unwrap().insert(
+            key.clone(),
+            RefreshState { fail_count: 1, last_failure: 1000.0, ..Default::default() },
+        );
+        let (ok, _) = should_refresh_endpoint(&local, 1000.0 + 10.0, false);
+        assert!(!ok);
+        // Past the cooldown -> allowed.
+        let (ok2, _) = should_refresh_endpoint(&local, 1000.0 + 301.0, false);
+        assert!(ok2);
+
+        // A fresh success within the (60s local) interval skips when cached.
+        let mut cached = ep_fixture("http://127.0.0.1:8000/v1", None, Some("local"), None);
+        cached.cached_models = Some("[\"m1\"]".to_string());
+        REFRESH_STATE.lock().unwrap().insert(
+            key.clone(),
+            RefreshState { last_success: 2000.0, ..Default::default() },
+        );
+        let (ok3, _) = should_refresh_endpoint(&cached, 2000.0 + 30.0, false);
+        assert!(!ok3);
+        // Past the interval -> allowed again.
+        let (ok4, _) = should_refresh_endpoint(&cached, 2000.0 + 61.0, false);
+        assert!(ok4);
+        REFRESH_STATE.lock().unwrap().clear();
     }
 }

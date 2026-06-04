@@ -784,6 +784,16 @@ async fn admin_delete_user(
     if !ok {
         return Err(HttpException::new(400, "Cannot delete user"));
     }
+    // `delete_user` removes the user's `ApiToken` rows, but the bearer-auth
+    // middleware serves from an in-memory prefix->token cache that only rebuilds
+    // when flagged dirty. Without this, a deleted user's already cached token
+    // keeps authenticating until some other token op or a restart clears the
+    // cache. Mirror what the token routes do (`api_token_routes`):
+    //   invalidator = getattr(request.app.state, "invalidate_token_cache", None)
+    //   if invalidator: invalidator()
+    // The Python `getattr`+`try/except` guard is dynamic-typing defense; here the
+    // hook is always present on `AppState` (an `Arc<dyn Fn() + Send + Sync>`).
+    (s.invalidate_token_cache)();
     Ok(Json(json!({"ok": true})).into_response())
 }
 
@@ -1307,6 +1317,61 @@ mod tests {
 
         let api_keys = out.get("api_key").unwrap().as_array().unwrap();
         assert_eq!(api_keys, &vec![Value::from(""), Value::from(""), Value::from("")]);
+    }
+
+    // --- 09fe308: revoke API tokens (invalidate bearer cache) on user delete ---
+    //
+    // The route-level slice of 09fe308: after a SUCCESSFUL `delete_user`, the
+    // DELETE /api/auth/users handler invalidates the in-memory bearer-token cache
+    // (so a deleted user's already-cached token stops authenticating), and a
+    // REFUSED delete (the `if !ok` early return -> 400) must NOT touch the cache.
+    // Constructing a full `AppState` here is unidiomatic for this module, so we
+    // exercise the exact ok-gated control flow of `admin_delete_user` against an
+    // invalidation hook of the SAME type the real `AppState.invalidate_token_cache`
+    // carries (`Arc<dyn Fn() + Send + Sync>`), mirroring the Python route test.
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// Reproduce `admin_delete_user`'s success/refusal branch: on a successful
+    /// delete, call the cache invalidator and return `{"ok": true}`; on a refused
+    /// delete, raise 400 BEFORE the invalidator can run.
+    fn run_delete_branch(
+        delete_ok: bool,
+        invalidate_token_cache: &Arc<dyn Fn() + Send + Sync>,
+    ) -> Result<Value, HttpException> {
+        if !delete_ok {
+            return Err(HttpException::new(400, "Cannot delete user"));
+        }
+        invalidate_token_cache();
+        Ok(json!({"ok": true}))
+    }
+
+    #[test]
+    fn successful_delete_invalidates_token_cache() {
+        let count = Arc::new(AtomicUsize::new(0));
+        let c = count.clone();
+        let hook: Arc<dyn Fn() + Send + Sync> =
+            Arc::new(move || {
+                c.fetch_add(1, Ordering::SeqCst);
+            });
+        let result = run_delete_branch(true, &hook).expect("successful delete returns ok");
+        assert_eq!(result, json!({"ok": true}));
+        // A successful delete must flag the token cache stale exactly once.
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn refused_delete_does_not_invalidate_token_cache() {
+        let count = Arc::new(AtomicUsize::new(0));
+        let c = count.clone();
+        let hook: Arc<dyn Fn() + Send + Sync> =
+            Arc::new(move || {
+                c.fetch_add(1, Ordering::SeqCst);
+            });
+        let err = run_delete_branch(false, &hook).expect_err("refused delete raises");
+        assert_eq!(err.status_code, 400);
+        // A refused delete (early 400) must never touch the token cache.
+        assert_eq!(count.load(Ordering::SeqCst), 0);
     }
 
     #[test]

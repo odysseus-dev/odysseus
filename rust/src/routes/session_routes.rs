@@ -60,6 +60,27 @@ use crate::routes::auth_adapter;
 use crate::routes::{ApiToken, AppState, CurrentUser, HttpException};
 
 // ---------------------------------------------------------------------------
+// Blind-compare: model-identity redaction
+// ---------------------------------------------------------------------------
+
+/// Blind-compare helper sessions are created with this name prefix. Their real
+/// model must never surface in the session list / sidebar — otherwise a blind
+/// comparison can be de-anonymized before the user votes (issue #1285).
+const COMPARE_SESSION_PREFIX: &str = "[CMP] ";
+
+/// `def _public_model(name, model)` — blank out the real model of blind-compare
+/// helper sessions so the session list cannot be used to map a neutral pane label
+/// ("Model A") back to its real model. The Compare UI tracks models client-side,
+/// so hiding it here costs the sidebar nothing. See issue #1285.
+fn public_model(name: &str, model: &str) -> String {
+    if name.starts_with(COMPARE_SESSION_PREFIX) {
+        String::new()
+    } else {
+        model.to_string()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Router factory
 // ---------------------------------------------------------------------------
 
@@ -304,7 +325,7 @@ async fn list_sessions(
         sessions.push(json!({
             "id": sess.id,
             "name": sess.name,
-            "model": sess.model,
+            "model": public_model(&sess.name, &sess.model),
             "endpoint_url": sess.endpoint_url,
             "rag": sess.rag,
             "archived": sess.archived,
@@ -2922,6 +2943,22 @@ mod tests {
             model_endpoint_enabled_owner_scoped("e3", None).unwrap(),
             Some(("https://api.bob/v1".to_string(), Some("sk-bob".to_string())))
         );
+    }
+
+    // ── public_model redaction (issue #1285) ──────────────────────────────────
+
+    /// `_public_model` must blank the model for [CMP]-prefixed sessions and pass
+    /// it through unchanged for all other sessions.
+    #[test]
+    fn public_model_redacts_compare_sessions() {
+        // Blind-compare helper session: model must be blanked.
+        assert_eq!(public_model("[CMP] Model A", "gpt-4o"), "");
+        assert_eq!(public_model("[CMP] ", "claude-3-5-sonnet"), "");
+        // Regular sessions: model passes through verbatim.
+        assert_eq!(public_model("My Chat", "gpt-4o"), "gpt-4o");
+        assert_eq!(public_model("", "claude-3-5-sonnet"), "claude-3-5-sonnet");
+        // Names that merely contain but do NOT start with the prefix are not redacted.
+        assert_eq!(public_model("Not [CMP] prefix", "llama-3"), "llama-3");
     }
 
     #[test]

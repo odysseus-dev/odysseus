@@ -378,6 +378,27 @@ impl AuthManager {
         if revoked > 0 {
             self._save_sessions();
         }
+        // Also revoke API bearer tokens owned by this user. The bearer auth
+        // path authenticates straight against api_tokens rows and never
+        // re-checks that the owner still exists, so leaving the rows behind
+        // would let a deleted user keep full API access indefinitely.
+        // `db.query(ApiToken).filter(ApiToken.owner == username).delete()` — the
+        // whole block is wrapped in try/except in Python, so any DB failure only
+        // logs a warning rather than aborting the (already-committed) deletion.
+        match crate::core::database::session_local().and_then(|conn| {
+            conn.execute(
+                "DELETE FROM api_tokens WHERE owner = ?1",
+                rusqlite::params![username],
+            )
+        }) {
+            Ok(removed) if removed > 0 => logger::info(&format!(
+                "Revoked {removed} API token(s) owned by deleted user '{username}'"
+            )),
+            Ok(_) => {}
+            Err(_) => logger::warning(&format!(
+                "Failed to revoke API tokens for deleted user '{username}'"
+            )),
+        }
         logger::info(&format!(
             "Deleted user '{username}' (by {requesting_user}); revoked {revoked} active session(s)"
         ));
@@ -834,5 +855,72 @@ impl AuthManager {
             result.insert("privileges".into(), Value::Object(self.get_privileges(u)));
         }
         Value::Object(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn seed_token(conn: &rusqlite::Connection, id: &str, owner: &str) {
+        conn.execute(
+            "INSERT INTO api_tokens \
+             (id, owner, name, token_hash, token_prefix, scopes, is_active, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, 'h', 'pfx', 'chat', 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00')",
+            rusqlite::params![id, owner, id],
+        )
+        .unwrap();
+    }
+
+    fn token_count(conn: &rusqlite::Connection, owner: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM api_tokens WHERE owner = ?1",
+            rusqlite::params![owner],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    // Deleting a user revokes the API bearer tokens they own, while leaving
+    // tokens owned by other users untouched.
+    #[test]
+    fn delete_user_revokes_owned_api_tokens() {
+        // Private, thread-local DB (no global `DATABASE_URL` swap) — `delete_user`
+        // and the seed/count helpers all open `session_local()` on this thread, so
+        // they target this DB via `db_path()`'s test routing, never racing siblings.
+        let _db = crate::core::database::test_db("auth_revoke_tokens");
+
+        let dir = std::env::temp_dir();
+        let auth_path = dir.join(format!(
+            "odysseus_auth_revoke_{}_{}.json",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        let mgr = AuthManager::with_path(auth_path.to_str().unwrap());
+
+        // admin requester + the victim being deleted.
+        assert!(mgr.setup("admin", "pw-admin"));
+        assert!(mgr.create_user("victim", "pw-victim", false));
+
+        {
+            let conn = crate::core::database::session_local().unwrap();
+            seed_token(&conn, "tok-victim-1", "victim");
+            seed_token(&conn, "tok-victim-2", "victim");
+            seed_token(&conn, "tok-other", "admin");
+            assert_eq!(token_count(&conn, "victim"), 2);
+        }
+
+        assert!(mgr.delete_user("victim", "admin"));
+
+        {
+            let conn = crate::core::database::session_local().unwrap();
+            // The deleted user's tokens are gone; the surviving user's remain.
+            assert_eq!(token_count(&conn, "victim"), 0);
+            assert_eq!(token_count(&conn, "admin"), 1);
+        }
+
+        // cleanup the auth/sessions json artifacts.
+        let _ = std::fs::remove_file(&auth_path);
+        let _ = std::fs::remove_file(auth_path.with_file_name("sessions.json"));
     }
 }

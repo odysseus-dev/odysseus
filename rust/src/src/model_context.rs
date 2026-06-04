@@ -28,8 +28,118 @@ const _PRIVATE_PREFIXES: [&str; 19] = [
     "172.29.", "172.30.", "172.31.", "192.168.", "100.",
 ];
 
+/// Strip trailing path suffixes that are endpoint variants of the same base
+/// so that two URLs pointing at the same host/prefix compare equal.
+///
+/// Mirrors Python `_normalize_base_for_compare`.
+fn _normalize_base_for_compare(url: &str) -> String {
+    let mut u = url.trim().trim_end_matches('/').to_string();
+    let suffixes = [
+        "/chat/completions",
+        "/models",
+        "/completions",
+        "/v1/messages",
+    ];
+    for suffix in suffixes {
+        if u.ends_with(suffix) {
+            u.truncate(u.len() - suffix.len());
+            u = u.trim_end_matches('/').to_string();
+            // Only strip one suffix (same as Python).
+            break;
+        }
+    }
+    u
+}
+
+/// Return the stored `endpoint_kind` for the enabled endpoint whose `base_url`
+/// best matches `url`. Returns `None` when the DB is unavailable or no row
+/// matches.
+///
+/// Mirrors Python `_configured_endpoint_kind`. The Python version guards with
+/// `"core.database" not in sys.modules`; in production the Rust port always has
+/// the DB compiled in so the read always runs (any DB error yields `None`). The
+/// query runs synchronously on the calling thread — the `Connection`/`Statement`
+/// never escape this scope, so `!Send` is a non-issue.
+pub fn _configured_endpoint_kind(url: &str) -> Option<String> {
+    let target = _normalize_base_for_compare(url);
+    if target.is_empty() {
+        return None;
+    }
+    // Test isolation (mirrors Python's `"core.database" not in sys.modules`
+    // guard): only touch the DB when the current test set one up via `test_db`
+    // (else return `None`). Otherwise this best-effort read would open a sibling
+    // test's `DATABASE_URL` and race with its lifecycle. In production the DB is
+    // always available, so the read always runs.
+    #[cfg(test)]
+    crate::core::database::current_thread_test_db()?;
+    // Run synchronously on the CALLING thread (not a spawned one): the connection
+    // target comes from `db_path()`, which in tests is a thread-local, so the
+    // query must execute on the same thread that set the test DB. rusqlite's
+    // `Connection`/`Statement` never escape this scope, so `!Send` is a non-issue.
+    (move || -> Option<String> {
+        let conn = crate::core::database::session_local().ok()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT base_url, api_key, endpoint_kind \
+                 FROM model_endpoints WHERE is_enabled = 1",
+            )
+            .ok()?;
+        let rows: Vec<(String, Option<String>, Option<String>)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })
+            .ok()?
+            .flatten()
+            .collect();
+        for (base_url_raw, api_key, endpoint_kind_raw) in rows {
+            let base = _normalize_base_for_compare(&base_url_raw);
+            if base.is_empty() {
+                continue;
+            }
+            if target != base && !target.starts_with(&format!("{base}/")) {
+                continue;
+            }
+            // kind = (ep.endpoint_kind or "auto").strip().lower()
+            let kind = endpoint_kind_raw
+                .as_deref()
+                .unwrap_or("auto")
+                .trim()
+                .to_lowercase();
+            if matches!(kind.as_str(), "local" | "api" | "proxy") {
+                return Some(kind);
+            }
+            // Heuristic: api_key present + v1/openai path => proxy.
+            if api_key.is_some() {
+                if let Ok(parsed) = Url::parse(&base) {
+                    let host = parsed.host_str().unwrap_or("").to_lowercase();
+                    let path = parsed.path().trim_end_matches('/');
+                    let port = parsed.port();
+                    if port != Some(11434)
+                        && !host.contains("ollama")
+                        && (path.ends_with("/v1") || path.contains("/openai"))
+                    {
+                        return Some("proxy".to_string());
+                    }
+                }
+            }
+            return Some("auto".to_string());
+        }
+        None
+    })()
+}
+
 /// Check if URL points to a local/private/tailscale address.
 pub fn _is_local_endpoint(url: &str) -> bool {
+    // Upstream a2e691d: check configured endpoint_kind first.
+    match _configured_endpoint_kind(url).as_deref() {
+        Some("api") | Some("proxy") => return false,
+        Some("local") => return true,
+        _ => {}
+    }
     // try: host = urlparse(url).hostname or ""  / except Exception: return False
     //
     // `urlparse(url).hostname` lowercases the host and is `None` (-> "") for a
@@ -177,8 +287,10 @@ static _CONTEXT_CACHE: Lazy<Mutex<IndexMap<String, i64>>> = Lazy::new(|| Mutex::
 ///
 /// TODO(web): the live httpx probe is deferred — see `_query_context_length`.
 pub fn get_context_length(endpoint_url: &str, model: &str) -> i64 {
+    // configured_kind = _configured_endpoint_kind(endpoint_url)
     // is_local = _is_local_endpoint(endpoint_url)
     // if not is_local and model in _context_cache: return _context_cache[model]
+    let configured_kind = _configured_endpoint_kind(endpoint_url);
     let is_local = _is_local_endpoint(endpoint_url);
     if !is_local {
         if let Some(ctx) = _CONTEXT_CACHE.lock().unwrap().get(model) {
@@ -189,7 +301,10 @@ pub fn get_context_length(endpoint_url: &str, model: &str) -> i64 {
     // Only cache non-default values to allow retry on next request.
     // Local endpoints can restart with a different --max-model-len while keeping
     // the same model id, so always re-query them instead of serving stale cache.
-    if !is_local && ctx != DEFAULT_CONTEXT {
+    // Upstream a2e691d: also cache the default for api/proxy endpoints so large
+    // proxy catalogs are not re-fetched on every model picker open.
+    let is_api_or_proxy = matches!(configured_kind.as_deref(), Some("api") | Some("proxy"));
+    if !is_local && (ctx != DEFAULT_CONTEXT || is_api_or_proxy) {
         _CONTEXT_CACHE.lock().unwrap().insert(model.to_string(), ctx);
     }
     logger::info(&format!("Context length for {model}: {ctx}"));
@@ -268,6 +383,19 @@ fn json_num_positive(v: &serde_json::Value) -> Option<i64> {
 fn _query_context_length(endpoint_url: &str, model: &str) -> i64 {
     let known = _lookup_known(model);
     let mut api_ctx: Option<i64> = None;
+    let configured_kind = _configured_endpoint_kind(endpoint_url);
+
+    // Large OpenAI-compatible proxies can make /models expensive. If the
+    // endpoint is explicitly configured as API/proxy, prefer known context
+    // metadata (or the default) over downloading the full catalog.
+    // Mirrors upstream a2e691d.
+    if matches!(configured_kind.as_deref(), Some("api") | Some("proxy")) {
+        if let Some(k) = known {
+            logger::info(&format!("Using known context window for {model}: {k}"));
+            return k;
+        }
+        return DEFAULT_CONTEXT;
+    }
 
     // Try llama.cpp /slots first — reports the actual serving context.
     if _is_local_endpoint(endpoint_url) {
@@ -388,4 +516,209 @@ pub fn estimate_tokens(messages: &[serde_json::Value]) -> i64 {
         }
     }
     total
+}
+
+// ---------------------------------------------------------------------------
+// Tests (upstream a2e691d — proxy endpoint refresh)
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // _normalize_base_for_compare — pure, no DB needed
+    // -----------------------------------------------------------------------
+    #[test]
+    fn normalize_strips_chat_completions() {
+        assert_eq!(
+            _normalize_base_for_compare("https://api.example.com/v1/chat/completions"),
+            "https://api.example.com/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_strips_models() {
+        assert_eq!(
+            _normalize_base_for_compare("https://api.example.com/v1/models"),
+            "https://api.example.com/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_strips_completions() {
+        assert_eq!(
+            _normalize_base_for_compare("https://api.example.com/v1/completions"),
+            "https://api.example.com/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_strips_v1_messages() {
+        // The suffix list contains the whole "/v1/messages", so it is stripped
+        // entirely (matching Python's `for suffix in (... "/v1/messages")`).
+        assert_eq!(
+            _normalize_base_for_compare("https://api.anthropic.com/v1/messages"),
+            "https://api.anthropic.com"
+        );
+    }
+
+    #[test]
+    fn normalize_strips_trailing_slash() {
+        assert_eq!(
+            _normalize_base_for_compare("https://api.example.com/v1/"),
+            "https://api.example.com/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_passthrough_plain_base() {
+        assert_eq!(
+            _normalize_base_for_compare("https://api.example.com/v1"),
+            "https://api.example.com/v1"
+        );
+    }
+
+    #[test]
+    fn normalize_empty_returns_empty() {
+        assert_eq!(_normalize_base_for_compare(""), "");
+        assert_eq!(_normalize_base_for_compare("   "), "");
+    }
+
+    // -----------------------------------------------------------------------
+    // _configured_endpoint_kind — requires temp DB
+    // -----------------------------------------------------------------------
+
+    /// Seed a model_endpoints row for testing. Uses the same schema as
+    /// `ai_interaction.rs::seed_endpoint` — NO encryption (api_key stored plain).
+    fn seed_endpoint(
+        conn: &rusqlite::Connection,
+        id: &str,
+        base_url: &str,
+        api_key: Option<&str>,
+        endpoint_kind: Option<&str>,
+        enabled: bool,
+    ) {
+        let ts = "2025-01-01T00:00:00";
+        conn.execute(
+            "INSERT OR REPLACE INTO model_endpoints \
+             (id, name, base_url, api_key, endpoint_kind, is_enabled, model_type, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'llm', ?7, ?7)",
+            rusqlite::params![id, id, base_url, api_key, endpoint_kind, enabled as i64, ts],
+        )
+        .unwrap();
+    }
+
+    /// Create a PRIVATE, thread-local temp DB (via `test_db`), run `create_all`,
+    /// and seed it with `f`. The returned guard keeps the DB alive and routed for
+    /// THIS thread for the test's duration; on drop it restores the thread-local
+    /// and removes the file. Because the target is thread-local (not the global
+    /// `DATABASE_URL`), these tests never race sibling DB tests.
+    fn with_temp_db<F: FnOnce(&rusqlite::Connection)>(
+        label: &str,
+        f: F,
+    ) -> crate::core::database::TestDb {
+        let db = crate::core::database::test_db(label);
+        let conn = crate::core::database::session_local().unwrap();
+        f(&conn);
+        db
+    }
+
+    #[test]
+    fn configured_kind_explicit_api() {
+        let _db = with_temp_db("ck_api", |conn| {
+            seed_endpoint(conn, "ep1", "https://api.openai.com/v1", Some("sk-x"), Some("api"), true);
+        });
+
+        // Chat-completions variant should normalise to the same base.
+        assert_eq!(
+            _configured_endpoint_kind("https://api.openai.com/v1/chat/completions").as_deref(),
+            Some("api")
+        );
+    }
+
+    #[test]
+    fn configured_kind_explicit_proxy() {
+        let _db = with_temp_db("ck_proxy", |conn| {
+            seed_endpoint(conn, "ep2", "https://proxy.example.com/v1", Some("sk-p"), Some("proxy"), true);
+        });
+
+        assert_eq!(
+            _configured_endpoint_kind("https://proxy.example.com/v1/chat/completions").as_deref(),
+            Some("proxy")
+        );
+    }
+
+    #[test]
+    fn configured_kind_explicit_local() {
+        let _db = with_temp_db("ck_local", |conn| {
+            seed_endpoint(conn, "ep3", "http://192.168.1.100:8080/v1", None, Some("local"), true);
+        });
+
+        assert_eq!(
+            _configured_endpoint_kind("http://192.168.1.100:8080/v1").as_deref(),
+            Some("local")
+        );
+    }
+
+    #[test]
+    fn configured_kind_none_when_no_match() {
+        let _db = with_temp_db("ck_none", |conn| {
+            seed_endpoint(conn, "ep4", "https://other.example.com/v1", None, None, true);
+        });
+
+        assert_eq!(
+            _configured_endpoint_kind("https://totally-different.example.com/v1").as_deref(),
+            None
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // _is_local_endpoint — endpoint_kind overrides URL heuristics
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_local_endpoint_kind_api_overrides_private_ip() {
+        // 192.168.x.x is normally local, but endpoint_kind="api" should return false.
+        let _db = with_temp_db("ile_api", |conn| {
+            seed_endpoint(
+                conn,
+                "ep5",
+                "http://192.168.1.50/v1",
+                Some("sk-k"),
+                Some("api"),
+                true,
+            );
+        });
+
+        assert!(!_is_local_endpoint("http://192.168.1.50/v1/chat/completions"));
+    }
+
+    #[test]
+    fn is_local_endpoint_kind_local_overrides_public_ip() {
+        // A public IP marked endpoint_kind="local" should return true.
+        let _db = with_temp_db("ile_local", |conn| {
+            seed_endpoint(
+                conn,
+                "ep6",
+                "http://203.0.113.5:8080/v1",
+                None,
+                Some("local"),
+                true,
+            );
+        });
+
+        assert!(_is_local_endpoint("http://203.0.113.5:8080/v1"));
+    }
+
+    // -----------------------------------------------------------------------
+    // _normalize_base_for_compare: only strips ONE suffix per call
+    // -----------------------------------------------------------------------
+    #[test]
+    fn normalize_only_strips_one_suffix() {
+        // If a URL ends with /completions it should strip that, NOT also /v1/messages.
+        let result = _normalize_base_for_compare("https://x.com/v1/completions");
+        assert_eq!(result, "https://x.com/v1");
+        // Not double-stripped to "https://x.com"
+        assert!(result.ends_with("/v1"));
+    }
 }

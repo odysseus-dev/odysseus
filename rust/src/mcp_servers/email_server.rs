@@ -1097,7 +1097,11 @@ fn read_email(
         }
     };
 
-    let raw = match conn.uid_fetch(&uid_s, "(RFC822)") {
+    // BODY.PEEK[] fetches the full message without setting \Seen; RFC822 is
+    // accepted by Gmail but silently ignored by iCloud IMAP (returns OK with
+    // no body tuple). BODY.PEEK[] is honoured by both. Response shape is
+    // identical — the raw bytes are still at f.body().
+    let raw = match conn.uid_fetch(&uid_s, "(BODY.PEEK[])") {
         Ok(fetches) => fetches.iter().find_map(|f| f.body().map(|b| b.to_vec())),
         Err(_) => {
             let _ = conn.logout();
@@ -1434,7 +1438,9 @@ fn reply_to_email(
 ) -> Result<ReplyResult, String> {
     let mut conn = imap_connect(account)?;
     let _ = conn.examine(folder);
-    let raw = match conn.uid_fetch(uid, "(RFC822)") {
+    // BODY.PEEK[] fetches the full message without setting \Seen; RFC822 is
+    // silently ignored by iCloud IMAP (same fix as read_email / download_attachment).
+    let raw = match conn.uid_fetch(uid, "(BODY.PEEK[])") {
         Ok(fetches) => fetches.iter().find_map(|f| f.body().map(|b| b.to_vec())),
         Err(_) => {
             let _ = conn.logout();
@@ -1777,7 +1783,9 @@ fn download_attachment(
 ) -> Result<DownloadResult, String> {
     let mut conn = imap_connect(account)?;
     let _ = conn.examine(folder);
-    let raw = match conn.uid_fetch(uid, "(RFC822)") {
+    // BODY.PEEK[] fetches the full message without setting \Seen; RFC822 is
+    // silently ignored by iCloud IMAP (same fix as read_email / reply_to_email).
+    let raw = match conn.uid_fetch(uid, "(BODY.PEEK[])") {
         Ok(fetches) => fetches.iter().find_map(|f| f.body().map(|b| b.to_vec())),
         Err(_) => {
             let _ = conn.logout();

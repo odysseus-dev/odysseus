@@ -39,6 +39,13 @@ pub fn database_url() -> String {
 
 /// `DATABASE_URL.replace("sqlite:///", "")` — the on-disk path the migrations use.
 pub fn db_path() -> String {
+    // In tests, a thread that set up a PRIVATE test DB via `test_db()` targets
+    // that file instead of the process-global `DATABASE_URL` — so concurrent
+    // tests never clobber each other's target. Production has no such override.
+    #[cfg(test)]
+    if let Some(p) = current_thread_test_db() {
+        return p;
+    }
     database_url().replace("sqlite:///", "")
 }
 
@@ -53,6 +60,13 @@ pub fn db_path() -> String {
 /// deletes before parents, so they remain valid under enforcement.
 fn open_db(path: &str) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
+    // pysqlite (and thus SQLAlchemy's default SQLite dialect) opens connections
+    // with `sqlite3.connect(..., timeout=5.0)` — a 5s busy timeout. rusqlite
+    // instead defaults to 0, failing immediately when the database file is locked
+    // by another connection. The app opens a fresh `Connection` per request/op
+    // (see `session_local`), so concurrent operations on the same file are normal;
+    // match Python and wait for the lock instead of erroring out.
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     Ok(conn)
 }
@@ -262,6 +276,10 @@ CREATE TABLE IF NOT EXISTS model_endpoints (
     hidden_models TEXT,
     cached_models TEXT,
     model_type VARCHAR DEFAULT 'llm',
+    endpoint_kind VARCHAR DEFAULT 'auto',
+    model_refresh_mode VARCHAR DEFAULT 'auto',
+    model_refresh_interval INTEGER,
+    model_refresh_timeout INTEGER,
     supports_tools BOOLEAN DEFAULT NULL,
     owner VARCHAR,
     pinned_models TEXT,
@@ -767,6 +785,32 @@ fn _migrate_add_model_type_column() {
         "model_type",
         "TEXT DEFAULT 'llm'",
         Some("Migrated: added 'model_type' column to model_endpoints"),
+    );
+}
+
+/// `_migrate_add_model_endpoint_refresh_columns` — add endpoint classification /
+/// refresh policy columns if missing (endpoint_kind, model_refresh_mode,
+/// model_refresh_interval, model_refresh_timeout).
+fn _migrate_add_model_endpoint_refresh_columns() {
+    migrate_add_endpoint_column(
+        "endpoint_kind",
+        "TEXT DEFAULT 'auto'",
+        None,
+    );
+    migrate_add_endpoint_column(
+        "model_refresh_mode",
+        "TEXT DEFAULT 'auto'",
+        None,
+    );
+    migrate_add_endpoint_column(
+        "model_refresh_interval",
+        "INTEGER",
+        None,
+    );
+    migrate_add_endpoint_column(
+        "model_refresh_timeout",
+        "INTEGER",
+        None,
     );
 }
 
@@ -1703,6 +1747,7 @@ pub fn init_db() {
     _migrate_add_cached_models_column();
     _migrate_add_notes_sort_order();
     _migrate_add_model_type_column();
+    _migrate_add_model_endpoint_refresh_columns();
     _migrate_add_model_endpoint_owner_column();
     _migrate_add_supports_tools_column();
     migrate_add_endpoint_column(
@@ -2106,3 +2151,57 @@ impl Session {
 /// must lock THIS single mutex (not a per-module one) so they truly serialize.
 #[cfg(test)]
 pub(crate) static DB_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+thread_local! {
+    /// When `Some`, the on-disk path of a PRIVATE, thread-local test database the
+    /// current thread set up via [`test_db`]. `db_path()` returns this for the
+    /// current thread, so a test can point the DB at its own file WITHOUT mutating
+    /// the process-global `DATABASE_URL` — concurrent tests therefore never clobber
+    /// each other's target nor race on a sibling's file lifecycle. Best-effort DB
+    /// reads in production helpers also consult this to mirror Python's
+    /// `"core.database" not in sys.modules` guard: a unit test that did NOT set up
+    /// a database skips the DB and returns the empty result.
+    static TEST_DB_PATH: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The current thread's private test-DB path, if it set one up via [`test_db`].
+#[cfg(test)]
+pub(crate) fn current_thread_test_db() -> Option<String> {
+    TEST_DB_PATH.with(|c| c.borrow().clone())
+}
+
+/// RAII handle to a private, thread-local test database (see [`TEST_DB_PATH`]).
+/// On drop it restores the previous thread-local value and removes the temp file.
+#[cfg(test)]
+pub(crate) struct TestDb {
+    path: std::path::PathBuf,
+    prev: Option<String>,
+}
+
+#[cfg(test)]
+impl Drop for TestDb {
+    fn drop(&mut self) {
+        let prev = self.prev.take();
+        TEST_DB_PATH.with(|c| *c.borrow_mut() = prev);
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Create a fresh, private temp database for the CURRENT THREAD and run
+/// [`create_all`] on it. Unlike swapping the process-global `DATABASE_URL`, this
+/// is thread-scoped, so it never races sibling tests. Any DB access made *on this
+/// thread* (including the synchronous best-effort helpers) targets this file.
+/// The returned guard must be held for the duration of the test.
+#[cfg(test)]
+pub(crate) fn test_db(tag: &str) -> TestDb {
+    let path = std::env::temp_dir().join(format!(
+        "odysseus_testdb_{tag}_{}_{}.db",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let prev = TEST_DB_PATH.with(|c| c.borrow_mut().replace(path.to_string_lossy().into_owned()));
+    create_all().expect("test_db: create_all");
+    TestDb { path, prev }
+}

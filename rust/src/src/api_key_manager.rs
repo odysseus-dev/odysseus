@@ -74,9 +74,14 @@ impl APIKeyManager {
             .map_err(|e| crate::error::PyError::value(format!("invalid utf-8: {e}")))
     }
 
-    /// Save encrypted API key to file
+    /// Save encrypted API key to file.
+    ///
+    /// Operates on the raw (still-encrypted) on-disk dict so other providers'
+    /// keys stay encrypted. Loading via `load()` first would decrypt them and
+    /// write them back as plaintext, which then fails to decrypt on the next
+    /// `load()` and silently drops those providers.
     pub fn save(&self, provider: &str, api_key: &str) -> PyResult<()> {
-        let mut keys = self.load()?;
+        let mut keys = self.load_raw()?;
         keys.insert(
             provider.to_string(),
             Value::String(self.encrypt_api_key(api_key)?),
@@ -86,13 +91,15 @@ impl APIKeyManager {
         Ok(())
     }
 
-    /// Load and decrypt API keys from `api_keys.json`.
+    /// Load the raw, still-encrypted keys dict from disk.
+    ///
+    /// Tolerates a missing/corrupt/wrong-shaped file by returning an empty map —
+    /// the same robustness `load()` relies on at startup.
     ///
     /// Mirrors Python error-handling policy:
     /// - Read or JSON-parse failure → log warning, return empty map (don't crash startup).
     /// - JSON root is not an object → log warning, return empty map.
-    /// - Per-entry decryption failure → log warning, skip that entry (don't abort the whole load).
-    pub fn load(&self) -> PyResult<Map<String, Value>> {
+    fn load_raw(&self) -> PyResult<Map<String, Value>> {
         if !os::path::exists(&self.api_keys_file) {
             return Ok(Map::new());
         }
@@ -117,8 +124,8 @@ impl APIKeyManager {
 
         // Must be a JSON object; ignore legacy/wrong shapes (e.g. arrays).
         // `if not isinstance(encrypted_keys, dict): return {}`
-        let encrypted_keys: Map<String, Value> = match parsed {
-            Value::Object(m) => m,
+        match parsed {
+            Value::Object(m) => Ok(m),
             other => {
                 let type_name = match &other {
                     Value::Array(_) => "list",
@@ -131,9 +138,18 @@ impl APIKeyManager {
                 logger::warning(&format!(
                     "API keys file has unexpected shape ({type_name}); ignoring"
                 ));
-                return Ok(Map::new());
+                Ok(Map::new())
             }
-        };
+        }
+    }
+
+    /// Load and decrypt API keys from `api_keys.json`.
+    ///
+    /// Mirrors Python error-handling policy:
+    /// - Read/parse/shape failures are absorbed by `load_raw()` (empty map).
+    /// - Per-entry decryption failure → log warning, skip that entry (don't abort the whole load).
+    pub fn load(&self) -> PyResult<Map<String, Value>> {
+        let encrypted_keys = self.load_raw()?;
 
         // Decrypt each entry individually — skip on failure, don't abort.
         let mut result = Map::new();
@@ -250,12 +266,49 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mgr = mgr_in(&dir);
         mgr.save("brave", "sk-brave-test").unwrap();
-        // save() re-reads load() which decrypts, then re-encrypts only the new entry —
-        // so after one save() the map on disk has the new entry encrypted and any
-        // prior entries as stored.  For a single save, we just verify the key comes
-        // back decrypted.
+        // save() reads the raw (still-encrypted) on-disk dict, re-encrypts only the
+        // new entry, and writes it back. load() decrypts, so we get the plaintext back.
         let result = mgr.load().unwrap();
         let brave = result.get("brave").and_then(Value::as_str).unwrap_or("");
         assert_eq!(brave, "sk-brave-test");
+    }
+
+    /// Regression for the security fix: saving one provider must NOT corrupt
+    /// other providers' stored (encrypted) keys. The old save() went through
+    /// load() (decrypting everything) then re-wrote untouched providers as
+    /// plaintext, so the next load() failed to decrypt them and silently
+    /// dropped them. With load_raw(), untouched ciphertext is preserved.
+    #[test]
+    fn save_preserves_other_providers_ciphertext() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = mgr_in(&dir);
+
+        // Store two providers via two separate save() calls.
+        mgr.save("anthropic", "anthropic-secret").unwrap();
+        mgr.save("openai", "openai-secret").unwrap();
+
+        // The second save() must not have clobbered "anthropic"; both keys must
+        // still decrypt to their original plaintext on load().
+        let result = mgr.load().unwrap();
+        assert_eq!(
+            result.get("anthropic").and_then(Value::as_str),
+            Some("anthropic-secret"),
+            "first provider's key must survive a later save() of another provider"
+        );
+        assert_eq!(
+            result.get("openai").and_then(Value::as_str),
+            Some("openai-secret"),
+            "second provider's key must be stored correctly"
+        );
+
+        // Belt-and-suspenders: the on-disk values must be CIPHERTEXT, not the
+        // plaintext secrets (the bug wrote untouched providers as plaintext).
+        let raw = std::fs::read_to_string(dir.path().join("api_keys.json")).unwrap();
+        let on_disk: Map<String, Value> = serde_json::from_str(&raw).unwrap();
+        let anthropic_disk = on_disk.get("anthropic").and_then(Value::as_str).unwrap();
+        assert_ne!(
+            anthropic_disk, "anthropic-secret",
+            "stored value must be encrypted, never plaintext"
+        );
     }
 }

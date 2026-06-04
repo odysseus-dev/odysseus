@@ -634,7 +634,17 @@ fn sync_blocking(owner: &str, url: &str, username: &str, password: &str) -> Valu
     counts(calendars_count, events_count, deleted_count, errors)
 }
 
-/// Upsert a single event by uid (the `existing` / `db.add` branches).
+/// Upsert a single event by uid, scoped to `cal_id`.
+///
+/// The lookup is scoped to `calendar_id = cal_id` so that a VEVENT uid shared
+/// between two calendars (public/subscribed/shared or two accounts on one
+/// server) does NOT steal (move) the other calendar's row. An unscoped match
+/// followed by `SET calendar_id = ?` was the Python bug fixed in commit
+/// 49c14af; `_find_existing_event` there added the `CalendarEvent.calendar_id
+/// == calendar_id` filter. We mirror the same scope here: if no row exists for
+/// THIS calendar, attempt an INSERT; if the uid is a genuine cross-calendar PK
+/// collision the INSERT will fail at the UNIQUE constraint and surface as an
+/// error — exactly the Python intent.
 fn upsert_event(
     conn: &rusqlite::Connection,
     cal_id: &str,
@@ -643,19 +653,20 @@ fn upsert_event(
 ) -> rusqlite::Result<()> {
     let dtstart_store = ev.dtstart.format(SQLITE_DT_FMT).to_string();
     let dtend_store = ev.dtend.format(SQLITE_DT_FMT).to_string();
+    // Scope the existence check to this calendar (mirrors _find_existing_event).
     let exists: bool = conn
         .query_row(
-            "SELECT 1 FROM calendar_events WHERE uid = ?1",
-            rusqlite::params![ev.uid],
+            "SELECT 1 FROM calendar_events WHERE uid = ?1 AND calendar_id = ?2",
+            rusqlite::params![ev.uid, cal_id],
             |_| Ok(true),
         )
         .unwrap_or(false);
     if exists {
         conn.execute(
-            "UPDATE calendar_events SET calendar_id = ?2, summary = ?3, description = ?4, \
+            "UPDATE calendar_events SET summary = ?3, description = ?4, \
                location = ?5, dtstart = ?6, dtend = ?7, all_day = ?8, is_utc = ?9, rrule = ?10, \
                updated_at = ?11 \
-             WHERE uid = ?1",
+             WHERE uid = ?1 AND calendar_id = ?2",
             rusqlite::params![
                 ev.uid,
                 cal_id,
@@ -1121,6 +1132,125 @@ mod tests {
                 "expected {h} to be blocked"
             );
         }
+    }
+
+    /// Regression test for the calendar-scoping fix (commit 49c14af).
+    ///
+    /// A VEVENT uid shared between two distinct calendars must NOT cause the
+    /// sync of calendar B to hijack (steal / move) calendar A's event row.
+    /// Before the fix `upsert_event` did an unscoped `WHERE uid = ?1`, so an
+    /// existing row from cal-A would be matched and then `SET calendar_id = cal-B`
+    /// would move it.  After the fix the lookup is scoped to
+    /// `uid = ?1 AND calendar_id = ?2`, so the cross-calendar collision is
+    /// invisible to the B-sync path and a fresh INSERT is attempted instead.
+    #[test]
+    fn upsert_event_does_not_hijack_other_calendar_row() {
+        let _g = crate::core::database::DB_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        // Build an in-memory DB with the minimal schema.
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE calendars (
+                id TEXT PRIMARY KEY,
+                owner TEXT,
+                name TEXT,
+                color TEXT,
+                source TEXT,
+                created_at TEXT,
+                updated_at TEXT
+             );
+             CREATE TABLE calendar_events (
+                uid TEXT,
+                calendar_id TEXT,
+                summary TEXT,
+                description TEXT,
+                location TEXT,
+                dtstart TEXT,
+                dtend TEXT,
+                all_day INTEGER,
+                is_utc INTEGER,
+                rrule TEXT,
+                status TEXT,
+                created_at TEXT,
+                updated_at TEXT,
+                PRIMARY KEY (uid, calendar_id)
+             );",
+        )
+        .unwrap();
+
+        let shared_uid = "shared-uid-42";
+        let now_str = "2024-06-01 00:00:00.000000";
+        let dtstart = NaiveDateTime::parse_from_str("2024-06-01 10:00:00", "%Y-%m-%d %H:%M:%S")
+            .unwrap();
+        let dtend =
+            NaiveDateTime::parse_from_str("2024-06-01 11:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+
+        // Insert the calendars so FK-style checks (if any) pass.
+        for cid in &["cal-A", "cal-B"] {
+            conn.execute(
+                "INSERT INTO calendars (id, owner, name, color, source, created_at, updated_at) \
+                 VALUES (?1, 'alice', 'Test', '#fff', 'caldav', ?2, ?2)",
+                rusqlite::params![cid, now_str],
+            )
+            .unwrap();
+        }
+
+        let ev = EventRow {
+            uid: shared_uid.to_string(),
+            summary: "Cal-A event".to_string(),
+            description: String::new(),
+            location: String::new(),
+            dtstart,
+            dtend,
+            all_day: false,
+            is_utc: true,
+            rrule: String::new(),
+        };
+
+        // Seed the event into cal-A.
+        upsert_event(&conn, "cal-A", &ev, now_str).unwrap();
+
+        // Confirm it lives in cal-A.
+        let cal_a_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM calendar_events WHERE uid = ?1 AND calendar_id = 'cal-A'",
+                rusqlite::params![shared_uid],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cal_a_count, 1, "event must be in cal-A after first upsert");
+
+        // Now sync the same uid into cal-B (simulating a shared/public calendar).
+        let ev_b = EventRow {
+            uid: shared_uid.to_string(),
+            summary: "Cal-B copy".to_string(),
+            description: String::new(),
+            location: String::new(),
+            dtstart,
+            dtend,
+            all_day: false,
+            is_utc: true,
+            rrule: String::new(),
+        };
+        // May succeed (two rows with same uid, different calendar_id) or fail at
+        // the PK constraint — either outcome is correct; what must NOT happen is
+        // cal-A's row being reassigned to cal-B.
+        let _ = upsert_event(&conn, "cal-B", &ev_b, now_str);
+
+        // The critical assertion: cal-A's row must still belong to cal-A.
+        let cal_a_after: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM calendar_events WHERE uid = ?1 AND calendar_id = 'cal-A'",
+                rusqlite::params![shared_uid],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            cal_a_after, 1,
+            "cal-A's event must not be hijacked by cal-B sync"
+        );
     }
 
     #[test]

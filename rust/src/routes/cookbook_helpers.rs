@@ -696,8 +696,19 @@ pub fn _append_serve_preflight_exit_lines(runner_lines: &mut Vec<String>, keep_s
 }
 
 /// Append serve-runner lines that preserve and report the command exit code.
-pub fn _append_serve_exit_code_lines(runner_lines: &mut Vec<String>, keep_shell_open: bool) {
+///
+/// `is_pip_install`: when `true`, emit a `DOWNLOAD_OK` sentinel on success so
+/// callers can detect a clean pip install without parsing exit codes.
+pub fn _append_serve_exit_code_lines(
+    runner_lines: &mut Vec<String>,
+    keep_shell_open: bool,
+    is_pip_install: bool,
+) {
     runner_lines.push("ODYSSEUS_CMD_EXIT=$?".to_string());
+    if is_pip_install {
+        runner_lines
+            .push("if [ $ODYSSEUS_CMD_EXIT -eq 0 ]; then echo \"\"; echo \"DOWNLOAD_OK\"; fi".to_string());
+    }
     if keep_shell_open {
         runner_lines.push(
             "echo \"\"; echo \"=== Process exited with code $ODYSSEUS_CMD_EXIT ===\"; exec \"${SHELL:-/bin/bash}\""
@@ -1225,14 +1236,41 @@ mod tests {
     #[test]
     fn serve_exit_code_lines_keep_open_vs_exit() {
         let mut lines: Vec<String> = Vec::new();
-        _append_serve_exit_code_lines(&mut lines, true);
+        _append_serve_exit_code_lines(&mut lines, true, false);
         assert_eq!(lines[0], "ODYSSEUS_CMD_EXIT=$?");
         assert!(lines[1].ends_with("exec \"${SHELL:-/bin/bash}\""));
 
         let mut lines2: Vec<String> = Vec::new();
-        _append_serve_exit_code_lines(&mut lines2, false);
+        _append_serve_exit_code_lines(&mut lines2, false, false);
         assert_eq!(lines2[0], "ODYSSEUS_CMD_EXIT=$?");
         assert_eq!(lines2[2], "exit \"$ODYSSEUS_CMD_EXIT\"");
+    }
+
+    #[test]
+    fn serve_exit_code_lines_pip_install_emits_download_ok_sentinel() {
+        // is_pip_install=true → DOWNLOAD_OK sentinel inserted after exit-capture,
+        // before the keep-shell-open / exit logic.
+        let mut lines: Vec<String> = Vec::new();
+        _append_serve_exit_code_lines(&mut lines, false, true);
+        assert_eq!(lines[0], "ODYSSEUS_CMD_EXIT=$?");
+        assert_eq!(
+            lines[1],
+            "if [ $ODYSSEUS_CMD_EXIT -eq 0 ]; then echo \"\"; echo \"DOWNLOAD_OK\"; fi"
+        );
+        // exit-code report and explicit exit still follow.
+        assert_eq!(lines[3], "exit \"$ODYSSEUS_CMD_EXIT\"");
+
+        // keep_shell_open variant with is_pip_install
+        let mut lines2: Vec<String> = Vec::new();
+        _append_serve_exit_code_lines(&mut lines2, true, true);
+        assert_eq!(lines2[1],
+            "if [ $ODYSSEUS_CMD_EXIT -eq 0 ]; then echo \"\"; echo \"DOWNLOAD_OK\"; fi");
+        assert!(lines2[2].ends_with("exec \"${SHELL:-/bin/bash}\""));
+
+        // is_pip_install=false → no DOWNLOAD_OK line.
+        let mut lines3: Vec<String> = Vec::new();
+        _append_serve_exit_code_lines(&mut lines3, false, false);
+        assert!(!lines3.iter().any(|l| l.contains("DOWNLOAD_OK")));
     }
 
     #[test]

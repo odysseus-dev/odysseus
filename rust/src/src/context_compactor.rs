@@ -436,7 +436,13 @@ mod compaction_tests {
 
     // The common case: a few short messages stay far below 85% of the context
     // window, so `maybe_compact` returns them UNCHANGED with `was_compacted=false`
-    // and never reaches `resolve_endpoint` / `llm_call_async` (pure, no I/O).
+    // and never reaches `resolve_endpoint` / `llm_call_async`.
+    //
+    // `maybe_compact` calls `get_context_length`, which since upstream a2e691d may
+    // consult the configured-endpoints DB (via `_configured_endpoint_kind`). This
+    // test sets up no `test_db`, so that best-effort read short-circuits to `None`
+    // (mirroring Python's `"core.database" not in sys.modules` guard) and never
+    // touches the process-global `DATABASE_URL` — no isolation lock needed.
     #[tokio::test]
     async fn maybe_compact_below_threshold_is_noop() {
         let mut sess = session_with_history("s1", vec![]);

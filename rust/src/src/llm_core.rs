@@ -593,10 +593,163 @@ pub fn list_model_ids(model: &str) -> Vec<String> {
     ids
 }
 
+/// `_model_list_base(url)` — normalize a model/chat URL to the configured
+/// endpoint base so the in-DB `base_url` can be matched regardless of which
+/// concrete model/chat suffix the caller passed in. Strips a trailing
+/// `/models`, `/chat/completions`, `/completions`, or `/v1/messages`, then a
+/// trailing native-Ollama `/api/chat`, `/api/tags`, or `/api/generate` (the
+/// `"/api" + suffix` Python branch), re-stripping trailing slashes after each
+/// removal. `None`/empty input → `""` (the Python `(url or "")`).
+pub fn _model_list_base(url: &str) -> String {
+    // base = (url or "").strip().rstrip("/")
+    let mut base = url.trim().trim_end_matches('/').to_string();
+    for suffix in ["/models", "/chat/completions", "/completions", "/v1/messages"] {
+        if base.ends_with(suffix) {
+            base = base[..base.len() - suffix.len()]
+                .trim_end_matches('/')
+                .to_string();
+        }
+    }
+    for suffix in ["/chat", "/tags", "/generate"] {
+        let api_suffix = format!("/api{suffix}");
+        if base.ends_with(&api_suffix) {
+            base = base[..base.len() - suffix.len()]
+                .trim_end_matches('/')
+                .to_string();
+        }
+    }
+    base
+}
+
+/// `_parse_model_cache(raw)` — parse a stored `cached_models` / `hidden_models`
+/// blob into a de-duplicated, order-preserving list of trimmed non-empty model
+/// ids. The DB column is TEXT holding a JSON array string; a parse failure or a
+/// non-array value yields `[]` (the Python broad `except` / `isinstance` guard).
+/// Each item is `str(item or "").strip()` — a falsy element (null/empty) is
+/// dropped, and duplicates (post-trim) are collapsed.
+pub fn _parse_model_cache(raw: Option<&str>) -> Vec<String> {
+    use serde_json::Value;
+    // if not raw: return []
+    let raw = match raw {
+        Some(s) if !s.is_empty() => s,
+        _ => return Vec::new(),
+    };
+    // models = json.loads(raw) ... except Exception: return []
+    let parsed: Value = match serde_json::from_str(raw) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    // if not isinstance(models, list): return []
+    let arr = match parsed.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for item in arr {
+        // mid = str(item or "").strip()  — falsy element → "" → skipped
+        let mid = if is_falsy(item) {
+            String::new()
+        } else {
+            match item {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            }
+        };
+        let mid = mid.trim().to_string();
+        if mid.is_empty() || seen.contains(&mid) {
+            continue;
+        }
+        seen.insert(mid.clone());
+        out.push(mid);
+    }
+    out
+}
+
+/// `_configured_cached_model_ids(endpoint_url)` — return the cached models of a
+/// configured, enabled endpoint whose `base_url` normalizes to the same base as
+/// `endpoint_url`, with the endpoint's hidden models filtered out. Returns `[]`
+/// when there is no normalized target, no matching enabled endpoint, no cached
+/// models, or on any DB error (the Python broad `except`).
+///
+/// `rusqlite::Connection` is NOT `Send`; this is a sync helper and the
+/// connection is opened, used, and dropped entirely within it (no `.await`
+/// while it is held). Callers invoke it from the synchronous prefix of an async
+/// fn, before any subsequent network `.await`.
+pub fn _configured_cached_model_ids(endpoint_url: &str) -> Vec<String> {
+    // target = _model_list_base(endpoint_url); if not target: return []
+    let target = _model_list_base(endpoint_url);
+    if target.is_empty() {
+        return Vec::new();
+    }
+    // Test isolation (mirrors Python's `"core.database" not in sys.modules`
+    // guard): only touch the DB when the current test set one up via `test_db`.
+    // Otherwise this best-effort cached-model read would open a sibling test's
+    // `DATABASE_URL` and race with its lifecycle. In production the DB is always
+    // available, so the read runs.
+    #[cfg(test)]
+    if crate::core::database::current_thread_test_db().is_none() {
+        return Vec::new();
+    }
+    // db = SessionLocal(); ... except Exception: return []
+    let conn = match crate::core::database::session_local() {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    // rows = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+    let mut stmt = match conn.prepare(
+        "SELECT base_url, cached_models, hidden_models FROM model_endpoints WHERE is_enabled = 1",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, Option<String>>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    });
+    let rows = match rows {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    for row in rows {
+        let (base_url, cached_models, hidden_models) = match row {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        // if _model_list_base(getattr(ep, "base_url", "")) != target: continue
+        if _model_list_base(base_url.as_deref().unwrap_or("")) != target {
+            continue;
+        }
+        // models = _parse_model_cache(ep.cached_models or ep.models)
+        // (the Rust schema has no separate `models` column; `cached_models` is it)
+        let models = _parse_model_cache(cached_models.as_deref());
+        if models.is_empty() {
+            continue;
+        }
+        // hidden = set(_parse_model_cache(ep.hidden_models))
+        let hidden: std::collections::HashSet<String> =
+            _parse_model_cache(hidden_models.as_deref()).into_iter().collect();
+        // return [m for m in models if m not in hidden]
+        return models.into_iter().filter(|m| !hidden.contains(m)).collect();
+    }
+    Vec::new()
+}
+
 /// Network port of Python `llm_core.list_model_ids(base_chat_url, timeout, headers)`
 /// — the `/models` discovery probe. (NOTE: the bare-string `list_model_ids` above
 /// and `normalize_model_id` are the Rust port's pure-string fallback helpers,
 /// which took those names; this is the distinct NETWORK form.)
+///
+/// CACHED-FIRST (upstream a2e691d): before any network probe, return the cached
+/// model list of a matching configured endpoint when one exists. Large
+/// OpenAI-compatible proxy endpoints expose hundreds of models and make
+/// `/v1/models` slow; treating them like local model servers made model-picker
+/// opens and background probes repeatedly hit `/models`, producing timeouts and
+/// making usable endpoints appear offline. Manual Test/Add/Refresh paths still
+/// fetch the full list with longer timeouts.
 ///
 /// Anthropic endpoints short-circuit to `ANTHROPIC_MODELS` (no `/models` route).
 /// Otherwise GET `<base>/models` (the `/chat/completions`→`/models` rewrite) with
@@ -606,6 +759,13 @@ pub async fn list_served_model_ids_with_headers(
     base_chat_url: &str,
     headers: &indexmap::IndexMap<String, String>,
 ) -> Vec<String> {
+    // cached = _configured_cached_model_ids(base_chat_url); if cached: return cached
+    // Synchronous DB read fully scoped here — the non-Send Connection is dropped
+    // before any network `.await` below.
+    let cached = _configured_cached_model_ids(base_chat_url);
+    if !cached.is_empty() {
+        return cached;
+    }
     if _detect_provider(base_chat_url) == "anthropic" {
         return ANTHROPIC_MODELS.iter().map(|s| s.to_string()).collect();
     }
@@ -3259,5 +3419,103 @@ mod tests {
         assert_eq!(out5.len(), 1);
         assert_eq!(out5[0]["content"].as_array().map(|a| a.len()), Some(2));
         assert_eq!(out5[0]["content"][1]["type"], json!("image_url"));
+    }
+
+    // ── Cached-first proxy endpoint refresh (upstream a2e691d) ────────────────
+
+    #[test]
+    fn model_list_base_strips_known_suffixes() {
+        // Trailing model/chat suffixes are stripped down to the endpoint base.
+        assert_eq!(_model_list_base("https://p.example/v1/models"), "https://p.example/v1");
+        assert_eq!(
+            _model_list_base("https://p.example/v1/chat/completions"),
+            "https://p.example/v1"
+        );
+        assert_eq!(_model_list_base("https://p.example/v1/completions"), "https://p.example/v1");
+        assert_eq!(
+            _model_list_base("https://a.example/v1/messages"),
+            "https://a.example"
+        );
+        // Native-Ollama `/api/<verb>` suffixes (only when preceded by `/api`).
+        assert_eq!(_model_list_base("http://h:11434/api/chat"), "http://h:11434/api");
+        assert_eq!(_model_list_base("http://h:11434/api/tags"), "http://h:11434/api");
+        assert_eq!(_model_list_base("http://h:11434/api/generate"), "http://h:11434/api");
+        // Trailing slashes are normalized; a bare base passes through.
+        assert_eq!(_model_list_base("https://p.example/v1/"), "https://p.example/v1");
+        assert_eq!(_model_list_base("https://p.example/v1"), "https://p.example/v1");
+        // Empty / whitespace input -> "".
+        assert_eq!(_model_list_base("   "), "");
+        // A `/chat` NOT preceded by `/api` is left intact (no spurious strip).
+        assert_eq!(_model_list_base("https://p.example/chat"), "https://p.example/chat");
+    }
+
+    #[test]
+    fn parse_model_cache_dedupes_and_filters() {
+        // JSON array string -> trimmed, de-duplicated, order-preserving ids.
+        assert_eq!(
+            _parse_model_cache(Some(r#"["a", " b ", "a", "", "c"]"#)),
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+        // None / empty / malformed / non-array -> [].
+        assert!(_parse_model_cache(None).is_empty());
+        assert!(_parse_model_cache(Some("")).is_empty());
+        assert!(_parse_model_cache(Some("not json")).is_empty());
+        assert!(_parse_model_cache(Some(r#"{"a": 1}"#)).is_empty());
+        // Falsy elements (null/empty) are dropped.
+        assert_eq!(
+            _parse_model_cache(Some(r#"[null, "x", ""]"#)),
+            vec!["x".to_string()]
+        );
+    }
+
+    #[test]
+    fn configured_cached_model_ids_cached_first_and_hidden_filter() {
+        // Private, thread-local DB (no global `DATABASE_URL` swap), so this test
+        // never races a sibling DB test. The cached-first read runs synchronously
+        // on this thread, so it targets this DB via `db_path()`'s test routing.
+        let _db = crate::core::database::test_db("llm_core_cached");
+
+        {
+            let conn = crate::core::database::session_local().unwrap();
+            // Enabled endpoint with cached + one hidden model.
+            conn.execute(
+                "INSERT INTO model_endpoints \
+                 (id, name, base_url, api_key, is_enabled, cached_models, hidden_models, model_type, created_at, updated_at) \
+                 VALUES ('ep1', 'p', 'https://proxy.example/v1', NULL, 1, ?1, ?2, 'llm', '2026-01-01', '2026-01-01')",
+                rusqlite::params![r#"["m-a", "m-b", "m-c"]"#, r#"["m-b"]"#],
+            )
+            .unwrap();
+            // A disabled endpoint must never contribute.
+            conn.execute(
+                "INSERT INTO model_endpoints \
+                 (id, name, base_url, api_key, is_enabled, cached_models, model_type, created_at, updated_at) \
+                 VALUES ('ep2', 'q', 'https://other.example/v1', NULL, 0, ?1, 'llm', '2026-01-01', '2026-01-01')",
+                rusqlite::params![r#"["z"]"#],
+            )
+            .unwrap();
+        }
+
+        // Match by normalized base: a `/chat/completions` query hits the `/v1` row,
+        // returning cached models minus the hidden one, order preserved.
+        assert_eq!(
+            _configured_cached_model_ids("https://proxy.example/v1/chat/completions"),
+            vec!["m-a".to_string(), "m-c".to_string()]
+        );
+        // The `/models` form normalizes to the same base.
+        assert_eq!(
+            _configured_cached_model_ids("https://proxy.example/v1/models"),
+            vec!["m-a".to_string(), "m-c".to_string()]
+        );
+        // No matching enabled endpoint -> [] (the disabled ep2 base is not used).
+        assert!(_configured_cached_model_ids("https://other.example/v1/chat/completions").is_empty());
+        // Empty target -> [].
+        assert!(_configured_cached_model_ids("   ").is_empty());
+
+        // The network probe is cached-first: it returns the cached list WITHOUT any
+        // network call (the temp host is unreachable, so a probe would yield []).
+        let cached = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(list_served_model_ids("https://proxy.example/v1/chat/completions"));
+        assert_eq!(cached, vec!["m-a".to_string(), "m-c".to_string()]);
     }
 }

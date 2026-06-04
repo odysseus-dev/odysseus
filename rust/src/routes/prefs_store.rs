@@ -53,6 +53,7 @@
 //! Pure FS + JSON logic with no `AppState` dependency, so it lives on the
 //! default profile (the `web`-gated routers simply call into it).
 
+use crate::core::atomic_io::atomic_write_json;
 use crate::pyos as os;
 use serde_json::{json, Value};
 
@@ -90,19 +91,29 @@ pub fn load() -> Value {
     }
 }
 
-/// `_save(prefs)` — write the raw prefs file with `indent=2`.
+/// `_save(prefs)` — write the raw prefs file with `indent=2`, atomically.
 ///
-/// Mirrors `os.makedirs(os.path.dirname(PREFS_FILE), exist_ok=True)` then
-/// `json.dump(prefs, f, indent=2)`. `serde_json::to_string_pretty` uses a
-/// two-space indent, matching Python's `indent=2`. Errors surface as
-/// `io::Error` (the Python `open(..., "w")` / `json.dump` would raise too).
+/// Upstream commit e340674 ("Persist user prefs atomically") replaced the
+/// plain truncating `open("w") + json.dump` with:
+///
+/// ```python
+/// tmp = f"{PREFS_FILE}.tmp.{os.getpid()}"
+/// with open(tmp, "w", encoding="utf-8") as f:
+///     json.dump(prefs, f, indent=2)
+///     f.flush()
+///     os.fsync(f.fileno())
+/// os.replace(tmp, PREFS_FILE)
+/// ```
+///
+/// We delegate to [`atomic_write_json`] which does the same: writes the
+/// serialized JSON to `{path}.tmp.{pid}`, fsyncs, then renames into place.
+/// On POSIX `os.replace` / `fs::rename` is atomic on the same filesystem,
+/// so a crash mid-write leaves either the old file or the new one intact.
 pub fn save(prefs: &Value) -> std::io::Result<()> {
     let path = prefs_file();
-    // os.makedirs(os.path.dirname(PREFS_FILE), exist_ok=True)
-    os::makedirs(&os::path::dirname(&path), true)?;
-    // json.dump(prefs, f, indent=2)
-    let text = serde_json::to_string_pretty(prefs).map_err(std::io::Error::other)?;
-    std::fs::write(&path, text)
+    // tmp = f"{PREFS_FILE}.tmp.{os.getpid()}"
+    // json.dump(prefs, f, indent=2); f.flush(); os.fsync(...); os.replace(tmp, PREFS_FILE)
+    atomic_write_json(&path, prefs, Some(2)).map_err(std::io::Error::other)
 }
 
 /// `_load_for_user(user=None)` — load preferences for a specific user.
@@ -416,6 +427,31 @@ mod tests {
         let _cwd = TempCwd::enter();
         // No _users map at all — legacy / auth-disabled path unchanged.
         save_for_user(None, &json!({"theme": "dark"})).unwrap();
+        assert_eq!(load(), json!({"theme": "dark"}));
+    }
+
+    // --- e340674: save() is now atomic (temp+fsync+rename) ---
+
+    #[test]
+    fn save_leaves_no_tmp_file_behind() {
+        let _cwd = TempCwd::enter();
+        save(&json!({"theme": "dark"})).unwrap();
+        // The .tmp.{pid} file must have been renamed away; only the real file
+        // and the data/ dir should exist.
+        let entries: Vec<_> = std::fs::read_dir("data")
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        let tmp_files: Vec<_> = entries
+            .iter()
+            .filter(|n| n.contains(".tmp."))
+            .collect();
+        assert!(
+            tmp_files.is_empty(),
+            "no .tmp.* file should remain after save(), found: {tmp_files:?}"
+        );
+        // The real file must exist and be well-formed.
         assert_eq!(load(), json!({"theme": "dark"}));
     }
 
