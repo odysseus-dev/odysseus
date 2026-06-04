@@ -1486,6 +1486,8 @@ export async function loadSessions() {
     console.error('Error in loadSessions:', error);
     uiModule.showError('Failed to load sessions: ' + error.message);
   }
+  // Notify listeners (e.g. projects sidebar) that sessions were refreshed
+  _loadListeners.forEach(fn => { try { fn(); } catch (_) {} });
 }
 
 export async function selectSession(id, { keepSidebar = false } = {}) {
@@ -1574,6 +1576,26 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     const currentMetaEl = uiModule.el('current-meta');
     if (currentMetaEl) {
       currentMetaEl.textContent = meta ? meta.name : 'Odysseus Chat';
+    }
+    // Update project badge in chat header
+    const _badge = document.getElementById('project-badge');
+    const _badgeName = document.getElementById('project-badge-name');
+    if (_badge && _badgeName) {
+      const _folder = meta && meta.folder;
+      const _proj = _folder && window.projectsModule
+        ? window.projectsModule.getProjectForFolder(_folder)
+        : null;
+      if (_proj) {
+        _badgeName.textContent = _proj.name;
+        _badge.style.display = 'inline-flex';
+        _badge.onclick = () => {
+          if (window.projectsModule && window.projectsModule.openSettings) {
+            window.projectsModule.openSettings(_proj.id);
+          }
+        };
+      } else {
+        _badge.style.display = 'none';
+      }
     }
     // Update model picker visibility
     updateModelPicker();
@@ -1759,7 +1781,9 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
 }
 
 // Pending session — stored locally until the first message is sent
-let _pendingChat = null; // { url, modelId, endpointId }
+let _pendingChat = null;   // { url, modelId, endpointId }
+let _pendingFolder = null; // folder to assign on session materialization
+const _loadListeners = [];  // callbacks fired after every loadSessions()
 
 export function createDirectChat(url, modelId, endpointId) {
   _sessionNavToken++;
@@ -1871,12 +1895,27 @@ export async function materializePendingSession() {
   Storage.set('lastSessionId', payload.id);
   history.replaceState(null, '', '#' + payload.id);
 
+  // Assign pending project folder if set
+  if (_pendingFolder && payload.id) {
+    const folderName = _pendingFolder;
+    _pendingFolder = null;
+    try {
+      const pfd = new FormData();
+      pfd.append('folder', folderName);
+      await fetch(`${API_BASE}/api/session/${payload.id}`, { method: 'PATCH', body: pfd });
+    } catch (_e) {}
+  } else {
+    _pendingFolder = null;
+  }
+
   // Reload sidebar to show the new session — await it so the session
   // is fully registered before the caller proceeds (prevents race conditions)
   await loadSessions().catch(() => {});
   return true;
 }
 
+export function setPendingFolder(name) { _pendingFolder = name || null; }
+export function addLoadListener(fn) { _loadListeners.push(fn); }
 export function hasPendingChat() { return !!_pendingChat; }
 export function getPendingChat() { return _pendingChat; }
 // Getters for external access
@@ -3079,6 +3118,8 @@ const sessionModule = {
   selectSession,
   createDirectChat,
   materializePendingSession,
+  setPendingFolder,
+  addLoadListener,
   hasPendingChat,
   getPendingChat,
   getCurrentSessionId,

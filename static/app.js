@@ -43,6 +43,8 @@ import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
+import { initProjects } from './js/projects.js';
+import projectsModule from './js/projects.js';
 
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;
@@ -4047,6 +4049,14 @@ function startOdysseusApp() {
   // Section collapse/expand + drag reorder (extracted to js/section-management.js)
   initSectionCollapse(Storage);
   initSectionDrag(Storage, loadUIVis);
+
+  // Projects sidebar section
+  initProjects();
+  window.projectsModule = projectsModule;
+  // Re-render project chat lists whenever sessions are reloaded
+  if (sessionModule && sessionModule.addLoadListener) {
+    sessionModule.addLoadListener(() => projectsModule.renderList());
+  }
   
   // Handle drag over and out for individual sections
   const sections = document.querySelectorAll('.section[draggable="true"]');

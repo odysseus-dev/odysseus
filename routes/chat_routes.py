@@ -318,6 +318,7 @@ def setup_chat_routes(
             use_web=use_web,
             time_filter=time_filter,
             webhook_manager=webhook_manager,
+            project_instructions=project_instructions,
         )
 
         # Research injection
@@ -416,6 +417,7 @@ def setup_chat_routes(
                 _tool_intent.reason,
             )
         active_doc_id = form_data.get("active_doc_id", "").strip()
+        project_instructions = (form_data.get("project_instructions") or "").strip() or None
         logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
 
         try:
@@ -508,6 +510,7 @@ def setup_chat_routes(
             # manage_skills (agent mode). In plain chat or incognito the
             # index would be useless / unwanted noise.
             agent_mode=(chat_mode == "agent"),
+            project_instructions=project_instructions,
         )
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope

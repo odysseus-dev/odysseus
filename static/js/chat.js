@@ -782,6 +782,17 @@ import createResearchSynapse from './researchSynapse.js';
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
       }
+      // Inject project instructions if the current session belongs to a project
+      try {
+        const _curSessions = sessionModule && sessionModule.getSessions ? sessionModule.getSessions() : [];
+        const _curSess = _curSessions.find(s => s.id === streamSessionId);
+        const _proj = (_curSess && _curSess.folder && window.projectsModule)
+          ? window.projectsModule.getProjectForFolder(_curSess.folder)
+          : null;
+        if (_proj && _proj.instructions) {
+          fd.append('project_instructions', _proj.instructions);
+        }
+      } catch (_e) { /* best-effort */ }
 
 
       const abortCtrl = new AbortController();
@@ -2827,6 +2838,13 @@ import createResearchSynapse from './researchSynapse.js';
           sessionModule.loadSessions();
         }
       }, 3000);
+
+      // Notify projects module of potential agent file changes
+      try {
+        if (window.projectsModule && window.projectsModule.checkForChanges) {
+          window.projectsModule.checkForChanges(streamSessionId);
+        }
+      } catch (_pce) {}
     }
   }
 
