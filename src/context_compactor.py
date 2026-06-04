@@ -311,8 +311,10 @@ async def maybe_compact(
         if "[Conversation summary" in m.get("content", "")
     )
 
-    # Use utility model if configured, otherwise fall back to session model
-    util_url, util_model, util_headers = resolve_endpoint("utility")
+    # Use the owner's utility model if configured, otherwise fall back to the
+    # session model. A missing owner preserves single-user / legacy behavior.
+    owner = getattr(session, "owner", None)
+    util_url, util_model, util_headers = resolve_endpoint("utility", owner=owner or None)
     compact_url = util_url or endpoint_url
     compact_model = util_model or model
     compact_headers = util_headers if util_url else headers

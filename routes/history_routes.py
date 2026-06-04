@@ -526,8 +526,10 @@ def setup_history_routes(session_manager) -> APIRouter:
                 for m in older
             )
 
-            # Use utility model if available
-            util_url, util_model, util_headers = resolve_endpoint("utility")
+            # Use the session owner's utility model if available; ownerless
+            # sessions keep the legacy/global lookup.
+            owner = getattr(session, "owner", None)
+            util_url, util_model, util_headers = resolve_endpoint("utility", owner=owner or None)
             compact_url = util_url or session.endpoint_url
             compact_model = util_model or session.model
             compact_headers = util_headers if util_url else session.headers
