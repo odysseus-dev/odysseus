@@ -192,3 +192,53 @@ class TestMaybeCompactFourthMessage:
         ]}
         result = self._run(messages)
         assert len(result) == 3 and result[2] is True
+
+
+class TestMaybeCompactFailure:
+    def test_summary_failure_preserves_original_messages(self):
+        messages = [
+            {"role": "system", "content": "You are helpful. " * 200},
+            {"role": "user", "content": "OLDER-1"},
+            {"role": "assistant", "content": "OLDER-2"},
+            {"role": "user", "content": "OLDER-3"},
+            {"role": "assistant", "content": "RECENT-1"},
+            {"role": "user", "content": "RECENT-2"},
+            {"role": "assistant", "content": "RECENT-3"},
+        ]
+
+        orig_ctx = cc.get_context_length
+        orig_call = cc.llm_call_async
+        orig_resolve = cc.resolve_endpoint
+
+        async def _boom(*a, **k):
+            raise RuntimeError("summary model down")
+
+        cc.get_context_length = lambda url, model: 500
+        cc.llm_call_async = _boom
+        cc.resolve_endpoint = lambda which: (None, None, None)
+        try:
+            compacted_messages, context_length, was_compacted = asyncio.run(
+                maybe_compact(
+                    session=None,
+                    endpoint_url="http://local/v1/chat/completions",
+                    model="local-model",
+                    messages=list(messages),
+                    headers={},
+                )
+            )
+        finally:
+            cc.get_context_length = orig_ctx
+            cc.llm_call_async = orig_call
+            cc.resolve_endpoint = orig_resolve
+
+        assert compacted_messages == messages
+        assert context_length == 500
+        assert was_compacted is False
+        assert [m["content"] for m in compacted_messages if m["role"] != "system"] == [
+            "OLDER-1",
+            "OLDER-2",
+            "OLDER-3",
+            "RECENT-1",
+            "RECENT-2",
+            "RECENT-3",
+        ]

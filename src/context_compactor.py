@@ -339,7 +339,7 @@ async def maybe_compact(
         )
     except Exception as e:
         logger.error(f"Compaction summary failed: {e}")
-        return system_msgs + recent, context_length, False
+        return messages, context_length, False
 
     summary_msg = {
         "role": "system",
