@@ -6,57 +6,18 @@ So importing your own backup silently drops any skill whose title (or id)
 collides with ANOTHER user's skill — the same cross-tenant data-loss bug
 that was already fixed for memories in the block just above.
 """
-import sys
-import types
-
 import pytest
 
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
+import routes.backup_routes as backup_routes
+from routes.backup_routes import setup_backup_routes
 
-# Modules we temporarily override so importing routes.backup_routes binds our
-# light stubs instead of the real (heavy / auth-coupled) implementations.
-_STUBBED = ("core", "core.middleware", "src", "src.auth_helpers", "src.settings")
-
-
-def _install_stubs():
-    # Save whatever is in sys.modules now so we can put it back. backup_routes
-    # uses `from x import name`, so once it is imported it keeps its own bound
-    # references and no longer needs these entries. Leaving stub `src` / `core`
-    # modules in sys.modules would make them non-packages and break collection
-    # of every later test module that imports a real src.*/core.* submodule.
-    saved = {name: sys.modules.get(name) for name in _STUBBED}
-
-    def _stub(name, **attrs):
-        m = types.ModuleType(name)
-        for k, v in attrs.items():
-            setattr(m, k, v)
-        sys.modules[name] = m
-        return m
-
-    _stub("core")
-    _stub("core.middleware", require_admin=lambda *a, **k: None)
-    _stub("src")
-    _stub("src.auth_helpers", get_current_user=lambda req: getattr(req.state, "user", None))
-    _stub("src.settings",
-          load_settings=lambda: {}, save_settings=lambda s: None,
-          load_features=lambda: {}, save_features=lambda f: None)
-    return saved
-
-
-def _restore_stubs(saved):
-    for name, mod in saved.items():
-        if mod is None:
-            sys.modules.pop(name, None)
-        else:
-            sys.modules[name] = mod
-
-
-_saved = _install_stubs()
-try:
-    from fastapi import FastAPI, Request  # noqa: E402
-    from fastapi.testclient import TestClient  # noqa: E402
-    from routes.backup_routes import setup_backup_routes  # noqa: E402
-finally:
-    _restore_stubs(_saved)
+# require_admin / get_current_user are bound into routes.backup_routes at import
+# time (`from x import name`). We patch them on that module directly per-test
+# via monkeypatch — robust to import order and reverted at teardown. (Stubbing
+# them through sys.modules only works if backup_routes has not been imported
+# yet, which is not guaranteed in a full-suite run.)
 
 
 class FakeMemoryManager:
@@ -98,7 +59,11 @@ class FakeSkillsManager:
         self.rows = list(rows)
 
 
-def _make_client(skills_mgr):
+def _make_client(skills_mgr, monkeypatch):
+    # Bypass the admin gate and read the importer straight off request.state.
+    monkeypatch.setattr(backup_routes, "require_admin", lambda *a, **k: None)
+    monkeypatch.setattr(backup_routes, "get_current_user",
+                        lambda req: getattr(req.state, "user", None))
     app = FastAPI()
 
     @app.middleware("http")
@@ -111,12 +76,12 @@ def _make_client(skills_mgr):
     return TestClient(app)
 
 
-def test_import_skill_not_dropped_by_other_users_title_collision():
+def test_import_skill_not_dropped_by_other_users_title_collision(monkeypatch):
     # Bob already owns a skill titled "Deploy". Alice (the importer) has none.
     skills_mgr = FakeSkillsManager([
         {"id": "bob-1", "title": "Deploy", "name": "Deploy", "owner": "bob"},
     ])
-    client = _make_client(skills_mgr)
+    client = _make_client(skills_mgr, monkeypatch)
 
     # Alice imports HER OWN backup containing a skill also titled "Deploy".
     payload = {
