@@ -1489,6 +1489,8 @@ export async function loadSessions() {
 }
 
 export async function selectSession(id, { keepSidebar = false } = {}) {
+  // Guard: entity-link anchors (#document-x, #note-x, etc.) are not session IDs
+  if (/^(document|note|image|email|event|task|skill|research)-/.test(id)) return;
   // Exit compare mode cleanly if active
   if (window.compareModule && window.compareModule.isActive()) {
     window.compareModule.deactivate(true);
@@ -2002,6 +2004,7 @@ export function initDragSort() {
 // Hash-based routing: navigate between sessions with browser back/forward
 window.addEventListener('hashchange', () => {
   const hashId = window.location.hash.replace('#', '');
+  if (/^(document|note|image|email|event|task|skill|research)-/.test(hashId)) return;
   if (hashId && hashId !== currentSessionId) {
     const target = sessions.find(s => s.id === hashId && !s.archived);
     if (target) selectSession(hashId);
