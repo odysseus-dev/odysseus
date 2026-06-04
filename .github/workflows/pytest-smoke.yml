@@ -1,0 +1,68 @@
+name: ci / pytest smoke
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pytest-smoke-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    name: Pytest smoke (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run pytest
+        id: pytest
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python -m pytest -q 2>&1 | tee pytest-output.txt
+
+      - name: Publish advisory result
+        if: always()
+        run: |
+          {
+            if [ "${{ steps.pytest.outcome }}" = "success" ]; then
+              echo "### Pytest smoke: passed"
+            else
+              echo "### Pytest smoke: failed (advisory)"
+            fi
+            echo
+            echo "This workflow is intentionally non-blocking while the full test suite is stabilized."
+            echo
+            echo '```text'
+            if [ -f pytest-output.txt ]; then
+              tail -n 120 pytest-output.txt
+            else
+              echo "pytest did not produce an output log."
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
