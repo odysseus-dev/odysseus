@@ -32,6 +32,76 @@ logger = logging.getLogger(__name__)
 # Helpers
 # ---------------------------------------------------------------------------
 
+_REPORT_ALLOWED_TAGS = {
+    "a", "abbr", "b", "blockquote", "br", "code", "del", "details", "div",
+    "em", "figcaption", "figure", "h1", "h2", "h3", "h4", "h5", "h6", "hr",
+    "i", "img", "kbd", "li", "ol", "p", "pre", "s", "span", "strong",
+    "sub", "summary", "sup", "table", "tbody", "td", "th", "thead", "tr",
+    "ul",
+}
+_REPORT_DROP_TAGS = {
+    "base", "button", "canvas", "embed", "form", "iframe", "input", "link",
+    "meta", "object", "script", "select", "source", "style", "svg", "textarea",
+    "video", "audio",
+}
+_REPORT_ALLOWED_ATTRS = {
+    "*": {"class", "id", "title"},
+    "a": {"href", "target", "rel", "title"},
+    "img": {"src", "alt", "title", "loading"},
+    "ol": {"start"},
+    "td": {"colspan", "rowspan", "align"},
+    "th": {"colspan", "rowspan", "align"},
+}
+_SAFE_LINK_SCHEMES = {"http", "https", "mailto", "tel"}
+_SAFE_MEDIA_SCHEMES = {"http", "https"}
+
+
+def _safe_url_attr(value: str, *, media: bool = False) -> bool:
+    """Return True only for URL attributes safe in untrusted report HTML."""
+    if not isinstance(value, str):
+        return False
+    value = html.unescape(value).strip()
+    if not value:
+        return False
+    if value.startswith("#") and not media:
+        return True
+    parsed = urlparse(value)
+    if not parsed.scheme:
+        return False
+    allowed = _SAFE_MEDIA_SCHEMES if media else _SAFE_LINK_SCHEMES
+    return parsed.scheme.lower() in allowed
+
+
+def _sanitize_report_html(report_html: str) -> str:
+    """Allowlist-sanitize LLM-generated visual-report HTML fragments."""
+    soup = BeautifulSoup(report_html or "", "html.parser")
+
+    for element in list(soup.find_all(True)):
+        if element.parent is None:
+            continue
+        name = (element.name or "").lower()
+        if name in _REPORT_DROP_TAGS:
+            element.decompose()
+            continue
+        if name not in _REPORT_ALLOWED_TAGS:
+            element.unwrap()
+            continue
+
+        allowed_attrs = set(_REPORT_ALLOWED_ATTRS.get("*", set()))
+        allowed_attrs.update(_REPORT_ALLOWED_ATTRS.get(name, set()))
+        for attr in list(element.attrs):
+            attr_l = attr.lower()
+            if attr_l.startswith("on") or attr_l == "style" or attr_l not in allowed_attrs:
+                del element.attrs[attr]
+                continue
+            if attr_l == "href" and not _safe_url_attr(element.attrs.get(attr)):
+                del element.attrs[attr]
+                continue
+            if attr_l == "src" and not _safe_url_attr(element.attrs.get(attr), media=True):
+                del element.attrs[attr]
+
+    return str(soup)
+
 def _autolink_urls(md_text: str) -> str:
     """Convert bare URLs to markdown links before processing.
 
@@ -64,7 +134,7 @@ def _md_to_html(md_text: str) -> str:
         r'<a target="_blank" rel="noopener noreferrer" href="\1',
         result,
     )
-    return result
+    return _sanitize_report_html(result)
 
 
 def _extract_headings(md_text: str) -> List[Dict[str, str]]:
