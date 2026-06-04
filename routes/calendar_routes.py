@@ -1200,7 +1200,7 @@ def setup_calendar_routes() -> APIRouter:
         "tomorrow", "next Tuesday", "in 30 minutes" resolve correctly.
         Uses the "utility" endpoint (small / fast model) to keep latency low.
         """
-        _require_user(request)
+        owner = _require_user(request)
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
         from src.text_helpers import strip_think
@@ -1213,9 +1213,9 @@ def setup_calendar_routes() -> APIRouter:
             raise HTTPException(400, "text is required")
         tz_hint = (body.get("tz") or "").strip()
 
-        url, model, headers = resolve_endpoint("utility")
+        url, model, headers = resolve_endpoint("utility", owner=owner)
         if not url:
-            url, model, headers = resolve_endpoint("default")
+            url, model, headers = resolve_endpoint("default", owner=owner)
         if not url or not model:
             return {"ok": False, "error": "No LLM endpoint configured"}
 
