@@ -47,7 +47,7 @@ class _FakeClient:
 
 def _drive(monkeypatch, lines, model="gemini-3.1-pro-preview-customtools"):
     """Run stream_llm against a canned SSE line list; return parsed events."""
-    monkeypatch.setattr(llm_core, "_get_http_client", lambda: _FakeClient(lines))
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda *args, **kwargs: _FakeClient(lines))
     monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
     monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
     monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)

@@ -441,6 +441,19 @@ _PRIVATE_PREFIXES = ("10.", "172.16.", "172.17.", "172.18.", "172.19.",
 _TAILSCALE_RE = re.compile(r"^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.")
 
 
+def _local_request_kwargs(base_url: str) -> Dict[str, Any]:
+    """Bypass environment proxies for local/self-hosted model endpoints.
+
+    Some desktop setups expose system proxy settings to child processes in ways
+    that can cause `httpx` requests for loopback/LAN hosts to be routed through
+    a gateway, yielding spurious 502 responses even though the local server is
+    directly reachable. Keep cloud/API endpoints on the default behaviour.
+    """
+    if _classify_endpoint(base_url) == "local":
+        return {"trust_env": False}
+    return {}
+
+
 def _classify_endpoint(base_url: str) -> str:
     """Return 'local' if the endpoint URL points to a private/local address, else 'api'.
     Includes the Tailscale CGNAT range (100.64.0.0/10) so tailnet-hosted
@@ -469,7 +482,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         if api_key:
             headers["x-api-key"] = api_key
         try:
-            r = httpx.get(url, headers=headers, timeout=timeout)
+            r = httpx.get(url, headers=headers, timeout=timeout, **_local_request_kwargs(base))
             r.raise_for_status()
             data = r.json()
             models = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
@@ -490,7 +503,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     url = build_models_url(base)
     headers = build_headers(api_key, base)
     try:
-        r = httpx.get(url, headers=headers, timeout=timeout)
+        r = httpx.get(url, headers=headers, timeout=timeout, **_local_request_kwargs(base))
         r.raise_for_status()
         data = r.json()
         # OpenAI format: {"data": [{"id": "model-name"}]}
@@ -525,7 +538,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         parsed = urlparse(base)
         if parsed.port == 11434 or "ollama" in (parsed.hostname or "").lower():
             root = base[:-3].rstrip("/") if base.endswith("/v1") else base
-            r = httpx.get(root + "/api/tags", timeout=timeout)
+            r = httpx.get(root + "/api/tags", timeout=timeout, **_local_request_kwargs(base))
             r.raise_for_status()
             data = r.json()
             models = [m.get("name") or m.get("model") for m in (data.get("models") or []) if m.get("name") or m.get("model")]
@@ -569,7 +582,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
     url = base + "/models"
     last_error: Optional[str] = None
     try:
-        r = httpx.get(url, headers=headers, timeout=timeout)
+        r = httpx.get(url, headers=headers, timeout=timeout, **_local_request_kwargs(base))
         if 300 <= r.status_code < 400:
             loc = r.headers.get("location", "")
             if loc.startswith("/login") or "/login" in loc:
@@ -596,7 +609,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
                     break
             for path in ("/api/version", "/api/tags"):
                 try:
-                    r = httpx.get(root + path, timeout=timeout)
+                    r = httpx.get(root + path, timeout=timeout, **_local_request_kwargs(base))
                     if r.status_code < 400:
                         return {"reachable": True, "status_code": r.status_code, "error": None}
                     last_error = f"HTTP {r.status_code}"

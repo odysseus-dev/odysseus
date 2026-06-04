@@ -123,11 +123,35 @@ def _clear_host_dead(url: str) -> None:
 # repeat calls to api.anthropic.com / api.openai.com / openrouter skip the
 # 100-500ms TCP+TLS handshake. Lazy init so we bind to the running event loop.
 _http_client: Optional[httpx.AsyncClient] = None
+_http_client_direct: Optional[httpx.AsyncClient] = None
 _http_limits = httpx.Limits(max_connections=100, max_keepalive_connections=30, keepalive_expiry=30.0)
 
-def _get_http_client() -> httpx.AsyncClient:
-    """Return process-wide AsyncClient. Per-request timeout is passed at call time."""
-    global _http_client
+def _is_local_endpoint_url(url: str) -> bool:
+    try:
+        parsed = urlparse(url or "")
+    except Exception:
+        return False
+    host = (parsed.hostname or "").lower()
+    if host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}:
+        return True
+    if host.startswith(("10.", "192.168.", "172.16.", "172.17.", "172.18.", "172.19.", "172.2", "172.30.", "172.31.")):
+        return True
+    if host.startswith("100."):
+        return True
+    return False
+
+
+def _get_http_client(url: Optional[str] = None) -> httpx.AsyncClient:
+    """Return a shared AsyncClient.
+
+    Local/self-hosted endpoints bypass environment proxies so loopback and LAN
+    requests go directly to the model server instead of any configured gateway.
+    """
+    global _http_client, _http_client_direct
+    if _is_local_endpoint_url(url or ""):
+        if _http_client_direct is None or _http_client_direct.is_closed:
+            _http_client_direct = httpx.AsyncClient(limits=_http_limits, http2=False, trust_env=False)
+        return _http_client_direct
     if _http_client is None or _http_client.is_closed:
         _http_client = httpx.AsyncClient(limits=_http_limits, http2=False)
     return _http_client
@@ -1010,7 +1034,7 @@ async def llm_call_async(
         start = time.time()
         try:
             note_model_activity(target_url, model)
-            client = _get_http_client()
+            client = _get_http_client(target_url)
             r = await client.post(target_url, headers=h, json=payload, timeout=call_timeout)
             duration = time.time() - start
             if not r.is_success:
@@ -1122,7 +1146,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     if provider == "ollama":
         _ollama_tool_calls: List[Dict] = []
         try:
-            client = _get_http_client()
+            client = _get_http_client(target_url)
             async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
                 _clear_host_dead(target_url)
                 if r.status_code != 200:
@@ -1183,7 +1207,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         _anth_block_idx = -1
         _anth_block_type = ""
         try:
-            client = _get_http_client()
+            client = _get_http_client(target_url)
             async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
                 _clear_host_dead(target_url)
                 if r.status_code != 200:
@@ -1298,7 +1322,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         return f'data: {json.dumps({"type": "tool_calls", "calls": calls})}\n\n'
 
     try:
-        client = _get_http_client()
+        client = _get_http_client(target_url)
         async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
             _clear_host_dead(target_url)
             if r.status_code != 200:

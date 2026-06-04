@@ -240,3 +240,47 @@ def test_stream_llm_threads_discovered_num_ctx(monkeypatch):
     assert seen["num_ctx"] == 32768
     assert seen["stream"] is True
     assert out  # we got the SSE error chunk
+
+
+def test_get_http_client_uses_direct_client_for_local_urls(monkeypatch):
+    created = []
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            self.kwargs = kwargs
+            self.is_closed = False
+
+    def fake_async_client(*args, **kwargs):
+        client = _FakeAsyncClient(*args, **kwargs)
+        created.append(client)
+        return client
+
+    monkeypatch.setattr(llm_core.httpx, "AsyncClient", fake_async_client)
+    monkeypatch.setattr(llm_core, "_http_client", None)
+    monkeypatch.setattr(llm_core, "_http_client_direct", None)
+
+    client = llm_core._get_http_client("http://127.0.0.1:11434/v1/chat/completions")
+
+    assert client.kwargs["trust_env"] is False
+
+
+def test_get_http_client_keeps_default_env_for_cloud_urls(monkeypatch):
+    created = []
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            self.kwargs = kwargs
+            self.is_closed = False
+
+    def fake_async_client(*args, **kwargs):
+        client = _FakeAsyncClient(*args, **kwargs)
+        created.append(client)
+        return client
+
+    monkeypatch.setattr(llm_core.httpx, "AsyncClient", fake_async_client)
+    monkeypatch.setattr(llm_core, "_http_client", None)
+    monkeypatch.setattr(llm_core, "_http_client_direct", None)
+
+    client = llm_core._get_http_client("https://api.openai.com/v1/chat/completions")
+
+    assert "trust_env" not in client.kwargs

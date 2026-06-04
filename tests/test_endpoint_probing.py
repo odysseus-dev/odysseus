@@ -98,7 +98,7 @@ class TestProbeEndpointParsing:
         _patch_resolve(monkeypatch)
         seen = []
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, **kwargs):
             seen.append(url)
             if url.endswith("/api/tags"):
                 return _resp(200, json={"models": [{"name": "llama3:8b"}]})
@@ -146,7 +146,7 @@ class TestPingEndpoint:
     def test_detects_odysseus_login_redirect(self, monkeypatch):
         _patch_resolve(monkeypatch)
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, **kwargs):
             return _resp(302, headers={"location": "/login?next=/"})
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
@@ -181,7 +181,7 @@ class TestPingEndpoint:
     def test_ollama_native_version_fallback(self, monkeypatch):
         _patch_resolve(monkeypatch)
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, **kwargs):
             if url.endswith("/api/version"):
                 return _resp(200)
             # The OpenAI-compatible /v1/models surface is down on this build.
@@ -191,6 +191,19 @@ class TestPingEndpoint:
         assert _ping_endpoint("http://localhost:11434/v1") == {
             "reachable": True, "status_code": 200, "error": None,
         }
+
+    def test_local_endpoint_probes_disable_env_proxy(self, monkeypatch):
+        _patch_resolve(monkeypatch)
+        seen = {}
+
+        def fake_get(url, headers=None, timeout=None, **kwargs):
+            seen[url] = kwargs
+            return _resp(200, json={"data": [{"id": "local-model"}]}, url=url)
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+
+        assert _probe_endpoint("http://127.0.0.1:11434/v1") == ["local-model"]
+        assert seen["http://127.0.0.1:11434/v1/models"]["trust_env"] is False
 
 
 # ── Docker loopback rewrite ──
