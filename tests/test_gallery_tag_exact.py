@@ -53,7 +53,13 @@ def _seed(*tagsets):
 def test_exact_tag_match_excludes_substring_tags(library):
     import asyncio
     _seed("cat", "category", "scatter", "cat, dog", "Cat")
-    res = asyncio.run(library(request=None, tag="cat"))
+    # Pass every query param explicitly: called directly (not through FastAPI),
+    # the Query(...) defaults are sentinel objects, not their values, and would
+    # otherwise reach the SQL query as unbound Query instances.
+    res = asyncio.run(library(
+        request=None, search=None, tag="cat", model=None, album=None,
+        favorites=False, sort="recent", seed=None, offset=0, limit=100,
+    ))
     got = {tuple(sorted(it["tags"].lower().replace(" ", "").split(","))) for it in res["items"]}
     # rows whose tag set contains exactly "cat": "cat", "cat,dog", "Cat"
     assert ("cat",) in got
