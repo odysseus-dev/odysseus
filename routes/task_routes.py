@@ -917,6 +917,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         import json as _json, re as _re
         from datetime import datetime as _dt
 
+        user = _owner(request)
         body = await request.json()
         desc = (body.get("description") or "").strip()
         if not desc:
@@ -947,9 +948,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             "use cron '0 H * * 1-5'. Keep the prompt actionable and self-contained."
         )
         try:
-            url, model, headers = resolve_endpoint("utility")
+            url, model, headers = resolve_endpoint("utility", owner=user)
             if not url:
-                url, model, headers = resolve_endpoint("default")
+                url, model, headers = resolve_endpoint("default", owner=user)
             if not (url and model):
                 return {"success": False, "message": "No model endpoint configured"}
             raw = await llm_call_async(
