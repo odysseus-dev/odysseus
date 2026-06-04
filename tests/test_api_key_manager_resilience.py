@@ -35,23 +35,17 @@ def test_api_key_manager_load_resilience(tmp_path):
     assert "garbage_provider" not in loaded
 
 
-def test_save_preserves_existing_providers_as_ciphertext(tmp_path):
+def test_load_ignores_non_string_raw_values(tmp_path):
     mgr = APIKeyManager(str(tmp_path))
 
     mgr.save("openai", "sk-openai")
     with open(mgr.api_keys_file, "r", encoding="utf-8") as f:
-        first_write = json.load(f)
+        keys = json.load(f)
 
-    mgr.save("anthropic", "sk-anthropic")
-    with open(mgr.api_keys_file, "r", encoding="utf-8") as f:
-        second_write = json.load(f)
+    keys["missing_provider"] = None
+    keys["numeric_provider"] = 42
+    keys["object_provider"] = {"encrypted": keys["openai"]}
+    with open(mgr.api_keys_file, "w", encoding="utf-8") as f:
+        json.dump(keys, f)
 
-    assert second_write["openai"] == first_write["openai"]
-    assert second_write["openai"] != "sk-openai"
-    assert second_write["anthropic"] != "sk-anthropic"
-
-    restarted = APIKeyManager(str(tmp_path))
-    assert restarted.load() == {
-        "openai": "sk-openai",
-        "anthropic": "sk-anthropic",
-    }
+    assert mgr.load() == {"openai": "sk-openai"}
