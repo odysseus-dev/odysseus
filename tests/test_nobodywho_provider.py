@@ -702,6 +702,18 @@ def test_resolve_n_ctx_respects_small_trained_max(tmp_path, monkeypatch):
     assert mgr.resolve_n_ctx(mgr.resolve_source("Tiny-2k")) == 2048
 
 
+def test_reset_import_cache_clears_failure_immediately(monkeypatch):
+    """The Cookbook install endpoint resets the cache on success so the very
+    next probe sees the package without waiting out the retry TTL."""
+    import sys as _sys
+
+    mgr = _unavailable_manager()
+    monkeypatch.setitem(_sys.modules, "nobodywho", _FakeNobodyWho())
+    assert not mgr.is_available()  # failure still cached
+    mgr.reset_import_cache()
+    assert mgr.is_available()  # retried right away
+
+
 def test_failed_import_is_retried_after_ttl(monkeypatch):
     """Cookbook's Dependencies tab can pip-install nobodywho into the running
     interpreter; a permanent negative import cache would keep the endpoint

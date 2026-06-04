@@ -316,6 +316,46 @@ document.addEventListener('odysseus:models-changed', () => {
   setTimeout(() => loadEndpoints().catch(() => {}), 5000);
 });
 
+// Render the "NobodyWho is not installed" hint with a working install offer:
+// one click runs the same allowlisted pip install Cookbook's Dependencies tab
+// uses, then re-tests the endpoint. Text is escaped before the button is added.
+function _nobodywhoInstallHint(text) {
+  return `${esc(String(text))} <button type="button" class="admin-btn-sm adm-install-nobodywho" style="margin-left:6px;">Install now</button>`;
+}
+
+function _isNobodywhoInstallHint(text) {
+  return /pip install nobodywho/i.test(String(text || ''));
+}
+
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.adm-install-nobodywho');
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = 'Installing… (can take a minute)';
+  try {
+    const res = await fetch('/api/cookbook/packages/install', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pip: 'nobodywho' }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (res.ok && d.ok) {
+      btn.textContent = 'Installed ✓';
+      await loadEndpoints();
+      // If the local URL field still points at NobodyWho, re-run Test so the
+      // user sees the endpoint go green without doing anything else.
+      const input = el('adm-epLocalUrl');
+      if (input && /^nobodywho/i.test(input.value || '')) el('adm-epLocalTestBtn')?.click();
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Install failed — see Cookbook → Dependencies';
+    }
+  } catch (_) {
+    btn.disabled = false;
+    btn.textContent = 'Install failed — see Cookbook → Dependencies';
+  }
+});
+
 // One delegated handler for every place the hint renders (test result, add
 // toasts, endpoint rows — rows re-render on refresh, so per-render binding
 // would leak or miss). Closes Settings, then opens Cookbook the same way
@@ -464,6 +504,7 @@ async function loadEndpoints() {
           </div>
           <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${ep.has_key ? ' (key set)' : ''}</div>
           ${ep.status === 'empty' && ep.ping_error ? `<div class="admin-ep-detail" style="opacity:0.75;">${_emptyHintHtml(ep.ping_error)}</div>` : ''}
+          ${!ep.online && _isNobodywhoInstallHint(ep.ping_error) ? `<div class="admin-ep-detail" style="opacity:0.75;">${_nobodywhoInstallHint(ep.ping_error)}</div>` : ''}
           ${hasModels ? `<div class="mcp-tools-panel hidden" data-adm-ep-models-panel="${ep.id}"></div>` : ''}
         </div>`;
     });
@@ -837,7 +878,12 @@ function initEndpointForm() {
       msg.className = 'admin-success';
       return;
     }
-    msg.textContent = (d && d.detail) || (d && d.ping_error ? `Offline — ${d.ping_error}` : 'Offline');
+    const offlineText = (d && d.detail) || (d && d.ping_error) || '';
+    if (_isNobodywhoInstallHint(offlineText)) {
+      msg.innerHTML = _nobodywhoInstallHint(offlineText);
+    } else {
+      msg.textContent = offlineText ? `Offline — ${offlineText}` : 'Offline';
+    }
     msg.className = 'admin-error';
   }
 
@@ -1008,6 +1054,8 @@ function initEndpointForm() {
           const count = (d.models || []).length;
           if (d.status === 'empty') {
             msg.innerHTML = 'Added — ' + (d.ping_error ? _emptyHintHtml(d.ping_error) : 'Ollama is running, no models pulled yet');
+          } else if (!d.online && _isNobodywhoInstallHint(d.ping_error)) {
+            msg.innerHTML = 'Added — ' + _nobodywhoInstallHint(d.ping_error);
           } else {
             msg.textContent = d.online
               ? `Added — found ${count} model${count !== 1 ? 's' : ''}`

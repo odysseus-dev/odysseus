@@ -46,7 +46,7 @@ CANONICAL_URL = "nobodywho:local"
 
 INSTALL_HINT = (
     "NobodyWho is not installed. Install it with: pip install nobodywho "
-    "(see requirements-optional.txt), then restart Odysseus."
+    "(see requirements-optional.txt)."
 )
 
 # Shown when the endpoint is healthy but no GGUF files were found — phrased as
@@ -313,6 +313,13 @@ class NobodyWhoManager:
             self._import_error = f"{INSTALL_HINT} ({type(e).__name__}: {e})"
             self._import_failed_at = time.time()
             raise NobodyWhoUnavailable(self._import_error)
+
+    def reset_import_cache(self) -> None:
+        """Forget a cached import failure immediately (e.g. right after the
+        Cookbook install endpoint pip-installed the package) so the very next
+        probe sees it without waiting out the retry TTL."""
+        self._import_error = None
+        self._import_failed_at = 0.0
 
     def is_available(self) -> bool:
         try:

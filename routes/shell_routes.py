@@ -1057,6 +1057,15 @@ def setup_shell_routes() -> APIRouter:
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode == 0:
+            if pip_name == "nobodywho":
+                # Make the install visible immediately: the provider caches
+                # import failures briefly, and the user is usually staring at
+                # the endpoint Test button right now.
+                try:
+                    from src.nobodywho_provider import manager as _nbw_manager
+                    _nbw_manager.reset_import_cache()
+                except Exception:
+                    pass
             return {"ok": True, "output": stdout.decode()[-200:]}
         return {"ok": False, "error": stderr.decode()[-300:]}
 
