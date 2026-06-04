@@ -170,6 +170,7 @@ class ChatProcessor:
         agent_mode: bool = False,
         incognito: bool = False,
         use_skills: bool = True,
+        project_instructions: Optional[str] = None,
     ) -> Tuple[List[Dict[str, str]], List[Dict[str, Any]], List[Dict[str, str]]]:
         """Build the context preface for LLM calls.
 
@@ -184,6 +185,12 @@ class ChatProcessor:
             preface.append({
                 "role": "system",
                 "content": preset_system_prompt
+            })
+        # Add project instructions if provided
+        if project_instructions:
+            preface.append({
+                "role": "system",
+                "content": project_instructions
             })
         preface.append({
             "role": "system",
