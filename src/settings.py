@@ -205,10 +205,10 @@ def save_settings(settings: dict):
             if 0.0 < ram < 16.0:
                 logger.warning(
                     f"[Hardware Warning] Available system memory ({ram:.1f} GB) is not optimal "
-                    f"for the 'full' tool context profile. Running extensive tool prompts on "
-                    f"low-RAM systems can cause memory pressure and slow execution. "
-                    f"We politely recommend sticking to the 'auto' profile to ensure "
-                    f"adaptive resource management."
+                    f"for CPU-bound local LLM setups running the 'full' tool context profile. Running extensive "
+                    f"tool prompts on low-RAM systems with local models can cause memory pressure "
+                    f"and slow execution if CPU-offloaded. We politely recommend sticking to the 'auto' profile "
+                    f"to ensure adaptive resource management."
                 )
         except Exception:
             pass

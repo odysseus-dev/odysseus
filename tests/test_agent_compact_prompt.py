@@ -14,23 +14,33 @@ from src.settings import save_settings, get_setting
 
 
 def test_make_compact_section_pruning():
-    """Verify that _make_compact_section preserves code blocks and crops text to the first sentence."""
+    """Verify that _make_compact_section preserves description text and guidelines while stripping code blocks and lists."""
     verbose_text = """\
 ```test_tool
 <argument>
 ```
-This is a test description. It contains multiple sentences.
-We want only the first sentence to survive this compaction.
+This is a test description. It contains multiple sentences of guidelines.
+
 Here is an example code snippet:
 ```
 example usage
-```"""
+```
+- Endpoint: /api/test/list
+- Endpoint: /api/test/create
+- Endpoint: /api/test/delete
+"""
     compact = _make_compact_section("test_tool", verbose_text)
     assert "```test_tool" in compact
     assert "<argument>" in compact
     assert "This is a test description." in compact
-    assert "It contains multiple" not in compact
+    assert "It contains multiple sentences" in compact
     assert "example usage" not in compact
+    assert "/api/test" not in compact
+    assert "Here is an example" not in compact
+
+    # Verify one-liner bullet point preservation
+    one_liner = "- ```some_tool``` — A one line tool description."
+    assert _make_compact_section("some_tool", one_liner) == one_liner
 
 
 def test_detect_system_ram_gb():
@@ -96,3 +106,61 @@ def test_save_settings_warns_low_ram_full_mode(tmp_path, monkeypatch, caplog):
     
     # Clean up mocked modules to avoid side-effects in other tests
     sys.modules.pop("services.hwfit.hardware", None)
+
+
+class InterceptedArgs(Exception):
+    def __init__(self, compact_descriptions):
+        self.compact_descriptions = compact_descriptions
+
+
+@pytest.mark.asyncio
+async def test_stream_agent_loop_auto_profile_resolution(monkeypatch):
+    from src.agent_loop import stream_agent_loop
+    
+    # Mock _build_system_prompt to intercept the compact_descriptions flag
+    def mock_build_system_prompt(*args, **kwargs):
+        raise InterceptedArgs(kwargs.get("compact_descriptions", False))
+        
+    monkeypatch.setattr("src.agent_loop._build_system_prompt", mock_build_system_prompt)
+    monkeypatch.setattr("src.agent_loop.get_setting", lambda key, default=None: "auto")
+
+    # Helper function to run the test case
+    async def run_case(endpoint_url, model, ram, context_len):
+        monkeypatch.setattr("src.agent_loop._detect_system_ram_gb", lambda: ram)
+        # Mock get_context_length
+        monkeypatch.setattr("src.model_context.get_context_length", lambda url, mdl: context_len)
+        
+        gen = stream_agent_loop(
+            endpoint_url=endpoint_url,
+            model=model,
+            messages=[{"role": "user", "content": "hello"}],
+        )
+        try:
+            await gen.__anext__()
+        except InterceptedArgs as e:
+            return e.compact_descriptions
+        except Exception as e:
+            pytest.fail(f"Unexpected exception: {e}")
+        finally:
+            await gen.aclose()
+
+    # Case 1: Cloud endpoint (api.anthropic.com) with low RAM (8GB) and large context (200k)
+    # Result should be False (no compaction)
+    compact_1 = await run_case("https://api.anthropic.com/v1", "claude-3-5-sonnet", 8.0, 200000)
+    assert compact_1 is False
+
+    # Case 2: Local endpoint (localhost) with low RAM (8GB) and large context (128k)
+    # Result should be False (no compaction based on local or system RAM)
+    compact_2 = await run_case("http://localhost:11434/v1", "llama3", 8.0, 128000)
+    assert compact_2 is False
+
+    # Case 3: Local endpoint (localhost) with high RAM (32GB) and large context (128k)
+    # Result should be False (no compaction because context is large)
+    compact_3 = await run_case("http://localhost:11434/v1", "llama3", 32.0, 128000)
+    assert compact_3 is False
+
+    # Case 4: Cloud endpoint (api.anthropic.com) with high RAM (32GB) but small context (8k)
+    # Result should be True (compaction due to small context window)
+    compact_4 = await run_case("https://api.openai.com/v1", "gpt-3.5-turbo", 32.0, 8192)
+    assert compact_4 is True
+

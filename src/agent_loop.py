@@ -379,49 +379,71 @@ def get_builtin_overrides() -> dict:
 
 
 def _make_compact_section(name: str, text: str) -> str:
-    """Strip detailed guidelines and examples from tool documentation to save context tokens."""
-    lines = text.split("\n")
-    result_lines = []
+    """Strip verbose example blocks and reference lists from tool documentation,
+    while preserving functional schemas/argument structures and critical guidelines."""
+    text_stripped = text.strip()
+    # One-liner tools starting with bullet points should be returned as-is
+    if text_stripped.startswith("-"):
+        return text
+
+    # Split by ``` to extract code blocks
+    parts = text.split("```")
+    if len(parts) < 3:
+        return text
+
+    # First code block (schema)
+    schema_block = "```" + parts[1] + "```"
     
-    # 1. Gather the first code block
-    in_code_block = False
-    code_block_captured = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            if not code_block_captured:
-                result_lines.append(line)
-                if in_code_block:
-                    code_block_captured = True
-                in_code_block = not in_code_block
-        elif in_code_block:
-            result_lines.append(line)
+    # We construct the description text by joining all even parts (except parts[0] if it's just whitespace)
+    # and discarding all odd parts >= 3 (secondary code blocks)
+    desc_parts = []
+    if parts[0].strip():
+        desc_parts.append(parts[0])
+    for idx in range(2, len(parts), 2):
+        desc_parts.append(parts[idx])
+        
+    desc_text = "".join(desc_parts)
+    raw_paragraphs = desc_text.split("\n\n")
+    kept_paragraphs = []
+    
+    i = 0
+    while i < len(raw_paragraphs):
+        p = raw_paragraphs[i].strip()
+        if not p:
+            i += 1
+            continue
             
-    # 2. Extract first description sentence
-    in_code_block = False
-    code_block_captured = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            if not code_block_captured:
-                if in_code_block:
-                    code_block_captured = True
-                in_code_block = not in_code_block
+        p_lower = p.lower()
+        if p_lower.startswith("example:") or p_lower.startswith("example usage:") or p_lower.startswith("here is an example"):
+            i += 1
             continue
-        if in_code_block:
+            
+        # Detect bulleted list of endpoints/paths
+        lines_in_p = [line.strip() for line in p.split("\n") if line.strip()]
+        bullet_lines = [line for line in lines_in_p if line.startswith("-")]
+        if len(bullet_lines) >= 3 and any("/api" in line for line in bullet_lines):
+            i += 1
             continue
-        if stripped and re.match(r'^[A-Za-z]', stripped):
-            if any(stripped.startswith(w) for w in ["Or ", "Example:", "For ", "SANDBOX "]):
-                continue
-            sentences = re.split(r'\.\s+', stripped)
-            if sentences:
-                desc_summary = sentences[0]
-                if not desc_summary.endswith("."):
-                    desc_summary += "."
-                result_lines.append(desc_summary)
-                break
-                
-    return "\n".join(result_lines)
+            
+        if p.endswith(":") or p.endswith(":\n"):
+            next_idx = i + 1
+            while next_idx < len(raw_paragraphs) and not raw_paragraphs[next_idx].strip():
+                next_idx += 1
+            is_next_code_block = next_idx < len(raw_paragraphs) and raw_paragraphs[next_idx].strip().startswith("```")
+            
+            if is_next_code_block or len(p) < 60:
+                if len(p) < 60:
+                    i += 1
+                    continue
+            p = re.sub(r'[\s,;.-]*\b(example|usage|snippet)s?:?\s*$', '', p, flags=re.IGNORECASE).strip()
+                    
+        kept_paragraphs.append(p)
+        i += 1
+        
+    result = schema_block
+    if kept_paragraphs:
+        result += "\n\n" + "\n\n".join(kept_paragraphs)
+    return result
 
 
 def _detect_system_ram_gb() -> float:
@@ -1487,19 +1509,34 @@ async def stream_agent_loop(
         is_local = False
         if endpoint_url:
             is_local = any(h in endpoint_url for h in ("localhost", "127.0.0.1", "host.docker.internal"))
-        if is_local or is_low_ram:
+        
+        # Check context length of the model to auto-compact for smaller windows
+        try:
+            from src.model_context import get_context_length
+            context_len = get_context_length(endpoint_url or "", model or "")
+        except Exception:
+            context_len = 128000
+        is_small_context = context_len <= 16384
+
+        # Relegate to compact mode if the model's context window is small (<= 16k tokens)
+        # to prevent context exhaustion.
+        if is_small_context:
             compact_descriptions = True
             compact_always_available = True
             distance_threshold = 0.5
             retrieval_k = 4
     elif profile == "full":
-        if is_low_ram:
+        # Check context length of the model to warn about potential exhaustion
+        try:
+            from src.model_context import get_context_length
+            context_len = get_context_length(endpoint_url or "", model or "")
+        except Exception:
+            context_len = 128000
+        if context_len <= 16384:
             logger.warning(
-                "[Hardware Constraint] Running 'full' tool prompt profile on a low-RAM system (%s GB). "
-                "This may lead to memory constraints or context window exhaustion. "
-                "For optimal local-first performance, we recommend setting 'agent_prompt_profile' to 'auto' "
-                "in your settings to enable dynamic context compaction.",
-                round(detected_ram, 1)
+                f"[Context Constraint] Running 'full' tool prompt profile on a model with a small context window ({context_len} tokens). "
+                f"This may lead to context window exhaustion. "
+                f"We recommend setting 'agent_prompt_profile' to 'auto' in your settings to enable adaptive resource management."
             )
 
     if _relevant_tools:
