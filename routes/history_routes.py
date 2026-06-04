@@ -527,6 +527,8 @@ def setup_history_routes(session_manager) -> APIRouter:
         except KeyError:
             raise HTTPException(404, "Session not found")
         _reject_compact_during_active_run(session_id)
+        from src.auth_helpers import effective_user
+        owner = getattr(session, "owner", None) or effective_user(request)
 
         try:
             from src.model_context import estimate_tokens, get_context_length
@@ -555,7 +557,7 @@ def setup_history_routes(session_manager) -> APIRouter:
             )
 
             # Use utility model if available
-            util_url, util_model, util_headers = resolve_endpoint("utility")
+            util_url, util_model, util_headers = resolve_endpoint("utility", owner=owner)
             compact_url = util_url or session.endpoint_url
             compact_model = util_model or session.model
             compact_headers = util_headers if util_url else session.headers
