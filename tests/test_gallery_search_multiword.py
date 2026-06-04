@@ -51,7 +51,13 @@ def _seed(*prompts):
 
 
 async def _call(library, **kw):
-    return await library(request=None, **kw)
+    # Fill every Query-defaulted param explicitly. Called directly (not through
+    # FastAPI) the unset params would otherwise stay as Query sentinel objects,
+    # and `if tag:` on a sentinel is truthy so tag.split(",") crashes.
+    params = dict(search=None, tag=None, model=None, album=None,
+                  favorites=False, sort="recent", seed=None, offset=0, limit=24)
+    params.update(kw)
+    return await library(request=None, **params)
 
 
 def test_multiword_search_matches_out_of_order(library):
