@@ -15,14 +15,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _load_db():
-    core_pkg = sys.modules.get("core") or types.ModuleType("core")
-    core_pkg.__path__ = [str(ROOT / "core")]
-    sys.modules["core"] = core_pkg
+def _load_db(monkeypatch):
+    # Use monkeypatch.setitem so sys.modules is restored at teardown. A raw
+    # assignment left this by-path copy of core.database (and a mutated core
+    # __path__) in place and broke every later-collected test that imports the
+    # real module.
+    if "core" not in sys.modules:
+        core_pkg = types.ModuleType("core")
+        core_pkg.__path__ = [str(ROOT / "core")]
+        monkeypatch.setitem(sys.modules, "core", core_pkg)
     path = ROOT / "core" / "database.py"
     spec = importlib.util.spec_from_file_location("core.database", path)
     db = importlib.util.module_from_spec(spec)
-    sys.modules["core.database"] = db
+    monkeypatch.setitem(sys.modules, "core.database", db)
     spec.loader.exec_module(db)
     return db
 
@@ -36,8 +41,8 @@ def _load_cli():
     return mod
 
 
-def test_list_tag_splits_commas_and_searches_ai_tags():
-    db = _load_db()
+def test_list_tag_splits_commas_and_searches_ai_tags(monkeypatch):
+    db = _load_db(monkeypatch)
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
