@@ -275,6 +275,31 @@ def test_resolve_source_paths_and_refs(tmp_path, monkeypatch):
         mgr.resolve_source("")
 
 
+def test_list_models_finds_symlinked_hf_hub_ggufs(tmp_path, monkeypatch):
+    """The HuggingFace cache stores GGUFs as snapshots/<sha>/<name>.gguf
+    symlinks pointing at extensionless blobs/<hash> files. Discovery must
+    judge the visible name (and use realpath only for dedup) — checking the
+    resolved path's extension made every Cookbook download invisible."""
+    monkeypatch.setenv("NOBODYWHO_MODELS_DIR", str(tmp_path / "empty"))
+    hf_home = tmp_path / "hf"
+    monkeypatch.setenv("HF_HOME", str(hf_home))
+
+    repo = hf_home / "hub" / "models--bartowski--Tiny-Coder-GGUF"
+    blob = repo / "blobs" / "abc123def456"
+    blob.parent.mkdir(parents=True)
+    blob.write_bytes(b"GGUF fake")
+    snap = repo / "snapshots" / "8f248fa2"
+    snap.mkdir(parents=True)
+    (snap / "Tiny-Coder-Q4_K_M.gguf").symlink_to(blob)
+    # mmproj symlinks in the same snapshot must still be excluded
+    (snap / "mmproj-Tiny-Coder.gguf").symlink_to(blob)
+
+    mgr = _unavailable_manager()
+    assert mgr.list_models(max_age=0.0) == ["Tiny-Coder-Q4_K_M"]
+    # and the resolved source loads through the symlink path
+    assert mgr.resolve_source("Tiny-Coder-Q4_K_M").endswith("Tiny-Coder-Q4_K_M.gguf")
+
+
 def test_list_models_includes_nobodywho_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("NOBODYWHO_MODELS_DIR", str(tmp_path / "empty"))
     monkeypatch.setenv("HF_HOME", str(tmp_path / "no-hub-here"))

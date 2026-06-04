@@ -232,17 +232,22 @@ class NobodyWhoManager:
         seen = set()
 
         def _add(path: str):
-            try:
-                real = os.path.realpath(path)
-            except Exception:
+            # Judge the VISIBLE name, then resolve. In the HuggingFace cache
+            # the .gguf under snapshots/ is a symlink to an extensionless
+            # blobs/<hash> file — realpath-first made every hub model invisible.
+            base = os.path.basename(path).lower()
+            if not base.endswith(".gguf"):
                 return
-            if real in seen or not real.lower().endswith(".gguf"):
-                return
-            base = os.path.basename(real).lower()
             if any(m in base for m in _NON_CHAT_GGUF_MARKERS):
                 return  # vision projectors etc. — not standalone chat models
+            try:
+                real = os.path.realpath(path)  # dedup key only
+            except Exception:
+                return
+            if real in seen or not os.path.isfile(real):
+                return
             seen.add(real)
-            paths.append(real)
+            paths.append(path)  # keep the symlink path — its stem is the model name
 
         # 1. The Odysseus-managed models directory (user drops GGUFs here).
         models_dir = _models_dir()
@@ -260,11 +265,16 @@ class NobodyWhoManager:
         except Exception as e:
             logger.debug(f"nobodywho.get_cached_models failed: {e}")
 
-        # 3. The HuggingFace hub cache — Cookbook downloads land here.
+        # 3. The HuggingFace hub cache — Cookbook downloads land here. Walk
+        # instead of glob: the files are symlinks and we only want resolved
+        # snapshot trees (blobs/ holds the same data under hash names).
         hub = _hf_hub_dir()
         if os.path.isdir(hub):
-            for p in glob.glob(os.path.join(hub, "models--*", "snapshots", "*", "**", "*.gguf"), recursive=True):
-                _add(p)
+            for root, _dirs, files in os.walk(hub):
+                if f"{os.sep}snapshots" not in root:
+                    continue
+                for fname in files:
+                    _add(os.path.join(root, fname))
 
         # Stable, human-friendly IDs: the file stem; disambiguate duplicates
         # with their parent directory.
