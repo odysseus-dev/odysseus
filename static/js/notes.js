@@ -10,6 +10,7 @@ import { attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 import { applyEdgeDock, clearDockSide } from './modalSnap.js';
+import { nextNotesPaneZIndex } from './notesStacking.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -1187,6 +1188,8 @@ export function openPanel() {
   });
   backdrop.appendChild(pane);
   document.body.appendChild(backdrop);
+  pane.addEventListener('pointerdown', _bringNotesPaneToFront, { capture: true });
+  _bringNotesPaneToFront();
   _wireNotesWindow(pane);
   _restoreNotesSidebarDock(pane);
 
@@ -1568,6 +1571,12 @@ function _ensureNotesChipRegistered() {
     restoreFn: () => { openPanel(); },
     closeFn: () => { _forceCloseNotesPanel(); },
   });
+}
+
+function _bringNotesPaneToFront() {
+  const backdrop = document.getElementById('notes-pane-backdrop');
+  if (!backdrop) return;
+  backdrop.style.zIndex = String(nextNotesPaneZIndex(document));
 }
 
 // `direction === 'down'` (mobile swipe-down) MINIMIZES the panel to a
