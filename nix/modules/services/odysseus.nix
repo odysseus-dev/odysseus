@@ -82,6 +82,41 @@ in
           '';
         };
 
+        searxng = {
+          enable = mkEnableOption "bundled SearXNG metasearch (web search / deep research)";
+          port = mkOption {
+            type = types.port;
+            default = 8888;
+            description = ''
+              Port for the bundled SearXNG instance. Bound to loopback only; the
+              app reaches it via SEARXNG_INSTANCE.
+            '';
+          };
+          secretKey = mkOption {
+            type = types.str;
+            default = "change-me-before-exposing-to-the-network";
+            description = ''
+              SearXNG secret_key (CSRF / session signing). MUST be changed from the
+              default before enabling. Note: this value lands in the world-readable
+              Nix store — for a hardened setup, set it out-of-band instead.
+            '';
+          };
+        };
+
+        extraEnvironmentVariables = mkOption {
+          type = with lib.types; attrsOf str;
+          default = { };
+          example = {
+            SEARXNG_GENERAL_ENGINES = "bing,mojeek";
+            LLM_HOST = "http://10.0.0.5:11434";
+          };
+          description = ''
+            Extra environment variables for the app service. Merged last, so they
+            override the module's own derived values (SEARXNG_INSTANCE, etc.) — the
+            escape hatch for app settings without a dedicated option.
+          '';
+        };
+
         llamaCpp = {
           enable = mkEnableOption "bundling llama.cpp (llama-server) for Cookbook GGUF serving";
           package = mkOption {
@@ -127,6 +162,8 @@ in
         };
       };
 
+      imports = [ ../security/firewall.nix ];
+
       config = mkIf cfg.enable {
         users.users.${cfg.user} = {
           isSystemUser = true;
@@ -136,6 +173,33 @@ in
           description = "Odysseus service user";
         };
         users.groups.${cfg.group} = { };
+
+        assertions = [
+          {
+            assertion =
+              !cfg.searxng.enable || cfg.searxng.secretKey != "change-me-before-exposing-to-the-network";
+            message = "services.odysseus.searxng.secretKey must be changed from its default before enabling SearXNG.";
+          }
+        ];
+
+        # Bundled SearXNG metasearch (web search / deep research). Loopback-only;
+        # the app reaches it via SEARXNG_INSTANCE (set on the app service below).
+        services.searx = mkIf cfg.searxng.enable {
+          enable = true;
+          settings = {
+            server = {
+              port = cfg.searxng.port;
+              bind_address = "127.0.0.1";
+              secret_key = cfg.searxng.secretKey;
+              limiter = false;
+            };
+            # Odysseus queries the JSON API, which SearXNG disables by default.
+            search.formats = [
+              "html"
+              "json"
+            ];
+          };
+        };
 
         # ChromaDB vector database server. The app talks to it over HTTP, so
         # it must be running for RAG / vector memory to work.
@@ -194,7 +258,12 @@ in
             # Connect to the bundled ChromaDB server (odysseus-chroma.service).
             CHROMADB_HOST = "127.0.0.1";
             CHROMADB_PORT = toString cfg.chromaPort;
-          };
+          }
+          // optionalAttrs cfg.searxng.enable {
+            # Connect to the bundled SearXNG instance (services.searx).
+            SEARXNG_INSTANCE = "http://127.0.0.1:${toString cfg.searxng.port}";
+          }
+          // cfg.extraEnvironmentVariables;
 
           preStart =
             let
@@ -308,6 +377,41 @@ in
           '';
         };
 
+        searxng = {
+          enable = mkEnableOption "bundled SearXNG metasearch (web search / deep research)";
+          port = mkOption {
+            type = types.port;
+            default = 8888;
+            description = ''
+              Port for the bundled SearXNG instance. Bound to loopback only; the
+              app reaches it via SEARXNG_INSTANCE.
+            '';
+          };
+          secretKey = mkOption {
+            type = types.str;
+            default = "change-me-before-exposing-to-the-network";
+            description = ''
+              SearXNG secret_key (CSRF / session signing). MUST be changed from the
+              default before enabling. Note: this value lands in the world-readable
+              Nix store — for a hardened setup, set it out-of-band instead.
+            '';
+          };
+        };
+
+        extraEnvironmentVariables = mkOption {
+          type = with lib.types; attrsOf str;
+          default = { };
+          example = {
+            SEARXNG_GENERAL_ENGINES = "bing,mojeek";
+            LLM_HOST = "http://10.0.0.5:11434";
+          };
+          description = ''
+            Extra environment variables for the app service. Merged last, so they
+            override the module's own derived values (SEARXNG_INSTANCE, etc.) — the
+            escape hatch for app settings without a dedicated option.
+          '';
+        };
+
         llamaCpp = {
           enable = mkEnableOption "bundling llama.cpp (llama-server) for Cookbook GGUF serving";
           package = mkOption {
@@ -361,6 +465,47 @@ in
           description = "Odysseus service user";
         };
         users.groups.${cfg.group} = { };
+
+        assertions = [
+          {
+            assertion =
+              !cfg.searxng.enable || cfg.searxng.secretKey != "change-me-before-exposing-to-the-network";
+            message = "services.odysseus.searxng.secretKey must be changed from its default before enabling SearXNG.";
+          }
+        ];
+
+        # Bundled SearXNG metasearch. launchd has no inter-daemon ordering, but
+        # the app reaches it lazily via SEARXNG_INSTANCE.
+        launchd.daemons.odysseus-searxng = mkIf cfg.searxng.enable {
+          command =
+            let
+              settings = pkgs.writeText "searxng-settings.yml" ''
+                use_default_settings: true
+                server:
+                  port: ${toString cfg.searxng.port}
+                  bind_address: "127.0.0.1"
+                  secret_key: "${cfg.searxng.secretKey}"
+                  limiter: false
+                search:
+                  formats:
+                    - html
+                    - json
+              '';
+            in
+            ''
+              #!/bin/sh
+              mkdir -p "${cfg.dataDir}/logs"
+              export SEARXNG_SETTINGS_PATH=${settings}
+              exec ${pkgs.searxng}/bin/searxng-run
+            '';
+
+          serviceConfig = {
+            KeepAlive = true;
+            RunAtLoad = true;
+            StandardOutPath = "${cfg.dataDir}/logs/searxng.out.log";
+            StandardErrorPath = "${cfg.dataDir}/logs/searxng.err.log";
+          };
+        };
 
         # ChromaDB vector database server. The app talks to it over HTTP, so
         # it must be running for RAG / vector memory to work. launchd has no
@@ -446,7 +591,12 @@ in
               # Connect to the bundled ChromaDB server (odysseus-chroma daemon).
               CHROMADB_HOST = "127.0.0.1";
               CHROMADB_PORT = toString cfg.chromaPort;
-            };
+            }
+            // optionalAttrs cfg.searxng.enable {
+              # Connect to the bundled SearXNG daemon (odysseus-searxng).
+              SEARXNG_INSTANCE = "http://127.0.0.1:${toString cfg.searxng.port}";
+            }
+            // cfg.extraEnvironmentVariables;
           };
         };
 
