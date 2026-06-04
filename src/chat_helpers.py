@@ -15,6 +15,18 @@ from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
+CHAT_TEXT_EXTENSIONS = {
+    ".txt", ".md", ".markdown", ".rst", ".csv", ".json", ".jsonl", ".log",
+    ".html", ".htm", ".css", ".xml", ".yml", ".yaml", ".toml", ".ini",
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".sh", ".bash", ".sql",
+    ".c", ".h", ".cpp", ".hpp", ".java", ".go", ".rs", ".php", ".rb",
+}
+CHAT_MEDIA_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".pdf",
+    ".webm", ".wav", ".mp3", ".m4a", ".ogg",
+}
+CHAT_ALLOWED_UPLOAD_EXTENSIONS = CHAT_TEXT_EXTENSIONS | CHAT_MEDIA_EXTENSIONS
+
 
 def extract_urls(text: str) -> List[str]:
     """Extract URLs from text using regex pattern."""
@@ -219,19 +231,15 @@ def validate_file_upload(file: UploadFile) -> UploadFile:
             }
         )
 
-    allowed_extensions = {'.txt', '.py', '.html', '.md', '.json', '.csv', '.js',
-                         '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.pdf',
-                         '.webm', '.wav', '.mp3', '.m4a', '.ogg'}
-
     _, ext = os.path.splitext(file.filename.lower())
 
-    if ext not in allowed_extensions:
+    if ext not in CHAT_ALLOWED_UPLOAD_EXTENSIONS:
         raise HTTPException(
             status_code=400,
             detail={
                 "error": "UNSUPPORTED_FILE_TYPE",
                 "message": f"File type '{ext}' not allowed",
-                "allowed_types": sorted(allowed_extensions)
+                "allowed_types": sorted(CHAT_ALLOWED_UPLOAD_EXTENSIONS)
             }
         )
 

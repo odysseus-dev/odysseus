@@ -15,24 +15,31 @@ logger = logging.getLogger(__name__)
 MAX_INLINE_ATTACHMENT_CHARS = 24000
 MIN_INLINE_ATTACHMENT_SLICE = 500
 
+TEXT_ATTACHMENT_EXTENSIONS = (
+    ".txt", ".md", ".markdown", ".rst", ".csv", ".json", ".jsonl", ".log",
+    ".html", ".htm", ".css", ".xml", ".yml", ".yaml", ".toml", ".ini",
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".sh", ".bash", ".sql",
+    ".c", ".h", ".cpp", ".hpp", ".java", ".go", ".rs", ".php", ".rb",
+)
+
 
 def _is_text_file(path: str) -> bool:
     """Check if file has text extension."""
-    return any(
-        path.lower().endswith(ext)
-        for ext in (".txt", ".py", ".html", ".htm", ".md", ".json", ".csv", ".log", ".js")
-    )
+    return path.lower().endswith(TEXT_ATTACHMENT_EXTENSIONS)
 
 
 def _process_text_file(path: str) -> str:
     """Process text file with enhanced formatting and metadata."""
     language_map = {
         ".py": "python", ".js": "javascript", ".html": "html", ".css": "css",
+        ".htm": "html",
         ".json": "json", ".md": "markdown", ".txt": "text", ".csv": "csv",
-        ".log": "log", ".sh": "bash", ".yml": "yaml", ".yaml": "yaml",
+        ".log": "log", ".sh": "bash", ".bash": "bash", ".yml": "yaml", ".yaml": "yaml",
         ".xml": "xml", ".sql": "sql", ".cpp": "cpp", ".c": "c",
-        ".java": "java", ".go": "go", ".rs": "rust", ".php": "php",
+        ".h": "c", ".hpp": "cpp", ".java": "java", ".go": "go",
+        ".rs": "rust", ".php": "php",
         ".rb": "ruby", ".ts": "typescript", ".jsx": "javascript", ".tsx": "typescript",
+        ".toml": "toml", ".ini": "ini", ".rst": "rst", ".jsonl": "json",
     }
 
     filename = os.path.basename(path)
@@ -91,9 +98,10 @@ def _process_text_file(path: str) -> str:
     header += f"[Type: {language}, Lines: {line_count}, Size: {size_str} bytes]"
 
     code_extensions = {
-        ".py", ".js", ".html", ".css", ".json", ".md", ".sh", ".yml", ".yaml",
+        ".py", ".js", ".html", ".htm", ".css", ".json", ".jsonl", ".md", ".markdown",
+        ".sh", ".bash", ".yml", ".yaml",
         ".xml", ".sql", ".cpp", ".c", ".java", ".go", ".rs", ".php", ".rb",
-        ".ts", ".jsx", ".tsx",
+        ".ts", ".jsx", ".tsx", ".h", ".hpp", ".toml", ".ini", ".rst",
     }
     if ext in code_extensions:
         code_block = f"```{language}\n{content}"
