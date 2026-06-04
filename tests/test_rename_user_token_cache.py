@@ -30,7 +30,6 @@ def rename_endpoint(monkeypatch):
     # Neutralize the DB owner-rename loop (no real DB needed for this test).
     monkeypatch.setattr(cdb, "SessionLocal", lambda: MagicMock())
     monkeypatch.setattr(cdb, "Base", SimpleNamespace(registry=SimpleNamespace(mappers=[])), raising=False)
-    monkeypatch.setattr(ar, "_get_current_user", lambda request: "admin", raising=False)
     # Neutralize the JSON-prefs rename.
     pr = types.ModuleType("routes.prefs_routes")
     pr._load = lambda: {}
@@ -39,6 +38,10 @@ def rename_endpoint(monkeypatch):
 
     am = MagicMock()
     am.is_admin.return_value = True
+    # The real _get_current_user closure resolves the admin via the auth
+    # manager (a module-level monkeypatch can't intercept a closure), so drive
+    # it through the manager instead.
+    am.get_username_for_token.return_value = "admin"
     am.users = {"alice": {}}
     am.rename_user.return_value = True
     return _route(ar.setup_auth_routes(am), "rename_user"), am
@@ -46,6 +49,7 @@ def rename_endpoint(monkeypatch):
 
 def _request(invalidator):
     return SimpleNamespace(
+        cookies={"odysseus_session": "t"},
         app=SimpleNamespace(state=SimpleNamespace(invalidate_token_cache=invalidator)),
         state=SimpleNamespace(current_user="admin"),
     )
@@ -65,7 +69,8 @@ def test_no_invalidator_does_not_crash(rename_endpoint):
     import asyncio
     endpoint, _am = rename_endpoint
     # app.state without the hook (older wiring) must not break rename.
-    req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()),
+    req = SimpleNamespace(cookies={"odysseus_session": "t"},
+                          app=SimpleNamespace(state=SimpleNamespace()),
                           state=SimpleNamespace(current_user="admin"))
     res = asyncio.run(endpoint("alice", SimpleNamespace(username="alice2"), req))
     assert res["ok"] is True
