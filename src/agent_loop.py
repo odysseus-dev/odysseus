@@ -13,6 +13,7 @@ import re
 import time
 import logging
 from typing import AsyncGenerator, List, Dict, Optional, Set
+from urllib.parse import urlparse
 
 from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
 from src.model_context import estimate_tokens
@@ -374,7 +375,8 @@ def get_builtin_overrides() -> dict:
         from src.settings import get_setting
         ov = get_setting("builtin_tool_overrides", {})
         return ov if isinstance(ov, dict) else {}
-    except Exception:
+    except Exception as e:
+        logger.warning('Failed to load builtin tool overrides: %s', e)
         return {}
 
 
@@ -475,6 +477,45 @@ _ADMIN_SCHEMA_NAMES = frozenset([
 ])
 _TOOL_SELECTION_TIMEOUT_SECONDS = 1.5
 
+
+def _is_ollama_openai_compat_url(endpoint_url: str) -> bool:
+    """Return True for local Ollama's OpenAI-compatible /v1 surface.
+
+    Ollama's /v1 endpoint accepts the OpenAI chat shape, but model-level tool
+    streaming is uneven. Some local models terminate after a token when schemas
+    are present. Keep native schemas opt-in via ModelEndpoint.supports_tools.
+    """
+    try:
+        parsed = urlparse(endpoint_url or "")
+    except Exception:
+        return False
+    path = (parsed.path or "").rstrip("/")
+    return parsed.port == 11434 and (path == "/v1" or path.startswith("/v1/"))
+
+
+def _endpoint_lookup_keys(endpoint_url: str) -> List[str]:
+    """Candidate ModelEndpoint.base_url keys for a runtime chat URL."""
+    raw = (endpoint_url or "").strip()
+    keys: List[str] = []
+
+    def add(value: str):
+        value = (value or "").strip()
+        if value and value not in keys:
+            keys.append(value)
+        trimmed = value.rstrip("/")
+        if trimmed and trimmed not in keys:
+            keys.append(trimmed)
+        if trimmed and f"{trimmed}/" not in keys:
+            keys.append(f"{trimmed}/")
+
+    add(raw)
+    try:
+        from src.endpoint_resolver import normalize_base
+        add(normalize_base(raw))
+    except Exception:
+        pass
+    return keys
+
 # Admin tool keywords — if the last user message contains any of these, include admin tools
 _ADMIN_KEYWORDS = [
     "session", "sessions", "chat", "chats", "conversation", "conversations",
@@ -571,8 +612,7 @@ def _build_system_prompt(
         # Skill index is user-editable (name + description), so it must never
         # live in the trusted system role and is NOT cached. Always recompute
         # when the cache hits.
-        from src.agent_loop import _build_base_prompt as _bbp_recompute
-        _, _skill_index_block = _bbp_recompute(
+        _, _skill_index_block = _build_base_prompt(
             disabled_tools, mcp_mgr, needs_admin, relevant_tools,
             mcp_disabled_map=mcp_disabled_map, compact=compact,
         )
@@ -596,28 +636,11 @@ def _build_system_prompt(
 
     set_active_model(model)
 
-    # Current date/time — every request. Models default to their
-    # training-cutoff date when "today" is asked otherwise (was
-    # rendering April 2026 dates as "today" when the actual date is
-    # May 19, 2026). System TZ-local so calendar/email date math
-    # matches what the user sees.
+    # Current date/time for every agent request. This is user-local when the
+    # browser provided timezone headers, with a server-local fallback.
     try:
-        from datetime import datetime as _dt, timezone as _tz
-        _now = _dt.now().astimezone()
-        _utc = _dt.now(_tz.utc)
-        _off = _now.strftime('%z')  # e.g. +0900
-        _off_fmt = (f"{_off[:3]}:{_off[3:]}" if _off else "+00:00")
-        agent_prompt = (
-            f"## Current date and time\n"
-            f"Today is {_now.strftime('%A, %B %-d, %Y')} ({_now.strftime('%Y-%m-%d')}). "
-            f"Local time is {_now.strftime('%-I:%M %p')} ({_now.strftime('%Z')}, UTC{_off_fmt}); "
-            f"current UTC time is {_utc.strftime('%H:%M')}. "
-            f"Use this for any 'today'/'tomorrow'/'this week' reasoning — do NOT "
-            f"infer the date from training data or from event timestamps.\n"
-            f"When scheduling a task (manage_tasks), scheduled_time is in UTC: "
-            f"subtract the offset above from the user's local time "
-            f"(local {_now.strftime('%H:%M')} = {_utc.strftime('%H:%M')} UTC right now).\n\n"
-        ) + agent_prompt
+        from src.user_time import current_datetime_prompt
+        agent_prompt = current_datetime_prompt() + agent_prompt
     except Exception:
         pass
 
@@ -1456,18 +1479,18 @@ async def stream_agent_loop(
     _model_lc = (model or "").lower()
     # Step 1: per-endpoint override (set at registration time from the
     # serve command — `--enable-auto-tool-choice` flips it on. UI can
-    # also toggle per endpoint). NULL = unknown, fall through to the
-    # keyword heuristic + host check.
+    # also toggle per endpoint). NULL = unknown; for local Ollama /v1 we
+    # default to fenced tools, otherwise fall through to keyword + host checks.
     _endpoint_supports: Optional[bool] = None
     try:
         from core.database import SessionLocal as _SL, ModelEndpoint as _ME
         _db = _SL()
         try:
-            _ep = _db.query(_ME).filter(_ME.base_url == endpoint_url).first()
-            if not _ep and endpoint_url:
-                _u = endpoint_url.rstrip("/")
-                _ep = _db.query(_ME).filter(_ME.base_url == _u).first() or \
-                      _db.query(_ME).filter(_ME.base_url == _u + "/").first()
+            _ep = None
+            for _key in _endpoint_lookup_keys(endpoint_url):
+                _ep = _db.query(_ME).filter(_ME.base_url == _key).first()
+                if _ep is not None:
+                    break
             if _ep is not None:
                 _endpoint_supports = _ep.supports_tools
         finally:
@@ -1503,9 +1526,15 @@ async def stream_agent_loop(
     # (via the endpoint settings toggle), treat Ollama-native as text-only so
     # the fenced-block path is used instead of native function calling.
     _is_ollama_native = _is_ollama_native_url(endpoint_url or "")
+    _ollama_openai_compat = _is_ollama_openai_compat_url(endpoint_url or "")
     if _endpoint_supports is True:
         _is_api_model = True
-    elif _endpoint_supports is False or _model_no_tools or _is_ollama_native:
+    elif (
+        _endpoint_supports is False
+        or _model_no_tools
+        or _is_ollama_native
+        or _ollama_openai_compat
+    ):
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools

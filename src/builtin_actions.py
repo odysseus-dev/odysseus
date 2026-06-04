@@ -38,13 +38,16 @@ class TaskDeferred(BaseException):
 
 
 async def action_tidy_sessions(owner: str, **kwargs) -> Tuple[str, bool]:
-    """Delete empty/throwaway sessions for the owner. Pure heuristic —
+    """Delete empty sessions for the owner. Pure heuristic —
     the LLM folder-sort phase is skipped (user opted to keep this task
     LLM-free; sorting can be triggered manually via the Chats UI)."""
     try:
         import asyncio
         from src.session_actions import run_auto_sort
-        result = await asyncio.wait_for(run_auto_sort(owner, skip_llm=True), timeout=60)
+        result = await asyncio.wait_for(
+            run_auto_sort(owner, skip_llm=True, delete_throwaway=False),
+            timeout=60,
+        )
         return result, True
     except asyncio.TimeoutError:
         logger.error("tidy_sessions action timed out")

@@ -1876,11 +1876,12 @@ function _wireAll(body) {
       }
       try {
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+        const tzOffset = -new Date().getTimezoneOffset();
         const res = await fetch(`${API_BASE}/api/calendar/quick-parse`, {
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, tz }),
+          body: JSON.stringify({ text, tz, tz_offset: tzOffset }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.ok) {

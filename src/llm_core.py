@@ -129,7 +129,10 @@ def _get_http_client() -> httpx.AsyncClient:
     """Return process-wide AsyncClient. Per-request timeout is passed at call time."""
     global _http_client
     if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(limits=_http_limits, http2=False)
+        from src.tls_overrides import llm_verify
+        _http_client = httpx.AsyncClient(
+            limits=_http_limits, http2=False, verify=llm_verify(),
+        )
     return _http_client
 
 def _get_cached_response(cache_key: str) -> Optional[str]:
@@ -1395,7 +1398,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                 j = json.loads(data)
                                 # Usage chunk (from stream_options)
                                 _choices = j.get("choices") or []
-                                _delta0 = _choices[0].get("delta") if _choices else None
+                                _delta0 = _choices[0].get("delta") if (_choices and _choices[0] is not None) else None
                                 # Capture usage whenever the chunk carries it and
                                 # the delta has no actual output. Some gateways /
                                 # local servers attach usage to the FINAL delta,
@@ -1409,7 +1412,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                     or _delta0.get("tool_calls")
                                 )
                                 if "usage" in j and not _delta_has_output:
-                                    u = j["usage"]
+                                    u = j["usage"] or {}
                                     _usage_data = {"input_tokens": u.get("prompt_tokens", 0), "output_tokens": u.get("completion_tokens", 0)}
                                     # llama.cpp puts a `timings` block alongside `usage` with the
                                     # TRUE generation speed (predicted_per_second) — pure decode,
@@ -1424,7 +1427,10 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                             _usage_data["prefill_tps"] = round(_tm["prompt_per_second"], 2)
                                     yield f'data: {json.dumps({"type": "usage", "data": _usage_data})}\n\n'
                                 elif "choices" in j:
-                                    delta = j["choices"][0].get("delta") or {}
+                                    _c0 = (j["choices"] or [None])[0]
+                                    if _c0 is None:
+                                        continue
+                                    delta = _c0.get("delta") or {}
                                     if isinstance(delta, dict):
                                         # Text content
                                         # Reasoning tokens (VLLM --reasoning-parser, e.g. Qwen3/DeepSeek-R1, Nemotron). vLLM 0.20.2 / NIM emit the field as `reasoning`; older builds use `reasoning_content`. Accept either.
@@ -1443,6 +1449,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                             yield f'data: {json.dumps({"delta": content})}\n\n'
                                         # Native tool calls — accumulate across chunks
                                         for tc in delta.get("tool_calls") or []:
+                                            if tc is None:
+                                                continue
                                             func = tc.get("function") or {}
                                             raw_idx = tc.get("index")
                                             if raw_idx is None:
