@@ -124,6 +124,43 @@ def _find_existing_event(db, pending, uid_val, calendar_id):
     ).first()
 
 
+def _google_caldav_events_url(url: str) -> str | None:
+    """Map a Google CalDAV *principal* URL to its event-collection URL.
+
+    Google serves the principal at ``.../caldav/v2/<id>/user`` but events live
+    under ``.../caldav/v2/<id>/events`` — the ``/user`` resource holds no
+    VEVENTs. The `caldav` library's principal→home-set discovery does not
+    reliably enumerate calendars from Google's ``/user`` endpoint, so the sync
+    falls into the "treat the URL as a single calendar" fallback below. Pointed
+    at ``/user`` that fallback issues every calendar-query REPORT against the
+    principal, which returns a clean but empty 200 for all date ranges — the
+    calendar shows no events even though auth succeeded (issue #2507).
+
+    Returns the events URL for a recognised Google principal URL, else None so
+    the caller keeps the original URL unchanged.
+    """
+    parts = urlparse(url)
+    host = (parts.hostname or "").lower()
+    if not host.endswith("googleusercontent.com"):
+        return None
+    path = parts.path.rstrip("/")
+    if not path.endswith("/user"):
+        return None
+    new_path = path[: -len("/user")] + "/events"
+    return urlunparse(parts._replace(path=new_path))
+
+
+def _open_url_as_calendar(client, url: str):
+    """Open ``url`` as a single calendar collection.
+
+    Used when principal discovery yields no calendars. Google's principal URL
+    is not an event collection, so map it to the events URL first
+    (see ``_google_caldav_events_url``); other servers' URLs are used as-is.
+    """
+    target = _google_caldav_events_url(url) or url
+    return client.calendar(url=target)
+
+
 def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
     """The actual sync — synchronous, intended to run in a threadpool.
     Returns counts: {calendars, events, deleted, errors}."""
@@ -150,14 +187,14 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
     except Exception as e:
         logger.info(f"CalDAV principal discovery failed, trying URL as calendar: {e}")
         try:
-            calendars = [client.calendar(url=url)]
+            calendars = [_open_url_as_calendar(client, url)]
         except Exception as e2:
             result["errors"].append(f"Could not open URL as calendar: {e2}")
             return result
 
     if not calendars:
         try:
-            calendars = [client.calendar(url=url)]
+            calendars = [_open_url_as_calendar(client, url)]
         except Exception as e:
             result["errors"].append(f"No calendars and URL fallback failed: {e}")
             return result
