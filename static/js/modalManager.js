@@ -938,6 +938,7 @@ function _wireChipDrag(chip, dock) {
           if (tz) {
             const dx = (tz.left + tz.width / 2) - (l.x + l.width / 2);
             const dy = (tz.top + tz.height / 2) - (l.y + l.height / 2);
+            l.chip.classList.add('chip-trashing');
             l.chip.style.transition = 'transform 0.32s cubic-bezier(0.45, 0, 0.25, 1), opacity 0.3s ease-in, left 0.32s cubic-bezier(0.45, 0, 0.25, 1), top 0.32s cubic-bezier(0.45, 0, 0.25, 1)';
             // Whirlpool: spin + shrink so the chip swirls into the X.
             l.chip.style.transform = 'scale(0.15) rotate(720deg)';
@@ -1001,6 +1002,7 @@ function _wireChipDrag(chip, dock) {
         // `!important`, so the close animation needs setProperty(...important)
         // too or the styles don't apply and the chip just snaps.
         const cur = chip.style.transform || 'translate(0,0)';
+        chip.classList.add('chip-trashing');
         chip.style.setProperty('transition', 'transform 0.32s cubic-bezier(0.45, 0, 0.25, 1), opacity 0.3s ease-in', 'important');
         // Whirlpool: spin + shrink as the chip swirls into the X.
         chip.style.setProperty('transform', `${cur} scale(0.15) rotate(720deg)`, 'important');

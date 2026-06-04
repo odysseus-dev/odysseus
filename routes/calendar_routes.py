@@ -13,6 +13,7 @@ from dateutil.rrule import DAILY, WEEKLY, MONTHLY, YEARLY
 
 from core.database import SessionLocal, CalendarCal, CalendarEvent
 from src.auth_helpers import get_current_user, require_user
+from src.upload_limits import read_upload_limited
 
 logger = logging.getLogger(__name__)
 
@@ -598,12 +599,12 @@ def setup_calendar_routes() -> APIRouter:
         cfg["username"] = (body.get("username") or "").strip()
         # Preserve the stored password when the client sends an empty
         # one (edit form re-submitted without re-typing the password).
+        # cfg already holds the existing (already-encrypted) password from
+        # prefs, so we only touch it when a new password is supplied —
+        # re-encrypting the stored value would double-encrypt it.
         if body.get("password"):
             from src.secret_storage import encrypt
             cfg["password"] = encrypt(body["password"])
-        elif cfg.get("password"):
-            from src.secret_storage import encrypt
-            cfg["password"] = encrypt(cfg["password"])
         prefs["caldav"] = cfg
         _save_for_user(owner, prefs)
         return {"ok": True}
@@ -1005,9 +1006,7 @@ def setup_calendar_routes() -> APIRouter:
         owner = _require_user(request)
         db = SessionLocal()
         try:
-            content = await file.read()
-            if len(content) > _ICS_MAX_BYTES:
-                raise HTTPException(413, f"ICS file too large (max {_ICS_MAX_BYTES // (1024*1024)} MB)")
+            content = await read_upload_limited(file, _ICS_MAX_BYTES, "ICS file")
             try:
                 cal_data = iCal.from_ical(content)
             except Exception as e:

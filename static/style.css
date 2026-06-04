@@ -1008,6 +1008,16 @@ body.bg-pattern-sparkles {
       opacity: 1;
       animation: whirlpool-burst 0.36s cubic-bezier(0.4, 0, 0.2, 1) forwards;
     }
+    /* When a chip is swirling into the trash X, its inline `rotate(720deg)`
+       drags every child + ::after badge along with it — the count/dot pill
+       spinning looks chaotic. Fade those out fast at the start of the close
+       so visually only the icon glyph rotates. */
+    .minimized-dock-chip.chip-trashing > :not(svg),
+    .minimized-dock-chip.chip-trashing::after,
+    .minimized-dock-chip.chip-trashing::before {
+      opacity: 0 !important;
+      transition: opacity 0.16s ease-out !important;
+    }
     @keyframes whirlpool-spin { to { transform: rotate(360deg); } }
     @keyframes whirlpool-burst {
       0%   { transform: rotate(0deg) scale(1);   opacity: 1; }
@@ -2204,12 +2214,12 @@ body.bg-pattern-sparkles {
       background: transparent;
       border: none;
       outline: none;
-      resize: vertical;
+      resize: none;
       font-size: 14px;
       line-height: 1.5;
       color: var(--fg);
       min-height: 24px;
-      max-height: min(60vh, 600px);
+      max-height: 200px;
       padding: 0;
       font-family: inherit;
       transition: height 0.12s ease-out;
@@ -10326,7 +10336,7 @@ textarea.memory-add-input {
 }
 .task-state-badge svg {
   position: relative;
-  top: -1px;
+  top: 0;
 }
 .task-status-badge:hover {
   filter: brightness(1.08) saturate(1.15);
@@ -13289,6 +13299,13 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   border-radius: 8px;
   padding: 12px;
   margin-bottom: 10px;
+}
+/* When the integrations editor opens, the inner admin-card should match the
+   listed integration cards (subtle tint, same border) instead of reverting
+   to the solid-panel admin-card surface used elsewhere. */
+#unified-intg-form .admin-card,
+#integrations-form .admin-card {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
 }
 .admin-card h2 {
   font-size: 14px;
@@ -18628,16 +18645,41 @@ body.gallery-selecting .gallery-dl-btn,
   background: color-mix(in srgb, var(--fg) 10%, transparent);
   color: color-mix(in srgb, var(--fg) 60%, transparent);
 }
+/* Rebuild tag — same look as the LLM category tag, sits to its left. */
+.cookbook-dep-rebuild {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: color-mix(in srgb, var(--fg) 75%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fg) 20%, transparent);
+  cursor: pointer;
+  font-family: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+.cookbook-dep-rebuild:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  color: var(--accent, var(--red));
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 45%, transparent);
+}
 .cookbook-dep-installed {
   background: color-mix(in srgb, var(--green, #50fa7b) 18%, transparent);
   color: var(--green, #50fa7b);
   border: 1px solid color-mix(in srgb, var(--green, #50fa7b) 35%, transparent);
+  /* Match the Install button + Installed ▾ split width so all three variants
+     align in a mixed row. */
+  min-width: 75.85px;
+  padding: 0 10px;
+  box-sizing: border-box;
 }
 .cookbook-dep-na {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: color-mix(in srgb, var(--fg) 60%, transparent);
   border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
   cursor: help;
+  /* Match other dep tag widths so N/A rows line up with Install / Installed. */
+  min-width: 75.85px;
+  padding: 0 10px;
+  box-sizing: border-box;
 }
 .cookbook-dep-install {
   background: var(--accent, var(--red));
@@ -18648,11 +18690,29 @@ body.gallery-selecting .gallery-dl-btn,
   font-weight: 500;
   position: relative;
   top: -3px;
+  /* Width matches the measured Installed ▾ split button (75.85px) so a row of
+     mixed Install / Installed deps lines up. */
+  min-width: 75.85px;
+  padding: 0 10px;
   /* Strip the native button box so it's the same height as the sibling tags
      (Firefox renders <button> taller otherwise); height comes from .cookbook-dep-tag. */
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
+}
+/* Conditional line under the Download h2: only when the section is folded
+   (collapsed). When expanded, the body content provides separation; the
+   underline reads as clutter. */
+#cookbook-dl-tab-fold { border-bottom: none !important; padding-bottom: 0 !important; }
+#cookbook-dl-tab-fold.is-folded {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent) !important;
+  padding-bottom: 6px !important;
+}
+/* Center the "?" glyph inside the help chip. Without text-align it sits 0.5px
+   left of true center because of the character's natural baseline offset. */
+.hwfit-help-chip {
+  text-align: center;
+  padding-left: 0.5px;
 }
 .cookbook-dep-install:hover { opacity: 0.85; }
 /* Installed split button: "Installed" label + separator + ▾ caret; clicking it
@@ -18695,6 +18755,94 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-serve-row label input {
   display: block;
   margin-top: 2px;
+}
+/* Ctx slider — ported from origin/main. Sits in the Scan/Download toolbar
+   next to the quant dropdown. Drives _ctxValue() in cookbook-hwfit.js. */
+.hwfit-ctx-control {
+  height: 28px;
+  min-width: 134px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  font-size: 12px;  /* match .cookbook-field-input so Context reads same size as Engine/Quant */
+}
+.hwfit-ctx-control span {
+  /* Match Quant/Engine select label style: no uppercase, no letter-spacing. */
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.9;
+}
+/* Editor-style slider (same look as the gallery editor sliders): thin pill
+   rail that fattens on interaction, circular red thumb that grows on hover. */
+.hwfit-ctx-control input[type="range"] {
+  width: 64px;
+  min-width: 64px;
+  height: 4px;
+  padding: 0;
+  border: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  /* Hard-coded grey so the rail is GUARANTEED visible regardless of theme —
+     every theme-derived color we tried (--fg-muted, --border, accent-bg mix)
+     kept blending into the panel background on at least one theme. */
+  background: rgba(150, 150, 150, 0.65);
+  border-radius: 999px;
+  accent-color: var(--red);
+  cursor: pointer;
+  transition: height 0.15s ease, background 0.15s ease;
+}
+.hwfit-ctx-control input[type="range"]:hover,
+.hwfit-ctx-control input[type="range"]:focus,
+.hwfit-ctx-control input[type="range"]:active {
+  background: var(--fg);
+}
+.hwfit-ctx-control input[type="range"]:hover,
+.hwfit-ctx-control input[type="range"]:focus,
+.hwfit-ctx-control input[type="range"]:active {
+  height: 10px;
+}
+.hwfit-ctx-control input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.hwfit-ctx-control input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.hwfit-ctx-control input[type="range"]:hover::-webkit-slider-thumb,
+.hwfit-ctx-control input[type="range"]:focus::-webkit-slider-thumb,
+.hwfit-ctx-control input[type="range"]:active::-webkit-slider-thumb {
+  width: 18px;
+  height: 18px;
+}
+.hwfit-ctx-control input[type="range"]:hover::-moz-range-thumb,
+.hwfit-ctx-control input[type="range"]:focus::-moz-range-thumb,
+.hwfit-ctx-control input[type="range"]:active::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+}
+.hwfit-ctx-control output {
+  min-width: 28px;
+  text-align: right;
+  color: var(--fg);
+  font-weight: 600;
 }
 .hwfit-sf {
   background: var(--bg);
@@ -19245,9 +19393,12 @@ body.gallery-selecting .gallery-dl-btn,
   position: relative;
   top: -4px;
   cursor: pointer;
-  padding: 1px 6px 1px 4px;
+  /* Tightened vertical padding so the hover-background isn't disproportionately
+     tall vs the icon+label. */
+  padding: 0 6px 0 4px;
+  height: 14px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 7px;
   background: transparent;
   color: var(--fg);
   font-family: inherit;
@@ -19949,6 +20100,17 @@ body.gallery-selecting .gallery-dl-btn,
   border-color: var(--color-error);
   background: color-mix(in srgb, var(--color-error) 12%, transparent);
 }
+/* Icons on the left of diagnosis action buttons (Retry / Copy / Edit / etc.). */
+.cookbook-diag-btn,
+.cookbook-diag-menu button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.cookbook-diag-btn-ico {
+  flex-shrink: 0;
+  opacity: 0.9;
+}
 
 /* ── What Fits? (hardware model fitting tab in cookbook) ── */
 .cookbook-group.hidden { display: none !important; }
@@ -20421,6 +20583,40 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-toolbar .hwfit-usecase { min-width: 70px; flex-shrink: 0; }
 .hwfit-toolbar .hwfit-quant { min-width: 50px; flex-shrink: 0; }
 .hwfit-toolbar .hwfit-search { flex: 1; min-width: 80px; }
+/* Lower-opacity "Search models..." placeholder so it reads as a hint, not
+   a label — matches the muted form-field feel of the inline filters. */
+.hwfit-search::placeholder { opacity: 0.5; }
+.hwfit-search::-webkit-input-placeholder { opacity: 0.5; }
+.hwfit-search::-moz-placeholder { opacity: 0.5; }
+
+/* Dot inside the Fit column header — click to toggle the fit-only filter
+   (off = show too-tight rows; on = hide them). */
+.hwfit-fit-dot {
+  display: inline-block;
+  margin-right: 4px;
+  font-size: 8px;
+  line-height: 1;
+  color: color-mix(in srgb, var(--fg) 35%, transparent);
+  cursor: pointer;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;  /* nudge 1px up so the small dot sits centered with the "Fit" caps */
+  transition: color 0.12s ease, text-shadow 0.12s ease;
+}
+/* Quant suffix appended to model names when the storage format isn't in the
+   repo id — e.g. "(FP4-MoE-Mixed)" after DeepSeek-V4-Flash. Muted to read as
+   metadata, not part of the name. */
+.hwfit-name-quant {
+  font-size: 0.78em;
+  opacity: 0.55;
+  font-weight: 400;
+  margin-left: 4px;
+}
+.hwfit-fit-dot:hover { color: var(--accent, var(--red)); }
+.hwfit-fit-dot.active {
+  color: var(--green, #50fa7b);
+  text-shadow: 0 0 4px color-mix(in srgb, var(--green, #50fa7b) 55%, transparent);
+}
 .hwfit-help-chip {
   width: 14px;
   height: 14px;
@@ -20447,6 +20643,28 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-help-chip-inline {
   margin-left: -2px;
   margin-right: 0;
+  top: 0;  /* parent rule sets top:-1px; nudge inline variant 1px lower */
+}
+/* Quant select + inline ? wrapper — the ? sits inside the dropdown's bordered
+   box, anchored on the right just left of the chevron. */
+.hwfit-quant-wrap, .hwfit-engine-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.hwfit-quant-wrap .hwfit-quant,
+.hwfit-engine-wrap .hwfit-engine {
+  /* Make room for the ? on the right edge, in addition to the native chevron. */
+  padding-right: 32px;
+}
+.hwfit-quant-wrap .hwfit-quant-help,
+.hwfit-engine-wrap .hwfit-engine-help {
+  position: absolute;
+  right: 20px;   /* sits just left of the native select chevron */
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: auto;
+  margin: 0;
 }
 .hwfit-ctx-control {
   height: 28px;
@@ -20460,21 +20678,27 @@ body.gallery-selecting .gallery-dl-btn,
   border-radius: 4px;
   color: var(--fg-muted);
   background: var(--bg);
-  font-size: 10px;
+  font-size: 12px;  /* match .cookbook-field-input — was 10px and read smaller than siblings */
   box-sizing: border-box;
 }
 .hwfit-ctx-control span {
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  opacity: 0.75;
+  /* Match Quant/Engine select label style: no uppercase, no letter-spacing. */
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.9;
 }
 .hwfit-ctx-control input[type="range"] {
-  width: 54px;
-  min-width: 54px;
-  height: 16px;
+  width: 64px;
+  min-width: 64px;
+  height: 4px;
   padding: 0;
   border: 0;
-  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  /* Hardcoded grey rail — was background:transparent here, which was the
+     LATER-in-cascade override that kept making the rail invisible. */
+  background: rgba(150, 150, 150, 0.65) !important;
+  border-radius: 999px;
   accent-color: var(--accent, var(--red));
 }
 .hwfit-ctx-control output {
@@ -21337,9 +21561,11 @@ body:not(.welcome-ready) #welcome-screen {
   position: relative;
   top: -1px;
 }
-.task-log-force-run svg {
+.task-log-force-run svg,
+.task-log-stop svg {
   display: block;
   flex-shrink: 0;
+  transform: translateY(1px);
 }
 .task-log-force-run:hover {
   opacity: 1;
@@ -21711,13 +21937,14 @@ a.chat-link[href^="#research-"] {
     padding-right: 0;
     box-sizing: border-box;
     justify-content: center;
+    top: 2px !important;
   }
   .task-card .task-state-badge .task-state-label {
     display: none;
   }
   .task-card .task-card-run-btn {
     margin-right: 1px !important;
-    top: 0;
+    top: 2px;
   }
 }
 
@@ -27084,6 +27311,20 @@ button .spinner-whirlpool {
     max-width: 100%;
   }
 }
+/* Mobile: long recipient lists (To/Cc with many addresses) shouldn't wrap to
+   N rows and push the body down. Keep them on one row, horizontally scrollable,
+   no scrollbar chrome. */
+@media (max-width: 768px) {
+  .recipient-chips {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .recipient-chips::-webkit-scrollbar { display: none; }
+  .recipient-chip { flex-shrink: 0; }
+}
 .email-reader-actions {
   display: flex; gap: 4px; flex-wrap: nowrap; align-items: center;
   flex-shrink: 0;
@@ -30630,6 +30871,20 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   margin-top: -2px;
 }
 /* Reminder bell button */
+/* Mobile-only: bell icon in the note editor is accent-coloured so it pops as
+   the primary "set a reminder" affordance. The Archive button is hidden — the
+   Update (✓) button morphs into an Archive action when the user opens a note
+   and clicks without making any edits (see notes.js `archive-mode` toggle). */
+@media (max-width: 768px) {
+  .note-form-remind-btn { color: var(--accent, var(--red)) !important; }
+  .note-form-remind-btn > svg { color: var(--accent, var(--red)); }
+  .note-form-archive-btn { display: none !important; }
+  .note-form-save.archive-mode {
+    color: var(--accent, var(--red)) !important;
+    border-color: color-mix(in srgb, var(--accent, var(--red)) 50%, transparent) !important;
+    background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent) !important;
+  }
+}
 .note-form-remind-btn {
   flex: 0 0 auto;
   background: transparent;
@@ -32967,6 +33222,18 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
 .email-attach-toggle-inline,
 .email-undone-toggle-inline,
 .email-reminder-toggle-inline { border-radius: 50% !important; opacity: 1 !important; }
+/* Mobile: enlarge the icons inside the inline search-bar toggles
+   (done / attachment / reminders) — buttons themselves stay the same,
+   only the SVG glyph scales up so it's tappable + visible. */
+@media (max-width: 768px) {
+  .email-attach-toggle-inline svg,
+  .email-undone-toggle-inline svg,
+  .email-reminder-toggle-inline svg,
+  .email-filter-refresh-btn svg {
+    width: 15px !important;
+    height: 15px !important;
+  }
+}
 .email-attach-toggle:not(.email-attach-toggle-inline):hover svg {
   animation: email-undone-jiggle 0.45s ease-in-out;
   transform-origin: 50% 50%;

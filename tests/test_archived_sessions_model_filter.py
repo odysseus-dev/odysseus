@@ -51,7 +51,7 @@ def _seed(owner, *models):
         db.query(DbSession).delete()
         for m in models:
             db.add(DbSession(id=str(uuid.uuid4()), owner=owner, name=f"chat {m}",
-                             model=m, archived=True))
+                             endpoint_url="http://localhost", model=m, archived=True))
         db.commit()
     finally:
         db.close()

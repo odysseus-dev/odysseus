@@ -82,8 +82,7 @@ python -m uvicorn app:app --host 127.0.0.1 --port 7000
 Requirements: Python 3.11+. Cookbook also needs `tmux` for background model
 downloads and serves. The app itself is lightweight; local model serving is the
 heavy part and depends on the model, runtime, GPU, and VRAM, so small hosts can
-connect to API or remote model servers instead. Use `--host 0.0.0.0` only when
-you intentionally want LAN/reverse-proxy access.
+connect to API or remote model servers instead. Use `--host 0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
 
 ### Apple Silicon
 Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
@@ -188,6 +187,20 @@ RENDER_GID=989
 ```
 
 For NVIDIA/AMD GPU support, also read the comments in the selected overlay file: docker/gpu.nvidia.yml or docker/gpu.amd.yml.
+
+**Stack-management UIs (Portainer, Coolify, Dockhand, etc.).** These tools
+often accept only a single Compose file and do not reliably honor `COMPOSE_FILE`
+or multiple `-f` overlays. CLI users should keep using the `COMPOSE_FILE`
+overlay workflow above. For stack UIs, point the stack at one of the standalone
+files instead, which bundle the base stack plus the GPU settings:
+
+- `docker-compose.gpu-nvidia.yml` — still requires the NVIDIA Container Toolkit
+  on the host.
+- `docker-compose.gpu-amd.yml` — still requires host ROCm/kfd/DRI setup, the
+  `video`/`render` group membership, and `RENDER_GID` when needed.
+
+The base `docker-compose.yml` plus the `docker/gpu.*.yml` overlays remain the
+source of truth; the standalone files mirror them for single-file deployments.
 
 Verify after enabling either overlay:
 

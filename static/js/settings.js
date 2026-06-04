@@ -3093,7 +3093,67 @@ const INTG_TYPES = {
   carddav: { label: 'CardDAV', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
   email:   { label: 'Email',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>' },
   mcp:     { label: 'MCP',     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>' },
+  codex:   { label: 'Codex',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 10.696.453a6.023 6.023 0 0 0-5.75 4.172 6.061 6.061 0 0 0-3.946 2.945 6.024 6.024 0 0 0 .742 7.099 5.98 5.98 0 0 0 .516 4.911 6.046 6.046 0 0 0 6.51 2.9A5.996 5.996 0 0 0 13.26 23.547a6.023 6.023 0 0 0 5.75-4.172 6.061 6.061 0 0 0 3.946-2.945 6.024 6.024 0 0 0-.674-6.609zM13.26 21.047a4.508 4.508 0 0 1-2.886-1.041l.143-.082 4.793-2.769a.777.777 0 0 0 .391-.676V10.34l2.026 1.17a.072.072 0 0 1 .039.061v5.596a4.532 4.532 0 0 1-4.506 4.48zM3.968 17.64a4.473 4.473 0 0 1-.537-3.018l.143.086 4.793 2.769a.79.79 0 0 0 .782 0l5.852-3.379v2.34a.072.072 0 0 1-.029.062l-4.845 2.796a4.532 4.532 0 0 1-6.159-1.656zM2.804 7.922a4.49 4.49 0 0 1 2.348-1.973V11.6a.778.778 0 0 0 .391.676l5.852 3.378-2.026 1.17a.072.072 0 0 1-.068 0L4.456 14.03a4.532 4.532 0 0 1-1.652-6.108zm16.423 3.823L13.375 8.367l2.026-1.17a.072.072 0 0 1 .068 0l4.845 2.796a4.525 4.525 0 0 1-.7 8.08V12.42a.778.778 0 0 0-.387-.676zm2.015-3.025l-.143-.086-4.793-2.769a.79.79 0 0 0-.782 0L9.672 9.243V6.903a.072.072 0 0 1 .029-.062l4.845-2.796a4.525 4.525 0 0 1 6.696 4.675zM8.598 12.66L6.57 11.49a.072.072 0 0 1-.039-.061V5.833a4.525 4.525 0 0 1 7.413-3.48l-.143.082-4.793 2.769a.777.777 0 0 0-.391.676l-.019 6.78zm1.1-2.379l2.607-1.505 2.607 1.505v3.01l-2.607 1.505-2.607-1.505z"/></svg>' },
+  claude:  { label: 'Claude',  icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg>' },
   vault:   { label: 'Vault',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' },
+};
+
+// Config shared by the Codex Agent and Claude Agent forms. Both use the same
+// scope-gated /api/codex/* backend; this just parameterizes the UI label,
+// default token name, and the per-agent install commands.
+const AGENT_CONFIGS = {
+  codex: {
+    label: 'Codex Agent',
+    word: 'Codex',
+    namePrefix: 'codex agent',
+    defaultName: 'Codex Agent',
+    pluginPath: '/api/codex/plugin.zip',
+    setupDescription: 'Downloads the plugin bundle and registers it with Codex. Sets <code>ODYSSEUS_URL</code> + <code>ODYSSEUS_API_TOKEN</code>, fetches the plugin from <a href="/api/codex/plugin.zip" style="color:var(--accent,var(--red));">this Odysseus instance</a>, and runs <code>codex plugin add odysseus@personal</code>.',
+    buildSetup: (origin, token) => `export ODYSSEUS_URL=${origin}
+export ODYSSEUS_API_TOKEN='${token}'
+mkdir -p ~/plugins
+curl -fsSL -H "Authorization: Bearer $ODYSSEUS_API_TOKEN" "$ODYSSEUS_URL/api/codex/plugin.zip" -o /tmp/odysseus-codex-plugin.zip
+python3 -m zipfile -e /tmp/odysseus-codex-plugin.zip ~/plugins
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+p = Path.home() / ".agents" / "plugins" / "marketplace.json"
+p.parent.mkdir(parents=True, exist_ok=True)
+if p.exists():
+    data = json.loads(p.read_text())
+else:
+    data = {"name": "personal", "interface": {"displayName": "Personal"}, "plugins": []}
+
+data.setdefault("name", "personal")
+data.setdefault("interface", {}).setdefault("displayName", "Personal")
+plugins = data.setdefault("plugins", [])
+entry = {
+    "name": "odysseus",
+    "source": {"source": "local", "path": "./plugins/odysseus"},
+    "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+    "category": "Productivity",
+}
+data["plugins"] = [item for item in plugins if item.get("name") != "odysseus"] + [entry]
+p.write_text(json.dumps(data, indent=2) + "\\n")
+PY
+codex plugin add odysseus@personal
+python3 ~/plugins/odysseus/scripts/odysseus_api.py capabilities`,
+  },
+  claude: {
+    label: 'Claude Agent',
+    word: 'Claude',
+    namePrefix: 'claude agent',
+    defaultName: 'Claude Agent',
+    pluginPath: '/api/claude/plugin.zip',
+    setupDescription: 'Downloads the skill bundle into <code>~/.claude/skills/odysseus/</code>. Sets <code>ODYSSEUS_URL</code> + <code>ODYSSEUS_API_TOKEN</code>, fetches the skill from <a href="/api/claude/plugin.zip" style="color:var(--accent,var(--red));">this Odysseus instance</a>. Claude Code auto-loads the skill on next start.',
+    buildSetup: (origin, token) => `export ODYSSEUS_URL=${origin}
+export ODYSSEUS_API_TOKEN='${token}'
+mkdir -p ~/.claude
+curl -fsSL -H "Authorization: Bearer $ODYSSEUS_API_TOKEN" "$ODYSSEUS_URL/api/claude/plugin.zip" -o /tmp/odysseus-claude-skill.zip
+python3 -m zipfile -e /tmp/odysseus-claude-skill.zip ~/.claude/
+python3 ~/.claude/skills/odysseus/scripts/odysseus_api.py capabilities`,
+  },
 };
 
 let _unifiedInited = false;
@@ -3113,7 +3173,7 @@ async function initUnifiedIntegrations() {
   }
 
   async function fetchAll() {
-    const [apiRes, calRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes] = await Promise.all([
+    const [apiRes, calRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes, tokenRes] = await Promise.all([
       fetch('/api/auth/integrations', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { integrations: [] }).catch(() => ({ integrations: [] })),
       fetch('/api/calendar/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
       fetch('/api/contacts/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
@@ -3121,6 +3181,7 @@ async function initUnifiedIntegrations() {
       fetch('/api/email/accounts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
       fetch('/api/mcp/servers', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : []).catch(() => []),
       fetch('/api/vault/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
+      fetch('/api/tokens', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : []).catch(() => []),
     ]);
     const items = [];
     // API integrations
@@ -3165,6 +3226,20 @@ async function initUnifiedIntegrations() {
       const statusText = srv.needs_oauth ? 'needs auth' : srv.status === 'connected' ? `${srv.enabled_tool_count}/${srv.tool_count} tools` : srv.status === 'error' ? 'error' : 'disconnected';
       items.push({ type: 'mcp', id: srv.id || srv.name, name: srv.name || 'MCP Server', detail: statusText, enabled: srv.is_enabled !== false, data: srv });
     }
+    for (const tok of (Array.isArray(tokenRes) ? tokenRes : [])) {
+      const scopes = tok.scopes || [];
+      const lowerName = (tok.name || '').toLowerCase();
+      let agentType = null;
+      if (lowerName.startsWith('claude agent')) agentType = 'claude';
+      else if (lowerName.startsWith('codex agent')) agentType = 'codex';
+      else if (scopes.some(s => String(s || '').startsWith('todos:') || String(s || '').startsWith('email:') || String(s || '').startsWith('documents:'))) {
+        // Legacy / un-prefixed scoped tokens fall back to Codex for backwards compat.
+        agentType = 'codex';
+      }
+      if (!agentType) continue;
+      const detail = `${tok.token_prefix || 'token'}... - ${scopes.join(', ') || 'chat'}`;
+      items.push({ type: agentType, id: tok.id, name: tok.name || (agentType === 'claude' ? 'Claude Agent' : 'Codex Agent'), detail, enabled: true, data: tok });
+    }
     // Vaultwarden removed as an integration option.
     return items;
   }
@@ -3175,9 +3250,9 @@ async function initUnifiedIntegrations() {
     // type gets. (The clickable glow-on-test variant for email was
     // removed earlier; this matches the API/CalDAV/MCP pattern.)
     const statusDot = item.enabled
-      ? '<span style="width:8px;height:8px;border-radius:50%;background:var(--green,#50fa7b);flex-shrink:0" title="Active"></span>'
+      ? '<span style="width:8px;height:8px;border-radius:50%;background:var(--color-success,#50fa7b);flex-shrink:0;--notif-glow:var(--color-success,#50fa7b);animation:cookbook-notif-pulse 2s ease-in-out infinite;" title="Active"></span>'
       : '<span style="width:8px;height:8px;border-radius:50%;background:var(--fg);opacity:0.3;flex-shrink:0" title="Disabled"></span>';
-    return `<div class="intg-card" data-intg-id="${item.id}" data-intg-type="${item.type}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;cursor:pointer" title="Click to edit">
+    return `<div class="intg-card" data-intg-id="${item.id}" data-intg-type="${item.type}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:color-mix(in srgb, var(--fg) 3%, transparent);margin-bottom:6px;cursor:pointer;transition:all 0.15s;" title="Click to edit">
       <span style="opacity:0.6;flex-shrink:0">${t.icon}</span>
       <div style="flex:1;min-width:0">
         <div style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px">${item.name} <span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 5px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 50%, transparent);border-radius:3px;color:var(--accent, var(--red));background:color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);">${t.label}</span></div>
@@ -3236,6 +3311,7 @@ async function initUnifiedIntegrations() {
           }
           else if (type === 'email') await fetch(`/api/email/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'mcp') await fetch(`/api/mcp/servers/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+          else if (type === 'codex' || type === 'claude') await fetch(`/api/tokens/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'vault') await fetch('/api/vault/logout', { method: 'POST', credentials: 'same-origin' });
         } catch (_) {}
         formEl.style.display = 'none';
@@ -3252,6 +3328,8 @@ async function initUnifiedIntegrations() {
     else if (type === 'contacts' || type === 'carddav') showCardDavForm();
     else if (type === 'email') showEmailForm(editId);
     else if (type === 'mcp') showMcpForm(editId);
+    else if (type === 'codex') showAgentForm('codex', editId);
+    else if (type === 'claude') showAgentForm('claude', editId);
     else if (type === 'vault') showVaultForm();
   }
 
@@ -3276,15 +3354,46 @@ async function initUnifiedIntegrations() {
     // and they're patchy on mobile browsers. A native select renders
     // the same everywhere and makes the available options visible
     // without needing the user to type.
-    const selectOpts = presetEntries
-      .sort((a, b) => (a[1].name || a[0]).localeCompare(b[1].name || b[0]))
+    const sortedPresets = presetEntries.sort((a, b) => (a[1].name || a[0]).localeCompare(b[1].name || b[0]));
+    const selectOpts = sortedPresets
       .map(([k, p]) => `<option value="${k}">${esc(p.name || k)}</option>`)
       .join('');
+    // Letter-in-brand-color logo for each API preset; outline plug icon for
+    // "Custom (no preset)". Matches the email-provider dropdown pattern.
+    const _apiLetter = (letter, bg) => `<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style="flex-shrink:0"><circle cx="12" cy="12" r="11" fill="${bg}"/><text x="12" y="16.5" font-size="13" font-weight="700" text-anchor="middle" fill="#fff" font-family="system-ui,sans-serif">${letter}</text></svg>`;
+    const _apiCustomIco = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0;opacity:0.7"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+    const API_PRESET_LOGO = {
+      miniflux:        _apiLetter('M', '#214c87'),
+      gitea:           _apiLetter('G', '#609926'),
+      linkding:        _apiLetter('L', '#1f2937'),
+      home_assistant:  _apiLetter('H', '#41bdf5'),
+      ntfy:            _apiLetter('n', '#317f43'),
+      vaultwarden:     _apiLetter('V', '#175ddc'),
+      freshrss:        _apiLetter('R', '#ef6c00'),
+    };
+    const _apiIconFor = (k) => {
+      if (!k) return _apiCustomIco;
+      if (API_PRESET_LOGO[k]) return API_PRESET_LOGO[k];
+      const first = (presets[k]?.name || k).trim().charAt(0).toUpperCase() || '?';
+      return _apiLetter(first, '#6b7280');
+    };
+    const _apiRows = [['', 'Custom (no preset)'], ...sortedPresets.map(([k, p]) => [k, p.name || k])]
+      .map(([k, label]) => `<button type="button" class="ufapi-option" data-value="${esc(k)}" style="display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;background:transparent;border:0;color:var(--fg);font:inherit;cursor:pointer;text-align:left;">${_apiIconFor(k)}<span>${esc(label)}</span></button>`).join('');
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
-        <h2 style="font-size:13px">${editId ? 'Edit' : 'Add'} API Integration</h2>
+        <h2 style="font-size:13px;display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>API Integration</h2>
         <div class="settings-col">
-          <div class="settings-row"><label class="settings-label">Preset</label><select id="uf-api-preset" class="settings-select"><option value="">Custom (no preset)</option>${selectOpts}</select></div>
+          <div class="settings-row"><label class="settings-label">Preset</label>
+            <div style="position:relative;flex:1;min-width:0;">
+              <select id="uf-api-preset" tabindex="-1" aria-hidden="true" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;"><option value="">Custom (no preset)</option>${selectOpts}</select>
+              <button type="button" id="uf-api-preset-trigger" class="settings-select" style="display:flex;align-items:center;gap:10px;cursor:pointer;text-align:left;width:100%;padding-right:24px;position:relative;">
+                <span class="ufapi-icon" style="display:inline-flex;align-items:center;">${_apiCustomIco}</span>
+                <span class="ufapi-label" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Custom (no preset)</span>
+                <span aria-hidden="true" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);opacity:0.5;font-size:10px;pointer-events:none;">▾</span>
+              </button>
+              <div id="uf-api-preset-menu" style="display:none;position:absolute;top:calc(100% + 2px);left:0;right:0;z-index:1000;background:var(--panel);border:1px solid var(--border);border-radius:6px;max-height:340px;overflow-y:auto;box-shadow:0 6px 18px rgba(0,0,0,0.25);">${_apiRows}</div>
+            </div>
+          </div>
           <div class="settings-row"><label class="settings-label">Name</label><input id="uf-api-name" class="settings-input" placeholder="My Service"></div>
           <div class="settings-row"><label class="settings-label">Base URL</label><input id="uf-api-url" class="settings-input" placeholder="http://localhost:8080"></div>
           <div id="uf-api-ntfy-hint" style="display:none;font-size:11px;line-height:1.35;opacity:0.68;margin:-2px 0 2px 106px;"></div>
@@ -3294,6 +3403,48 @@ async function initUnifiedIntegrations() {
           <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-api-save">Save</button><button class="admin-btn-sm" id="uf-api-test" style="opacity:0.7">Test</button><button class="admin-btn-sm" id="uf-api-cancel" style="opacity:0.7">Cancel</button><span id="uf-api-msg" style="font-size:11px"></span></div>
         </div>
       </div>`;
+    // Custom preset dropdown wire-up (hidden select stays as data source).
+    (() => {
+      const trig = el('uf-api-preset-trigger');
+      const menu = el('uf-api-preset-menu');
+      const sel = el('uf-api-preset');
+      if (!trig || !menu || !sel) return;
+      const lbl = trig.querySelector('.ufapi-label');
+      const ico = trig.querySelector('.ufapi-icon');
+      const _setFromKey = (k) => {
+        const row = menu.querySelector(`.ufapi-option[data-value="${k}"]`);
+        const text = row?.querySelector('span')?.textContent || 'Custom (no preset)';
+        if (lbl) lbl.textContent = text;
+        if (ico) ico.innerHTML = _apiIconFor(k);
+      };
+      const _close = () => { menu.style.display = 'none'; };
+      const _open = () => {
+        menu.style.display = 'block';
+        const tRect = trig.getBoundingClientRect();
+        const mRect = menu.getBoundingClientRect();
+        const below = window.innerHeight - tRect.bottom;
+        const above = tRect.top;
+        if (mRect.height > below && above > below) { menu.style.top = 'auto'; menu.style.bottom = 'calc(100% + 2px)'; }
+        else { menu.style.top = 'calc(100% + 2px)'; menu.style.bottom = 'auto'; }
+        const onDoc = (ev) => { if (!menu.contains(ev.target) && ev.target !== trig) { _close(); document.removeEventListener('click', onDoc, true); } };
+        setTimeout(() => document.addEventListener('click', onDoc, true), 0);
+      };
+      trig.addEventListener('click', (e) => { e.stopPropagation(); menu.style.display === 'block' ? _close() : _open(); });
+      menu.querySelectorAll('.ufapi-option').forEach(btn => {
+        btn.addEventListener('mouseenter', () => { btn.style.background = 'color-mix(in srgb, var(--fg) 8%, transparent)'; });
+        btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const k = btn.dataset.value || '';
+          sel.value = k;
+          _setFromKey(k);
+          _close();
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      });
+      _setFromKey(sel.value || '');
+    })();
+
     const preset = el('uf-api-preset'), name = el('uf-api-name'), url = el('uf-api-url'), auth = el('uf-api-auth'), header = el('uf-api-header'), key = el('uf-api-key'), ntfyHint = el('uf-api-ntfy-hint');
     let _editId = editId && editId !== 'new' ? editId : null;
     // Load existing
@@ -3451,17 +3602,27 @@ async function initUnifiedIntegrations() {
   async function showCardDavForm() {
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
-        <h2 style="font-size:13px">Contacts (CardDAV)</h2>
+        <h2 style="font-size:13px;display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Contacts (CardDAV)</h2>
         <div class="settings-col">
           <div class="settings-row"><label class="settings-label">URL</label><input id="uf-carddav-url" class="settings-input" placeholder="http://localhost:5232/user/contacts/"></div>
           <div class="settings-row"><label class="settings-label">Username</label><input id="uf-carddav-user" class="settings-input"></div>
           <div class="settings-row"><label class="settings-label">Password</label><input id="uf-carddav-pass" class="settings-input" type="password"></div>
-          <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-carddav-save">Save</button><button class="admin-btn-sm" id="uf-carddav-cancel" style="opacity:0.7">Cancel</button><span id="uf-carddav-msg" style="font-size:11px"></span></div>
+          <div class="settings-row" style="margin-top:8px;align-items:center;">
+            <button class="admin-btn-add" id="uf-carddav-save" style="background:var(--red);border-color:var(--red);color:#fff;display:inline-flex;align-items:center;gap:5px;font-weight:600;">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+              Save
+            </button>
+            <span id="uf-carddav-msg" style="font-size:11px;flex:1;margin-left:8px"></span>
+            <button class="admin-btn-add" id="uf-carddav-cancel" style="opacity:0.7;display:inline-flex;align-items:center;gap:5px;position:relative;top:1px;margin-left:auto;">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              Cancel
+            </button>
+          </div>
         </div>
       </div>
       <div class="admin-card contacts-manager" style="margin-top:8px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-          <h2 style="font-size:13px;margin:0;">Contacts Import <span id="cm-count" style="opacity:0.5;font-weight:normal;font-size:11px;"></span></h2>
+          <h2 style="font-size:13px;margin:0;display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Contacts Import <span id="cm-count" style="opacity:0.5;font-weight:normal;font-size:11px;"></span></h2>
           <button class="admin-btn-sm" id="cm-import-btn" style="margin-left:auto;">Import</button>
           <button class="admin-btn-sm" id="cm-export-vcf-btn">Export .vcf</button>
           <button class="admin-btn-sm" id="cm-export-csv-btn">Export .csv</button>
@@ -3621,8 +3782,14 @@ async function initUnifiedIntegrations() {
             <div class="contact-name" style="font-size:12px;font-weight:600;">${esc(c.name || '(no name)')}</div>
             <div class="contact-sub" style="font-size:10px;opacity:0.55;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(sub)}</div>
           </div>
-          <button class="admin-btn-sm contact-edit" title="Edit">Edit</button>
-          <button class="admin-btn-sm contact-del" title="Delete" style="opacity:0.75;">Delete</button>
+          <button class="admin-btn-sm contact-edit" title="Edit" style="display:inline-flex;align-items:center;gap:4px;color:var(--accent, var(--red));border-color:color-mix(in srgb, var(--accent, var(--red)) 35%, var(--border));">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            Edit
+          </button>
+          <button class="admin-btn-sm contact-del" title="Delete" style="opacity:0.85;display:inline-flex;align-items:center;gap:4px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            Delete
+          </button>
         </div>
         <div class="contact-row-edit" style="display:none;flex-direction:column;gap:4px;">
           <input class="settings-input contact-edit-name" value="${esc(c.name || '')}" placeholder="Name">
@@ -3704,22 +3871,49 @@ async function initUnifiedIntegrations() {
     };
     const _providerOptions = Object.entries(PROVIDERS)
       .map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
+    // Provider logos — small SVGs the custom dropdown renders next to each
+    // option. Letter-in-brand-color circle for known providers; outline
+    // envelope for "Custom…". Inline SVG (no external assets, no emoji).
+    const _letterLogo = (letter, bg) => `<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style="flex-shrink:0"><circle cx="12" cy="12" r="11" fill="${bg}"/><text x="12" y="16.5" font-size="13" font-weight="700" text-anchor="middle" fill="#fff" font-family="system-ui,sans-serif">${letter}</text></svg>`;
+    const _customLogo = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0;opacity:0.7"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>';
+    const PROV_LOGO = {
+      '':       _customLogo,
+      gmail:    _letterLogo('G', '#ea4335'),
+      migadu:   _letterLogo('M', '#3aa39d'),
+      icloud:   _letterLogo('i', '#3693f3'),
+      outlook:  _letterLogo('O', '#0078d4'),
+      fastmail: _letterLogo('F', '#4a5fbb'),
+      yahoo:    _letterLogo('Y', '#6001d2'),
+      dovecot:  _letterLogo('D', '#6b7280'),
+    };
+    const _provOptionRows = [['', 'Custom…'], ...Object.entries(PROVIDERS).map(([k, v]) => [k, v.label])]
+      .map(([k, label]) => `<button type="button" class="ufp-option" data-value="${esc(k)}" style="display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;background:transparent;border:0;color:var(--fg);font:inherit;cursor:pointer;text-align:left;">${PROV_LOGO[k] || _customLogo}<span>${esc(label)}</span></button>`).join('');
     const _smtpSecurity = (acct) => acct?.smtp_security || ((parseInt(acct?.smtp_port || 465) === 587) ? 'starttls' : 'ssl');
     formEl.innerHTML = `
       <div class="admin-card" style="margin-top:8px">
         <h2 style="font-size:13px">${isEdit ? 'Edit' : 'Add'} Email Account</h2>
         <div class="settings-col">
-          <div class="settings-row"><label class="settings-label">Provider${_hint('Pick a known provider to auto-fill the IMAP and SMTP host/port. Choose Custom to type your own.')}</label><select id="uf-email-provider" class="settings-select"><option value="">Custom…</option>${_providerOptions}</select></div>
+          <div class="settings-row"><label class="settings-label">Provider${_hint('Pick a known provider to auto-fill the IMAP and SMTP host/port. Choose Custom to type your own.')}</label>
+            <div class="ufp-wrap" style="position:relative;flex:1;min-width:0;">
+              <select id="uf-email-provider" tabindex="-1" aria-hidden="true" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;"><option value="">Custom…</option>${_providerOptions}</select>
+              <button type="button" id="uf-email-provider-trigger" class="settings-select" style="display:flex;align-items:center;gap:8px;cursor:pointer;text-align:left;width:100%;padding-right:24px;position:relative;">
+                <span class="ufp-icon" style="display:inline-flex;align-items:center;">${PROV_LOGO['']}</span>
+                <span class="ufp-label" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Custom…</span>
+                <span aria-hidden="true" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);opacity:0.5;font-size:10px;pointer-events:none;">▾</span>
+              </button>
+              <div id="uf-email-provider-menu" style="display:none;position:absolute;top:calc(100% + 2px);left:0;right:0;z-index:1000;background:var(--panel);border:1px solid var(--border);border-radius:6px;max-height:280px;overflow-y:auto;box-shadow:0 6px 18px rgba(0,0,0,0.25);">${_provOptionRows}</div>
+            </div>
+          </div>
           <div id="uf-email-provider-note" style="display:none;font-size:11px;line-height:1.5;padding:8px 10px;margin:2px 0 4px;border:1px solid color-mix(in srgb, var(--fg) 15%, transparent);border-left:3px solid var(--accent, var(--red));border-radius:4px;background:color-mix(in srgb, var(--fg) 4%, transparent);"></div>
           <div class="settings-row"><label class="settings-label">Name${_hint('Optional label for this account (e.g. “Work” or “Personal”). Leave blank to use the email address.')}</label><input id="uf-email-name" class="settings-input" placeholder="(optional — leave blank to use email)"></div>
           <div class="settings-row"><label class="settings-label">Email${_hint('Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank.')}</label><input id="uf-email-from" class="settings-input" placeholder="you@example.com"></div>
-          <div style="font-size:11px;font-weight:600;opacity:0.6;margin:4px 0 2px">IMAP (Receiving)</div>
+          <div style="font-size:11px;font-weight:600;opacity:0.6;margin:4px 0 2px;display:flex;align-items:center;gap:5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;" aria-hidden="true"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>IMAP (Receiving)</div>
           <div class="settings-row"><label class="settings-label">Host${_hint('Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot.')}</label><input id="uf-imap-host" class="settings-input" placeholder="imap.example.com"></div>
           <div class="settings-row"><label class="settings-label">Port${_hint('993 for IMAPS (most providers), 143 for plain or STARTTLS. Local servers often use a custom port like 31143.')}</label><input id="uf-imap-port" class="settings-input" type="number" placeholder="993" style="max-width:100px"></div>
           <div class="settings-row"><label class="settings-label">Username${_hint('Yes — your full email address goes here too (e.g. you@gmail.com). Same as the Email field above for almost every provider.')}</label><input id="uf-imap-user" class="settings-input" placeholder="you@example.com"></div>
           <div class="settings-row"><label class="settings-label">Password${_hint('For Gmail, iCloud, and Yahoo: paste your App Password (NOT your normal account password — those are blocked for IMAP). For Migadu, Fastmail, Outlook, etc.: your regular mailbox password works.')}</label><input id="uf-imap-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
           <div class="settings-row"><label class="settings-label">STARTTLS${_hint('Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-imap-starttls" checked><span class="admin-slider"></span></label></div>
-          <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px">SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
+          <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px;display:flex;align-items:center;gap:5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
           <div class="settings-row"><label class="settings-label">Host${_hint('Your outgoing-mail server, e.g. smtp.gmail.com. Leave blank to make this account read-only.')}</label><input id="uf-smtp-host" class="settings-input" placeholder="smtp.example.com"></div>
           <div class="settings-row"><label class="settings-label">Port${_hint('465 for SSL/SMTPS, 587 for STARTTLS. 25 is usually blocked by ISPs.')}</label><input id="uf-smtp-port" class="settings-input" type="number" placeholder="465" style="max-width:100px"></div>
           <div class="settings-row"><label class="settings-label">Security${_hint('SSL for port 465, STARTTLS for port 587, or None for local SMTP bridges such as Proton Mail Bridge.')}</label><select id="uf-smtp-security" class="settings-select"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option><option value="none">None</option></select></div>
@@ -3835,6 +4029,56 @@ async function initUnifiedIntegrations() {
           </button>
         </div>`;
     };
+
+    // Custom dropdown wire-up — the native <select> stays in the DOM as the
+    // data source and accessibility target, but the visible UI is a button +
+    // popup so each provider row can render with its SVG logo. Selecting an
+    // option updates select.value and dispatches a `change` event so the
+    // existing autofill handler below runs unchanged.
+    (() => {
+      const trigger = el('uf-email-provider-trigger');
+      const menu = el('uf-email-provider-menu');
+      const sel = el('uf-email-provider');
+      if (!trigger || !menu || !sel) return;
+      const labelEl = trigger.querySelector('.ufp-label');
+      const iconEl = trigger.querySelector('.ufp-icon');
+      const _setFromKey = (k) => {
+        const row = menu.querySelector(`.ufp-option[data-value="${k}"]`);
+        const lbl = row?.querySelector('span')?.textContent || 'Custom…';
+        if (labelEl) labelEl.textContent = lbl;
+        if (iconEl) iconEl.innerHTML = PROV_LOGO[k] || _customLogo;
+      };
+      const _closeMenu = () => { menu.style.display = 'none'; };
+      const _openMenu = () => {
+        menu.style.display = 'block';
+        // Drop-up when there's not enough room below the trigger.
+        const tRect = trigger.getBoundingClientRect();
+        const mRect = menu.getBoundingClientRect();
+        const below = window.innerHeight - tRect.bottom;
+        const above = tRect.top;
+        if (mRect.height > below && above > below) {
+          menu.style.top = 'auto'; menu.style.bottom = 'calc(100% + 2px)';
+        } else {
+          menu.style.top = 'calc(100% + 2px)'; menu.style.bottom = 'auto';
+        }
+        const onDoc = (ev) => { if (!menu.contains(ev.target) && ev.target !== trigger) { _closeMenu(); document.removeEventListener('click', onDoc, true); } };
+        setTimeout(() => document.addEventListener('click', onDoc, true), 0);
+      };
+      trigger.addEventListener('click', (e) => { e.stopPropagation(); menu.style.display === 'block' ? _closeMenu() : _openMenu(); });
+      menu.querySelectorAll('.ufp-option').forEach(btn => {
+        btn.addEventListener('mouseenter', () => { btn.style.background = 'color-mix(in srgb, var(--fg) 8%, transparent)'; });
+        btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const k = btn.dataset.value || '';
+          sel.value = k;
+          _setFromKey(k);
+          _closeMenu();
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      });
+      _setFromKey(sel.value || '');
+    })();
 
     // Provider preset → autofill IMAP + SMTP host/port + STARTTLS, set the
     // helper note, and update the Email/Username placeholders to a
@@ -4302,30 +4546,386 @@ async function initUnifiedIntegrations() {
     }
   }
 
+  async function showAgentForm(kind, editId) {
+    const cfg = AGENT_CONFIGS[kind] || AGENT_CONFIGS.codex;
+    let tokens = [];
+    try {
+      const tokRes = await fetch('/api/tokens', { credentials: 'same-origin' });
+      if (tokRes.ok) tokens = await tokRes.json();
+    } catch (_) {}
+
+    const toolScopes = [
+      { key: 'todos:read', label: 'Todos', detail: 'Read notes and checklists' },
+      { key: 'todos:write', label: 'Todos write', detail: 'Create, update, delete, and toggle todo items' },
+      { key: 'documents:read', label: 'Documents', detail: 'Read documents when a document API is enabled' },
+      { key: 'documents:write', label: 'Documents write', detail: 'Create and update draft documents' },
+      { key: 'email:read', label: 'Email', detail: 'Read email when an email API is enabled' },
+      { key: 'email:draft', label: 'Email drafts', detail: 'Create email reply drafts without sending' },
+      { key: 'email:send', label: 'Email send', detail: 'Send email directly' },
+      { key: 'calendar:read', label: 'Calendar', detail: 'Read calendar events when enabled' },
+      { key: 'calendar:write', label: 'Calendar write', detail: 'Create and update calendar events' },
+      { key: 'memory:read', label: 'Memory', detail: 'Read memory when enabled' },
+      { key: 'memory:write', label: 'Memory write', detail: 'Write memory when enabled' },
+    ];
+    // Strict name-prefix match keeps Codex and Claude tokens in their own forms.
+    const agentTokens = (Array.isArray(tokens) ? tokens : []).filter(tok =>
+      (tok.name || '').toLowerCase().startsWith(cfg.namePrefix)
+    );
+    const current = agentTokens.find(t => String(t.id) === String(editId));
+    const _scopeIcons = {
+      todos: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>',
+      documents: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+      email: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2 6 12 13 22 6"/></svg>',
+      calendar: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
+      memory: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2a2.5 2.5 0 0 0-2.5 2.5 2.5 2.5 0 0 0-2.5 2.5A2.5 2.5 0 0 0 2 9.5v3A2.5 2.5 0 0 0 4.5 15a2.5 2.5 0 0 0 2.5 2.5A2.5 2.5 0 0 0 9.5 20H10V2z"/><path d="M14.5 2a2.5 2.5 0 0 1 2.5 2.5 2.5 2.5 0 0 1 2.5 2.5A2.5 2.5 0 0 1 22 9.5v3A2.5 2.5 0 0 1 19.5 15a2.5 2.5 0 0 1-2.5 2.5A2.5 2.5 0 0 1 14.5 20H14V2z"/></svg>',
+    };
+    const _scopeNiceLabel = (label) => label.replace(/\s+(write|drafts?|send)$/i, '');
+    const _scopeAction = (key) => (key.split(':')[1] || '').toLowerCase();
+    const _pillStyle = (action) => {
+      if (action === 'read') return 'background:rgba(150,150,150,0.18);color:var(--fg-muted,#888);';
+      return 'background:color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);color:var(--accent, var(--red));';
+    };
+    const scopeToggles = (t) => {
+      const scopes = new Set(t.scopes || []);
+      return toolScopes.map(scope => {
+        const tool = scope.key.split(':')[0];
+        const action = _scopeAction(scope.key);
+        const icon = _scopeIcons[tool] || '';
+        const niceLabel = _scopeNiceLabel(scope.label);
+        return `
+        <label class="settings-row" style="align-items:center;gap:8px;display:flex;min-height:30px;padding:2px 0;">
+          <span style="opacity:0.7;display:inline-flex;align-items:center;justify-content:center;width:16px;flex-shrink:0;">${icon}</span>
+          <span class="settings-label" style="width:75px;flex-shrink:0;padding:0;">${esc(niceLabel)}</span>
+          <span style="font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;padding:1px 7px;border-radius:999px;flex-shrink:0;min-width:44px;text-align:center;margin-left:-3px;box-sizing:border-box;${_pillStyle(action)}">${esc(action)}</span>
+          <span style="font-size:11px;line-height:1.35;opacity:0.62;flex:1;min-width:0;">${esc(scope.detail)}</span>
+          <label class="admin-switch" style="margin-left:auto;flex-shrink:0;"><input type="checkbox" class="uf-codex-scope" data-token-id="${esc(t.id)}" data-scope="${esc(scope.key)}" ${scopes.has(scope.key) ? 'checked' : ''}><span class="admin-slider"></span></label>
+        </label>`;
+      }).join('');
+    };
+    const tokenRows = agentTokens.length ? agentTokens.map(t => `
+      <div class="uf-codex-token" data-token-id="${esc(t.id)}" style="border:1px solid var(--border);border-radius:6px;padding:9px 10px;margin-top:8px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <div style="flex:1;min-width:0;">
+            <input type="text" class="uf-codex-rename settings-input" data-token-id="${esc(t.id)}" value="${esc(t.name || cfg.defaultName)}" placeholder="${esc(cfg.defaultName)} (e.g. ${esc(cfg.word)} on laptop)" style="font-size:12px;font-weight:600;padding:3px 6px;width:100%;background:transparent;border:1px solid transparent;border-radius:4px;" title="Click to rename this agent">
+            <div style="font-size:10px;opacity:0.52;margin-top:2px;">${esc(t.token_prefix || 'token')}...${t.last_used_at ? ` · Last used ${new Date(t.last_used_at).toLocaleDateString()}` : ' · Never used'}</div>
+          </div>
+          <button class="admin-btn-sm uf-codex-copy-prefix" data-token-prefix="${esc(t.token_prefix || '')}" title="Copy token prefix (full token only shown once, at creation)" style="opacity:0.7">Copy</button>
+          <button class="admin-btn-delete uf-codex-revoke" data-token-id="${esc(t.id)}">Revoke</button>
+        </div>
+        <div style="font-size:11px;font-weight:600;opacity:0.62;margin-bottom:4px;">Tool access</div>
+        ${scopeToggles(t)}
+        <div class="uf-codex-scope-msg" data-token-id="${esc(t.id)}" style="font-size:11px;min-height:14px;"></div>
+      </div>`).join('') : `<div style="opacity:0.45;font-size:11px;padding:8px 0;">No ${esc(cfg.word)} tokens yet.</div>`;
+    const origin = window.location.origin || '';
+    const setupForToken = (token) => cfg.buildSetup(origin, token);
+
+    formEl.innerHTML = `
+      <div class="admin-card" style="margin-top:8px">
+        <h2 style="font-size:13px">${esc(cfg.label)}</h2>
+        <div style="font-size:11px;opacity:0.65;line-height:1.45;margin:-2px 0 8px;">Generates a scoped token + setup commands so ${esc(cfg.word)} on your own machine can read/write your Odysseus data (todos, email, calendar, etc.). The agent runs in your terminal — it isn't streamed inside Odysseus.</div>
+        <div class="settings-col">
+          <div id="uf-codex-pending" style="display:${current ? 'none' : 'block'};font-size:11px;opacity:0.6;padding:6px 0;">Creating agent...</div>
+          <div id="uf-codex-reveal" style="display:none;padding:10px 12px;border:1px solid var(--border);border-left:3px solid var(--accent, var(--red));border-radius:6px;background:rgba(0,0,0,0.04);width:100%;box-sizing:border-box;">
+            <div style="font-weight:600;font-size:12px;margin-bottom:6px;">${esc(cfg.word)} setup</div>
+
+            <div style="font-size:11px;opacity:0.62;margin-bottom:4px;">Copy this token now &mdash; it will not be shown again.</div>
+            <code id="uf-codex-token" style="display:block;word-break:break-all;font-size:11px;padding:6px 8px;background:rgba(0,0,0,0.08);border-radius:4px;"></code>
+            <div style="margin-top:6px;">
+              <button class="admin-btn-sm" id="uf-codex-copy-token">Copy token</button>
+            </div>
+
+            <div style="margin-top:14px;font-weight:600;font-size:11px;margin-bottom:4px;">Quickstart &mdash; or copy setup directly in your terminal</div>
+            <div style="font-size:11px;opacity:0.62;margin-bottom:6px;">${cfg.setupDescription}</div>
+            <pre style="margin:0;white-space:pre;overflow-x:auto;max-height:220px;overflow-y:auto;font-size:10px;line-height:1.45;padding:8px 10px;background:rgba(0,0,0,0.08);border-radius:4px;width:100%;box-sizing:border-box;"><code id="uf-codex-setup-code"></code></pre>
+            <div style="margin-top:6px;">
+              <button class="admin-btn-sm" id="uf-codex-copy-setup">Copy setup</button>
+            </div>
+
+            <div style="margin-top:14px;font-weight:600;font-size:11px;margin-bottom:4px;">Configure access</div>
+            <div style="font-size:11px;opacity:0.62;margin-bottom:6px;">Toggle which Odysseus tools this agent can use. New agents start with chat only.</div>
+            <div id="uf-codex-inline-scopes"></div>
+          </div>
+          <div style="font-size:11px;font-weight:600;opacity:0.62;margin-top:10px;">${agentTokens.length ? 'Existing agents' : 'Agents'}</div>
+          <div id="uf-codex-token-list">${tokenRows}</div>
+          <div class="settings-row" style="margin-top:10px;align-items:center;">
+            <button class="admin-btn-add" id="uf-codex-save" style="background:var(--red);border-color:var(--red);color:#fff;display:inline-flex;align-items:center;gap:5px;font-weight:600;">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+              Save
+            </button>
+            <span id="uf-codex-msg" style="font-size:11px;flex:1;margin-left:8px"></span>
+            <button class="admin-btn-add" id="uf-codex-cancel" style="opacity:0.7;display:inline-flex;align-items:center;gap:5px;position:relative;top:1px;margin-left:auto;">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>`;
+
+    el('uf-codex-cancel')?.addEventListener('click', () => { formEl.style.display = 'none'; });
+    el('uf-codex-save')?.addEventListener('click', () => {
+      const msg = el('uf-codex-msg');
+      if (msg) { msg.textContent = 'Saved'; msg.style.color = 'var(--green, #50fa7b)'; }
+      setTimeout(() => { formEl.style.display = 'none'; }, 350);
+    });
+
+    const _autoCreateCodex = async () => {
+      const msg = el('uf-codex-msg');
+      const pending = el('uf-codex-pending');
+      const existingNames = new Set(agentTokens.map(t => (t.name || '').trim()));
+      let name = cfg.defaultName;
+      let n = 2;
+      while (existingNames.has(name)) { name = `${cfg.defaultName} ${n++}`; }
+      const fd = new FormData();
+      fd.append('name', name);
+      fd.append('scopes', 'chat');
+      try {
+        const r = await fetch('/api/tokens', { method: 'POST', credentials: 'same-origin', body: fd });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'Failed');
+        if (pending) pending.style.display = 'none';
+        el('uf-codex-token').textContent = d.token || '';
+        el('uf-codex-reveal').style.display = '';
+        const setupBtn = el('uf-codex-copy-setup');
+        if (setupBtn) setupBtn.dataset.token = d.token || '';
+        const setupCode = el('uf-codex-setup-code');
+        if (setupCode) setupCode.textContent = setupForToken(d.token || '');
+        // Populate inline scope toggles for the just-created token (Configure access already open)
+        const newToken = { id: d.id, name, scopes: d.scopes || ['chat'] };
+        const inlineEl = el('uf-codex-inline-scopes');
+        if (inlineEl) {
+          inlineEl.innerHTML = `
+            <div class="uf-codex-token" data-token-id="${esc(newToken.id)}">
+              ${scopeToggles(newToken)}
+              <div class="uf-codex-scope-msg" data-token-id="${esc(newToken.id)}" style="font-size:11px;min-height:14px;"></div>
+            </div>`;
+          _wireScopeChange(inlineEl);
+        }
+        if (msg) {
+          msg.textContent = `Created "${name}".`;
+          msg.style.color = 'var(--green, #50fa7b)';
+        }
+        await renderList();
+      } catch (err) {
+        if (pending) pending.style.display = 'none';
+        if (msg) {
+          msg.textContent = err?.message || 'Failed';
+          msg.style.color = 'var(--red)';
+        }
+      }
+    };
+    if (!current) _autoCreateCodex();
+    const _copyCodexToken = async (text) => {
+      const value = String(text || '');
+      if (!value) return false;
+      if (navigator.clipboard && window.isSecureContext) {
+        try {
+          await navigator.clipboard.writeText(value);
+          return true;
+        } catch (_) {}
+      }
+      const ta = document.createElement('textarea');
+      ta.value = value;
+      ta.setAttribute('readonly', 'readonly');
+      ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;z-index:-1;';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, value.length);
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+      ta.remove();
+      return ok;
+    };
+    const _selectTextFallback = (text, containerId) => {
+      const code = document.createElement('pre');
+      code.textContent = text;
+      code.style.cssText = 'white-space:pre-wrap;word-break:break-word;font-size:10px;margin:6px 0 0;';
+      el(containerId)?.appendChild(code);
+      const range = document.createRange();
+      range.selectNodeContents(code);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    };
+    el('uf-codex-copy-setup')?.addEventListener('click', async () => {
+      const token = el('uf-codex-copy-setup')?.dataset.token || '';
+      const btn = el('uf-codex-copy-setup');
+      if (!token) {
+        if (btn) {
+          btn.textContent = 'Add agent first';
+          setTimeout(() => { const latest = el('uf-codex-copy-setup'); if (latest) latest.textContent = 'Copy setup'; }, 1600);
+        }
+        return;
+      }
+      const setup = setupForToken(token);
+      const ok = await _copyCodexToken(setup);
+      if (!btn) return;
+      btn.textContent = ok ? 'Copied setup' : 'Select setup';
+      if (!ok) _selectTextFallback(setup, 'uf-codex-reveal');
+      setTimeout(() => { const latest = el('uf-codex-copy-setup'); if (latest) latest.textContent = 'Copy setup'; }, 1600);
+    });
+    el('uf-codex-copy-token')?.addEventListener('click', async () => {
+      const token = el('uf-codex-token')?.textContent || '';
+      const ok = await _copyCodexToken(token);
+      const btn = el('uf-codex-copy-token');
+      if (!btn) return;
+      btn.textContent = ok ? 'Copied token' : 'Select token';
+      if (!ok) _selectTextFallback(token, 'uf-codex-reveal');
+      setTimeout(() => { const latest = el('uf-codex-copy-token'); if (latest) latest.textContent = 'Copy token'; }, 1600);
+    });
+    formEl.querySelectorAll('.uf-codex-revoke').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!await window.styledConfirm(`Revoke this ${cfg.word} token? Terminal agents using it will lose access.`, { confirmText: 'Revoke', danger: true })) return;
+        await fetch(`/api/tokens/${btn.dataset.tokenId}`, { method: 'DELETE', credentials: 'same-origin' });
+        formEl.style.display = 'none';
+        await renderList();
+      });
+    });
+    // Rename: PATCH the token's name when the user blurs the input (or hits Enter).
+    formEl.querySelectorAll('.uf-codex-rename').forEach(input => {
+      const original = input.value;
+      const commit = async () => {
+        const name = (input.value || '').trim();
+        if (!name || name === original) return;
+        try {
+          const r = await fetch(`/api/tokens/${input.dataset.tokenId}`, {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name }),
+          });
+          if (!r.ok) throw new Error('Save failed');
+          input.style.borderColor = 'var(--green, #50fa7b)';
+          setTimeout(() => { input.style.borderColor = 'transparent'; }, 800);
+          await renderList();
+        } catch (_) {
+          input.value = original;
+          input.style.borderColor = 'var(--red)';
+          setTimeout(() => { input.style.borderColor = 'transparent'; }, 1200);
+        }
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } });
+    });
+    // Copy token prefix (full token irrecoverable after the one-time creation reveal).
+    formEl.querySelectorAll('.uf-codex-copy-prefix').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const prefix = btn.dataset.tokenPrefix || '';
+        if (!prefix) return;
+        try {
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(prefix);
+          } else {
+            const ta = document.createElement('textarea');
+            ta.value = prefix;
+            ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch (_) {}
+            ta.remove();
+          }
+          const label = btn.textContent;
+          btn.textContent = 'Copied prefix';
+          setTimeout(() => { btn.textContent = label; }, 1400);
+        } catch (_) {}
+      });
+    });
+    function _wireScopeChange(scope) {
+      scope.querySelectorAll('.uf-codex-scope').forEach(cb => {
+        if (cb.dataset.wired === '1') return;
+        cb.dataset.wired = '1';
+        cb.addEventListener('change', async () => {
+          const tokenId = cb.dataset.tokenId;
+          const panel = formEl.querySelector(`.uf-codex-token[data-token-id="${CSS.escape(tokenId)}"]`);
+          const msg = formEl.querySelector(`.uf-codex-scope-msg[data-token-id="${CSS.escape(tokenId)}"]`);
+          const scopes = Array.from(panel.querySelectorAll('.uf-codex-scope:checked')).map(input => input.dataset.scope);
+          try {
+            const r = await fetch(`/api/tokens/${tokenId}`, {
+              method: 'PATCH',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ scopes }),
+            });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(d.detail || 'Failed');
+            if (msg) { msg.textContent = 'Saved'; msg.style.color = 'var(--green, #50fa7b)'; }
+            await renderList();
+          } catch (err) {
+            cb.checked = !cb.checked;
+            if (msg) { msg.textContent = err?.message || 'Failed'; msg.style.color = 'var(--red)'; }
+          }
+        });
+      });
+    }
+    _wireScopeChange(formEl);
+  }
+
   // ── Add button with type picker ──
   if (addBtn) {
     addBtn.addEventListener('click', () => {
       formEl.style.display = '';
+      const _typeOptions = [
+        ['api', 'API Service'],
+        ['caldav', 'CalDAV Calendar'],
+        ['claude', 'Claude Agent'],
+        ['codex', 'Codex Agent'],
+        ['carddav', 'Contacts (CardDAV)'],
+        ['contacts', 'Contacts Import'],
+        ['email', 'Email (IMAP/SMTP)'],
+        ['mcp', 'MCP Tool Server'],
+      ];
+      const _iconFor = (k) => (INTG_TYPES[k]?.icon || '').replace(/width="14"/, 'width="16"').replace(/height="14"/, 'height="16"');
+      const _rowsHtml = _typeOptions.map(([k, label]) => `<button type="button" class="uf-type-option" data-value="${k}" style="display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;background:transparent;border:0;color:var(--fg);font:inherit;cursor:pointer;text-align:left;"><span style="display:inline-flex;color:var(--accent, var(--red));flex-shrink:0;">${_iconFor(k)}</span><span>${esc(label)}</span></button>`).join('');
       formEl.innerHTML = `
         <div class="admin-card" style="margin-top:8px">
-          <h2 style="font-size:13px">Add Integration</h2>
+          <h2 style="font-size:13px;display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Add Integration</h2>
           <div class="settings-col">
             <div class="settings-row"><label class="settings-label">Type</label>
-              <select id="uf-type-picker" class="settings-input">
-                <option value="">Select...</option>
-                <option value="api">API Service</option>
-                <option value="caldav">CalDAV Calendar</option>
-                <option value="contacts">Contacts Import</option>
-                <option value="carddav">Contacts (CardDAV)</option>
-                <option value="email">Email (IMAP/SMTP)</option>
-                <option value="mcp">MCP Tool Server</option>
-              </select>
+              <div style="position:relative;flex:1;min-width:0;">
+                <button type="button" id="uf-type-trigger" class="settings-select" style="display:flex;align-items:center;gap:10px;cursor:pointer;text-align:left;width:100%;padding-right:24px;position:relative;">
+                  <span class="uf-type-icon" style="display:inline-flex;color:var(--accent, var(--red));"></span>
+                  <span class="uf-type-label" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:0.65;">Select...</span>
+                  <span aria-hidden="true" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);opacity:0.5;font-size:10px;pointer-events:none;">▾</span>
+                </button>
+                <div id="uf-type-menu" style="display:none;position:absolute;top:calc(100% + 2px);left:0;right:0;z-index:1000;background:var(--panel);border:1px solid var(--border);border-radius:6px;max-height:340px;overflow-y:auto;box-shadow:0 6px 18px rgba(0,0,0,0.25);">${_rowsHtml}</div>
+              </div>
             </div>
           </div>
         </div>`;
-      el('uf-type-picker').addEventListener('change', () => {
-        const v = el('uf-type-picker').value;
-        if (v) showForm(v, 'new');
+      const trigger = el('uf-type-trigger');
+      const menu = el('uf-type-menu');
+      const labelEl = trigger.querySelector('.uf-type-label');
+      const iconEl = trigger.querySelector('.uf-type-icon');
+      const _closeMenu = () => { menu.style.display = 'none'; };
+      const _openMenu = () => {
+        menu.style.display = 'block';
+        // Drop-up when there's not enough room below the trigger (mobile
+        // landscape / docked keyboard / long lists near the bottom of screen).
+        const tRect = trigger.getBoundingClientRect();
+        const mRect = menu.getBoundingClientRect();
+        const below = window.innerHeight - tRect.bottom;
+        const above = tRect.top;
+        if (mRect.height > below && above > below) {
+          menu.style.top = 'auto'; menu.style.bottom = 'calc(100% + 2px)';
+        } else {
+          menu.style.top = 'calc(100% + 2px)'; menu.style.bottom = 'auto';
+        }
+        const onDoc = (ev) => { if (!menu.contains(ev.target) && ev.target !== trigger) { _closeMenu(); document.removeEventListener('click', onDoc, true); } };
+        setTimeout(() => document.addEventListener('click', onDoc, true), 0);
+      };
+      trigger.addEventListener('click', (e) => { e.stopPropagation(); menu.style.display === 'block' ? _closeMenu() : _openMenu(); });
+      menu.querySelectorAll('.uf-type-option').forEach(btn => {
+        btn.addEventListener('mouseenter', () => { btn.style.background = 'color-mix(in srgb, var(--fg) 8%, transparent)'; });
+        btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const k = btn.dataset.value;
+          const lbl = btn.querySelector('span:last-child')?.textContent || '';
+          if (labelEl) { labelEl.textContent = lbl; labelEl.style.opacity = '1'; }
+          if (iconEl) iconEl.innerHTML = _iconFor(k);
+          _closeMenu();
+          showForm(k, 'new');
+        });
       });
     });
   }

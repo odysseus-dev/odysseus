@@ -399,7 +399,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     "action_name": {"type": "string", "enum": [
                         "tidy_sessions", "tidy_documents", "consolidate_memory", "tidy_research",
                         "summarize_emails", "draft_email_replies", "extract_email_events",
-                        "classify_events", "mark_email_boundaries", "learn_sender_signatures",
+                        "classify_events", "learn_sender_signatures",
                         "test_skills", "audit_skills", "check_email_urgency"
                     ],
                                     "description": "Built-in action (for task_type=action)"},

@@ -31,6 +31,7 @@ body:
     attributes:
       label: Install Method
       options:
+        - "-- Please Select --"
         - Docker (docker compose up)
         - Manual Python install (pip / venv)
         - Windows native (launch-windows.ps1)
@@ -44,6 +45,7 @@ body:
     attributes:
       label: Operating System
       options:
+        - "-- Please Select --"
         - Linux
         - macOS
         - Windows

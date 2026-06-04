@@ -211,7 +211,6 @@ HOUSEKEEPING_DEFAULTS = {
     "draft_email_replies":  {"name": "Email AI Auto Reply",      "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Tidy Email (Replies)", "AI Auto Reply"]},
     "extract_email_events": {"name": "Email Calendar Events",    "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */1 * * *", "ship_paused": True, "legacy_names": ["Email → Calendar Events"]},
     "classify_events":      {"name": "Calendar Classify Events", "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 6,18 * * *", "ship_paused": True, "legacy_names": ["Classify Calendar Events"]},
-    "mark_email_boundaries": {"name": "Email Mark Boundaries",   "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Mark Email Boundaries"]},
     "check_email_urgency":   {"name": "Email Tags",               "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 * * * *", "ship_paused": True, "old_cron_expressions": ["*/15 * * * *"], "legacy_names": ["Email Triage", "Urgent Email"]},
     "audit_skills":          {"name": "Skills Audit",             "trigger_type": "event", "trigger_event": "skill_added", "trigger_count": 5, "schedule": None, "scheduled_time": None, "cron_expression": None, "legacy_names": ["Audit Skills"]},
 }
@@ -219,6 +218,7 @@ HOUSEKEEPING_DEFAULTS = {
 RETIRED_HOUSEKEEPING_ACTIONS = frozenset({
     "tidy_calendar",
     "tidy_email_inbox",
+    "mark_email_boundaries",
 })
 
 
@@ -944,7 +944,6 @@ class TaskScheduler:
     # Activity log + reminder email already carry everything the user needs.
     _SILENT_ACTIONS = frozenset({
         "check_email_urgency",
-        "mark_email_boundaries",
         "learn_sender_signatures",
         "summarize_emails",
         "draft_email_replies",
@@ -963,7 +962,6 @@ class TaskScheduler:
         "draft_email_replies",
         "extract_email_events",
         "classify_events",
-        "mark_email_boundaries",
         "learn_sender_signatures",
         "check_email_urgency",
         "test_skills",
@@ -1946,11 +1944,30 @@ class TaskScheduler:
                 task.task_type = "action"
                 task.action = action
 
+            from core.database import TaskRun
+            retired_ids = [
+                row[0] for row in db.query(ScheduledTask.id).filter(
+                    ScheduledTask.owner == owner,
+                    ScheduledTask.task_type == "action",
+                    ScheduledTask.action.in_(list(RETIRED_HOUSEKEEPING_ACTIONS)),
+                ).all()
+            ]
+            if retired_ids:
+                db.query(TaskRun).filter(TaskRun.task_id.in_(retired_ids)).delete(synchronize_session=False)
             retired_count = db.query(ScheduledTask).filter(
                 ScheduledTask.owner == owner,
                 ScheduledTask.task_type == "action",
                 ScheduledTask.action.in_(list(RETIRED_HOUSEKEEPING_ACTIONS)),
             ).delete(synchronize_session=False)
+            # Sweep orphan TaskRun rows (parent task deleted previously) so
+            # retired actions stop showing in Activity. Only runs when at least
+            # one live task exists — avoids wiping run history on a fresh DB.
+            try:
+                live_ids = {row[0] for row in db.query(ScheduledTask.id).all()}
+                if live_ids:
+                    db.query(TaskRun).filter(~TaskRun.task_id.in_(list(live_ids))).delete(synchronize_session=False)
+            except Exception:
+                pass
             existing_actions = {
                 row[0] for row in db.query(ScheduledTask.action).filter(
                     ScheduledTask.owner == owner,
@@ -2088,11 +2105,13 @@ class TaskScheduler:
                 db.add(task)
                 seeded.append(action)
             if seeded or renamed or removed_dupes or retired_count:
-                db.commit()
                 logger.info(
                     "Housekeeping defaults for %s: seeded=%s renamed=%s deduped=%s retired=%s",
                     owner, seeded, sorted(set(renamed)), sorted(set(removed_dupes)), retired_count,
                 )
+            # Always commit — the orphan-run sweep above may have produced
+            # pending deletes even when no defaults changed.
+            db.commit()
         except Exception as e:
             logger.warning(f"Failed to create default tasks: {e}")
         finally:

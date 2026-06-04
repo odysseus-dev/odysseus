@@ -1769,6 +1769,33 @@ def setup_cookbook_routes() -> APIRouter:
 
             disk_tasks = on_disk.get("tasks") or [] if isinstance(on_disk, dict) else []
             incoming_tasks = data.get("tasks") if isinstance(data.get("tasks"), list) else []
+            # Anti-poisoning guard: a stale browser tab can keep POSTing a
+            # download task as status='done' from before the strict-finish
+            # fix landed, undoing any server-side correction. For each
+            # incoming "done" download, override to "running" if the last
+            # shard pattern says N<total AND no DOWNLOAD_OK/DOWNLOAD_FAILED/
+            # /snapshots/ sentinel is in the output.
+            import re as _re_dl
+            for _it in incoming_tasks:
+                if (not isinstance(_it, dict)) or _it.get("type") != "download" or _it.get("status") != "done":
+                    continue
+                _out = _it.get("output") or ""
+                if ("DOWNLOAD_OK" in _out) or ("DOWNLOAD_FAILED" in _out) or ("/snapshots/" in _out):
+                    continue
+                _shards = _re_dl.findall(r"model-(\d+)-of-(\d+)\.safetensors", _out)
+                if _shards:
+                    _n, _tot = _shards[-1]
+                    if int(_n) < int(_tot):
+                        logger.info(f"cookbook state POST: rejecting stale done for {_it.get('sessionId')} "
+                                    f"(last shard {_n}/{_tot}, no DOWNLOAD_OK)")
+                        _it["status"] = "running"
+                else:
+                    _completed = _out.count("Download complete")
+                    _starts = _out.count("Downloading '")
+                    if _starts > _completed:
+                        logger.info(f"cookbook state POST: rejecting stale done for {_it.get('sessionId')} "
+                                    f"({_completed}/{_starts} files complete, no DOWNLOAD_OK)")
+                        _it["status"] = "running"
             incoming_ids = {t.get("sessionId") for t in incoming_tasks if isinstance(t, dict) and t.get("sessionId")}
             import time as _t
             now_ms = int(_t.time() * 1000)
@@ -1887,10 +1914,14 @@ def setup_cookbook_routes() -> APIRouter:
 
             if vram_gb > 0 and needed_vram is not None and needed_vram > vram_gb:
                 continue
-            # Skip if no size info — without a size we can't tell if it's a real
-            # full-weight model or a tiny adapter, so we'd rather drop it
-            if est_vram is None:
-                continue
+            # Unknown-size models (e.g. MiniMax-M2.7, DeepSeek-V4-Flash) have no
+            # "NB" in the repo id, so the regex above can't extract their
+            # param count. Previously we dropped them entirely, which made
+            # brand-new flagship releases silently vanish from this list even
+            # on rigs with hundreds of GB of VRAM. Adapters/LoRAs are already
+            # filtered by _is_excluded(), so what falls through here is
+            # overwhelmingly full models — keep them, just without a size
+            # badge (the frontend handles needed_vram_gb=null gracefully).
 
             out.append({
                 "repo_id": repo_id,

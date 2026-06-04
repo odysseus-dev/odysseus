@@ -22,7 +22,8 @@ def test_background_status_poll_reconciles_into_local_tasks():
     assert "const statusById = new Map(tasks.map(t => [t.session_id, t]));" in source
     assert "const nextStatus = live.status === 'completed'" in source
     assert "? 'done'" in source
-    assert "live.status === 'error'" in source
+    assert ": (live.status === 'error'" in source
+    assert "? 'error'" in source
     assert "_saveTasks(localTasks);" in source
     assert "completedDeps.forEach(t => _refreshDepsAfterInstall(t));" in source
 
