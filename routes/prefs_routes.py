@@ -19,9 +19,13 @@ def _load():
 
 
 def _save(prefs):
-    os.makedirs(os.path.dirname(PREFS_FILE), exist_ok=True)
-    with open(PREFS_FILE, "w", encoding="utf-8") as f:
+    os.makedirs(os.path.dirname(PREFS_FILE) or ".", exist_ok=True)
+    tmp = f"{PREFS_FILE}.tmp.{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(prefs, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, PREFS_FILE)
 
 
 def _load_for_user(user: Optional[str] = None) -> dict:

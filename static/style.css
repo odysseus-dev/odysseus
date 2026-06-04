@@ -1008,6 +1008,16 @@ body.bg-pattern-sparkles {
       opacity: 1;
       animation: whirlpool-burst 0.36s cubic-bezier(0.4, 0, 0.2, 1) forwards;
     }
+    /* When a chip is swirling into the trash X, its inline `rotate(720deg)`
+       drags every child + ::after badge along with it — the count/dot pill
+       spinning looks chaotic. Fade those out fast at the start of the close
+       so visually only the icon glyph rotates. */
+    .minimized-dock-chip.chip-trashing > :not(svg),
+    .minimized-dock-chip.chip-trashing::after,
+    .minimized-dock-chip.chip-trashing::before {
+      opacity: 0 !important;
+      transition: opacity 0.16s ease-out !important;
+    }
     @keyframes whirlpool-spin { to { transform: rotate(360deg); } }
     @keyframes whirlpool-burst {
       0%   { transform: rotate(0deg) scale(1);   opacity: 1; }
@@ -2204,12 +2214,12 @@ body.bg-pattern-sparkles {
       background: transparent;
       border: none;
       outline: none;
-      resize: vertical;
+      resize: none;
       font-size: 14px;
       line-height: 1.5;
       color: var(--fg);
       min-height: 24px;
-      max-height: min(60vh, 600px);
+      max-height: 200px;
       padding: 0;
       font-family: inherit;
       transition: height 0.12s ease-out;
@@ -10326,7 +10336,7 @@ textarea.memory-add-input {
 }
 .task-state-badge svg {
   position: relative;
-  top: -1px;
+  top: 0;
 }
 .task-status-badge:hover {
   filter: brightness(1.08) saturate(1.15);
@@ -13289,6 +13299,13 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   border-radius: 8px;
   padding: 12px;
   margin-bottom: 10px;
+}
+/* When the integrations editor opens, the inner admin-card should match the
+   listed integration cards (subtle tint, same border) instead of reverting
+   to the solid-panel admin-card surface used elsewhere. */
+#unified-intg-form .admin-card,
+#integrations-form .admin-card {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
 }
 .admin-card h2 {
   font-size: 14px;
@@ -21544,9 +21561,11 @@ body:not(.welcome-ready) #welcome-screen {
   position: relative;
   top: -1px;
 }
-.task-log-force-run svg {
+.task-log-force-run svg,
+.task-log-stop svg {
   display: block;
   flex-shrink: 0;
+  transform: translateY(1px);
 }
 .task-log-force-run:hover {
   opacity: 1;
@@ -21918,13 +21937,14 @@ a.chat-link[href^="#research-"] {
     padding-right: 0;
     box-sizing: border-box;
     justify-content: center;
+    top: 2px !important;
   }
   .task-card .task-state-badge .task-state-label {
     display: none;
   }
   .task-card .task-card-run-btn {
     margin-right: 1px !important;
-    top: 0;
+    top: 2px;
   }
 }
 
@@ -27291,6 +27311,20 @@ button .spinner-whirlpool {
     max-width: 100%;
   }
 }
+/* Mobile: long recipient lists (To/Cc with many addresses) shouldn't wrap to
+   N rows and push the body down. Keep them on one row, horizontally scrollable,
+   no scrollbar chrome. */
+@media (max-width: 768px) {
+  .recipient-chips {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .recipient-chips::-webkit-scrollbar { display: none; }
+  .recipient-chip { flex-shrink: 0; }
+}
 .email-reader-actions {
   display: flex; gap: 4px; flex-wrap: nowrap; align-items: center;
   flex-shrink: 0;
@@ -30837,6 +30871,20 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   margin-top: -2px;
 }
 /* Reminder bell button */
+/* Mobile-only: bell icon in the note editor is accent-coloured so it pops as
+   the primary "set a reminder" affordance. The Archive button is hidden — the
+   Update (✓) button morphs into an Archive action when the user opens a note
+   and clicks without making any edits (see notes.js `archive-mode` toggle). */
+@media (max-width: 768px) {
+  .note-form-remind-btn { color: var(--accent, var(--red)) !important; }
+  .note-form-remind-btn > svg { color: var(--accent, var(--red)); }
+  .note-form-archive-btn { display: none !important; }
+  .note-form-save.archive-mode {
+    color: var(--accent, var(--red)) !important;
+    border-color: color-mix(in srgb, var(--accent, var(--red)) 50%, transparent) !important;
+    background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent) !important;
+  }
+}
 .note-form-remind-btn {
   flex: 0 0 auto;
   background: transparent;
@@ -33174,6 +33222,18 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
 .email-attach-toggle-inline,
 .email-undone-toggle-inline,
 .email-reminder-toggle-inline { border-radius: 50% !important; opacity: 1 !important; }
+/* Mobile: enlarge the icons inside the inline search-bar toggles
+   (done / attachment / reminders) — buttons themselves stay the same,
+   only the SVG glyph scales up so it's tappable + visible. */
+@media (max-width: 768px) {
+  .email-attach-toggle-inline svg,
+  .email-undone-toggle-inline svg,
+  .email-reminder-toggle-inline svg,
+  .email-filter-refresh-btn svg {
+    width: 15px !important;
+    height: 15px !important;
+  }
+}
 .email-attach-toggle:not(.email-attach-toggle-inline):hover svg {
   animation: email-undone-jiggle 0.45s ease-in-out;
   transform-origin: 50% 50%;

@@ -391,6 +391,27 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     }
   }
 
+  function libraryRemoveDocumentFromState(docId) {
+    const removed = _libraryDocs.find(d => String(d.id) === String(docId));
+    _libraryDocs = _libraryDocs.filter(d => String(d.id) !== String(docId));
+    _librarySelectedIds.delete(docId);
+    _libraryTotal = Math.max(0, _libraryTotal - 1);
+
+    const lang = removed && (removed.language || 'text');
+    if (lang && Object.prototype.hasOwnProperty.call(_libraryLanguages, lang)) {
+      const next = Math.max(0, Number(_libraryLanguages[lang] || 0) - 1);
+      if (next > 0) {
+        _libraryLanguages[lang] = next;
+      } else {
+        delete _libraryLanguages[lang];
+      }
+    }
+
+    libraryRenderStats();
+    libraryRenderLangChips();
+    libraryUpdateBulkCount();
+  }
+
   function libraryRenderGrid() {
     const grid = document.getElementById('doclib-grid');
     if (!grid) return;
@@ -709,8 +730,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         const res = await fetch(`${API_BASE}/api/document/${doc.id}/archive?archived=${toArchived}`, { method: 'POST', credentials: 'same-origin' });
         if (!res.ok) throw new Error('failed');
         // Drop it from the current view (it no longer belongs here) and refresh.
-        _libraryDocs = _libraryDocs.filter(d => d.id !== doc.id);
-        _libraryTotal = Math.max(0, _libraryTotal - 1);
+        libraryRemoveDocumentFromState(doc.id);
         libraryRenderGrid();
         if (uiModule) uiModule.showToast(toArchived ? 'Archived' : 'Restored');
       } catch { if (uiModule) uiModule.showError('Failed to ' + (toArchived ? 'archive' : 'restore')); }
@@ -802,8 +822,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       try {
         const res = await fetch(`${API_BASE}/api/document/${doc.id}/archive?archived=${toArchived}`, { method: 'POST', credentials: 'same-origin' });
         if (!res.ok) throw new Error('failed');
-        _libraryDocs = _libraryDocs.filter(d => d.id !== doc.id);
-        _libraryTotal = Math.max(0, _libraryTotal - 1);
+        libraryRemoveDocumentFromState(doc.id);
         libraryRenderGrid();
         if (uiModule) uiModule.showToast(toArchived ? 'Archived' : 'Restored');
       } catch { if (uiModule) uiModule.showError('Failed to ' + (toArchived ? 'archive' : 'restore')); }
@@ -1170,9 +1189,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         card.addEventListener('transitionend', () => card.remove(), { once: true });
         setTimeout(() => { if (card.parentElement) card.remove(); }, 400);
       }
-      _libraryDocs = _libraryDocs.filter(d => d.id !== docId);
-      _libraryTotal = Math.max(0, _libraryTotal - 1);
-      libraryRenderStats();
+      libraryRemoveDocumentFromState(docId);
       if (uiModule) uiModule.showToast('Document deleted');
     } catch (e) {
       if (uiModule) uiModule.showError(`Failed to delete document: ${e.message || e}`);

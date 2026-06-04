@@ -34,6 +34,7 @@ from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPExc
 from fastapi.responses import FileResponse
 
 from src.llm_core import llm_call_async
+from src.upload_limits import read_upload_limited
 
 from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
@@ -55,6 +56,7 @@ from routes.email_pollers import _start_poller
 logger = logging.getLogger(__name__)
 
 ODYSSEUS_MAIL_ORIGIN = "odysseus-ui"
+EMAIL_COMPOSE_UPLOAD_MAX_BYTES = 25 * 1024 * 1024
 
 
 def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[str]:
@@ -1880,16 +1882,12 @@ def setup_email_routes():
     @router.post("/compose-upload")
     async def compose_upload(file: UploadFile = File(...), owner: str = Depends(require_owner)):
         """Upload a file for attaching to a compose email. Returns a token."""
-        # 25MB cap (matches typical SMTP limits w/ base64 overhead)
-        MAX_BYTES = 25 * 1024 * 1024
         try:
             # Sanitize filename and generate a unique token
             safe_name = re.sub(r"[^\w\s\-.]", "_", file.filename or "file").strip()
             token = f"{uuid.uuid4().hex}_{safe_name}"
             filepath = COMPOSE_UPLOADS_DIR / token
-            content = await file.read()
-            if len(content) > MAX_BYTES:
-                raise HTTPException(413, f"Attachment exceeds {MAX_BYTES // (1024*1024)}MB limit")
+            content = await read_upload_limited(file, EMAIL_COMPOSE_UPLOAD_MAX_BYTES, "Attachment")
             with open(filepath, "wb") as f:
                 f.write(content)
             return {

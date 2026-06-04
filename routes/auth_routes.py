@@ -375,6 +375,17 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         ok = auth_manager.delete_user(body.username, user)
         if not ok:
             raise HTTPException(400, "Cannot delete user")
+        # delete_user removes the user's ApiToken rows, but the bearer-auth
+        # middleware serves from an in-memory prefix->token cache that only
+        # rebuilds when flagged dirty. Without this, a deleted user's already
+        # cached token keeps authenticating until some other token op or a
+        # restart clears the cache. Mirror what the token routes do.
+        try:
+            invalidator = getattr(request.app.state, "invalidate_token_cache", None)
+            if invalidator:
+                invalidator()
+        except Exception:
+            pass
         return {"ok": True}
 
     # ---- Feature visibility (admin-managed) ----

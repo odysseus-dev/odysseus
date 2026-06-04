@@ -1886,7 +1886,7 @@
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>Email Accounts</h2>
             <div class="settings-row" style="align-items:center;">
               <div class="admin-toggle-sub" style="margin:0;flex:1;">Add, edit, delete, and test accounts in Integrations.</div>
-              <button class="admin-btn-add" id="set-email-open-integrations">Manage in Integrations</button>
+              <button class="admin-btn-add" id="set-email-open-integrations" style="display:inline-flex;align-items:center;gap:6px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="opacity:0.7"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Manage in Integrations</button>
             </div>
           </div>
 
@@ -1894,7 +1894,7 @@
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg>Email Tasks</h2>
             <div class="settings-row" style="align-items:center;">
               <div class="admin-toggle-sub" style="margin:0;flex:1;">Manage email background tasks in Tasks.</div>
-              <button class="admin-btn-add" id="set-email-open-tasks">Open Tasks</button>
+              <button class="admin-btn-add" id="set-email-open-tasks" style="display:inline-flex;align-items:center;gap:6px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="opacity:0.7"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg>Open Tasks</button>
             </div>
           </div>
 
@@ -2079,6 +2079,10 @@
                 </select>
                 <div class="admin-model-form-row">
                   <input id="adm-epApiKey" type="password" placeholder="API key">
+                  <select id="adm-epKind" style="padding:5px;width:82px;">
+                    <option value="proxy">Proxy</option>
+                    <option value="api">API</option>
+                  </select>
                   <select id="adm-epType" style="padding:5px;width:80px;">
                     <option value="llm">LLM</option>
                     <option value="image">Image</option>
@@ -2115,12 +2119,12 @@
         <!-- ═══ INTEGRATIONS TAB ═══ -->
         <div data-settings-panel="integrations" class="hidden">
           <div class="admin-card">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Connections</h2>
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Integrations</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">All external service connections in one place.</div>
             <div id="unified-integrations-list"></div>
             <div id="unified-intg-form" style="display:none"></div>
             <div style="text-align:center;padding:8px 0;">
-              <button type="button" class="admin-btn-sm" id="unified-intg-add-btn">+ Add Integration</button>
+              <button type="button" class="admin-btn-sm" id="unified-intg-add-btn" style="display:inline-flex;align-items:center;gap:6px;">+ Add Integration<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
             </div>
           </div>
         </div>

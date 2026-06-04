@@ -1,7 +1,7 @@
 import os
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
@@ -13,15 +13,21 @@ logger = logging.getLogger(__name__)
 # Create base class for declarative models
 Base = declarative_base()
 
+
+def utcnow_naive() -> datetime:
+    """Return naive UTC for existing DateTime columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 class TimestampMixin:
     """Mixin that adds timestamp fields to models"""
     @declared_attr
     def created_at(cls):
-        return Column(DateTime, default=datetime.utcnow, nullable=False)
+        return Column(DateTime, default=utcnow_naive, nullable=False)
     
     @declared_attr
     def updated_at(cls):
-        return Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+        return Column(DateTime, default=utcnow_naive, onupdate=utcnow_naive, nullable=False)
 
 # Get database URL from environment, default to SQLite
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
@@ -171,7 +177,7 @@ class ChatMessage(Base):
     meta_data = Column("metadata", Text, nullable=True)  # JSON string for metrics etc.
 
     # Timestamp
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=utcnow_naive)
     
     # Relationship to Session
     session = relationship("Session", back_populates="messages")
@@ -224,7 +230,7 @@ class DocumentVersion(Base):
     content        = Column(Text, nullable=False)
     summary        = Column(String, nullable=True)     # Edit description
     source         = Column(String, default="ai")      # "ai" or "user"
-    created_at     = Column(DateTime, default=datetime.utcnow)
+    created_at     = Column(DateTime, default=utcnow_naive)
 
     document = relationship("Document", back_populates="versions")
 
@@ -336,6 +342,14 @@ class ModelEndpoint(TimestampMixin, Base):
     cached_models = Column(Text, nullable=True)    # JSON list of last-known model IDs (avoids probe on list)
     pinned_models = Column(Text, nullable=True)    # JSON list of admin-pinned model IDs (manual, may not appear in /v1/models)
     model_type = Column(String, nullable=True, default="llm")  # "llm" or "image"
+    # auto = classify by URL; local = self-hosted server; api/proxy = external
+    # OpenAI-compatible API even when reachable through a private/tailnet IP.
+    endpoint_kind = Column(String, nullable=True, default="auto")
+    # auto = background refresh with TTL/backoff; manual/disabled = cached-first
+    # only unless an explicit endpoint probe is requested.
+    model_refresh_mode = Column(String, nullable=True, default="auto")
+    model_refresh_interval = Column(Integer, nullable=True, default=None)
+    model_refresh_timeout = Column(Integer, nullable=True, default=None)
     # Whether models on this endpoint accept OpenAI-style function
     # schemas + emit `tool_calls`. Auto-detected at Cookbook auto-
     # register time from `--enable-auto-tool-choice` in the serve cmd;
@@ -472,8 +486,8 @@ class UserToolData(Base):
     tool_id    = Column(String, ForeignKey("user_tools.id", ondelete="CASCADE"), nullable=False)
     key        = Column(String, nullable=False)
     value      = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_naive)
+    updated_at = Column(DateTime, default=utcnow_naive, onupdate=utcnow_naive)
 
     tool = relationship("UserTool", backref=backref("data_entries", cascade="all, delete-orphan"))
 
@@ -592,7 +606,7 @@ class TaskRun(Base):
 
     id          = Column(String, primary_key=True, index=True)
     task_id     = Column(String, ForeignKey("scheduled_tasks.id", ondelete="CASCADE"), nullable=False)
-    started_at  = Column(DateTime, nullable=False, default=datetime.utcnow)
+    started_at  = Column(DateTime, nullable=False, default=utcnow_naive)
     finished_at = Column(DateTime, nullable=True)
     status      = Column(String, default="running")  # "running", "success", "error"
     result      = Column(Text, nullable=True)
@@ -633,7 +647,7 @@ class Memory(Base):
     session_id = Column(String, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Timestamp as Unix timestamp
-    timestamp = Column(Integer, default=lambda: int(datetime.utcnow().timestamp()))
+    timestamp = Column(Integer, default=lambda: int(utcnow_naive().timestamp()))
 
     # Relationship to Session
     session = relationship("Session", backref="memories")
@@ -802,6 +816,29 @@ def _migrate_add_model_type_column():
         conn.close()
     except Exception as e:
         logging.getLogger(__name__).warning(f"model_type migration failed: {e}")
+
+def _migrate_add_model_endpoint_refresh_columns():
+    """Add endpoint classification / refresh policy columns if missing."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(model_endpoints)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "endpoint_kind" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN endpoint_kind TEXT DEFAULT 'auto'")
+        if columns and "model_refresh_mode" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN model_refresh_mode TEXT DEFAULT 'auto'")
+        if columns and "model_refresh_interval" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN model_refresh_interval INTEGER")
+        if columns and "model_refresh_timeout" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN model_refresh_timeout INTEGER")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"model_endpoints refresh-policy migration failed: {e}")
 
 def _migrate_add_task_run_model_column():
     """Add model column to task_runs if it doesn't exist (records which model ran)."""
@@ -1480,7 +1517,7 @@ def _migrate_seed_email_account():
         if not imap_host and not smtp_host:
             return  # nothing to migrate
 
-        now = datetime.utcnow()
+        now = utcnow_naive()
         with engine.begin() as conn:
             conn.execute(text("""
                 INSERT INTO email_accounts
@@ -1533,6 +1570,7 @@ def init_db():
     _migrate_add_pinned_models_column()
     _migrate_add_notes_sort_order()
     _migrate_add_model_type_column()
+    _migrate_add_model_endpoint_refresh_columns()
     _migrate_add_model_endpoint_owner_column()
     _migrate_add_supports_tools_column()
     _migrate_add_task_run_model_column()
@@ -1760,7 +1798,7 @@ def bulk_insert_messages(session_id: str, messages: list):
                     'session_id': session_id,
                     'role': msg['role'],
                     'content': msg['content'],
-                    'timestamp': datetime.utcnow()
+                    'timestamp': utcnow_naive()
                 }
                 for msg in messages
             ]
@@ -1771,7 +1809,7 @@ def cleanup_old_sessions(days: int = 30):
     from datetime import timedelta
     
     with get_db_session() as db:
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = utcnow_naive() - timedelta(days=days)
         
         deleted_count = db.query(Session).filter(
             Session.archived == True,
@@ -1816,7 +1854,7 @@ def update_session_last_accessed(session_id: str):
     with get_db_session() as db:
         db_session = db.query(Session).filter(Session.id == session_id).first()
         if db_session:
-            db_session.last_accessed = datetime.utcnow()
+            db_session.last_accessed = utcnow_naive()
             db.commit()
             return True
     return False
@@ -1861,7 +1899,7 @@ def get_upcoming_events(owner, horizon_days: int = 60, limit: int = 40):
     The autonomous email->calendar pass relies on this to avoid disclosing (and
     acting on) other users' calendars."""
     from datetime import timedelta
-    now = datetime.utcnow()
+    now = utcnow_naive()
     with get_db_session() as db:
         q = db.query(CalendarEvent).join(CalendarCal).filter(
             CalendarEvent.dtstart >= now,
