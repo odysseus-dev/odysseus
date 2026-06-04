@@ -15,6 +15,7 @@ Security fixes are handled on the default branch until formal releases are cut.
 - Put the authenticated Odysseus web/API entrypoint behind a trusted reverse proxy or private access layer such as Cloudflare Access, Tailscale, or a VPN.
 - Keep ChromaDB, SearXNG, ntfy, Ollama, vLLM, llama.cpp, databases, and raw model/provider APIs internal-only.
 - Protect `.env`, `data/`, `logs/`, uploads, generated media, backups, auth/session files, database files, API keys, and model/provider tokens.
+- If Codex Runtime is enabled, protect `data/codex` / `CODEX_HOME`; it contains the shared instance-level Codex login.
 - Disable open signup unless you intentionally want new accounts.
 - Keep demo/test users non-admin, and remove them entirely on serious deployments.
 - Give admin accounts strong passwords and enable 2FA where possible.

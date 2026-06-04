@@ -671,6 +671,161 @@ async function _saveEpModelState(epId, panel) {
   } catch (e) { /* silent */ }
 }
 
+function _codexStateLabel(state) {
+  return {
+    ready: 'ready',
+    disabled: 'disabled',
+    cli_missing: 'CLI missing',
+    auth_required: 'login needed',
+    unregistered: 'needs reconcile',
+    not_ready: 'not ready',
+  }[state] || (state || 'unknown');
+}
+
+function _codexStateClass(state) {
+  return state === 'ready' ? 'admin-badge' : 'admin-badge admin-badge-off';
+}
+
+function _formatCodexModels(models) {
+  if (!Array.isArray(models) || !models.length) return '-';
+  const preview = models.slice(0, 4).map(m => String(m).split('/').pop()).join(', ');
+  return preview + (models.length > 4 ? `, +${models.length - 4}` : '');
+}
+
+function _renderCodexDiagnostics(data, extraMessage) {
+  const diagEl = el('adm-codexDiagnostics');
+  if (!diagEl) return;
+  const diagnostics = Array.isArray(data?.diagnostics) ? data.diagnostics : [];
+  const lines = [];
+  if (extraMessage) lines.push(`<div>${esc(extraMessage)}</div>`);
+  diagnostics.forEach(d => {
+    const cls = d.severity === 'error' || d.severity === 'warning' ? 'admin-error' : 'admin-success';
+    lines.push(`<div class="${cls}" style="font-size:11px;margin:2px 0;">${esc(d.message || d.code || '')}</div>`);
+  });
+  diagEl.innerHTML = lines.join('') || '<span style="opacity:0.5;font-size:11px;">No diagnostics.</span>';
+}
+
+function _renderCodexRuntime(data, extraMessage) {
+  const card = el('adm-codexRuntimeCard');
+  if (!card || !data) return;
+  const state = data.state || 'unknown';
+  const stateEl = el('adm-codexState');
+  if (stateEl) {
+    stateEl.className = _codexStateClass(state);
+    stateEl.textContent = _codexStateLabel(state);
+  }
+  const summary = el('adm-codexSummary');
+  if (summary) {
+    const parts = [];
+    parts.push(data.enabled ? 'Enabled' : 'Disabled');
+    parts.push(data.registered ? 'endpoint registered' : 'endpoint not registered');
+    parts.push(data.auth_ready ? 'auth ready' : 'auth required');
+    const maxReq = data.limits && data.limits.max_concurrent_requests;
+    if (maxReq) parts.push(`${maxReq} concurrent max`);
+    summary.textContent = parts.join(' · ');
+  }
+  const def = el('adm-codexDefault');
+  if (def) def.textContent = data.default_model || '-';
+  const models = el('adm-codexModels');
+  if (models) models.textContent = _formatCodexModels(data.models);
+  const cli = el('adm-codexCli');
+  if (cli) {
+    const version = data.cli_version ? String(data.cli_version).replace(/^codex-cli\s*/i, '') : '';
+    cli.textContent = data.cli_available ? (version || data.cli || 'available') : 'not found';
+  }
+  const setup = el('adm-codexSetupCommand');
+  if (setup && data.setup_command) {
+    setup.textContent = data.setup_command;
+    setup.title = data.setup_command;
+  }
+  _renderCodexDiagnostics(data, extraMessage);
+}
+
+async function loadCodexRuntimeStatus(extraMessage) {
+  const card = el('adm-codexRuntimeCard');
+  if (!card) return;
+  const msg = el('adm-codexMsg');
+  if (msg && !extraMessage) { msg.textContent = ''; msg.className = ''; }
+  try {
+    const res = await fetch('/api/codex-runtime/status', { credentials: 'same-origin' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (msg) { msg.textContent = data.detail || 'Failed to load Codex Runtime'; msg.className = 'admin-error'; }
+      return;
+    }
+    _renderCodexRuntime(data, extraMessage);
+  } catch (e) {
+    if (msg) { msg.textContent = 'Failed to load Codex Runtime'; msg.className = 'admin-error'; }
+  }
+}
+
+function initCodexRuntimeControls() {
+  const card = el('adm-codexRuntimeCard');
+  if (!card) return;
+  const msg = el('adm-codexMsg');
+  const refreshBtn = el('adm-codexRefresh');
+  const probeBtn = el('adm-codexProbe');
+  const reconcileBtn = el('adm-codexReconcile');
+  const copyBtn = el('adm-codexCopyLogin');
+
+  refreshBtn?.addEventListener('click', async () => {
+    if (msg) { msg.textContent = 'Refreshing...'; msg.className = ''; }
+    await loadCodexRuntimeStatus();
+    if (msg) { msg.textContent = 'Refreshed'; msg.className = 'admin-success'; }
+  });
+
+  probeBtn?.addEventListener('click', async () => {
+    if (msg) { msg.textContent = 'Probing...'; msg.className = ''; }
+    probeBtn.disabled = true;
+    try {
+      const res = await fetch('/api/codex-runtime/probe', { method: 'POST', credentials: 'same-origin' });
+      const data = await res.json().catch(() => ({}));
+      const probeMessage = data.auth && data.auth.message ? data.auth.message : '';
+      await loadCodexRuntimeStatus(probeMessage);
+      if (msg) {
+        msg.textContent = res.ok && data.state === 'ready' ? 'Probe passed' : 'Probe complete';
+        msg.className = res.ok && data.auth_ready ? 'admin-success' : 'admin-error';
+      }
+    } catch (e) {
+      if (msg) { msg.textContent = 'Probe failed'; msg.className = 'admin-error'; }
+    }
+    probeBtn.disabled = false;
+  });
+
+  reconcileBtn?.addEventListener('click', async () => {
+    if (msg) { msg.textContent = 'Reconciling...'; msg.className = ''; }
+    reconcileBtn.disabled = true;
+    try {
+      const res = await fetch('/api/codex-runtime/reconcile', { method: 'POST', credentials: 'same-origin' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        _renderCodexRuntime(data, data.endpoint_registration?.changed ? 'Endpoint reconciled.' : 'Endpoint already current.');
+        await loadEndpoints();
+        if (settingsModule && typeof settingsModule.refreshAiModelEndpoints === 'function') {
+          settingsModule.refreshAiModelEndpoints();
+        }
+        if (msg) { msg.textContent = 'Reconciled'; msg.className = 'admin-success'; }
+      } else if (msg) {
+        msg.textContent = data.detail || 'Reconcile failed';
+        msg.className = 'admin-error';
+      }
+    } catch (e) {
+      if (msg) { msg.textContent = 'Reconcile failed'; msg.className = 'admin-error'; }
+    }
+    reconcileBtn.disabled = false;
+  });
+
+  copyBtn?.addEventListener('click', async () => {
+    const command = el('adm-codexSetupCommand')?.textContent || '';
+    if (!command) return;
+    try {
+      await uiModule.copyToClipboard(command);
+      copyBtn.textContent = 'Copied';
+      setTimeout(() => { const btn = el('adm-codexCopyLogin'); if (btn) btn.textContent = 'Copy'; }, 1400);
+    } catch (_) {}
+  });
+}
+
 function initEndpointForm() {
   const provider = el('adm-epProvider');
   const urlInput = el('adm-epUrl');
@@ -2099,7 +2254,7 @@ function initDangerZone() {
    ═══════════════════════════════════════════ */
 function initAll() {
   modalEl = el('settings-modal');
-  const inits = [initSignupToggle, initAddUser, initEndpointForm, initMcpForm, initCalDAV, initBackup, initDangerZone, () => settingsModule.initIntegrations()];
+  const inits = [initSignupToggle, initAddUser, initCodexRuntimeControls, initEndpointForm, initMcpForm, initCalDAV, initBackup, initDangerZone, () => settingsModule.initIntegrations()];
   for (const fn of inits) {
     try { fn(); } catch (e) { console.error('Admin init error in', fn.name || 'anonymous', e); }
   }
@@ -2109,6 +2264,7 @@ function initAll() {
 
 function refreshAll() {
   loadUsers();
+  loadCodexRuntimeStatus();
   loadEndpoints();
   loadBuiltinTools();
   loadMcpServers();

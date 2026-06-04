@@ -13,6 +13,7 @@ set -e
 
 PUID="${PUID:-1000}"
 PGID="${PGID:-1000}"
+CODEX_HOME="${CODEX_HOME:-/app/data/codex}"
 
 # Reuse an existing matching group/user if the host's UID/GID already
 # corresponds to one in /etc/passwd (e.g. when the image is rebuilt
@@ -23,6 +24,11 @@ fi
 if ! getent passwd "$PUID" >/dev/null 2>&1; then
     useradd -u "$PUID" -g "$PGID" -M -s /bin/sh -d /app odysseus
 fi
+
+# Codex Runtime stores ChatGPT device-login state under the persistent
+# data bind mount. Create it before chown/drop so `docker compose exec
+# odysseus codex login --device-auth` writes credentials the app user can read.
+mkdir -p "$CODEX_HOME" 2>/dev/null || true
 
 # Repair ownership on every writable path the app touches at runtime.
 #

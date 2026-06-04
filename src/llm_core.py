@@ -1020,7 +1020,6 @@ async def llm_call_async(
     prompt_type: Optional[str] = None
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
-    provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 
     # Consolidate multiple system messages into one at the start.
@@ -1036,6 +1035,11 @@ async def llm_call_async(
     else:
         messages_copy = non_sys
 
+    from src.codex_runtime import call_codex, is_codex_runtime_url
+    if is_codex_runtime_url(url):
+        return await call_codex(model, messages_copy, timeout=timeout)
+
+    provider = _detect_provider(url)
     cache_key = _get_cache_key(url, model, messages_copy, temperature, max_tokens)
     cached_response = _get_cached_response(cache_key)
     if cached_response:
@@ -1129,7 +1133,6 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
       - event: error                       — errors
       - data: [DONE]                       — end of stream
     """
-    provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 
     # Consolidate multiple system messages into one at the start.
@@ -1146,6 +1149,13 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     else:
         messages_copy = non_sys
 
+    from src.codex_runtime import is_codex_runtime_url, stream_codex
+    if is_codex_runtime_url(url):
+        async for chunk in stream_codex(model, messages_copy, timeout=timeout):
+            yield chunk
+        return
+
+    provider = _detect_provider(url)
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)

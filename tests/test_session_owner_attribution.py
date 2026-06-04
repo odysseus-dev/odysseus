@@ -107,7 +107,15 @@ def test_missing_session_is_404(monkeypatch):
 
 
 def test_unauthenticated_caller_rejected(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
     req = _req(api_token=False, current_user=None)
     with pytest.raises(HTTPException) as exc:
         SR._verify_session_owner(req, "sid")
     assert exc.value.status_code == 403
+
+
+def test_auth_disabled_allows_single_user_session_access(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    monkeypatch.setattr(SR, "SessionLocal", _session_local_returning("alice"))
+    req = _req(api_token=False, current_user=None)
+    SR._verify_session_owner(req, "sid")

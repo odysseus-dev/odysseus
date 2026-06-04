@@ -242,6 +242,19 @@ container. Cookbook **Serve** is a separate workflow for serving downloaded
 models through Odysseus/llama.cpp, so Windows users with an existing Ollama
 install usually only need to add the endpoint in Settings.
 
+**Codex Runtime with Docker.** Codex Runtime lets Odysseus use the pinned Codex
+CLI as a shared model runtime through the `codex://runtime` endpoint. It uses a
+Codex/ChatGPT device login stored under `CODEX_HOME`, not an OpenAI API key:
+
+```bash
+CODEX_RUNTIME_ENABLED=true docker compose up -d --build
+docker compose exec odysseus codex login --device-auth
+```
+
+The login is instance-level. Protect `data/codex` like an API key, keep
+`AUTH_ENABLED=true` for any exposed deployment, and use Settings > Services >
+Codex Runtime to probe auth or reconcile the shared model endpoint.
+
 **Useful checks.**
 
 ```bash
@@ -337,6 +350,7 @@ Odysseus is a self-hosted workspace with powerful local tools: shell access, fil
 - Use `SECURE_COOKIES=true` when Odysseus is served through HTTPS by a trusted reverse proxy or private access gateway.
 - Do not expose it directly to the public internet without HTTPS and a trusted reverse proxy or private access layer.
 - Keep `.env`, `data/`, `logs/`, databases, uploads, generated media, backups, auth/session files, API keys, and model/provider tokens out of Git and private shares. They are ignored by default.
+- If Codex Runtime is enabled, treat `data/codex` / `CODEX_HOME` as a shared credential store.
 - Review `data/auth.json` after first boot: disable open signup unless you intentionally want it, make only your own account admin, and keep demo/test accounts non-admin.
 - Non-admin users do not get shell/Python/file read/write by default, and admin-only routes/tools such as MCP management, API tokens, webhooks, model/cookbook serving, backup/vault, and app settings are admin-gated. Other features are controlled by per-user privileges, so review each user's privileges before exposing a deployment.
 - Rotate any API keys or tokens that were ever pasted into a shared chat, demo, screenshot, or log.
@@ -389,6 +403,12 @@ Key settings:
 | `LOCALHOST_BYPASS` | `false` | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
 | `SECURE_COOKIES` | `false` | Set true when serving Odysseus through HTTPS at a trusted proxy or private access gateway. |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | Database connection string |
+| `CODEX_RUNTIME_ENABLED` | `false` | Enable the shared Codex Runtime endpoint. |
+| `CODEX_RUNTIME_DEFAULT_MODEL` | `gpt-5.5` | Default model shown for Codex Runtime. |
+| `CODEX_RUNTIME_MODELS` | `gpt-5.5,gpt-5.4-mini,gpt-5.3-codex-spark` | Comma-separated Codex Runtime model list. |
+| `CODEX_HOME` | `/app/data/codex` | Persistent Codex device-login storage for Docker installs. |
+| `CODEX_RUNTIME_MAX_CONCURRENT_REQUESTS` | `2` | Maximum concurrent Codex subprocess requests. |
+| `CODEX_RUNTIME_REQUEST_TIMEOUT_SECONDS` | `300` | Total request timeout for a Codex turn. |
 | `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |
 | `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |
 | `EMBEDDING_URL` | -- | OpenAI-compatible embeddings endpoint |
