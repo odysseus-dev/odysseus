@@ -979,10 +979,10 @@ class TaskScheduler:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 return True
-            task_type = task.task_type or "llm"
+            task_type = getattr(task, "task_type", "") or "llm"
             if task_type != "action":
                 return True
-            return (task.action or "") in self._MODEL_BACKED_ACTIONS
+            return (getattr(task, "action", "") or "") in self._MODEL_BACKED_ACTIONS
         finally:
             db.close()
 
@@ -992,7 +992,7 @@ class TaskScheduler:
         if "check-in" in (task.name or "").lower():
             return
         # Built-in housekeeping noise stays out of the chat.
-        if (task.action or "") in self._SILENT_ACTIONS:
+        if (getattr(task, "action", "") or "") in self._SILENT_ACTIONS:
             return
         from src.assistant_log import log_to_assistant
         log_to_assistant(
@@ -1410,8 +1410,8 @@ class TaskScheduler:
         output = task.output_target or "session"
         if (
             output == "session"
-            and (task.task_type or "") == "action"
-            and (task.action or "") in self._SILENT_ACTIONS
+            and (getattr(task, "task_type", "") or "") == "action"
+            and (getattr(task, "action", "") or "") in self._SILENT_ACTIONS
         ):
             return
         if output.startswith("mcp__"):
