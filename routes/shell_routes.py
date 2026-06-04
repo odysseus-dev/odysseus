@@ -1148,7 +1148,7 @@ def setup_shell_routes() -> APIRouter:
                     pkg["installed"] = which_tool("apfel") is not None
                     pkg["status_note"] = (
                         "Available on Apple Silicon (arm64) devices; exposed through a local OpenAI-compatible API."
-                        if apfel_available
+                        if IS_APPLE_SILICON
                         else "Requires a native Apple Silicon Mac with Apple Foundational Models support."
                     )
                 else:
