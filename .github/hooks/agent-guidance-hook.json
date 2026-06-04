@@ -1,0 +1,19 @@
+{
+  "name": "agent-guidance-hook",
+  "description": "Enforce conversation-derived agent guidance and gating for tool use.
+  Applies on SessionStart and PreToolUse to inject context and warn/block unsafe automation.",
+  "events": ["SessionStart", "PreToolUse"],
+  "actions": [
+    {
+      "event": "SessionStart",
+      "type": "inject_context",
+      "message": "Agent must use todo-list tracking, preface tool calls with a short status, keep messages concise, avoid revealing model or internal name, and use absolute workspace paths for edits."
+    },
+    {
+      "event": "PreToolUse",
+      "type": "check",
+      "script": "agent-guidance.js",
+      "description": "Validate that potential tool usage is gated by an explicit preamble and that absolute paths are used for edits."
+    }
+  ]
+}

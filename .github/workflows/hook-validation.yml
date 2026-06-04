@@ -1,0 +1,26 @@
+name: ci / hook validation
+
+on:
+  push:
+    paths:
+      - '.github/hooks/**'
+  pull_request_target:
+    paths:
+      - '.github/hooks/**'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-hooks:
+    name: Validate agent hook files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.base_ref || github.ref }}
+          sparse-checkout: .github/hooks
+
+      - name: Validate hook JSON and script
+        run: |
+          node .github/hooks/agent-guidance-validate.js
