@@ -1,0 +1,699 @@
+/* #region Link And Session Utilities */
+/* Internal chat links (search results, session references) */
+a.chat-link {
+	color: var(--hl-function);
+	text-decoration: none;
+	border-bottom: 1px dotted var(--hl-function);
+	cursor: pointer;
+}
+a.chat-link:hover {
+	opacity: 0.8;
+	border-bottom-style: solid;
+}
+
+/* Session items */
+.session-item { position: relative; }
+.text-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-menu-btn { padding: 0 2px !important; min-width: 20px; height: 20px; display: inline-flex !important; align-items: center; justify-content: center; background: none !important; border-color: transparent !important; }
+.session-menu-btn:hover { background: none !important; border-color: transparent !important; }
+@media (max-width: 768px) {
+	.session-menu-btn { display: none !important; }
+	.item-drag-handle { display: none !important; }
+}
+.session-menu-btn svg { transition: transform 0.2s ease; }
+
+/* First-time swipe hint */
+.swipe-hint {
+	position: absolute;
+	right: 8px;
+	top: 50%;
+	transform: translateY(-50%);
+	font-size: 0.7rem;
+	color: var(--color-error, #f44);
+	opacity: 0.8;
+	transition: opacity 0.5s ease;
+	pointer-events: none;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	z-index: 2;
+}
+.swipe-hint-arrow {
+	animation: swipe-nudge 1s ease-in-out infinite;
+}
+@keyframes swipe-nudge {
+	0%, 100% { transform: translateX(0); }
+	50% { transform: translateX(-6px); }
+}
+
+/* Utility classes */
+.muted { opacity: 0.5; }
+.muted-sm { opacity: 0.35; font-size: 0.8em; }
+.accent-link { color: var(--accent-primary, var(--color-accent)); cursor: pointer; font-size: 0.85em; }
+.models-empty-state { text-align: center; padding: 12px 8px; line-height: 1.6; }
+
+/* Provider logo inside favorite dot */
+.provider-logo {
+	border: none !important;
+	background: none !important;
+	width: 14px !important;
+	height: 14px !important;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	transition: opacity 0.15s;
+}
+.provider-logo svg { width: 14px; height: 14px; display: block; }
+.provider-logo:hover { opacity: 1 !important; transform: scale(1.2); }
+
+/* Hide session menu button until hover — use width:0 so it doesn't steal space from text */
+.list-item .hamburger { opacity: 0; width: 0; min-width: 0; overflow: hidden; padding: 0 !important; transition: opacity 0.15s, width 0.15s, padding 0.15s; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.list-item:hover .hamburger { opacity: 1; width: 24px; min-width: 24px; padding: 0 4px !important; }
+@media (max-width: 768px) {
+	.list-item .hamburger { opacity: 0.5; width: 28px; min-width: 28px; padding: 0 4px !important; }
+	.list-item .hamburger:active { opacity: 1; }
+}
+
+/* Hamburger menu button styling (overrides default button appearance) */
+button.hamburger {
+	background: none;
+	border: none;
+	padding: 0;
+	cursor: pointer;
+}
+/* #endregion Link And Session Utilities */
+
+/* #region Agent Controls And Loading */
+/* Agent UI Styling */
+.agent-controls {
+	background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+	border: 1px solid #dee2e6;
+	border-radius: 8px;
+	padding: 12px;
+	margin-bottom: 12px;
+	box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.agent-toggle label {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	cursor: pointer;
+	font-weight: 500;
+	margin-bottom: 8px;
+}
+
+#workflow-selector {
+	margin-top: 8px;
+}
+
+#workflow-type {
+	width: 100%;
+	padding: 6px 12px;
+	border: 1px solid #ced4da;
+	border-radius: 4px;
+	background: white;
+	font-size: 14px;
+}
+
+.agent-progress {
+	background: #ffebee;
+	border: 1px solid #ef9a9a;
+	border-radius: 6px;
+	padding: 12px;
+	margin: 8px 0;
+	text-align: center;
+}
+
+.agent-working {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	font-style: italic;
+	color: var(--red);
+}
+
+.loading-dots::after {
+	content: '...';
+	animation: dots 1.5s infinite;
+}
+
+@keyframes dots {
+	0%, 20% { opacity: 0; }
+	40% { opacity: 0.5; }
+	60%, 100% { opacity: 1; }
+}
+
+.workflow-info {
+	background: #f8f9fa;
+	border: 1px solid var(--red);
+	border-radius: 6px;
+	padding: 8px 12px;
+	margin: 4px 0;
+	font-size: 0.9em;
+	color: var(--red);
+	text-align: center;
+}
+
+/* Loading spinner */
+@keyframes spin {
+	to { transform: rotate(360deg); }
+}
+.spinner {
+	width: 24px;
+	height: 24px;
+	margin: 8px auto;
+	border: 3px solid var(--border);
+	border-top-color: var(--red);
+	border-radius: 50%;
+	animation: spin 0.9s linear infinite;
+}
+
+/* Inline spinner for buttons */
+.btn-spinner {
+	display: inline-block;
+	width: 12px;
+	height: 12px;
+	border: 2px solid transparent;
+	border-top-color: currentColor;
+	border-radius: 50%;
+	animation: spin 1s linear infinite;
+	margin-right: 6px;
+}
+
+/* Loading indicator for messages */
+.loading-indicator {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 10px;
+}
+.loading-dots {
+	display: flex;
+	gap: 4px;
+}
+.loading-dot {
+	width: 6px;
+	height: 6px;
+	background-color: var(--fg);
+	border-radius: 50%;
+	opacity: 0.6;
+}
+.loading-dot:nth-child(1) {
+	animation: loading-bounce 1.4s infinite ease-in-out both;
+}
+.loading-dot:nth-child(2) {
+	animation: loading-bounce 1.4s infinite ease-in-out both;
+	animation-delay: -0.32s;
+}
+.loading-dot:nth-child(3) {
+	animation: loading-bounce 1.4s infinite ease-in-out both;
+	animation-delay: -0.64s;
+}
+@keyframes loading-bounce {
+	0%, 80%, 100% { transform: scale(0); }
+	40% { transform: scale(1); }
+}
+
+/* Hamburger menu button */
+.hamburger {
+	display: inline-flex;
+	flex-direction: column;
+	justify-content: space-between;
+	width: 24px;
+	height: 18px;
+	background: none;
+	border: none;
+	padding: 0;
+	cursor: pointer;
+}
+.hamburger span {
+	display: block;
+	width: 100%;
+	height: 3px;
+	background: var(--fg);
+	border-radius: 2px;
+}
+
+/* Agent indicator */
+#agent-indicator {
+	position: fixed;
+	top: 20px;
+	right: 20px;
+	background: var(--bg);
+	color: var(--fg);
+	border: 1px solid var(--border);
+	padding: 6px 12px;
+	border-radius: 6px;
+	font-size: 12px;
+	display: none;
+	z-index: 100;
+	cursor: pointer;
+	transition: all 0.2s ease;
+}
+#agent-indicator.active {
+	display: block;
+	border-color: var(--color-agent-active);
+	box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
+}
+#agent-indicator:hover {
+	border-color: var(--color-agent-active);
+	background: var(--panel);
+}
+/* #endregion Agent Controls And Loading */
+
+/* #region Chat Input And Attachments */
+/* Preset buttons */
+.preset-btn {
+	height: 27.2px;
+	padding: 0 8.5px;
+	margin-left: 4px;
+	border: 1px solid var(--red);
+	border-radius: 4px;
+	background: var(--bg);
+	color: var(--fg);
+	font-family: inherit;
+	font-size: 10.2px;
+	cursor: pointer;
+	transition: all 0.2s ease;
+}
+
+.preset-btn:hover {
+	background: var(--panel);
+	border-color: var(--fg);
+}
+
+.preset-btn.active {
+	background: var(--panel);
+	border-color: var(--red);
+	box-shadow: 0 0 0 1px var(--red), 0 0 8px color-mix(in srgb, var(--red) 30%, transparent);
+	font-weight: 600;
+}
+
+/* Unified chat input area */
+.chat-input-area {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	background: var(--panel);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	padding: 12px;
+	margin-top: 12px;
+	box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.chat-controls-row {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 8px;
+}
+
+.chat-controls-left {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.chat-controls-right {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.control-group {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.control-label {
+	font-size: 11px;
+	color: var(--fg);
+	opacity: 0.8;
+}
+
+.toggle-switch {
+	position: relative;
+	display: inline-block;
+	width: 30px;
+	height: 16px;
+}
+
+.toggle-switch input {
+	opacity: 0;
+	width: 0;
+	height: 0;
+}
+
+.toggle-slider {
+	position: absolute;
+	cursor: pointer;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background-color: color-mix(in srgb, var(--fg) 15%, transparent);
+	border-radius: 8px;
+	transition: background 0.08s;
+}
+
+.toggle-slider:before {
+	position: absolute;
+	content: "";
+	height: 12px;
+	width: 12px;
+	left: 2px;
+	top: 2px;
+	background-color: var(--panel);
+	border-radius: 50%;
+	transition: transform 0.08s;
+	box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+	background-color: var(--toggle-active, var(--red));
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+	transform: translateX(14px);
+}
+
+.preset-buttons-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-wrap: wrap;
+}
+
+.chat-input-form {
+	display: flex;
+	gap: 8px;
+	align-items: flex-end;
+}
+
+#message {
+	flex: 1;
+	min-height: 34px;
+	max-height: 120px;
+	resize: none;
+	font-size: 13px !important;
+	overflow-y: auto !important;
+	line-height: 1.4 !important;
+	font-family: inherit !important;
+}
+
+.action-button {
+	width: 34px;
+	height: 34px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	margin: 0;
+	background: none;
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	cursor: pointer;
+	color: var(--fg);
+	transition: all 0.2s ease;
+}
+
+.action-button:hover {
+	background: color-mix(in srgb, var(--fg) 6%, transparent);
+	border-color: var(--fg);
+}
+
+.action-button:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.action-button.recording {
+	background: var(--color-recording);
+	border-color: var(--color-recording);
+	animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+	0% { opacity: 1; }
+	50% { opacity: 0.7; }
+	100% { opacity: 1; }
+}
+
+#stop-icon {
+	display: none;
+	width: 14px;
+	height: 14px;
+	background: var(--color-recording);
+	border-radius: 2px;
+}
+
+/* Attachment strip — centered + max-width to match the chat-input-bar below,
+	 otherwise the chip floats flush-left while the input is centered (visible on
+	 desktop where the chat area is wider than 800px). */
+.attach-strip {
+	display: flex;
+	gap: 6px;
+	flex-wrap: wrap;
+	padding: 2px 8px;
+	max-width: 800px;
+	width: 100%;
+	margin-left: auto;
+	margin-right: auto;
+	box-sizing: border-box;
+}
+.attach-strip:empty { display: none; }
+
+/* Upload-in-progress feedback: the message bubble shows immediately, so while
+	 the files are still uploading we put a whirlpool ON each attachment chip and
+	 dim the chip's content — making it obvious that file is being sent, not stuck. */
+.attach-strip.attach-uploading .thumb {
+	position: relative;
+	pointer-events: none;
+}
+.attach-strip.attach-uploading .thumb > :not(.thumb-upload-spinner) {
+	opacity: 0.4;
+}
+.thumb-upload-spinner {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	pointer-events: none;
+	z-index: 3;
+}
+
+.thumb {
+	border: 1px solid var(--border);
+	background: color-mix(in srgb, var(--fg) 11%, transparent);
+	padding: 3px 6px;
+	font-size: 12px;
+	display: flex;
+	gap: 6px;
+	align-items: center;
+	border-radius: 4px;
+	transition: all 0.2s ease;
+	max-width: 180px;
+}
+.thumb-img {
+	max-width: 60px;
+	max-height: 40px;
+	border-radius: 3px;
+	object-fit: cover;
+}
+.attach-image-preview {
+	margin: 4px 0;
+}
+.attach-image-preview img {
+	box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+	/* Same border as the chat bubbles. */
+	border: 1px solid var(--bubble-border, var(--border));
+}
+/* Image chips: image fills the chip, X overlays as a corner accent badge.
+	 Same on desktop and mobile — doc/text chips keep the beside-X layout. */
+.thumb.thumb-image {
+	position: relative;
+	padding: 0;
+}
+.thumb.thumb-image .thumb-img {
+	max-height: 56px;
+	display: block;
+}
+.thumb.thumb-image button {
+	position: absolute;
+	/* Sit on the top-right corner edge as an accent badge. */
+	top: -7px;
+	right: -7px;
+	width: 24px;
+	height: 24px;
+	min-width: 0;
+	padding: 0;
+	border: 2px solid var(--bg);
+	border-radius: 50%;
+	background: var(--accent-primary, var(--red));
+	color: #fff;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 15px;
+	line-height: 1;
+	z-index: 3;
+	transition: transform 0.12s ease, filter 0.12s ease, box-shadow 0.12s ease;
+}
+.thumb.thumb-image button:hover {
+	transform: scale(1.12);
+	filter: brightness(1.12);
+	box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+}
+.thumb.thumb-image button:active {
+	transform: scale(0.96);
+}
+@media (max-width: 768px) {
+	/* Collapsed "N files" badge: use the same corner-X accent badge as image thumbs. */
+	.thumb-collapsed { position: relative; }
+	.thumb-collapsed .thumb-collapsed-x {
+		position: absolute;
+		top: -7px;
+		right: -7px;
+		width: 24px;
+		height: 24px;
+		min-width: 0;
+		padding: 0;
+		border: 2px solid var(--bg);
+		border-radius: 50%;
+		background: var(--accent-primary, var(--red));
+		color: #fff;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 15px;
+		line-height: 1;
+		z-index: 3;
+		opacity: 1;
+	}
+	/* Bigger remove-X tap target for non-image (doc/text) chips on mobile too. */
+	.thumb button {
+		height: 28px;
+		min-width: 28px;
+		font-size: 15px;
+	}
+}
+.thumb span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.thumb:hover {
+	background: color-mix(in srgb, var(--fg) 16%, transparent);
+	border-color: var(--fg);
+}
+
+.thumb button {
+	height: 24px;
+	padding: 0 7px;
+	font-size: 13px;
+	border-radius: 4px;
+	color: var(--accent-primary, var(--red));
+}
+
+.thumb-collapsed {
+	cursor: pointer;
+	color: var(--red);
+	border-color: var(--red);
+	background: color-mix(in srgb, var(--red) 10%, transparent);
+	font-weight: 600;
+	gap: 8px;
+	border-radius: 999px;   /* pill — rounder than the square file chips */
+	padding-left: 12px;
+}
+.thumb-collapsed:hover {
+	background: color-mix(in srgb, var(--red) 20%, transparent);
+}
+.thumb-collapsed-label { white-space: nowrap; }
+.thumb-collapsed-x {
+	height: 24px;
+	padding: 0 7px;
+	font-size: 13px;
+	border-radius: 4px;
+	color: var(--accent-primary, var(--red));
+	background: none;
+	border: none;
+	cursor: pointer;
+	opacity: 0.6;
+}
+.thumb-collapsed-x:hover { opacity: 1; }
+/* #endregion Chat Input And Attachments */
+
+/* #region Recording Overlay */
+/* Recording indicator */
+#recording-indicator {
+	position: fixed;
+	top: 10px;
+	left: 0;
+	right: 0;
+	background: rgba(0, 0, 0, 0.8);
+	backdrop-filter: blur(10px);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	padding: 12px;
+	margin: 10px;
+	z-index: 1000;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+#recording-indicator.hidden {
+	display: none !important;
+}
+
+.recording-content {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	color: white;
+}
+
+.recording-icon {
+	color: var(--color-recording);
+	font-size: 20px;
+	animation: pulse 1.5s infinite;
+}
+
+.recording-text {
+	font-size: 16px;
+	font-weight: 500;
+}
+
+.stop-recording-btn {
+	background: var(--color-recording);
+	color: white;
+	border: none;
+	border-radius: 6px;
+	padding: 6px 12px;
+	font-size: 14px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: background 0.2s ease;
+}
+
+.stop-recording-btn:hover {
+	background: var(--color-recording-hover);
+}
+
+#recording-indicator.error {
+	background: rgba(173, 26, 26, 0.9);
+}
+
+.recording-error {
+	color: var(--color-recording);
+	font-size: 14px;
+	margin-top: 4px;
+}
+/* #endregion Recording Overlay */
