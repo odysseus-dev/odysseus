@@ -456,11 +456,15 @@ async def _direct_fallback(
     # but at least non-interactive code with incidental TERM lookups
     # stops failing. COLUMNS/LINES give terminal-width-aware tools (less,
     # rich, etc.) reasonable defaults instead of 0×0.
+    # /app/data is the only bind-mounted volume — the sole path that survives
+    # a container rebuild. Default cwd and HOME here so relative paths and ~
+    # resolve to persistent storage. The agent can still cd elsewhere.
     _subproc_env = {
         **os.environ,
         "TERM": "xterm-256color",
         "COLUMNS": "120",
         "LINES": "40",
+        "HOME": "/app/data",
     }
 
     try:
@@ -470,6 +474,7 @@ async def _direct_fallback(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,
+                cwd="/app/data",
             )
             stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
                 proc,
@@ -496,6 +501,7 @@ async def _direct_fallback(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,
+                cwd="/app/data",
             )
             stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
                 proc,
