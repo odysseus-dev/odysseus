@@ -5043,7 +5043,23 @@ async function _initReminders() {
   } catch {}
 }
 
-const notesModule = { openPanel, closePanel, togglePanel, isPanelOpen, openNotes: openPanel, closeNotes: closePanel, isNotesOpen: isPanelOpen, refreshDueBadge };
+
+export async function openNote(id) {
+  openPanel();
+  // Wait for panel render, then scroll to and highlight the note card
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      const card = document.querySelector(`.note-card[data-note-id="${id}"]`);
+      if (!card) return;
+      try { card.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+      catch { card.scrollIntoView(); }
+      card.classList.add('note-card-reminder-fired');
+      setTimeout(() => card.classList.remove('note-card-reminder-fired'), 2000);
+    }, 150);
+  });
+}
+
+const notesModule = { openPanel, closePanel, togglePanel, isPanelOpen, openNotes: openPanel, closeNotes: closePanel, isNotesOpen: isPanelOpen, refreshDueBadge, openNote };
 export default notesModule;
 export { openPanel as openNotes, closePanel as closeNotes, isPanelOpen as isNotesOpen };
 window.notesModule = notesModule;
