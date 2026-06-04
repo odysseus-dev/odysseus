@@ -20,6 +20,12 @@ services:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.
       - "host.docker.internal:host-gateway"
+    dns:
+      # systemd-resolved's stub (127.0.0.53) is unreachable from inside a
+      # Podman container — the loopback address resolves to the container,
+      # not the host. Use real upstream resolvers so pip, hf, email, etc. work.
+      - 1.1.1.1
+      - 9.9.9.9
     environment:
       - LLM_HOST=${LLM_HOST:-localhost}
       - LLM_HOSTS=${LLM_HOSTS:-}
@@ -76,6 +82,9 @@ services:
       - chromadb-data:/chroma/chroma
     environment:
       - ANONYMIZED_TELEMETRY=FALSE
+    dns:
+      - 1.1.1.1
+      - 9.9.9.9
     restart: unless-stopped
 
   searxng:
@@ -113,6 +122,9 @@ services:
     # with EACCES and the container fails its healthcheck with permission
     # errors during setup. Mirrors the cap set recommended by the upstream
     # searxng-docker compose file. See issue #721.
+    dns:
+      - 1.1.1.1
+      - 9.9.9.9
     cap_drop:
       - ALL
     cap_add:
@@ -137,6 +149,9 @@ services:
       - ntfy-cache:/var/cache/ntfy
     environment:
       - NTFY_BASE_URL=${NTFY_BASE_URL:-http://localhost:8091}
+    dns:
+      - 1.1.1.1
+      - 9.9.9.9
     restart: unless-stopped
 
 volumes:
