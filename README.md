@@ -107,11 +107,23 @@ The script also reads `.env` at startup, so `APP_BIND=0.0.0.0` and `APP_PORT`
 set there are picked up automatically without a command-line override each run.
 
 Keep `AUTH_ENABLED=true` (the default) before binding outside loopback. Do not
-expose this port directly to the public internet. To build a clickable app wrapper:
+expose this port directly to the public internet. To build the standalone native app:
 
 ```bash
 ./build-macos-app.sh
 ```
+
+That script builds a native `.app` for the current Mac architecture
+(`arm64` on Apple Silicon, `x86_64` on Intel), bundles the Python runtime and
+app code inside the app, copies that runtime into
+`~/Library/Application Support/Odysseus/runtime` on first launch, and ad-hoc
+signs the bundle when `codesign` is available. The default minimum supported
+macOS version is `11.0`; override it with
+`MACOS_MIN_VERSION=...` if you need a different deployment target.
+
+The generated app is meant for local/manual distribution. It is not notarized
+by this script, so broader distribution still needs a real Developer ID
+signature plus notarization.
 
 <details>
 <summary>Cookbook, GPU, Ollama, and troubleshooting notes</summary>
@@ -254,8 +266,14 @@ docker compose logs odysseus | grep -E 'ChromaDB|MemoryVectorStore|DEGRADED'
 
 **macOS details.** `start-macos.sh` installs Homebrew deps, creates the venv,
 runs setup, and starts uvicorn on port `7860` because AirPlay often holds
-`7000`. It uses llama.cpp/Ollama for Metal. vLLM/SGLang are CUDA/ROCm-only and
-do not run on macOS. MLX-only models are not served by Odysseus.
+`7000`. `build-macos-app.sh` packages a standalone `.app` for the current Mac
+architecture with the Python runtime and app code bundled inside it, then
+copies that runtime into Application Support on first launch. The script
+ad-hoc signs the bundle when possible, but it does not notarize it. Restart
+the app after changing `.env`, because the packaged backend only reads
+environment changes on process start. It uses llama.cpp/Ollama for Metal.
+vLLM/SGLang are CUDA/ROCm-only and do not run on macOS. MLX-only models are
+not served by Odysseus.
 
 </details>
 
