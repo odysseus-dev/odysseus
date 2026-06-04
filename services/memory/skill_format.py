@@ -82,6 +82,7 @@ def slugify(text: str, fallback: str = "skill") -> str:
 
 _FM_KEY_RE = re.compile(r"^([a-z_][a-z0-9_]*):\s*(.*)$", re.IGNORECASE)
 _FM_BLOCK_LIST_RE = re.compile(r"^\s*-\s*(.*)$")
+_STRING_FRONTMATTER_KEYS = {"version"}
 
 
 def _parse_scalar(raw: str) -> Any:
@@ -109,6 +110,17 @@ def _parse_scalar(raw: str) -> Any:
     except ValueError:
         pass
     return raw
+
+
+def _parse_frontmatter_value(key: str, raw: str) -> Any:
+    if key.lower() in _STRING_FRONTMATTER_KEYS:
+        parsed = _parse_scalar(raw)
+        if parsed in (None, ""):
+            return parsed
+        if isinstance(parsed, str):
+            return parsed
+        return raw.strip()
+    return _parse_scalar(raw)
 
 
 def _split_top_level(s: str, sep: str) -> List[str]:
@@ -159,7 +171,7 @@ def parse_frontmatter(text: str) -> tuple[Dict[str, Any], str]:
                 pending_key = key
                 fm[key] = []
             else:
-                fm[key] = _parse_scalar(val)
+                fm[key] = _parse_frontmatter_value(key, val)
                 pending_key = None
             continue
         m2 = _FM_BLOCK_LIST_RE.match(line)
