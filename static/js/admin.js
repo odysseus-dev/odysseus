@@ -676,6 +676,7 @@ function _codexStateLabel(state) {
     ready: 'ready',
     disabled: 'disabled',
     cli_missing: 'CLI missing',
+    cli_unavailable: 'CLI unavailable',
     auth_required: 'login needed',
     unregistered: 'needs reconcile',
     not_ready: 'not ready',
@@ -731,7 +732,13 @@ function _renderCodexRuntime(data, extraMessage) {
   const cli = el('adm-codexCli');
   if (cli) {
     const version = data.cli_version ? String(data.cli_version).replace(/^codex-cli\s*/i, '') : '';
-    cli.textContent = data.cli_available ? (version || data.cli || 'available') : 'not found';
+    if (!data.cli_available) {
+      cli.textContent = 'not found';
+    } else if (data.cli_usable === false) {
+      cli.textContent = `${data.cli || 'codex'} failed`;
+    } else {
+      cli.textContent = version || data.cli || 'available';
+    }
   }
   const setup = el('adm-codexSetupCommand');
   if (setup && data.setup_command) {

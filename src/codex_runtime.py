@@ -254,10 +254,27 @@ def _version_for_cli(resolved_cli: Optional[str]) -> Optional[str]:
             check=False,
         )
         output = (result.stdout or result.stderr or "").strip()
+        if result.returncode != 0:
+            logger.debug(
+                "Codex CLI version probe returned %s: %s",
+                result.returncode,
+                _sanitize_diagnostic_text(output, limit=200),
+            )
+            return None
         return _sanitize_diagnostic_text(output, limit=200) or None
     except Exception as exc:
         logger.debug("Codex CLI version probe failed: %s", _sanitize_diagnostic_text(exc))
         return None
+
+
+def _cli_unavailable_auth() -> Dict[str, Any]:
+    return {
+        "auth_ready": False,
+        "method": "cli_version",
+        "ok": False,
+        "message": "Codex CLI is on PATH but failed to run. Reinstall @openai/codex or set CODEX_RUNTIME_CLI.",
+        "error": "cli_unavailable",
+    }
 
 
 def _codex_cli_env() -> Dict[str, str]:
@@ -343,18 +360,25 @@ def codex_auth_probe() -> Dict[str, Any]:
 def codex_runtime_probe() -> Dict[str, Any]:
     resolved_cli = resolve_codex_cli()
     version = _version_for_cli(resolved_cli)
-    auth = codex_auth_probe() if resolved_cli else {
-        "auth_ready": is_codex_auth_ready(),
-        "method": "auth_file",
-        "ok": False,
-        "message": "Codex CLI is not available.",
-        "error": "cli_missing",
-    }
-    state = "ready" if is_codex_runtime_enabled() and resolved_cli and auth.get("auth_ready") else "not_ready"
+    cli_usable = bool(resolved_cli and version)
+    if cli_usable:
+        auth = codex_auth_probe()
+    elif resolved_cli:
+        auth = _cli_unavailable_auth()
+    else:
+        auth = {
+            "auth_ready": is_codex_auth_ready(),
+            "method": "auth_file",
+            "ok": False,
+            "message": "Codex CLI is not available.",
+            "error": "cli_missing",
+        }
+    state = "ready" if is_codex_runtime_enabled() and cli_usable and auth.get("auth_ready") else "not_ready"
     return {
         "state": state,
         "enabled": is_codex_runtime_enabled(),
         "cli_available": bool(resolved_cli),
+        "cli_usable": cli_usable,
         "cli": codex_cli(),
         "cli_version": version,
         "auth_ready": bool(auth.get("auth_ready")),
@@ -398,6 +422,8 @@ def codex_runtime_endpoint_registration_status() -> Dict[str, Any]:
 
 def codex_runtime_status() -> Dict[str, Any]:
     resolved_cli = resolve_codex_cli()
+    version = _version_for_cli(resolved_cli)
+    cli_usable = bool(resolved_cli and version)
     registration = codex_runtime_endpoint_registration_status()
     enabled = is_codex_runtime_enabled()
     auth_ready = is_codex_auth_ready()
@@ -410,6 +436,9 @@ def codex_runtime_status() -> Dict[str, Any]:
     elif not resolved_cli:
         state = "cli_missing"
         diagnostics.append(_safe_diag("cli_missing", "Install the Codex CLI or set CODEX_RUNTIME_CLI.", "error"))
+    elif not cli_usable:
+        state = "cli_unavailable"
+        diagnostics.append(_safe_diag("cli_unavailable", "Codex CLI is on PATH but failed to run. Reinstall @openai/codex or set CODEX_RUNTIME_CLI.", "error"))
     elif not auth_ready:
         state = "auth_required"
         diagnostics.append(_safe_diag("auth_required", "Run the Codex device login command from the Odysseus container.", "warning"))
@@ -434,7 +463,8 @@ def codex_runtime_status() -> Dict[str, Any]:
         "auth_ready": auth_ready,
         "cli": codex_cli(),
         "cli_available": bool(resolved_cli),
-        "cli_version": _version_for_cli(resolved_cli),
+        "cli_usable": cli_usable,
+        "cli_version": version,
         "setup_command": CODEX_RUNTIME_SETUP_COMMAND,
         "limits": codex_runtime_limits(),
         "diagnostics": diagnostics,

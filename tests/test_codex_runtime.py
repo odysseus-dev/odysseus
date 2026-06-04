@@ -321,6 +321,25 @@ def test_codex_runtime_status_is_read_only(monkeypatch):
     assert data["limits"]["max_concurrent_requests"] >= 1
 
 
+def test_codex_runtime_status_flags_unusable_cli(monkeypatch):
+    monkeypatch.setenv("CODEX_RUNTIME_ENABLED", "true")
+    monkeypatch.setattr(codex_runtime, "resolve_codex_cli", lambda: "/usr/local/bin/codex")
+    monkeypatch.setattr(codex_runtime, "_version_for_cli", lambda cli: None)
+    monkeypatch.setattr(codex_runtime, "is_codex_auth_ready", lambda: False)
+    monkeypatch.setattr(
+        codex_runtime,
+        "codex_runtime_endpoint_registration_status",
+        lambda: {"registered": True, "endpoint_id": "abc123"},
+    )
+
+    data = codex_runtime.codex_runtime_status()
+
+    assert data["state"] == "cli_unavailable"
+    assert data["cli_available"] is True
+    assert data["cli_usable"] is False
+    assert data["diagnostics"][0]["code"] == "cli_unavailable"
+
+
 def test_codex_runtime_probe_uses_cli_login_status(monkeypatch):
     monkeypatch.setenv("CODEX_RUNTIME_ENABLED", "true")
     monkeypatch.delenv("CODEX_ACCESS_TOKEN", raising=False)
