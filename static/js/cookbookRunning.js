@@ -8,6 +8,7 @@ import uiModule from './ui.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
 import { registerMenuDismiss } from './escMenuStack.js';
 import { computeProgressSignal } from './cookbookProgressSignal.js';
+import { applyLiveTaskStatus, normalizeLiveDiagnosis } from './cookbookTaskStatusMerge.js';
 
 // Human-friendly badge label for a task's internal status. Avoids surfacing
 // the word "error" in the sidebar — a server the user stopped or one that
@@ -153,6 +154,11 @@ function _terminalServeDiagnosis(task, outputText) {
       : 'Suggested action: copy the troubleshooting bundle, then edit serve settings or relaunch with a CPU/backend fallback.',
     fixes: [{ label: 'Edit serve', action: (panel) => _openServeEditForTask(task) }],
   };
+}
+
+function _serveDiagnosisForTask(task, outputText) {
+  if (task?.type !== 'serve' || !['stopped', 'error', 'crashed', 'failed'].includes(task.status)) return null;
+  return normalizeLiveDiagnosis(task.diagnosis) || _terminalServeDiagnosis(task, outputText);
 }
 
 function _redactCrashReportText(text) {
@@ -1816,8 +1822,9 @@ export function _renderRunningTab() {
       }
       const startNow = el.querySelector('.cookbook-task-start-now');
       if (startNow) startNow.style.display = (task.type === 'download' && task.status === 'queued') ? '' : 'none';
-      const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
-      if (terminalDiag) _showDiagnosis(el, terminalDiag, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+      const outputText = el.querySelector('.cookbook-output-pre')?.textContent || task.output || '';
+      const terminalDiag = _serveDiagnosisForTask(task, outputText);
+      if (terminalDiag) _showDiagnosis(el, terminalDiag, outputText);
     }
     if (!task) {
       if (el._uptimeInterval) { clearInterval(el._uptimeInterval); el._uptimeInterval = null; }
@@ -1853,7 +1860,7 @@ export function _renderRunningTab() {
     const _waveEl = el.querySelector('.cookbook-task-wave');
     if (_waveEl && task.status === 'running') _registerWaveEl(_waveEl);
 
-    const terminalDiag = _terminalServeDiagnosis(task, task.output || '');
+    const terminalDiag = _serveDiagnosisForTask(task, task.output || '');
     if (terminalDiag) _showDiagnosis(el, terminalDiag, task.output || '');
 
     const _uptimeEl = el.querySelector('.cookbook-task-uptime');
@@ -3304,30 +3311,10 @@ async function _pollBackgroundStatus() {
       for (const task of localTasks) {
         const live = statusById.get(task.sessionId);
         if (!live) continue;
-        const updates = {};
-        const nextStatus = live.status === 'completed'
-          ? 'done'
-          : (live.status === 'error'
-            ? 'error'
-            : (live.status === 'stopped' ? (task.type === 'download' ? 'crashed' : 'stopped') : null));
-        if (nextStatus && task.status !== nextStatus) {
-          updates.status = nextStatus;
-          if (nextStatus === 'done' && task.payload?._dep) completedDeps.push(task);
-        }
-        if ((live.status === 'running' || live.status === 'ready') && task.status !== live.status) {
-          updates.status = live.status === 'ready' ? 'ready' : 'running';
-        }
-        if (live.progress && live.progress !== task.progress) updates.progress = live.progress;
-        if (live.output_tail) {
-          const previous = String(task.output || '');
-          const tail = String(live.output_tail || '');
-          if (tail && !previous.endsWith(tail)) {
-            updates.output = `${previous ? `${previous}\n` : ''}${tail}`.slice(-5000);
-          }
-        }
-        if (Object.keys(updates).length) {
-          Object.assign(task, updates);
+        const previousStatus = task.status;
+        if (applyLiveTaskStatus(task, live)) {
           changed = true;
+          if (previousStatus !== 'done' && task.status === 'done' && task.payload?._dep) completedDeps.push(task);
         }
       }
       if (changed) {

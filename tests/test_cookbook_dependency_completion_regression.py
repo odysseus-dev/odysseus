@@ -18,14 +18,17 @@ def test_backend_status_treats_download_exit_zero_as_completed():
 
 def test_background_status_poll_reconciles_into_local_tasks():
     source = _read("static/js/cookbookRunning.js")
+    merge = _read("static/js/cookbookTaskStatusMerge.js")
 
+    assert "import { applyLiveTaskStatus" in source
     assert "const statusById = new Map(tasks.map(t => [t.session_id, t]));" in source
-    assert "const nextStatus = live.status === 'completed'" in source
-    assert "? 'done'" in source
-    assert ": (live.status === 'error'" in source
-    assert "? 'error'" in source
+    assert "if (applyLiveTaskStatus(task, live))" in source
+    assert "previousStatus !== 'done' && task.status === 'done'" in source
     assert "_saveTasks(localTasks);" in source
     assert "completedDeps.forEach(t => _refreshDepsAfterInstall(t));" in source
+    assert "if (live.status === 'completed') return 'done';" in merge
+    assert "if (live.status === 'error') return 'error';" in merge
+    assert "task.type === 'download' ? 'crashed' : 'stopped'" in merge
 
 
 def test_local_windows_session_commands_use_local_powershell_log_dir():
