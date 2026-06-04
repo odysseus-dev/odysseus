@@ -93,6 +93,67 @@ function _allGpuIds(count) {
   return Array.from({ length: Math.floor(n) }, (_, i) => String(i)).join(',');
 }
 
+function _selectedServeTarget(panel) {
+  const select = document.getElementById('hwfit-server-select') || document.getElementById('hwfit-dl-server');
+  const servers = Array.isArray(_envState.servers) ? _envState.servers : [];
+  let host = _envState.remoteHost || '';
+  let server = host ? servers.find(s => s.host === host) : null;
+  if (select && select.value != null) {
+    if (select.value === 'local') {
+      host = '';
+      server = servers.find(s => !s.host || s.host === 'local') || null;
+    } else {
+      const idx = /^\d+$/.test(String(select.value)) ? parseInt(select.value, 10) : -1;
+      server = servers.find(s => s.host === select.value) || (idx >= 0 ? servers[idx] : null) || null;
+      host = server?.host || '';
+    }
+  }
+  const venv = panel?.querySelector('[data-field="venv"]')?.value?.trim() || server?.envPath || _envState.envPath || '';
+  const label = host
+    ? (server?.name ? `${server.name} (${host})` : host)
+    : (server?.name || 'local server');
+  return {
+    host,
+    port: host ? (_getPort(host) || server?.port || '') : '',
+    venv,
+    label,
+  };
+}
+
+async function _fetchServeRuntimePackage(panel, backend) {
+  const packageByBackend = {
+    vllm: 'vllm',
+    sglang: 'sglang',
+    llamacpp: 'llama_cpp',
+    diffusers: 'diffusers',
+  };
+  const packageName = packageByBackend[backend];
+  if (!packageName) return null;
+  const target = _selectedServeTarget(panel);
+  const params = new URLSearchParams();
+  if (target.host) {
+    params.set('host', target.host);
+    if (target.port) params.set('ssh_port', target.port);
+    if (target.venv) params.set('venv', target.venv);
+  }
+  const res = await fetch('/api/cookbook/packages' + (params.toString() ? '?' + params.toString() : ''), { credentials: 'same-origin' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  const pkg = (data.packages || []).find(p => p.name === packageName);
+  return { pkg, target };
+}
+
+function _runtimeNoteText(backend, pkg, target) {
+  const labels = { vllm: 'vLLM', sglang: 'SGLang', llamacpp: 'llama.cpp', diffusers: 'Diffusers' };
+  const label = labels[backend] || backend;
+  if (!pkg) return `${label} readiness unavailable for ${target.label}.`;
+  const note = pkg.status_note || pkg.update_note || '';
+  if (pkg.installed) {
+    return note ? `${label} ready on ${target.label}: ${note}` : `${label} ready on ${target.label}.`;
+  }
+  return note ? `${label} missing on ${target.label}: ${note}` : `${label} missing on ${target.label}.`;
+}
+
 // ── Filter/sort cached model list ──
 
 function _filterCachedList() {
@@ -185,8 +246,18 @@ function _selectedGgufExpr(model, repo, relPath) {
     const base = String(model.path || '').replace(/\/+$/, '');
     return `$(printf %s ${_shellPathExpr(`${base}/${repo}/${rel}`)})`;
   }
+  if (model.path) {
+    const base = String(model.path || '').replace(/\/+$/, '');
+    return `$(printf %s ${_shellPathExpr(`${base}/models--${repo.replace(/\//g, '--')}/snapshots/${rel}`)})`;
+  }
   const cacheRepo = repo.replace(/\//g, '--');
   return `$(printf %s \${HOME}${_shellQuote(`/.cache/huggingface/hub/models--${cacheRepo}/snapshots/${rel}`)})`;
+}
+
+function _ggufSearchDirExpr(model, repo) {
+  if (model.is_local_dir && model.path) return _shellQuote(`${String(model.path || '').replace(/\/+$/, '')}/${repo}`);
+  if (model.path) return _shellQuote(`${String(model.path || '').replace(/\/+$/, '')}/models--${repo.replace(/\//g, '--')}/snapshots`);
+  return `"$HOME/.cache/huggingface/hub/models--${repo.replace(/\//g, '--')}/snapshots"`;
 }
 
 function _rerenderCachedModels() {
@@ -399,7 +470,9 @@ function _rerenderCachedModels() {
 
       // Toggle — close if already open
       if (item.classList.contains('doclib-card-expanded')) {
-        item.querySelector('.hwfit-serve-panel')?.remove();
+        const existingPanel = item.querySelector('.hwfit-serve-panel');
+        existingPanel?._cleanupRuntimeReadiness?.();
+        existingPanel?.remove();
         item.classList.remove('doclib-card-expanded');
         item.style.flexDirection = '';
         item.style.alignItems = '';
@@ -410,7 +483,9 @@ function _rerenderCachedModels() {
 
       // Collapse any other expanded
       list.querySelectorAll('.doclib-card-expanded').forEach(c => {
-        c.querySelector('.hwfit-serve-panel')?.remove();
+        const openPanel = c.querySelector('.hwfit-serve-panel');
+        openPanel?._cleanupRuntimeReadiness?.();
+        openPanel?.remove();
         c.classList.remove('doclib-card-expanded');
         c.style.flexDirection = '';
         c.style.alignItems = '';
@@ -453,6 +528,7 @@ function _rerenderCachedModels() {
           : (_es.gpus || detectedGpuIds));
       const tpOpts = [1,2,4,8].map(n => `<option${defaultTp==String(n)?' selected':''}>${n}</option>`).join('');
       const dtypeOpts = ['auto','float16','bfloat16'].map(d => `<option value="${d}"${sv('dtype','auto')===d?' selected':''}>${d}</option>`).join('');
+      const vllmKvCacheOpts = ['auto','fp8'].map(d => `<option value="${d}"${sv('vllm_kv_cache_dtype','auto')===d?' selected':''}>${d}</option>`).join('');
       const _l = (name, tip) => `<span>${name}<span class="hwfit-hint" title="${tip}">?</span></span>`;
       const _ggufChoices = _runnableGgufFiles(m);
       const _savedGguf = String(sv('gguf_file', '') || '');
@@ -484,6 +560,15 @@ function _rerenderCachedModels() {
         + `</div>`;
 
       let panelHtml = `<div class="hwfit-serve-panel">${_slotsHtml}`;
+      // Warn when serving a model whose download hasn't fully completed —
+      // the user CAN still hit Launch (vLLM/llama-server will start, then
+      // crash trying to read missing shards), but they should know.
+      if (m && (m.status === 'downloading' || m.status === 'stalled' || m.has_incomplete)) {
+        const _warnText = m.status === 'stalled'
+          ? `This model looks like a stale download shell (${esc(m.size || '0 KB')}). The weights aren't on disk — the serve will fail to load. Re-download first, or pick another model.`
+          : `This model's download isn't complete yet (${esc(m.size || 'partial')}). The serve will start but is likely to crash on a missing shard. Wait for the download to finish, or relaunch after it's done.`;
+        panelHtml += `<div class="hwfit-serve-warn" style="margin:0 0 8px;padding:6px 10px;border-radius:5px;font-size:11px;background:color-mix(in srgb, var(--color-warning, #f0ad4e) 14%, transparent);border:1px solid color-mix(in srgb, var(--color-warning, #f0ad4e) 40%, transparent);color:var(--color-warning, #f0ad4e);display:flex;gap:6px;align-items:flex-start;line-height:1.4;"><span aria-hidden="true">⚠</span><span>${_warnText}</span></div>`;
+      }
       // Row 1: Backend + Server + Env
       panelHtml += `<div class="hwfit-serve-row">`;
       const _backendChoices = _isWindows()
@@ -508,6 +593,7 @@ function _rerenderCachedModels() {
       }
       panelHtml += `<label>${_l('GPUs','Toggle which GPUs to use')}<div class="cookbook-gpu-group">${_gpuBtnsHtml}</div><input type="hidden" class="hwfit-sf" data-field="gpus" value="${esc(defaultGpus)}" /></label>`;
       panelHtml += `</div>`;
+      panelHtml += `<div class="hwfit-serve-runtime-note" style="display:none;font-size:11px;line-height:1.35;color:var(--fg-muted);margin-top:-4px;"></div>`;
       if (_ggufChoices.length > 1) {
         panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp">`;
         panelHtml += `<label class="hwfit-backend-llamacpp">${_l('GGUF File','Choose the exact GGUF artifact to serve from this cached model folder.')}<select class="hwfit-sf hwfit-sf-wide" data-field="gguf_file">${_ggufOptions}</select></label>`;
@@ -518,12 +604,15 @@ function _rerenderCachedModels() {
       // Row 2: Core settings
       panelHtml += `<div class="hwfit-serve-row hwfit-backend-vllm hwfit-backend-sglang hwfit-backend-llamacpp">`;
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('TP','Tensor Parallelism — split model across N GPUs')}<select class="hwfit-sf" data-field="tp">${tpOpts}</select></label>`;
-      panelHtml += `<label>${_l('Context','Max tokens per request. Lower = less VRAM')}<input type="text" class="hwfit-sf" data-field="ctx" value="${esc(sv('ctx', '8192'))}" /></label>`;
+      // ctx resets to the model's max on every panel open (the real ctx slider
+      // lives in the Scan/Download toolbar — see cookbook.js .hwfit-ctx-control).
+      panelHtml += `<label>${_l('Context','Max tokens per request — resets to the model max on every open. Lower = less VRAM')}<input type="text" class="hwfit-sf" data-field="ctx" value="${esc(m.context_length || m.context || '20000')}" /></label>`;
       panelHtml += `<label>${_l('GPU','Which GPU to use. Leave empty for default')}<input type="text" class="hwfit-sf" data-field="gpu_id" value="${esc(sv('gpu_id', ''))}" placeholder="auto" style="width:50px;" /></label>`;
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('GPU Mem','Fraction of GPU memory (0.0–1.0). Lower if OOM')}<input type="text" class="hwfit-sf" data-field="gpu_mem" value="${esc(sv('gpu_mem', '0.90'))}" /></label>`;
       panelHtml += `<label class="hwfit-backend-vllm">${_l('Swap','CPU swap space in GB. Leave empty to omit (removed in newer vLLM)')}<input type="text" class="hwfit-sf" data-field="swap" value="${esc(sv('swap', ''))}" placeholder="off" /></label>`;
-      panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('Max Seqs','Maximum concurrent requests. Lower = less memory. Default 8 — prosumer GPUs often OOM on vLLM default 256 during CUDA graph capture.')}<input type="text" class="hwfit-sf" data-field="max_seqs" value="${esc(sv('max_seqs', '8'))}" placeholder="8" /></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('Max Seqs','Maximum concurrent requests. Lower = less memory. Default 4 — prosumer GPUs often OOM on vLLM default 256 during CUDA graph capture.')}<input type="text" class="hwfit-sf" data-field="max_seqs" value="${esc(sv('max_seqs', '4'))}" placeholder="4" /></label>`;
       panelHtml += `<label>${_l('Dtype','Data type for weights. auto picks best for GPU')}<select class="hwfit-sf" data-field="dtype">${dtypeOpts}</select></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm">${_l('KV Cache','vLLM --kv-cache-dtype. auto uses the model/runtime default; fp8 reduces KV memory for long context.')}<select class="hwfit-sf" data-field="vllm_kv_cache_dtype" style="height:32px;">${vllmKvCacheOpts}</select></label>`;
       panelHtml += `</div>`;
       // Row 2b: Diffusers settings
       const diffDtypeOpts = ['bfloat16','float16','float32'].map(d => `<option value="${d}"${sv('diff_dtype','bfloat16')===d?' selected':''}>${d}</option>`).join('');
@@ -616,7 +705,7 @@ function _rerenderCachedModels() {
         if (!_specMethods.includes(_specMethod)) _specMethods.unshift(_specMethod);
         const _specOpts = _specMethods.map(m =>
           `<option value="${m}"${m === _specMethod ? ' selected' : ''}>${m}</option>`).join('');
-        panelHtml += `<label class="hwfit-sf-cb hwfit-spec-group"><input type="checkbox" class="hwfit-sf" data-field="speculative" /> Speculative <select class="hwfit-sf hwfit-spec-method" data-field="spec_method" title="vLLM --speculative-config method">${_specOpts}</select><span class="hwfit-numstep"><button type="button" class="hwfit-numstep-btn" data-step="-1" tabindex="-1" aria-label="Decrease">‹</button><input type="number" class="hwfit-sf hwfit-spec-tokens" data-field="spec_tokens" value="${esc(_specTokens)}" min="1" max="10" title="num_speculative_tokens" /><button type="button" class="hwfit-numstep-btn" data-step="1" tabindex="-1" aria-label="Increase">›</button></span></label>`;
+        panelHtml += `<label class="hwfit-sf-cb hwfit-spec-group"><input type="checkbox" class="hwfit-sf" data-field="speculative" /> Speculative <select class="hwfit-sf hwfit-spec-method" data-field="spec_method" title="vLLM --speculative-config method">${_specOpts}</select><span class="hwfit-numstep"><button type="button" class="hwfit-numstep-btn" data-step="-1" tabindex="-1" aria-label="Decrease">‹</button><input type="number" class="hwfit-sf hwfit-spec-tokens" data-field="spec_tokens" value="${esc(_specTokens)}" min="1" max="10" title="num_speculative_tokens" /><button type="button" class="hwfit-numstep-btn" data-step="1" tabindex="-1" aria-label="Increase">›</button></span><span class="hwfit-help-chip hwfit-help-chip-inline" title="MTP / speculative decoding is supported on a few model families only — turn it on when the model card explicitly recommends it. On supported models it can boost inference throughput up to ~3×; on unsupported models it will either be ignored or fail to launch." style="margin-left:6px;">?</span></label>`;
       }
       if (_opts2.envVars.length) panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="moe_env" /> MoE Env Vars</label>`;
       panelHtml += `</div>`;
@@ -641,16 +730,17 @@ function _rerenderCachedModels() {
       // pushes Cancel + Launch to the right.
       panelHtml += `<span class="hwfit-serve-actions-spacer"></span>`;
       panelHtml += `<button class="cookbook-btn hwfit-serve-cancel" type="button" title="Close this configuration panel">Cancel</button>`;
-      panelHtml += `<button class="cookbook-btn hwfit-serve-launch">Launch</button>`;
+      panelHtml += `<button class="cookbook-btn hwfit-serve-launch"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;flex-shrink:0;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Launch</button>`;
       panelHtml += `</div>`;
       panelHtml += `</div>`;
 
       item.classList.add('doclib-card-expanded');
       item.style.flexDirection = 'column';
       item.style.alignItems = 'stretch';
-      if (list) list.scrollTop = 0;
       item.insertAdjacentHTML('beforeend', panelHtml);
       const panel = item.querySelector('.hwfit-serve-panel');
+      // Scroll the serve panel into view within its nearest scrollable ancestor
+      requestAnimationFrame(() => panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
 
       // Build command preview
       function updateCmd() {
@@ -667,13 +757,12 @@ function _rerenderCachedModels() {
           // For multi-part GGUFs, llama.cpp requires the first split
           // (-00001-of-NNNNN.gguf). Prefer it (sorted, so UD-IQ4_XS/001 comes
           // before Q4_K_M/001 etc); fall back to any single GGUF sorted.
-          // Use $HOME (not ~) so tilde survives variable interpolation inside $(...).
-          const dir = `"$HOME/.cache/huggingface/hub/models--${repo.replace(/\//g, '--')}/snapshots"`;
+          const dir = _ggufSearchDirExpr(m, repo);
           // GGUF needs the actual .gguf FILE, not the folder. For a custom-dir
           // model the file lives under "<path>/<repo>" — search there just like we
           // search the HF snapshots dir, so serving a GGUF from a custom dir works
           // instead of handing llama.cpp a directory (which fails).
-          const _ldir = `"${m.path}/${repo}"`;
+          const _ldir = m.path ? _shellQuote(`${m.path}/${repo}`) : '""';
           f._gguf_path = selectedGguf
             ? _selectedGgufExpr(m, repo, selectedGguf.rel_path)
             : m.is_local_dir && m.path
@@ -853,6 +942,38 @@ function _rerenderCachedModels() {
       }
       updateBackendVisibility();
 
+      async function updateRuntimeReadinessNote() {
+        const note = panel.querySelector('.hwfit-serve-runtime-note');
+        if (!note) return;
+        const backend = panel.querySelector('[data-field="backend"]')?.value || 'vllm';
+        if (!['vllm', 'sglang', 'llamacpp', 'diffusers'].includes(backend)) {
+          note.style.display = 'none';
+          note.textContent = '';
+          return;
+        }
+        const seq = (panel._runtimeReadinessSeq || 0) + 1;
+        panel._runtimeReadinessSeq = seq;
+        note.style.display = '';
+        note.textContent = 'Checking runtime on selected server...';
+        try {
+          const { pkg, target } = await _fetchServeRuntimePackage(panel, backend);
+          if (panel._runtimeReadinessSeq !== seq) return;
+          note.textContent = _runtimeNoteText(backend, pkg, target);
+          note.style.color = pkg?.installed ? 'var(--fg-muted)' : 'var(--red)';
+        } catch (err) {
+          if (panel._runtimeReadinessSeq !== seq) return;
+          note.textContent = `Runtime readiness unavailable: ${err?.message || err}`;
+          note.style.color = 'var(--fg-muted)';
+        }
+      }
+      updateRuntimeReadinessNote();
+      const runtimeServerSelect = document.getElementById('hwfit-server-select') || document.getElementById('hwfit-dl-server');
+      if (runtimeServerSelect) {
+        const refreshRuntimeOnServerChange = () => updateRuntimeReadinessNote();
+        runtimeServerSelect.addEventListener('change', refreshRuntimeOnServerChange);
+        panel._cleanupRuntimeReadiness = () => runtimeServerSelect.removeEventListener('change', refreshRuntimeOnServerChange);
+      }
+
       // Wire save slots
       function _loadSlotIntoPanel(slotIdx) {
         const presets = _loadPresets();
@@ -882,6 +1003,7 @@ function _rerenderCachedModels() {
             gpu_mem: _ex(/--gpu-memory-utilization\s+([\d.]+)/) || '0.90',
             swap: _ex(/--swap-space\s+(\d+)/) || '',
             dtype: _ex(/--dtype\s+(\w+)/) || 'auto',
+            vllm_kv_cache_dtype: _ex(/--kv-cache-dtype\s+([\w.-]+)/) || 'auto',
             max_seqs: _ex(/--max-num-seqs\s+(\d+)/) || '',
             cache_type: _ex(/(?:--cache-type-k|-ctk)\s+(\S+)/) || '',
             llama_fit: _ex(/(?:--fit|-fit)\s+(on|off)/) || '',
@@ -935,6 +1057,7 @@ function _rerenderCachedModels() {
         const _gf = panel.querySelector('[data-field="gpus"]');
         if (_gf) _gf.value = activeGpus.join(',');
         updateBackendVisibility();
+        updateRuntimeReadinessNote();
         updateCmd();
         panel.querySelectorAll('.cookbook-slot-btn').forEach(b => b.classList.remove('active'));
         panel.querySelector(`.cookbook-slot-btn[data-slot="${slotIdx}"]`)?.classList.add('active');
@@ -1474,6 +1597,10 @@ function _rerenderCachedModels() {
             const extraEl = panel.querySelector('[data-field="extra"]');
             if (extraEl) extraEl.value = '';
             updateBackendVisibility();
+            updateRuntimeReadinessNote();
+          }
+          if (e.target.dataset.field === 'venv') {
+            updateRuntimeReadinessNote();
           }
           updateCmd();
         });
@@ -1505,6 +1632,7 @@ function _rerenderCachedModels() {
       // "back out" affordance next to Launch.
       panel.querySelector('.hwfit-serve-cancel')?.addEventListener('click', (ev) => {
         ev.stopPropagation();
+        panel._cleanupRuntimeReadiness?.();
         panel.remove();
         item.classList.remove('doclib-card-expanded');
         item.style.flexDirection = '';
@@ -1537,6 +1665,37 @@ function _rerenderCachedModels() {
             cancelText: 'Close',
           });
           return;
+        }
+        // Pre-launch GPU probe — common failure pattern: vLLM/SGLang launched
+        // on a host where no GPU is visible (driver missing, $CUDA_VISIBLE_DEVICES
+        // unset, container without --gpus). Catch it BEFORE the user spends
+        // minutes watching the task fail.
+        const _needsGpu = ['vllm', 'sglang'].includes(serveState.backend)
+          || (serveState.backend === 'diffusers');
+        if (_needsGpu) {
+          try {
+            const _probeHost = (_envState.remoteHost || '').trim();
+            const _probeParams = new URLSearchParams();
+            if (_probeHost) {
+              _probeParams.set('host', _probeHost);
+              const _sp = (_envState.servers || []).find(s => s.host === _probeHost)?.port;
+              if (_sp) _probeParams.set('ssh_port', _sp);
+            }
+            const _probeRes = await fetch('/api/cookbook/gpus' + (_probeParams.toString() ? '?' + _probeParams : ''), { credentials: 'same-origin' });
+            const _probeData = await _probeRes.json();
+            const _probeGpus = Array.isArray(_probeData) ? _probeData : (_probeData.gpus || []);
+            if (!_probeGpus.length) {
+              const _proceed = await window.styledConfirm(
+                `No GPU detected on ${_probeHost ? _probeHost : 'this host'}. ${serveState.backend.toUpperCase()} needs a visible CUDA/ROCm accelerator to start — launching now will most likely crash early.\n\nLaunch anyway?`,
+                { title: 'No GPU detected', confirmText: 'Launch anyway', cancelText: 'Cancel', danger: true },
+              );
+              if (!_proceed) return;
+            }
+          } catch {
+            // Network / probe failure — don't block. Better to let the launch
+            // proceed than to silently refuse because the probe endpoint
+            // hiccuped (the user can read the real error in the task output).
+          }
         }
         // Save in the { _byRepo, _lastUsed } schema — no legacy flat keys at
         // the root so per-model state doesn't leak between models.

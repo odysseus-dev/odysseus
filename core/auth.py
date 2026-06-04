@@ -241,6 +241,18 @@ class AuthManager:
                 revoked += 1
         if revoked:
             self._save_sessions()
+        # Also revoke API bearer tokens owned by this user. The bearer auth
+        # path authenticates straight against ApiToken rows and never
+        # re-checks that the owner still exists, so leaving the rows behind
+        # would let a deleted user keep full API access indefinitely.
+        try:
+            from core.database import get_db_session, ApiToken
+            with get_db_session() as db:
+                removed = db.query(ApiToken).filter(ApiToken.owner == username).delete()
+            if removed:
+                logger.info(f"Revoked {removed} API token(s) owned by deleted user '{username}'")
+        except Exception:
+            logger.warning(f"Failed to revoke API tokens for deleted user '{username}'")
         logger.info(f"Deleted user '{username}' (by {requesting_user}); revoked {revoked} active session(s)")
         return True
 
@@ -266,7 +278,8 @@ class AuthManager:
         renamed_sessions = 0
         with self._sessions_lock:
             for sess in self._sessions.values():
-                if (sess or {}).get("username") == old_username:
+                sess_user = str((sess or {}).get("username") or "").strip().lower()
+                if sess_user == old_username:
                     sess["username"] = new_username
                     renamed_sessions += 1
         if renamed_sessions:
@@ -375,7 +388,10 @@ class AuthManager:
             return True  # 2FA not enabled, always pass
         secret = user.get("totp_secret")
         if not secret:
-            return True
+            # 2FA is enabled but no secret is stored (corrupt/partially-written
+            # auth.json). Fail closed — returning True here bypassed the second
+            # factor entirely.
+            return False
         # Check backup codes first
         backup = user.get("totp_backup_codes", [])
         if code in backup:

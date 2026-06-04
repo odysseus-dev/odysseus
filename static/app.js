@@ -85,6 +85,39 @@ async function _refreshDefaultChat() {
 // synchronously; later reads should call _refreshDefaultChat() first.
 _refreshDefaultChat();
 
+async function _createDirectChatFromPreferredModel() {
+  if (!sessionModule) return false;
+
+  const pending = sessionModule.getPendingChat && sessionModule.getPendingChat();
+  if (pending && pending.url && pending.modelId) {
+    sessionModule.createDirectChat(pending.url, pending.modelId, pending.endpointId);
+    return true;
+  }
+
+  const sessions = sessionModule.getSessions();
+  const currentId = sessionModule.getCurrentSessionId();
+  const current = sessions.find(s => s.id === currentId);
+  if (current && current.endpoint_url && current.model) {
+    sessionModule.createDirectChat(current.endpoint_url, current.model, current.endpoint_id);
+    return true;
+  }
+
+  const dc = await _refreshDefaultChat();
+  if (dc) {
+    sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
+    return true;
+  }
+
+  const withModel = sessions.filter(s => s.endpoint_url && s.model);
+  if (withModel.length > 0) {
+    const last = withModel[0]; // sessions are sorted by recent
+    sessionModule.createDirectChat(last.endpoint_url, last.model, last.endpoint_id);
+    return true;
+  }
+
+  return false;
+}
+
 // ============================================
 // EVENT LISTENERS INITIALIZATION
 // ============================================
@@ -270,7 +303,9 @@ function initializeEventListeners() {
           label = (raw || '').trim() || 'Assistant';
         }
         const body = child.querySelector('.body');
-        const text = body ? (body.innerText || body.textContent || '').trim() : '';
+        // Prefer dataset.raw (original markdown) over innerText (rendered HTML as text)
+        // to avoid extra newlines and formatting artifacts.
+        const text = body ? (body.dataset.raw || body.innerText || body.textContent || '').trim() : '';
         if (text) parts.push(`${label}: ${text}`);
       } else if (child.classList?.contains('agent-thread')) {
         const lines = ['[Tool calls]'];
@@ -499,6 +534,13 @@ function initializeEventListeners() {
         return;
       }
 
+      // Model picker popup — close before opening any modals
+      const modelPickerMenu = document.getElementById('model-picker-menu');
+      if (modelPickerMenu && modelPickerMenu.classList.contains('open')) {
+        modelPickerMenu.classList.remove('open');
+        return;
+      }
+
       // Close one modal at a time (last in DOM = topmost)
       // Map modal id → sidebar list-item id to clear active state
       const modalItemMap = {
@@ -510,7 +552,7 @@ function initializeEventListeners() {
       };
 
       // Dynamic modals (removed from DOM on close)
-      const dynamicModals = ['library-modal', 'archive-modal', 'doclib-modal', 'gallery-modal', 'tasks-modal'];
+      const dynamicModals = ['library-modal', 'archive-modal', 'doclib-modal', 'gallery-modal', 'tasks-modal', 'email-lib-modal'];
       for (const id of dynamicModals) {
         const m = document.getElementById(id);
         if (id === 'gallery-modal') {
@@ -1564,6 +1606,8 @@ function initializeEventListeners() {
       saveToggleState(st);
       agentBtn.classList.toggle('active', mode === 'agent');
       chatBtn.classList.toggle('active', mode === 'chat');
+      agentBtn.setAttribute('aria-pressed', String(mode === 'agent'));
+      chatBtn.setAttribute('aria-pressed', String(mode === 'chat'));
       // Slide the pill to the active button
       const toggle = agentBtn.closest('.mode-toggle');
       if (toggle) toggle.classList.toggle('mode-chat', mode === 'chat');
@@ -1621,11 +1665,13 @@ function initializeEventListeners() {
     const chk = el(checkboxId);
     if (chk) chk.checked = saved;
     btn.classList.toggle('active', saved);
+    btn.setAttribute('aria-pressed', String(saved));
     btn.addEventListener('click', () => {
       const curMode = (loadToggleState().mode) || 'chat';
       const chk = el(checkboxId);
       chk.checked = !chk.checked;
       btn.classList.toggle('active', chk.checked);
+      btn.setAttribute('aria-pressed', String(chk.checked));
       saveToolPref(stateKey, curMode, chk.checked);
       showToolToggleToast(stateKey, chk.checked);
       if (chk.checked) _showToolSplash(stateKey);
@@ -3011,27 +3057,7 @@ function initializeEventListeners() {
       // Clear research mode if active
       const _resChk = el('research-toggle');
       if (_resChk && _resChk.checked) _syncResearchIndicator(false);
-      // Use default chat if configured — always re-fetch so setting changes apply immediately
-      const dc = await _refreshDefaultChat();
-      if (dc) {
-        sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
-        return;
-      }
-      const sessions = sessionModule.getSessions();
-      const currentId = sessionModule.getCurrentSessionId();
-      const current = sessions.find(s => s.id === currentId);
-      // Try current session's model first
-      if (current && current.endpoint_url && current.model) {
-        sessionModule.createDirectChat(current.endpoint_url, current.model, current.endpoint_id);
-        return;
-      }
-      // Fallback: find any recent session with a model
-      const withModel = sessions.filter(s => s.endpoint_url && s.model);
-      if (withModel.length > 0) {
-        const last = withModel[0]; // sessions are sorted by recent
-        sessionModule.createDirectChat(last.endpoint_url, last.model, last.endpoint_id);
-        return;
-      }
+      if (await _createDirectChatFromPreferredModel()) return;
       // No models at all — show welcome screen
       sessionModule.setCurrentSessionId(null);
       if (documentModule && documentModule.isPanelOpen && documentModule.isPanelOpen()) documentModule.closePanel();
@@ -3076,23 +3102,7 @@ function initializeEventListeners() {
       if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
       // Clear research toggle when starting a fresh chat (not via research button)
       _syncResearchIndicator(false);
-      const dc = await _refreshDefaultChat();
-      if (dc) {
-        sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
-        return;
-      }
-      const sessions = sessionModule.getSessions();
-      const currentId = sessionModule.getCurrentSessionId();
-      const current = sessions.find(s => s.id === currentId);
-      if (current && current.endpoint_url && current.model) {
-        sessionModule.createDirectChat(current.endpoint_url, current.model, current.endpoint_id);
-        return;
-      }
-      const withModel = sessions.filter(s => s.endpoint_url && s.model);
-      if (withModel.length > 0) {
-        sessionModule.createDirectChat(withModel[0].endpoint_url, withModel[0].model, withModel[0].endpoint_id);
-        return;
-      }
+      if (await _createDirectChatFromPreferredModel()) return;
       // No models at all — show welcome screen
       sessionModule.setCurrentSessionId(null);
       if (documentModule && documentModule.isPanelOpen && documentModule.isPanelOpen()) documentModule.closePanel();
@@ -3129,10 +3139,7 @@ function initializeEventListeners() {
         const idx = sessions.findIndex(s => s.id === currentId);
         const nextSession = sessions.filter(s => !s.archived && s.id !== currentId)[Math.max(0, idx)] ||
                             sessions.find(s => !s.archived && s.id !== currentId);
-        const res = await fetch(`${API_BASE}/api/session/${currentId}/archive`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        });
+        const res = await fetch(`${API_BASE}/api/session/${currentId}`, { method: 'DELETE' });
         if (res.ok) {
           await sessionModule.loadSessions();
           if (nextSession) {
@@ -3159,7 +3166,7 @@ function initializeEventListeners() {
       setTimeout(() => uiModule.autoResize(textarea), 1);
     });
     textarea.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         // If ghost autocomplete is active, accept the suggestion instead of submitting
         if (window._ghostAutocomplete && window._ghostAutocomplete.isActive()) {
           e.preventDefault();
@@ -3732,7 +3739,7 @@ function startOdysseusApp() {
   // Enter to send (shift+enter for newline), or new chat when empty
   if (messageInput) {
     messageInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         // Flush the debounced icon update so dataset.mode reflects the current
         // text state. Without this, a fast type-and-Enter would still see the

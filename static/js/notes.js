@@ -2145,6 +2145,21 @@ function _bindCardEvents(body) {
       });
     });
   }
+  // Mobile, non-select: tapping anywhere on the card body (not on an
+  // interactive child — buttons, pin, checkbox, color dot, reminder pill,
+  // agent tag, links) opens the fullscreen editor. Previously only the
+  // title / content preview triggered edit, so padding + empty gutters were
+  // dead zones that felt broken on mobile.
+  if (_isNotesMobileMode() && !_selectMode) {
+    const _INTERACTIVE = 'button, a, input, label, .note-card-color-dot, .note-checkbox, .note-checkbox-rm, .note-cl-quickadd, .note-agent-tag, .note-card-pin, .note-card-corner-trash, .note-card-corner-menu, .note-card-corner-unarchive, .note-card-edit-corner, .note-card-reminder, .note-card-cb';
+    body.querySelectorAll('.note-card').forEach(card => {
+      card.addEventListener('click', (e) => {
+        if (e.target.closest(_INTERACTIVE)) return;
+        e.stopPropagation();
+        tapToEditOrSelect(card);
+      });
+    });
+  }
   // Multi-select checkbox (only in select mode)
   body.querySelectorAll('.note-card-cb').forEach(cb => {
     cb.addEventListener('click', (e) => e.stopPropagation());
@@ -3456,6 +3471,14 @@ function _buildForm(note = null) {
     // let repeated clicks create duplicate notes.
     const _saveBtn = form.querySelector('.note-form-save');
     if (_saveBtn._saving) return;
+    // Mobile: when an existing note is opened and closed without edits, the
+    // Update (✓) button morphs into Archive (set up below). Route the click
+    // to the hidden archive button so the existing archive flow + undo toast
+    // run unchanged.
+    if (_saveBtn.classList.contains('archive-mode')) {
+      form.querySelector('.note-form-archive-btn')?.click();
+      return;
+    }
     _saveBtn._saving = true; _saveBtn.disabled = true; _saveBtn.style.opacity = '0.5';
     try {
     const title = form.querySelector('.note-form-title').value.trim();
@@ -3549,6 +3572,28 @@ function _buildForm(note = null) {
       _saveBtn._saving = false; _saveBtn.disabled = false; _saveBtn.style.opacity = '';
     }
   });
+
+  // Mobile-only: when editing an existing note, the Update (✓) button starts in
+  // archive-mode (visually + behaviorally) and flips to Update on the first
+  // edit. Lets the user tap a note to skim, then tap ✓ to archive without ever
+  // touching a separate Archive button.
+  if (isEdit && window.innerWidth <= 768) {
+    const _saveLabelEl = _saveBtnEl0.querySelector('.nft-label');
+    const _enterArchive = () => {
+      _saveBtnEl0.classList.add('archive-mode');
+      if (_saveLabelEl) _saveLabelEl.textContent = 'Archive';
+      _saveBtnEl0.title = 'Archive';
+    };
+    const _enterUpdate = () => {
+      if (!_saveBtnEl0.classList.contains('archive-mode')) return;
+      _saveBtnEl0.classList.remove('archive-mode');
+      if (_saveLabelEl) _saveLabelEl.textContent = 'Update';
+      _saveBtnEl0.title = 'Update';
+    };
+    _enterArchive();
+    form.addEventListener('input', _enterUpdate, true);
+    form.addEventListener('change', _enterUpdate, true);
+  }
 
   // Cancel
   form.querySelector('.note-form-cancel').addEventListener('click', () => { _clearDraft(isEdit ? note.id : '__new__'); _editingId = null; _renderNotes(); });

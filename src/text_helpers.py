@@ -20,9 +20,9 @@ import re
 _THINK_CLOSED_RE = re.compile(r"<think(?:ing)?>[\s\S]*?</think(?:ing)?>\s*", re.IGNORECASE)
 # Orphan opening or closing tags that survive after the closed-pass.
 _THINK_TAG_RE = re.compile(r"</?think(?:ing)?[^>]*>\s*", re.IGNORECASE)
-# Dangling opener at the top of the response with no closer — strip everything
-# from `<think>` up to either `</think>` (if it ever shows) or end of string.
-_THINK_OPEN_RE = re.compile(r"^\s*<think(?:ing)?>.*?(?:</think(?:ing)?>|$)", re.DOTALL | re.IGNORECASE)
+# Dangling opener anywhere in the response with no closer — strip everything
+# from `<think>` to the end of string.
+_THINK_OPEN_RE = re.compile(r"<think(?:ing)?>[\s\S]*$", re.IGNORECASE)
 # Streaming models occasionally emit `<thinking time="0.42">`-style attributes.
 # Normalize to a plain `<think>` so the regexes above catch them.
 _THINK_ATTR_RE = re.compile(r"<think(?:ing)?\s+[^>]*>", re.IGNORECASE)
@@ -62,16 +62,20 @@ def _strip_reasoning_prose(text: str) -> str:
     paragraphs = re.split(r"\n\s*\n", text.strip())
     if len(paragraphs) <= 1:
         return text
-    last_reasoning_idx = -1
+    # Strip only a LEADING contiguous run of reasoning paragraphs. Keeping the
+    # text after the *last* reasoning paragraph destroyed the real answer when a
+    # reasoning-style sentence trailed it: keep became empty and the function
+    # returned that trailing sentence instead of the answer above it.
+    first_keep = 0
     for i, p in enumerate(paragraphs):
         if _REASONING_PREFIX_RE.match(p):
-            last_reasoning_idx = i
-    if last_reasoning_idx < 0:
+            first_keep = i + 1
+        else:
+            break
+    if first_keep == 0:
         return text
-    keep = paragraphs[last_reasoning_idx + 1:]
-    if not keep:
-        return paragraphs[-1].strip()
-    return "\n\n".join(keep).strip()
+    keep = paragraphs[first_keep:]
+    return "\n\n".join(keep).strip() if keep else text
 
 
 def strip_think(text: str, *, prose: bool = False, prompt_echo: bool = True) -> str:

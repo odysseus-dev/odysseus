@@ -66,24 +66,107 @@ def _ensure_stub(name: str, **attrs):
         setattr(parent, child_name, mod)
     return mod
 
-_ensure_stub("core.database",
-    SessionLocal=MagicMock(), ScheduledTask=MagicMock(), TaskRun=MagicMock(),
-    ModelEndpoint=MagicMock(), Session=MagicMock(), ChatMessage=MagicMock(),
-    CalendarCal=MagicMock(), CalendarEvent=MagicMock(),
-    Document=MagicMock(), DocumentVersion=MagicMock(),
-    GalleryImage=MagicMock(), GalleryAlbum=MagicMock(), Note=MagicMock(),
-    McpServer=MagicMock(),
-)
-_ensure_stub("core.auth", AuthManager=MagicMock())
-_ensure_stub("src.endpoint_resolver",
-    resolve_endpoint=MagicMock(return_value=("", "", {})),
-    normalize_base=MagicMock(),
-    build_chat_url=MagicMock(),
-    build_headers=MagicMock(),
-)
+@pytest.fixture(autouse=True)
+def _auth_regressions_stubs(monkeypatch):
+    db = _ensure_stub("core.database",
+        SessionLocal=MagicMock(), ScheduledTask=MagicMock(), TaskRun=MagicMock(),
+        ModelEndpoint=MagicMock(), Session=MagicMock(), ChatMessage=MagicMock(),
+        CalendarCal=MagicMock(), CalendarEvent=MagicMock(),
+        Document=MagicMock(), DocumentVersion=MagicMock(),
+        GalleryImage=MagicMock(), GalleryAlbum=MagicMock(), Note=MagicMock(),
+        McpServer=MagicMock(),
+    )
+    auth = _ensure_stub("core.auth", AuthManager=MagicMock())
+    ep = _ensure_stub("src.endpoint_resolver",
+        resolve_endpoint=MagicMock(return_value=("", "", {})),
+        normalize_base=MagicMock(),
+        build_chat_url=MagicMock(),
+        build_models_url=MagicMock(),
+        build_headers=MagicMock(),
+    )
+    monkeypatch.setitem(sys.modules, "core.database", db)
+    monkeypatch.setitem(sys.modules, "core.auth", auth)
+    monkeypatch.setitem(sys.modules, "src.endpoint_resolver", ep)
 
 from fastapi import HTTPException
 
+# ---------------------------------------------------------------------------
+# Auth routes -- open signup setter
+# ---------------------------------------------------------------------------
+
+def _auth_route_endpoint(path: str, method: str):
+    from routes.auth_routes import setup_auth_routes
+
+    auth_manager = MagicMock()
+    router = setup_auth_routes(auth_manager)
+    for route in router.routes:
+        if getattr(route, "path", "") == path and method in getattr(route, "methods", set()):
+            return auth_manager, route.endpoint
+    raise AssertionError(f"{method} {path} route not registered")
+
+
+def _fake_auth_request(token="session-token"):
+    from routes.auth_routes import SESSION_COOKIE
+
+    req = SimpleNamespace()
+    req.cookies = {SESSION_COOKIE: token}
+    req.client = SimpleNamespace(host="127.0.0.1")
+    return req
+
+
+def test_set_signup_enabled_true_is_idempotent():
+    from routes.auth_routes import SetOpenRegistrationRequest
+
+    auth, target = _auth_route_endpoint("/api/auth/open-signup", "PUT")
+    auth.get_username_for_token.return_value = "admin"
+    auth.is_admin.return_value = True
+
+    request = _fake_auth_request()
+    auth.signup_enabled = False
+
+    out = asyncio.run(target(body=SetOpenRegistrationRequest(enabled=True),request=request))
+
+    assert out == {"ok": True, "signup_enabled": True}
+    assert auth.signup_enabled is True
+
+    out = asyncio.run(target(body=SetOpenRegistrationRequest(enabled=True), request=request))
+
+    assert out == {"ok": True, "signup_enabled": True}
+    assert auth.signup_enabled is True
+
+def test_set_signup_enabled_false_is_idempotent():
+    from routes.auth_routes import SetOpenRegistrationRequest
+
+    auth, target = _auth_route_endpoint("/api/auth/open-signup", "PUT")
+    auth.get_username_for_token.return_value = "admin"
+    auth.is_admin.return_value = True
+
+    request = _fake_auth_request()
+    auth.signup_enabled = True
+
+    out = asyncio.run(target(body=SetOpenRegistrationRequest(enabled=False), request=request))
+
+    assert out == {"ok": True, "signup_enabled": False}
+    assert auth.signup_enabled is False
+
+    out = asyncio.run(target(body=SetOpenRegistrationRequest(enabled=False), request=request))
+
+    assert out == {"ok": True, "signup_enabled": False}
+    assert auth.signup_enabled is False
+
+def test_set_signup_enabled_requires_admin():
+    from routes.auth_routes import SetOpenRegistrationRequest
+
+    auth, target = _auth_route_endpoint("/api/auth/open-signup", "PUT")
+    auth.get_username_for_token.return_value = "bob"
+    auth.is_admin.return_value = False
+    auth.signup_enabled = False
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(target(body=SetOpenRegistrationRequest(enabled=True), request=_fake_auth_request()))
+
+    assert exc.value.status_code == 403
+    assert auth.signup_enabled is False
 
 # ---------------------------------------------------------------------------
 # Research endpoints — `_require_user` rejects anonymous

@@ -11,10 +11,14 @@ test asserts the opposite: the task fires at most once across two consecutive
 polls.
 """
 import sys, types, asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 from sqlalchemy import create_engine, Column, String, DateTime, Integer, Boolean, Text
 from sqlalchemy.orm import sessionmaker, declarative_base
+
+
+def _test_utcnow():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _stub_heavy():
@@ -57,6 +61,15 @@ def _setup_isolated_db():
     cd.ScheduledTask = ScheduledTask
     cd.TaskRun = TaskRun
     return cd, ScheduledTask, TaskRun
+
+
+def test_scheduler_utcnow_preserves_naive_utc_contract():
+    from src.task_scheduler import _utcnow
+
+    now = _utcnow()
+
+    assert now.tzinfo is None
+    assert abs((now - _test_utcnow()).total_seconds()) < 2
 
 
 def _drive_scheduler(monkeypatch, pre_start_setup=None):
@@ -115,7 +128,7 @@ def test_restart_does_not_re_dispatch_overdue_task(monkeypatch):
         db.add(ScheduledTask(
             id="t_due_1", owner="alice", name="overdue",
             task_type="llm",
-            next_run=datetime.utcnow() - timedelta(hours=1),
+            next_run=_test_utcnow() - timedelta(hours=1),
             status="active",
         ))
         db.commit()
@@ -126,7 +139,7 @@ def test_restart_does_not_re_dispatch_overdue_task(monkeypatch):
     db = cd.SessionLocal()
     t = db.query(ScheduledTask).filter(ScheduledTask.id == "t_due_1").first()
     db.close()
-    assert t.next_run >= datetime.utcnow() - timedelta(seconds=1), (
+    assert t.next_run >= _test_utcnow() - timedelta(seconds=1), (
         f"After start(), next_run should have been pushed into the future; "
         f"got {t.next_run}"
     )
@@ -140,7 +153,7 @@ def test_restart_does_not_re_dispatch_overdue_task(monkeypatch):
 def test_startup_does_not_advance_fresh_tasks(monkeypatch):
     """Tasks whose next_run is in the future must be untouched by the startup
     sweep — only overdue ones get pushed forward."""
-    future = datetime.utcnow() + timedelta(hours=2)
+    future = _test_utcnow() + timedelta(hours=2)
     def _setup(cd, ScheduledTask, TaskRun):
         db = cd.SessionLocal()
         db.add(ScheduledTask(
@@ -169,7 +182,7 @@ def test_startup_does_not_advance_paused_tasks(monkeypatch):
         db.add(ScheduledTask(
             id="t_paused", owner="alice", name="paused",
             task_type="llm",
-            next_run=datetime.utcnow() - timedelta(hours=1),
+            next_run=_test_utcnow() - timedelta(hours=1),
             status="paused",
         ))
         db.commit()
@@ -183,7 +196,7 @@ def test_startup_does_not_advance_paused_tasks(monkeypatch):
     # The stored next_run should still be ~1h in the past (the startup sweep
     # only advances active overdue tasks; a paused task with an old next_run
     # is left alone). Allow a small delta to absorb the time the sweep took.
-    one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+    one_hour_ago = _test_utcnow() - timedelta(hours=1)
     assert abs((t.next_run - one_hour_ago).total_seconds()) < 5, (
         f"Paused task's next_run was modified: "
         f"expected ~{one_hour_ago}, got {t.next_run}"

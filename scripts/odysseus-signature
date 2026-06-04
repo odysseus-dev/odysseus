@@ -29,6 +29,19 @@ except ModuleNotFoundError as e:
     sys.exit(2)
 
 
+def _decode_png_data(data_png: str) -> bytes:
+    raw = data_png or ""
+    if "," in raw:
+        raw = raw.split(",", 1)[1]
+    try:
+        decoded = base64.b64decode(raw, validate=True)
+    except Exception as e:
+        fail(f"data_png is not valid base64: {e}")
+    if not decoded.startswith(b"\x89PNG\r\n\x1a\n"):
+        fail("data_png is not a PNG image")
+    return decoded
+
+
 def cmd_list(args):
     """No `Signature` SQLAlchemy model is registered for the
     `signatures` table — query via raw SQL so we don't depend on it."""
@@ -85,13 +98,7 @@ def cmd_export(args):
         ), {"id": args.id}).mappings().first()
     if not row:
         fail(f"no signature with id {args.id!r}")
-    raw = row["data_png"] or ""
-    if "," in raw:
-        raw = raw.split(",", 1)[1]
-    try:
-        png_bytes = base64.b64decode(raw)
-    except Exception as e:
-        fail(f"data_png is not valid base64: {e}")
+    png_bytes = _decode_png_data(row["data_png"] or "")
     out = Path(args.png)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(png_bytes)

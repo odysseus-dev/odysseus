@@ -30,6 +30,24 @@ def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, n))
 
 
+def _format_probe_failure(model: str, exc: Exception) -> str:
+    """Turn a failed research model probe into a user-facing message."""
+    detail = getattr(exc, "detail", None)
+    status = getattr(exc, "status_code", None)
+    err = str(detail if detail is not None else exc).strip()
+
+    if status in {401, 403} or "401" in err or "API key" in err or "Unauthorized" in err:
+        return f"Model '{model}' requires an API key. Check your endpoint configuration."
+
+    if status and err:
+        return f"Model '{model}' probe failed: {err}"
+
+    if err:
+        return f"Cannot reach model '{model}' — {err}"
+
+    return f"Cannot reach model '{model}' — check that the endpoint is running and accessible."
+
+
 class ResearchHandler:
     """Handles research service operations with iterative deep research."""
 
@@ -143,10 +161,10 @@ class ResearchHandler:
     ) -> Optional[dict]:
         """Generate a research plan for user review before starting research."""
         try:
-            from src.deep_research import RESEARCH_PLAN_PROMPT
+            from src.deep_research import RESEARCH_PLAN_PROMPT, current_date_context
             from src.llm_core import llm_call_async
 
-            prompt = RESEARCH_PLAN_PROMPT.format(question=query)
+            prompt = current_date_context() + RESEARCH_PLAN_PROMPT.format(question=query)
             response = await llm_call_async(
                 url=llm_endpoint,
                 model=llm_model,
@@ -216,15 +234,25 @@ class ResearchHandler:
         """
         # Resolve the hard wall-clock timeout from settings when the caller
         # didn't pin one. Local / edge models routinely need more than the
-        # old 600s default to finish a deep-research synthesis.
+        # old 600s default to finish a deep-research synthesis. A setting of
+        # 0 disables the cap entirely (unlimited run); any other value is
+        # bounded to [60, 86400] so a misconfigured settings.json can't
+        # explode into a multi-day hang.
         if hard_timeout is None:
             from src.settings import get_setting
-            hard_timeout = _bounded_int(
-                get_setting("research_run_timeout_seconds", 1800),
-                default=1800,
-                minimum=60,
-                maximum=86400,
-            )
+            try:
+                raw_timeout = int(get_setting("research_run_timeout_seconds", 1800))
+            except (TypeError, ValueError):
+                raw_timeout = 1800
+            if raw_timeout <= 0:
+                hard_timeout = None  # 0 = no wall-clock cap (asyncio.wait_for timeout=None)
+            else:
+                hard_timeout = _bounded_int(
+                    raw_timeout,
+                    default=1800,
+                    minimum=60,
+                    maximum=86400,
+                )
 
         # Cancel any existing research for this session
         if session_id in self._active_tasks:
@@ -433,6 +461,8 @@ class ResearchHandler:
         seen = set()
         sources = []
         for f in findings:
+            if not isinstance(f, dict):
+                continue
             url = f.get("url", "")
             title = f.get("title", "") or url
             summary = f.get("summary", "") or f.get("evidence", "")
@@ -451,6 +481,8 @@ class ResearchHandler:
         try:
             items = []
             for f in findings:
+                if not isinstance(f, dict):
+                    continue
                 url = f.get("url", "")
                 title = f.get("title", "") or "Untitled"
                 summary = f.get("summary", "")
@@ -624,14 +656,7 @@ class ResearchHandler:
             logger.info(f"Endpoint probe OK: {model}")
         except Exception as e:
             logger.error(f"Probe failed for {model}: {e}")
-            err = str(e)
-            if "401" in err or "API key" in err or "Unauthorized" in err:
-                raise RuntimeError(
-                    f"Model '{model}' requires an API key. Check your endpoint configuration."
-                ) from e
-            raise RuntimeError(
-                f"Cannot reach model '{model}' — check that the endpoint is running and accessible."
-            ) from e
+            raise RuntimeError(_format_probe_failure(model, e)) from e
 
     async def call_research_service(
         self,

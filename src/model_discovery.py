@@ -16,6 +16,23 @@ _hosts_cache_time: float = 0
 _HOSTS_CACHE_TTL = 60  # seconds
 
 
+def _parse_tailscale_status(raw: str) -> Dict[str, Any]:
+    try:
+        data = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _first_tailscale_ipv4(value: Any) -> Optional[str]:
+    if not isinstance(value, list):
+        return None
+    for ip in value:
+        if isinstance(ip, str) and "." in ip:
+            return ip
+    return None
+
+
 def discover_tailscale_hosts() -> List[str]:
     """Discover online Tailscale peers, returning their IPv4 addresses."""
     global _hosts_cache, _hosts_cache_time
@@ -33,17 +50,21 @@ def discover_tailscale_hosts() -> List[str]:
         if result.returncode != 0:
             return hosts
 
-        data = json.loads(result.stdout)
+        data = _parse_tailscale_status(result.stdout)
+        if not data:
+            return hosts
 
         # Add self
-        self_ips = data.get("Self", {}).get("TailscaleIPs", [])
-        for ip in self_ips:
-            if "." in ip:  # IPv4 only
-                hosts.append(ip)
-                break
+        self_data = data.get("Self") if isinstance(data.get("Self"), dict) else {}
+        self_ip = _first_tailscale_ipv4(self_data.get("TailscaleIPs"))
+        if self_ip:
+            hosts.append(self_ip)
 
         # Add online peers (skip funnel-ingress-nodes and android devices)
-        for peer in data.get("Peer", {}).values():
+        peers = data.get("Peer") if isinstance(data.get("Peer"), dict) else {}
+        for peer in peers.values():
+            if not isinstance(peer, dict):
+                continue
             if not peer.get("Online"):
                 continue
             hostname = peer.get("HostName", "")
@@ -52,11 +73,9 @@ def discover_tailscale_hosts() -> List[str]:
             os_name = peer.get("OS", "")
             if os_name == "android":
                 continue
-            peer_ips = peer.get("TailscaleIPs", [])
-            for ip in peer_ips:
-                if "." in ip:  # IPv4 only
-                    hosts.append(ip)
-                    break
+            peer_ip = _first_tailscale_ipv4(peer.get("TailscaleIPs"))
+            if peer_ip:
+                hosts.append(peer_ip)
 
         _hosts_cache = hosts
         _hosts_cache_time = now
@@ -74,14 +93,32 @@ class ModelDiscovery:
         self.default_host = default_host
         self.openai_api_key = openai_api_key
         self.openai_compat_path = "/v1/chat/completions"
+        # Custom ports from env vars, merged into the scan list by discover_models.
+        self._extra_ports: set = set()
 
     def _get_hosts(self) -> List[str]:
         """Get all hosts to scan, using env override, Tailscale, or default."""
+        self._extra_ports = set()
+
         def _append_host(out: List[str], host: str) -> None:
             host = (host or "").strip()
             if not host or host in out:
                 return
             out.append(host)
+
+        def _append_env_hosts(out: List[str]) -> None:
+            """Add hosts (and any custom ports) from provider-specific env vars."""
+            for env_name in ("OLLAMA_BASE_URL", "OLLAMA_URL", "LM_STUDIO_URL"):
+                raw = os.getenv(env_name, "").strip()
+                if not raw:
+                    continue
+                try:
+                    parsed = urlparse(raw if "://" in raw else "http://" + raw)
+                    _append_host(out, parsed.hostname or "")
+                    if parsed.port:
+                        self._extra_ports.add(parsed.port)
+                except Exception:
+                    pass
 
         # Manual override takes priority
         extra = os.getenv("LLM_HOSTS", "").strip()
@@ -91,6 +128,7 @@ class ModelDiscovery:
             if self.default_host not in hosts:
                 hosts.insert(0, self.default_host)
             _append_host(hosts, "host.docker.internal")
+            _append_env_hosts(hosts)
             return hosts
 
         # Try Tailscale discovery
@@ -100,22 +138,29 @@ class ModelDiscovery:
             if self.default_host not in ts_hosts:
                 ts_hosts.insert(0, self.default_host)
             _append_host(ts_hosts, "host.docker.internal")
+            _append_env_hosts(ts_hosts)
             return ts_hosts
 
         hosts = [self.default_host]
         # Docker desktop/Linux compose maps this to the host machine. That is
         # the common "I started Ollama normally on this computer" case.
         _append_host(hosts, "host.docker.internal")
-        for env_name in ("OLLAMA_BASE_URL", "OLLAMA_URL"):
-            raw = os.getenv(env_name, "").strip()
-            if not raw:
-                continue
-            try:
-                parsed = urlparse(raw if "://" in raw else "http://" + raw)
-                _append_host(hosts, parsed.hostname or "")
-            except Exception:
-                pass
+        _append_env_hosts(hosts)
         return hosts
+
+    def _fingerprint_provider(self, host: str, port: int) -> Optional[str]:
+        """Identify the server software via its native API, independent of port."""
+        try:
+            r = httpx.get(f"http://{host}:{port}/api/v1/models", timeout=1.5)
+            if r.is_success:
+                models = (r.json() or {}).get("models")
+                if (isinstance(models, list) and models
+                        and isinstance(models[0], dict)
+                        and "key" in models[0] and "architecture" in models[0]):
+                    return "lmstudio"
+        except Exception:
+            pass
+        return None
 
     def _check_port(self, host: str, port: int) -> Optional[Dict[str, Any]]:
         """Check a single host:port for models."""
@@ -132,7 +177,8 @@ class ModelDiscovery:
                     "port": port,
                     "url": f"http://{host}:{port}{self.openai_compat_path}",
                     "models": ids,
-                    "models_display": [i.lstrip("/") for i in ids]
+                    "models_display": [i.lstrip("/") for i in ids],
+                    "provider": self._fingerprint_provider(host, port),
                 }
         except Exception:
             pass
@@ -145,9 +191,10 @@ class ModelDiscovery:
 
         logger.info(f"Scanning {len(hosts)} hosts for models: {hosts}")
 
-        # Build list of (host, port) to check. 8000-8020 catches vLLM,
-        # llama.cpp, SGLang, and Cookbook serves; 11434 catches Ollama.
-        ports = list(range(8000, 8021)) + [11434]
+        # Well-known ports: 8000-8020 (vLLM, llama.cpp, SGLang, Cookbook),
+        # 1234 (LM Studio), 11434 (Ollama)
+        ports = list(range(8000, 8021)) + [1234, 11434]
+        ports += [p for p in sorted(self._extra_ports) if p not in ports]
         targets = [(h, p) for h in hosts for p in ports]
 
         seen_models = set()  # dedupe by (port, model_ids) to avoid same machine via different IPs

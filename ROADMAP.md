@@ -1,6 +1,6 @@
 # Roadmap / Help Wanted
 
-Odysseus is on a voyage, but not home yet. It works great for me (lol), but this is ship is moving fast and feedback/help would be appreciated! (I dont know what I'm doing hlep).
+Odysseus is on a voyage, but not home yet. It works great for me (lol), but this ship is moving fast and feedback/help would be appreciated! (I don't know what I'm doing, help).
 
 If you see weird CSS, strange layout behavior, or a suspiciously murky corner of
 the codebase, you are probably right to stay away.
@@ -37,6 +37,12 @@ the codebase, you are probably right to stay away.
   fetched pages, and memories should be treated as untrusted data. Keep testing
   whether models follow malicious instructions from those surfaces.
 - Better degraded-state reporting for ChromaDB, SearXNG, email, ntfy, and provider probes.
+- Email performance audit. Fetching, searching, opening, deleting, and sending
+  email can feel slow, especially over IMAP/SMTP providers with high latency.
+  Need someone who knows mail performance to profile the current flow, identify
+  whether the bottleneck is IMAP folder select/fetch, cache invalidation,
+  attachment/body loading, SMTP handshakes, or frontend refresh behavior, then
+  propose safer caching/prefetch/batching without breaking multi-account state.
 - Provider setup/probing audit for Anthropic, Gemini, Groq, xAI, OpenRouter, OpenAI, and DeepSeek.
 
 ## Refactor Targets

@@ -27,6 +27,7 @@ class _FakeModelEndpoint:
 
 
 class _FakeDbSession:
+    id = _FakeColumn("id")
     endpoint_url = _FakeColumn("endpoint_url")
 
 
@@ -43,6 +44,9 @@ class _FakeQuery:
 
     def first(self):
         return self.rows[0] if self.rows else None
+
+    def all(self):
+        return list(self.rows)
 
 
 class _FakeDb:
@@ -73,16 +77,30 @@ def _install_model_route_import_stubs(monkeypatch):
     db_mod.SessionLocal = lambda: _FakeDb([])
     db_mod.ModelEndpoint = _FakeModelEndpoint
     db_mod.Session = _FakeDbSession
+    db_mod.Document = MagicMock()
+    db_mod.DocumentVersion = MagicMock()
+    db_mod.GalleryImage = MagicMock()
     middleware_mod = types.ModuleType("core.middleware")
     middleware_mod.require_admin = lambda request: None
     multipart_mod = types.ModuleType("python_multipart")
     multipart_mod.__version__ = "0.0.13"
+    models_mod = types.ModuleType("core.models")
+    models_mod.ChatMessage = MagicMock()
+    exceptions_mod = types.ModuleType("core.exceptions")
+    exceptions_mod.SessionNotFoundError = type("SessionNotFoundError", (Exception,), {})
+    session_mgr_mod = types.ModuleType("core.session_manager")
+    session_mgr_mod.SessionManager = MagicMock()
 
     monkeypatch.delitem(sys.modules, "routes.model_routes", raising=False)
+    monkeypatch.delitem(sys.modules, "routes.chat_routes", raising=False)
+    monkeypatch.delitem(sys.modules, "routes.session_routes", raising=False)
     monkeypatch.setitem(sys.modules, "core", core_mod)
     monkeypatch.setitem(sys.modules, "core.database", db_mod)
     monkeypatch.setitem(sys.modules, "core.middleware", middleware_mod)
     monkeypatch.setitem(sys.modules, "python_multipart", multipart_mod)
+    monkeypatch.setitem(sys.modules, "core.models", models_mod)
+    monkeypatch.setitem(sys.modules, "core.exceptions", exceptions_mod)
+    monkeypatch.setitem(sys.modules, "core.session_manager", session_mgr_mod)
 
 
 def _install_core_auth_stub(monkeypatch):
@@ -399,14 +417,15 @@ async def test_admin_agent_tools_require_admin(monkeypatch):
 
     monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
 
-    desc, result = await execute_tool_block(
-        SimpleNamespace(tool_type="manage_tokens", content='{"action":"create","name":"bad"}'),
-        owner="regular-user",
-    )
+    for tool_name in ("manage_tokens", "app_api", "serve_preset"):
+        desc, result = await execute_tool_block(
+            SimpleNamespace(tool_type=tool_name, content='{"action":"create","name":"bad"}'),
+            owner="regular-user",
+        )
 
-    assert desc == "manage_tokens: BLOCKED"
-    assert result["exit_code"] == 1
-    assert "requires an admin" in result["error"]
+        assert desc == f"{tool_name}: BLOCKED"
+        assert result["exit_code"] == 1
+        assert "requires an admin" in result["error"]
 
 
 @pytest.mark.asyncio
@@ -422,7 +441,7 @@ async def test_public_agent_policy_blocks_sensitive_tools(monkeypatch):
 
     monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
 
-    for tool_name in ("send_email", "read_file", "app_api", "mcp__email__send_email"):
+    for tool_name in ("send_email", "read_file", "mcp__email__send_email"):
         desc, result = await execute_tool_block(
             SimpleNamespace(tool_type=tool_name, content="{}"),
             owner="regular-user",
@@ -449,6 +468,7 @@ def test_public_agent_policy_hides_sensitive_tools(monkeypatch):
     assert "send_email" in blocked
     assert "read_file" in blocked
     assert "app_api" in blocked
+    assert "serve_preset" in blocked
     assert "manage_tasks" in blocked
 
 
@@ -481,3 +501,143 @@ async def test_webhook_tool_reuses_private_url_validation():
 
     assert result["exit_code"] == 1
     assert "private/internal" in result["error"]
+
+
+def test_default_chat_skips_hidden_first_model(monkeypatch):
+    """get_default_chat picks first visible model when default_model is empty
+    and the first cached model is hidden."""
+    _install_model_route_import_stubs(monkeypatch)
+    import routes.model_routes as model_routes
+    import routes.prefs_routes as prefs_routes
+
+    ep = SimpleNamespace(
+        id="ep1",
+        base_url="http://localhost:11434",
+        is_enabled=True,
+        owner="fresh",
+        cached_models='["hidden-model", "visible-model"]',
+        hidden_models='["hidden-model"]',
+    )
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _FakeModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: _FakeDb([ep]))
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: {})
+    monkeypatch.setattr(model_routes, "owner_filter", lambda q, m, u, **kw: q)
+    monkeypatch.setattr(model_routes, "_normalize_base", lambda base: base.rstrip("/"))
+    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+    monkeypatch.setattr(prefs_routes, "_load_for_user", lambda user: {})
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user="fresh"),
+        app=SimpleNamespace(state=SimpleNamespace(
+            auth_manager=SimpleNamespace(is_admin=lambda user: False)
+        )),
+    )
+
+    result = _default_chat_endpoint()(request)
+    assert result["model"] == "visible-model", f"Expected visible-model, got {result['model']!r}"
+
+
+def test_default_chat_admin_skips_hidden_first_model(monkeypatch):
+    """Admin user with global defaults also skips hidden models in fallback."""
+    _install_model_route_import_stubs(monkeypatch)
+    import routes.model_routes as model_routes
+
+    ep = SimpleNamespace(
+        id="ep1",
+        base_url="http://localhost:11434",
+        is_enabled=True,
+        owner=None,
+        cached_models='["hidden-model", "visible-model"]',
+        hidden_models='["hidden-model"]',
+    )
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _FakeModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: _FakeDb([ep]))
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: {})
+    monkeypatch.setattr(model_routes, "owner_filter", lambda q, m, u, **kw: q)
+    monkeypatch.setattr(model_routes, "_normalize_base", lambda base: base.rstrip("/"))
+    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user="admin"),
+        app=SimpleNamespace(state=SimpleNamespace(
+            auth_manager=SimpleNamespace(is_admin=lambda user: True)
+        )),
+    )
+
+    result = _default_chat_endpoint()(request)
+    assert result["model"] == "visible-model"
+
+
+def test_default_chat_all_models_hidden_returns_empty_model(monkeypatch):
+    """When all cached models are hidden, get_default_chat returns model: ''."""
+    _install_model_route_import_stubs(monkeypatch)
+    import routes.model_routes as model_routes
+
+    ep = SimpleNamespace(
+        id="ep1",
+        base_url="http://localhost:11434",
+        is_enabled=True,
+        owner=None,
+        cached_models='["hidden-a", "hidden-b"]',
+        hidden_models='["hidden-a", "hidden-b"]',
+    )
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _FakeModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: _FakeDb([ep]))
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: {})
+    monkeypatch.setattr(model_routes, "owner_filter", lambda q, m, u, **kw: q)
+    monkeypatch.setattr(model_routes, "_normalize_base", lambda base: base.rstrip("/"))
+    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user="admin"),
+        app=SimpleNamespace(state=SimpleNamespace(
+            auth_manager=SimpleNamespace(is_admin=lambda user: True)
+        )),
+    )
+
+    result = _default_chat_endpoint()(request)
+    assert result["model"] == "", f"Expected empty model, got {result['model']!r}"
+
+
+def test_visible_models_filters_hidden_first(monkeypatch):
+    """_visible_models removes hidden models from the list."""
+    from routes.model_routes import _visible_models
+
+    result = _visible_models(
+        '["hidden-model", "visible-model"]',
+        '["hidden-model"]',
+    )
+    assert result == ["visible-model"]
+
+
+def test_visible_models_all_hidden_returns_empty(monkeypatch):
+    """_visible_models returns [] when all models are hidden."""
+    from routes.model_routes import _visible_models
+
+    result = _visible_models(
+        '["hidden-a", "hidden-b"]',
+        '["hidden-a", "hidden-b"]',
+    )
+    assert result == []
+
+
+def test_visible_models_no_hidden_returns_all(monkeypatch):
+    """_visible_models returns full list when no hidden_models."""
+    from routes.model_routes import _visible_models
+
+    result = _visible_models(
+        '["model-a", "model-b"]',
+        None,
+    )
+    assert result == ["model-a", "model-b"]
+
+
+def test_visible_models_empty_cached_returns_empty(monkeypatch):
+    """_visible_models returns [] for empty cached list."""
+    from routes.model_routes import _visible_models
+
+    result = _visible_models([], None)
+    assert result == []

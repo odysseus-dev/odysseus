@@ -7,6 +7,7 @@
 import uiModule from './ui.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
 import { registerMenuDismiss } from './escMenuStack.js';
+import { computeProgressSignal } from './cookbookProgressSignal.js';
 
 // Human-friendly badge label for a task's internal status. Avoids surfacing
 // the word "error" in the sidebar — a server the user stopped or one that
@@ -34,14 +35,34 @@ function _taskBadge(task) {
   return { text: _statusLabel(task.status, task.type), cls: 'cookbook-task-' + task.status };
 }
 
+// A download task whose tmux output still shows an active per-shard line
+// (e.g. "model-00012-of-00082.safetensors: 56%|") is NOT actually finished —
+// the cookbook just lost track. The clear pill becomes a "reconnect" affordance
+// in that case (click → revive the row + reattach the poll loop).
+function _downloadOutputLooksActive(task) {
+  if (!task || task.type !== 'download') return false;
+  const out = task.output || '';
+  if (!out) return false;
+  if (out.includes('DOWNLOAD_OK') || out.includes('DOWNLOAD_FAILED')) return false;
+  // An active shard line: filename + a colon + a percentage that isn't 100%.
+  // We catch any in-flight shard or "Downloading 'X' to ..." line (no %).
+  return /model-\d+-of-\d+\.[a-z]+:\s+(?!100%)\d+%/i.test(out)
+      || /Downloading\s+'[^']+'\s+to\s+'[^']*\.incomplete'/i.test(out);
+}
+
 function _canClearTask(task) {
   if (!task || task.status === 'running') return false;
   if (task.type === 'serve' && (task.status === 'ready' || task._serveReady)) return false;
-  if (task.type === 'download' && task.status === 'done' && !task.payload?._dep) return false;
+  // If the tmux output still shows an in-flight download, the task isn't
+  // actually finished — hide the clear/check pill so it doesn't show on a
+  // task that's still doing work. (The next render will reflect this and
+  // ideally the self-heal flips status back to running.)
+  if (_downloadOutputLooksActive(task)) return false;
   return ['done', 'stopped', 'error', 'crashed', 'failed'].includes(task.status);
 }
 
 function _clearPillLabel(task) {
+  if (_downloadOutputLooksActive(task)) return 'reconnect';
   return 'clear';
 }
 
@@ -376,10 +397,40 @@ function _refreshModelsAfterEndpointChange() {
   }, 1500);
 }
 
+function _appendCookbookEndpointScope(fd, remoteHost) {
+  const host = String(remoteHost || '').trim();
+  if (!host || host === 'local' || host === 'localhost' || host === '127.0.0.1') {
+    fd.append('container_local', 'true');
+  }
+}
+
+function _connectHostFromRemote(remoteHost, fallback = 'localhost') {
+  const host = String(remoteHost || '').trim();
+  if (!host || host === 'local') return fallback;
+  return host.includes('@') ? host.split('@').pop() : host;
+}
+
+function _isAnyBindHost(host) {
+  const h = String(host || '').trim().toLowerCase();
+  return h === '0.0.0.0' || h === '::' || h === '[::]';
+}
+
+function _endpointFromAdvertisedUrl(rawUrl, currentHost, fallbackPort = '11434') {
+  try {
+    const u = new URL(rawUrl);
+    const host = _isAnyBindHost(u.hostname) ? currentHost : (u.hostname || currentHost);
+    const port = u.port || fallbackPort;
+    const bracketedHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+    return { host, port, baseUrl: `${u.protocol}//${bracketedHost}${port ? `:${port}` : ''}/v1` };
+  } catch {
+    return null;
+  }
+}
+
 // ── Download queue — runs one at a time per server ──
 
 function _processQueue() {
-  const tasks = _loadTasks();
+  const tasks = _loadPrunedTasks();
   const running = tasks.filter(t => t.type === 'download' && t.status === 'running');
   const queued = tasks.filter(t => t.type === 'download' && t.status === 'queued');
   if (!queued.length) return;
@@ -433,14 +484,24 @@ async function _startQueuedDownload(task) {
       return;
     }
     const oldId = task.sessionId;
-    const tasks = _loadTasks();
-    const t = tasks.find(t => t.sessionId === oldId);
-    if (t) {
-      t.sessionId = data.session_id;
-      t.id = data.session_id;
-      t.status = 'running';
-      _saveTasks(tasks);
-    }
+    const launchedTask = { ...task, sessionId: data.session_id, id: data.session_id, status: 'running' };
+    const key = _downloadDedupeKey(launchedTask);
+    let found = false;
+    const tasks = _loadTasks().filter(t => {
+      if (t.sessionId === oldId) {
+        found = true;
+        t.sessionId = data.session_id;
+        t.id = data.session_id;
+        t.status = 'running';
+        t._startLaunched = true;
+        return true;
+      }
+      if (t.sessionId === data.session_id) return false;
+      return !(key && t.type === 'download' && t.status === 'queued' && _downloadDedupeKey(t) === key);
+    });
+    if (!found) tasks.push(_stripTaskSecrets(launchedTask));
+    _saveTasks(tasks);
+    _renderRunningTab();
     _startBackgroundMonitor();
     await new Promise(r => setTimeout(r, 2000));
     _renderRunningTab();
@@ -471,6 +532,53 @@ function _normalizeTaskForDisplay(task) {
 export function _loadTasks() {
   try { return (JSON.parse(localStorage.getItem(TASKS_KEY)) || []).map(_normalizeTaskForDisplay); }
   catch { return []; }
+}
+
+function _downloadRepoKey(task) {
+  return String(task?.payload?.repo_id || task?.repo_id || task?.repo || task?.name || '').trim();
+}
+
+function _downloadHostKey(task) {
+  return String(task?.remoteHost || task?.payload?.remote_host || 'local').trim() || 'local';
+}
+
+function _downloadDedupeKey(task) {
+  if (!task || task.type !== 'download') return '';
+  const repo = _downloadRepoKey(task);
+  if (!repo) return '';
+  return `${_downloadHostKey(task)}\n${repo}`;
+}
+
+function _pruneQueuedDownloadDuplicates(tasks) {
+  if (!Array.isArray(tasks) || !tasks.length) return tasks || [];
+  const launched = new Set();
+  for (const task of tasks) {
+    if (task?.type !== 'download' || task.status === 'queued') continue;
+    const key = _downloadDedupeKey(task);
+    if (key) launched.add(key);
+  }
+
+  let changed = false;
+  const seenQueued = new Set();
+  const next = tasks.filter(task => {
+    if (task?.type !== 'download' || task.status !== 'queued') return true;
+    const key = _downloadDedupeKey(task);
+    if (!key) return true;
+    if (launched.has(key) || seenQueued.has(key)) {
+      changed = true;
+      return false;
+    }
+    seenQueued.add(key);
+    return true;
+  });
+  return changed ? next : tasks;
+}
+
+function _loadPrunedTasks() {
+  const tasks = _loadTasks();
+  const pruned = _pruneQueuedDownloadDuplicates(tasks);
+  if (pruned !== tasks) _saveTasks(pruned);
+  return pruned;
 }
 
 // Tombstones for removed tasks. Without these, removing a task only deletes it
@@ -534,6 +642,13 @@ export function _addTask(sessionId, name, type, payload) {
   if (type === 'serve' && payload && payload.repo_id) {
     const _repoId = payload.repo_id;
     tasks = tasks.filter(t => !(t.type === 'download' && t.status === 'done' && t.payload && t.payload.repo_id === _repoId));
+  }
+  if (type === 'download' && payload && payload.repo_id) {
+    const key = _downloadDedupeKey({ type: 'download', payload, remoteHost });
+    tasks = tasks.filter(t => {
+      if (t.sessionId === sessionId) return false;
+      return !(key && t.type === 'download' && t.status === 'queued' && _downloadDedupeKey(t) === key);
+    });
   }
   const task = _stripTaskSecrets({ id: sessionId, sessionId, name, type, status: 'running', output: '', ts: Date.now(), payload: payload || null, remoteHost, sshPort, platform });
   tasks.push(task);
@@ -613,42 +728,99 @@ export function _tmuxCmd(task, tmuxArgs) {
 }
 
 function _winSessionCmd(task, tmuxArgs) {
-  const sd = '$env:TEMP\\odysseus-sessions';
+  const host = task.remoteHost;
+  const sd = host ? '$env:TEMP\\odysseus-sessions' : '$env:TEMP\\odysseus-tmux';
   const sid = task.sessionId;
   const pf = _sshPrefix(_getPort(task));
-  const host = task.remoteHost;
   if (tmuxArgs.includes('capture-pane')) {
     const lines = tmuxArgs.match(/-S\s*-?(\d+)/)?.[1] || '200';
-    const ps = `Get-Content '${sd}\\${sid}.log' -Tail ${lines} -ErrorAction SilentlyContinue`;
-    return `ssh ${pf}${host} "powershell -Command \\"${ps}\\""`;
+    const ps = host
+      ? `Get-Content '${sd}\\${sid}.log' -Tail ${lines} -ErrorAction SilentlyContinue`
+      : `Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.log') -Tail ${lines} -ErrorAction SilentlyContinue`;
+    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
   }
   if (tmuxArgs.includes('has-session')) {
-    const ps = `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Get-Process -Id $p -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } else { exit 1 } } else { exit 1 }`;
-    return `ssh ${pf}${host} "powershell -Command \\"${ps}\\""`;
+    const ps = host
+      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Get-Process -Id $p -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } else { exit 1 } } else { exit 1 }`
+      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Get-Process -Id $p -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } else { exit 1 } } else { exit 1 }`;
+    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
   }
   if (tmuxArgs.includes('kill-session')) {
-    const ps = `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`;
-    return `ssh ${pf}${host} "powershell -Command \\"${ps}\\""`;
+    const ps = host
+      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`
+      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.*') -Force -ErrorAction SilentlyContinue`;
+    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
   }
   if (tmuxArgs.includes('send-keys') && tmuxArgs.includes('C-c')) {
-    const ps = `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -ErrorAction SilentlyContinue }`;
-    return `ssh ${pf}${host} "powershell -Command \\"${ps}\\""`;
+    const ps = host
+      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -ErrorAction SilentlyContinue }`
+      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -ErrorAction SilentlyContinue }`;
+    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
   }
-  return `ssh ${pf}${host} 'tmux ${tmuxArgs}' 2>/dev/null`;
+  return host ? `ssh ${pf}${host} 'tmux ${tmuxArgs}' 2>/dev/null` : `tmux ${tmuxArgs} 2>/dev/null`;
 }
 
 function _tmuxGracefulKill(task) {
   if (_isWindows(task)) {
-    const sd = '$env:TEMP\\odysseus-sessions';
+    const host = task.remoteHost;
+    const sd = host ? '$env:TEMP\\odysseus-sessions' : '$env:TEMP\\odysseus-tmux';
     const sid = task.sessionId;
     const pf = _sshPrefix(_getPort(task));
-    const ps = `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`;
-    return `ssh ${pf}${task.remoteHost} "powershell -Command \\"${ps}\\""`;
+    const ps = host
+      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`
+      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.*') -Force -ErrorAction SilentlyContinue`;
+    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
   }
   if (task.remoteHost) {
     return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} 'tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null'`;
   }
   return `tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null`;
+}
+
+function _shQuote(value) {
+  return "'" + String(value ?? '').replace(/'/g, "'\\''") + "'";
+}
+
+function _taskLooksOllama(task, outputText = '') {
+  const haystack = `${task?.payload?.backend || ''} ${task?.payload?._cmd || ''} ${task?.payload?._fields?.backend || ''} ${outputText || ''}`;
+  return /\bollama\b/i.test(haystack) || /Ollama API ready on port\s+\d+/i.test(haystack);
+}
+
+function _ollamaBaseUrlForTask(task, outputText = '') {
+  const out = String(outputText || '');
+  const ready = out.match(/Ollama API ready on port\s+\d+:\s*(http:\/\/[^\s]+)/i);
+  if (ready) return ready[1].replace(/\/+$/, '');
+  const cmd = String(task?.payload?._cmd || '');
+  const host = cmd.match(/OLLAMA_HOST=([^\s]+)/)?.[1] || '';
+  const port = host.match(/:(\d+)$/)?.[1] || '11434';
+  return `http://127.0.0.1:${port}`;
+}
+
+function _ollamaModelForTask(task) {
+  return String(task?.payload?.model || task?.payload?.repo_id || task?.name || '').trim();
+}
+
+function _ollamaUnloadCommand(task, outputText = '') {
+  if (!_taskLooksOllama(task, outputText)) return '';
+  const model = _ollamaModelForTask(task);
+  if (!model) return '';
+  const base = _ollamaBaseUrlForTask(task, outputText);
+  const body = JSON.stringify({ model, prompt: '', keep_alive: 0, stream: false });
+  const inner = `curl -sf -X POST ${_shQuote(base + '/api/generate')} -H 'Content-Type: application/json' -d ${_shQuote(body)} >/dev/null 2>&1 || true`;
+  if (task.remoteHost) {
+    return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} ${_shQuote(inner)}`;
+  }
+  return inner;
+}
+
+function _endpointUrlForTask(task, outputText = '') {
+  if (_taskLooksOllama(task, outputText)) {
+    return _ollamaBaseUrlForTask(task, outputText) + '/v1';
+  }
+  const host = _connectHostFromRemote(task.remoteHost);
+  const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
+  const port = portMatch ? portMatch[1] : '8000';
+  return `http://${host}:${port}/v1`;
 }
 
 // ── Wave animation ──
@@ -909,17 +1081,23 @@ async function _retryTask(el, task) {
       body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
     });
   } catch {}
-  _removeTask(task.sessionId);
   if (task.payload) {
     if (task.type === 'serve' && task.payload._cmd) {
+      _removeTask(task.sessionId);
       _launchServeTask(task.name, task.payload.repo_id, task.payload._cmd, task.payload._fields, task.remoteHost || '');
     } else {
-      _retryDownload(task.name, task.payload);
+      uiModule.showToast('Retrying download — progress may look reset while HuggingFace checks cached files, then it should resume.', 7000);
+      _updateTask(task.sessionId, {
+        status: 'running',
+        output: `${task.output || ''}\n\n[odysseus] Retrying download. Progress may briefly look like a fresh download while HuggingFace checks cached/incomplete files; cached partial files will be reused when available.`.trim(),
+        _retrying: true,
+      });
+      _retryDownload(task.name, task.payload, task.sessionId);
     }
   }
 }
 
-async function _retryDownload(name, payload) {
+async function _retryDownload(name, payload, replaceSessionId = '') {
   try {
     // A retry means the fast hf_transfer path already failed once — fall back to
     // the plain, reliable downloader for this and any further attempt (it resumes
@@ -932,17 +1110,40 @@ async function _retryDownload(name, payload) {
     });
     if (!res.ok) {
       uiModule.showToast('Download failed: HTTP ' + res.status);
+      if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
       return;
     }
     const data = await res.json();
     if (!data.ok) {
       uiModule.showToast('Download failed: ' + (data.error || ''));
+      if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
       return;
     }
-    _addTask(data.session_id, name, 'download', _payload);
+    if (replaceSessionId) {
+      const tasks = _loadTasks();
+      const task = tasks.find(t => t.sessionId === replaceSessionId);
+      if (task) {
+        task.id = data.session_id;
+        task.sessionId = data.session_id;
+        task.status = 'running';
+        task.output = '';
+        task.ts = Date.now();
+        task.payload = _payload;
+        task._retrying = false;
+        _saveTasks(tasks);
+        _soloExpandTaskId = data.session_id;
+        _renderRunningTab();
+        _startBackgroundMonitor();
+      } else {
+        _addTask(data.session_id, name, 'download', _payload);
+      }
+    } else {
+      _addTask(data.session_id, name, 'download', _payload);
+    }
     uiModule.showToast(`Downloading ${name}...`);
   } catch (e) {
     uiModule.showToast('Download failed: ' + e.message);
+    if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
   }
 }
 
@@ -1193,6 +1394,7 @@ function _parseServeCmdToFields(cmd) {
     gpu_mem: ex(/--gpu-memory-utilization\s+([\d.]+)/) || '0.90',
     swap: ex(/--swap-space\s+(\d+)/) || '',
     dtype: ex(/--dtype\s+(\w+)/) || 'auto',
+    vllm_kv_cache_dtype: ex(/--kv-cache-dtype\s+([\w.-]+)/) || 'auto',
     max_seqs: ex(/--max-num-seqs\s+(\d+)/) || '',
     gpus: ex(/CUDA_VISIBLE_DEVICES=(\S+)/) || '',
     cache_type: ex(/(?:--cache-type-k|-ctk)\s+(\S+)/) || '',
@@ -1326,7 +1528,7 @@ export function _renderRunningTab() {
   // event but the matching clear only ran on modal-open, so the highlight
   // persisted indefinitely after tasks finished in the background.
   try {
-    const _activeTasks = _loadTasks().filter(t => t.status === 'running' || t.status === 'queued' || t.status === 'error');
+    const _activeTasks = _loadPrunedTasks().filter(t => t.status === 'running' || t.status === 'queued' || t.status === 'error');
     if (!_activeTasks.length) _clearCookbookNotif();
   } catch {}
 
@@ -1367,7 +1569,16 @@ export function _renderRunningTab() {
 
   const tasks = _loadTasks();
   const hasContent = tasks.length > 0;
-  const activeCount = tasks.filter(t => t.status === 'running' || t.status === 'queued').length;
+  // Count anything that's really active: explicit 'running'/'queued' status,
+  // OR a download whose tmux output is still showing live shard progress.
+  // Without the output check, a task whose status got stuck at 'done' /
+  // 'crashed' (before auto-reconnect catches it) would read as "Running 0"
+  // even when the model is actively downloading on the host.
+  const activeCount = tasks.filter(t =>
+    t.status === 'running'
+    || t.status === 'queued'
+    || _downloadOutputLooksActive(t)
+  ).length;
   const activeCountHtml = activeCount ? ` <span class="cookbook-tab-count">${activeCount}</span>` : '';
 
   let tabBar = body.querySelector('.cookbook-tabs');
@@ -1536,6 +1747,9 @@ export function _renderRunningTab() {
       const running = _loadTasks().filter(t => (t.remoteHost || '') === host && t.status === 'running');
       if (!running.length) { uiModule.showToast(`Nothing running on ${_serverName(host)}`); return; }
       if (!await window.styledConfirm(`Stop ${running.length} running task${running.length > 1 ? 's' : ''} on ${_serverName(host)}?`, { confirmText: 'Stop all' })) return;
+      // Mark every task as user-stopped BEFORE firing the kills so that the
+      // download auto-retry logic never restarts a task the user just stopped.
+      running.forEach(t => _updateTask(t.sessionId, { _userStopped: true }));
       // Reuse each task's own Stop action so it does the full teardown
       // (send C-c, drop the endpoint, mark stopped) consistently.
       running.forEach(t => {
@@ -1600,6 +1814,8 @@ export function _renderRunningTab() {
         const label = check.querySelector('.cookbook-task-done-label');
         if (label) label.textContent = _clearPillLabel(task);
       }
+      const startNow = el.querySelector('.cookbook-task-start-now');
+      if (startNow) startNow.style.display = (task.type === 'download' && task.status === 'queued') ? '' : 'none';
       const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
       if (terminalDiag) _showDiagnosis(el, terminalDiag, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
     }
@@ -1626,10 +1842,11 @@ export function _renderRunningTab() {
         <span class="cookbook-task-type${(task.status === 'done' && task.type === 'download') ? ' cookbook-task-type-done' : ''}" data-type="${esc(task.type)}">${esc((task.status === 'done' && task.type === 'download') ? 'finished' : task.type)}</span>
         <span class="cookbook-task-name">${modelLogo(task.name)}${esc(task.name)}</span>
         <span class="cookbook-task-indicator"><span class="cookbook-task-wave" style="display:${task.status === 'running' ? '' : 'none'}"></span><span class="cookbook-task-check" title="Clear" style="display:${_canClearTask(task) ? '' : 'none'}"><svg class="cookbook-task-check-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#50fa7b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cookbook-task-clear-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span class="cookbook-task-done-label">${esc(_clearPillLabel(task))}</span><span class="cookbook-task-clear-label">clear</span></span></span>
+        <button type="button" class="cookbook-task-start-now" title="Start this queued download now" style="display:${(task.type === 'download' && task.status === 'queued') ? '' : 'none'}"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="8 5 19 12 8 19 8 5"/></svg><span>start now</span></button>
         <span class="cookbook-task-status ${_bdg.cls}"${_bdgTitle}>${esc(_bdg.text)}</span>
         <button class="cookbook-task-menu-btn" title="Actions">&#8942;</button>
       </div>
-      <div class="cookbook-task-sub"><span class="cookbook-task-session">${esc(task.sessionId)}</span><span class="cookbook-task-uptime" style="display:${((task.type === 'serve' || task.type === 'download') && task.status === 'running') ? '' : 'none'}"></span></div>
+      <div class="cookbook-task-sub"><span class="cookbook-task-session">${esc(task.sessionId)}</span><span class="cookbook-task-uptime" style="display:${((task.type === 'serve' || task.type === 'download') && task.status === 'running') ? '' : 'none'}"></span>${(task.type === 'download') ? `<span class="cookbook-task-dldir" title="Download destination" style="font-size:9px;color:var(--fg-muted);font-family:'Fira Code',monospace;opacity:0.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40ch;">Dir: ${esc(task.payload?.local_dir || '~/.cache/huggingface/hub')}</span>` : ''}</div>
       <div class="cookbook-output-wrap cookbook-task-collapsible${_mobileCollapseDefault ? ' cookbook-task-collapsed' : ''}"><pre class="cookbook-output-pre">${esc(task.output || '')}</pre><button type="button" class="copy-code cookbook-output-copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
     `;
 
@@ -1648,9 +1865,31 @@ export function _renderRunningTab() {
         const h = Math.floor(secs / 3600);
         const m = Math.floor((secs % 3600) / 60);
         const s = secs % 60;
-        _uptimeEl.textContent = h > 0
+        const _timer = h > 0
           ? `${_prefix}: ${h}h ${String(m).padStart(2,'0')}m`
           : `${_prefix}: ${m}m ${String(s).padStart(2,'0')}s`;
+        // ETA — only for downloads, only when we have a meaningful overall %.
+        // Reads the badge text (which already shows the true overall % we
+        // compute in the live-polling block) and back-derives a remaining-time
+        // estimate from elapsed/done. Hidden until pct >= 3% so the early-job
+        // wild estimates don't show.
+        let _eta = '';
+        if (task.type === 'download') {
+          const _badge = el.querySelector('.cookbook-task-status');
+          const _m = _badge && /^(\d+)%/.exec(_badge.textContent || '');
+          const _pct = _m ? parseInt(_m[1], 10) : 0;
+          if (_pct >= 3 && _pct < 100 && secs > 5) {
+            const _totalSec = Math.round(secs * (100 / _pct));
+            const _remain = Math.max(0, _totalSec - secs);
+            const _eh = Math.floor(_remain / 3600);
+            const _em = Math.floor((_remain % 3600) / 60);
+            const _es = _remain % 60;
+            _eta = _eh > 0
+              ? ` · ETA ${_eh}h ${String(_em).padStart(2,'0')}m`
+              : (_em > 0 ? ` · ETA ${_em}m ${String(_es).padStart(2,'0')}s` : ` · ETA ${_es}s`);
+          }
+        }
+        _uptimeEl.textContent = _timer + _eta;
       }, 1000);
     }
 
@@ -1698,7 +1937,48 @@ export function _renderRunningTab() {
     if (_clearChk) {
       _clearChk.addEventListener('click', (e) => {
         e.stopPropagation();
+        // If the output still shows an active shard line, the task isn't
+        // actually finished — clicking is "reconnect" (flip back to running
+        // + let _reconnectTask reattach to the live tmux session), not
+        // "clear". The pill label already reflects this via _clearPillLabel.
+        if (_downloadOutputLooksActive(task)) {
+          const _fresh = _loadTasks();
+          const _ft = _fresh.find(t => t.sessionId === task.sessionId);
+          if (_ft) {
+            _ft.status = 'running';
+            _ft._selfHealed = true;
+            _saveTasks(_fresh);
+          }
+          // Visually flip without waiting for a full re-render — same path the
+          // self-heal uses on cookbook open.
+          const _chk = el.querySelector('.cookbook-task-check');
+          if (_chk) _chk.style.display = 'none';
+          const _wave = el.querySelector('.cookbook-task-wave');
+          if (_wave) _wave.style.display = '';
+          const _up = el.querySelector('.cookbook-task-uptime');
+          if (_up) _up.style.display = '';
+          el.dataset.status = 'running';
+          _renderRunningTab();
+          return;
+        }
+        // Otherwise: real clear. Kill the tmux session as belt-and-suspenders,
+        // then animate out + remove the row.
+        try {
+          fetch('/api/shell/exec', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${task.sessionId}`) }),
+          }).catch(() => {});
+        } catch {}
         _animateOutThenRemove(el, task.sessionId);
+      });
+    }
+
+    const _startNowBtn = el.querySelector('.cookbook-task-start-now');
+    if (_startNowBtn) {
+      _startNowBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        _startQueuedDownload(task);
       });
     }
 
@@ -1802,8 +2082,7 @@ export function _renderRunningTab() {
         // serve to the model-endpoints list regardless of prior flag state.
         if (task.type === 'serve' && task.payload?._cmd) {
           items.push({ label: 'Register endpoint', action: 'register-endpoint', custom: async () => {
-            const rawHost = task.remoteHost || 'localhost';
-            const host = rawHost.includes('@') ? rawHost.split('@').pop() : rawHost;
+            const host = _connectHostFromRemote(task.remoteHost);
             const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
             const port = portMatch ? portMatch[1] : '8000';
             const baseUrl = `http://${host}:${port}/v1`;
@@ -1826,6 +2105,7 @@ export function _renderRunningTab() {
               fd.append('base_url', baseUrl);
               fd.append('name', task.name);
               fd.append('skip_probe', 'true');
+              _appendCookbookEndpointScope(fd, task.remoteHost || '');
               if (task.payload?._cmd?.includes('diffusion_server')) fd.append('model_type', 'image');
               const res = await fetch('/api/model-endpoints', { method: 'POST', credentials: 'same-origin', body: fd });
               if (res.ok) {
@@ -1847,8 +2127,11 @@ export function _renderRunningTab() {
           }});
         }
         if (_isWindows(task)) {
-          const sd = '$env:TEMP\\odysseus-sessions';
-          const logCmd = `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} "powershell -Command \\"Get-Content '${sd}\\${task.sessionId}.log' -Wait\\""`;
+          const host = task.remoteHost;
+          const sd = host ? '$env:TEMP\\odysseus-sessions' : '$env:TEMP\\odysseus-tmux';
+          const logCmd = host
+            ? `ssh ${_sshPrefix(_getPort(task))}${host} "powershell -Command \\"Get-Content '${sd}\\${task.sessionId}.log' -Wait\\""`
+            : `powershell -Command "Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${task.sessionId}.log') -Wait"`;
           items.push({ label: 'Copy log cmd', action: 'copy-tmux', custom: () => {
             _copyText(logCmd);
           }});
@@ -1983,16 +2266,28 @@ export function _renderRunningTab() {
 
     // Wire stop
     el.querySelector('.cookbook-task-action-stop').addEventListener('click', async () => {
+      // Abort the reconnect loop before sending kill so that a DOWNLOAD_FAILED
+      // marker written by the shell wrapper (on SIGINT/non-zero exit) cannot
+      // trigger an auto-retry after a manual stop.
+      if (el._abort) el._abort.abort();
       const badge = el.querySelector('.cookbook-task-status');
       if (badge) { badge.textContent = 'stopping...'; badge.className = 'cookbook-task-status cookbook-task-stopping'; }
       el.dataset.status = 'stopped';
+      _updateTask(task.sessionId, { _userStopped: true });
+      const outputText = el.querySelector('.cookbook-output-pre')?.textContent || task.output || '';
       // Drop the model endpoint so the picker stops listing it.
       if (task.type === 'serve' && task.payload) {
-        const rawHost = task.remoteHost || 'localhost';
-        const host = rawHost.includes('@') ? rawHost.split('@').pop() : rawHost;
-        const portMatch = task.payload._cmd?.match(/--port\s+(\d+)/);
-        const port = portMatch ? portMatch[1] : '8000';
-        _removeEndpointByUrl(`http://${host}:${port}/v1`);
+        _removeEndpointByUrl(_endpointUrlForTask(task, outputText));
+      }
+      const ollamaUnload = _ollamaUnloadCommand(task, outputText);
+      if (ollamaUnload) {
+        try {
+          await fetch('/api/shell/exec', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: ollamaUnload }),
+          });
+        } catch {}
       }
       // Gracefully stop (C-c, then kill the session) so it's fully down...
       try {
@@ -2009,23 +2304,29 @@ export function _renderRunningTab() {
 
     // Wire kill
     el.querySelector('.cookbook-task-action-kill').addEventListener('click', () => {
+      const outputText = el.querySelector('.cookbook-output-pre')?.textContent || task.output || '';
+      const ollamaUnload = _ollamaUnloadCommand(task, outputText);
+      if (ollamaUnload) {
+        fetch('/api/shell/exec', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command: ollamaUnload }),
+        }).catch(() => {});
+      }
       fetch('/api/shell/exec', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
       }).catch(() => {});
       if (task.type === 'serve' && task.payload) {
-        const rawHost = task.remoteHost || 'localhost';
-        const host = rawHost.includes('@') ? rawHost.split('@').pop() : rawHost;
-        const portMatch = task.payload._cmd?.match(/--port\s+(\d+)/);
-        const port = portMatch ? portMatch[1] : '8000';
-        _removeEndpointByUrl(`http://${host}:${port}/v1`);
+        const endpointUrl = _endpointUrlForTask(task, outputText);
+        _removeEndpointByUrl(endpointUrl);
         const modelName = task.payload.model || task.name || '';
         if (modelName) {
           fetch('/api/model-endpoints', { credentials: 'same-origin' })
             .then(r => r.json())
             .then(eps => {
-              const ep = eps.find(e => e.name === modelName || (e.base_url && e.base_url.includes(':' + port)));
+              const ep = eps.find(e => e.name === modelName || e.base_url === endpointUrl);
               if (ep) fetch(`/api/model-endpoints/${ep.id}`, { method: 'DELETE', credentials: 'same-origin' }).then(() => _refreshModelsAfterEndpointChange());
             }).catch(() => {});
         }
@@ -2168,17 +2469,124 @@ async function _reconnectTask(el, task) {
                 fixes: [{ label: 'Edit serve', action: (panel) => _openServeEditForTask(task) }],
               };
               _showDiagnosis(el, diag, lastOutput);
+            } else if (task.type === 'download') {
+              const isDisk = /no space left|disk quota|enospc/i.test(lastOutput);
+              const isNetwork = /connection|timeout|timed out|incompleteread|chunkedencoding|reset by peer|protocolerror|all connection attempts failed/i.test(lastOutput);
+              const progressMatch = String(lastOutput || '').match(/(\d+)%\|/);
+              const nearDone = progressMatch && Number(progressMatch[1]) >= 80;
+              // Reconnect: most "crashed" downloads near the end are actually
+              // finished — we just missed the DOWNLOAD_OK / /snapshots/ marker
+              // because output rolled over, or the tmux session ended a tick
+              // before we polled. Probing has-session and re-attaching to
+              // capture-pane lets the existing _reconnectTask flow pick up
+              // the real state (running, finished, or truly dead).
+              const _reconnectFix = {
+                label: 'Reconnect',
+                action: () => {
+                  _updateTask(task.sessionId, { status: 'running' });
+                  el.dataset.status = 'running';
+                  const badge2 = el.querySelector('.cookbook-task-status');
+                  if (badge2) { badge2.textContent = _statusLabel('running', task.type); badge2.className = 'cookbook-task-status'; }
+                  const _diagEl = el.querySelector('.cookbook-diagnosis');
+                  if (_diagEl) _diagEl.remove();
+                  const _wave = el.querySelector('.cookbook-task-wave'); if (_wave) _wave.style.display = '';
+                  const _up = el.querySelector('.cookbook-task-uptime'); if (_up) _up.style.display = '';
+                  _reconnectTask(el, task);
+                },
+              };
+              const diag = {
+                message: isDisk
+                  ? 'Download stopped because this server ran out of disk space.'
+                  : isNetwork
+                  ? 'Download stopped after the HuggingFace connection was interrupted.'
+                  : nearDone
+                  ? 'Download stopped near the end before the final completion marker was captured.'
+                  : 'Download stopped before HuggingFace reported completion.',
+                suggestion: isDisk
+                  ? 'Suggested action: free disk space, then retry the download. HuggingFace resumes incomplete files when possible.'
+                  : nearDone
+                  ? 'Suggested action: hit Reconnect first — the download may have finished after the output buffer rolled over. Retry only if reconnect cannot recover.'
+                  : 'Suggested action: hit Reconnect to re-attach to the tmux session. If that fails, retry — HuggingFace resumes incomplete files when possible.',
+                fixes: isDisk
+                  ? [
+                      { label: 'Retry download', action: () => _retryTask(el, task) },
+                      { label: 'Copy last 50 lines', action: () => {
+                        const last = String(lastOutput || '').split('\n').slice(-50).join('\n');
+                        _copyText(last || 'No download log available.');
+                      } },
+                    ]
+                  : [
+                      _reconnectFix,
+                      { label: 'Retry download', action: () => _retryTask(el, task) },
+                      { label: 'Copy last 50 lines', action: () => {
+                        const last = String(lastOutput || '').split('\n').slice(-50).join('\n');
+                        _copyText(last || 'No download log available.');
+                      } },
+                    ],
+              };
+              _showDiagnosis(el, diag, lastOutput);
+              // Auto-probe: if the tmux session is still alive (download
+              // genuinely still in progress), _selfHealStaleTasks flips the
+              // task back to running and the diagnosis disappears without
+              // the user needing to click Reconnect.
+              if (nearDone) setTimeout(() => { _selfHealStaleTasks().catch(() => {}); }, 1200);
             }
             _showCookbookNotif(true);
           } else {
-            _updateTask(task.sessionId, { status: 'done' });
-            el.dataset.status = 'done';
-            const badge = el.querySelector('.cookbook-task-status');
-            if (badge) { badge.textContent = _statusLabel('done', task.type); badge.className = 'cookbook-task-status cookbook-task-done'; }
-            const _chk = el.querySelector('.cookbook-task-check'); if (_chk && task.type !== 'download') _chk.style.display = '';
-            const _sb = el.querySelector('.cookbook-task-serve-btn'); if (_sb) _sb.style.display = '';
-            _showCookbookNotif();
-            _refreshDepsAfterInstall(task);
+            // Debounce the done flip. Tmux capture-pane can fail transiently
+            // (network blip, ssh reconnect), and the verify has-session right
+            // above can briefly report dead even when the session is in the
+            // middle of finalizing. Marking done immediately + the periodic
+            // _selfHealStaleTasks then flipping back to running causes the
+            // status badge to oscillate between Finished and Downloading.
+            // Wait 30s and re-probe: only finalize as done if tmux is STILL
+            // gone. If the session resurfaces, restart _reconnectTask so live
+            // capture resumes without the user seeing a fake "done" first.
+            if (!task._doneConfirmAt) {
+              _updateTask(task.sessionId, { _doneConfirmAt: Date.now() + 30000 });
+              setTimeout(async () => {
+                try {
+                  const fresh = _loadTasks().find(t => t.sessionId === task.sessionId);
+                  if (!fresh) return;
+                  let stillAlive = false;
+                  try {
+                    const probe = await fetch('/api/shell/exec', {
+                      method: 'POST', credentials: 'same-origin',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ command: _tmuxCmd(task, `has-session -t ${task.sessionId}`), timeout: 5 }),
+                    });
+                    const pData = await probe.json();
+                    stillAlive = pData.exit_code === 0;
+                  } catch { /* network blip — treat as inconclusive, prefer running */ stillAlive = true; }
+                  if (stillAlive) {
+                    _updateTask(task.sessionId, { status: 'running', _doneConfirmAt: null });
+                    const _el = document.querySelector(`.cookbook-task[data-task-id="${task.sessionId}"]`);
+                    if (_el) {
+                      _el.dataset.status = 'running';
+                      const _badge = _el.querySelector('.cookbook-task-status');
+                      if (_badge) { _badge.textContent = _statusLabel('running', task.type); _badge.className = 'cookbook-task-status'; }
+                      const _wave = _el.querySelector('.cookbook-task-wave'); if (_wave) _wave.style.display = '';
+                      const _up = _el.querySelector('.cookbook-task-uptime'); if (_up) _up.style.display = '';
+                      _reconnectTask(_el, _loadTasks().find(t => t.sessionId === task.sessionId));
+                    }
+                    return;
+                  }
+                  _updateTask(task.sessionId, { status: 'done', _doneConfirmAt: null });
+                  const _el = document.querySelector(`.cookbook-task[data-task-id="${task.sessionId}"]`);
+                  if (_el) {
+                    _el.dataset.status = 'done';
+                    const _badge = _el.querySelector('.cookbook-task-status');
+                    if (_badge) { _badge.textContent = _statusLabel('done', task.type); _badge.className = 'cookbook-task-status cookbook-task-done'; }
+                    const _chk = _el.querySelector('.cookbook-task-check'); if (_chk) _chk.style.display = '';
+                    const _sb = _el.querySelector('.cookbook-task-serve-btn'); if (_sb) _sb.style.display = '';
+                  }
+                  _showCookbookNotif();
+                  _refreshDepsAfterInstall(task);
+                  _renderRunningTab();
+                  _processQueue();
+                } catch { /* swallow — next polling cycle will retry */ }
+              }, 30000);
+            }
           }
         }
         _renderRunningTab();
@@ -2219,7 +2627,11 @@ async function _reconnectTask(el, task) {
             // back to %/aggregate only when no byte counter is present.
             const _byteMatches = [...snapshot.matchAll(/([\d.]+\s?[KMGT])B?\s*\/\s*[\d.]+\s?[KMGT]B?/gi)];
             const _bytes = _byteMatches.length ? _byteMatches[_byteMatches.length - 1][1].replace(/\s/g, '') : null;
-            const curProgress = _bytes || (_dlAgg != null ? String(_dlAgg) : (lastPct || '0'));
+            // When there's no byte counter (pip resolve / native build phase of a
+            // dependency install), key off the output tail so new build lines count
+            // as progress — otherwise a long quiet build is falsely declared stale
+            // and restarted mid-build, looping forever (#1568).
+            const curProgress = computeProgressSignal(_bytes, _dlAgg, lastPct, snapshot);
             const _fetchPctMatches = [...snapshot.matchAll(/Fetching\s+\d+\s+files:\s*(\d+)%/g)];
             const _fetchPct = _fetchPctMatches.length ? parseInt(_fetchPctMatches[_fetchPctMatches.length - 1][1]) : null;
             const _startupStalled = !_bytes && ((_dlAgg === 0) || (_fetchPct === 0)) && curProgress === '0';
@@ -2288,12 +2700,37 @@ async function _reconnectTask(el, task) {
               break;
             }
 
+            // When the snapshot includes a shard-of-N marker (e.g.
+            // "model-00006-of-00082.safetensors"), TRUE overall progress is
+            // ((shard-1) + currentShardFraction) / totalShards. Before, _dlAgg
+            // (hf_transfer's per-current-shard aggregate, e.g. 53% of shard 6)
+            // was treated as overall and the row read "53%" while only 5 of
+            // 82 shards were actually done.
+            const _shardPat = [...snapshot.matchAll(/model-(\d+)-of-(\d+)\.(?:safetensors|bin)/g)];
+            const _lastShard = _shardPat.length ? _shardPat[_shardPat.length - 1] : null;
+            const _curShardNum = _lastShard ? parseInt(_lastShard[1], 10) : null;
+            const _totalShards = _lastShard ? parseInt(_lastShard[2], 10) : null;
+            const _useShardAgg = _curShardNum && _totalShards && _totalShards > 1;
+
             // HF's own "Fetching N files: X%" aggregate counts ALL files,
             // including ones already finished in a previous session (resume) —
             // so on a resumed download it reflects the true overall progress,
             // whereas completed/totalFiles only see this session's files (→ 0%).
             // Take the higher of the two so resume doesn't read as 0%.
-            if (_dlAgg != null) {
+            if (_useShardAgg) {
+              // Multi-shard download: compute TRUE overall as completed shards
+              // plus the current shard's fraction. _dlAgg / lastPct represent
+              // *this shard's* progress, not the whole download.
+              const curShardFrac = (_dlAgg != null)
+                ? _dlAgg / 100
+                : (lastPct ? parseInt(lastPct, 10) / 100 : 0);
+              let overallPct = Math.round((((_curShardNum - 1) + curShardFrac) / _totalShards) * 100);
+              if (_fetchPct != null) overallPct = Math.max(overallPct, _fetchPct);
+              let text = `${overallPct}%`;
+              if (lastSpeed) text += ` · ${lastSpeed}`;
+              badge.textContent = text;
+              badge.className = 'cookbook-task-status cookbook-task-running';
+            } else if (_dlAgg != null) {
               // Real aggregate byte progress — most accurate; take the max of all signals.
               let pct = _dlAgg;
               if (_fetchPct != null) pct = Math.max(pct, _fetchPct);
@@ -2329,7 +2766,7 @@ async function _reconnectTask(el, task) {
               const _accessDenied = /Access to model.*is restricted|gated repo|GatedRepoError|401 Unauthorized|403 Forbidden|not in the authorized list|awaiting a review|must (?:be authenticated|have access)/i.test(snapshot);
               const _dlKey = task.payload?.repo_id || task.name;
               const _dlN = _dlRetryCount.get(_dlKey) || 0;
-              if (!_accessDenied && task.type === 'download' && task.payload && _dlN < _DL_MAX_AUTO_RETRY) {
+              if (!controller.signal.aborted && !_accessDenied && task.type === 'download' && task.payload && _dlN < _DL_MAX_AUTO_RETRY) {
                 // Auto-retry: kill the dead session and re-launch (resumes from
                 // the cached .incomplete files) after a short delay.
                 _dlRetryCount.set(_dlKey, _dlN + 1);
@@ -2444,8 +2881,7 @@ async function _reconnectTask(el, task) {
         // first one's dedup check can observe the newly-added row.
         if (task.type === 'serve' && !task._endpointAdded && !task._endpointAddInFlight && task._serveReady) {
           task._endpointAddInFlight = true;
-          const rawHost = task.remoteHost || 'localhost';
-          let host = rawHost.includes('@') ? rawHost.split('@').pop() : rawHost;
+          let host = _connectHostFromRemote(task.remoteHost);
           const portMatch = task.payload?._cmd?.match(/--port[=\s]+(\d+)/)
             || task.payload?._cmd?.match(/(?:^|\s)-p[=\s]+(\d+)/)
             || snapshot.match(/Uvicorn running on\D*?:(\d+)/i)
@@ -2456,12 +2892,8 @@ async function _reconnectTask(el, task) {
           let baseUrl = `http://${host}:${port}/v1`;
           const ollamaUrlMatch = snapshot.match(/Ollama API ready on port\s+\d+:\s*(http:\/\/[^\s]+)/i);
           if (ollamaUrlMatch) {
-            try {
-              const u = new URL(ollamaUrlMatch[1]);
-              host = u.hostname || host;
-              port = u.port || '11434';
-              baseUrl = `${u.origin}/v1`;
-            } catch {}
+            const endpoint = _endpointFromAdvertisedUrl(ollamaUrlMatch[1], host, '11434');
+            if (endpoint) ({ host, port, baseUrl } = endpoint);
           }
           fetch('/api/model-endpoints', { credentials: 'same-origin' })
             .then(r => r.json())
@@ -2489,6 +2921,7 @@ async function _reconnectTask(el, task) {
               fd.append('base_url', baseUrl);
               fd.append('name', task.name);
               fd.append('skip_probe', 'true');
+              _appendCookbookEndpointScope(fd, task.remoteHost || '');
               if (_isDiffusion) fd.append('model_type', 'image');
               return fetch('/api/model-endpoints', { method: 'POST', credentials: 'same-origin', body: fd });
             })
@@ -2592,8 +3025,7 @@ async function _checkServeReachability() {
     ]);
   } catch { return; }
   for (const task of serveTasks) {
-    const rawHost = task.remoteHost || 'localhost';
-    const host = rawHost.includes('@') ? rawHost.split('@').pop() : rawHost;
+    const host = _connectHostFromRemote(task.remoteHost);
     const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
     const port = portMatch ? portMatch[1] : '8000';
     const baseUrl = `http://${host}:${port}/v1`;
@@ -2703,9 +3135,84 @@ function _refreshServerDots() {
   _syncSettingsServerDots(byKey);
 }
 
+// Self-heal: scan persisted download tasks marked done/error/crashed and
+// check whether their tmux session is still alive on the host. If yes —
+// the task isn't actually finished, the cookbook just lost the in-flight
+// status during restart — flip status back to 'running' so _reconnectTask
+// picks it up. The one-shot guard is enforced by callers (open path) or
+// time-throttled inside (background-monitor path).
+let _selfHealRan = false;
+let _selfHealLastTs = 0;
+export async function _selfHealStaleTasks(opts = {}) {
+  // Open-path call: one-shot per page load.
+  if (opts.oneShot) {
+    if (_selfHealRan) return;
+    _selfHealRan = true;
+  } else {
+    // Background-monitor call: throttle to once every 8s (the bg monitor
+    // itself fires every 10s, so this almost always fires too, but the
+    // guard keeps a fast manual call from doubling up).
+    const now = Date.now();
+    if (now - _selfHealLastTs < 8000) return;
+    _selfHealLastTs = now;
+  }
+  const tasks = _loadTasks();
+  const candidates = tasks.filter(t =>
+    t.type === 'download'
+    && ['done', 'error', 'crashed', 'stopped'].includes(t.status)
+    && t.sessionId
+    && !String(t.sessionId).startsWith('queue-')
+  );
+  if (!candidates.length) return;
+  let flipped = 0;
+  for (const t of candidates) {
+    try {
+      const res = await fetch('/api/shell/exec', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: _tmuxCmd(t, `has-session -t ${t.sessionId}`), timeout: 5 }),
+      });
+      const data = await res.json();
+      if (data.exit_code === 0) {
+        // Session still alive → the task is actually still running.
+        const fresh = _loadTasks();
+        const ft = fresh.find(x => x.sessionId === t.sessionId);
+        if (ft && ft.status !== 'running') {
+          ft.status = 'running';
+          ft._selfHealed = true;
+          _saveTasks(fresh);
+          flipped++;
+          const _el = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
+          if (_el) {
+            const _chk = _el.querySelector('.cookbook-task-check');
+            if (_chk) _chk.style.display = 'none';
+            const _wave = _el.querySelector('.cookbook-task-wave');
+            if (_wave) _wave.style.display = '';
+            const _up = _el.querySelector('.cookbook-task-uptime');
+            if (_up) _up.style.display = '';
+            _el.dataset.status = 'running';
+          }
+        }
+      }
+    } catch { /* network blip — skip this one */ }
+  }
+  if (flipped) {
+    console.log(`[cookbook] auto-reconnect: revived ${flipped} task(s) whose tmux session was still alive`);
+    _renderRunningTab();
+  }
+}
+
 export function _startBackgroundMonitor() {
   if (_bgMonitorInterval) return;
-  _bgMonitorInterval = setInterval(() => { _pollBackgroundStatus(); _checkServeReachability(); }, BG_MONITOR_INTERVAL_MS);
+  _bgMonitorInterval = setInterval(() => {
+    _pollBackgroundStatus();
+    _checkServeReachability();
+    // Auto-reconnect: every cycle, look for download tasks marked finished/
+    // crashed/etc. whose tmux session is actually still running, and flip
+    // them back to running. Internally throttled to 8s so a manual call from
+    // the open path or a fast invocation doesn't double up.
+    _selfHealStaleTasks().catch(() => {});
+  }, BG_MONITOR_INTERVAL_MS);
   _pollBackgroundStatus();
   _checkServeReachability();
 }
@@ -2804,13 +3311,24 @@ async function _pollBackgroundStatus() {
         const updates = {};
         const nextStatus = live.status === 'completed'
           ? 'done'
-          : (live.status === 'error' ? 'error' : null);
+          : (live.status === 'error'
+            ? 'error'
+            : (live.status === 'stopped' ? (task.type === 'download' ? 'crashed' : 'stopped') : null));
         if (nextStatus && task.status !== nextStatus) {
           updates.status = nextStatus;
           if (nextStatus === 'done' && task.payload?._dep) completedDeps.push(task);
         }
+        if ((live.status === 'running' || live.status === 'ready') && task.status !== live.status) {
+          updates.status = live.status === 'ready' ? 'ready' : 'running';
+        }
         if (live.progress && live.progress !== task.progress) updates.progress = live.progress;
-        if (live.output_tail && live.output_tail !== task.output) updates.output = live.output_tail;
+        if (live.output_tail) {
+          const previous = String(task.output || '');
+          const tail = String(live.output_tail || '');
+          if (tail && !previous.endsWith(tail)) {
+            updates.output = `${previous ? `${previous}\n` : ''}${tail}`.slice(-5000);
+          }
+        }
         if (Object.keys(updates).length) {
           Object.assign(task, updates);
           changed = true;
@@ -2835,8 +3353,7 @@ async function _pollBackgroundStatus() {
       const localTask = localTasks.find(lt => lt.sessionId === t.session_id);
       if (localTask && localTask._endpointAdded) continue;
 
-      const rawHost = localTask?.remoteHost || t.remote || 'localhost';
-      let host = rawHost.includes('@') ? rawHost.split('@').pop() : (rawHost === 'local' ? 'localhost' : rawHost);
+      let host = _connectHostFromRemote(localTask?.remoteHost || t.remote);
       const portMatch = localTask?.payload?._cmd?.match(/--port\s+(\d+)/)
         || localTask?.payload?._cmd?.match(/OLLAMA_HOST=[^\s:]+:(\d+)/);
       let port = portMatch ? portMatch[1] : '8000';
@@ -2844,12 +3361,8 @@ async function _pollBackgroundStatus() {
       const snapshot = t.output || localTask?.output || '';
       const ollamaUrlMatch = snapshot.match(/Ollama API ready on port\s+\d+:\s*(http:\/\/[^\s]+)/i);
       if (ollamaUrlMatch) {
-        try {
-          const u = new URL(ollamaUrlMatch[1]);
-          host = u.hostname || host;
-          port = u.port || '11434';
-          baseUrl = `${u.origin}/v1`;
-        } catch {}
+        const endpoint = _endpointFromAdvertisedUrl(ollamaUrlMatch[1], host, '11434');
+        if (endpoint) ({ host, port, baseUrl } = endpoint);
       }
       const _isDiffusion = localTask?.payload?._cmd?.includes('diffusion_server');
 
@@ -2880,6 +3393,7 @@ async function _pollBackgroundStatus() {
           fd.append('base_url', baseUrl);
           fd.append('name', t.model);
           fd.append('skip_probe', 'true');
+          _appendCookbookEndpointScope(fd, localTask?.remoteHost || t.remote || '');
           if (_isDiffusion) fd.append('model_type', 'image');
           if (_supportsTools) fd.append('supports_tools', 'true');
           return fetch('/api/model-endpoints', { method: 'POST', credentials: 'same-origin', body: fd });

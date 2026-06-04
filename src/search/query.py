@@ -13,9 +13,14 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------
 def _detect_question_type(query: str) -> Optional[str]:
     """Return the leading question word if present (who, what, when, where, why, how)."""
+    if not isinstance(query, str):
+        return None
     q = query.strip().lower()
     for word in ("who", "what", "when", "where", "why", "how"):
-        if q.startswith(word):
+        # Require a whole-word match: a bare prefix mis-flags ordinary queries
+        # like "whatsapp pricing" (-> what) or "however ..." (-> how), which
+        # then get spurious boost terms OR-appended in enhance_query.
+        if q == word or q.startswith(word + " "):
             return word
     return None
 
@@ -42,12 +47,16 @@ def _extract_entities(query: str) -> Dict[str, List[str]]:
 
 def _split_multi_part(query: str) -> List[str]:
     """Split a query into sub-queries on common conjunctions."""
+    if not isinstance(query, str):
+        return []
     parts = re.split(r"\s+and\s+|\s+or\s+|;", query, flags=re.I)
     return [p.strip() for p in parts if p.strip()]
 
 
 def _extract_site_filter(query: str) -> Tuple[str, Optional[str]]:
     """Detect a 'site:example.com' token. Returns (query_without_token, site_or_None)."""
+    if not isinstance(query, str):
+        return "", None
     match = re.search(r"\bsite:([^\s]+)", query, flags=re.I)
     if match:
         site = match.group(1)
@@ -68,6 +77,8 @@ def _boost_entities_in_query(base_query: str, entities: Dict[str, List[str]]) ->
 
 def enhance_query(original_query: str) -> Tuple[str, Optional[str]]:
     """Process the original query: site filter, question type boosts, entity extraction."""
+    if not isinstance(original_query, str):
+        original_query = ""
     query_without_site, site = _extract_site_filter(original_query)
     sub_queries = _split_multi_part(query_without_site)
 
@@ -116,6 +127,8 @@ def build_enhanced_query(query: str, time_filter: str = None) -> str:
 # ----------------------------------------------------------------------
 def _is_news_query(query: str) -> bool:
     """Lightweight heuristic to decide if a query is news-oriented."""
+    if not isinstance(query, str):
+        return False
     news_terms = {"news", "latest", "breaking", "today", "today's", "current", "updates", "happening"}
     tokens = set(re.findall(r"\b\w+\b", query.lower()))
     return bool(tokens & news_terms)

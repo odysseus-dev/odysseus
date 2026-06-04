@@ -16,8 +16,24 @@ set -e
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 
-PORT="${ODYSSEUS_PORT:-7860}"   # 7860, not 7000 — macOS AirPlay Receiver holds 7000.
-HOST="${ODYSSEUS_HOST:-127.0.0.1}" # Set ODYSSEUS_HOST=0.0.0.0 for LAN/Tailscale access.
+# Load .env so APP_PORT and APP_BIND are available without re-typing them on
+# the command line every run — consistent with how app.py reads them via
+# python-dotenv. Variables already set in the shell take priority over .env.
+if [ -f .env ]; then
+  while IFS='=' read -r key value; do
+    [[ "$key" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "${key// }" ]] && continue
+    value="${value%%#*}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    [ -n "$key" ] && [ -z "${!key+x}" ] && export "$key=$value"
+  done < .env
+fi
+
+# Shell overrides (ODYSSEUS_PORT / ODYSSEUS_HOST) take top priority, then .env
+# values (APP_PORT / APP_BIND), then built-in defaults.
+PORT="${ODYSSEUS_PORT:-${APP_PORT:-7860}}"   # 7860, not 7000 — macOS AirPlay Receiver holds 7000.
+HOST="${ODYSSEUS_HOST:-${APP_BIND:-127.0.0.1}}" # Set APP_BIND=0.0.0.0 in .env for LAN/Tailscale access.
 PROBE_HOST="$HOST"
 if [ "$PROBE_HOST" = "0.0.0.0" ] || [ "$PROBE_HOST" = "::" ]; then
   PROBE_HOST="127.0.0.1"
@@ -117,10 +133,20 @@ if [ ! -d venv ]; then
   echo "▶ Creating Python environment…"
   "$PY" -m venv venv
 fi
+VENV_PY="./venv/bin/python3"
 echo "▶ Installing Python packages (first run downloads a few — can take a few minutes)…"
-"$PY" -m pip install --quiet --upgrade pip
+"$VENV_PY" -m pip install --quiet --upgrade pip
 # Not --quiet: this is the slow step, so show progress (and any real errors).
-"$PY" -m pip install -r requirements.txt
+"$VENV_PY" -m pip install -r requirements.txt
+
+# chromadb-client (HTTP-only) conflicts with the full chromadb package. If
+# it got installed (e.g., from an older requirements-optional.txt), remove
+# it to prevent ChromaDB from silently failing in HTTP-only mode.
+if "$VENV_PY" -m pip show chromadb-client >/dev/null 2>&1; then
+  echo "▶ Cleaning up conflicting chromadb-client package…"
+  "$VENV_PY" -m pip uninstall -y chromadb-client
+  "$VENV_PY" -m pip install --force-reinstall chromadb
+fi
 
 # 4. First-run setup: creates data dirs and prints an initial admin password
 #    the first time (idempotent — does nothing if already set up). Suppress its
@@ -179,4 +205,4 @@ if [ -n "$TAILSCALE_URL" ]; then
 fi
 echo "  (this takes a few seconds; press Ctrl+C here to stop)"
 echo
-"$PY" -m uvicorn app:app --host "$HOST" --port "$PORT"
+"$VENV_PY" -m uvicorn app:app --host "$HOST" --port "$PORT"
