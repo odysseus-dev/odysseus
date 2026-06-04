@@ -136,6 +136,28 @@ def test_think_tag_and_close_in_same_chunk(monkeypatch):
     assert regular and "my answer" in regular[0]["delta"], regular
 
 
+def test_think_tag_gt_in_mid_reasoning_not_truncated(monkeypatch):
+    # Regression for _first_content_sent misuse: the opening-tag strip ran on every
+    # chunk (not just the first) because _first_content_sent stays False throughout
+    # the think block. On chunk 2 it did find(">") over reasoning text and silently
+    # dropped everything before the first ">". Repro: 3 chunks, ">" in chunk 2.
+    deltas = _run_stream(
+        "Qwopus3-9B-custom",
+        [
+            'data: {"choices":[{"delta":{"content":"<think>reasoning a "}}]}',
+            'data: {"choices":[{"delta":{"content":"more c > d "}}]}',
+            'data: {"choices":[{"delta":{"content":"</think>answer"}}]}',
+            "data: [DONE]",
+        ],
+        monkeypatch,
+    )
+    thinking = [d for d in deltas if d.get("thinking")]
+    regular = [d for d in deltas if not d.get("thinking")]
+    # "more c " must survive — must not be truncated at the '>'
+    assert any("more c > d" in d["delta"] for d in thinking), thinking
+    assert any("answer" in d["delta"] for d in regular), regular
+
+
 def test_registered_thinking_model_stray_close_tag_repair_unchanged(monkeypatch):
     # The existing </think> repair for registered models must not regress.
     # A registered model that starts content with </think> gets <think> prepended.

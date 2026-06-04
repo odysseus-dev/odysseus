@@ -1143,7 +1143,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     # can detect thinking-in-progress (some models output </think> but no <think>)
     _thinking_model = _supports_thinking(model)
     _first_content_sent = False
-    _in_think_tag = False  # True while consuming <think>…</think> content
+    _in_think_tag = False        # True while consuming <think>…</think> content
+    _think_open_stripped = False  # opening <think> tag already removed
 
     def _emit_tool_calls():
         """Build the tool_calls event string if any were accumulated."""
@@ -1208,11 +1209,14 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                                 if close_idx != -1:
                                                     # Split: up-to-</think> → thinking, remainder → content
                                                     think_part = content[:close_idx]
-                                                    if not _first_content_sent:
-                                                        # Strip the opening <think[...] > from the first chunk
+                                                    if not _think_open_stripped:
+                                                        # Strip the opening <think[...] > from the first chunk.
+                                                        # Use a dedicated flag — _first_content_sent stays False
+                                                        # throughout the think block, so it must not be reused.
                                                         tag_end = think_part.lower().find(">")
                                                         if tag_end != -1:
                                                             think_part = think_part[tag_end + 1:]
+                                                        _think_open_stripped = True
                                                     regular_part = content[close_idx + len("</think>"):]
                                                     _in_think_tag = False
                                                     if think_part:
@@ -1222,12 +1226,14 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                                         yield f'data: {json.dumps({"delta": regular_part})}\n\n'
                                                 else:
                                                     # Still inside <think>: route to thinking channel
-                                                    if not _first_content_sent:
-                                                        # Strip the opening <think[...] > tag
+                                                    if not _think_open_stripped:
+                                                        # Strip the opening <think[...] > tag (first chunk only)
                                                         tag_end = stripped.lower().find(">")
                                                         if tag_end != -1:
                                                             content = stripped[tag_end + 1:]
-                                                    yield f'data: {json.dumps({"delta": content, "thinking": True})}\n\n'
+                                                        _think_open_stripped = True
+                                                    if content:
+                                                        yield f'data: {json.dumps({"delta": content, "thinking": True})}\n\n'
                                             else:
                                                 # Some thinking backends start normal content with a
                                                 # stray closing tag. Repair only that shape; do not
