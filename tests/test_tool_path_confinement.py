@@ -196,6 +196,47 @@ def test_extra_root_still_blocks_sensitive(tmp_path):
             _resolve_tool_path("~/.ssh/authorized_keys")
 
 
+# ── Odysseus-specific secret file tests ───────────────────────────────
+
+def test_blocks_odysseus_auth_json(tmp_path, monkeypatch):
+    """auth.json inside DATA_DIR must be blocked — it holds bcrypt hashes."""
+    from src.tool_execution import _resolve_tool_path
+    from src.constants import DATA_DIR
+    os.makedirs(DATA_DIR, exist_ok=True)
+    target = os.path.join(DATA_DIR, "auth.json")
+    with pytest.raises(ValueError, match="sensitive"):
+        _resolve_tool_path(target)
+
+
+def test_blocks_odysseus_sessions_json(tmp_path):
+    """sessions.json inside DATA_DIR must be blocked — it holds live tokens."""
+    from src.tool_execution import _resolve_tool_path
+    from src.constants import DATA_DIR
+    os.makedirs(DATA_DIR, exist_ok=True)
+    target = os.path.join(DATA_DIR, "sessions.json")
+    with pytest.raises(ValueError, match="sensitive"):
+        _resolve_tool_path(target)
+
+
+def test_blocks_odysseus_app_key(tmp_path):
+    """.app_key inside DATA_DIR must be blocked — it is the Fernet master key."""
+    from src.tool_execution import _resolve_tool_path
+    from src.constants import DATA_DIR
+    os.makedirs(DATA_DIR, exist_ok=True)
+    target = os.path.join(DATA_DIR, ".app_key")
+    with pytest.raises(ValueError, match="sensitive"):
+        _resolve_tool_path(target)
+
+
+def test_blocks_odysseus_secrets_via_is_sensitive():
+    """_is_sensitive_path must flag the three Odysseus secrets regardless of dir."""
+    from src.tool_execution import _is_sensitive_path
+    assert _is_sensitive_path("/app/data/auth.json")
+    assert _is_sensitive_path("/app/data/sessions.json")
+    assert _is_sensitive_path("/app/data/.app_key")
+    assert _is_sensitive_path("/tmp/auth.json")
+
+
 # ── Integration: dispatch-level tests ────────────────────────────────
 
 @pytest.mark.asyncio
