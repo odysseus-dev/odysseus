@@ -241,7 +241,7 @@ export function _parseServePhase(snapshot) {
   const loadMatches = [...flat.matchAll(/Loading safetensors.*?(\d+)%/g)];
   // "Downloading (incomplete total...)" tracks real aggregate bytes; prefer it
   // over "Fetching N files" which only counts fully-closed files and lags badly
-  // with hf_transfer's parallel-chunk strategy (often sits at 0/N for most of the run).
+  // with chunked transfer strategies (often sits at 0/N for most of the run).
   const downloadingMatches = [...flat.matchAll(/Downloading.*?(\d+)%/g)];
   const fetchingMatches = [...flat.matchAll(/Fetching.*?(\d+)%/g)];
   const dlMatches = downloadingMatches.length ? downloadingMatches : fetchingMatches;
@@ -1067,7 +1067,7 @@ async function _retryTask(el, task) {
 
 async function _retryDownload(name, payload, replaceSessionId = '') {
   try {
-    // A retry means the fast hf_transfer path already failed once — fall back to
+    // A retry means the fast transfer path already failed once — fall back to
     // the plain, reliable downloader for this and any further attempt (it resumes
     // from the cached .incomplete files, so no progress is lost).
     const _payload = { ...(payload || {}), disable_hf_transfer: true };
@@ -2427,7 +2427,7 @@ async function _reconnectTask(el, task) {
             const lastPct = pctMatches.length ? pctMatches[pctMatches.length - 1][1] : null;
             const speedMatch = [...snapshot.matchAll(/([\d.]+)(?:MB|GB)\/s/g)];
             const lastSpeed = speedMatch.length ? speedMatch[speedMatch.length - 1][0] : null;
-            // hf_transfer prints "Downloading (incomplete total...): 73% | 1.81G/2.49G"
+            // High-performance HF transfers can print "Downloading (incomplete total...): 73% | 1.81G/2.49G"
             // — the real aggregate byte progress. The "Fetching N files" line (often
             // last in the output) sits at 0%, so lastPct/_fetchPct can read 0 even at
             // 73% done. Prefer this aggregate when present.
@@ -2437,7 +2437,7 @@ async function _reconnectTask(el, task) {
             // Stale download detection.
             // Use the DOWNLOADED-BYTE count ("1.81G" from "1.81G/2.49G") as the
             // progress signal: it climbs continuously while transferring (even when
-            // the % plateaus during a big hf_transfer chunk) and FREEZES when stuck.
+            // the % plateaus during a big transfer chunk) and FREEZES when stuck.
             // The % alone plateaus (false stall), and a frozen frame still shows a
             // stale speed/ETA — so keying off speed masked real stalls (that's why a
             // 97%-stuck download went undetected). Bytes are the honest signal; fall
@@ -2490,7 +2490,7 @@ async function _reconnectTask(el, task) {
                   ? { ...task.payload }
                   : { repo_id: task.repo || task.name, remote_host: task.remoteHost || '' };
                 if (_envState.hfToken) dlPayload.hf_token = _envState.hfToken;
-                // Stalled with hf_transfer — restart on the reliable downloader.
+                // Stalled on the fast transfer path — restart with conservative settings.
                 dlPayload.disable_hf_transfer = true;
                 // Don't overwrite env_prefix — task.payload already has the correct
                 // "source <path>" form. The bare envPath would miss the `source` and

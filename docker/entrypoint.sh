@@ -14,6 +14,16 @@ set -e
 PUID="${PUID:-1000}"
 PGID="${PGID:-1000}"
 
+# Docker persistence contract: user installs and model caches must live under
+# bind-mounted /app paths, not /root. Export before setup.py and uvicorn so every
+# subprocess inherits the same cache/home roots.
+export HOME="${ODYSSEUS_HOME:-/app}"
+export HF_HOME="${HF_HOME:-/app/.cache/huggingface}"
+export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-$HF_HOME/hub}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/app/.cache}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-/app/.local/share}"
+export PYTHONUSERBASE="${PYTHONUSERBASE:-/app/.local}"
+
 # Reuse an existing matching group/user if the host's UID/GID already
 # corresponds to one in /etc/passwd (e.g. when the image is rebuilt
 # and "odysseus" already exists at the same id). Otherwise create.

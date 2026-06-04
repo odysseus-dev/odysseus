@@ -1,0 +1,40 @@
+# NVIDIA llama.cpp CUDA overlay. Enable by setting COMPOSE_FILE in .env:
+#   COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.llamacpp.yml
+#
+# This overlay is stronger than docker/gpu.nvidia.yml:
+# - requests NVIDIA GPUs at runtime
+# - builds Odysseus from Dockerfile.cuda
+# - preinstalls a CUDA-enabled native llama-server in the image
+#
+# Optional build overrides:
+#   LLAMA_CPP_REF=<branch-or-tag-or-commit>
+#   CUDA_ARCHITECTURES=120
+#
+# RTX 5090 uses compute capability 12.0, represented as 120.
+services:
+  odysseus:
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
+      args:
+        LLAMA_CPP_REF: ${LLAMA_CPP_REF:-master}
+        CUDA_ARCHITECTURES: ${CUDA_ARCHITECTURES:-120}
+    image: odysseus-odysseus:cuda-llamacpp
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - CUDA_HOME=/usr/local/cuda
+      - LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}
+      - HOME=/app
+      - HF_HOME=/app/.cache/huggingface
+      - HUGGINGFACE_HUB_CACHE=/app/.cache/huggingface/hub
+      - XDG_CACHE_HOME=/app/.cache
+      - XDG_DATA_HOME=/app/.local/share
+      - PYTHONUSERBASE=/app/.local
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

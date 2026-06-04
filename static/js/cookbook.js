@@ -437,6 +437,13 @@ export function _buildServeCmd(f, modelName, backend) {
       const s = String(v || '').replace(/\s+/g, '');
       return /^\d+(?:\.\d+)?(?:,\d+(?:\.\d+)?)*$/.test(s) ? s : '';
     };
+    const _lcpKvType = (v) => {
+      const s = String(v || '').trim().toLowerCase();
+      // llama-cpp-python expects raw GGML enum integers here, while native
+      // llama-server accepts names like q8_0. Keep native flags readable and
+      // translate only for the Python fallback.
+      return ({ f16: '1', q4_0: '2', q8_0: '8' })[s] || '';
+    };
     let _lcExtra = '';
     let _lcpExtra = '';
     if (_ncm !== '' && Number(_ncm) > 0) {
@@ -449,8 +456,8 @@ export function _buildServeCmd(f, modelName, backend) {
     }
     if (_kv) {
       _lcExtra += ` --cache-type-k ${_kv} --cache-type-v ${_kv}`;
-      // llama-cpp-python exposes these as type_k/type_v; pass through best-effort.
-      _lcpExtra += ` --type_k ${_kv} --type_v ${_kv}`;
+      const _pyKv = _lcpKvType(_kv);
+      if (_pyKv) _lcpExtra += ` --type_k ${_pyKv} --type_v ${_pyKv}`;
     }
     const _llamaFit = String(f.llama_fit || '').trim();
     if (['on', 'off'].includes(_llamaFit)) _lcExtra += ` --fit ${_llamaFit}`;
@@ -1633,7 +1640,7 @@ function _renderRecipes() {
   html += '<span class="cookbook-serve-dir-edit" title="Edit in Settings">edit</span>';
   html += '</div>';
   html += '<div style="display:flex;gap:4px;align-items:center;margin-top:4px;">';
-  html += '<select class="memory-sort-select" id="hwfit-cache-server" style="height:24px;">' + _buildServerOpts(true) + '</select>';
+  html += '<select class="memory-sort-select" id="hwfit-cache-server" style="height:24px;">' + _buildServerOpts(false) + '</select>';
   html += '<select class="memory-sort-select" id="serve-sort" style="height:24px;">';
   html += '<option value="name">Name</option><option value="size-desc">Size \u2193</option><option value="size-asc">Size \u2191</option><option value="recent">Recent</option>';
   html += '</select>';

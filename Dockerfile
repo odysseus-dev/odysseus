@@ -22,6 +22,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+ENV HOME=/app \
+    HF_HOME=/app/.cache/huggingface \
+    HUGGINGFACE_HUB_CACHE=/app/.cache/huggingface/hub \
+    XDG_CACHE_HOME=/app/.cache \
+    XDG_DATA_HOME=/app/.local/share \
+    PYTHONUSERBASE=/app/.local \
+    PATH=/app/.local/bin:$PATH
+
 # Install Python deps first (layer cache)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -29,8 +37,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy app code
 COPY . .
 
-# Create data directory (mount a volume here for persistence)
-RUN mkdir -p data logs services/cache/search
+# Create data/cache directories (mount volumes here for persistence)
+RUN mkdir -p data logs services/cache/search .cache/huggingface .local
 
 # Entrypoint that drops to PUID/PGID (default 1000:1000) and repairs
 # ownership on the bind-mounted /app/data and /app/logs. Without this,

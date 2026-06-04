@@ -36,7 +36,8 @@ from routes.cookbook_helpers import (
     _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_remote_host, _validate_token,
     _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
-    _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
+    _safe_env_prefix, _local_tooling_path_export, _local_persistent_home_exports,
+    _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache, _venv_safe_local_pip_install_cmd,
     ModelDownloadRequest, ServeRequest,
@@ -50,6 +51,71 @@ _HF_TOKEN_STATUS_SNIPPET = (
     'Add one in Odysseus Settings -> Cookbook -> HuggingFace Token."; '
     'fi'
 )
+
+_HF_MODEL_PAYLOAD_EXTENSIONS = (
+    ".gguf",
+    ".safetensors",
+    ".bin",
+    ".pt",
+    ".pth",
+    ".onnx",
+    ".mlpackage",
+)
+
+
+def _hf_download_verify_py(repo_id: str, include: str | None, local_dir: str | None) -> str:
+    """Python verifier embedded in cookbook download runners.
+
+    `hf download` can exit successfully after creating/reusing a snapshot while
+    no serveable model payload was fetched, especially when an include glob
+    matches metadata only or nothing useful. Treat that as a failed download so
+    the UI does not offer a broken "Serve" action.
+    """
+    return (
+        "import fnmatch, os, sys\n"
+        f"repo_id = {repo_id!r}\n"
+        f"include = {include!r}\n"
+        f"local_dir = {local_dir!r}\n"
+        f"payload_exts = {list(_HF_MODEL_PAYLOAD_EXTENSIONS)!r}\n"
+        "if local_dir:\n"
+        "    roots = [os.path.expanduser(local_dir)]\n"
+        "else:\n"
+        "    cache = os.environ.get('HF_HOME') or os.path.expanduser('~/.cache/huggingface')\n"
+        "    roots = [os.path.join(cache, 'hub', 'models--' + repo_id.replace('/', '--'), 'snapshots')]\n"
+        "matches = []\n"
+        "for root in roots:\n"
+        "    if not os.path.isdir(root):\n"
+        "        continue\n"
+        "    for base, _, files in os.walk(root):\n"
+        "        for name in files:\n"
+        "            path = os.path.join(base, name)\n"
+        "            rel = os.path.relpath(path, root).replace(os.sep, '/')\n"
+        "            if include and not (fnmatch.fnmatch(name, include) or fnmatch.fnmatch(rel, include)):\n"
+        "                continue\n"
+        "            if not name.lower().endswith(tuple(payload_exts)):\n"
+        "                continue\n"
+        "            try:\n"
+        "                size = os.path.getsize(path)\n"
+        "            except OSError:\n"
+        "                size = 0\n"
+        "            if size > 0:\n"
+        "                matches.append((path, size))\n"
+        "if not matches:\n"
+        "    target = include or 'model payload'\n"
+        "    print(f'DOWNLOAD_FAILED no non-empty model payload found for {repo_id} ({target})')\n"
+        "    sys.exit(42)\n"
+        "total = sum(size for _, size in matches)\n"
+        "print(f'[odysseus] verified {len(matches)} model payload file(s), {total} bytes')\n"
+    )
+
+
+def _hf_download_verify_bash(repo_id: str, include: str | None, local_dir: str | None) -> str:
+    return "python3 - <<'PY'\n" + _hf_download_verify_py(repo_id, include, local_dir) + "PY"
+
+
+def _hf_download_verify_powershell(repo_id: str, include: str | None, local_dir: str | None) -> list[str]:
+    return ["$verifyPy = @'", _hf_download_verify_py(repo_id, include, local_dir).rstrip(), "'@", "python -c $verifyPy"]
+
 
 def setup_cookbook_routes() -> APIRouter:
     router = APIRouter(tags=["cookbook"])
@@ -437,6 +503,8 @@ def setup_cookbook_routes() -> APIRouter:
         # No script/tee needed — we'll use tmux capture-pane to read output
         lines = ["#!/bin/bash"]
         lines.extend(_user_shell_path_bootstrap())
+        if not req.remote_host and req.platform != "windows":
+            lines.extend(_local_persistent_home_exports())
         if req.hf_token:
             lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
         # Ensure pip-user scripts (e.g. hf CLI installed via --user) are on PATH
@@ -446,18 +514,17 @@ def setup_cookbook_routes() -> APIRouter:
         # activated venv. Local bash runs only — meaningless over SSH/Windows.
         if not req.remote_host and req.platform != "windows":
             lines.append(_local_tooling_path_export(sys.executable))
-        # Best-effort install hf CLI (always). hf_transfer (Rust parallel downloader)
-        # is fast but flaky on large files — it tends to crash near the end at high
-        # throughput. Retries set disable_hf_transfer to fall back to the plain,
-        # slower-but-reliable downloader (resumes cleanly from the .incomplete files).
+        # Best-effort install hf CLI (always). Modern huggingface_hub uses Xet
+        # for high-performance transfers; the old HF_HUB_ENABLE_HF_TRANSFER flag
+        # now only emits a deprecation warning and no longer enables the fast path.
         # Use `python3 -m pip` not `pip` — macOS has no bare `pip` command.
         lines.append(f"command -v hf >/dev/null 2>&1 || {_pip_install_fallback_chain('huggingface_hub', upgrade=True)}")
         if req.disable_hf_transfer:
-            lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
+            lines.append("export HF_XET_HIGH_PERFORMANCE=0")
             lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=4")
         else:
-            lines.append(f"python3 -c 'import hf_transfer' 2>/dev/null || {_pip_install_fallback_chain('hf_transfer')}")
-            lines.append("python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
+            lines.append(f"python3 -c 'import hf_xet' 2>/dev/null || {_pip_install_fallback_chain('hf_xet')}")
+            lines.append("python3 -c 'import hf_xet' 2>/dev/null && export HF_XET_HIGH_PERFORMANCE=1")
             lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
 
         remote = req.remote_host  # None for local
@@ -494,18 +561,23 @@ def setup_cookbook_routes() -> APIRouter:
             ps_lines.append('    python -c "import huggingface_hub" 2>$null')
             ps_lines.append('    if ($LASTEXITCODE -eq 0) {{')
             ps_lines.append('      Write-Host "hf CLI not found, using Python huggingface_hub..."')
-            ps_lines.append('      python -m pip install -q hf_transfer 2>$null')
-            ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
+            ps_lines.append('      python -m pip install -q hf_xet 2>$null')
+            ps_lines.append('      $env:HF_XET_HIGH_PERFORMANCE = "1"')
             ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
             ps_lines.append('    }} else {{')
             ps_lines.append('      Write-Host "Installing huggingface-hub..."')
-            ps_lines.append('      python -m pip install -q huggingface-hub hf_transfer')
-            ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
+            ps_lines.append('      python -m pip install -q huggingface-hub hf_xet')
+            ps_lines.append('      $env:HF_XET_HIGH_PERFORMANCE = "1"')
             ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
             ps_lines.append('    }}')
             ps_lines.append('  }}')
-            ps_lines.append('  if ($LASTEXITCODE -eq 0) {{ Write-Host ""; Write-Host "DOWNLOAD_OK" }}')
-            ps_lines.append('  else {{ Write-Host ""; Write-Host "DOWNLOAD_FAILED (exit $LASTEXITCODE)" }}')
+            ps_lines.append('  $downloadExit = $LASTEXITCODE')
+            ps_lines.append('  if ($downloadExit -eq 0) {{')
+            ps_lines.extend("    " + line if line else line for line in _hf_download_verify_powershell(req.repo_id, req.include, _dl_base))
+            ps_lines.append('    $downloadExit = $LASTEXITCODE')
+            ps_lines.append('  }}')
+            ps_lines.append('  if ($downloadExit -eq 0) {{ Write-Host ""; Write-Host "DOWNLOAD_OK" }}')
+            ps_lines.append('  else {{ Write-Host ""; Write-Host "DOWNLOAD_FAILED (exit $downloadExit)" }}')
             ps_lines.append('}} catch {{')
             ps_lines.append('  Write-Host ""; Write-Host "DOWNLOAD_FAILED ($_)"')
             ps_lines.append('}}')
@@ -550,17 +622,15 @@ def setup_cookbook_routes() -> APIRouter:
                 )
             # Ensure pip-user scripts (e.g. hf CLI installed via --user) are on PATH
             runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
-            # Install hf CLI + optional hf_transfer best-effort. Retries disable
-            # hf_transfer because the Rust parallel path is fast but has been
-            # flaky near the end of very large multi-file downloads.
+            # Install hf CLI + hf_xet best-effort so future runs get the fast path.
             # Use --break-system-packages on PEP-668 systems (Arch, newer Debian) so it doesn't bail.
             runner_lines.append(f"command -v hf >/dev/null 2>&1 || {_pip_install_fallback_chain('huggingface_hub', python_cmd='pip', upgrade=True)}")
             if req.disable_hf_transfer:
-                runner_lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
+                runner_lines.append("export HF_XET_HIGH_PERFORMANCE=0")
                 runner_lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=4")
             else:
-                runner_lines.append(f"python3 -c 'import hf_transfer' 2>/dev/null || {_pip_install_fallback_chain('hf_transfer', python_cmd='pip')}")
-                runner_lines.append("python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
+                runner_lines.append(f"python3 -c 'import hf_xet' 2>/dev/null || {_pip_install_fallback_chain('hf_xet', python_cmd='pip')}")
+                runner_lines.append("python3 -c 'import hf_xet' 2>/dev/null && export HF_XET_HIGH_PERFORMANCE=1")
                 runner_lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
             # Surface whether the HF token actually reached THIS server, so a gated
             # download's "not authorized" failure can be told apart from a missing
@@ -578,13 +648,18 @@ def setup_cookbook_routes() -> APIRouter:
             runner_lines.append('  pip install --no-deps -q huggingface-hub 2>/dev/null')
             if req.disable_hf_transfer:
                 runner_lines.append('  pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests 2>/dev/null')
-                runner_lines.append('  export HF_HUB_ENABLE_HF_TRANSFER=0')
+                runner_lines.append('  export HF_XET_HIGH_PERFORMANCE=0')
             else:
-                runner_lines.append('  pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests hf_transfer 2>/dev/null')
-                runner_lines.append("  python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
+                runner_lines.append('  pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests hf_xet 2>/dev/null')
+                runner_lines.append("  python3 -c 'import hf_xet' 2>/dev/null && export HF_XET_HIGH_PERFORMANCE=1")
             runner_lines.append(f'  python3 -c "import os; from huggingface_hub import snapshot_download; snapshot_download(\'{req.repo_id}\'{_dl_pyarg}, max_workers={4 if req.disable_hf_transfer else 8})"')
             runner_lines.append('fi')
-            runner_lines.append('_ec=$?; if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec)"; fi')
+            runner_lines.append('ODYSSEUS_DL_EXIT=$?')
+            runner_lines.append('if [ "$ODYSSEUS_DL_EXIT" -eq 0 ]; then')
+            runner_lines.append(_hf_download_verify_bash(req.repo_id, req.include, _dl_base))
+            runner_lines.append('ODYSSEUS_DL_EXIT=$?')
+            runner_lines.append('fi')
+            runner_lines.append('if [ "$ODYSSEUS_DL_EXIT" -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $ODYSSEUS_DL_EXIT)"; fi')
             runner_lines.append(f"rm -f {remote_runner}")
             runner_lines.append('exec "${SHELL:-/bin/bash}"')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
@@ -615,11 +690,21 @@ def setup_cookbook_routes() -> APIRouter:
                 # Detached path: no controlling TTY, so skip `< /dev/null`
                 # (handled by Popen stdin=DEVNULL) and don't keep a shell open.
                 lines.append(hf_cmd)
-                lines.append('_ec=$?; if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec)"; fi')
+                lines.append('ODYSSEUS_DL_EXIT=$?')
+                lines.append('if [ "$ODYSSEUS_DL_EXIT" -eq 0 ]; then')
+                lines.append(_hf_download_verify_bash(req.repo_id, req.include, _dl_base))
+                lines.append('ODYSSEUS_DL_EXIT=$?')
+                lines.append('fi')
+                lines.append('if [ "$ODYSSEUS_DL_EXIT" -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $ODYSSEUS_DL_EXIT)"; fi')
             else:
                 # < /dev/null suppresses interactive "update available? [Y/n]" prompt
                 lines.append(f"{hf_cmd} < /dev/null")
-                lines.append('_ec=$?; if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec)"; fi')
+                lines.append('ODYSSEUS_DL_EXIT=$?')
+                lines.append('if [ "$ODYSSEUS_DL_EXIT" -eq 0 ]; then')
+                lines.append(_hf_download_verify_bash(req.repo_id, req.include, _dl_base))
+                lines.append('ODYSSEUS_DL_EXIT=$?')
+                lines.append('fi')
+                lines.append('if [ "$ODYSSEUS_DL_EXIT" -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $ODYSSEUS_DL_EXIT)"; fi')
                 lines.append(f"rm -f '{wrapper_script}'")
                 lines.append('exec "${SHELL:-/bin/bash}"')
                 wrapper_script.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -1005,6 +1090,8 @@ def setup_cookbook_routes() -> APIRouter:
             # ── Linux/Termux: bash + tmux (existing flow) ──
             runner_lines = ["#!/bin/bash"]
             runner_lines.extend(_user_shell_path_bootstrap())
+            if not remote:
+                runner_lines.extend(_local_persistent_home_exports())
             runner_lines.append('ODYSSEUS_PREFLIGHT_EXIT=""')
             # Put Odysseus's own venv bin on PATH (local runs only) so the serve
             # shell resolves the bundled python3/hf, mirroring the download flow.
@@ -1073,6 +1160,29 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('    ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('  fi')
                 runner_lines.append('fi')
+                if req.gpus:
+                    runner_lines.append('# Refuse a silent CPU fallback when the user requested GPU llama.cpp serving.')
+                    runner_lines.append('if [ -z "$ODYSSEUS_PREFLIGHT_EXIT" ] && [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then')
+                    runner_lines.append('  ODYSSEUS_LLAMA_GPU_BACKEND=""')
+                    runner_lines.append('  if command -v llama-server &>/dev/null; then')
+                    runner_lines.append('    _llama_info="$(llama-server --list-devices 2>&1 || llama-server --version 2>&1 || true)"')
+                    runner_lines.append('    echo "$_llama_info" | grep -Eiq "cuda|cublas|ggml-cuda|hip|rocm" && ODYSSEUS_LLAMA_GPU_BACKEND=1')
+                    runner_lines.append('  fi')
+                    runner_lines.append('  if [ -z "$ODYSSEUS_LLAMA_GPU_BACKEND" ] && python3 -c "import llama_cpp" 2>/dev/null; then')
+                    runner_lines.append('    _llama_py_info="$(python3 - <<\'PY\' 2>/dev/null || true')
+                    runner_lines.append('import llama_cpp')
+                    runner_lines.append('print(llama_cpp.llama_print_system_info().decode("utf-8", "replace"))')
+                    runner_lines.append('PY')
+                    runner_lines.append(')"')
+                    runner_lines.append('    echo "$_llama_py_info" | grep -Eiq "cuda|cublas|ggml-cuda|hip|rocm" && ODYSSEUS_LLAMA_GPU_BACKEND=1')
+                    runner_lines.append('  fi')
+                    runner_lines.append('  if [ -z "$ODYSSEUS_LLAMA_GPU_BACKEND" ]; then')
+                    runner_lines.append('    echo "ERROR: GPU was selected, but the available llama.cpp runtime is CPU-only."')
+                    runner_lines.append('    echo "Docker can see the GPU, but llama-server/llama-cpp-python was not built with CUDA/HIP support."')
+                    runner_lines.append('    echo "Use Ollama for this GGUF now, or install a CUDA/HIP-enabled llama.cpp runtime before launching llama.cpp with GPUs."')
+                    runner_lines.append('    ODYSSEUS_PREFLIGHT_EXIT=70')
+                    runner_lines.append('  fi')
+                    runner_lines.append('fi')
             elif "ollama" in req.cmd:
                 handled_ollama_serve = True
                 _ollama_default_host = "0.0.0.0" if remote else "127.0.0.1"
@@ -1316,7 +1426,7 @@ def setup_cookbook_routes() -> APIRouter:
             cmd = f"ssh {pf}{host} '{setup_script}'"
         else:
             # Linux: auto-install tmux (via whichever package manager is available)
-            # and huggingface_hub + hf_transfer (falling back to --user/--break-system-packages
+            # and huggingface_hub + hf_xet (falling back to --user/--break-system-packages
             # on PEP-668 locked distros like Arch / newer Debian).
             setup_script = (
                 # Install tmux if missing — try common package managers; skip if no sudo
@@ -1330,9 +1440,9 @@ def setup_cookbook_routes() -> APIRouter:
                 "fi; "
                 "command -v tmux >/dev/null 2>&1 || echo 'WARNING: tmux missing and auto-install failed (need passwordless sudo). Install manually.'; "
                 # Install Python bits. Try system install first; fall back to --user --break-system-packages on PEP 668 systems.
-                "pip install -q huggingface_hub hf_transfer 2>/dev/null || "
-                "pip install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null || "
-                "pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null; "
+                "pip install -q huggingface_hub hf_xet 2>/dev/null || "
+                "pip install --user --break-system-packages -q huggingface_hub hf_xet 2>/dev/null || "
+                "pip3 install --user --break-system-packages -q huggingface_hub hf_xet 2>/dev/null; "
                 "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
             )
             cmd = f"ssh {pf}{host} '{setup_script}'"
@@ -2078,7 +2188,7 @@ def setup_cookbook_routes() -> APIRouter:
 
                 # Capture last lines for progress. Prefer the "Downloading" line
                 # (real aggregate bytes) over "Fetching N files" (whole-file count that
-                # lags with hf_transfer). Falls back to the true last line otherwise.
+                # lags behind chunked transfers). Falls back to the true last line otherwise.
                 if is_alive:
                     try:
                         cap = subprocess.run(capture_cmd, timeout=10, capture_output=True, text=True)

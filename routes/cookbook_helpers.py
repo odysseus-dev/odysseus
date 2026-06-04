@@ -148,6 +148,25 @@ def _local_tooling_path_export(executable: str) -> str:
     return f'export PATH="{esc}:$PATH"'
 
 
+def _local_persistent_home_exports() -> list[str]:
+    """Environment lines for local Cookbook runners.
+
+    Docker persists Cookbook downloads and user installs at /app/.cache and
+    /app/.local. Native/remote hosts should keep their normal HOME semantics,
+    so this only activates when the app is running from the Docker /app tree.
+    """
+    return [
+        'if [ -d /app ] && [ -d /app/data ]; then',
+        '  export HOME="${ODYSSEUS_HOME:-/app}"',
+        '  export HF_HOME="${HF_HOME:-/app/.cache/huggingface}"',
+        '  export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-$HF_HOME/hub}"',
+        '  export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/app/.cache}"',
+        '  export XDG_DATA_HOME="${XDG_DATA_HOME:-/app/.local/share}"',
+        '  export PYTHONUSERBASE="${PYTHONUSERBASE:-/app/.local}"',
+        'fi',
+    ]
+
+
 def _pip_install_no_cache(cmd: str) -> str:
     """Add ``--no-cache-dir`` to a pip install command.
 
@@ -385,7 +404,20 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
         "            seen.add(name)",
         "            models.append({'repo_id':name,'size_bytes':size_bytes,'nb_files':1,'has_incomplete':False,'path':'ollama','backend':'ollama','is_ollama':True})",
         "        return",
-        "scan_hf(os.path.expanduser('~/.cache/huggingface/hub'))",
+        "def hf_cache_roots():",
+        "    roots = []",
+        "    def add(p):",
+        "        if not p: return",
+        "        p = os.path.expanduser(p)",
+        "        if p not in roots: roots.append(p)",
+        "    add(os.environ.get('HUGGINGFACE_HUB_CACHE'))",
+        "    hf_home = os.environ.get('HF_HOME')",
+        "    if hf_home: add(os.path.join(hf_home, 'hub'))",
+        "    xdg = os.environ.get('XDG_CACHE_HOME')",
+        "    if xdg: add(os.path.join(xdg, 'huggingface', 'hub'))",
+        "    add('~/.cache/huggingface/hub')",
+        "    return roots",
+        "for _hf_root in hf_cache_roots(): scan_hf(_hf_root)",
         "scan_ollama()",
         "scan_ollama_api()",
     ]
@@ -550,7 +582,18 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     # check — a machine with both stacks should honor the native HIP toolchain on
     # AMD hosts instead of accidentally preferring a stray nvcc wheel.
     runner_lines.append('    for _cudir in ~/.local/lib/python*/site-packages/nvidia/cu13 ~/.local/lib/python*/site-packages/nvidia/cu12 ~/.local/lib/python*/site-packages/nvidia/cuda_nvcc; do')
-    runner_lines.append('      [ -x "$_cudir/bin/nvcc" ] && export CUDA_HOME="$_cudir" && export PATH="$_cudir/bin:$PATH" && break')
+    runner_lines.append('      if [ -x "$_cudir/bin/nvcc" ]; then')
+    runner_lines.append('        export CUDA_HOME="$_cudir"')
+    runner_lines.append('        export CUDAToolkit_ROOT="$_cudir"')
+    runner_lines.append('        export PATH="$_cudir/bin:$PATH"')
+    runner_lines.append('        export LD_LIBRARY_PATH="$_cudir/lib:$_cudir/lib64:${LD_LIBRARY_PATH:-}"')
+    runner_lines.append('        export CMAKE_LIBRARY_PATH="$_cudir/lib:$_cudir/lib64:${CMAKE_LIBRARY_PATH:-}"')
+    runner_lines.append('        for _lib in cudart cublas cublasLt; do')
+    runner_lines.append('          _match=$(ls "$_cudir/lib/lib${_lib}.so"* "$_cudir/lib64/lib${_lib}.so"* 2>/dev/null | head -1 || true)')
+    runner_lines.append('          [ -n "$_match" ] && [ ! -e "$(dirname "$_match")/lib${_lib}.so" ] && ln -sf "$(basename "$_match")" "$(dirname "$_match")/lib${_lib}.so" 2>/dev/null || true')
+    runner_lines.append('        done')
+    runner_lines.append('        break')
+    runner_lines.append('      fi')
     runner_lines.append('    done')
     # rm -rf build so a prior poisoned CMakeCache.txt (e.g. from a failed CUDA
     # or HIP attempt) doesn't cause the next configure to reuse stale settings.
@@ -623,7 +666,7 @@ class ModelDownloadRequest(BaseModel):
     ssh_port: str | None = None    # e.g. "8022" for Termux
     platform: str | None = None    # "linux", "termux", or "windows"
     local_dir: str | None = None   # base dir to download into (a per-model subfolder is created under it); None = default HF cache
-    disable_hf_transfer: bool = False  # skip the Rust hf_transfer downloader — slower but far more reliable on large files (used by retries)
+    disable_hf_transfer: bool = False  # legacy field name; use conservative HF transfer settings on retries
 
 
 class ServeRequest(BaseModel):
@@ -652,7 +695,7 @@ def _parse_serve_phase(snapshot: str, task_type: str = "serve") -> dict:
 
     load_matches = re.findall(r'Loading safetensors.*?(\d+)%', flat)
     # Prefer "Downloading (incomplete total...)" (real aggregate bytes) over
-    # "Fetching N files" (whole-file count, lags with hf_transfer's chunked pulls).
+    # "Fetching N files" (whole-file count, can lag behind chunked pulls).
     downloading_matches = re.findall(r'Downloading.*?(\d+)%', flat)
     fetching_matches = re.findall(r'Fetching.*?(\d+)%', flat)
     dl_matches = downloading_matches if downloading_matches else fetching_matches

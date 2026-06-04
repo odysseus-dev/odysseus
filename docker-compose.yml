@@ -28,6 +28,12 @@ services:
       - RESEARCH_LLM_ENDPOINT=${RESEARCH_LLM_ENDPOINT:-}
       - HF_TOKEN=${HF_TOKEN:-}
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+      - HOME=/app
+      - HF_HOME=/app/.cache/huggingface
+      - HUGGINGFACE_HUB_CACHE=/app/.cache/huggingface/hub
+      - XDG_CACHE_HOME=/app/.cache
+      - XDG_DATA_HOME=/app/.local/share
+      - PYTHONUSERBASE=/app/.local
       - SEARXNG_INSTANCE=http://searxng:8080
       - CHROMADB_HOST=chromadb
       - CHROMADB_PORT=8000

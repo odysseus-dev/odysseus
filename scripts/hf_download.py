@@ -150,13 +150,13 @@ def main():
     # Disable HF progress bars (we provide our own)
     os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "0"
 
-    # Enable Rust-backed parallel downloader if available — big throughput win.
+    # Enable Xet-backed high-performance transfers if available.
     # Must be set before importing huggingface_hub.
     try:
-        import hf_transfer  # noqa: F401
-        os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+        import hf_xet  # noqa: F401
+        os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
     except ImportError:
-        print("HINT pip install hf_transfer for faster downloads", flush=True)
+        print("HINT pip install hf_xet for faster downloads", flush=True)
 
     _patch_tqdm()
 

@@ -12,6 +12,7 @@ from routes.cookbook_helpers import (
     _append_serve_preflight_exit_lines,
     _llama_cpp_rebuild_cmd,
     _local_tooling_path_export,
+    _local_persistent_home_exports,
     _pip_install_attempt,
     _pip_install_fallback_chain,
     _ollama_bind_from_cmd,
@@ -81,6 +82,15 @@ def test_local_tooling_path_export_prepends_interpreter_bin():
         _local_tooling_path_export("/opt/venv/bin/python")
         == 'export PATH="/opt/venv/bin:$PATH"'
     )
+
+
+def test_local_persistent_home_exports_pin_docker_cache_paths():
+    script = "\n".join(_local_persistent_home_exports())
+
+    assert 'export HOME="${ODYSSEUS_HOME:-/app}"' in script
+    assert 'export HF_HOME="${HF_HOME:-/app/.cache/huggingface}"' in script
+    assert 'export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-$HF_HOME/hub}"' in script
+    assert 'export PYTHONUSERBASE="${PYTHONUSERBASE:-/app/.local}"' in script
 
 
 def test_local_tooling_path_export_preserves_spaces_and_expands_path():
@@ -189,6 +199,20 @@ def test_serve_runner_installs_llama_cpp_server_extra():
     # The [server] extra is requested in the build/fallback paths.
     assert "'llama-cpp-python[server]'" in src
     assert "_pip_install_fallback_chain('llama-cpp-python[server]'" in src
+
+
+def test_serve_runner_refuses_cpu_only_llama_cpp_when_gpu_selected():
+    """GPU-selected llama.cpp serving must not silently fall back to CPU-only
+    llama-cpp-python when CUDA/HIP build detection fails."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+
+    assert "Refuse a silent CPU fallback when the user requested GPU llama.cpp serving." in src
+    assert "llama-server --list-devices" in src
+    assert "ERROR: GPU was selected, but the available llama.cpp runtime is CPU-only." in src
+    assert "llama_print_system_info" in src
+    assert "ODYSSEUS_PREFLIGHT_EXIT=70" in src
 
 
 def test_venv_safe_local_pip_install_strips_user_flags_only_for_local_venv():
