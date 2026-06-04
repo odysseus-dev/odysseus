@@ -1063,6 +1063,22 @@ FUNCTION_TOOL_SCHEMAS = [
 # Converter: native function call -> ToolBlock
 # ---------------------------------------------------------------------------
 
+def _arg_str(args: dict, key: str, default: str = "") -> str:
+    """Read a function-call field as a string, tolerating non-string values.
+
+    Models sometimes emit a number/bool/object where a string is expected
+    (e.g. ``write_file {"content": 42}``). The text-format branches below
+    concatenate these field values, so a non-string raised ``TypeError`` and
+    aborted the whole agent stream. Coerce to str (``None`` -> the default).
+    Companion to #2166/#2168, which hardened the ``edit_document`` /
+    ``suggest_document`` list branches against non-dict items.
+    """
+    value = args.get(key, default)
+    if value is None:
+        return default
+    return value if isinstance(value, str) else str(value)
+
+
 def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock]:
     """Convert a native function call into a ToolBlock for the existing execution pipeline."""
     try:
@@ -1113,12 +1129,12 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
     elif tool_type == "read_file":
         content = args.get("path", "")
     elif tool_type == "write_file":
-        content = args.get("path", "") + "\n" + args.get("content", "")
+        content = _arg_str(args, "path") + "\n" + _arg_str(args, "content")
     elif tool_type == "create_document":
-        parts = [args.get("title", "Untitled")]
+        parts = [_arg_str(args, "title", "Untitled")]
         if args.get("language"):
-            parts.append(args["language"])
-        parts.append(args.get("content", ""))
+            parts.append(_arg_str(args, "language"))
+        parts.append(_arg_str(args, "content"))
         content = "\n".join(parts)
     elif tool_type == "edit_document":
         blocks = []
@@ -1139,47 +1155,47 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
     elif tool_type == "search_chats":
         content = args.get("query", "")
     elif tool_type == "chat_with_model":
-        content = args.get("model", "") + "\n" + args.get("message", "")
+        content = _arg_str(args, "model") + "\n" + _arg_str(args, "message")
     elif tool_type == "create_session":
-        content = args.get("name", "Untitled") + "\n" + args.get("model", "")
+        content = _arg_str(args, "name", "Untitled") + "\n" + _arg_str(args, "model")
     elif tool_type == "list_sessions":
         content = args.get("filter", "")
     elif tool_type == "send_to_session":
-        content = args.get("session_id", "") + "\n" + args.get("message", "")
+        content = _arg_str(args, "session_id") + "\n" + _arg_str(args, "message")
     elif tool_type == "pipeline":
         # Pass as JSON for the pipeline parser
         content = json.dumps({"steps": args.get("steps", [])})
     elif tool_type == "manage_session":
-        action = args.get("action", "")
-        value = args.get("value", "")
+        action = _arg_str(args, "action")
+        value = _arg_str(args, "value")
         # `list` is the only action that takes an OPTIONAL keyword
         # filter — never a session_id. Don't leak the "current" default
         # into the filter slot (was producing "No sessions found
         # matching 'current'" when the agent omitted session_id).
         if action == "list":
-            keyword = args.get("session_id", "") or args.get("keyword", "") or value
+            keyword = _arg_str(args, "session_id") or _arg_str(args, "keyword") or value
             content = "list" + (("\n" + keyword) if keyword and keyword.lower() != "current" else "")
         else:
-            sid = args.get("session_id", "current")
+            sid = _arg_str(args, "session_id", "current")
             content = action + "\n" + sid
             if value:
                 content += "\n" + value
     elif tool_type == "manage_memory":
-        action = args.get("action", "")
+        action = _arg_str(args, "action")
         if action == "add":
-            content = "add\n" + args.get("text", "")
+            content = "add\n" + _arg_str(args, "text")
             if args.get("category"):
-                content += "\n" + args["category"]
+                content += "\n" + _arg_str(args, "category")
         elif action == "edit":
-            content = "edit\n" + args.get("memory_id", "") + "\n" + args.get("text", "")
+            content = "edit\n" + _arg_str(args, "memory_id") + "\n" + _arg_str(args, "text")
         elif action == "delete":
-            content = "delete\n" + args.get("memory_id", "")
+            content = "delete\n" + _arg_str(args, "memory_id")
         elif action == "search":
-            content = "search\n" + args.get("text", "")
+            content = "search\n" + _arg_str(args, "text")
         elif action == "list":
             content = "list"
             if args.get("category"):
-                content += "\n" + args["category"]
+                content += "\n" + _arg_str(args, "category")
         else:
             content = action
     elif tool_type == "list_models":
@@ -1229,7 +1245,7 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
                         "manage_tokens", "manage_documents", "manage_settings"):
         content = json.dumps(args)
     elif tool_type == "ask_teacher":
-        content = args.get("model", "auto") + "\n" + args.get("problem", "")
+        content = _arg_str(args, "model", "auto") + "\n" + _arg_str(args, "problem")
     else:
         content = json.dumps(args)
 
