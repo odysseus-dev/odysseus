@@ -49,66 +49,110 @@ Defaults work out of the box: clone, run, then configure models/search/email
 inside **Settings**. Only edit `.env` for deployment-level overrides like
 `APP_BIND`, `APP_PORT`, `AUTH_ENABLED`, `DATABASE_URL`, or a pre-seeded admin password.
 
-On first setup, Odysseus creates an admin account (`admin` unless
-`ODYSSEUS_ADMIN_USER` is set) and prints a temporary password in the terminal.
-For Docker installs, the same line is in `docker compose logs odysseus`.
-Use that for the first login, then change it in **Settings**.
+On first setup, the native launcher prepares the data directory and opens the
+login flow so you can create the admin account in the browser. Docker installs
+create an initial admin account (`admin` unless `ODYSSEUS_ADMIN_USER` is set)
+and print a temporary password in `./odysseus docker logs`; use that for the
+first login, then change it in **Settings**.
 
 Contributing? See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and
 pull request guidelines.
 
-### Docker (recommended)
+### Native launcher (recommended)
+```bash
+git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+cd odysseus
+./odysseus
+```
+
+Requirements: Bun and Rust/Cargo. The launcher runs first-time setup, builds the
+Rust server, and starts Odysseus. On macOS it uses `http://127.0.0.1:7860` by
+default because AirPlay often holds port `7000`; on Linux it uses
+`http://127.0.0.1:7000`.
+
+To choose a host or port:
+
+```bash
+ODYSSEUS_PORT=7070 ./odysseus
+ODYSSEUS_HOST=0.0.0.0 ./odysseus
+```
+
+The script reads `.env` at startup, so `APP_BIND=0.0.0.0` and `APP_PORT=7001`
+set there are picked up automatically. Keep `AUTH_ENABLED=true` (the default)
+before binding outside loopback. Do not expose this port directly to the public
+internet.
+
+Useful launcher commands:
+
+```bash
+./odysseus --help
+./odysseus doctor
+./odysseus setup
+./odysseus serve --host 127.0.0.1 --port 7000
+./odysseus chroma status
+```
+
+### Docker
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
 cp .env.example .env       # optional, but recommended for explicit defaults
-docker compose up -d --build
+./odysseus docker up
 ```
+
 Open `http://localhost:7000` when the containers are healthy. Docker Compose
 binds the web UI to `127.0.0.1` by default. If the port is taken, set
 `APP_PORT=7001` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0`
 only when you intentionally want LAN/reverse-proxy access.
 
-### Native Linux / macOS
+Useful Docker commands:
+
+```bash
+./odysseus docker ps
+./odysseus docker logs
+./odysseus docker down
+./odysseus docker gpu nvidia
+./odysseus docker gpu amd
+```
+
+### Manual Python / uv
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
-python3 -m venv venv
+python3 -m venv venv      # Python 3.11+
 source venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -U pip uv
+uv pip install -r requirements.txt
 python setup.py
 python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
-Requirements: Python 3.11+. Cookbook also needs `tmux` for background model
-downloads and serves. The app itself is lightweight; local model serving is the
-heavy part and depends on the model, runtime, GPU, and VRAM, so small hosts can
-connect to API or remote model servers instead. Use `--host 0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
+Cookbook also needs `tmux` for background model downloads and serves. The app
+itself is lightweight; local model serving is the heavy part and depends on the
+model, runtime, GPU, and VRAM, so small hosts can connect to API or remote model
+servers instead. Use `--host 0.0.0.0` only when you intentionally want
+LAN/reverse-proxy access.
 
 ### Apple Silicon
 Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
-M-series Mac, run Odysseus natively:
+M-series Mac, run Odysseus with the native launcher:
 
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
-./start-macos.sh
+./odysseus
 ```
 
 It launches at `http://127.0.0.1:7860`. To expose it to your phone over a trusted LAN/VPN such as Tailscale, bind all interfaces:
 
 ```bash
-ODYSSEUS_HOST=0.0.0.0 ./start-macos.sh
+ODYSSEUS_HOST=0.0.0.0 ./odysseus
 # then open http://<tailscale-ip>:7860
 ```
 
-The script also reads `.env` at startup, so `APP_BIND=0.0.0.0` and `APP_PORT`
-set there are picked up automatically without a command-line override each run.
-
-Keep `AUTH_ENABLED=true` (the default) before binding outside loopback. Do not
-expose this port directly to the public internet. To build a clickable app wrapper:
+To build a clickable app wrapper:
 
 ```bash
-./build-macos-app.sh
+./odysseus macos-app
 ```
 
 <details>
@@ -137,24 +181,24 @@ only detect GPUs that Docker exposes to the container — if the host runtime or
 device passthrough is not configured, Cookbook sees the iGPU, another card, or
 CPU instead of your intended GPU.
 
-For NVIDIA, `scripts/check-docker-gpu.sh` diagnoses GPU passthrough and can
+For NVIDIA, `./odysseus docker gpu nvidia` diagnoses GPU passthrough and can
 optionally install the host runtime or update `.env`.
 
 ```bash
 # Read-only diagnostic (default — installs nothing, never edits .env):
-scripts/check-docker-gpu.sh
+./odysseus docker gpu nvidia
 
 # Print OS-specific install commands without running them:
-scripts/check-docker-gpu.sh --print-install-commands
+./odysseus docker gpu nvidia --print-install-commands
 
 # Install NVIDIA Container Toolkit on Ubuntu/Debian (requires sudo):
-scripts/check-docker-gpu.sh --install-nvidia-toolkit
+./odysseus docker gpu nvidia --install-nvidia-toolkit
 
 # Write COMPOSE_FILE to .env (only when GPU passthrough is confirmed working):
-scripts/check-docker-gpu.sh --enable-nvidia-overlay
+./odysseus docker gpu nvidia --enable-nvidia-overlay
 
 # Full assisted setup — install toolkit, then enable overlay if passthrough works:
-scripts/check-docker-gpu.sh --install-nvidia-toolkit --enable-nvidia-overlay
+./odysseus docker gpu nvidia --install-nvidia-toolkit --enable-nvidia-overlay
 ```
 
 Safety notes:
@@ -175,7 +219,7 @@ COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml
 **AMD / ROCm.** AMD setup is read-only diagnostic plus manual `.env` edit. Run:
 
 ```bash
-scripts/check-docker-amd-gpu.sh
+./odysseus docker gpu amd
 ```
 
 Then add the reported values to `.env`, replacing `RENDER_GID` with your host's
@@ -245,15 +289,15 @@ install usually only need to add the endpoint in Settings.
 **Useful checks.**
 
 ```bash
-docker compose ps
-docker compose logs --tail=120 odysseus
+./odysseus docker ps
+./odysseus docker logs
 docker compose logs odysseus | grep -E 'ChromaDB|MemoryVectorStore|DEGRADED'
 ```
 
-**macOS details.** `start-macos.sh` installs Homebrew deps, creates the venv,
-runs setup, and starts uvicorn on port `7860` because AirPlay often holds
-`7000`. It uses llama.cpp/Ollama for Metal. vLLM/SGLang are CUDA/ROCm-only and
-do not run on macOS. MLX-only models are not served by Odysseus.
+**macOS details.** The native launcher starts on port `7860` by default because
+AirPlay often holds `7000`. It uses llama.cpp/Ollama for Metal. vLLM/SGLang are
+CUDA/ROCm-only and do not run on macOS. MLX-only models are not served by
+Odysseus.
 
 </details>
 
@@ -275,7 +319,8 @@ git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
 py -3.11 -m venv venv
 venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+python -m pip install -U pip uv
+uv pip install -r requirements.txt
 python setup.py
 python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
