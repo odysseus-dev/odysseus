@@ -47,7 +47,9 @@ class _FakeChatAsync:
         self.n_ctx = n_ctx
         self.template_variables = template_variables
         self.system_prompt = None
+        self.system_prompt_calls = 0
         self.history = None
+        self.history_calls = []
         self.sampler = None
         self.stopped = False
         self.asked = []
@@ -58,9 +60,11 @@ class _FakeChatAsync:
 
     async def set_system_prompt(self, system_prompt):
         self.system_prompt = system_prompt
+        self.system_prompt_calls += 1
 
     async def set_chat_history(self, msgs):
         self.history = msgs
+        self.history_calls.append(list(msgs))
 
     async def stop_generation(self):
         self.stopped = True
@@ -334,6 +338,43 @@ async def test_astream_defaults_system_prompt_when_absent(tmp_path, monkeypatch)
     assert chat.system_prompt == DEFAULT_SYSTEM_PROMPT  # never None on an empty history
     assert chat.history == []
     assert chat.asked == ["hi"]
+
+
+async def test_system_prompt_sync_is_staged_and_skipped(tmp_path, monkeypatch):
+    """set_system_prompt is NobodyWho's only eagerly-syncing setter and its
+    render kills the worker on non-renderable states (empty: Gemma/Qwen3;
+    system-only: Qwen3.5's "No user query found"). So when it must run, the
+    history is staged WITH the user prompt first; and when the system prompt
+    is unchanged it must not run at all."""
+    monkeypatch.setenv("NOBODYWHO_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "no-hub-here"))
+    _gguf(tmp_path, "TinyChat.gguf")
+    mgr = _available_manager()
+
+    msgs = [{"role": "user", "content": "first question"}]
+    [e async for e in mgr.astream("TinyChat", msgs)]
+    chat = mgr._chats[mgr.resolve_source("TinyChat")].chat
+
+    # The sync-triggering setter saw a renderable state: history staged with
+    # the user prompt BEFORE set_system_prompt ran, then un-staged.
+    assert chat.system_prompt_calls == 1
+    assert chat.history_calls[0] == [{"role": "user", "content": "first question"}]
+    assert chat.history_calls[-1] == []  # un-staged before ask()
+
+    # Second request, same (default) system prompt: setter skipped entirely.
+    [e async for e in mgr.astream("TinyChat", [{"role": "user", "content": "second"}])]
+    assert chat.system_prompt_calls == 1
+
+    # Changed system prompt: setter runs again, staged the same way.
+    msgs3 = [
+        {"role": "system", "content": "Be a pirate."},
+        {"role": "user", "content": "third"},
+    ]
+    [e async for e in mgr.astream("TinyChat", msgs3)]
+    assert chat.system_prompt_calls == 2
+    assert chat.system_prompt == "Be a pirate."
+    assert chat.history_calls[-2] == [{"role": "user", "content": "third"}]  # staged
+    assert chat.history_calls[-1] == []  # un-staged
 
 
 async def test_astream_enforces_max_tokens(tmp_path, monkeypatch):

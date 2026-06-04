@@ -144,11 +144,16 @@ class NobodyWhoModelNotFound(RuntimeError):
 class _LoadedChat:
     """A resident ChatAsync plus the lock that serializes generations on it."""
 
-    __slots__ = ("chat", "lock", "source", "last_used")
+    __slots__ = ("chat", "lock", "source", "last_used", "applied_system")
 
     def __init__(self, chat, source: str):
         self.chat = chat
         self.source = source
+        # System prompt last applied to this chat (None = fresh chat, none set).
+        # Lets astream skip set_system_prompt when unchanged — that setter is
+        # the only one that sync-renders eagerly in NobodyWho <= 1.4.0, and its
+        # render crashes the worker on strict templates (see astream).
+        self.applied_system = None
         # threading.Lock (not asyncio.Lock): generations are awaited from the
         # main event loop, but sync utility calls (llm_call in FastAPI's
         # threadpool) run under their own ad-hoc loop via asyncio.run(). A
@@ -490,13 +495,29 @@ class NobodyWhoManager:
             lc.last_used = time.time()
             system_text, history, prompt = self.prepare_conversation(messages)
             if not system_text:
-                # Never run setters against an empty conversation — see
-                # DEFAULT_SYSTEM_PROMPT for why (worker-killing empty render
-                # in NobodyWho <= 1.4.0 on Gemma-4-style templates).
                 system_text = DEFAULT_SYSTEM_PROMPT
             chat = lc.chat
             await chat.set_sampler_config(self._sampler_for(temperature))
-            await chat.set_system_prompt(system_text)
+
+            # NobodyWho (<= 1.4.0) sync-renders the chat template inside
+            # set_system_prompt — and that render kills the worker thread when
+            # the conversation state isn't renderable: empty conversations
+            # break templates that index messages[0] (Gemma 3/4, Qwen3), and
+            # system-only conversations break templates that require a user
+            # message (Qwen3.5 raises "No user query found in messages").
+            # set_chat_history never syncs, so the safe sequence is:
+            #   1. skip set_system_prompt entirely when unchanged (common case)
+            #   2. when it must run, stage history WITH the user prompt first,
+            #      so it renders [system, ...history, user] — acceptable to
+            #      every template family, and the prefill is exactly the state
+            #      ask() renders next (no wasted work)
+            if system_text != lc.applied_system:
+                await chat.set_chat_history(
+                    history + [{"role": "user", "content": prompt}]
+                )
+                await chat.set_system_prompt(system_text)
+                lc.applied_system = system_text
+            # Un-stage / set the real history; ask() re-appends the prompt.
             await chat.set_chat_history(history)
 
             stream = chat.ask(prompt)
