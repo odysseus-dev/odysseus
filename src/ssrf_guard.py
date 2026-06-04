@@ -127,6 +127,8 @@ def inspect_url(url: str, resolver: Resolver | None = None) -> UrlInspection:
             try:
                 for resolved in resolve(host):
                     addresses.append(ResolvedAddress(resolved, classify_ip(resolved)))
+                if not addresses:
+                    errors.append("dns_resolution_failed")
             except Exception:
                 errors.append("dns_resolution_failed")
 
