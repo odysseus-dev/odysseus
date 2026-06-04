@@ -373,7 +373,11 @@ async def _create_shell(command: str, **kwargs):
     and env variable expansion errors under Git Bash.
     """
     if IS_WINDOWS:
-        if command.strip().lower().startswith("powershell"):
+        # PowerShell commands (used by the frontend for Windows log-file polling
+        # and session management) must run directly — passing them through
+        # bash -c mangles $env:VAR syntax and breaks the command.
+        cmd_trim = command.strip()
+        if cmd_trim.startswith("powershell") or cmd_trim.startswith("cmd "):
             return await asyncio.create_subprocess_shell(command, **kwargs)
         bash = find_bash()
         if bash:
@@ -758,7 +762,7 @@ def setup_shell_routes() -> APIRouter:
             return {"stdout": "", "stderr": "No command provided", "exit_code": 1}
 
         logger.info("User shell exec requested: length=%d", len(cmd))
-        result = await _exec_shell(cmd, timeout=EXEC_TIMEOUT)
+        result = await _exec_shell(cmd, timeout=req.timeout if req.timeout is not None else EXEC_TIMEOUT)
         return result
 
     @router.post("/api/shell/stream")

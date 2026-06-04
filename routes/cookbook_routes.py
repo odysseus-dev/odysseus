@@ -799,6 +799,10 @@ def setup_cookbook_routes() -> APIRouter:
                 existing.name = display_name
                 if supports_tools is not None:
                     existing.supports_tools = supports_tools
+                # Wipe stale model lists so the picker re-probes and discovers
+                # the newly-served model instead of showing the old one.
+                existing.cached_models = None
+                existing.hidden_models = None
                 db.commit()
                 logger.info(f"Updated existing local model endpoint: {base_url}")
                 return existing.id
@@ -1089,13 +1093,23 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('    ODYSSEUS_OLLAMA_PORT="$_ody_try_port"')
                 runner_lines.append('    break')
                 runner_lines.append('  fi')
-                runner_lines.append('  exec 3<&-; exec 3>&-')
-                runner_lines.append('done')
+                runner_lines.append('  echo "[odysseus] Ollama API ready on port ${ODYSSEUS_OLLAMA_PORT}: ${ODYSSEUS_OLLAMA_URL}"')
+                runner_lines.append('  echo "[odysseus] This task is monitoring an existing Ollama server; stopping it here will not stop an external Docker/system service."')
+                if local_windows:
+                    # Windows detached process has no TTY; exec bash -i crashes.
+                    # Keep the monitoring task alive with a sleep loop.
+                    runner_lines.append('  while true; do sleep 60; done')
+                else:
+                    runner_lines.append('  exec bash -i')
+                runner_lines.append('fi')
                 runner_lines.append('if ! command -v ollama &>/dev/null; then')
                 runner_lines.append('  echo "ERROR: Ollama not found on this server. Install it from https://ollama.com/download or `curl -fsSL https://ollama.com/install.sh | sh`."')
                 runner_lines.append('  echo')
                 runner_lines.append('  echo "=== Process exited with code 127 ==="')
-                runner_lines.append('  exec bash -i')
+                if local_windows:
+                    runner_lines.append('  exit 127')
+                else:
+                    runner_lines.append('  exec bash -i')
                 runner_lines.append('fi')
                 runner_lines.append('ODYSSEUS_OLLAMA_URL="http://${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}"')
                 if remote and _ollama_host in ("0.0.0.0", "::"):
@@ -1103,10 +1117,13 @@ def setup_cookbook_routes() -> APIRouter:
                     runner_lines.append('echo "[odysseus] Ollama has no built-in authentication; expose this only on a trusted LAN/VPN or provide an explicit OLLAMA_HOST with your own access controls."')
                 runner_lines.append('echo "Starting ollama server on ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}..."')
                 runner_lines.append('OLLAMA_HOST="${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}" ollama serve')
-                runner_lines.append('_ody_exit=$?')
-                runner_lines.append('echo')
-                runner_lines.append('echo "=== Process exited with code ${_ody_exit} ==="')
-                runner_lines.append('exec bash -i')
+                if local_windows:
+                    _append_serve_exit_code_lines(runner_lines, keep_shell_open=False)
+                else:
+                    runner_lines.append('_ody_exit=$?')
+                    runner_lines.append('echo')
+                    runner_lines.append('echo "=== Process exited with code ${_ody_exit} ==="')
+                    runner_lines.append('exec bash -i')
             elif "vllm serve" in req.cmd:
                 # vLLM is CUDA/ROCm-only and does not run on macOS at all.
                 runner_lines.append('if [ "$(uname -s)" = "Darwin" ]; then')
@@ -2104,11 +2121,13 @@ def setup_cookbook_routes() -> APIRouter:
                 "inc=os.path.isdir(blobs) and any(x.endswith('.incomplete') for x in os.listdir(blobs));"
                 "sys.exit(0 if ok and not inc else 1)"
             )
-            if not remote_host:
-                import sys
-                cmd = [sys.executable, "-c", py, repo_id]
-            else:
+            if remote_host:
                 cmd = ["python3", "-c", py, repo_id]
+            else:
+                # Local Windows: python3 can hit the Microsoft Store stub. Use the
+                # real Python Odysseus is running under (guaranteed to exist).
+                import sys as _sys_local
+                cmd = [_sys_local.executable, "-c", py, repo_id]
             try:
                 if remote_host:
                     ssh_base = ["ssh"]

@@ -1862,7 +1862,17 @@ export function _renderRunningTab() {
       const startNow = el.querySelector('.cookbook-task-start-now');
       if (startNow) startNow.style.display = (task.type === 'download' && task.status === 'queued') ? '' : 'none';
       const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
-      if (terminalDiag) _showDiagnosis(el, terminalDiag, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+      if (terminalDiag) {
+        _showDiagnosis(el, terminalDiag, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+      } else {
+        const existingDiag = el.querySelector('.cookbook-diagnosis');
+        // Keep diagnosis for failed tasks even if output was cleared and we
+        // can no longer re-derive the exact message — removing it would hide
+        // the crash reason from the user.
+        if (existingDiag && !['stopped', 'error', 'crashed', 'failed'].includes(task.status)) {
+          existingDiag.remove();
+        }
+      }
     }
     if (!task) {
       if (el._uptimeInterval) { clearInterval(el._uptimeInterval); el._uptimeInterval = null; }
@@ -2201,6 +2211,10 @@ export function _renderRunningTab() {
         items.push({ label: 'Copy last 50 lines', action: 'copy-log', custom: () => {
           const out = (el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
           const last = out.split('\n').slice(-50).join('\n');
+          if (!last.trim()) {
+            uiModule.showToast('No log content available yet');
+            return;
+          }
           _copyText(last);
           uiModule.showToast('Copied last 50 lines');
         }});
@@ -2437,6 +2451,10 @@ export function _renderRunningTab() {
     el.querySelector('.cookbook-output-copy').addEventListener('click', (e) => {
       e.stopPropagation();
       const text = el.querySelector('.cookbook-output-pre')?.textContent || '';
+      if (!text.trim()) {
+        uiModule.showToast('No log content available yet');
+        return;
+      }
       _copyText(text).then(() => {
         const btn = el.querySelector('.cookbook-output-copy');
         const origHTML = btn.innerHTML;
