@@ -12,6 +12,41 @@ from src.settings import load_settings, save_settings, load_features, save_featu
 logger = logging.getLogger(__name__)
 
 
+def _as_list(value):
+    if isinstance(value, list):
+        return [str(item) for item in value if item not in (None, "")]
+    if value in (None, ""):
+        return []
+    return [str(value)]
+
+
+def _as_float(value, default=0.8):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_text(value):
+    return str(value).strip() if value not in (None, "") else ""
+
+
+def _owner_key(owner):
+    return _as_text(owner)
+
+
+def _skill_id(skill):
+    return _as_text(skill.get("id") or skill.get("name"))
+
+
+def _skill_label(skill):
+    for key in ("title", "description", "name", "id"):
+        value = _as_text(skill.get(key))
+        if value:
+            return value
+    return ""
+
+
 def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRouter:
     router = APIRouter(tags=["backup"])
 
@@ -101,24 +136,80 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
         # ── Skills ──
         if "skills" in body and isinstance(body["skills"], list):
             existing = skills_manager.load_all()
-            existing_ids = {s.get("id") for s in existing}
-            existing_titles = {s.get("title", "").strip().lower() for s in existing}
+            existing_ids = {
+                (_owner_key(s.get("owner")), _skill_id(s))
+                for s in existing
+                if _skill_id(s)
+            }
+            existing_titles = {
+                (_owner_key(s.get("owner")), _skill_label(s).lower())
+                for s in existing
+                if _skill_label(s)
+            }
             added = 0
             for skill in body["skills"]:
-                if not isinstance(skill, dict) or not skill.get("title"):
+                if not isinstance(skill, dict):
                     continue
-                # Skip if same id or same title already exists
-                if skill.get("id") in existing_ids:
+                skill = dict(skill)
+                label = _skill_label(skill)
+                if not label:
                     continue
-                if skill["title"].strip().lower() in existing_titles:
+                target_owner = _as_text(skill.get("owner")) or user
+                owner_key = _owner_key(target_owner)
+                skill_id = _skill_id(skill)
+                title_key = label.lower()
+                # Skip if the importing owner's library already has this skill.
+                if skill_id and (owner_key, skill_id) in existing_ids:
                     continue
-                if user and not skill.get("owner"):
+                if (owner_key, title_key) in existing_titles:
+                    continue
+                if user and not _as_text(skill.get("owner")):
                     skill["owner"] = user
-                existing.append(skill)
-                existing_ids.add(skill.get("id"))
-                existing_titles.add(skill["title"].strip().lower())
-                added += 1
-            skills_manager.save(existing)
+                    target_owner = user
+                    owner_key = _owner_key(target_owner)
+
+                body_extra = skill.get("body_extra")
+                created = _as_text(skill.get("created")) or None
+                result = skills_manager.add_skill(
+                    title=_as_text(skill.get("title") or skill.get("description") or skill.get("name")),
+                    problem=_as_text(skill.get("problem") if skill.get("problem") is not None else skill.get("when_to_use")),
+                    solution=_as_text(skill.get("solution") if skill.get("solution") is not None else skill.get("body_extra")),
+                    steps=_as_list(skill.get("steps") if skill.get("steps") is not None else skill.get("procedure")),
+                    tags=_as_list(skill.get("tags")),
+                    source=_as_text(skill.get("source")) or "imported",
+                    teacher_model=skill.get("teacher_model"),
+                    confidence=_as_float(skill.get("confidence"), 0.8),
+                    owner=target_owner or None,
+                    name=_as_text(skill.get("name") or skill.get("id")) or None,
+                    description=_as_text(skill.get("description") or skill.get("title")),
+                    category=_as_text(skill.get("category")) or "general",
+                    when_to_use=_as_text(skill.get("when_to_use") if skill.get("when_to_use") is not None else skill.get("problem")),
+                    procedure=_as_list(skill.get("procedure") if skill.get("procedure") is not None else skill.get("steps")),
+                    pitfalls=_as_list(skill.get("pitfalls")),
+                    verification=_as_list(skill.get("verification")),
+                    platforms=_as_list(skill.get("platforms")),
+                    requires_toolsets=_as_list(skill.get("requires_toolsets")),
+                    fallback_for_toolsets=_as_list(skill.get("fallback_for_toolsets")),
+                    status=_as_text(skill.get("status")) or "draft",
+                    version=_as_text(skill.get("version")) or "1.0.0",
+                    body_extra=str(body_extra) if body_extra not in (None, "") else None,
+                    created=created,
+                )
+                if isinstance(result, dict):
+                    stored_owner_key = _owner_key(result.get("owner"))
+                    stored_id = _skill_id(result)
+                    stored_label = _skill_label(result)
+                    if stored_id:
+                        existing_ids.add((stored_owner_key, stored_id))
+                    if stored_label:
+                        existing_titles.add((stored_owner_key, stored_label.lower()))
+                    if not result.get("_deduped"):
+                        added += 1
+                else:
+                    added += 1
+                if skill_id:
+                    existing_ids.add((owner_key, skill_id))
+                existing_titles.add((owner_key, title_key))
             imported.append(f"{added} skills")
 
         # ── Presets ──

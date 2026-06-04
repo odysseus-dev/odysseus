@@ -307,7 +307,7 @@ def emit_body(sections: Dict[str, Any]) -> str:
         parts.append(f"## {heading}\n\n{body}")
     extra = (sections.get("body_extra") or "").strip()
     if extra:
-        parts.append(extra)
+        parts.append(f"## Notes\n\n{extra}" if parts else extra)
     return "\n\n".join(parts) + ("\n" if parts else "")
 
 
