@@ -219,6 +219,107 @@ def _context_score(ctx, use_case):
     return 30
 
 
+_PROVIDER_LABELS = {
+    "amd": "AMD",
+    "deepseek": "DeepSeek",
+    "ibm": "IBM",
+    "liquidai": "Liquid AI",
+    "meta": "Meta",
+    "meta-llama": "Meta Llama",
+    "mistralai": "Mistral AI",
+    "moonshotai": "Moonshot AI",
+    "nvidia": "NVIDIA",
+    "openai": "OpenAI",
+    "redhatai": "Red Hat AI",
+}
+
+_PROVIDER_KEY_ALIASES = {
+    "inclusion-ai": "inclusionai",
+    "liquid-ai": "liquidai",
+    "mistral-ai": "mistralai",
+    "moonshot-ai": "moonshotai",
+    "redhat-ai": "redhatai",
+}
+
+
+def _provider_label(provider, key):
+    if key in _PROVIDER_LABELS:
+        return _PROVIDER_LABELS[key]
+    label = provider.replace("-", " ").replace("_", " ").strip() or "Local"
+    label = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", label)
+    label = re.sub(r"(?i)(?<=\w)ai$", " AI", label)
+    return " ".join(part.upper() if len(part) <= 3 else part.capitalize() for part in label.split())
+
+
+def _provider_family(model):
+    provider = (model.get("provider") or "").strip()
+    if not provider:
+        name = model.get("name") or ""
+        provider = name.split("/", 1)[0] if "/" in name else "local"
+    key = re.sub(r"[^a-z0-9]+", "-", provider.lower()).strip("-") or "local"
+    key = _PROVIDER_KEY_ALIASES.get(key, key)
+    return key, _provider_label(provider, key)
+
+
+def _architecture_family(model):
+    name = (model.get("name") or "").lower()
+    arch = (model.get("architecture") or "").lower()
+    uc = infer_use_case(model)
+    text = f"{name} {arch}"
+    if model.get("is_moe") or model.get("active_parameters"):
+        return "moe", "MoE"
+    if any(tok in text for tok in ("mamba", "rwkv", "recurrent", "bamba", "falcon_h1", "hyena", "ssm")):
+        return "looped", "Looped / SSM"
+    if uc == "multimodal":
+        return "multimodal", "Vision"
+    if uc == "embedding":
+        return "embedding", "Embedding"
+    return "dense", "Dense"
+
+
+def _install_kind(model, quant):
+    q = (quant or model.get("quantization") or "").upper()
+    name = (model.get("name") or "").lower()
+    if model.get("is_image_gen"):
+        return "diffusers"
+    if model.get("is_gguf") or model.get("gguf_sources") or q.startswith(("Q2", "Q3", "Q4", "Q5", "Q6", "Q8", "IQ")):
+        return "gguf"
+    if any(token in q for token in ("AWQ", "GPTQ", "FP8", "FP4", "NVFP4", "MXFP4", "NF4", "INT4", "INT8", "W4A16", "W8A8", "W8A16")):
+        return "safetensors"
+    if "gguf" in name:
+        return "gguf"
+    return "safetensors"
+
+
+def _recommended_backend(model, quant, system):
+    kind = _install_kind(model, quant)
+    backend = (system.get("backend") or "").lower()
+    if kind == "diffusers":
+        return "diffusers", "Diffusers"
+    if kind == "gguf":
+        return "llamacpp", "llama.cpp"
+    if backend == "rocm":
+        return "sglang", "SGLang"
+    return "vllm", "vLLM"
+
+
+def _model_facets(model, quant, system):
+    provider_key, provider_family = _provider_family(model)
+    architecture_family, architecture_label = _architecture_family(model)
+    recommended_backend, recommended_backend_label = _recommended_backend(model, quant, system)
+    install_kind = _install_kind(model, quant)
+    return {
+        "provider_family": provider_family,
+        "provider_key": provider_key,
+        "architecture": model.get("architecture") or "",
+        "architecture_family": architecture_family,
+        "architecture_label": architecture_label,
+        "recommended_backend": recommended_backend,
+        "recommended_backend_label": recommended_backend_label,
+        "install_kind": install_kind,
+    }
+
+
 def _try_quant_at(model, quant, ctx, gpu_vram, available_ram):
     """Try a specific quant at a given context. Returns (run_mode, quant, ctx, mem) or None."""
     mem = estimate_memory_gb(model, quant, ctx)
@@ -408,6 +509,7 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
             "gguf_sources": model.get("gguf_sources", []),
             "context_length": model_ctx,
             "target_context": target_context or None,
+            **_model_facets(model, quant_to_try, system),
         }
 
     run_mode, quant, fit_ctx, required_gb = result
@@ -468,6 +570,7 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
         "context_length": model_ctx,
         "release_date": model.get("release_date", ""),
         "target_context": target_context or None,
+        **_model_facets(model, quant, system),
     }
 
 
@@ -541,9 +644,18 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
             img_results = []
         for im in img_results:
             fit_map = {"perfect": "perfect", "good": "good", "tight": "marginal", "no_fit": "too_tight", "no_gpu": "too_tight"}
+            provider_key, provider_family = _provider_family({"provider": im.get("provider") or "image"})
             results.append({
                 "name": im["id"],
                 "provider": im["provider"],
+                "provider_family": provider_family,
+                "provider_key": provider_key,
+                "architecture": im.get("architecture", ""),
+                "architecture_family": "image",
+                "architecture_label": "Image",
+                "recommended_backend": "diffusers",
+                "recommended_backend_label": "Diffusers",
+                "install_kind": "diffusers",
                 "parameter_count": f"{im['params_b']}B",
                 "params_b": im["params_b"],
                 "is_moe": False,

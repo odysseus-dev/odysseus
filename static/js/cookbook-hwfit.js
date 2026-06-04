@@ -413,14 +413,53 @@ function _hwfitShowError(list, host, detail) {
   if (rb) rb.addEventListener('click', () => { _resetGpuToggleState(); _hwfitFetch(true); });
 }
 
-// Client-side "Engine" filter (llama.cpp / vLLM / SGLang). Empty = show all.
-// Uses the same _detectBackend() the serve commands use, so what you filter to
-// is exactly what would be launched. Pure view filter — no refetch needed.
+function _providerKey(model) {
+  return String(model?.provider_key || model?.provider_family || model?.provider || '').toLowerCase();
+}
+
+function _providerLabel(model) {
+  return model?.provider_family || model?.provider || (model?.name || '').split('/')[0] || 'Local';
+}
+
+function _syncProviderOptions(models) {
+  const sel = document.getElementById('hwfit-provider');
+  if (!sel || !Array.isArray(models)) return;
+  const current = sel.value || '';
+  const seen = new Map();
+  models.forEach(m => {
+    const key = _providerKey(m);
+    if (!key) return;
+    const label = _providerLabel(m);
+    if (!seen.has(key)) seen.set(key, { label, count: 0 });
+    seen.get(key).count += 1;
+  });
+  const items = [...seen.entries()].sort((a, b) => {
+    if (b[1].count !== a[1].count) return b[1].count - a[1].count;
+    return a[1].label.localeCompare(b[1].label);
+  });
+  let html = '<option value="">Provider</option>';
+  for (const [key, info] of items) {
+    html += `<option value="${esc(key)}">${esc(info.label)}</option>`;
+  }
+  sel.innerHTML = html;
+  sel.value = seen.has(current) ? current : '';
+}
+
+// Client-side view filters. Engine uses the same _detectBackend() the serve
+// commands use, so what you filter to is exactly what would be launched.
+// Provider/architecture are normalized by /api/hwfit/models. Pure view filters:
+// no hardware re-probe needed.
 function _applyEngineFilter(models) {
-  const want = document.getElementById('hwfit-engine')?.value || '';
-  if (!want || !Array.isArray(models)) return models || [];
+  if (!Array.isArray(models)) return [];
+  _syncProviderOptions(models);
+  const wantEngine = document.getElementById('hwfit-engine')?.value || '';
+  const wantProvider = document.getElementById('hwfit-provider')?.value || '';
+  const wantArch = document.getElementById('hwfit-arch')?.value || '';
   return models.filter(m => {
-    try { return _detectBackend(m).backend === want; } catch { return true; }
+    if (wantProvider && _providerKey(m) !== wantProvider) return false;
+    if (wantArch && String(m?.architecture_family || '') !== wantArch) return false;
+    if (!wantEngine) return true;
+    try { return _detectBackend(m).backend === wantEngine; } catch { return true; }
   });
 }
 
@@ -870,9 +909,11 @@ export function _hwfitRenderList(el, models) {
     const hasFilters = !!(document.getElementById('hwfit-search')?.value?.trim()
       || document.getElementById('hwfit-usecase')?.value
       || document.getElementById('hwfit-quant')?.value
-      || document.getElementById('hwfit-engine')?.value);
+      || document.getElementById('hwfit-engine')?.value
+      || document.getElementById('hwfit-provider')?.value
+      || document.getElementById('hwfit-arch')?.value);
     let msg;
-    if (hasFilters) msg = 'No models match these filters — try clearing the search, use-case, quant, or engine.';
+    if (hasFilters) msg = 'No models match these filters — try clearing the search, use-case, engine, provider, architecture, or quant.';
     else if (hasHw) msg = 'No models fit — the hardware probe may have under-reported. Try Rescan.';
     else msg = 'No models fit your hardware';
     el.innerHTML = `<div class="hwfit-loading">${msg}</div>`;
@@ -922,8 +963,12 @@ export function _hwfitRenderList(el, models) {
     const fitLabel = (m.fit_level || '').replace('_', ' ');
     const modeLabel = _modeLabel(m);
     const vramLabel = m.required_gb ? m.required_gb.toFixed(1) + 'G' : '?';
-    const moeBadge = m.is_moe ? '<span class="hwfit-badge hwfit-moe">MoE</span>' : '';
-    const imgBadge = m.is_image_gen ? '<span class="hwfit-badge" style="background:color-mix(in srgb, var(--red) 20%, transparent);color:var(--red);font-size:8px;padding:1px 4px;border-radius:3px;margin-left:4px;">IMG</span>' : '';
+    let archBadge = '';
+    if (m.is_image_gen) {
+      archBadge = '<span class="hwfit-badge hwfit-arch-badge">IMG</span>';
+    } else if (m.architecture_family && m.architecture_family !== 'dense') {
+      archBadge = `<span class="hwfit-badge hwfit-arch-badge">${esc(m.architecture_label || m.architecture_family)}</span>`;
+    }
     const dlDot = (_cachedModelIds && (_cachedModelIds.has(m.name) || [..._cachedModelIds].some(id => id === m.name?.split('/').pop()))) ? '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>' : '';
     html += `<div class="hwfit-row" data-model="${esc(m.name)}">`;
     html += `<span class="hwfit-col hwfit-fit" style="color:${fitColor}">${esc(fitLabel)}</span>`;
@@ -945,7 +990,7 @@ export function _hwfitRenderList(el, models) {
         _quantSuffix = ` <span class="hwfit-name-quant" title="${esc(_quantTag)} — full storage format">(${esc(_display)})</span>`;
       }
     }
-    html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(_short)}${_quantSuffix}${moeBadge}${imgBadge}${dlDot}</span>`;
+    html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(_short)}${_quantSuffix}${archBadge}${dlDot}</span>`;
     html += `<span class="hwfit-col hwfit-c-params">${esc(pcount)}</span>`;
     // Truncate the Quant cell to 9 chars + ellipsis so long tags like
     // "FP4-MoE-Mixed" don't push neighboring columns. Full tag stays in title.
@@ -1038,6 +1083,14 @@ function _syncHostFromScanDropdown() {
   return host;
 }
 
+function _installKindLabel(kind) {
+  const k = String(kind || '').toLowerCase();
+  if (k === 'gguf') return 'GGUF';
+  if (k === 'safetensors') return 'safetensors';
+  if (k === 'diffusers') return 'diffusers';
+  return kind || 'model';
+}
+
 export function _expandModelRow(row, modelData) {
   const list = row.closest('.hwfit-list');
   if (!list) return;
@@ -1066,6 +1119,17 @@ export function _expandModelRow(row, modelData) {
   html += `<span class="hwfit-panel-badge">${esc(label)}</span>`;
   html += `<a href="${esc(hfUrl)}" target="_blank" rel="noopener" class="hwfit-panel-hf-link" title="View download source on HuggingFace">HF \u2197</a>`;
   html += `</div>`;
+  const providerLabel = modelData.provider_family || modelData.provider || 'Provider';
+  const archLabel = modelData.architecture_label || (modelData.is_moe ? 'MoE' : 'Dense');
+  const installLabel = _installKindLabel(modelData.install_kind || dlSource.kind);
+  const backendLabel = modelData.recommended_backend_label || label;
+  html += `<div class="hwfit-panel-meta">`;
+  html += `<span class="hwfit-meta-pill" title="Model provider">${esc(providerLabel)}</span>`;
+  html += `<span class="hwfit-meta-pill" title="Architecture family">${esc(archLabel)}</span>`;
+  html += `<span class="hwfit-meta-pill" title="Download format">${esc(installLabel)}</span>`;
+  html += `<span class="hwfit-meta-pill" title="Recommended serving backend">${esc(backendLabel)}</span>`;
+  html += `</div>`;
+  html += `<div class="hwfit-panel-install">Download installs the ${esc(installLabel)} source. Run starts it with ${esc(backendLabel)} defaults when the model is already local.</div>`;
   html += `<div class="hwfit-panel-actions">`;
   html += `<button class="cookbook-btn hwfit-dl-btn">Download</button>`;
   if (!modelData.is_image_gen) {
@@ -1290,17 +1354,22 @@ export function _hwfitInit() {
   if (uc) uc.addEventListener('change', () => _hwfitFetch());
   if (sort) sort.addEventListener('change', () => _hwfitFetch());
   if (qpref) qpref.addEventListener('change', () => _hwfitFetch());
-  // Engine filter is a pure client-side view filter over the already-fetched
-  // list, so just re-render from cache instead of re-probing hardware.
-  const engine = document.getElementById('hwfit-engine');
-  if (engine) engine.addEventListener('change', () => {
+  // Engine/provider/architecture filters are pure client-side view filters over
+  // the already-fetched list, so re-render from cache instead of re-probing.
+  const filterSelects = [
+    document.getElementById('hwfit-engine'),
+    document.getElementById('hwfit-provider'),
+    document.getElementById('hwfit-arch'),
+  ].filter(Boolean);
+  const rerenderFiltered = () => {
     const list = document.getElementById('hwfit-list');
     if (list && _hwfitCache && Array.isArray(_hwfitCache.models)) {
       _hwfitRenderList(list, _applyEngineFilter(_hwfitCache.models));
     } else {
       _hwfitFetch();
     }
-  });
+  };
+  filterSelects.forEach(sel => sel.addEventListener('change', rerenderFiltered));
   if (ctx && !ctx.dataset.bound) {
     ctx.dataset.bound = '1';
     ctx.addEventListener('input', () => {

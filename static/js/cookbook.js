@@ -294,6 +294,12 @@ export function _detectBackend(model) {
   if (model?.backend === 'ollama' || model?.is_ollama) {
     return { backend: 'ollama', label: 'Ollama' };
   }
+  if (model?.recommended_backend) {
+    return {
+      backend: model.recommended_backend,
+      label: model.recommended_backend_label || model.recommended_backend,
+    };
+  }
   const q = (model.quant || '').toUpperCase();
   const sysBackend = String(_hwfitCache?.system?.backend || '').toLowerCase();
   const isRocm = sysBackend === 'rocm';
@@ -1779,6 +1785,17 @@ function _renderRecipes() {
   html += '</select>';
   html += '<span class="hwfit-help-chip hwfit-help-chip-inline hwfit-engine-help" title="Rule of thumb: GGUF on single GPU / CPU+RAM → llama.cpp (or Ollama). Safetensors on multi-GPU NVIDIA → vLLM. SGLang is a vLLM-class alternative, sometimes faster on big-MoE / long-context.">?</span>';
   html += '</span>';
+  html += '<select class="cookbook-field-input hwfit-provider" id="hwfit-provider" style="height:28px;" title="Filter by model provider">';
+  html += '<option value="">Provider</option>';
+  html += '</select>';
+  html += '<select class="cookbook-field-input hwfit-arch" id="hwfit-arch" style="height:28px;" title="Filter by model architecture">';
+  html += '<option value="">Architecture</option>';
+  html += '<option value="dense">Dense</option>';
+  html += '<option value="moe">MoE</option>';
+  html += '<option value="looped">Looped / SSM</option>';
+  html += '<option value="multimodal">Vision</option>';
+  html += '<option value="embedding">Embedding</option>';
+  html += '</select>';
   // Quant (Q4/Q8/…). Default is "All" so the list shows the best-scoring
   // quant for every model instead of silently filtering to Q4.
   html += '<span class="hwfit-quant-wrap">';

@@ -20897,6 +20897,8 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-toolbar input:focus { outline: none; border-color: var(--red); }
 .hwfit-toolbar .hwfit-server-select { min-width: 70px; flex-shrink: 0; }
 .hwfit-toolbar .hwfit-usecase { min-width: 70px; flex-shrink: 0; }
+.hwfit-toolbar .hwfit-provider { min-width: 82px; max-width: 128px; flex-shrink: 0; }
+.hwfit-toolbar .hwfit-arch { min-width: 96px; flex-shrink: 0; }
 .hwfit-toolbar .hwfit-quant { min-width: 50px; flex-shrink: 0; }
 .hwfit-toolbar .hwfit-search { flex: 1; min-width: 80px; }
 /* Lower-opacity "Search models..." placeholder so it reads as a hint, not
@@ -21219,10 +21221,14 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-c-speed  { width: 44px; }
 .hwfit-c-score  { width: 40px; font-weight: 700; font-size: 11px; color: var(--fg); }
 .hwfit-c-mode   { width: 72px; }
-.hwfit-moe {
+.hwfit-badge {
   display: inline-block; padding: 0 4px; border-radius: 4px; margin-left: 4px;
   background: color-mix(in srgb, var(--red) 15%, transparent);
   color: var(--red); font-weight: 600; font-size: 8px;
+}
+.hwfit-arch-badge {
+  background: color-mix(in srgb, var(--accent, var(--red)) 13%, transparent);
+  color: var(--accent, var(--red));
 }
 .hwfit-sort, .hwfit-quant { width: auto; min-width: 70px; flex-shrink: 0; }
 .hwfit-row-active { background: color-mix(in srgb, var(--red) 8%, transparent); }
@@ -21250,6 +21256,24 @@ body.gallery-selecting .gallery-dl-btn,
   font-size: 9px; padding: 2px 8px; border-radius: 10px;
   background: color-mix(in srgb, var(--red) 12%, transparent);
   color: var(--red); font-weight: 600; flex-shrink: 0;
+}
+.hwfit-panel-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.hwfit-meta-pill {
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  color: var(--fg-muted);
+  line-height: 1.2;
+}
+.hwfit-panel-install {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--fg-muted);
 }
 .hwfit-panel-fields {
   display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
