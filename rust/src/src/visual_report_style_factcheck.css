@@ -1,0 +1,21 @@
+
+/* Fact-check category */
+.category-factcheck .hero {
+  background:linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+}
+.category-factcheck .content h2:first-of-type {
+  font-size:1.4em; text-align:center; padding:16px 0; border:none;
+  background:color-mix(in srgb, var(--accent) 8%, transparent);
+  border-radius:8px; margin:1em 0;
+}
+.category-factcheck .content blockquote {
+  position:relative; padding-left:20px;
+}
+.category-factcheck .content h2 ~ h3 {
+  padding:6px 10px; border-radius:4px;
+  border-left:3px solid var(--accent);
+}
+.category-factcheck .content strong:only-child {
+  display:inline-block; padding:4px 12px; border-radius:4px;
+  font-size:1.1em;
+}

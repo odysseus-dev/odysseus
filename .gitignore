@@ -30,6 +30,17 @@ node_modules/
 services/node_modules/
 services/data/
 
+# Rust (rust/ server port + desktop crates)
+# Build output — matches target/ at any depth (rust/target, rust/desktop/target,
+# rust/leptos-desktop/frontend/target). Cargo.lock is intentionally NOT ignored:
+# these are binary apps, so the lockfile is committed.
+target/
+*.rs.bk
+**/*.rs.bk
+# WASM build output (leptos-desktop frontend); trunk/electron dist is covered by
+# the `dist/` rule above.
+pkg/
+
 # IDE / Editor
 .aider*
 .claude/

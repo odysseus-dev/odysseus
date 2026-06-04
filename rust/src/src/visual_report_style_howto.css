@@ -1,0 +1,33 @@
+
+/* How-to category */
+.category-howto .content h2 {
+  counter-increment:step-counter;
+}
+.category-howto .content h2::before {
+  content:counter(step-counter);
+  display:inline-flex; align-items:center; justify-content:center;
+  width:28px; height:28px; border-radius:50%;
+  background:var(--accent); color:#fff; font-size:0.8em; font-weight:700;
+  margin-right:10px; flex-shrink:0;
+}
+.category-howto .content { counter-reset:step-counter; }
+.category-howto .content blockquote {
+  border-left:3px solid var(--accent); background:color-mix(in srgb, var(--accent) 8%, transparent);
+  padding:12px 16px; border-radius:0 6px 6px 0; margin:1em 0;
+}
+.category-howto .content blockquote strong:first-child {
+  display:inline-block; margin-bottom:4px; text-transform:uppercase;
+  font-size:0.82em; letter-spacing:0.5px;
+}
+.category-howto .content h2#quick-guide + ol,
+.category-howto .content h2#quick-guide ~ ol:first-of-type {
+  background:color-mix(in srgb, var(--accent) 8%, transparent);
+  border:1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  border-radius:8px; padding:14px 14px 14px 32px; font-size:0.95em; line-height:1.8;
+}
+.category-howto .content h2#quick-guide {
+  counter-increment:none;
+}
+.category-howto .content h2#quick-guide::before {
+  content:'\26A1'; background:none; width:auto; height:auto; margin-right:6px;
+}

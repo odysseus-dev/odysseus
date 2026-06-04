@@ -1,0 +1,32 @@
+
+/* Comparison category */
+.category-comparison .content table {
+  width:100%; border-collapse:collapse; margin:1.2em 0;
+}
+.category-comparison .content table th {
+  background:var(--accent); color:#fff; padding:10px 14px;
+  text-align:center; font-weight:600; position:sticky; top:0;
+}
+.category-comparison .content table td {
+  padding:10px 14px; border-bottom:1px solid var(--border); text-align:center;
+}
+.category-comparison .content table tr:nth-child(even) td { background:var(--bg-surface); }
+.category-comparison .content table td:first-child {
+  text-align:left; font-weight:500; background:color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.category-comparison .content table td.cmp-pos {
+  color:#2e7d32; font-weight:600;
+  background:color-mix(in srgb, #4caf50 10%, transparent);
+}
+.category-comparison .content table td.cmp-neg {
+  color:#c62828; font-weight:600;
+  background:color-mix(in srgb, #f44336 8%, transparent);
+}
+.category-comparison .content table td.cmp-mid {
+  color:#e68a00;
+  background:color-mix(in srgb, #ffa726 8%, transparent);
+}
+.category-comparison .content h2 ~ p strong:first-child {
+  display:inline-block; padding:2px 8px; border-radius:3px;
+  background:color-mix(in srgb, var(--accent) 15%, transparent); font-size:0.9em;
+}

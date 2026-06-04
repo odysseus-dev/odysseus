@@ -1,0 +1,433 @@
+[package]
+name = "odysseus"
+version = "1.0.0"
+edition = "2021"
+description = "Line-by-line-like Rust rewrite of the Odysseus Python AI workspace (developed in parallel with the live Python tree)."
+license = "MIT"
+
+# The crate is both a library (mirroring the Python packages) and a binary
+# (mirroring app.py / setup.py). The Python source tree is left untouched in
+# the repo root; this crate lives entirely under rust/.
+[lib]
+name = "odysseus"
+path = "src/lib.rs"
+
+# The runnable demo server (app.py analogue). Always built: the entire crate
+# (every dependency, every module) now compiles unconditionally — one build.
+[[bin]]
+name = "odysseus"
+path = "src/main.rs"
+
+# (feature flags removed; entire crate compiles unconditionally)
+
+[dependencies]
+# --- serialization (json everywhere in the Python code) ---
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+# --- time (datetime.utcnow().isoformat() / fromisoformat) ---
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+# dateutil.parser fallback for calendar_routes natural-language date parsing (the
+# Python ends its chain with dateutil.parser.parse). dtparse is the faithful Rust
+# port of python-dateutil; parse(&str) -> Result<(NaiveDateTime, Option<FixedOffset>), ParseError>.
+dtparse = "2.0.1"
+
+# --- ids / randomness (uuid4, secrets.token_*) ---
+uuid = { version = "1", features = ["v4"] }
+rand = "0.8"
+
+# --- crypto / hashing (bcrypt, hashlib, hmac, pyotp TOTP, Fernet) ---
+bcrypt = "0.15"
+sha2 = "0.10"
+sha1 = "0.10"
+hmac = "0.12"
+fernet = "0.2"
+
+# --- encodings (base64 url-safe, base32 for pyotp, hex for sha256 hexdigest) ---
+base64 = "0.22"
+base32 = "0.5"
+hex = "0.4"
+
+# --- regex (text helpers / security scrubbing) ---
+regex = "1"
+# fancy-regex: lookaround/backrefs the `regex` crate can't compile (text_helpers).
+fancy-regex = "0.13"
+
+# --- HTML DOM parsing (BeautifulSoup/html.parser -> scraper, html5ever-backed).
+# NON-OPTIONAL / DEFAULT build: email_thread_parser's HTML path reimplements
+# bs4 .extract()/.decode_contents() via NodeId traversal + inner-HTML
+# serialization. Pure parser (no async/HTTP), so it sits beside regex/comrak as a
+# core text dep. DOCUMENTED DRIFT: html5ever follows the HTML5 spec while Python's
+# html.parser is more lenient -> slightly different DOM shapes on malformed mail. ---
+scraper = "0.20"
+# scraper's underlying immutable DOM arena. email_thread_parser names
+# `ego_tree::{NodeRef, NodeId}` directly to reproduce bs4's `.extract()` (track
+# detached node ids) + a custom inner-HTML serializer. Already a transitive
+# scraper dep (no new download); pinned to scraper's version.
+ego-tree = "0.6"
+
+# --- unicode (unicodedata.normalize / unicodedata.category) ---
+unicode-normalization = "0.1"
+unicode-general-category = "1"
+
+# --- lazy singletons (module-level globals in Python) ---
+once_cell = "1"
+
+# --- insertion-ordered map (Python dict ordering for e.g. Session.headers) ---
+indexmap = { version = "2", features = ["serde"] }
+
+# --- URL parsing (urllib.parse.urlparse: hostname, scheme, netloc) ---
+url = "2"
+# --- IDN host punycode->unicode (urlparse().hostname returns the Unicode host;
+# url::Url punycode-encodes, so visual_report decodes it back for display). ---
+idna = "1"
+
+# --- POSIX shell tokenization (shlex.split / shlex.quote) ---
+shlex = "1"
+
+# --- recursive directory walk (os.walk in rag_vector/personal_docs/
+# document_processor/upload_handler). Pure + tiny, so default-build. ---
+walkdir = "2"
+
+# --- markdown -> HTML for visual_report.rs (DEFAULT build). Deliberate engine
+# swap: python-markdown + Pygments codehilite -> comrak (CommonMark + GFM
+# tables/footnotes/strikethrough). No codehilite syntax spans; documented drift. ---
+comrak = "0.52"
+
+# --- html.escape parity for visual_report.rs (escapes ' to &#x27; for the
+# single-quoted onerror handlers). DEFAULT build. ---
+html-escape = "0.2"
+
+# --- urllib.parse.unquote for pdf_form_doc::_decode_name. Tiny, DEFAULT build
+# even though pdf_form_doc itself is web-gated. ---
+percent-encoding = "2"
+
+# --- local-host RAM/CPU probe for services/hwfit/hardware.rs (DEFAULT build,
+# since hwfit is default-built). The honest portable substitute for Python's
+# os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") fallback in
+# _get_ram_gb (taken only on the LOCAL host when /proc/meminfo is absent, i.e.
+# the non-Linux dev/runner machine). The /proc + /sys + ssh-remote Linux paths
+# stay faithful std::fs / std::process::Command -- sysinfo is ONLY the local
+# no-/proc fallback. nix v0.31 in this tree lacks the `fs` feature that would
+# expose sysconf directly, so a small portable crate is the honest stand-in.
+# Subprocess timeouts (Python subprocess.run timeout=10/15) use a no-crate
+# spawn + thread-based kill in hardware.rs, so NO wait-timeout crate is added. ---
+sysinfo = { version = "0.32", default-features = false, features = ["system"] }
+
+# --- SQLite (the `db` feature: core/database.py). `bundled` compiles SQLite
+# from source so the build/tests need no system libsqlite3. ---
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# --- local FastEmbed backend (the `local-embeddings` feature: src/embeddings.py's
+# `FastEmbedClient`). The Python uses the `fastembed` Python lib (ONNX, ~50MB,
+# zero-config local embeddings); the faithful Rust equivalent is the `fastembed`
+# crate (fastembed-rs by the same author, same ONNX models, same `TextEmbedding`
+# API). Its default features (`ort-download-binaries-native-tls`,
+# `hf-hub-native-tls`, `image-models`) make `ort` (ONNX Runtime) DOWNLOAD its
+# prebuilt binary at build time — so NO system `onnxruntime` install is required
+# — and `hf-hub` fetch the model weights into the cache dir on first use, exactly
+# like the Python lib. OPTIONAL so default/web/db builds stay free of the heavy
+# `ort` stack; only `--features local-embeddings` pulls it in (slower build, that
+# is fine). API verified against 5.15.0: `TextEmbedding::try_new(InitOptions::new
+# (EmbeddingModel::AllMiniLML6V2).with_cache_dir(PathBuf))` then `embed(texts,
+# None) -> Vec<Vec<f32>>`.
+fastembed = { version = "5" }
+
+# --- web server (the `web` feature: the runnable demo). axum is the FastAPI
+# analogue; tokio its async runtime. axum-extra gives the cookie jar (the
+# session cookie), tower-http the static-file server (serves the REAL frontend)
+# + CORS + request tracing, dotenvy the `load_dotenv()` at startup. ---
+axum = { version = "0.7", features = ["multipart"] }
+axum-extra = { version = "0.9", features = ["cookie"] }
+# async LLM client (httpx -> reqwest) + Python-async-generator-style streaming.
+# The `blocking` feature backs caldav_sync's hand-rolled CalDAV PROPFIND/REPORT
+# client, which runs inside `tokio::task::spawn_blocking` (the Python
+# `asyncio.to_thread(_sync_blocking, ...)` analogue — the whole CalDAV sync is a
+# synchronous routine in the source).
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "blocking", "multipart"] }
+async-stream = { version = "0.3" }
+futures-util = { version = "0.3" }
+bytes = { version = "1" }
+tower = { version = "0.5" }
+tower-http = { version = "0.6", features = ["fs", "trace", "cors"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "process", "io-util", "io-std", "time"] }
+dotenvy = { version = "0.15" }
+tracing = { version = "0.1" }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+time = { version = "0.3" }
+
+# --- src/ feature-engine batch (all `web`-gated so default/db builds stay free
+# of the PDF / image / cron / nix stacks). ---
+
+# PDF read/write of AcroForm objects (PyMuPDF -> lopdf): field
+# names/values/rects/flags + set /V, NeedAppearances. Drawing/rendering stays an
+# honest stub (lopdf can't regenerate appearance streams).
+lopdf = { version = "0.40" }
+# PDF text extraction (PyMuPDF page text / pypdf -> pdf-extract). Read-only text;
+# per-page image extraction stays an honest stub.
+pdf-extract = { version = "0.10" }
+
+# PDF RENDER / page geometry / positioned-text — the real PyMuPDF (fitz) port
+# that lopdf/pdf-extract can't cover (rasterize a page to PNG, page width/height
+# for the interactive viewer, positioned words for label inference, burn-in
+# stamping of filled field values). pdfium-render binds the prebuilt libpdfium
+# dynamic library at RUNTIME (Pdfium::bind_to_library) — NO bundled `static`/
+# `bindgen`. The dylib is provisioned on first use by downloading the matching
+# bblanchon/pdfium-binaries .tgz into DATA_DIR/pdfium (honoring ODYSSEUS_DATA_DIR,
+# exactly like the onnx_models cache); on no-network that provisioning Err becomes
+# the same honest 500 the Python emits when `import fitz` fails (never faked).
+# default-features=false drops the floating `image_latest` pin (and avoids the
+# default `bindings` path that would pull `bindgen`+clang at build time). We
+# select EXACTLY: `image_025` (the alias the 0.9.x crate actually exposes — there
+# is no bare `image` feature in 0.9, contra the floated `image`/`image_latest`
+# shorthand) matches the in-tree `image` 0.25 so PdfBitmap::as_image yields a
+# DynamicImage the existing `image` dep PNG-encodes; `thread_safe` Mutex-wraps the
+# process-global bindings so it is safe to touch from axum/tokio worker threads
+# (all calls run under tokio::task::spawn_blocking); `pdfium_latest` selects the
+# pre-generated (checked-in) FPDF_* binding header that matches the bblanchon
+# "latest" prebuilt libpdfium we provision at runtime — NO `bindings`/`bindgen`
+# (we bind the prebuilt dylib at runtime via Pdfium::bind_to_library), NO `static`.
+pdfium-render = { version = "0.9", default-features = false, features = ["image_025", "thread_safe", "pdfium_latest"] }
+# gzip layer of the bblanchon .tgz: flate2::read::GzDecoder wraps the downloaded
+# bytes before tar (PDFium binary provisioning in src/src/pdf_render.rs).
+flate2 = { version = "1" }
+# tar layer: tar::Archive over the GzDecoder, iterate entries, extract the single
+# lib/libpdfium.{dylib,so} or bin/pdfium.dll member to the DATA_DIR/pdfium cache.
+tar = { version = "0.4" }
+
+# magic-byte content sniffing for upload_handler::detect_content_type
+# (python-magic/libmagic -> infer, pure-Rust). Extension-only fallback when None.
+infer = { version = "0.19" }
+# mimetypes.guess_type for document_processor + upload_handler.
+mime_guess = { version = "2" }
+# upload_handler image-dimension capture (PIL.Image -> image). Best-effort field.
+image = { version = "0.25" }
+
+# --- gallery_routes ML/CPU image-editing ops (web feature; gallery_routes is web+db-gated).
+# These un-stub the 7 PIL/Real-ESRGAN/rembg/GFPGAN editor ops in routes/gallery_routes.rs.
+# NO new feature flag is created: all three are folded DIRECTLY into the existing `web`
+# dependency set (added to the `web = [ ... ]` array above AND declared optional here).
+# `image` (0.25) is already present (kept as-is). `ndarray` and `ort` are already in the
+# tree transitively via `fastembed`; we name them DIRECTLY at the SAME versions the lock
+# already resolved (ort 2.0.0-rc.12, ndarray 0.17.2) so the web build reuses the identical
+# compiled artifacts (no second ONNX Runtime, no version split). A
+# `--features web,local-embeddings` build therefore still resolves a SINGLE ort/ort-sys.
+# ort is pinned with `=2.0.0-rc.12` so a silent minor bump can't break the call sites.
+# default-features = false + the explicit subset (std,ndarray,download-binaries,tls-native,
+# copy-dylibs) avoids the default `api-24`/`tracing` pull while still self-provisioning the
+# ONNX Runtime binary at build time exactly the way fastembed does (no system onnxruntime
+# install). No api-NN feature is selected: ort-sys binds the minimum ORT_API_VERSION (17),
+# which the downloaded runtime satisfies. ndarray 0.17 matches ort's `ndarray` feature so the
+# Array4<f32> NCHW tensors hand to ort without a version-mismatch wrapper. (The CPU
+# editor ops — rotate 90/180/270, unsharp mask — use `image`/imageops directly; the
+# handler accepts only right-angle rotations, so no arbitrary-angle/imageproc path is needed.)
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "download-binaries", "tls-native", "copy-dylibs"] }
+ndarray = { version = "0.17" }
+# gallery_helpers::_extract_exif EXIF tag read (PIL Image._getexif() -> the pure
+# Rust `kamadak-exif` crate, imported as `exif`). Reads DateTimeOriginal /
+# Make / Model / GPSInfo from the same in-memory upload bytes the `image` crate
+# decodes for width/height. web-gated (gallery_routes is web+db only).
+kamadak-exif = { version = "0.6" }
+
+# memory_routes::import_memories_from_file non-UTF-8 fallback: Python's
+# charset_normalizer.detect + bytes.decode(enc, errors="replace") -> chardetng
+# (Firefox's encoding detector) to guess the label, then encoding_rs to decode
+# (BOM sniff + U+FFFD replacement == errors="replace"). encoding_rs is already
+# in the lockfile transitively; named directly here for the decode call.
+chardetng = { version = "1" }
+encoding_rs = { version = "0.8" }
+
+# auth_routes 2FA: render the otpauth provisioning URI to a base64 PNG QR
+# (Python `qrcode.make(uri, box_size=6, border=2)`), encoded via the `image` crate.
+qrcode = { version = "0.14" }
+
+# services/stt: real LOCAL speech-to-text (replaces the faster-whisper stub).
+# transcribe-rs (onnx feature) reuses the SAME ort/ndarray pins already in the
+# tree (no second ML toolchain). The uploaded audio (browser sends WebM/Opus)
+# is demuxed by symphonia, Opus frames decoded by the `opus` C-binding, and the
+# PCM resampled to 16 kHz mono by rubato before inference.
+transcribe-rs = { version = "0.3", default-features = false, features = ["whisper-cpp"] }
+symphonia = { version = "0.5", features = ["mkv", "ogg", "isomp4", "wav", "pcm", "mp3", "aac", "vorbis", "flac", "adpcm", "alac"] }
+opus = { version = "0.3" }
+
+# services/tts: real LOCAL Kokoro-82M speech synthesis (replaces the stub). Runs
+# the Kokoro ONNX model over the SAME ort runtime; pure-Rust G2P (no system
+# espeak). Model + voices fetched lazily on first use.
+kokoro-tts = { version = "0.3" }
+
+# scripts/diffusion_server.py port: LOCAL Stable-Diffusion text-to-image via
+# candle (HuggingFace's pure-Rust ML framework). Exposed as the `diffusion-server`
+# subcommand serving the same OpenAI `/v1/images/generations` contract the app's
+# image-gen already speaks. SD 1.5 / 2.1 / SDXL / Turbo (candle's built-in
+# architectures); weights fetched via hf-hub. CPU is slow — `metal`/`cuda` features
+# can accelerate. (candle is a separate ML toolchain, NOT ort.)
+candle-core = { version = "0.10" }
+candle-nn = { version = "0.10" }
+candle-transformers = { version = "0.10" }
+tokenizers = { version = "0.23", default-features = false, features = ["onig"] }
+hf-hub = { version = "0.4" }
+
+# task_scheduler::compute_next_run IANA wall-clock interpretation
+# (zoneinfo.ZoneInfo -> chrono-tz). PARITY-CRITICAL date math.
+chrono-tz = { version = "0.10" }
+# task_scheduler::compute_next_run cron branch (croniter -> cron). Crate
+# get_next + weekday numbering to be VERIFIED against croniter before locking.
+cron = { version = "0.16" }
+
+# bg_jobs detached process groups: os.setsid (pre_exec) + killpg/getpgid/
+# kill(pid,0) liveness (-> nix). Unix-only (honest note if Windows targeted).
+# `term` adds nix::pty::openpty + Winsize for shell_routes' use_pty path
+# (pty.openpty/os.setsid/TIOCSCTTY -> nix::pty + nix::unistd::setsid + the
+# re-exported nix::libc::ioctl(TIOCSCTTY)). Pure-stdlib in Python; portable here.
+nix = { version = "0.31", features = ["signal", "process", "term"] }
+
+# research_handler's ResearchEngine trait: dyn-compatible async methods on the
+# DeepResearcher engine seam (the handler logic is ported/tested independent of
+# the engine's availability). web-gated alongside the research cohort.
+async-trait = { version = "0.1" }
+
+# caldav_sync VEVENT parse/serialize (Python `icalendar` library -> the Rust
+# `icalendar` crate). Used inside spawn_blocking after the CalDAV REPORT
+# (calendar-query time-range) fetch over reqwest. web-gated (CalDAV is async/HTTP
+# + DB upsert). The full multi-calendar PROPFIND discovery may stay an honest
+# stub; the single-calendar REPORT path + VEVENT parse are ported.
+icalendar = { version = "0.16" }
+
+# agent_runs cooperative cancellation: CancellationToken lets a running stream
+# stop gracefully (partial-persist on the wrapped stream's Drop) instead of
+# JoinHandle::abort(), which would not run a catchable handler -- the whole point
+# of the run buffer/replay module is graceful stop. web-gated alongside tokio.
+tokio-util = { version = "0.7" }
+
+# document_routes /api/documents/export-zip + gallery_routes /api/gallery/
+# download-zip build a ZIP archive in memory (Python `zipfile.ZipFile(buf, "w",
+# zipfile.ZIP_DEFLATED)` -> `zip::ZipWriter` over a `Cursor<Vec<u8>>` with the
+# Deflated compression method). document_routes uses `writestr` (string body ->
+# `start_file` + `write_all`); gallery_routes uses `write(src, arcname=name)`
+# (file from disk -> `start_file` + stream the bytes). web-gated (both routes are
+# web-only); `default-features = false` + only `deflate` keeps the pulled-in
+# compression backend to flate2/miniz_oxide, matching ZIP_DEFLATED exactly.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+# --- wave-8 mail stack (the comms cohort: routes/email_helpers.py +
+# email_routes.py + email_pollers.py + contacts_routes.py). All `web`-gated so
+# the default/db build combos stay free of the IMAP/SMTP/MIME/XML/CSV stacks. ---
+
+# IMAP client (Python's stdlib `imaplib` -> the sync `imap` crate). email_helpers
+# opens IMAP4 / IMAP4_SSL / IMAP4 + .starttls() and runs SELECT/SEARCH/FETCH/
+# STORE/LOGOUT; the crate's `Client`/`Session` map those 1:1. SYNCHRONOUS, exactly
+# like imaplib — every call runs inside `tokio::task::spawn_blocking` (the same
+# pattern caldav_sync uses for its blocking reqwest). The maintained line is the
+# 3.0.0-alpha series (the 2.x stable predates current native-tls); `native-tls`
+# is its default TLS feature and the one email_helpers' implicit-SSL + STARTTLS
+# branches need. Documented drift: like all real IMAP libraries it speaks the
+# protocol the same way imaplib does; folder/UID semantics are preserved.
+imap = { version = "3.0.0-alpha.15" }
+# The wire-protocol types the `imap` crate parses into (it re-exports most but NOT
+# `UidSetMember`, which `Appended.uids` is a `Vec<_>` of). Named directly so the
+# `_deliver` APPENDUID path can match `UidSetMember::Uid(u)` to read the server's
+# returned Sent-folder UID (Python's `re.search(rb"APPENDUID\s+\d+\s+(\d+)", ...)`).
+# Same version the `imap` crate locks transitively, so no extra resolution cost.
+imap-proto = { version = "0.16" }
+# TLS backend the `imap` crate (and lettre below) use for the implicit-SSL
+# (IMAP4_SSL / SMTP_SSL :993/:465) and STARTTLS (:143/:587 upgrade) transports.
+# Named directly because email_helpers builds the TlsConnector handed to
+# `imap::connect` / `Client::secure`. Distinct from reqwest's rustls-tls (a
+# different crate, no conflict) — this matches Python's stdlib ssl default, which
+# is the OS-native TLS stack. Unix dev/runner ships a usable system OpenSSL.
+native-tls = { version = "0.2" }
+
+# SMTP send + MIME *build* (Python's stdlib `smtplib` + `email.mime.*`/`encoders`
+# -> lettre). The blocking `SmtpTransport` (default `smtp-transport` feature)
+# covers both modes email_helpers uses: `SmtpTransport::relay(host)` = implicit
+# TLS (smtplib.SMTP_SSL, :465) and `SmtpTransport::starttls_relay(host)` =
+# STARTTLS upgrade (smtplib.SMTP + .starttls(), :587), each `.credentials(..)` +
+# `.send(&msg)`. lettre's `message` builder (default `builder` feature) replaces
+# MIMEMultipart/MIMEText/MIMEBase+encoders for outbound multipart-with-attachments.
+# Defaults (builder + smtp-transport + native-tls + pool + hostname) are exactly
+# the surface needed; runs under spawn_blocking like the IMAP path.
+lettre = { version = "0.11" }
+# MIME *parse* of the RFC822 bytes IMAP FETCH returns (Python's stdlib `email`/
+# `email.header` `message_from_bytes` + decode_header + get_payload walk ->
+# mail-parser). Read-only structured parse (headers, decoded subject/from,
+# text/html bodies, attachment parts); pairs with the `imap` fetch above.
+mail-parser = { version = "0.11" }
+
+# --- wave-8 contacts_routes (CardDAV directory sync + CSV import/export) ---
+
+# CardDAV REPORT/GET response XML parse (Python `defusedxml.ElementTree` ->
+# quick-xml). contacts_routes sends a fixed addressbook-query REPORT body (a
+# string constant, no builder needed) and parses the multistatus response to
+# pull each `<D:href>` + `<C:address-data>` (raw vCard); quick-xml's pull reader
+# walks that. The vCard parse/build itself is pure regex/string in the Python and
+# stays crate-free. `defusedxml`'s entity-expansion hardening has no exact Rust
+# analogue; quick-xml does not expand external entities by default, which is the
+# safe behavior defusedxml enforces.
+quick-xml = { version = "0.40" }
+# contacts CSV import/export (Python's stdlib `csv` DictReader/reader/writer +
+# Sniffer -> the `csv` crate). Used for /api/contacts/import (parse uploaded CSV)
+# and /export (emit name,email,phone). The crate has no feature flags to set.
+csv = { version = "1" }
+
+[dev-dependencies]
+tempfile = "3"
+
+# =============================================================================
+# routes/ PORT — DEFERRED DEPENDENCY LEDGER (recorded, NOT added now)
+# -----------------------------------------------------------------------------
+# STEP 0 of the routes/ rewrite verified that the INTEGRATION FOUNDATION and the
+# PROOF BATCH (font/emoji/prefs/search/diagnostics/hwfit/vault/compare/preset/
+# cleanup/tts/stt/signature) need ZERO new crates: their deps (axum + multipart,
+# serde_json, reqwest, base64, base32, rand, uuid, image, chrono, rusqlite,
+# regex, tokio `process`, shlex/std) are already in the web/db feature set.
+#
+# `axum::extract::ConnectInfo<SocketAddr>` + `into_make_service_with_connect_info`
+# (the auth-adapter's client_host source) are ALSO already available: axum here
+# keeps `default-features` on, so axum's default `tokio` feature is enabled.
+# `shutil.which` (vault `_find_bw`) reuses the pure-std `shutil_which` already in
+# src/src/builtin_mcp.rs; the glob tail uses the existing `walkdir`. So nothing
+# is added at this step.
+#
+# The crates below are required only by LATER waves; each is added (with the
+# `optional = true` + feature gate shown) in the wave that first needs it, so the
+# default/web/db build combos stay clean and warning-free until then:
+#
+#   wave-4-reconcile (auth_routes /2fa/setup QR PNG):
+#     qrcode = { version = "0.14", optional = true }            # gate: web
+#       (alternatively keep /2fa/setup secret+uri only and skip the PNG)
+#
+#   wave-8-comms (the mail stack — single largest external decision): LANDED.
+#     imap@3-alpha + native-tls -> IMAP fetch     # gate: web (added above)
+#       (the SYNC `imap` crate under spawn_blocking, matching imaplib's blocking
+#        model exactly — chosen over async-imap because the Python is synchronous)
+#     lettre                    -> SMTP send + MIME build  # gate: web (added above)
+#     mail-parser               -> MIME parse (FETCH bytes) # gate: web (added above)
+#
+#   wave-8-comms (contacts_routes CardDAV + import/export): LANDED.
+#     quick-xml -> CardDAV REPORT XML parse        # gate: web (added above)
+#     csv       -> contacts import/export          # gate: web (added above)
+#
+#   conditional (only if these stubbed paths are ever de-stubbed):
+#     kamadak-exif -> gallery `_extract_exif` (PIL EXIF)   # LANDED (gate: web)
+#       — added above; `_extract_exif` now decodes width/height via `image` and
+#       reads DateTimeOriginal/Make/Model/GPS via `kamadak-exif`.
+#       (strict base64 decode for signature/gallery already covered by `base64`)
+#
+# NO Rust equivalent (these stay FAITHFUL honest-stubs mirroring Python's own
+# "not installed" branch — they are NOT crate additions):
+#   * fastembed         (embedding_routes /models/*)  -> 503 "not installed"
+#   * PIL / Pillow      (gallery/upload thumbnails)   -> fall-through to full file
+#
+# DE-STUBBED — gallery /api/image/* editor ops (Real-ESRGAN / rembg / GFPGAN +
+# the PIL rotate/sharpen/inpaint-mask CPU ops): LANDED via REAL Rust, not stubs.
+#   ort (=2.0.0-rc.12) + ndarray (0.17) + imageproc (0.25) added above as DIRECT
+#   optional deps and folded into the `web` feature array (NO new feature flag).
+#   The 7 ops live in routes/gallery_routes.rs backed by the new web-gated shared
+#   modules src/src/image_edit.rs (pure CPU: rotate/unsharp/mask/composite/enhance
+#   fallback via image+imageproc) and src/src/image_models.rs (ort/ONNX runners:
+#   u2net remove-bg, Real-ESRGAN x4plus upscale, realesr-general-x4v3 denoise,
+#   GFPGAN whole-image face restore — models cached lazily under DATA_DIR/onnx_models
+#   via reqwest, self-provisioning the ONNX runtime exactly like fastembed). When a
+#   model can't be obtained at runtime the ML handlers soft-fail with {"error": ...}
+#   (HTTP 200), matching Python's "not installed" branch — never a 500.
+# =============================================================================

@@ -1,0 +1,269 @@
+#!/usr/bin/env bun
+
+/**
+ * Odysseus launcher.
+ *
+ * Direct Bun script by design. It is the friendly front door for the Rust port:
+ * native setup/serve use the Rust binary; Docker and GPU helpers delegate to
+ * the repo's existing scripts and Compose files.
+ */
+
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+
+if (typeof Bun === "undefined") {
+  console.error("odysseus: this launcher must be run with Bun, not Node.");
+  process.exit(1);
+}
+
+const root = dirname(import.meta.path);
+const args = process.argv.slice(2);
+const release = process.env.RELEASE === "1";
+const binDir = release ? "release" : "debug";
+const rustBin = join(root, "rust", "target", binDir, "odysseus");
+
+const truthy = (value) => /^(1|true|yes|on)$/i.test(String(value ?? "").trim());
+const isMac = process.platform === "darwin";
+
+function printUsage() {
+  console.log(`Odysseus launcher (Bun -> Rust)
+
+Usage:
+  ./odysseus                         native quick start (setup, then serve)
+  ./odysseus setup                   run Rust first-time setup
+  ./odysseus serve [--host H] [--port P]
+                                      run Rust web server
+  ./odysseus rust <args...>          pass args directly to the Rust binary
+
+Docker:
+  ./odysseus docker up               docker compose up -d --build
+  ./odysseus docker down             docker compose down
+  ./odysseus docker restart          recreate the Docker stack
+  ./odysseus docker ps               show Compose services
+  ./odysseus docker logs [service]   tail logs (default: odysseus)
+  ./odysseus docker gpu nvidia [...] run NVIDIA GPU helper
+  ./odysseus docker gpu amd [...]    run AMD GPU helper
+
+Other helpers:
+  ./odysseus chroma [start|stop|status]
+  ./odysseus service install         install systemd service from odysseus-ui.service
+  ./odysseus macos-app               build clickable macOS app wrapper
+  ./odysseus doctor                  check common local tools
+
+Env:
+  RELEASE=1                          build optimized Rust binary
+  APP_BIND / APP_PORT                native serve defaults from .env
+  ODYSSEUS_HOST / ODYSSEUS_PORT      override native quick-start bind/port
+  ODYSSEUS_NO_OPEN=1                 do not open browser after native startup
+`);
+}
+
+function loadDotEnv() {
+  const path = join(root, ".env");
+  if (!existsSync(path)) return;
+  const text = Bun.file(path).textSync();
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const idx = trimmed.indexOf("=");
+    if (idx < 1) continue;
+    const key = trimmed.slice(0, idx).trim();
+    if (process.env[key] !== undefined) continue;
+    let value = trimmed.slice(idx + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    } else {
+      value = value.replace(/\s+#.*$/, "");
+    }
+    process.env[key] = value;
+  }
+}
+
+function spawnSync(argv, opts = {}) {
+  const proc = Bun.spawnSync(argv, {
+    cwd: root,
+    env: process.env,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+    ...opts,
+  });
+  return proc.exitCode ?? (proc.success ? 0 : 1);
+}
+
+async function spawn(argv, opts = {}) {
+  const child = Bun.spawn(argv, {
+    cwd: root,
+    env: process.env,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+    ...opts,
+  });
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+    process.on(signal, () => child.kill(signal));
+  }
+  return await child.exited;
+}
+
+function commandExists(command) {
+  return Bun.spawnSync(["sh", "-lc", `command -v ${command} >/dev/null 2>&1`]).success;
+}
+
+function buildRust() {
+  const buildArgs = [
+    "cargo",
+    "build",
+    "--manifest-path",
+    join(root, "rust", "Cargo.toml"),
+    "--bin",
+    "odysseus",
+    "--quiet",
+  ];
+  if (release) buildArgs.push("--release");
+  const code = spawnSync(buildArgs);
+  if (code !== 0) process.exit(code);
+}
+
+async function runRust(rustArgs) {
+  buildRust();
+  process.exit(await spawn([rustBin, ...rustArgs]));
+}
+
+function composeArgs(extra) {
+  return ["docker", "compose", ...extra];
+}
+
+async function openWhenReady(host, port) {
+  if (process.env.ODYSSEUS_NO_OPEN || !isMac || !commandExists("open")) return;
+  const probeHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
+  const urlHost = probeHost;
+  const url = `http://${urlHost}:${port}`;
+  for (let i = 0; i < 90; i += 1) {
+    const ok = Bun.spawnSync([
+      "sh",
+      "-lc",
+      `nc -z ${JSON.stringify(probeHost)} ${Number(port)} >/dev/null 2>&1`,
+    ]).success;
+    if (ok) {
+      console.log(`\nOdysseus is ready: ${url}\n`);
+      Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
+      return;
+    }
+    await Bun.sleep(1000);
+  }
+}
+
+async function nativeQuickStart() {
+  loadDotEnv();
+  const port = process.env.ODYSSEUS_PORT || process.env.APP_PORT || (isMac ? "7860" : "7000");
+  const host = process.env.ODYSSEUS_HOST || process.env.APP_BIND || "127.0.0.1";
+  console.log("Odysseus native quick start");
+  buildRust();
+  let setupEnv = process.env;
+  setupEnv = { ...setupEnv };
+  const setup = spawnSync([rustBin, "setup"], { env: setupEnv });
+  if (setup !== 0) process.exit(setup);
+  openWhenReady(host, port).catch(() => {});
+  console.log(`Starting Rust server on http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${port}`);
+  process.exit(await spawn([rustBin, "serve", "--host", host, "--port", port]));
+}
+
+async function dockerCommand(rest) {
+  const sub = rest[0] || "up";
+  if (sub === "up" || sub === "start") {
+    process.exit(await spawn(composeArgs(["up", "-d", "--build", ...rest.slice(1)])));
+  }
+  if (sub === "down" || sub === "stop") {
+    process.exit(await spawn(composeArgs(["down", ...rest.slice(1)])));
+  }
+  if (sub === "restart") {
+    let code = await spawn(composeArgs(["down"]));
+    if (code !== 0) process.exit(code);
+    process.exit(await spawn(composeArgs(["up", "-d", "--build", ...rest.slice(1)])));
+  }
+  if (sub === "ps" || sub === "status") {
+    process.exit(await spawn(composeArgs(["ps", ...rest.slice(1)])));
+  }
+  if (sub === "logs") {
+    const service = rest[1] || "odysseus";
+    process.exit(await spawn(composeArgs(["logs", "--tail=120", service, ...rest.slice(2)])));
+  }
+  if (sub === "gpu") {
+    const vendor = rest[1];
+    if (vendor === "nvidia") {
+      process.exit(await spawn([join(root, "scripts", "check-docker-gpu.sh"), ...rest.slice(2)]));
+    }
+    if (vendor === "amd" || vendor === "rocm") {
+      process.exit(await spawn([join(root, "scripts", "check-docker-amd-gpu.sh"), ...rest.slice(2)]));
+    }
+    console.error("usage: ./odysseus docker gpu <nvidia|amd> [helper args...]");
+    process.exit(2);
+  }
+  console.error(`unknown docker command: ${sub}`);
+  printUsage();
+  process.exit(2);
+}
+
+function doctor() {
+  const checks = [
+    ["bun", true],
+    ["cargo", true],
+    ["docker", false],
+    ["tmux", false],
+    ["brew", isMac],
+    ["llama-server", isMac],
+  ];
+  for (const [cmd, important] of checks) {
+    const ok = commandExists(cmd);
+    const mark = ok ? "ok" : important ? "missing" : "optional";
+    console.log(`${mark.padEnd(8)} ${cmd}`);
+  }
+}
+
+switch (args[0]) {
+  case undefined:
+    await nativeQuickStart();
+    break;
+  case "-h":
+  case "--help":
+  case "help":
+    printUsage();
+    break;
+  case "setup":
+    await runRust(["setup"]);
+    break;
+  case "serve":
+    loadDotEnv();
+    await runRust(args);
+    break;
+  case "rust":
+    await runRust(args.slice(1));
+    break;
+  case "mcp-server":
+  case "chroma":
+  case "diffusion-server":
+    await runRust(args);
+    break;
+  case "docker":
+    await dockerCommand(args.slice(1));
+    break;
+  case "service":
+    if (args[1] === "install") {
+      process.exit(await spawn([join(root, "install-service.sh")]));
+    }
+    console.error("usage: ./odysseus service install");
+    process.exit(2);
+    break;
+  case "macos-app":
+    process.exit(await spawn([join(root, "build-macos-app.sh"), ...args.slice(1)]));
+    break;
+  case "doctor":
+    doctor();
+    break;
+  default:
+    await runRust(args);
+}
