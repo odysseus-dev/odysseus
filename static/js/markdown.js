@@ -60,8 +60,20 @@ const _ALLOWED_HTML_BAD_TAGS = new Set([
   'SVG', 'MATH',
 ]);
 const _ALLOWED_HTML_URL_ATTRS = new Set([
-  'href', 'src', 'xlink:href', 'action', 'formaction', 'background', 'poster',
+  'href', 'src', 'srcset', 'xlink:href', 'action', 'formaction', 'background', 'poster',
 ]);
+
+function _compactUrlSchemeValue(value) {
+  return String(value || '').replace(/[\u0000-\u0020\u007f-\u009f]+/g, '').toLowerCase();
+}
+
+function _isDangerousUrl(value) {
+  return /^(javascript|vbscript|data):/.test(_compactUrlSchemeValue(value));
+}
+
+function _isDangerousSrcset(value) {
+  return String(value || '').split(',').some(candidate => _isDangerousUrl(candidate));
+}
 
 function _cleanAllowedHtmlOnce(htmlString) {
   const tpl = document.createElement('template');
@@ -82,11 +94,17 @@ function _cleanAllowedHtmlOnce(htmlString) {
         el.removeAttribute(attr.name);
         continue;
       }
+      if (name === 'style') {
+        const value = _compactUrlSchemeValue(attr.value);
+        if (/javascript:|vbscript:|data:|expression\(/.test(value)) {
+          el.removeAttribute(attr.name);
+        }
+        continue;
+      }
       // Neutralize javascript:/vbscript:/data: in URL-bearing attributes.
       // Strip control/space chars first so e.g. "java\tscript:" can't slip by.
       if (_ALLOWED_HTML_URL_ATTRS.has(name)) {
-        const value = (attr.value || '').replace(/[\x00-\x20]+/g, '').toLowerCase();
-        if (/^(javascript|vbscript|data):/.test(value)) {
+        if (name === 'srcset' ? _isDangerousSrcset(attr.value) : _isDangerousUrl(attr.value)) {
           el.removeAttribute(attr.name);
         }
       }
