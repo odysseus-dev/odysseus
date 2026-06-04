@@ -240,6 +240,115 @@
     setTimeout(function(){var l=document.getElementById('app-loader');if(l){l.style.opacity='0';setTimeout(function(){l.remove()},300)}},5000);
   })();
   </script>
+  <!-- Project Add/Edit Modal -->
+  <!-- Project Workspace (file explorer + chat launcher) -->
+  <div id="project-workspace" class="modal hidden" role="dialog" aria-label="Project workspace" aria-modal="true">
+    <div class="modal-content" style="width:min(720px,95vw);height:min(84vh,740px);background:var(--bg);display:flex;flex-direction:column;padding:0;overflow:hidden;">
+      <!-- Header -->
+      <div class="modal-header" style="flex-shrink:0;gap:10px;min-width:0;">
+        <h4 id="workspace-project-title" style="display:flex;align-items:center;gap:8px;overflow:hidden;min-width:0;flex:1;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.7;">
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          </svg>
+          <span id="workspace-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;"></span>
+          <span id="workspace-path" style="font-size:10px;opacity:0.45;font-weight:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:10;"></span>
+        </h4>
+        <div style="display:flex;gap:6px;align-items:center;flex-shrink:0;">
+          <button type="button" id="workspace-refresh-btn" style="display:none;padding:5px 11px;border-radius:4px;border:1px solid var(--border);background:var(--panel,var(--bg2,var(--bg)));color:var(--fg);cursor:pointer;font-size:12px;white-space:nowrap;">Refresh</button>
+          <button type="button" id="workspace-snapshot-btn" style="padding:5px 11px;border-radius:4px;border:none;background:var(--red,#e06c75);color:#fff;cursor:pointer;font-size:12px;white-space:nowrap;">Take snapshot</button>
+          <button class="close-btn" id="close-project-workspace" aria-label="Close workspace">✖</button>
+        </div>
+      </div>
+      <!-- Access banner (shown when folder permission is needed) -->
+      <div id="workspace-access-banner" style="display:none;flex-shrink:0;padding:14px 18px;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--red,#e06c75) 8%,transparent);">
+        <div style="display:flex;align-items:flex-start;gap:10px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:2px;opacity:0.7;">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <div style="flex:1;min-width:0;">
+            <p id="workspace-access-msg" style="margin:0 0 6px;font-size:13px;font-weight:500;"></p>
+            <p style="margin:0 0 10px;font-size:11px;opacity:0.6;line-height:1.4;">Files are read locally in your browser and never uploaded to the server.</p>
+            <button type="button" id="workspace-grant-btn"
+              style="padding:6px 14px;border-radius:4px;border:none;background:var(--red,#e06c75);color:#fff;cursor:pointer;font-size:12px;font-weight:500;">
+              Grant Access
+            </button>
+          </div>
+        </div>
+      </div>
+      <!-- File tree + diff panel -->
+      <div id="workspace-tree-area" style="flex:1;overflow-y:auto;padding:6px 4px;border-top:1px solid var(--border);display:flex;flex-direction:column;">
+        <div id="workspace-file-tree" style="font-size:13px;"></div>
+        <div id="workspace-diff-panel" style="display:none;flex-shrink:0;border-top:1px solid var(--border);background:var(--panel,var(--bg2,var(--bg)));"></div>
+      </div>
+      <!-- Status bar -->
+      <div style="flex-shrink:0;padding:7px 14px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;font-size:11px;opacity:0.6;">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+        </svg>
+        <span id="workspace-sel-status">No changes tracked yet</span>
+      </div>
+    </div>
+  </div>
+  <div id="project-modal" class="modal hidden" role="dialog" aria-label="Project" aria-modal="true">
+    <div class="modal-content" style="max-width:480px;background:var(--bg)">
+      <div class="modal-header">
+        <h4 id="project-modal-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          New Project
+        </h4>
+        <button class="close-btn" id="close-project-modal" aria-label="Close project modal">✖</button>
+      </div>
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;padding:18px 20px;">
+        <div>
+          <label for="project-name-input" style="display:block;font-size:12px;opacity:0.7;margin-bottom:5px;">Name</label>
+          <input type="text" id="project-name-input" placeholder="My Project" maxlength="120"
+            style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--fg);font-size:13px;" />
+        </div>
+        <div>
+          <label style="display:block;font-size:12px;opacity:0.7;margin-bottom:5px;">Folder</label>
+          <button type="button" id="project-pick-folder-btn"
+            style="display:flex;align-items:center;gap:8px;width:100%;padding:7px 12px;border-radius:4px;border:1px solid var(--border);background:var(--panel,var(--bg2,var(--bg)));color:var(--fg);cursor:pointer;font-size:13px;text-align:left;overflow:hidden;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.6;">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            </svg>
+            <span id="project-pick-folder-label" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:0.5;">Choose a folder…</span>
+          </button>
+          <p style="font-size:11px;opacity:0.45;margin:6px 0 0;line-height:1.4;">
+            Odysseus reads this folder directly in your browser — no files are uploaded to the server.
+          </p>
+        </div>
+        <div>
+          <label for="project-instructions-input" style="display:block;font-size:12px;opacity:0.7;margin-bottom:5px;">Instructions <span style="opacity:0.5;font-weight:400;">(sent as system prompt in every project chat)</span></label>
+          <textarea id="project-instructions-input" rows="5" placeholder="e.g. Always reply in English. Context: this project is a React app." maxlength="4000"
+            style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--fg);font-size:13px;resize:vertical;font-family:inherit;"></textarea>
+        </div>
+        <div>
+          <label style="display:block;font-size:12px;opacity:0.7;margin-bottom:5px;">Agent <span style="opacity:0.5;font-weight:400;">(optional &mdash; coding agent for this project)</span></label>
+          <select id="project-agent-select" style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--fg);font-size:13px;">
+            <option value="">None</option>
+          </select>
+        </div>
+        <div id="project-modal-error" style="font-size:12px;color:var(--red,#e06c75);display:none;"></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:4px;">
+          <button type="button" id="project-modal-cancel-btn"
+            style="padding:7px 16px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--fg);cursor:pointer;font-size:13px;">Cancel</button>
+          <button type="button" id="project-modal-save-btn"
+            style="padding:7px 16px;border-radius:4px;border:none;background:var(--red,#e06c75);color:#fff;cursor:pointer;font-size:13px;font-weight:500;">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Project context menu -->
+  <div id="project-context-menu" class="dropdown hidden" style="position:fixed;z-index:9999;">
+    <div class="dropdown-item" id="project-ctx-settings">Settings</div>
+    <div class="dropdown-item" id="project-ctx-changes">View changes</div>
+    <div class="dropdown-item" id="project-ctx-rename">Rename</div>
+    <div class="dropdown-item" id="project-ctx-delete" style="color:var(--red,#e06c75);">Delete</div>
+  </div>
+
   <!-- Memory Management Modal -->
   <div id="memory-modal" class="modal hidden">
     <div class="modal-content memory-modal-content" role="dialog" aria-label="Brain" style="background:var(--bg)">
@@ -678,6 +787,21 @@
       </div>
     </div>
     <div class="sidebar-inner">
+      <!-- Projects section — top of sidebar -->
+      <div class="section" id="projects-section" draggable="true">
+        <div class="section-header-flex">
+          <span class="section-title">
+            <svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+            Projects
+          </span>
+          <button type="button" class="section-header-btn list-item-plus-btn" id="projects-add-btn" title="Add project">
+            <svg class="list-item-plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span class="list-item-plus-label">new</span>
+          </button>
+        </div>
+        <div id="projects-list"></div>
+      </div>
+
       <div class="list-item" id="sidebar-new-chat-btn" title="New chat">
         <svg class="sidebar-action-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="position:relative;left:-2px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         <span class="grow" style="position:relative;left:-3px;">New Chat</span>
@@ -929,7 +1053,7 @@
     <h1 class="a11y-visually-hidden">Odysseus</h1>
     <div class="chat-top-bar">
       <button type="button" class="incognito-indicator" id="incognito-indicator" title="Nobody mode active — click to deactivate" style="display:none;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg></button>
-      <div class="chat-meta-overlay"><span id="current-meta">Odysseus Chat</span><span id="current-meta-count" class="chat-meta-count" aria-hidden="true"></span><span id="session-cost-display" class="session-cost-display" style="display:none;"></span><span class="export-dropdown-wrap" id="export-dropdown-wrap"><button type="button" class="export-dl-btn" id="export-dl-btn" title="More"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button><div class="export-dropdown-menu" id="export-dropdown-menu"><div class="export-dropdown-item" id="export-rename-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span><span>Rename</span></div><div class="export-dropdown-item" id="export-copy-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span><span>Copy Chat</span></div><div class="export-dropdown-item" id="export-pdf-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15v-2h2a1.5 1.5 0 0 1 0 3H9z"/></svg></span><span>PDF</span></div><div class="export-dropdown-item" id="export-doc-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Save to Documents</span></div></div></span></div>    </div>
+      <div class="chat-meta-overlay"><span id="current-meta">Odysseus Chat</span><button type="button" id="project-badge" title="Open project settings" style="display:none;align-items:center;gap:5px;margin-left:8px;padding:2px 8px 2px 6px;border-radius:10px;border:1px solid var(--border);background:var(--panel,var(--bg2,var(--bg)));color:var(--fg);font-size:11px;cursor:pointer;opacity:0.75;white-space:nowrap;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span id="project-badge-name"></span></button><span id="current-meta-count" class="chat-meta-count" aria-hidden="true"></span><span id="session-cost-display" class="session-cost-display" style="display:none;"></span><span class="export-dropdown-wrap" id="export-dropdown-wrap"><button type="button" class="export-dl-btn" id="export-dl-btn" title="More"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button><div class="export-dropdown-menu" id="export-dropdown-menu"><div class="export-dropdown-item" id="export-rename-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span><span>Rename</span></div><div class="export-dropdown-item" id="export-copy-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span><span>Copy Chat</span></div><div class="export-dropdown-item" id="export-pdf-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15v-2h2a1.5 1.5 0 0 1 0 3H9z"/></svg></span><span>PDF</span></div><div class="export-dropdown-item" id="export-doc-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Save to Documents</span></div></div></span></div>    </div>
     <div id="welcome-screen">
       <div class="welcome-name"><svg class="welcome-boat" viewBox="0 0 32 32"><path d="M16 4L16 22L6 22Z" fill="currentColor"/><path d="M16 8L16 22L24 22Z" fill="currentColor" opacity="0.6"/><path d="M4 24Q10 20 16 24Q22 28 28 24" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg>Odysseus</div>
       <div class="welcome-sub" id="welcome-sub">Welcome, <span class="setup-trigger-link" style="color:var(--accent,var(--red));font-weight:600;cursor:pointer;text-decoration:underline;" title="Click to launch setup">type /setup</span> to get started.</div>
