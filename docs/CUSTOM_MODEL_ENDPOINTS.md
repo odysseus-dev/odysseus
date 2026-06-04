@@ -28,7 +28,7 @@ Odysseus will automatically probe the endpoint and discover available models.
 If you prefer programmatic addition (e.g., in scripts or CI/CD):
 
 ```bash
-curl -X POST http://localhost:7000/api/models/model-endpoints \
+curl -X POST http://localhost:7000/api/model-endpoints \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "name=Local%20Code%20Model" \
   -d "base_url=http://127.0.0.1:20128/v1" \
@@ -159,7 +159,7 @@ If you see errors like **"local endpoint rejected the API key — Missing API ke
 If you know your models ahead of time and want to avoid the initial probe timeout:
 
 ```bash
-curl -X POST http://localhost:7000/api/models/model-endpoints \
+curl -X POST http://localhost:7000/api/model-endpoints \
   -d "name=My%20Endpoint" \
   -d "base_url=http://127.0.0.1:8000/v1" \
   -d "api_key=sk-xxx" \
@@ -172,7 +172,7 @@ curl -X POST http://localhost:7000/api/models/model-endpoints \
 To change the API key, base URL, or other settings without deleting and re-adding:
 
 ```bash
-curl -X PATCH http://localhost:7000/api/models/model-endpoints/{endpoint_id} \
+curl -X PATCH http://localhost:7000/api/model-endpoints/{endpoint_id} \
   -H "Content-Type: application/json" \
   -d '{
     "api_key": "new-key-here",
@@ -185,7 +185,7 @@ curl -X PATCH http://localhost:7000/api/models/model-endpoints/{endpoint_id} \
 By default, new endpoints are visible to all users. To scope an endpoint to yourself:
 
 ```bash
-curl -X POST http://localhost:7000/api/models/model-endpoints \
+curl -X POST http://localhost:7000/api/model-endpoints \
   -d "name=My%20Personal%20Endpoint" \
   -d "base_url=http://127.0.0.1:8000/v1" \
   -d "shared=false"
@@ -216,7 +216,7 @@ try:
     )
     db.add(ep)
     db.commit()
-    print(f"✓ Endpoint added: {ep_id}")
+    print(f"Endpoint added: {ep_id}")
 finally:
     db.close()
 ```
