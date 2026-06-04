@@ -270,7 +270,15 @@ def _user_shell_path_bootstrap() -> list[str]:
         '  ODYSSEUS_USER_PATH="$("$ODYSSEUS_USER_SHELL" -ic \'printf "__ODYSSEUS_PATH__%s\\n" "$PATH"\' 2>/dev/null | sed -n \'s/^__ODYSSEUS_PATH__//p\' | tail -n 1 || true)"',
         '  if [ -n "$ODYSSEUS_USER_PATH" ]; then export PATH="$ODYSSEUS_USER_PATH:$PATH"; fi',
         'fi',
-        'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }',
+        'if ! command -v python3 >/dev/null 2>&1; then',
+        '  if command -v python >/dev/null 2>&1; then',
+        '    python3() { python "$@"; }',
+        '    export -f python3 2>/dev/null || true',
+        '  elif command -v py >/dev/null 2>&1; then',
+        '    python3() { py -3 "$@"; }',
+        '    export -f python3 2>/dev/null || true',
+        '  fi',
+        'fi',
     ]
 
 

@@ -1,4 +1,7 @@
 import json
+import os
+import shlex
+import shutil
 import subprocess
 import sys
 
@@ -88,6 +91,64 @@ def test_local_tooling_path_export_preserves_spaces_and_expands_path():
     line = _local_tooling_path_export("/Users/John Smith/.venv/bin/python3")
     assert line == 'export PATH="/Users/John Smith/.venv/bin:$PATH"'
     assert line.endswith(':$PATH"')  # $PATH stays expandable in double quotes
+
+
+def _write_executable(path, content):
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def test_user_shell_path_bootstrap_delegates_to_python_and_exports(tmp_path):
+    bash = shutil.which("bash")
+    assert bash, "bash is required for this regression"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(
+        bin_dir / "python",
+        '#!/bin/sh\nprintf "python:%s\\n" "$*"\n',
+    )
+    script = "\n".join(
+        _user_shell_path_bootstrap()
+        + [
+            "python3 direct",
+            f"{shlex.quote(bash)} -c 'python3 nested'",
+        ]
+    )
+
+    result = subprocess.run(
+        [bash, "-c", script],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": str(bin_dir)},
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "python:direct" in result.stdout
+    assert "python:nested" in result.stdout
+
+
+def test_user_shell_path_bootstrap_uses_py_launcher_when_python_is_missing(tmp_path):
+    bash = shutil.which("bash")
+    assert bash, "bash is required for this regression"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(
+        bin_dir / "py",
+        '#!/bin/sh\nprintf "py:%s\\n" "$*"\n',
+    )
+    script = "\n".join(_user_shell_path_bootstrap() + ["python3 direct"])
+
+    result = subprocess.run(
+        [bash, "-c", script],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": str(bin_dir)},
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "py:-3 direct" in result.stdout
 
 
 def test_pip_install_fallback_chain_prefers_venv_safe_install():
@@ -267,7 +328,9 @@ def test_local_tooling_path_export_converts_windows_paths_for_bash():
 
 def test_user_shell_path_bootstrap_falls_back_to_python_on_windows_bash():
     script = "\n".join(_user_shell_path_bootstrap())
-    assert 'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }' in script
+    assert 'python3() { python "$@"; }' in script
+    assert 'python3() { py -3 "$@"; }' in script
+    assert script.count("export -f python3") == 2
 
 
 def test_serve_preflight_failure_keeps_tmux_pane_visible():
