@@ -167,7 +167,8 @@ async def validate_id_token(id_token: str, nonce: str) -> Dict[str, Any]:
     key_set = JsonWebKey.import_key_set(jwks_resp.json())
     claims = jwt.decode(id_token, key_set)
     claims.validate()
-    if claims.get("iss") != AUTHENTIK_ISSUER:
+    token_iss = claims.get("iss", "").rstrip("/")
+    if token_iss != AUTHENTIK_ISSUER:
         raise ValueError("Invalid token issuer")
     aud = claims.get("aud")
     if isinstance(aud, list):
