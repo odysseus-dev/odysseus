@@ -13,6 +13,7 @@ from urllib.parse import urlparse, urlunparse
 
 from src.database import SessionLocal, ModelEndpoint
 from src.llm_core import _detect_provider, _host_match
+from src.nobodywho_provider import is_nobodywho_url
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,8 @@ def _resolve_tailscale_host(hostname: str) -> Optional[str]:
 
 def resolve_url(url: str) -> str:
     """If a URL's hostname can't be resolved via DNS, try Tailscale."""
+    if is_nobodywho_url(url):
+        return url  # pseudo-URL for the in-process provider — nothing to resolve
     parsed = urlparse(url)
     hostname = parsed.hostname
     if not hostname:
@@ -167,6 +170,8 @@ def build_chat_url(base: str) -> str:
     """Return the correct chat endpoint URL for a given base."""
     base = resolve_url(base)
     provider = _detect_provider(base)
+    if provider == "nobodywho":
+        return base  # in-process — the pseudo-URL is the dispatch key itself
     if provider == "anthropic":
         return _anthropic_api_root(base) + "/v1/messages"
     if provider == "ollama":
@@ -178,6 +183,8 @@ def build_models_url(base: str) -> str:
     """Return the provider-specific model-list endpoint URL for a base."""
     base = resolve_url(base)
     provider = _detect_provider(base)
+    if provider == "nobodywho":
+        return base  # no HTTP model list; llm_core.list_model_ids handles it
     if provider == "anthropic":
         return _anthropic_api_root(base) + "/v1/models"
     if provider == "ollama":
@@ -189,6 +196,8 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     """Build auth headers for an endpoint."""
     provider = _detect_provider(base)
     headers: Dict[str, str] = {}
+    if provider == "nobodywho":
+        return headers  # in-process, no auth
     if provider == "anthropic":
         if api_key:
             headers["x-api-key"] = api_key

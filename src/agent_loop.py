@@ -15,6 +15,7 @@ import logging
 from typing import AsyncGenerator, List, Dict, Optional, Set
 
 from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
+from src.nobodywho_provider import is_nobodywho_url
 from src.model_context import estimate_tokens
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
@@ -1503,7 +1504,13 @@ async def stream_agent_loop(
     # (via the endpoint settings toggle), treat Ollama-native as text-only so
     # the fenced-block path is used instead of native function calling.
     _is_ollama_native = _is_ollama_native_url(endpoint_url or "")
-    if _endpoint_supports is True:
+    if is_nobodywho_url(endpoint_url or ""):
+        # NobodyWho runs tools inside its own generation loop (Python
+        # callables) and never emits OpenAI-style `tool_calls`, so native
+        # function calling cannot round-trip — not even with the endpoint's
+        # supports_tools toggle. Always use the fenced-block text path.
+        _is_api_model = False
+    elif _endpoint_supports is True:
         _is_api_model = True
     elif _endpoint_supports is False or _model_no_tools or _is_ollama_native:
         _is_api_model = False

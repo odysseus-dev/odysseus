@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 from core.database import SessionLocal, ModelEndpoint, Session as DbSession
 from core.middleware import require_admin
 from src.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS
+from src.nobodywho_provider import is_nobodywho_url, manager as _nobodywho
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
 from src.endpoint_resolver import (
     normalize_base as _normalize_base,
@@ -504,6 +505,16 @@ def _is_chat_model(model_id: str) -> bool:
 def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 10, with_tools: bool = False) -> dict:
     """Send a realistic completion request to a single model. Returns {status, latency_ms, error?}."""
     provider = _detect_provider(base)
+    if provider == "nobodywho":
+        # A real completion would load the whole model into RAM/VRAM — far too
+        # heavy for a routine probe. Verify the GGUF resolves instead.
+        try:
+            t0 = _time.time()
+            _nobodywho.resolve_source(model_id)
+            return {"status": "ok", "latency_ms": round((_time.time() - t0) * 1000)}
+        except Exception as e:
+            return {"status": "fail", "error": str(e)[:120]}
+
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "Say OK"},
@@ -585,6 +596,8 @@ def _classify_endpoint(base_url: str, endpoint_kind: str = "auto") -> str:
         return "local"
     if kind in ("api", "proxy"):
         return "api"
+    if is_nobodywho_url(base_url):
+        return "local"  # in-process inference is local by definition
     try:
         host = urlparse(base_url).hostname or ""
         if host in _LOCAL_HOSTS or host.startswith(_PRIVATE_PREFIXES):
@@ -617,6 +630,13 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
+    if is_nobodywho_url(base):
+        # In-process provider: "probing" is a local GGUF scan, no HTTP.
+        try:
+            return _nobodywho.list_models(max_age=0.0)
+        except Exception as e:
+            logger.warning(f"NobodyWho model scan failed: {e}")
+            return []
     if _detect_provider(base) == "anthropic":
         # Try Anthropic's /v1/models endpoint first
         url = build_models_url(base)
@@ -701,6 +721,9 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
     """Reachability probe that does not require installed/listed models."""
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
+    if is_nobodywho_url(base):
+        # "Reachable" = the optional python package imports; no network probe.
+        return _nobodywho.ping()
     headers = build_headers(api_key, base)
 
     # Ollama exposes /v1/models (OpenAI-compatible) AND native /api/version,
@@ -768,6 +791,19 @@ def _model_endpoint_error_message(base_url: str, ping: Dict[str, Any] = None) ->
     parsed = urlparse(base_url)
     host = (parsed.hostname or "").lower()
     is_ollama = parsed.port == 11434 or "ollama" in host or "ollama" in base_url.lower()
+
+    if is_nobodywho_url(base_url):
+        if not _nobodywho.is_available():
+            return _nobodywho.availability_error() or (
+                "NobodyWho is not installed. Install with: pip install nobodywho"
+            )
+        from src.nobodywho_provider import _models_dir
+        return (
+            "NobodyWho is installed but no GGUF models were found. "
+            f"Put a .gguf file in {_models_dir()} (or set NOBODYWHO_MODELS_DIR), "
+            "or pin a 'huggingface:owner/repo/file.gguf' ref on the endpoint — "
+            "it downloads automatically on first use."
+        )
 
     if is_ollama:
         parts = ["No Ollama models found for that endpoint."]
@@ -1432,6 +1468,11 @@ def setup_model_routes(model_discovery):
         base_url = _normalize_base(base_url)
         if not base_url:
             raise HTTPException(400, "Base URL is required")
+        if is_nobodywho_url(base_url):
+            # One canonical spelling so dedupe-by-base_url can't create
+            # "nobodywho:" and "nobodywho:local" twins.
+            from src.nobodywho_provider import CANONICAL_URL
+            base_url = CANONICAL_URL
         # Resolve hostname via Tailscale if DNS fails
         from src.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
@@ -1442,7 +1483,10 @@ def setup_model_routes(model_discovery):
 
         # Auto-generate name from URL if not provided
         if not name.strip():
-            name = base_url.replace("http://", "").replace("https://", "").split("/")[0]
+            if is_nobodywho_url(base_url):
+                name = "NobodyWho"
+            else:
+                name = base_url.replace("http://", "").replace("https://", "").split("/")[0]
 
         requested_kind = _normalize_endpoint_kind(endpoint_kind)
         refresh_mode = _normalize_refresh_mode(model_refresh_mode, requested_kind)
@@ -1544,6 +1588,10 @@ def setup_model_routes(model_discovery):
         try:
             _st_raw = (supports_tools or "").strip().lower()
             _st = True if _st_raw in ("true", "1", "yes") else (False if _st_raw in ("false", "0", "no") else None)
+            if _st is None and is_nobodywho_url(base_url):
+                # NobodyWho can't emit OpenAI-style tool_calls (tools run inside
+                # its generation loop), so the agent uses the fenced-block path.
+                _st = False
             _pinned = _normalize_model_ids(pinned_models)
             # Stamp owner so the picker only shows this endpoint to the admin
             # who added it. Pass `shared=true` to mark it null-owner (visible
@@ -1611,6 +1659,9 @@ def setup_model_routes(model_discovery):
         base_url = _normalize_base(base_url)
         if not base_url:
             raise HTTPException(400, "Base URL is required")
+        if is_nobodywho_url(base_url):
+            from src.nobodywho_provider import CANONICAL_URL
+            base_url = CANONICAL_URL
         from src.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
         base_url = _rewrite_loopback_for_docker(base_url)

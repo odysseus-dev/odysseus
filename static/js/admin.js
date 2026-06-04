@@ -742,6 +742,9 @@ function initEndpointForm() {
   }
   function _normalizeBaseUrl(raw) {
     let u = raw.trim();
+    // NobodyWho is an in-process provider with a pseudo base URL, not http(s) —
+    // keep it out of the URL fixups below (which would prefix http://).
+    if (/^nobodywho(:.*)?$/i.test(u)) return 'nobodywho:local';
     // Fix common protocol typos
     u = u.replace(/^https?:\/(?!\/)/, m => m + '/');  // https:/ → https://
     u = u.replace(/^htp:/, 'http:').replace(/^htps:/, 'https:');
@@ -993,6 +996,23 @@ function initEndpointForm() {
       const msg = _endpointMsg('local');
       if (msg) {
         msg.innerHTML = '<span style="font-size:11px;opacity:0.55;">Ollama ready to test.</span>';
+        msg.className = '';
+      }
+    });
+  }
+
+  // NobodyWho — in-process inference (pip install nobodywho), pseudo base URL
+  const nobodywhoBtn = el('adm-epNobodyWhoBtn');
+  if (nobodywhoBtn) {
+    nobodywhoBtn.addEventListener('click', () => {
+      const input = el('adm-epLocalUrl');
+      if (input) {
+        input.value = 'nobodywho:local';
+        input.focus();
+      }
+      const msg = _endpointMsg('local');
+      if (msg) {
+        msg.innerHTML = '<span style="font-size:11px;opacity:0.55;">NobodyWho ready to test — needs <code>pip install nobodywho</code> and a .gguf in data/models.</span>';
         msg.className = '';
       }
     });

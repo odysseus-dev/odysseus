@@ -9,6 +9,7 @@ import threading
 from fastapi import HTTPException
 from typing import Optional, Dict, List
 from src.model_context import get_context_length, DEFAULT_CONTEXT
+from src.nobodywho_provider import is_nobodywho_url
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -306,6 +307,8 @@ def _detect_provider(url: str) -> str:
     Unknown hosts fall back to the OpenAI-compatible default, which the
     majority of providers implement.
     """
+    if is_nobodywho_url(url):
+        return "nobodywho"
     if _is_ollama_native_url(url):
         return "ollama"
     if _host_match(url, "anthropic.com"):
@@ -331,6 +334,7 @@ def _provider_label(url: str) -> str:
     """Human-friendly provider name for error messages."""
     if not url:
         return "provider"
+    if is_nobodywho_url(url): return "NobodyWho"
     if _host_match(url, "anthropic.com"): return "Anthropic"
     if _host_match(url, "ollama.com"): return "Ollama Cloud"
     if _host_match(url, "x.ai"): return "xAI"
@@ -814,6 +818,13 @@ def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT,
     provider = _detect_provider(base_chat_url)
     if provider == "anthropic":
         return list(ANTHROPIC_MODELS)
+    if provider == "nobodywho":
+        from src.nobodywho_provider import manager as _nbw
+        try:
+            return _nbw.list_models()
+        except Exception as e:
+            logger.debug(f"NobodyWho model listing failed: {e}")
+            return []
     try:
         h = {}
         if headers:
@@ -895,6 +906,17 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     if cached_response:
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
+
+    if provider == "nobodywho":
+        # In-process inference — no HTTP request to make.
+        from src.nobodywho_provider import manager as _nbw
+        try:
+            note_model_activity(url, model)
+            response = _nbw.complete_sync(model, messages_copy, temperature, max_tokens)
+        except Exception as e:
+            raise HTTPException(503, f"NobodyWho: {e}")
+        _set_cached_response(cache_key, response)
+        return response
 
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
@@ -1039,6 +1061,20 @@ async def llm_call_async(
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
 
+    if provider == "nobodywho":
+        # In-process inference — no HTTP request, retries, or host cooldown.
+        from src.nobodywho_provider import manager as _nbw
+        start = time.time()
+        try:
+            note_model_activity(url, model)
+            response = await _nbw.acomplete(model, messages_copy, temperature, max_tokens)
+        except Exception as e:
+            logger.warning(f"NobodyWho call failed after {time.time() - start:.2f}s: {e}")
+            raise HTTPException(503, f"NobodyWho: {e}")
+        logger.info(f"NobodyWho call succeeded in {time.time() - start:.2f}s")
+        _set_cached_response(cache_key, response)
+        return response
+
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
@@ -1142,6 +1178,34 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         messages_copy = [{"role": "system", "content": "\n\n".join(sys_parts)}] + non_sys
     else:
         messages_copy = non_sys
+
+    # ── NobodyWho in-process streaming (no HTTP request) ──
+    if provider == "nobodywho":
+        from src.nobodywho_provider import manager as _nbw
+        note_model_activity(url, model)
+        if tools:
+            # NobodyWho executes tools inside its own generation loop (Python
+            # callables), so OpenAI-style schemas can't round-trip. agent_loop
+            # already routes these endpoints to the fenced-block text path.
+            logger.debug("NobodyWho: ignoring native tool schemas (fenced-block path is used)")
+        _nbw_gen = _nbw.astream(model, messages_copy, temperature, max_tokens)
+        try:
+            async for event in _nbw_gen:
+                if "delta" in event:
+                    yield f'data: {json.dumps({"delta": event["delta"]})}\n\n'
+                elif "usage" in event:
+                    yield f'data: {json.dumps({"type": "usage", "data": event["usage"]})}\n\n'
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            logger.error(f"NobodyWho stream error: {e}")
+            yield f'event: error\ndata: {json.dumps({"error": f"NobodyWho: {e}", "status": 503})}\n\n'
+        finally:
+            # Deterministic cleanup: if a consumer breaks out of this stream
+            # mid-generation, close the inner generator NOW so it stops the
+            # worker and releases the model's generation lock, instead of
+            # waiting for GC finalization.
+            await _nbw_gen.aclose()
+        return
 
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)

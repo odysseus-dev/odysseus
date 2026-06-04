@@ -4,6 +4,14 @@
 # Note: chromadb-client + fastembed moved to requirements.txt — RAG, semantic
 # memory, and tool selection are core paths, so they ship by default now.
 
+# NobodyWho (https://nobodywho.ooo) — in-process local LLM inference built on
+# llama.cpp (Metal/Vulkan GPU acceleration), for the "NobodyWho" model
+# endpoint (base URL `nobodywho:local` in Settings → Add Models). No separate
+# model server needed: Odysseus loads GGUF files directly from data/models,
+# the HuggingFace cache, or `huggingface:owner/repo/file.gguf` pinned refs.
+# License: EUPL-1.2 (dynamically imported optional dep, not bundled).
+nobodywho
+
 # Local speech-to-text (microphone -> text) via faster-whisper, for the
 # "local" STT provider. Runs on CPU out of the box (CTranslate2 backend, no
 # torch needed). Install if you want to dictate/transcribe with the mic

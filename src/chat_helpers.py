@@ -152,6 +152,12 @@ def model_supports_vision(model_name: str, endpoint_url: str = "") -> bool:
     capability when available (LM Studio) and falling back to name-based
     detection otherwise."""
     if endpoint_url:
+        from src.nobodywho_provider import is_nobodywho_url
+        if is_nobodywho_url(endpoint_url):
+            # Image input needs a multimodal projector configured per model,
+            # which the NobodyWho provider doesn't wire up yet. Report False
+            # even for VL-named GGUFs so images aren't silently dropped.
+            return False
         try:
             advertised = lmstudio_supports_vision(endpoint_url, model_name or "")
         except Exception:

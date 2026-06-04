@@ -13,6 +13,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from src.nobodywho_provider import configured_n_ctx, is_nobodywho_url
+
 logger = logging.getLogger(__name__)
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal"}
@@ -218,6 +220,10 @@ def get_context_length(endpoint_url: str, model: str) -> int:
     or context_window fields. Caches result per model ID.
     Falls back to DEFAULT_CONTEXT if unavailable.
     """
+    if is_nobodywho_url(endpoint_url):
+        # In-process provider: the serving context is whatever we allocate per
+        # chat (NOBODYWHO_CTX) — there is no HTTP endpoint to ask.
+        return configured_n_ctx()
     configured_kind = _configured_endpoint_kind(endpoint_url)
     is_local = _is_local_endpoint(endpoint_url)
     if not is_local and model in _context_cache:
