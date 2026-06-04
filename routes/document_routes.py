@@ -506,10 +506,15 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     ext = _ext.get(doc.language or "text", ".txt")
                     base = (doc.title or "document").strip() or "document"
                     base = re.sub(r"[^\w\-. ]+", "", base)[:60].strip() or doc.id
-                    name = base if "." in base else base + ext
+                    if base.lower().endswith(ext.lower()):
+                        name = base
+                        stem = base[: -len(ext)] or base
+                    else:
+                        name = base + ext
+                        stem = base
                     i = 1
                     while name in used:
-                        name = f"{base}-{i}" + ("" if "." in base else ext)
+                        name = f"{stem}-{i}{ext}"
                         i += 1
                     used.add(name)
                     zf.writestr(name, doc.current_content or "")
