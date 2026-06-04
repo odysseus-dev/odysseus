@@ -23,6 +23,7 @@ import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
+import convertModule from './js/convert.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
@@ -549,6 +550,7 @@ function initializeEventListeners() {
         'rename-ai-modal': null,
         'custom-preset-modal': null,
         'memory-modal': null,
+        'convert-modal': null,
       };
 
       // Dynamic modals (removed from DOM on close)
@@ -914,6 +916,20 @@ function initializeEventListeners() {
       }
     });
   }
+
+  // Convert Files tool button — opens the file-conversion modal
+  const toolConvertBtn = el('tool-convert-btn');
+  const convertModal = el('convert-modal');
+  if (toolConvertBtn && convertModal) {
+    toolConvertBtn.addEventListener('click', () => {
+      convertModal.classList.remove('hidden');
+      convertModule.open();
+    });
+    const closeConvertBtn = el('close-convert-modal');
+    if (closeConvertBtn) {
+      closeConvertBtn.addEventListener('click', () => dismissModal(convertModal));
+    }
+  }
   // Refresh notes due-reminder badge on load and every 5 minutes
   if (notesModule && notesModule.refreshDueBadge) {
     notesModule.refreshDueBadge();
@@ -1043,6 +1059,7 @@ function initializeEventListeners() {
     '/gallery':  () => document.getElementById('tool-gallery-btn')?.click(),
     '/tasks':    () => document.getElementById('tool-tasks-btn')?.click(),
     '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
+    '/convert':  () => document.getElementById('tool-convert-btn')?.click(),
   };
   const _opener = _routeOpen[urlPath];
   // Defer the opener — at this point in init, the modules whose handlers
@@ -2395,6 +2412,7 @@ function initializeEventListeners() {
     'tool-memory':         '#tool-memory-btn',
     'tool-notes':          '#tool-notes-btn',
     'tool-tasks':          '#tool-tasks-btn',
+    'tool-convert':        '#tool-convert-btn',
     'tool-theme':          '#tool-theme-btn',
     'user-bar':            '#user-bar-profile',
     'sidebar-settings-btn':'#user-bar-settings',

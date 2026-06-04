@@ -669,6 +669,37 @@
     <button class="icon-rail-btn" id="rail-settings" title="Settings"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
   </div>
 
+  <!-- File Conversion Modal (Tools → Convert Files) -->
+  <div id="convert-modal" class="modal hidden">
+    <div class="modal-content" role="dialog" aria-label="Convert Files" style="background:var(--bg);max-width:560px;">
+      <div class="modal-header">
+        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>Convert Files</h4>
+        <button class="close-btn" id="close-convert-modal" aria-label="Close convert modal">✖</button>
+      </div>
+      <div class="modal-body" style="padding:16px;">
+        <div class="admin-card">
+          <div class="admin-toggle-sub" style="margin-bottom:10px;">Convert images (PNG, JPG, WebP, GIF, BMP, TIFF, PDF) and documents (DOCX, PPTX, XLSX, EPUB, CSV, HTML, PDF → Markdown/text). Files are processed in-memory and never stored.</div>
+          <div class="settings-col">
+            <div class="settings-row" style="align-items:center;">
+              <label class="settings-label">File</label>
+              <input type="file" id="convert-file-input" style="flex:1;font-family:inherit;font-size:12px;color:var(--fg);">
+            </div>
+            <div class="settings-row" style="align-items:center;">
+              <label class="settings-label">Convert to</label>
+              <select id="convert-target-select" class="settings-select" disabled>
+                <option value="">Choose a file first…</option>
+              </select>
+            </div>
+            <div class="settings-row" style="margin-top:4px;justify-content:flex-end;align-items:center;gap:10px;">
+              <span id="convert-msg" style="font-size:11px;margin-right:auto;opacity:0.8;"></span>
+              <button class="admin-btn-add" id="convert-run-btn" disabled>Convert &amp; Download</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <nav class="sidebar" id="sidebar" role="navigation" aria-label="Sidebar">
     <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
     <div class="sidebar-header">
@@ -834,6 +865,17 @@
         <div class="list-item" id="tool-compare-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5;"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg>
           <span class="grow">Compare</span>
+        </div>
+        <div class="list-item" id="tool-convert-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            style="flex-shrink:0;opacity:0.5;">
+            <path d="M21 2v6h-6"/>
+            <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+            <path d="M3 22v-6h6"/>
+            <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+          </svg>
+          <span class="grow">Convert Files</span>
         </div>
         <div class="list-item" id="tool-cookbook-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -1695,6 +1737,11 @@
                 <input type="checkbox" checked data-ui-key="tool-compare"><span class="vis-switch"></span>
               </label>
               <label class="vis-row">
+                <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg></span>
+                <span class="vis-label">Convert Files</span>
+                <input type="checkbox" checked data-ui-key="tool-convert"><span class="vis-switch"></span>
+              </label>
+              <label class="vis-row">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h4"/></svg></span>
                 <span class="vis-label">Cookbook</span>
                 <input type="checkbox" checked data-ui-key="tool-cookbook"><span class="vis-switch"></span>
@@ -1842,6 +1889,7 @@
             <div id="shortcuts-list"></div>
           </div>
         </div>
+
 
 
         <!-- ═══ ACCOUNT TAB ═══ -->
@@ -2276,6 +2324,6 @@
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script type="module" src="/static/js/a11y.js"></script>
-<script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>
+<script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(()=>{});}</script>
 </body>
 </html>

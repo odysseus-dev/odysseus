@@ -170,6 +170,7 @@ if AUTH_ENABLED:
         "/api/health",
         "/api/version",
         "/login",
+        "/sw.js",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
     # Dynamic paths whose own handler proves identity via a path-embedded
@@ -658,6 +659,9 @@ app.include_router(setup_backup_routes(memory_manager, preset_manager, skills_ma
 from routes.font_routes import setup_font_routes
 app.include_router(setup_font_routes())
 
+from routes.convert_routes import setup_convert_routes
+app.include_router(setup_convert_routes())
+
 
 # MCP (Model Context Protocol)
 from src.mcp_manager import McpManager
@@ -779,6 +783,23 @@ async def serve_library(request: Request):
 async def serve_backgrounds(request: Request):
     """Sandbox page for prototyping background effects. No auth required."""
     return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/backgrounds.html"))
+
+@app.get("/sw.js")
+async def serve_service_worker():
+    """Serve the service worker from the site root so its scope is '/'.
+
+    A SW registered from '/static/sw.js' is scoped to '/static/' and never
+    controls the SPA root, so its navigation cache never runs and Chrome
+    doesn't treat the app as installable. Serving the same file from '/sw.js'
+    gives it root scope; the file itself still lives in static/. The
+    Service-Worker-Allowed header is belt-and-suspenders for explicit-scope
+    registrations, and no-cache keeps SW updates prompt.
+    """
+    return FileResponse(
+        abs_join(BASE_DIR, "static/sw.js"),
+        media_type="text/javascript",
+        headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+    )
 
 @app.get("/login")
 async def serve_login(request: Request):
