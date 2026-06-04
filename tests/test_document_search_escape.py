@@ -35,7 +35,7 @@ def _route(router, path):
 def library(monkeypatch):
     import routes.document_routes as dr
     monkeypatch.setattr(dr, "SessionLocal", _TS, raising=False)
-    monkeypatch.setattr(dr, "get_current_user", lambda request: None, raising=False)
+    monkeypatch.setattr(dr, "get_current_user", lambda request: "u1", raising=False)
     return _route(dr.setup_document_routes(MagicMock()), "/api/documents/library")
 
 
@@ -44,7 +44,7 @@ def _seed(*titles):
     try:
         db.query(Document).delete()
         for t in titles:
-            db.add(Document(id=str(uuid.uuid4()), owner=None, title=t, current_content="x", is_active=True))
+            db.add(Document(id=str(uuid.uuid4()), owner="u1", title=t, current_content="x", is_active=True))
         db.commit()
     finally:
         db.close()
