@@ -5,13 +5,18 @@ import time
 import json
 import logging
 import hashlib
+import re
 import threading
 from fastapi import HTTPException
 from typing import Optional, Dict, List
 from src.model_context import get_context_length, DEFAULT_CONTEXT
-from urllib.parse import urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 logger = logging.getLogger(__name__)
+
+
+def _redact_url(url: str) -> str:
+    return re.sub(r"([?&]key=)[^&]+", r"\1REDACTED", url or "")
 
 class LLMConfig:
     """Configuration constants for LLM operations."""
@@ -309,6 +314,8 @@ def _detect_provider(url: str) -> str:
     Unknown hosts fall back to the OpenAI-compatible default, which the
     majority of providers implement.
     """
+    if _host_match(url, "aiplatform.googleapis.com"):
+        return "vertex_express"
     if _is_ollama_native_url(url):
         return "ollama"
     if _host_match(url, "anthropic.com"):
@@ -334,6 +341,7 @@ def _provider_label(url: str) -> str:
     """Human-friendly provider name for error messages."""
     if not url:
         return "provider"
+    if _host_match(url, "aiplatform.googleapis.com"): return "Gemini Enterprise Agent Platform"
     if _host_match(url, "anthropic.com"): return "Anthropic"
     if _host_match(url, "ollama.com"): return "Ollama Cloud"
     if _host_match(url, "x.ai"): return "xAI"
@@ -395,6 +403,97 @@ def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:
     if status >= 500:
         return f"{provider} is having an outage (HTTP {status})." + (f" {detail}" if detail else "")
     return f"{provider} returned HTTP {status}" + (f": {detail}" if detail else "")
+
+
+def _extract_bearer_api_key(headers: Optional[Dict]) -> str:
+    if not isinstance(headers, dict):
+        return ""
+    for key in ("Authorization", "authorization"):
+        value = headers.get(key)
+        if isinstance(value, str):
+            value = value.strip()
+            if value.lower().startswith("bearer "):
+                return value[7:].strip()
+            if value:
+                return value
+    for key in ("x-goog-api-key", "X-Goog-Api-Key", "api_key"):
+        value = headers.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _vertex_text_parts(content) -> List[Dict[str, str]]:
+    """MVP text-only Gemini parts builder; non-text parts are ignored."""
+    if isinstance(content, str):
+        return [{"text": content}] if content else []
+    if isinstance(content, list):
+        parts: List[Dict[str, str]] = []
+        for item in content:
+            if isinstance(item, str):
+                if item:
+                    parts.append({"text": item})
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str) and text:
+                    parts.append({"text": text})
+        return parts
+    if content is None:
+        return []
+    return [{"text": str(content)}]
+
+
+def _build_vertex_payload(messages: List[Dict], temperature: float, max_tokens: int) -> Dict:
+    system_parts: List[Dict[str, str]] = []
+    contents: List[Dict] = []
+    for msg in messages or []:
+        role = msg.get("role")
+        parts = _vertex_text_parts(msg.get("content"))
+        if not parts:
+            continue
+        if role == "system":
+            system_parts.extend(parts)
+        elif role == "assistant":
+            contents.append({"role": "model", "parts": parts})
+        elif role == "tool":
+            # Tool-result mapping is out of scope for the MVP; preserve text as user context.
+            contents.append({"role": "user", "parts": parts})
+        else:
+            contents.append({"role": "user", "parts": parts})
+    payload: Dict = {
+        "contents": contents or [{"role": "user", "parts": [{"text": ""}]}],
+        "generationConfig": {"temperature": temperature},
+    }
+    if system_parts:
+        payload["systemInstruction"] = {"parts": system_parts}
+    if max_tokens and max_tokens > 0:
+        payload["generationConfig"]["maxOutputTokens"] = max_tokens
+    return payload
+
+
+def _vertex_url(base_url: str, model: str, api_key: str, stream: bool = False) -> str:
+    root = (base_url or "https://aiplatform.googleapis.com/v1").rstrip("/")
+    action = "streamGenerateContent" if stream else "generateContent"
+    params = {"key": api_key}
+    if stream:
+        params["alt"] = "sse"
+    model_name = (model or "").strip()
+    if not model_name.startswith("publishers/google/models/"):
+        model_name = f"publishers/google/models/{model_name}"
+    return f"{root}/{quote(model_name, safe='/')}:{action}?{urlencode(params)}"
+
+
+def _parse_vertex_response(data: Dict) -> str:
+    chunks: List[str] = []
+    for cand in data.get("candidates") or []:
+        content = cand.get("content") or {}
+        for part in content.get("parts") or []:
+            text = part.get("text")
+            if text:
+                chunks.append(text)
+    if chunks:
+        return "".join(chunks)
+    raise KeyError("candidates[].content.parts[].text")
 
 # Models that require max_completion_tokens instead of max_tokens
 _MAX_COMPLETION_TOKENS_MODELS = {"o1", "o3", "o4", "gpt-4.5", "gpt-5"}
@@ -909,6 +1008,13 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+    elif provider == "vertex_express":
+        api_key = _extract_bearer_api_key(h)
+        if not api_key:
+            raise HTTPException(401, "Gemini Enterprise Agent Platform API key is required")
+        target_url = _vertex_url(url, model, api_key, stream=False)
+        h = {"Content-Type": "application/json"}
+        payload = _build_vertex_payload(messages_copy, temperature, max_tokens)
     else:
         target_url = url
         payload = {
@@ -925,15 +1031,17 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         note_model_activity(target_url, model)
         r = httpx.post(target_url, headers=h, json=payload, timeout=timeout)
     except Exception as e:
-        raise HTTPException(502, f"POST {target_url} failed: {e}")
+        raise HTTPException(502, f"POST {_redact_url(target_url)} failed: {e}")
     if not r.is_success:
-        raise HTTPException(502, f"Upstream {target_url} -> {r.status_code}: {r.text}")
+        raise HTTPException(502, f"Upstream {_redact_url(target_url)} -> {r.status_code}: {r.text}")
     data = r.json()
     try:
         if provider == "anthropic":
             response = _parse_anthropic_response(data)
         elif provider == "ollama":
             response = _parse_ollama_response(data)
+        elif provider == "vertex_express":
+            response = _parse_vertex_response(data)
         else:
             msg = data["choices"][0]["message"]
             response = msg.get("content") or msg.get("reasoning_content") or ""
@@ -1055,6 +1163,13 @@ async def llm_call_async(
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+    elif provider == "vertex_express":
+        api_key = _extract_bearer_api_key(headers)
+        if not api_key:
+            raise HTTPException(401, "Gemini Enterprise Agent Platform API key is required")
+        target_url = _vertex_url(url, model, api_key, stream=False)
+        h = {"Content-Type": "application/json"}
+        payload = _build_vertex_payload(messages_copy, temperature, max_tokens)
     else:
         target_url = url
         h = _provider_headers(provider, headers)
@@ -1085,11 +1200,11 @@ async def llm_call_async(
             if not r.is_success:
                 friendly = _format_upstream_error(r.status_code, r.text, target_url)
                 logger.warning(
-                    f"LLM async call to {target_url} failed in {duration:.2f}s "
+                    f"LLM async call to {_redact_url(target_url)} failed in {duration:.2f}s "
                     f"(attempt {attempt}): HTTP {r.status_code} {friendly}"
                 )
                 raise HTTPException(r.status_code, friendly)
-            logger.info(f"LLM async call to {target_url} succeeded in {duration:.2f}s (attempt {attempt})")
+            logger.info(f"LLM async call to {_redact_url(target_url)} succeeded in {duration:.2f}s (attempt {attempt})")
             _clear_host_dead(target_url)
             data = r.json()
             try:
@@ -1097,6 +1212,8 @@ async def llm_call_async(
                     response = _parse_anthropic_response(data)
                 elif provider == "ollama":
                     response = _parse_ollama_response(data)
+                elif provider == "vertex_express":
+                    response = _parse_vertex_response(data)
                 else:
                     msg = data["choices"][0]["message"]
                     response = msg.get("content") or msg.get("reasoning_content") or ""
@@ -1108,13 +1225,13 @@ async def llm_call_async(
             _cooled = _mark_host_dead(target_url)
             duration = time.time() - start
             _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
-            logger.warning(f"LLM async connect to {target_url} failed after {duration:.2f}s: {e}{_tail}")
+            logger.warning(f"LLM async connect to {_redact_url(target_url)} failed after {duration:.2f}s: {e}{_tail}")
             raise HTTPException(503, f"Cannot reach {_host_key(target_url)}: {e}")
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
             duration = time.time() - start
             logger.warning(f"LLM async call attempt {attempt} failed after {duration:.2f}s: {e}")
             if attempt >= max_retries:
-                raise HTTPException(502, f"POST {target_url} failed after {max_retries} attempts: {e}")
+                raise HTTPException(502, f"POST {_redact_url(target_url)} failed after {max_retries} attempts: {e}")
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
 
 async def stream_llm(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
@@ -1159,6 +1276,14 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             model, messages_copy, temperature, max_tokens,
             stream=True, tools=tools, num_ctx=get_context_length(url, model),
         )
+    elif provider == "vertex_express":
+        api_key = _extract_bearer_api_key(headers)
+        if not api_key:
+            yield f'event: error\ndata: {json.dumps({"error": "Gemini Enterprise Agent Platform API key is required", "status": 401})}\n\n'
+            return
+        target_url = _vertex_url(url, model, api_key, stream=True)
+        h = {"Content-Type": "application/json"}
+        payload = _build_vertex_payload(messages_copy, temperature, max_tokens)
     else:
         target_url = url
         payload = {
@@ -1186,6 +1311,44 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         yield f'event: error\ndata: {json.dumps({"error": f"Upstream {_host_key(target_url)} unreachable (cooldown active)", "status": 503})}\n\n'
         return
     note_model_activity(target_url, model)
+
+    # ── Gemini Enterprise Agent Platform / Vertex Express streaming ──
+    if provider == "vertex_express":
+        try:
+            client = _get_http_client()
+            async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
+                _clear_host_dead(target_url)
+                if r.status_code != 200:
+                    raw = (await r.aread()).decode(errors="replace")
+                    friendly = _format_upstream_error(r.status_code, raw, target_url)
+                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    return
+                async for line in r.aiter_lines():
+                    if not line:
+                        continue
+                    data = line[6:].strip() if line.startswith("data: ") else line.strip()
+                    if not data or data == "[DONE]" or not data.startswith("{"):
+                        continue
+                    try:
+                        text = _parse_vertex_response(json.loads(data))
+                    except Exception:
+                        continue
+                    if text:
+                        yield f'data: {json.dumps({"delta": text})}\n\n'
+                yield "data: [DONE]\n\n"
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            _cooled = _mark_host_dead(target_url)
+            _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
+            logger.warning(f"Vertex Express stream connect to {_redact_url(target_url)} failed: {e}{_tail}")
+            yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
+        except httpx.ReadTimeout:
+            yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
+        except httpx.NetworkError:
+            yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
+        except Exception as e:
+            logger.error(f"Vertex Express stream error: {e}")
+            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+        return
 
     # ── Native Ollama streaming ──
     if provider == "ollama":

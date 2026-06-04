@@ -53,8 +53,11 @@ const SETUP_PROVIDER_URLS = {
   groq: { name: 'Groq', url: 'https://api.groq.com/openai/v1' },
   gemini: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
   google: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
+  vertex: { name: 'Gemini Enterprise Agent Platform', url: 'https://aiplatform.googleapis.com/v1' },
+  vertexexpress: { name: 'Gemini Enterprise Agent Platform', url: 'https://aiplatform.googleapis.com/v1' },
+  geminienterprise: { name: 'Gemini Enterprise Agent Platform', url: 'https://aiplatform.googleapis.com/v1' },
 };
-const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini'];
+const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini', 'vertex'];
 const SETUP_PROVIDER_HINT = SETUP_PROVIDER_NAMES.slice(0, -1).join(', ') + ', or ' + SETUP_PROVIDER_NAMES[SETUP_PROVIDER_NAMES.length - 1];
 const SETUP_LOCAL_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>';
 const SETUP_API_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
@@ -75,6 +78,11 @@ function _setupProviderFromInput(input) {
     groq: 'groq',
     gemini: 'gemini',
     google: 'gemini',
+    vertex: 'vertex',
+    vertexexpress: 'vertex',
+    vertexai: 'vertex',
+    geminienterprise: 'vertex',
+    geminienterpriseagentplatform: 'vertex',
     xai: 'xai',
     grok: 'xai',
   };
@@ -91,6 +99,8 @@ function _extractSetupProviderCredential(input) {
     ['open ai', 'openai'], ['openai', 'openai'], ['chatgpt', 'openai'],
     ['anthropic', 'anthropic'], ['claude', 'anthropic'],
     ['groq', 'groq'],
+    ['gemini enterprise agent platform', 'vertex'], ['gemini enterprise', 'vertex'],
+    ['vertex express', 'vertex'], ['vertex ai', 'vertex'], ['vertex', 'vertex'],
     ['google', 'gemini'], ['gemini', 'gemini'],
     ['x ai', 'xai'], ['xai', 'xai'], ['grok', 'xai'],
   ];
@@ -548,6 +558,7 @@ function setupChatUrlForEndpoint(detected) {
   const base = (detected.base_url || '').replace(/\/+$/, '');
   if (detected.name === 'Anthropic') return base.replace(/\/v1$/, '') + '/v1/messages';
   if (base.includes('ollama.com')) return 'https://ollama.com/api/chat';
+  if (base.includes('aiplatform.googleapis.com')) return base;
   return base + '/chat/completions';
 }
 

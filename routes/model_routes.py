@@ -10,7 +10,7 @@ import logging
 import httpx
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import quote, urlencode, urlparse, urlunparse
 from fastapi import APIRouter, HTTPException, Form, Query, Body, Request, Response
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
@@ -261,6 +261,18 @@ _PROVIDER_CURATED = {
         "gemini-3.5", "gemini-3.1", "gemini-3",
         "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash",
     ],
+    "vertex_express": [
+        "gemini-3.5-flash",
+        "gemini-3.1-pro-preview",
+        "gemini-3.1-pro-preview-customtools",
+        "gemini-3-pro-preview",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-pro",
+        "gemini-2.0-flash-001",
+        "gemini-2.0-flash-lite-001",
+    ],
     "xai": [
         "grok-4.3", "grok-4", "grok-4-fast", "grok-3", "grok-3-fast",
     ],
@@ -280,6 +292,7 @@ _HOST_TO_CURATED = (
     ("together.xyz", "together"),
     ("together.ai", "together"),
     ("fireworks.ai", "fireworks"),
+    ("aiplatform.googleapis.com", "vertex_express"),
     ("googleapis.com", "google"),
     ("x.ai", "xai"),
     ("openrouter.ai", "openrouter"),
@@ -526,6 +539,15 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
         h = build_headers(api_key, base)
         h["Content-Type"] = "application/json"
         payload = _build_ollama_payload(model_id, messages, 0.0, 5, stream=False, tools=_test_tools)
+    elif provider == "vertex_express":
+        if not api_key:
+            return {"status": "fail", "error": "Gemini Enterprise Agent Platform API key is required"}
+        from src.llm_core import _build_vertex_payload
+        root = _normalize_base(base).rstrip("/")
+        model_name = model_id if model_id.startswith("publishers/google/models/") else f"publishers/google/models/{model_id}"
+        target_url = f"{root}/{quote(model_name, safe='/')}:generateContent?{urlencode({'key': api_key})}"
+        h = {"Content-Type": "application/json"}
+        payload = _build_vertex_payload(messages, 0.0, 5)
     else:
         target_url = build_chat_url(base)
         h = build_headers(api_key, base)
@@ -618,6 +640,9 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
+    if _detect_provider(base) == "vertex_express":
+        models = _probe_vertex_express_models(base, api_key, timeout=timeout)
+        return models or ([] if api_key else list(_PROVIDER_CURATED["vertex_express"]))
     if _detect_provider(base) == "anthropic":
         # Try Anthropic's /v1/models endpoint first
         url = build_models_url(base)
@@ -696,6 +721,82 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         logger.info(f"Using curated fallback for {curated_key}: {fallback}")
         return list(fallback)
     return []
+
+
+def _vertex_express_models_url(base_url: str, api_key: str) -> str:
+    parsed = urlparse(_normalize_base(base_url))
+    scheme = parsed.scheme or "https"
+    netloc = parsed.netloc or "aiplatform.googleapis.com"
+    root = f"{scheme}://{netloc}/v1beta1"
+    return f"{root}/publishers/google/models?{urlencode({'key': api_key or '', 'pageSize': 100})}"
+
+
+def _parse_vertex_model_ids(data: Dict[str, Any]) -> List[str]:
+    items = data.get("publisherModels") or data.get("models") or data.get("data") or []
+    model_ids: List[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name") or item.get("id") or ""
+        if not isinstance(name, str) or not name:
+            continue
+        model_id = name.rsplit("/", 1)[-1]
+        if model_id.startswith("gemini-") and _is_chat_model(model_id):
+            model_ids.append(model_id)
+    return sorted(set(model_ids), key=lambda mid: (_PROVIDER_CURATED["vertex_express"].index(mid) if mid in _PROVIDER_CURATED["vertex_express"] else 999, mid))
+
+
+def _probe_vertex_express_models(base_url: str, api_key: str = None, timeout: float = 5.0) -> List[str]:
+    if not api_key:
+        return []
+    try:
+        url = _vertex_express_models_url(base_url, api_key)
+        r = httpx.get(url, headers={"Content-Type": "application/json"}, timeout=timeout)
+        r.raise_for_status()
+        return _parse_vertex_model_ids(r.json())
+    except Exception as e:
+        logger.warning(f"Gemini Enterprise Agent Platform model scan failed: {e}")
+        return []
+
+
+def _test_vertex_express(base_url: str, api_key: str = None, timeout: float = 2.0) -> Dict[str, Any]:
+    base = _normalize_base(base_url).rstrip("/")
+    models = list(_PROVIDER_CURATED["vertex_express"])
+    if not api_key:
+        return {
+            "reachable": False,
+            "status_code": 401,
+            "error": "Gemini Enterprise Agent Platform API key is required",
+            "models": models,
+        }
+    model = "gemini-3.1-flash-lite"
+    model_name = f"publishers/google/models/{model}"
+    url = f"{base}/{quote(model_name, safe='/')}:generateContent?{urlencode({'key': api_key})}"
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": "Say OK"}]}],
+        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 8},
+    }
+    try:
+        r = httpx.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=timeout)
+        if r.is_success:
+            scanned = _probe_vertex_express_models(base, api_key, timeout=timeout)
+            if scanned:
+                models = scanned
+            return {"reachable": True, "status_code": r.status_code, "error": None, "models": models}
+        error = f"HTTP {r.status_code}"
+        try:
+            body = r.json()
+            err = body.get("error") if isinstance(body, dict) else None
+            if isinstance(err, dict) and err.get("message"):
+                error = err["message"][:160]
+            elif isinstance(err, str):
+                error = err[:160]
+        except Exception:
+            if r.text:
+                error = r.text[:160]
+        return {"reachable": False, "status_code": r.status_code, "error": error, "models": models}
+    except Exception as e:
+        return {"reachable": False, "status_code": None, "error": str(e)[:160], "models": models}
 
 
 def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> Dict[str, Any]:
@@ -1533,11 +1634,20 @@ def setup_model_routes(model_discovery):
         finally:
             _db_dedup.close()
 
-        model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=explicit_timeout) if should_probe else []
+        is_vertex_express = _detect_provider(base_url) == "vertex_express"
+        vertex_ping = None
+        if should_probe and is_vertex_express:
+            vertex_ping = _test_vertex_express(base_url, api_key.strip() or None, timeout=explicit_timeout)
+            model_ids = vertex_ping.get("models", []) if vertex_ping.get("reachable") else []
+        else:
+            model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=explicit_timeout) if should_probe else []
         ping = {"reachable": False, "error": None}
         if (should_probe or requested_kind in ("api", "proxy")) and not model_ids:
-            ping = _ping_endpoint(base_url, api_key.strip() or None, timeout=min(explicit_timeout, 2.0))
+            ping = vertex_ping or _ping_endpoint(base_url, api_key.strip() or None, timeout=min(explicit_timeout, 2.0))
         if require_model_list and not model_ids:
+            detail = ping.get("error") if isinstance(ping, dict) else ""
+            if is_vertex_express and detail:
+                raise HTTPException(400, f"Gemini Enterprise Agent Platform test failed: {detail}")
             raise HTTPException(400, _model_endpoint_error_message(base_url, ping))
 
         ep_id = str(uuid.uuid4())[:8]
@@ -1618,6 +1728,19 @@ def setup_model_routes(model_discovery):
         requested_kind = _normalize_endpoint_kind(endpoint_kind)
         configured_timeout = _parse_positive_int(model_refresh_timeout, minimum=1, maximum=60)
         probe_timeout = _explicit_model_list_timeout(base_url, requested_kind, configured_timeout)
+        if _detect_provider(base_url) == "vertex_express":
+            ping = _test_vertex_express(base_url, api_key.strip() or None, timeout=probe_timeout)
+            models = ping.get("models") if ping.get("reachable") else []
+            return {
+                "base_url": base_url,
+                "online": bool(ping.get("reachable")),
+                "status": "online" if ping.get("reachable") else "offline",
+                "ping_error": ping.get("error"),
+                "models": models,
+                "count": len(models),
+                "endpoint_kind": requested_kind,
+                "category": _classify_endpoint(base_url, requested_kind),
+            }
         models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
         ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=min(probe_timeout, 2.0))
         return {

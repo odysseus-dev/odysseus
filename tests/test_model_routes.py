@@ -45,6 +45,8 @@ from routes.model_routes import (
     _ping_endpoint,
     _parse_model_list,
     _normalize_refresh_mode,
+    _test_vertex_express,
+    _vertex_express_models_url,
     _truthy,
     _speech_settings_using_endpoint,
     _clear_speech_settings_for_endpoint,
@@ -175,6 +177,9 @@ class TestMatchProviderCurated:
     def test_google_url(self):
         assert _match_provider_curated("https://generativelanguage.googleapis.com/v1beta", "openai") == "google"
 
+    def test_vertex_express_url(self):
+        assert _match_provider_curated("https://aiplatform.googleapis.com/v1", "openai") == "vertex_express"
+
     def test_xai_url(self):
         assert _match_provider_curated("https://api.x.ai/v1", "openai") == "xai"
 
@@ -253,6 +258,14 @@ class TestCurateModels:
     def test_google_current_gemini_curated(self):
         curated, extra = _curate_models(["gemini-3.5-flash", "gemini-3.1-pro"], "google")
         assert curated == ["gemini-3.5-flash", "gemini-3.1-pro"]
+        assert extra == []
+
+    def test_vertex_express_curated(self):
+        curated, extra = _curate_models(
+            ["gemini-2.5-flash", "gemini-3-pro-preview", "gemini-3.1-pro-preview", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
+            "vertex_express",
+        )
+        assert curated == ["gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3-pro-preview", "gemini-3.1-flash-lite", "gemini-2.5-flash"]
         assert extra == []
 
 
@@ -345,7 +358,7 @@ class TestClassifyEndpoint:
         def fake_head(*args, **kwargs):
             raise AssertionError("generic proxy health check should not use HEAD")
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, **kwargs):
             seen.append(("GET", url))
             request = httpx.Request("GET", url)
             return httpx.Response(200, request=request)
@@ -376,7 +389,7 @@ class TestSetupProbeSafety:
         monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
         monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, **kwargs):
             request = httpx.Request("GET", url)
             response = httpx.Response(401, request=request)
             raise httpx.HTTPStatusError("unauthorized", request=request, response=response)
@@ -389,18 +402,81 @@ class TestSetupProbeSafety:
         monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
         monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, **kwargs):
             raise httpx.ConnectError("offline")
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
 
         assert _probe_endpoint("https://api.groq.com/openai/v1") == _PROVIDER_CURATED["groq"]
 
+    def test_vertex_express_probe_scans_publisher_models(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+        seen = {}
+
+        def fake_get(url, headers=None, timeout=None, **kwargs):
+            seen["url"] = url
+            request = httpx.Request("GET", url)
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "publisherModels": [
+                        {"name": "publishers/google/models/text-embedding-005"},
+                        {"name": "publishers/google/models/gemini-3-pro-preview"},
+                        {"name": "publishers/google/models/gemini-3.5-flash"},
+                    ]
+                },
+            )
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+
+        assert _probe_endpoint("https://aiplatform.googleapis.com/v1", "vertex-key") == ["gemini-3.5-flash", "gemini-3-pro-preview"]
+        assert seen["url"] == "https://aiplatform.googleapis.com/v1beta1/publishers/google/models?key=vertex-key&pageSize=100"
+
+    def test_vertex_express_probe_falls_back_to_curated_without_key(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+        assert _probe_endpoint("https://aiplatform.googleapis.com/v1") == _PROVIDER_CURATED["vertex_express"]
+
+    def test_vertex_express_models_url_uses_v1beta1(self):
+        assert _vertex_express_models_url("https://aiplatform.googleapis.com/v1", "vertex-key") == "https://aiplatform.googleapis.com/v1beta1/publishers/google/models?key=vertex-key&pageSize=100"
+
+    def test_vertex_express_test_requires_api_key(self):
+        result = _test_vertex_express("https://aiplatform.googleapis.com/v1", "")
+        assert result["reachable"] is False
+        assert result["status_code"] == 401
+        assert "API key is required" in result["error"]
+
+    def test_vertex_express_test_posts_generate_content(self, monkeypatch):
+        seen = {}
+
+        def fake_post(url, headers=None, json=None, timeout=None):
+            seen["url"] = url
+            seen["headers"] = headers
+            seen["json"] = json
+            request = httpx.Request("POST", url)
+            return httpx.Response(
+                200,
+                request=request,
+                json={"candidates": [{"content": {"parts": [{"text": "OK"}]}}]},
+            )
+
+        monkeypatch.setattr(model_routes.httpx, "post", fake_post)
+        monkeypatch.setattr(model_routes, "_probe_vertex_express_models", lambda base_url, api_key=None, timeout=5.0: ["gemini-3.5-flash"])
+
+        result = _test_vertex_express("https://aiplatform.googleapis.com/v1", "vertex-key", timeout=2)
+        assert result["reachable"] is True
+        assert result["models"] == ["gemini-3.5-flash"]
+        assert seen["url"] == "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.1-flash-lite:generateContent?key=vertex-key"
+        assert seen["headers"] == {"Content-Type": "application/json"}
+        assert seen["json"]["generationConfig"]["maxOutputTokens"] == 8
+
     def test_keyed_anthropic_probe_does_not_fallback_on_failure(self, monkeypatch):
         monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
         monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, **kwargs):
             raise httpx.ConnectError("offline")
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
@@ -412,7 +488,7 @@ class TestSetupProbeSafety:
         monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
         seen = []
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, **kwargs):
             seen.append(url)
             request = httpx.Request("GET", url)
             response = httpx.Response(
@@ -432,7 +508,7 @@ class TestSetupProbeSafety:
         monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
         seen = []
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, **kwargs):
             seen.append((url, headers))
             request = httpx.Request("GET", url)
             response = httpx.Response(
@@ -451,7 +527,7 @@ class TestSetupProbeSafety:
         monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
         monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, **kwargs):
             raise httpx.ConnectError("offline")
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)

@@ -1,12 +1,19 @@
 """Regression tests for native Ollama Cloud provider handling."""
 import httpx
+import pytest
 
 from src import llm_core
+from src import endpoint_resolver
 
 
 def test_detects_ollama_cloud_native_provider():
     assert llm_core._detect_provider("https://ollama.com/api") == "ollama"
     assert llm_core._detect_provider("https://ollama.com/api/chat") == "ollama"
+
+
+def test_detects_vertex_express_provider():
+    assert llm_core._detect_provider("https://aiplatform.googleapis.com/v1") == "vertex_express"
+    assert endpoint_resolver.build_chat_url("https://aiplatform.googleapis.com/v1") == "https://aiplatform.googleapis.com/v1"
 
 
 def test_llm_call_posts_native_ollama_payload(monkeypatch):
@@ -240,3 +247,94 @@ def test_stream_llm_threads_discovered_num_ctx(monkeypatch):
     assert seen["num_ctx"] == 32768
     assert seen["stream"] is True
     assert out  # we got the SSE error chunk
+
+
+def test_llm_call_posts_vertex_express_payload(monkeypatch):
+    seen = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen["url"] = url
+        seen["headers"] = headers
+        seen["json"] = json
+        request = httpx.Request("POST", url)
+        return httpx.Response(
+            200,
+            request=request,
+            json={"candidates": [{"content": {"parts": [{"text": "OK"}]}}]},
+        )
+
+    monkeypatch.setattr(llm_core.httpx, "post", fake_post)
+
+    result = llm_core.llm_call(
+        "https://aiplatform.googleapis.com/v1",
+        "gemini-3.5-flash",
+        [
+            {"role": "system", "content": "Be terse."},
+            {"role": "user", "content": "Say OK"},
+            {"role": "assistant", "content": "Thinking"},
+            {"role": "user", "content": [{"type": "text", "text": "Now answer."}]},
+        ],
+        temperature=0.3,
+        max_tokens=8,
+        headers={"Authorization": "Bearer vertex-key"},
+        timeout=11,
+    )
+
+    assert result == "OK"
+    assert seen["url"] == "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.5-flash:generateContent?key=vertex-key"
+    assert seen["headers"] == {"Content-Type": "application/json"}
+    assert seen["json"]["systemInstruction"] == {"parts": [{"text": "Be terse."}]}
+    assert seen["json"]["contents"] == [
+        {"role": "user", "parts": [{"text": "Say OK"}]},
+        {"role": "model", "parts": [{"text": "Thinking"}]},
+        {"role": "user", "parts": [{"text": "Now answer."}]},
+    ]
+    assert seen["json"]["generationConfig"] == {"temperature": 0.3, "maxOutputTokens": 8}
+
+
+@pytest.mark.asyncio
+async def test_stream_llm_parses_vertex_express_sse(monkeypatch):
+    seen = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aiter_lines(self):
+            yield 'data: {"candidates":[{"content":{"parts":[{"text":"O"}]}}]}'
+            yield 'data: {"candidates":[{"content":{"parts":[{"text":"K"}]}}]}'
+
+    class FakeClient:
+        def stream(self, method, url, json=None, headers=None, timeout=None):
+            seen["method"] = method
+            seen["url"] = url
+            seen["json"] = json
+            seen["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: FakeClient())
+
+    chunks = [
+        chunk async for chunk in llm_core.stream_llm(
+            "https://aiplatform.googleapis.com/v1",
+            "publishers/google/models/gemini-3.1-flash-lite",
+            [{"role": "user", "content": "Say OK"}],
+            temperature=0.0,
+            max_tokens=8,
+            headers={"Authorization": "Bearer vertex-key"},
+        )
+    ]
+
+    assert seen["method"] == "POST"
+    assert seen["url"] == "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-3.1-flash-lite:streamGenerateContent?key=vertex-key&alt=sse"
+    assert seen["headers"] == {"Content-Type": "application/json"}
+    assert chunks == [
+        'data: {"delta": "O"}\n\n',
+        'data: {"delta": "K"}\n\n',
+        "data: [DONE]\n\n",
+    ]

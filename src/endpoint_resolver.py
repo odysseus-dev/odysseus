@@ -167,6 +167,8 @@ def build_chat_url(base: str) -> str:
     """Return the correct chat endpoint URL for a given base."""
     base = resolve_url(base)
     provider = _detect_provider(base)
+    if provider == "vertex_express":
+        return base
     if provider == "anthropic":
         return _anthropic_api_root(base) + "/v1/messages"
     if provider == "ollama":
@@ -178,6 +180,8 @@ def build_models_url(base: str) -> str:
     """Return the provider-specific model-list endpoint URL for a base."""
     base = resolve_url(base)
     provider = _detect_provider(base)
+    if provider == "vertex_express":
+        return base
     if provider == "anthropic":
         return _anthropic_api_root(base) + "/v1/models"
     if provider == "ollama":
