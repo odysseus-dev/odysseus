@@ -993,8 +993,8 @@ def setup_model_routes(model_discovery):
                     db.close()
                 if changed:
                     _invalidate_models_cache()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning('Background endpoint refresh failed: %s', e)
             finally:
                 for st in _refresh_state.values():
                     st["inflight"] = False

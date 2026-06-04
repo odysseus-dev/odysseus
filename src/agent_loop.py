@@ -374,7 +374,8 @@ def get_builtin_overrides() -> dict:
         from src.settings import get_setting
         ov = get_setting("builtin_tool_overrides", {})
         return ov if isinstance(ov, dict) else {}
-    except Exception:
+    except Exception as e:
+        logger.warning('Failed to load builtin tool overrides: %s', e)
         return {}
 
 
@@ -571,8 +572,7 @@ def _build_system_prompt(
         # Skill index is user-editable (name + description), so it must never
         # live in the trusted system role and is NOT cached. Always recompute
         # when the cache hits.
-        from src.agent_loop import _build_base_prompt as _bbp_recompute
-        _, _skill_index_block = _bbp_recompute(
+        _, _skill_index_block = _build_base_prompt(
             disabled_tools, mcp_mgr, needs_admin, relevant_tools,
             mcp_disabled_map=mcp_disabled_map, compact=compact,
         )
