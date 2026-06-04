@@ -253,6 +253,16 @@ CODEX_RUNTIME_ENABLED=true docker compose up -d --build
 docker compose exec odysseus codex login --device-auth
 ```
 
+On Windows PowerShell, use `.env` or `$env:` syntax instead of Bash inline env
+assignment:
+
+```powershell
+Copy-Item .env.example .env
+# Edit .env and set CODEX_RUNTIME_ENABLED=true, then:
+docker compose up -d --build
+docker compose exec odysseus codex login --device-auth
+```
+
 The login is instance-level. Protect `data/codex` like an API key, keep
 `AUTH_ENABLED=true` for any exposed deployment, and use Settings > Services >
 Codex Runtime to probe auth or reconcile the shared model endpoint.
