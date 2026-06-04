@@ -596,6 +596,23 @@ def test_probe_endpoint_lists_local_ggufs(tmp_path, monkeypatch):
     assert mr._probe_endpoint(CANONICAL_URL) == ["Qwen3-4B-Q4_K_M"]
 
 
+def test_empty_state_hint_is_actionable(monkeypatch):
+    """A reachable NobodyWho endpoint with zero models must tell a
+    non-technical user what to do next, not just "no models found"."""
+    import routes.model_routes as mr
+
+    monkeypatch.setattr(mr, "_nobodywho", _available_manager())
+    hint = mr._empty_state_hint(CANONICAL_URL)
+    assert hint and "Cookbook" in hint and ".gguf" in hint
+
+    # No hint for other providers (their empty states have other causes)...
+    assert mr._empty_state_hint("http://localhost:11434/v1") is None
+    # ...and none when the package isn't even installed (the install hint
+    # path owns that case).
+    monkeypatch.setattr(mr, "_nobodywho", _unavailable_manager())
+    assert mr._empty_state_hint(CANONICAL_URL) is None
+
+
 def test_get_context_length_uses_configured_ctx(monkeypatch):
     from src.model_context import get_context_length
 

@@ -718,6 +718,19 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     return []
 
 
+def _empty_state_hint(base_url: str) -> Optional[str]:
+    """Actionable next step for a reachable endpoint that lists zero models.
+
+    "Online — no models found" is technically true and practically useless for
+    someone who doesn't know what a GGUF is. For providers where we know the
+    fix (NobodyWho: get a model via Cookbook / drop a file), say it.
+    """
+    if is_nobodywho_url(base_url) and _nobodywho.is_available():
+        from src.nobodywho_provider import EMPTY_MODELS_HINT
+        return EMPTY_MODELS_HINT
+    return None
+
+
 def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> Dict[str, Any]:
     """Reachability probe that does not require installed/listed models."""
     from src.endpoint_resolver import resolve_url
@@ -1418,6 +1431,7 @@ def setup_model_routes(model_discovery):
                     ping = _ping_endpoint(r.base_url, r.api_key, timeout=1.0)
                     if ping.get("reachable"):
                         status = "empty"
+                        ping["error"] = ping.get("error") or _empty_state_hint(r.base_url)
                 base = _normalize_base(r.base_url)
                 kind = _effective_endpoint_kind(r, base)
                 results.append({
@@ -1635,6 +1649,8 @@ def setup_model_routes(model_discovery):
             db.close()
 
         # Return immediately — probing happens via the separate /probe SSE endpoint
+        if not model_ids and not _pinned and ping.get("reachable"):
+            ping["error"] = ping.get("error") or _empty_state_hint(base_url)
         return {
             "id": ep_id,
             "name": name.strip(),
@@ -1671,6 +1687,8 @@ def setup_model_routes(model_discovery):
         probe_timeout = _explicit_model_list_timeout(base_url, requested_kind, configured_timeout)
         models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
         ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=min(probe_timeout, 2.0))
+        if not models and ping.get("reachable"):
+            ping["error"] = ping.get("error") or _empty_state_hint(base_url)
         return {
             "base_url": base_url,
             "online": bool(models) or bool(ping.get("reachable")),

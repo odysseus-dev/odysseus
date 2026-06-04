@@ -48,6 +48,14 @@ INSTALL_HINT = (
     "(see requirements-optional.txt), then restart Odysseus."
 )
 
+# Shown when the endpoint is healthy but no GGUF files were found — phrased as
+# a next step a non-technical user can actually follow (Cookbook downloads
+# land in the HuggingFace cache, which this provider scans automatically).
+EMPTY_MODELS_HINT = (
+    "no models yet. Open Cookbook and download one — it shows up here "
+    "automatically. (Or drop a .gguf file into data/models.)"
+)
+
 # Filename markers for GGUFs that are not chat models (multimodal projectors).
 _NON_CHAT_GGUF_MARKERS = ("mmproj", "projector")
 
