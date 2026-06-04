@@ -8835,6 +8835,57 @@ body.hide-thinking .thinking-section { display: none !important; }
   list-style: none;
 }
 .agent-tool-output summary::-webkit-details-marker { display: none; }
+/* File-write diff — neutral chrome (not the red error tint) + colored lines */
+.agent-tool-diff {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 18%, transparent);
+}
+.agent-tool-diff summary {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.agent-tool-diff .diff-stat {
+  font-weight: 600;
+  opacity: 0.7;
+  font-family: var(--mono, monospace);
+}
+/* Collapsed diff summary: filename + +adds/−dels (theme green/red). */
+.agent-tool-diff summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.agent-tool-diff .diff-file {
+  font-family: var(--mono, monospace);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-tool-diff .diff-summary-stats {
+  margin-left: auto;
+  font-family: var(--mono, monospace);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.agent-tool-diff .diff-summary-stats .diff-stat-add { color: var(--green, #2ecc71); }
+.agent-tool-diff .diff-summary-stats .diff-stat-del { color: var(--red, #e74c3c); }
+.agent-tool-diff .diff-summary-stats .diff-stat-new { color: var(--accent, var(--red)); opacity: 0.85; }
+.diff-pre {
+  margin: 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-family: var(--mono, monospace);
+  font-size: 0.82em;
+  line-height: 1.45;
+}
+.diff-pre span { display: block; white-space: pre; }
+.diff-pre .diff-add { background: color-mix(in srgb, #2ecc71 22%, transparent); }
+.diff-pre .diff-del { background: color-mix(in srgb, #e74c3c 22%, transparent); }
+.diff-pre .diff-hunk { color: var(--accent); opacity: 0.85; }
+.diff-pre .diff-meta { opacity: 0.55; }
+.diff-pre .diff-ctx { opacity: 0.8; }
 /* Suppress the global `summary::before { content: '▶' }` left arrow — this
    section uses a right-side chevron instead. */
 .agent-tool-output summary::before { content: none; }

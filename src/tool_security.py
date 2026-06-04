@@ -16,6 +16,7 @@ NON_ADMIN_BLOCKED_TOOLS = {
     "python",
     "read_file",
     "write_file",
+    "edit_file",
     "search_chats",
     "manage_memory",
     "manage_skills",
