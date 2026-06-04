@@ -2647,32 +2647,74 @@ import * as Modals from './modalManager.js';
     if (list.length === 0) return;
     const doc = docs.get(activeDocId);
     if (!doc) return;
-    if (doc.language !== 'email') return;
-    if (!doc._composeAtts) doc._composeAtts = [];
 
-    for (const file of list) {
-      try {
-        const fd = new FormData();
-        fd.append('file', file);
-        const res = await fetch(`${API_BASE}/api/email/compose-upload`, {
-          method: 'POST',
-          body: fd,
-        });
-        const data = await res.json();
-        if (data.success) {
-          doc._composeAtts.push({
-            token: data.token,
-            filename: data.filename,
-            size: data.size,
+    // Email compose — upload to email compose endpoint, store as attachment tokens
+    if (doc.language === 'email') {
+      if (!doc._composeAtts) doc._composeAtts = [];
+      for (const file of list) {
+        try {
+          const fd = new FormData();
+          fd.append('file', file);
+          const res = await fetch(`${API_BASE}/api/email/compose-upload`, {
+            method: 'POST',
+            body: fd,
           });
-        } else {
-          if (uiModule) uiModule.showError(`Failed to upload ${file.name}: ${data.error || ''}`);
+          const data = await res.json();
+          if (data.success) {
+            doc._composeAtts.push({
+              token: data.token,
+              filename: data.filename,
+              size: data.size,
+            });
+          } else {
+            if (uiModule) uiModule.showError(`Failed to upload ${file.name}: ${data.error || ''}`);
+          }
+        } catch (err) {
+          if (uiModule) uiModule.showError(`Failed to upload ${file.name}`);
         }
-      } catch (err) {
-        if (uiModule) uiModule.showError(`Failed to upload ${file.name}`);
       }
+      _renderComposeAttachments();
+      return;
     }
-    _renderComposeAttachments();
+
+    // Regular document — upload via general upload endpoint, insert as markdown
+    const ta = document.getElementById('doc-editor-textarea');
+    if (!ta) return;
+    try {
+      const fd = new FormData();
+      for (const file of list) {
+        fd.append('files', file);
+      }
+      const res = await fetch(`${API_BASE}/api/upload`, {
+        method: 'POST',
+        body: fd,
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => 'Unknown error');
+        if (uiModule) uiModule.showError(`Upload failed: ${errText}`);
+        return;
+      }
+      const data = await res.json();
+      const uploaded = data.files || [];
+      let insert = '';
+      for (const f of uploaded) {
+        const url = `${API_BASE}/api/upload/${f.id}`;
+        if (f.mime && f.mime.startsWith('image/')) {
+          insert += `![](${url})\n`;
+        } else {
+          insert += `[${f.name}](${url})\n`;
+        }
+      }
+      const cursor = ta.selectionStart;
+      const before = ta.value.slice(0, cursor);
+      const after = ta.value.slice(cursor);
+      ta.value = before + insert + after;
+      ta.selectionStart = ta.selectionEnd = cursor + insert.length;
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.focus();
+    } catch (err) {
+      if (uiModule) uiModule.showError(`Failed to upload ${list.map(f => f.name).join(', ')}`);
+    }
   }
 
   async function _handleAttachUpload(e) {
