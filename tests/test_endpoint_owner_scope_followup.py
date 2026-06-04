@@ -7,26 +7,65 @@ import pytest
 from fastapi import HTTPException
 
 
-def test_compare_start_rejects_raw_endpoint_for_non_admin():
-    from routes.compare_routes import setup_compare_routes
-
-    router = setup_compare_routes(SimpleNamespace(create_session=lambda **_: None, sessions={}))
-    start = next(
-        r.endpoint for r in router.routes
-        if getattr(r, "path", "") == "/api/compare/start"
-    )
-    request = SimpleNamespace(
-        state=SimpleNamespace(current_user="alice"),
+def _compare_request(user="alice", is_admin=False):
+    return SimpleNamespace(
+        state=SimpleNamespace(current_user=user),
         app=SimpleNamespace(
             state=SimpleNamespace(
-                auth_manager=SimpleNamespace(is_admin=lambda user: False)
+                auth_manager=SimpleNamespace(is_admin=lambda u: is_admin)
             )
         ),
     )
 
+
+def _compare_start_route(session_manager):
+    from routes.compare_routes import setup_compare_routes
+
+    router = setup_compare_routes(session_manager)
+    # setup_compare_routes registers on a module-global router, so each call
+    # appends another /start route; take the most recently registered one so we
+    # get the handler bound to *this* session_manager.
+    return [
+        r.endpoint for r in router.routes
+        if getattr(r, "path", "") == "/api/compare/start"
+    ][-1]
+
+
+class _FakeDB:
+    """The endpoint lookup is patched, so only the trailing Comparison insert
+    touches this — swallow add/commit/close so the test never hits a real DB."""
+
+    def add(self, *a, **k):
+        pass
+
+    def commit(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class _SessionStore:
+    def __init__(self, store):
+        self._store = store
+
+    def get(self, key, default=None):
+        return self._store.get(key, default)
+
+
+def test_compare_start_rejects_unregistered_endpoint_for_non_admin(monkeypatch):
+    import routes.compare_routes as cr
+
+    monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
+    # Nothing visible to the caller matches the supplied URL → raw, unregistered.
+    monkeypatch.setattr(cr, "_owned_endpoint_by_url", lambda *a, **k: None)
+
+    start = _compare_start_route(
+        SimpleNamespace(create_session=lambda **_: None, sessions={})
+    )
     with pytest.raises(HTTPException) as exc:
         start(
-            request,
+            _compare_request(),
             prompt="p",
             model_a="a",
             model_b="b",
@@ -35,6 +74,41 @@ def test_compare_start_rejects_raw_endpoint_for_non_admin():
         )
 
     assert exc.value.status_code == 403
+
+
+def test_compare_start_allows_owned_registered_endpoint_for_non_admin(monkeypatch):
+    # Regression: the followup must not blanket-reject non-admins. Compare
+    # resolves endpoints by URL (no endpoint_id), so a caller comparing a
+    # registered endpoint they own has to be allowed — only truly raw,
+    # unregistered URLs are rejected.
+    import routes.compare_routes as cr
+
+    monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
+    owned = SimpleNamespace(id=7, api_key="sk-secret", base_url="http://127.0.0.1:8000/v1")
+    monkeypatch.setattr(cr, "_owned_endpoint_by_url", lambda *a, **k: owned)
+
+    created = {}
+
+    def _create_session(session_id, **_):
+        created[session_id] = SimpleNamespace(headers={})
+
+    start = _compare_start_route(
+        SimpleNamespace(create_session=_create_session, sessions=_SessionStore(created))
+    )
+    # Must complete without raising 403.
+    start(
+        _compare_request(),
+        prompt="p",
+        model_a="a",
+        model_b="b",
+        endpoint_a="http://127.0.0.1:8000/v1",
+        endpoint_b="http://127.0.0.1:8000/v1",
+    )
+
+    # Both [CMP] sessions created, each with the owned endpoint's key copied in.
+    assert len(created) == 2
+    for s in created.values():
+        assert s.headers
 
 
 def test_compare_endpoint_key_lookup_is_owner_scoped():

@@ -90,24 +90,33 @@ def setup_compare_routes(session_manager: SessionManager):
 
         # Create ephemeral sessions (prefixed [CMP])
         for sid, model, endpoint in [(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]:
-            _reject_raw_endpoint_url_for_non_admin(request, user, None, endpoint)
-            name = f"[CMP] {slot_name[sid]}" if blind else f"[CMP] {model.split('/')[-1]}"
-            session_manager.create_session(
-                session_id=sid,
-                name=name,
-                endpoint_url=endpoint,
-                model=model,
-                rag=False,
-                owner=user,
-            )
-            # Copy API key from endpoint config
             db = SessionLocal()
             try:
                 from src.endpoint_resolver import build_headers, normalize_base
-                # Find matching endpoint by URL, scoped to the caller so a
+                # Resolve the supplied URL to a ModelEndpoint the caller owns
+                # (their own rows + legacy null-owner shared rows), scoped so a
                 # comparison can't borrow another user's private endpoint key.
                 base = normalize_base(endpoint)
                 ep = _owned_endpoint_by_url(db, base, user)
+                # Only reject *unregistered* raw URLs for signed-in non-admins;
+                # a matched registered endpoint supplies an id so the caller can
+                # still compare endpoints they own. Blanket-rejecting here (the
+                # earlier `endpoint_id=None` call) locked non-admins out of
+                # compare entirely, since compare resolves endpoints by URL with
+                # no endpoint_id. Mirrors the gallery inpaint/harmonize checks.
+                _reject_raw_endpoint_url_for_non_admin(
+                    request, user, str(ep.id) if ep is not None else None, endpoint
+                )
+                name = f"[CMP] {slot_name[sid]}" if blind else f"[CMP] {model.split('/')[-1]}"
+                session_manager.create_session(
+                    session_id=sid,
+                    name=name,
+                    endpoint_url=endpoint,
+                    model=model,
+                    rag=False,
+                    owner=user,
+                )
+                # Copy API key from the matched endpoint config.
                 if ep and ep.api_key:
                     s = session_manager.sessions.get(sid)
                     if s:
