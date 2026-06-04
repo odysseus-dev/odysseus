@@ -3932,8 +3932,6 @@ function startOdysseusApp() {
     uiModule.showToast(`Added ${files.length} file${files.length > 1 ? 's' : ''} to attach`);
   }, true);
 
-=======
->>>>>>> be96806 (fix: default text-emojis to off so emoji render as monochrome SVGs)
   // Load initial data
   presetsModule.loadPresets(uiModule.showError);
 
