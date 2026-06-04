@@ -39,16 +39,23 @@ def test_compare_start_rejects_raw_endpoint_for_non_admin():
 
 def test_compare_endpoint_key_lookup_is_owner_scoped():
     body = Path("routes/compare_routes.py").read_text(encoding="utf-8")
-    start_body = body.split("def start_comparison", 1)[1].split("# Blind mapping", 1)[0]
+    start_body = body.split("def start_comparison", 1)[1].split("# Store comparison record", 1)[0]
+    helper_body = body.split("def _owned_endpoint_by_url", 1)[1].split("class RecordVoteRequest", 1)[0]
 
     assert "_reject_raw_endpoint_url_for_non_admin" in start_body
-    assert "owner_filter(q, ModelEndpoint, user)" in start_body
+    assert "_owned_endpoint_by_url(db, base, user)" in start_body
+    assert "owner_filter(q, ModelEndpoint, owner)" in helper_body
 
 
 def test_gallery_image_endpoint_lookups_are_owner_scoped():
     body = Path("routes/gallery_routes.py").read_text(encoding="utf-8")
+    helper_body = body.split("def _visible_image_endpoint_query", 1)[1].split(
+        "def _first_visible_image_endpoint", 1
+    )[0]
 
-    assert body.count("owner_filter(q, ModelEndpoint, user)") >= 6
+    assert "owner_filter(q, ModelEndpoint, owner)" in helper_body
+    assert body.count("_first_visible_image_endpoint(db, user)") >= 4
+    assert body.count("_visible_image_endpoint_for_base(db,") >= 2
     assert "def _current_user_is_admin" in body
     assert body.count('raise HTTPException(403, "Choose a registered image endpoint")') == 2
     for marker in (
@@ -59,7 +66,10 @@ def test_gallery_image_endpoint_lookups_are_owner_scoped():
     ):
         section = body.split(marker, 1)[1].split("@router.", 1)[0]
         assert "user = require_privilege(request, \"can_generate_images\")" in section
-        assert "owner_filter(q, ModelEndpoint, user)" in section
+        assert (
+            "_first_visible_image_endpoint(db, user)" in section
+            or "_visible_image_endpoint_for_base(db," in section
+        )
 
 
 def test_research_endpoint_resolution_passes_owner():
@@ -70,4 +80,6 @@ def test_research_endpoint_resolution_passes_owner():
     assert 'resolve_endpoint("utility", owner=user)' in body
     assert 'resolve_endpoint("default", owner=user)' in body
     assert 'resolve_endpoint("chat", owner=user)' in body
-    assert body.count("owner_filter(q, ModelEndpoint, user)") >= 2
+    helper_body = body.split("def _owned_enabled_endpoint", 1)[1].split("def setup_research_routes", 1)[0]
+    assert "owner_filter(q, ModelEndpoint, owner)" in helper_body
+    assert body.count("_owned_enabled_endpoint(db, user") >= 2
