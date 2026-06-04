@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -83,6 +83,24 @@
   .nav-links { display: flex; align-items: center; gap: 22px; }
   .nav-links a { color: var(--muted); font-size: 14px; font-weight: 500; }
   .nav-links a:hover { color: var(--fg); }
+  .language-toggle-btn {
+    appearance: none;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: transparent;
+    color: var(--fg);
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    min-width: 56px;
+    height: 30px;
+    padding: 0 10px;
+  }
+  .language-toggle-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
   .btn {
     display: inline-flex; align-items: center; gap: 8px;
     padding: 9px 16px; border-radius: 10px; font-weight: 600; font-size: 14px;
@@ -135,6 +153,10 @@
   }
   .hamburger-menu a:hover {
     color: var(--fg);
+  }
+  .hamburger-menu .landing-language-toggle {
+    width: 100%;
+    margin-top: 4px;
   }
   .nav-links-hamburger.open .hamburger-menu {
     display: flex;
@@ -364,6 +386,7 @@
         <a href="#testimonials">Testimonials</a>
         <a href="#how">How it started</a>
         <a href="#start">Get started</a>
+        <button type="button" class="language-toggle-btn landing-language-toggle" data-language-toggle aria-label="切换到英文" title="当前：中文">English</button>
         <a class="btn" href="https://github.com/pewdiepie-archdaemon/odysseus" target="_blank">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.7.5.5 5.7.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.2.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.7 18.3.5 12 .5z"/></svg>
           GitHub
@@ -382,6 +405,7 @@
           <a href="#testimonials">Testimonials</a>
           <a href="#how">How it started</a>
           <a href="#start">Get started</a>
+          <button type="button" class="language-toggle-btn landing-language-toggle" data-language-toggle aria-label="切换到英文" title="当前：中文">English</button>
 
           <a class="btn" href="https://github.com/pewdiepie-archdaemon/odysseus" target="_blank">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -649,6 +673,7 @@
     </div>
   </footer>
 
+  <script type="module" src="/static/js/i18n.js"></script>
   <script>
     // Typewriter for the origin terminal: type line 1, pause 2s, line 2, pause
     // 2s, line 3, hold 4s, then reset and loop. Blinking "|" cursor throughout.

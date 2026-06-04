@@ -13,6 +13,12 @@ let modalEl = null;
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
+function _refreshSettingsI18n(root) {
+  const target = root || modalEl || el('settings-modal');
+  try {
+    window.odysseusI18n?.applyTranslations?.(target || document);
+  } catch (_) {}
+}
 
 /* ── Tab switching ── */
 const ADMIN_TABS = new Set(['services', 'integrations', 'tools', 'users', 'system']);
@@ -24,6 +30,7 @@ function initTabs() {
       // Lazy-init admin when first clicking an admin tab
       if (ADMIN_TABS.has(tab) && window.adminModule && typeof window.adminModule.open === 'function') {
         window.adminModule.open(tab);
+        requestAnimationFrame(() => _refreshSettingsI18n(modalEl));
         return;
       }
       modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
@@ -34,6 +41,7 @@ function initTabs() {
       document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
       syncAppearanceOpacity(tab === 'appearance');
       if (tab === 'ai') refreshAiModelEndpoints();
+      requestAnimationFrame(() => _refreshSettingsI18n(modalEl));
     });
   });
 }
@@ -479,7 +487,11 @@ async function initDefaultChat() {
       });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) {
+      msg.textContent = 'Failed to save';
+      msg.style.color = 'var(--red)';
+      _refreshSettingsI18n(msg);
+    }
   }
 
   epSel.addEventListener('change', function() { refreshModels(''); saveDefault(); });
@@ -548,7 +560,11 @@ async function initUtilityModel() {
       });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 1500);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) {
+      msg.textContent = 'Failed to save';
+      msg.style.color = 'var(--red)';
+      _refreshSettingsI18n(msg);
+    }
   }
 
   epSel.addEventListener('change', function() { refreshModels(''); saveUtility(); });
@@ -643,8 +659,13 @@ async function initTeacherModel() {
       });
       msg.textContent = enabled ? (spec ? 'Saved' : 'Pick an endpoint + model') : 'Disabled';
       msg.style.color = enabled && !spec ? 'var(--red)' : 'var(--fg)';
+      _refreshSettingsI18n(msg);
       setTimeout(function() { msg.textContent = ''; }, 2000);
-    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    } catch (e) {
+      msg.textContent = 'Failed to save';
+      msg.style.color = 'var(--red)';
+      _refreshSettingsI18n(msg);
+    }
   }
 
   if (enabledToggle) {
@@ -1572,12 +1593,14 @@ async function initAgentSettings() {
       });
       msg.textContent = val > 0 ? 'Limit: ' + val + ' tool calls per message' : 'Unlimited';
       msg.style.color = 'var(--fg)';
+      _refreshSettingsI18n(msg);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
   toolsInput.addEventListener('change', save);
   var cur = parseInt(toolsInput.value, 10) || 0;
   msg.textContent = cur > 0 ? 'Limit: ' + cur + ' tool calls per message' : 'Unlimited';
+  _refreshSettingsI18n(msg);
 }
 
 /* ═══════════════════════════════════════════
@@ -1853,6 +1876,7 @@ async function initShortcuts() {
         render();
       });
     });
+    _refreshSettingsI18n(listEl);
   }
 
   function startRebind(btn) {
@@ -1882,6 +1906,7 @@ async function initShortcuts() {
       hintEl.hidden = false;
       hintEl.textContent = 'press a key';
     }
+    _refreshSettingsI18n(row);
 
     let pendingCombo = null;
 
@@ -1930,6 +1955,7 @@ async function initShortcuts() {
       btn.innerHTML = _formatKeyCaps(combo);
       // Now that a combo is captured, prompt to commit with Enter.
       if (hintEl) hintEl.textContent = '\u21B5 Enter to save';
+      _refreshSettingsI18n(row);
     }
 
     function cleanup() {
@@ -1952,6 +1978,7 @@ async function initShortcuts() {
       // Update global keybinds so they take effect immediately
       window._odysseusKeybinds = keybinds;
       if (uiModule && uiModule.showToast) uiModule.showToast('Shortcut saved');
+      _refreshSettingsI18n(modalEl);
     } catch (e) {
       console.error('Failed to save keybinds:', e);
     }
@@ -1967,6 +1994,7 @@ async function initShortcuts() {
   }
 
   render();
+  _refreshSettingsI18n(listEl);
 }
 
 /* ═══════════════════════════════════════════
@@ -2173,6 +2201,7 @@ function initAll() {
   initEmailAccountsSettings();
   initReminderSettings();
   initUnifiedIntegrations();
+  _refreshSettingsI18n(modalEl);
 }
 
 function notifyIntegrationsChanged() {
@@ -4964,6 +4993,7 @@ export function open(tab) {
   if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();
   }
+  requestAnimationFrame(() => _refreshSettingsI18n(modalEl));
 }
 
 export function close() {

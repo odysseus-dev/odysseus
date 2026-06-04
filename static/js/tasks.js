@@ -20,6 +20,13 @@ let _clockInterval = null;
 
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
+function _refreshTasksI18n(root) {
+  const target = root || document.getElementById('tasks-modal');
+  try {
+    window.odysseusI18n?.applyTranslations?.(target || document);
+  } catch (_) {}
+}
+
 // ---- API ----
 
 async function _fetchTasks() {
@@ -559,6 +566,7 @@ function _taskUpdateBulkCount() {
   if (c) c.textContent = `${_taskSelected.size} Selected`;
   const del = document.getElementById('tasks-bulk-delete');
   if (del) del.disabled = _taskSelected.size === 0;
+  _refreshTasksI18n(document.getElementById('tasks-bulk-bar'));
 }
 async function _taskBulkDelete() {
   const ids = [..._taskSelected];
@@ -633,6 +641,7 @@ function _renderList() {
     } else {
       list.innerHTML = '<div style="opacity:0.4;font-size:12px;text-align:center;padding:24px 0;">No tasks yet. Create one to get started.</div>';
     }
+    _refreshTasksI18n();
     return;
   }
 
@@ -661,6 +670,7 @@ function _renderList() {
   });
   if (visible.length === 0) {
     list.innerHTML = '<div style="opacity:0.4;font-size:12px;text-align:center;padding:24px 0;">No matching tasks.</div>';
+    _refreshTasksI18n();
     return;
   }
 
@@ -844,6 +854,7 @@ function _renderList() {
     setTimeout(() => list.classList.remove('tasks-just-opened'), 900);
   }
   _tasksCascadeNext = false;
+  _refreshTasksI18n();
 }
 
 function _btn(label, onClick) {
@@ -904,6 +915,7 @@ function _showTaskDropdown(anchor, items) {
     dd.appendChild(btn);
   });
   document.body.appendChild(dd);
+  _refreshTasksI18n(dd);
   const rect = anchor.getBoundingClientRect();
   let top = rect.bottom + 4;
   let left = rect.right - dd.offsetWidth;
@@ -987,6 +999,7 @@ function _showPresetPicker() {
     aiInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); aiBtn.click(); } });
     aiBtn.addEventListener('click', () => _aiDraftTask(aiInput, aiBtn));
   }
+  _refreshTasksI18n(body);
 }
 
 // ---- Form ----
@@ -1099,6 +1112,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
         }
         const notifEl = document.getElementById('task-form-notif');
         if (notifEl && !existing?.id) notifEl.checked = false;
+        _refreshTasksI18n(typeOpts);
       };
       _fetchActions().then(actions => {
         const sel = document.getElementById('task-form-action');
@@ -1113,8 +1127,10 @@ function _showForm(existing, initTaskType, initTriggerType) {
         }
         sel.addEventListener('change', syncActionExtra);
         syncActionExtra();
+        _refreshTasksI18n(typeOpts);
       });
     }
+    _refreshTasksI18n(typeOpts);
   }
 
   typeToggle.addEventListener('click', (e) => {
@@ -1227,6 +1243,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
       }
       schedSelect.addEventListener('change', updateScheduleOpts);
       updateScheduleOpts();
+      _refreshTasksI18n(triggerOpts);
 
     } else if (triggerType === 'event') {
       triggerOpts.innerHTML = `
@@ -1248,6 +1265,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
           if (existing?.trigger_event === ev.name) opt.selected = true;
           sel.appendChild(opt);
         }
+        _refreshTasksI18n(triggerOpts);
       });
     } else if (triggerType === 'webhook') {
       if (existing?.webhook_token) {
@@ -1268,6 +1286,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
         triggerOpts.innerHTML = '<div style="font-size:11px;opacity:0.5;margin-top:4px;">Webhook URL will be generated when the task is saved.</div>';
       }
     }
+    _refreshTasksI18n(triggerOpts);
   }
 
   triggerToggle.addEventListener('click', (e) => {
@@ -1302,6 +1321,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
       opt.selected = true;
       outputSel.appendChild(opt);
     }
+    _refreshTasksI18n(outputSel);
   });
 
   // Populate model dropdown from /api/models. Value is "endpoint_url::model"
@@ -1339,6 +1359,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
         opt.selected = true;
         modelSel.appendChild(opt);
       }
+      _refreshTasksI18n(modelSel);
     })
     .catch(() => {});
 
@@ -1498,6 +1519,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
       if (uiModule) uiModule.showError(e.message);
     }
   });
+  _refreshTasksI18n(body);
 }
 
 // ---- Run History ----
@@ -1539,6 +1561,7 @@ async function _showRunHistory(taskId, taskName) {
   }
 
   body.innerHTML = html;
+  _refreshTasksI18n(body);
 
   document.getElementById('task-history-back').addEventListener('click', () => {
     _viewingRuns = null;
@@ -1705,6 +1728,7 @@ function _syncPauseAllButton() {
     btn.style.opacity = '0.4';
     btn.disabled = true;
   }
+  _refreshTasksI18n(btn);
 }
 
 // ---- Tab routing ----
@@ -1723,6 +1747,7 @@ function _switchTab(tab) {
   if (tab === 'tasks') _renderMainView();
   else if (tab === 'activity') _renderActivityView();
   else if (tab === 'new') _showPresetPicker();
+  requestAnimationFrame(() => _refreshTasksI18n(modal));
 }
 
 // ---- Activity view (assistant session log) ----
@@ -1782,10 +1807,12 @@ async function _renderActivityView() {
     });
     if (filtered.length === 0) {
       list.innerHTML = '<div style="opacity:0.5;padding:12px;">No matching activity.</div>';
+      _refreshTasksI18n(list);
       return;
     }
     list.innerHTML = _stackActivityEntries(filtered).map(_renderActivityEntry).join('');
     _wireActivityRows(list);
+    _refreshTasksI18n(list);
   };
 
   const _buildChips = () => {
@@ -1830,6 +1857,7 @@ async function _renderActivityView() {
         _applyFilter();
       });
     });
+    _refreshTasksI18n(chipBar);
   };
 
   const searchEl = document.getElementById('tasks-activity-search');
@@ -1841,7 +1869,9 @@ async function _renderActivityView() {
     _applyFilter();
   } else if (_actList) {
     _actList.appendChild(spinnerModule.createLoadingRow('Loading…'));
+    _refreshTasksI18n(_actList);
   }
+  _refreshTasksI18n(body);
 
   try {
     const res = await fetch(`${API_BASE}/api/tasks/runs/recent?limit=100`, { credentials: 'same-origin' });
@@ -1852,6 +1882,7 @@ async function _renderActivityView() {
     if (!list) return;
     if (runs.length === 0) {
       list.innerHTML = '<div style="opacity:0.5;padding:12px;">No activity yet. Scheduled tasks will log here once they run.</div>';
+      _refreshTasksI18n(list);
       return;
     }
     _activityEntries = runs.map(r => {
@@ -1885,6 +1916,7 @@ async function _renderActivityView() {
   } catch (e) {
     const list = document.getElementById('tasks-activity-list');
     if (list) list.innerHTML = `<div style="opacity:0.5;padding:12px;">Failed to load activity: ${_escHtml(e.message || String(e))}</div>`;
+    _refreshTasksI18n(list);
   }
 }
 

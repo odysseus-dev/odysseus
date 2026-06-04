@@ -1199,6 +1199,12 @@ const MCP_PRESETS = [
     help: "1. Go to todoist.com > Settings > Integrations > Developer\n2. Copy your API token" },
 ];
 // ── Built-in tools management ──
+function _refreshAdminI18n(root) {
+  try {
+    window.odysseusI18n?.applyTranslations?.(root || document.getElementById('settings-modal') || document);
+  } catch (_) {}
+}
+
 const TOOL_META = {
   bash:              { name: 'Shell',            desc: 'Execute bash commands',           cat: 'Code',       ctx: '~200' },
   python:            { name: 'Python',           desc: 'Run Python scripts',              cat: 'Code',       ctx: '~200' },
@@ -1241,7 +1247,11 @@ async function loadBuiltinTools() {
     const res = await fetch('/api/tools', { credentials: 'same-origin' });
     const data = await res.json();
     const tools = data.tools || [];
-    if (!tools.length) { list.innerHTML = '<div class="admin-empty">No tools found</div>'; return; }
+    if (!tools.length) {
+      list.innerHTML = '<div class="admin-empty">No tools found</div>';
+      _refreshAdminI18n(list);
+      return;
+    }
 
     // Group by category
     const groups = {};
@@ -1292,6 +1302,7 @@ async function loadBuiltinTools() {
       html += '</div></div>';
     }
     list.innerHTML = html;
+    _refreshAdminI18n(list);
 
     // Prevent toggle clicks from expanding/collapsing
     list.querySelectorAll('.admin-tool-cat-right').forEach(span => {

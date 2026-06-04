@@ -35731,3 +35731,31 @@ body.theme-frosted .modal {
      is already ≥16px and never zoomed — leave it so we don't shrink it. */
   .doc-email-richbody.doc-font-m { font-size: 16px !important; }
 }
+
+.language-toggle-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  min-width: 54px;
+  height: 28px;
+  padding: 0 9px;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.language-toggle-btn:hover {
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+}
+
+.user-bar-actions .language-toggle-btn {
+  width: auto;
+  flex-shrink: 0;
+}
