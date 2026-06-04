@@ -33,7 +33,7 @@ from src.llm_core import llm_call_async
 
 from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, _load_settings, _save_settings, _get_email_config,
-    _send_smtp_message,
+    _send_smtp_message, _envelope_recipients,
     _imap_connect, _imap, _decode_header,
     _detect_sent_folder, _detect_spam_folder, _imap_move,
     _extract_attachment_text, _extract_text,
@@ -1021,11 +1021,7 @@ def _scheduled_poll_once() -> dict:
                 if has_atts:
                     outer.attach(body_container)
                     _attach_compose_uploads(outer, attachments)
-                recipients = [a.strip() for a in (r[1] or "").split(",") if a.strip()]
-                if r[2]:
-                    recipients.extend([a.strip() for a in r[2].split(",") if a.strip()])
-                if r[3]:
-                    recipients.extend([a.strip() for a in r[3].split(",") if a.strip()])
+                recipients = _envelope_recipients(r[1], r[2], r[3])
 
                 _send_smtp_message(cfg, cfg["from_address"], recipients, outer.as_string())
 

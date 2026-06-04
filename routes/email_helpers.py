@@ -71,6 +71,21 @@ def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message
         smtp.sendmail(from_addr, recipients, message)
 
 
+def _envelope_recipients(*fields: str) -> list[str]:
+    """Extract bare SMTP envelope addresses from To/Cc/Bcc header strings.
+
+    Splitting on commas corrupts quoted display names such as
+    ``"Smith, John" <john@corp.com>``. ``email.utils.getaddresses`` understands
+    the address grammar and returns the underlying mailbox safely.
+    """
+    out: list[str] = []
+    for _name, addr in email.utils.getaddresses([f for f in fields if f]):
+        addr = (addr or "").strip()
+        if addr:
+            out.append(addr)
+    return out
+
+
 def _strip_think(text: str) -> str:
     """Email-flavored think strip — thin wrapper over the central helper.
 

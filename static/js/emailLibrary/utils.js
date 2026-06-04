@@ -88,9 +88,46 @@ export function _formatBubbleDate(iso) {
 // Format a raw "to" address string ("Foo <foo@x.com>, bar@y.com") into a
 // short, readable list — display names when present, just the local part
 // of the email otherwise, and ", +N" once there are more than 2 recipients.
+function _splitAddressList(raw) {
+  const out = [];
+  let cur = '';
+  let quoted = false;
+  let angleDepth = 0;
+  let escaped = false;
+  for (const ch of String(raw || '')) {
+    if (escaped) {
+      cur += ch;
+      escaped = false;
+      continue;
+    }
+    if (quoted && ch === '\\') {
+      cur += ch;
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      quoted = !quoted;
+      cur += ch;
+      continue;
+    }
+    if (!quoted && ch === '<') angleDepth++;
+    else if (!quoted && ch === '>' && angleDepth > 0) angleDepth--;
+    if (!quoted && angleDepth === 0 && ch === ',') {
+      const part = cur.trim();
+      if (part) out.push(part);
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  const part = cur.trim();
+  if (part) out.push(part);
+  return out;
+}
+
 export function _formatRecipients(raw) {
   if (!raw) return '';
-  const addrs = String(raw).split(',').map(s => s.trim()).filter(Boolean);
+  const addrs = _splitAddressList(raw);
   if (!addrs.length) return '';
   const friendly = addrs.map(a => {
     const m = a.match(/^\s*"?([^"<]+?)"?\s*<[^>]+>\s*$/);

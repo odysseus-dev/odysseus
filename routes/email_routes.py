@@ -40,7 +40,7 @@ from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
     _q, _attach_compose_uploads, _cleanup_compose_uploads,
     _load_settings, _save_settings, _get_email_config,
-    _send_smtp_message, _smtp_security_mode,
+    _send_smtp_message, _smtp_security_mode, _envelope_recipients,
     _IMAP_TIMEOUT_SECONDS, _open_imap_connection,
     _imap_connect, _imap, _decode_header, _detect_sent_folder, _detect_drafts_folder,
     _extract_attachment_text, _list_attachments_from_msg,
@@ -322,20 +322,6 @@ def _apply_odysseus_headers(msg, kind: str | None = None, ref_id: str | None = N
         msg["X-Odysseus-Kind"] = re.sub(r"[^A-Za-z0-9_.-]", "-", kind)[:64]
     if ref_id:
         msg["X-Odysseus-Ref"] = re.sub(r"[^A-Za-z0-9_.:-]", "-", ref_id)[:128]
-
-
-def _envelope_recipients(*fields: str) -> list:
-    """Extract bare SMTP envelope addresses from one or more To/Cc/Bcc header
-    strings. A naive `field.split(",")` corrupts display names that contain a
-    comma (e.g. `"Smith, John" <john@corp.com>`, the canonical Outlook form):
-    it splits into `"Smith` and `John" <john@corp.com>`, breaking delivery.
-    email.utils.getaddresses parses the address grammar correctly."""
-    out = []
-    for _name, addr in email.utils.getaddresses([f for f in fields if f]):
-        addr = (addr or "").strip()
-        if addr:
-            out.append(addr)
-    return out
 
 
 def _md_to_email_html(text: str) -> str:

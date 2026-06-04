@@ -57,6 +57,31 @@ def _clean_header_value(value) -> str:
     return re.sub(r"[\r\n]+[ \t]*", " ", str(value)).strip()
 
 
+def _address_field_values(*fields) -> list[str]:
+    values: list[str] = []
+    for field in fields:
+        if not field:
+            continue
+        if isinstance(field, str):
+            values.append(field)
+            continue
+        try:
+            values.extend(str(item) for item in field if item)
+        except TypeError:
+            values.append(str(field))
+    return values
+
+
+def _envelope_recipients(*fields) -> list[str]:
+    """Extract SMTP envelope addresses without splitting quoted display names."""
+    out: list[str] = []
+    for _name, addr in email.utils.getaddresses(_address_field_values(*fields)):
+        addr = (addr or "").strip()
+        if addr:
+            out.append(addr)
+    return out
+
+
 def _db_path() -> Path:
     return DATA_DIR / "app.db"
 
@@ -805,15 +830,7 @@ def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, b
         msg["Message-ID"] = email.utils.make_msgid()
     msg.set_content(body)
 
-    recipients = []
-    if isinstance(to, str):
-        recipients.extend([a.strip() for a in to.split(",") if a.strip()])
-    else:
-        recipients.extend(to)
-    if cc:
-        recipients.extend([a.strip() for a in cc.split(",")] if isinstance(cc, str) else cc)
-    if bcc:
-        recipients.extend([a.strip() for a in bcc.split(",")] if isinstance(bcc, str) else bcc)
+    recipients = _envelope_recipients(to, cc, bcc)
 
     conn = _smtp_connect(send_account, cfg=cfg)
     try:
