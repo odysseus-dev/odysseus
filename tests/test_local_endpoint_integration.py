@@ -125,10 +125,13 @@ async def test_resolve_contact_reads_carddav_for_admin(monkeypatch):
 # ---------------------------------------------------------------------------
 async def test_manage_endpoints_existing_add_updates_local_metadata(monkeypatch):
     import core.database as dbmod
+    import routes.model_routes as mr
     import src.tool_security as ts
     import src.tool_implementations as t
 
     monkeypatch.setattr(ts, "owner_is_admin_or_single_user", lambda o: True)
+    invalidations = []
+    monkeypatch.setattr(mr, "invalidate_model_endpoint_caches", lambda: invalidations.append("cleared"))
 
     existing = SimpleNamespace(
         id="abc123",
@@ -177,6 +180,7 @@ async def test_manage_endpoints_existing_add_updates_local_metadata(monkeypatch)
     assert existing.supports_tools is False
     assert json.loads(existing.diagnostics_paths) == {"health": "/health"}
     assert commits["n"] == 1
+    assert invalidations == ["cleared"]
 
 
 async def test_adopt_served_model_registers_with_base_url(monkeypatch):
@@ -213,12 +217,27 @@ async def test_adopt_served_model_registers_with_base_url(monkeypatch):
 # ---------------------------------------------------------------------------
 def _fresh_chat_helpers():
     # Another test module may have installed an incomplete `core.database` stub
-    # at collection time (one lacking ModelEndpoint). Drop it so chat_helpers'
-    # `from core.database import ... ModelEndpoint` re-imports the real module
-    # and this test stays order-independent.
+    # at collection time. Complete the stub in place so chat_helpers can import
+    # the attributes it evaluates without splitting SQLAlchemy model identity for
+    # the rest of the pytest process.
     _db = sys.modules.get("core.database")
-    if _db is not None and not hasattr(_db, "ModelEndpoint"):
-        sys.modules.pop("core.database", None)
+    if _db is not None:
+        from unittest.mock import MagicMock
+
+        for name in ("SessionLocal", "Session", "ModelEndpoint"):
+            if not hasattr(_db, name):
+                setattr(_db, name, MagicMock())
+
+        _model_endpoint = _db.ModelEndpoint
+        for attr in ("is_enabled", "base_url"):
+            if not hasattr(_model_endpoint, attr):
+                setattr(_model_endpoint, attr, object())
+
+        _session_model = _db.Session
+        for attr in ("id", "owner"):
+            if not hasattr(_session_model, attr):
+                setattr(_session_model, attr, object())
+
     for name in ("routes.chat_helpers", "src.context_compactor", "src.endpoint_resolver"):
         sys.modules.pop(name, None)
     import routes.chat_helpers as ch

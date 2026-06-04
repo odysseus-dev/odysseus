@@ -36,6 +36,23 @@ logger = logging.getLogger(__name__)
 # fetch from being abused as a generic same-origin proxy.
 _MAX_DIAGNOSTIC_SECTIONS = 16
 _DIAGNOSTIC_RESPONSE_LIMIT_BYTES = 20_000
+_models_cache_invalidator = None
+
+
+def _set_models_cache_invalidator(callback) -> None:
+    global _models_cache_invalidator
+    _models_cache_invalidator = callback
+
+
+def invalidate_model_endpoint_caches() -> None:
+    """Clear model route caches after endpoint writes outside this router."""
+    callback = _models_cache_invalidator
+    if not callable(callback):
+        return
+    try:
+        callback()
+    except Exception as exc:
+        logger.warning("model endpoint cache invalidation failed: %s", exc)
 
 
 def _parse_diagnostics_paths(raw: Any) -> Dict[str, str]:
@@ -1113,6 +1130,8 @@ def setup_model_routes(model_discovery):
         affects the visible endpoint list (CRUD on ModelEndpoint, prefs
         flip)."""
         _models_cache.clear()
+
+    _set_models_cache_invalidator(_invalidate_models_cache)
 
     # Track model-list refreshes by URL+key. This prevents repeated picker/API
     # opens from starting duplicate /models probes, and gives slow/offline

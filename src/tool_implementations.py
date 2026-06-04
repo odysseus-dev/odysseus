@@ -1030,7 +1030,11 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
     from core.database import SessionLocal, ModelEndpoint
     from src.endpoint_resolver import normalize_base, resolve_url
     from src.tool_security import owner_is_admin_or_single_user
-    from routes.model_routes import _endpoint_diagnostics_sections, _parse_diagnostics_paths
+    from routes.model_routes import (
+        _endpoint_diagnostics_sections,
+        _parse_diagnostics_paths,
+        invalidate_model_endpoint_caches,
+    )
     try:
         args = _parse_tool_args(content)
     except ValueError:
@@ -1121,6 +1125,7 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
                     changed = True
                 if changed:
                     db.commit()
+                    invalidate_model_endpoint_caches()
                 existing_models = []
                 if existing.cached_models:
                     try:
@@ -1165,6 +1170,7 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
             )
             db.add(ep)
             db.commit()
+            invalidate_model_endpoint_caches()
             return {
                 "response": f"Added endpoint '{name or base_url}' (id: {eid})",
                 "endpoint_id": eid,
@@ -1183,6 +1189,7 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
             name = ep.name
             db.delete(ep)
             db.commit()
+            invalidate_model_endpoint_caches()
             return {"response": f"Deleted endpoint '{name}'", "exit_code": 0}
 
         elif action in ("enable", "disable"):
@@ -1192,6 +1199,7 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
                 return {"error": f"Endpoint {eid} not found", "exit_code": 1}
             ep.is_enabled = (action == "enable")
             db.commit()
+            invalidate_model_endpoint_caches()
             return {"response": f"Endpoint '{ep.name}' {action}d", "exit_code": 0}
 
         else:
