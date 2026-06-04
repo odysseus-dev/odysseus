@@ -457,6 +457,8 @@ import createResearchSynapse from './researchSynapse.js';
           const ok = await sessionModule.materializePendingSession();
           if (!ok || !sessionModule.getCurrentSessionId()) { _releaseSendFlag(); return; }
         } else {
+          el('message').value = '';
+          if (uiModule.autoResize) uiModule.autoResize(el('message'));
           addMessage('assistant',
             'No chat session active. You can:\n\n' +
             '- Open the model picker in the chat box and pick a model\n' +
@@ -466,6 +468,8 @@ import createResearchSynapse from './researchSynapse.js';
           return;
         }
       } catch (e) {
+        el('message').value = '';
+        if (uiModule.autoResize) uiModule.autoResize(el('message'));
         addMessage('assistant',
           'No chat session active. You can:\n\n' +
           '- Open the model picker in the chat box and pick a model\n' +
@@ -4037,8 +4041,11 @@ import createResearchSynapse from './researchSynapse.js';
     const clickedIndex = allMsgs.indexOf(msgElement);
     if (clickedIndex < 0) return;
 
+    // No early-out on a missing session: an output shown before any model was
+    // selected (issue #1428) has no session/persisted rows, but its "x" must
+    // still remove it. We only need the session id for the server-side delete
+    // below; without one we fall back to removing the DOM.
     const sessionId = sessionModule.getCurrentSessionId();
-    if (!sessionId) return;
 
     const clickedIsUser = msgElement.classList.contains('msg-user');
 
@@ -4114,8 +4121,10 @@ import createResearchSynapse from './researchSynapse.js';
       }
     }
 
-    if (!msgIds.length) {
-      // Fallback: just remove DOM elements if no DB IDs available
+    if (!msgIds.length || !sessionId) {
+      // No persisted rows to delete (no DB IDs, or no session at all — e.g. an
+      // error output shown before a model was selected, #1428). Just remove the
+      // DOM so the "x" works regardless.
       domToRemove.forEach(el => el.remove());
       if (uiModule) uiModule.showToast('Message deleted');
       return;

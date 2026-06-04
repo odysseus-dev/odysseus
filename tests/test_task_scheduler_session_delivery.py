@@ -1,5 +1,6 @@
 """Regression tests for task-result delivery into chat sessions (issue #326)."""
 import asyncio
+import sys
 import types as _types
 
 import pytest
@@ -11,18 +12,33 @@ if not isinstance(sqlalchemy, _types.ModuleType):
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+
+def _drop_fake_core_database():
+    parent = sys.modules.get("core")
+    attr = getattr(parent, "database", None) if parent is not None else None
+    mod = sys.modules.get("core.database") or attr
+    if mod is None or isinstance(getattr(mod, "__file__", None), str):
+        return
+    sys.modules.pop("core.database", None)
+    sys.modules.pop("src.database", None)
+    if parent is not None and attr is mod:
+        delattr(parent, "database")
+
+
+_drop_fake_core_database()
+
+import core.database as cdb
 from core.database import Base, Session as DbSession
 from src.task_scheduler import TaskScheduler
 
-# TEMPORARY ISOLATION WORKAROUND — remove once test_null_owner_gates.py is
-# refactored to use a fixture-scoped stub instead of module-level sys.modules
-# patching.  When collected after test_null_owner_gates (alphabetical order),
-# core.database is already a stub whose Base attribute is a MagicMock, so
-# Base.metadata.create_all() below does nothing and the assertions fail.
-# The test passes correctly in isolation:
-#   pytest tests/test_task_scheduler_session_delivery.py   → 1 passed
-# Full-suite baseline before this PR:  9 failed, 345 passed  (pre-upstream-pull)
-# Full-suite after this PR:            1 failed, 495 passed, 1 skipped
+# This test needs the real core.database (real SQLAlchemy Base/ChatMessage).
+# test_null_owner_gates.py no longer leaks its stubs (per-test fixture cleanup
+# since PR #1513), but several other files still install core.database stubs
+# at module level without teardown (test_model_routes, test_companion_readonly,
+# test_endpoint_probing, test_vault_password_not_in_argv).  When any of those
+# are collected before us, core.database is a stub and Base is a MagicMock.
+# Skip in that case — the test passes correctly in isolation or when collected
+# before the stubbing files.
 if type(Base).__name__ == "MagicMock":
     pytest.skip("core.database is stubbed — run this file in isolation", allow_module_level=True)
 
@@ -47,10 +63,15 @@ def _make_task():
     )
 
 
-def test_session_delivery_survives_empty_database():
+def test_session_delivery_survives_empty_database(monkeypatch):
     """On a fresh/wiped database there is no session to inherit endpoint/model
     from, so _resolve_defaults returns None. The delivery must still persist a
     session instead of crashing on the NOT NULL constraint (issue #326)."""
+    monkeypatch.setitem(sys.modules, "core.database", cdb)
+    parent = sys.modules.get("core")
+    if parent is not None:
+        monkeypatch.setattr(parent, "database", cdb, raising=False)
+
     db = _make_db()
     scheduler = TaskScheduler.__new__(TaskScheduler)
     scheduler._session_manager = None

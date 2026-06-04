@@ -16,9 +16,25 @@ from src.auth_helpers import get_current_user, effective_user
 
 def _sanitize_export_filename(name: str) -> str:
     """Return a conservative filename safe for Content-Disposition."""
-    name = name or ""
+    name = name if isinstance(name, str) else ""
     name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
     return name[:128]
+
+
+# Blind-compare helper sessions are created with this name prefix. Their real
+# model must never surface in the session list / sidebar — otherwise a blind
+# comparison can be de-anonymized before the user votes (issue #1285).
+COMPARE_SESSION_PREFIX = "[CMP] "
+
+
+def _public_model(name: str, model: str) -> str:
+    """Blank out the real model of blind-compare helper sessions so the
+    session list can't be used to map a neutral pane label ("Model A") back
+    to its model. The Compare UI tracks models client-side, so hiding it here
+    costs the sidebar nothing. See issue #1285."""
+    if (name or "").startswith(COMPARE_SESSION_PREFIX):
+        return ""
+    return model
 
 
 def _verify_session_owner(request: Request, session_id: str, session_manager=None):
@@ -215,7 +231,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         finally:
             db.close()
 
-        sessions = [{"id": s.id, "name": s.name, "model": s.model,
+        sessions = [{"id": s.id, "name": s.name, "model": _public_model(s.name, s.model),
                      "endpoint_url": s.endpoint_url, "rag": s.rag,
                      "archived": s.archived, "folder": folder_map.get(s.id),
                      "total_tokens": token_map.get(s.id, 0),
@@ -618,7 +634,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 safe_search = search.replace('%', r'\%').replace('_', r'\_')
                 q = q.filter(DbSession.name.ilike(f"%{safe_search}%", escape='\\'))
             if model:
-                q = q.filter(DbSession.model.ilike(f"%{model}"))
+                # Contains match (mirrors the name filter above). The old
+                # f"%{model}" was a SUFFIX-only match, so filtering by "gpt-4"
+                # dropped "gpt-4o" and over-matched on shared suffixes; it also
+                # left LIKE wildcards in the user value unescaped.
+                safe_model = model.replace('%', r'\%').replace('_', r'\_')
+                q = q.filter(DbSession.model.ilike(f"%{safe_model}%", escape='\\'))
             total = q.count()
             sort_map = {
                 "recent": DbSession.updated_at.desc(),

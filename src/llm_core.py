@@ -420,7 +420,7 @@ def _restricts_temperature(model: str) -> bool:
     return any(m.startswith(p) or f"/{p}" in m for p in _FIXED_TEMPERATURE_MODELS)
 
 # Models that support structured thinking — may output </think> without opening tag
-_THINKING_MODEL_PATTERNS = ("qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax", "m2-reap")
+_THINKING_MODEL_PATTERNS = ("qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax", "m2-reap", "gemma")
 
 def _supports_thinking(model: str) -> bool:
     """Check if model supports structured thinking output."""
@@ -512,6 +512,12 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
             # Convert multimodal content (image_url → image) for Anthropic
             content = _convert_openai_content_to_anthropic(m["content"])
             chat_messages.append({"role": m["role"], "content": content})
+    # Anthropic only accepts temperature in [0.0, 1.0] and 400s on anything above
+    # 1.0. Clamp here (in the Anthropic builder only) so presets/sliders that use
+    # the wider OpenAI 0.0-2.0 range — e.g. the shipped "Nietzsche" preset at 1.2
+    # — don't hard-break every Claude request. OpenAI's own path is left untouched.
+    if temperature is not None:
+        temperature = max(0.0, min(temperature, 1.0))
     payload = {
         "model": model,
         "messages": chat_messages,
@@ -737,8 +743,74 @@ def _normalize_anthropic_url(url: str) -> str:
         return url + "/messages"
     return url + "/v1/messages"
 
+
+def _model_list_base(url: str) -> str:
+    """Normalize model/chat URLs to the configured endpoint base."""
+    base = (url or "").strip().rstrip("/")
+    for suffix in ("/models", "/chat/completions", "/completions", "/v1/messages"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)].rstrip("/")
+    for suffix in ("/chat", "/tags", "/generate"):
+        if base.endswith("/api" + suffix):
+            base = base[: -len(suffix)].rstrip("/")
+    return base
+
+
+def _parse_model_cache(raw) -> List[str]:
+    if not raw:
+        return []
+    try:
+        models = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return []
+    if not isinstance(models, list):
+        return []
+    out = []
+    seen = set()
+    for item in models:
+        mid = str(item or "").strip()
+        if not mid or mid in seen:
+            continue
+        out.append(mid)
+        seen.add(mid)
+    return out
+
+
+def _configured_cached_model_ids(endpoint_url: str) -> List[str]:
+    """Return cached models for a configured endpoint matching endpoint_url."""
+    target = _model_list_base(endpoint_url)
+    if not target:
+        return []
+    try:
+        from src.database import SessionLocal, ModelEndpoint
+    except Exception:
+        return []
+    db = SessionLocal()
+    try:
+        rows = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        for ep in rows:
+            if _model_list_base(getattr(ep, "base_url", "")) != target:
+                continue
+            models = _parse_model_cache(getattr(ep, "cached_models", None) or getattr(ep, "models", None))
+            if not models:
+                continue
+            hidden = set(_parse_model_cache(getattr(ep, "hidden_models", None)))
+            return [m for m in models if m not in hidden]
+    except Exception:
+        return []
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+    return []
+
+
 def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT, headers: Optional[Dict] = None) -> List[str]:
     """List available model IDs from an endpoint."""
+    cached = _configured_cached_model_ids(base_chat_url)
+    if cached:
+        return cached
     provider = _detect_provider(base_chat_url)
     if provider == "anthropic":
         return list(ANTHROPIC_MODELS)
@@ -868,6 +940,31 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         raise HTTPException(502, f"Unexpected schema from {target_url}: {str(data)[:400]}")
 
 
+def _dedupe_candidates(candidates):
+    """Filter malformed entries and drop a later repeat of an already-seen
+    ``(url, model)`` route, preserving order (first occurrence wins).
+
+    The chain is the primary target followed by the configured fallbacks, so a
+    fallback that repeats the session's current model — a common misconfiguration,
+    since callers prepend the live ``(url, model)`` to ``default_model_fallbacks``
+    — would otherwise make the chain re-attempt the very route that just failed:
+    a wasted round-trip plus a spurious ``fallback`` notice for a switch that did
+    not happen. Headers are not part of the key; the first tuple (with its
+    headers) is the one kept.
+    """
+    seen = set()
+    out = []
+    for c in candidates or []:
+        if not c or not c[0] or not c[1]:
+            continue
+        key = (c[0], c[1])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(c)
+    return out
+
+
 def llm_call_with_fallback(candidates, messages, **kwargs) -> str:
     """Sync `llm_call` with an ordered fallback chain.
 
@@ -876,7 +973,7 @@ def llm_call_with_fallback(candidates, messages, **kwargs) -> str:
     the next candidate. The dead-host cooldown inside `llm_call` makes repeat
     attempts at an offline primary effectively free.
     """
-    cands = [c for c in (candidates or []) if c and c[0] and c[1]]
+    cands = _dedupe_candidates(candidates)
     if not cands:
         raise HTTPException(503, "No model endpoint configured")
     last_err = None
@@ -893,7 +990,7 @@ def llm_call_with_fallback(candidates, messages, **kwargs) -> str:
 
 async def llm_call_async_with_fallback(candidates, messages, **kwargs) -> str:
     """Async variant of `llm_call_with_fallback` — same semantics."""
-    cands = [c for c in (candidates or []) if c and c[0] and c[1]]
+    cands = _dedupe_candidates(candidates)
     if not cands:
         raise HTTPException(503, "No model endpoint configured")
     last_err = None
@@ -1161,9 +1258,13 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                     yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
                     return
                 async for line in r.aiter_lines():
-                    if not line or not line.startswith("data: "):
+                    # SSE allows "data:value" with no space after the colon
+                    # (the space is optional per the spec). Some gateways and
+                    # local servers omit it; gating on "data: " dropped their
+                    # entire stream.
+                    if not line or not line.startswith("data:"):
                         continue
-                    data = line[6:].strip()
+                    data = line[5:].strip()
                     if not data or not data.startswith("{"):
                         continue
                     try:
@@ -1276,8 +1377,11 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                 if not line:
                     continue
 
-                if line.startswith("data: "):
-                    data = line[6:].strip()
+                # SSE allows "data:value" with no space after the colon; gating
+                # on "data: " silently dropped content + usage from providers
+                # that omit it.
+                if line.startswith("data:"):
+                    data = line[5:].strip()
                     if data == "[DONE]":
                         tc_event = _emit_tool_calls()
                         if tc_event:
@@ -1292,7 +1396,19 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                 # Usage chunk (from stream_options)
                                 _choices = j.get("choices") or []
                                 _delta0 = _choices[0].get("delta") if _choices else None
-                                if "usage" in j and _delta0 in (None, {}, {"content": None}):
+                                # Capture usage whenever the chunk carries it and
+                                # the delta has no actual output. Some gateways /
+                                # local servers attach usage to the FINAL delta,
+                                # which also carries role/finish_reason (so it is
+                                # not exactly None/{}/{"content": None}); gating on
+                                # those exact shapes discarded their token counts.
+                                _delta_has_output = isinstance(_delta0, dict) and (
+                                    _delta0.get("content")
+                                    or _delta0.get("reasoning_content")
+                                    or _delta0.get("reasoning")
+                                    or _delta0.get("tool_calls")
+                                )
+                                if "usage" in j and not _delta_has_output:
                                     u = j["usage"]
                                     _usage_data = {"input_tokens": u.get("prompt_tokens", 0), "output_tokens": u.get("completion_tokens", 0)}
                                     # llama.cpp puts a `timings` block alongside `usage` with the
@@ -1430,7 +1546,7 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
 
     Yields the same SSE chunk protocol as stream_llm.
     """
-    cands = [c for c in (candidates or []) if c and c[0] and c[1]]
+    cands = _dedupe_candidates(candidates)
     if not cands:
         yield f'event: error\ndata: {json.dumps({"error": "No model endpoint configured", "status": 503})}\n\n'
         return
