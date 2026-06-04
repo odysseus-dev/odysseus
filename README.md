@@ -397,6 +397,7 @@ Key settings:
 | `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |
 | `EMBEDDING_URL` | -- | OpenAI-compatible embeddings endpoint |
 | `ODYSSEUS_CHAT_UPLOAD_MAX_BYTES` | `10485760` | Chat/agent attachment cap in bytes. Raise for larger local PDFs or text documents. |
+| `ODYSSEUS_DATA_DIR` | `./data` | Root directory for all mutable app data (DB, uploads, vectors, etc.). Override when the source tree is read-only or when data must live on a separate volume. |
 
 ### Built-in MCP servers (optional setup)
 
@@ -422,8 +423,12 @@ docs/      landing page (index.html) + preview clips
 ```
 
 ## Data
-All user data lives in `data/` (gitignored): `app.db` (sessions, messages, documents),
+All user data lives in `data/` (gitignored) by default: `app.db` (sessions, messages, documents),
 `memory.json`, `presets.json`, `uploads/`, `personal_docs/`, `chroma/`, `settings.json`.
+
+Set the `ODYSSEUS_DATA_DIR` environment variable to move the data root elsewhere.
+This is required when the source tree lives on a read-only filesystem (e.g. an
+immutable deployment) or when you want data on a separate volume.
 
 ## Star History
 
