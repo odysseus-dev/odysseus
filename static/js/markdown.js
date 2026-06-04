@@ -125,8 +125,46 @@ export function startsWithReasoningPrefix(text) {
   return /^\s*(?:thinking(?:\s+process)?\s*:|the user |i need |i should |i will |they are |the question |i can )/i.test(text || '');
 }
 
+/** gpt-oss OpenAI-harmony: <|channel|>analysis<|message|>… → thinking tags. */
+export function normalizeHarmonyMarkup(text) {
+  if (!text || text.indexOf('<|channel') < 0) return text;
+
+  const analysisRe = /<\|channel\|>\s*analysis\s*<\|message\|>\s*([\s\S]*?)(?:<\|end\|>|<\|call\|>|<\|return\|>|(?=<\|channel\|>)|$)/gi;
+  const finalRe = /<\|channel\|>\s*final\s*<\|message\|>\s*([\s\S]*?)(?:<\|end\|>|<\|return\|>|(?=<\|channel\|>)|$)/gi;
+  const commentaryRe = /<\|channel\|>\s*commentary\s*<\|message\|>\s*([\s\S]*?)(?:<\|end\|>|<\|call\|>|<\|return\|>|(?=<\|channel\|>)|$)/gi;
+  const controlRe = /<\|(?:start|channel|message|end|return|call|constrain)\|>/gi;
+  const trailRe = /<\|(?:end|return|call)\|>\s*$/i;
+
+  let out = text.replace(analysisRe, (_m, body) => {
+    const t = (body || '').trim();
+    return t ? `<think>${t}</think>\n` : '';
+  });
+  const unwrap = (_m, body) => {
+    const t = (body || '').replace(trailRe, '').trim();
+    return t ? `${t}\n` : '';
+  };
+  out = out.replace(finalRe, unwrap);
+  out = out.replace(commentaryRe, unwrap);
+
+  const unc = /<\|channel\|>\s*analysis\s*<\|message\|>\s*([\s\S]+)$/i.exec(out);
+  if (unc) {
+    const body = (unc[1] || '').trim();
+    out = out.slice(0, unc.index) + `<think>${body}</think>`;
+  }
+  return out.replace(controlRe, '').trim();
+}
+
+export function hasHarmonyAnalysisInProgress(text) {
+  if (!text || !/<\|channel\|>\s*analysis\s*<\|message\|>/i.test(text)) return false;
+  const finalIdx = text.search(/<\|channel\|>\s*final\s*<\|message\|>/i);
+  const analysisIdx = text.search(/<\|channel\|>\s*analysis\s*<\|message\|>/i);
+  return finalIdx < 0 || finalIdx > analysisIdx;
+}
+
 function normalizePlainThinking(text) {
-  if (!text || /<think/i.test(text)) return text;
+  if (!text) return text;
+  text = normalizeHarmonyMarkup(text);
+  if (/<think/i.test(text)) return text;
 
   const trimmed = text.trimStart();
   if (!startsWithReasoningPrefix(trimmed)) return text;
@@ -687,6 +725,8 @@ const markdownModule = {
   hasUnclosedThinkTag,
   extractThinkingBlocks,
   startsWithReasoningPrefix,
+  normalizeHarmonyMarkup,
+  hasHarmonyAnalysisInProgress,
   renderMermaid
 };
 

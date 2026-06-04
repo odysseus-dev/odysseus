@@ -42,6 +42,39 @@ _PROMPT_ECHO_RES = (
 # Aggressive heuristic for untagged reasoning prose (models that don't wrap
 # CoT in `<think>` tags). Only applied as opt-in (`prose=True`) because it
 # false-positives on legit user content like "Looking at the attached file…".
+# gpt-oss OpenAI-harmony grammar: <|channel|>analysis<|message|>…<|end|> (double-piped).
+# Distinct from Gemma 4 <|channel>thought (single-piped) handled elsewhere.
+_HARMONY_ANALYSIS_RE = re.compile(
+    r"<\|channel\|>\s*analysis\s*<\|message\|>\s*"
+    r"([\s\S]*?)"
+    r"(?:<\|end\|>|<\|call\|>|<\|return\|>|(?=<\|channel\|>)|$)",
+    re.IGNORECASE,
+)
+_HARMONY_FINAL_RE = re.compile(
+    r"<\|channel\|>\s*final\s*<\|message\|>\s*"
+    r"([\s\S]*?)"
+    r"(?:<\|end\|>|<\|return\|>|(?=<\|channel\|>)|$)",
+    re.IGNORECASE,
+)
+_HARMONY_COMMENTARY_RE = re.compile(
+    r"<\|channel\|>\s*commentary\s*<\|message\|>\s*"
+    r"([\s\S]*?)"
+    r"(?:<\|end\|>|<\|call\|>|<\|return\|>|(?=<\|channel\|>)|$)",
+    re.IGNORECASE,
+)
+_HARMONY_UNCLOSED_ANALYSIS_RE = re.compile(
+    r"<\|channel\|>\s*analysis\s*<\|message\|>\s*([\s\S]+)$",
+    re.IGNORECASE,
+)
+_HARMONY_CONTROL_RE = re.compile(
+    r"<\|(?:start|channel|message|end|return|call|constrain)\|>",
+    re.IGNORECASE,
+)
+_HARMONY_TRAIL_RE = re.compile(
+    r"<\|(?:end|return|call)\|>\s*$",
+    re.IGNORECASE,
+)
+
 _REASONING_PREFIX_RE = re.compile(
     r"^\s*(?:"
     r"the user (?:wants|is|asks|needs|wrote|said|told|messaged|requested)|"
@@ -54,6 +87,39 @@ _REASONING_PREFIX_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+
+
+def normalize_harmony_markup(text: str) -> str:
+    """Convert gpt-oss OpenAI-harmony channel output into Odysseus thinking tags.
+
+    Analysis-channel CoT becomes ``<think>…</think>``;
+    final-channel text is kept as the visible reply. Raw harmony control tokens
+    are stripped so they do not leak into chat bubbles on save or reload.
+    """
+    if not text or "<|channel" not in text:
+        return text
+
+    def _wrap_analysis(m: re.Match) -> str:
+        body = (m.group(1) or "").strip()
+        if not body:
+            return ""
+        return f"<think>{body}</think>\n"
+
+    def _unwrap_channel(m: re.Match) -> str:
+        body = _HARMONY_TRAIL_RE.sub("", (m.group(1) or "")).strip()
+        return f"{body}\n" if body else ""
+
+    out = _HARMONY_ANALYSIS_RE.sub(_wrap_analysis, text)
+    out = _HARMONY_FINAL_RE.sub(_unwrap_channel, out)
+    out = _HARMONY_COMMENTARY_RE.sub(_unwrap_channel, out)
+
+    unc = _HARMONY_UNCLOSED_ANALYSIS_RE.search(out)
+    if unc:
+        body = (unc.group(1) or "").strip()
+        out = out[: unc.start()] + f"<think>{body}</think>"
+
+    out = _HARMONY_CONTROL_RE.sub("", out)
+    return out.strip()
 
 
 def _strip_reasoning_prose(text: str) -> str:
@@ -99,6 +165,7 @@ def strip_think(text: str, *, prose: bool = False, prompt_echo: bool = True) -> 
     """
     if not text:
         return ""
+    text = normalize_harmony_markup(text)
     # Normalize attributes so the closed/open regexes can catch them.
     text = _THINK_ATTR_RE.sub("<think>", text)
     text = _THINK_ATTR_CLOSE_RE.sub("</think>", text)

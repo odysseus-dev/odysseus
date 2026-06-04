@@ -1340,6 +1340,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                     _delta0.get("content")
                                     or _delta0.get("reasoning_content")
                                     or _delta0.get("reasoning")
+                                    or _delta0.get("thinking")
                                     or _delta0.get("tool_calls")
                                 )
                                 if "usage" in j and not _delta_has_output:
@@ -1361,8 +1362,14 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                     delta = j["choices"][0].get("delta") or {}
                                     if isinstance(delta, dict):
                                         # Text content
-                                        # Reasoning tokens (VLLM --reasoning-parser, e.g. Qwen3/DeepSeek-R1, Nemotron). vLLM 0.20.2 / NIM emit the field as `reasoning`; older builds use `reasoning_content`. Accept either.
-                                        reasoning = delta.get("reasoning_content") or delta.get("reasoning") or ""
+                                        # Reasoning tokens (VLLM --reasoning-parser, Qwen3/DeepSeek-R1, Nemotron).
+                                        # Ollama OpenAI-compat gpt-oss emits `thinking` for analysis-channel CoT.
+                                        reasoning = (
+                                            delta.get("reasoning_content")
+                                            or delta.get("reasoning")
+                                            or delta.get("thinking")
+                                            or ""
+                                        )
                                         if reasoning:
                                             yield f'data: {json.dumps({"delta": reasoning, "thinking": True})}\n\n'
                                         content = delta.get("content") or ""

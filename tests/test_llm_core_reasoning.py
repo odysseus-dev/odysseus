@@ -83,6 +83,21 @@ def test_reasoning_field_emits_thinking_chunk(monkeypatch):
     assert any((not d.get("thinking")) and d["delta"] == "Hello" for d in deltas), deltas
 
 
+def test_thinking_field_emits_thinking_chunk(monkeypatch):
+    # Ollama OpenAI-compat gpt-oss streams analysis CoT in `thinking`.
+    deltas = _run_stream(
+        "gpt-oss:20b",
+        [
+            'data: {"choices":[{"delta":{"thinking":"planning shell ls"}}]}',
+            'data: {"choices":[{"delta":{"content":"/bin /etc"}}]}',
+            "data: [DONE]",
+        ],
+        monkeypatch,
+    )
+    assert any(d.get("thinking") and "planning shell" in d["delta"] for d in deltas), deltas
+    assert any((not d.get("thinking")) and "/bin" in d["delta"] for d in deltas), deltas
+
+
 def test_reasoning_content_field_still_supported(monkeypatch):
     # Older builds emit `reasoning_content`; it must still surface as thinking.
     deltas = _run_stream(

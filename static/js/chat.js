@@ -1427,6 +1427,9 @@ import createResearchSynapse from './researchSynapse.js';
                 // Detect non-tag thinking patterns: "Thinking:", "Thinking Process:", Gemma-style reasoning
                 // These patterns don't use <think> tags, so we simulate unclosed thinking during streaming
                 const _replyPrefixes = ['Hey', 'Hi ', 'Hi!', 'Hello', 'Sure', 'Yes', 'No ', 'No,', 'Yo', 'OK', 'Here', 'Absolutely', 'Of course', 'Great', 'Alright', 'Thanks', 'Welcome', 'Good ', "I'm happy", "I'd be"];
+                if (!hasUnclosedThink && markdownModule.hasHarmonyAnalysisInProgress(roundText)) {
+                  hasUnclosedThink = true;
+                }
                 if (!hasUnclosedThink && !roundText.includes('<think')) {
                   const _trimmedRT = roundText.trimStart();
                   const _isReasoning = markdownModule.startsWithReasoningPrefix(_trimmedRT);

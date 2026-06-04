@@ -587,8 +587,10 @@ def _normalize_thinking(text: str) -> str:
     - Garbled <think> tags (reasoning before the tag, unclosed tags)
     """
     import re
+    from src.text_helpers import normalize_harmony_markup
     if not text:
         return text
+    text = normalize_harmony_markup(text)
     reasoning_prefix_re = re.compile(
         r'^\s*(?:thinking(?:\s+process)?\s*:|the user |i need |i should |i will |they are |the question |i can )',
         re.IGNORECASE,
