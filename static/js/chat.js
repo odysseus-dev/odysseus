@@ -82,13 +82,15 @@ import createResearchSynapse from './researchSynapse.js';
 
   // Background streaming support
   const _backgroundStreams = new Map(); // sessionId -> { status, accumulated, sourcesHtml, abortCtrl, query, metrics }
+  const _resumingStreams = new Set();   // sessionId -> a resumeStream() reader is live (re-attach lock)
   let _streamSessionId = null; // Session ID for the currently active reader loop
   let _lastReaderActivity = 0; // Timestamp of last reader.read() success — used to detect frozen streams
   let _webLockRelease = null;  // Function to release the Web Lock held during streaming
 
   /** Check if an SSE reader is still actively connected for a session. */
   function hasActiveStream(sessionId) {
-    return _streamSessionId === sessionId || _backgroundStreams.has(sessionId);
+    return _streamSessionId === sessionId || _backgroundStreams.has(sessionId) ||
+           _resumingStreams.has(sessionId);
   }
 
   // Sources box builder and toggleSources are now in chatRenderer.js
@@ -3049,8 +3051,10 @@ import createResearchSynapse from './researchSynapse.js';
    * Live-resume a chat run still streaming detached on the server (#2539).
    *
    * On session re-entry, GET /api/chat/resume/{id} replays the run's buffer then
-   * streams live. We render reply tokens as they arrive, then reload the session
-   * on completion so the final render matches a normal send. Returns true if it
+   * streams live; reply tokens render as they arrive. On completion a plain text
+   * reply is finalized in place (canonical bubble via chatRenderer.addMessage, no
+   * reload); a "rich" reply (tool calls, sources, doc streaming, multi-round) is
+   * reloaded from the DB so its full render stays faithful. Returns true if it
    * attached, false to let the caller fall back to spinner+poll.
    */
   export async function resumeStream(sessionId) {
@@ -3068,8 +3072,10 @@ import createResearchSynapse from './researchSynapse.js';
     const box = document.getElementById('chat-history');
     if (!box) return false;
 
-    // Block duplicate re-attach attempts while this reader is live.
-    _backgroundStreams.set(sessionId, { status: 'running', accumulated: '' });
+    // Block duplicate re-attach attempts while this reader is live. A dedicated
+    // set (not _backgroundStreams) so checkBackgroundStream doesn't mistake this
+    // for a same-tab POST stream and spawn its own spinner+poll on re-entry.
+    _resumingStreams.add(sessionId);
 
     const holder = document.createElement('div');
     holder.className = 'msg msg-ai';
@@ -3102,7 +3108,7 @@ import createResearchSynapse from './researchSynapse.js';
 
     const cleanup = () => {
       try { spinner.destroy(); } catch (_) {}
-      _backgroundStreams.delete(sessionId);
+      _resumingStreams.delete(sessionId);
     };
 
     const renderDelta = () => {
