@@ -15,16 +15,6 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# core.database instantiates SQLAlchemy declarative classes at import time, which
-# blows up under conftest's sqlalchemy MagicMock stubs. companion.routes only
-# imports it lazily inside the /models handler, but stub it defensively so the
-# import is robust regardless of collection order.
-if "core.database" not in sys.modules:
-    _db = types.ModuleType("core.database")
-    _db.SessionLocal = MagicMock()
-    _db.ModelEndpoint = MagicMock()
-    sys.modules["core.database"] = _db
-
 import companion.routes as companion_routes
 from companion.routes import setup_companion_routes, token_owner, owner_can_see
 
