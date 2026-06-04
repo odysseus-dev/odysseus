@@ -1479,6 +1479,91 @@ async function _cmdNote(args, ctx) {
 // They never involve the LLM — they parse the string locally and hit the
 // API directly, so they work instantly regardless of chat/agent mode.
 
+async function _cmdGoal(args, ctx) {
+  if (!ctx.sid) { slashReply('No active session'); return true; }
+  const sub = (args[0] || '').toLowerCase();
+  const goalUrl = `${API_BASE}/api/goals/${encodeURIComponent(ctx.sid)}`;
+
+  async function req(method, body, suffix = '') {
+    const opts = { method, credentials: 'same-origin', headers: {} };
+    if (body !== undefined) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+    const res = await fetch(goalUrl + suffix, opts);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.error || `goal ${res.status}`);
+    if (window.chatModule && window.chatModule.refreshAgentGoal) {
+      window.chatModule.refreshAgentGoal(ctx.sid);
+    }
+    return data;
+  }
+
+  function render(goal) {
+    if (!goal) return 'No goal set';
+    const budget = goal.token_budget == null
+      ? 'no budget'
+      : `${goal.tokens_used || 0}/${goal.token_budget} tokens, ${goal.remaining_tokens || 0} remaining`;
+    return `<pre>Status: ${ctx.esc(goal.status)}
+Objective: ${ctx.esc(goal.objective)}
+Usage: ${ctx.esc(budget)}
+Time: ${goal.time_used_seconds || 0}s</pre>`;
+  }
+
+  try {
+    if (!sub || sub === 'status' || sub === 'show' || sub === 'info') {
+      const data = await req('GET');
+      slashReply(render(data.goal));
+      return true;
+    }
+    if (sub === 'clear' || sub === 'delete' || sub === 'rm') {
+      const data = await req('DELETE');
+      slashReply(data.cleared ? 'Goal cleared' : 'No goal set');
+      return true;
+    }
+    if (sub === 'pause' || sub === 'resume' || sub === 'complete' || sub === 'blocked') {
+      const status = sub === 'resume' ? 'active' : sub;
+      const data = await req('PATCH', { status });
+      slashReply(render(data.goal));
+      return true;
+    }
+    if (sub === 'budget') {
+      const value = args[1] ? Number(args[1]) : null;
+      if (value == null || !Number.isFinite(value) || value <= 0) {
+        slashReply('Usage: /goal budget 20000');
+        return true;
+      }
+      const data = await req('PATCH', { token_budget: Math.trunc(value) });
+      slashReply(render(data.goal));
+      return true;
+    }
+    if (sub === 'continue') {
+      const data = await req('POST', undefined, '/continue');
+      if (data.started && window.chatModule && window.chatModule.startAgentGoalContinuation) {
+        window.chatModule.startAgentGoalContinuation(ctx.sid);
+        slashReply('Continuing goal');
+      } else {
+        slashReply(`Cannot continue: ${ctx.esc(data.reason || 'unknown')}`);
+      }
+      return true;
+    }
+
+    const objective = (sub === 'set' || sub === 'new' || sub === 'create')
+      ? args.slice(1).join(' ').trim()
+      : args.join(' ').trim();
+    if (!objective) {
+      slashReply('Usage: /goal Ship the thing  ·  /goal status  ·  /goal clear');
+      return true;
+    }
+    const data = await req('POST', { objective, token_budget: null, replace: true });
+    slashReply(render(data.goal));
+    return true;
+  } catch (err) {
+    slashReply(`Goal failed: ${ctx.esc(err.message || String(err))}`);
+    return true;
+  }
+}
+
 function _pad2(n) { return String(n).padStart(2, '0'); }
 
 /** Local-time ISO-8601 string (no Z, no offset) — what the calendar API wants. */
@@ -5450,6 +5535,13 @@ const COMMANDS = {
     handler: _cmdTodo,
     noUserBubble: true,
     usage: '/todo Your task  ·  /todo list',
+  },
+  goal: {
+    alias: ['goals', 'objective'],
+    category: 'Productivity',
+    help: 'Manage the current agent goal',
+    handler: _cmdGoal,
+    usage: '/goal Ship the thing  ·  /goal status  ·  /goal clear',
   },
   event: {
     alias: ['ev'],

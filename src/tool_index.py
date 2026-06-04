@@ -34,6 +34,9 @@ ALWAYS_AVAILABLE = frozenset({
     "list_served_models", "stop_served_model",
     # Generic API loopback — the catch-all when no named tool fits.
     "app_api",
+    # Goal tools must remain available whenever agent mode is active so an
+    # injected goal can be completed or blocked even if retrieval misses it.
+    "get_goal", "create_goal", "update_goal",
 })
 
 # Tools that the Personal Assistant always has access to during scheduled
@@ -78,6 +81,9 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "manage_memory": "Memory management: list, add, edit, delete, or search persistent memories.",
     "manage_skills": "Skill management: add, update, publish, or search reusable skills/presets.",
     "manage_tasks": "Scheduled task management: list, create, edit, delete, pause, resume, or run cron tasks.",
+    "get_goal": "Get the active session goal, status, objective, budget, tokens used, elapsed time, and remaining token budget.",
+    "create_goal": "Create a session goal when the user explicitly asks for a goal or objective. Fails if a goal already exists.",
+    "update_goal": "Mark the current goal complete or blocked. The model cannot pause, resume, clear, or edit goals.",
     "manage_endpoints": "Endpoint management: list, add, delete, enable, or disable model API endpoints.",
     "manage_mcp": "MCP server management: list, add, delete, reconnect servers, or list available tools.",
     "manage_webhooks": "Webhook management: list, add, delete, enable, or disable webhooks.",
@@ -321,6 +327,8 @@ class ToolIndex:
                    "cron", "periodically", "on a schedule", "set up a task",
                    "create a task", "summarize my inbox every", "remind me every"}):
             {"manage_tasks"},
+        frozenset({"goal", "objective", "finish this goal", "current goal", "complete goal", "blocked goal"}):
+            {"get_goal", "create_goal", "update_goal"},
         frozenset({"contact", "address", "phone", "who is"}):
             {"resolve_contact", "manage_contact"},
         frozenset({"save contact", "add contact", "new contact", "update contact",

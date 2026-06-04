@@ -560,6 +560,7 @@ def setup_chat_routes(
                 "manage_memory",      # persistent memory store
                 "search_chats",       # past chat history
                 "manage_skills",      # skill presets tied to user
+                "get_goal", "create_goal", "update_goal",
             })
 
         # Enforce per-user privileges
@@ -963,6 +964,7 @@ def setup_chat_routes(
                         disabled_tools=disabled_tools if disabled_tools else None,
                         owner=_user,
                         fallbacks=_fallback_candidates,
+                        goals_enabled=not incognito,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -982,6 +984,7 @@ def setup_chat_routes(
                                     "tool_start", "tool_output", "agent_step",
                                     "doc_stream_open", "doc_stream_delta",
                                     "doc_update", "doc_suggestions", "ui_control",
+                                    "goal_update", "goal_cleared",
                                 ):
                                     if data.get("type") == "agent_step":
                                         _agent_rounds = max(_agent_rounds, data.get("round", 1))

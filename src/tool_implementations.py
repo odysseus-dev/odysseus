@@ -853,6 +853,64 @@ def _skill_dump(sk) -> Dict:
 
 
 # ---------------------------------------------------------------------------
+# Goal tools
+# ---------------------------------------------------------------------------
+
+async def do_get_goal(content: str = "", session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+    """Return the current session goal for the agent."""
+    if not session_id:
+        return {"error": "session_id is required for get_goal", "exit_code": 1}
+    from src.agent_goals import get_goal, goal_tool_response
+
+    goal = get_goal(session_id, owner=owner)
+    return {"response": goal_tool_response(goal), "goal": goal, "exit_code": 0}
+
+
+async def do_create_goal(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+    """Create a model-requested goal for the current session."""
+    if not session_id:
+        return {"error": "session_id is required for create_goal", "exit_code": 1}
+    try:
+        args = _parse_tool_args(content)
+    except ValueError:
+        return {"error": "Invalid JSON arguments", "exit_code": 1}
+
+    from src.agent_goals import GoalError, create_goal, goal_tool_response
+
+    try:
+        goal = create_goal(
+            session_id,
+            args.get("objective", ""),
+            token_budget=args.get("token_budget"),
+            owner=owner,
+        )
+        return {"response": goal_tool_response(goal), "goal": goal, "exit_code": 0}
+    except GoalError as e:
+        return {"error": str(e), "exit_code": 1}
+
+
+async def do_update_goal(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+    """Model-facing goal update. Only complete/blocked are allowed."""
+    if not session_id:
+        return {"error": "session_id is required for update_goal", "exit_code": 1}
+    try:
+        args = _parse_tool_args(content)
+    except ValueError:
+        return {"error": "Invalid JSON arguments", "exit_code": 1}
+
+    from src.agent_goals import GoalError, goal_tool_response, update_goal_from_model
+
+    try:
+        goal = update_goal_from_model(session_id, args.get("status", ""), owner=owner)
+        response = goal_tool_response(goal)
+        if goal.get("status") == "complete" and goal.get("token_budget") is not None:
+            response += f" Final token use: {goal.get('tokens_used', 0)}/{goal['token_budget']}."
+        return {"response": response, "goal": goal, "exit_code": 0}
+    except GoalError as e:
+        return {"error": str(e), "exit_code": 1}
+
+
+# ---------------------------------------------------------------------------
 # Task management tool
 # ---------------------------------------------------------------------------
 

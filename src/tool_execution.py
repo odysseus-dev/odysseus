@@ -695,6 +695,7 @@ async def execute_tool_block(
     from src.tool_implementations import (
         do_create_document, do_update_document, do_edit_document,
         do_suggest_document, do_search_chats, do_manage_tasks,
+        do_get_goal, do_create_goal, do_update_goal,
         do_manage_skills, do_api_call, do_manage_endpoints,
         do_manage_mcp, do_manage_webhooks, do_manage_tokens,
         do_manage_documents, do_manage_settings, do_manage_notes,
@@ -821,6 +822,15 @@ async def execute_tool_block(
     elif tool == "manage_tasks":
         desc = "manage_tasks"
         result = await do_manage_tasks(content, owner=owner)
+    elif tool == "get_goal":
+        desc = "get_goal"
+        result = await do_get_goal(content, session_id=session_id, owner=owner)
+    elif tool == "create_goal":
+        desc = "create_goal"
+        result = await do_create_goal(content, session_id=session_id, owner=owner)
+    elif tool == "update_goal":
+        desc = "update_goal"
+        result = await do_update_goal(content, session_id=session_id, owner=owner)
     elif tool == "manage_skills":
         desc = "manage_skills"
         result = await do_manage_skills(content, owner=owner)

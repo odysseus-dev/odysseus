@@ -154,6 +154,7 @@ import createResearchSynapse from './researchSynapse.js';
   export function init(apiBase) {
     API_BASE = apiBase;
     initSlashCommands({ apiBase, isStreaming: () => isStreaming });
+    _initAgentGoalUi();
     // Initialize email inbox
     emailInbox.init(documentModule);
     // Wire the slash-command autocomplete popup on the chat composer. The
@@ -163,6 +164,227 @@ import createResearchSynapse from './researchSynapse.js';
       const ta = document.getElementById('message');
       if (ta && mod.initSlashAutocomplete) mod.initSlashAutocomplete(ta);
     }).catch(() => {});
+  }
+
+  const _goalStateBySession = new Map();
+  const _goalRunPolls = new Map();
+  let _goalUiReady = false;
+
+  function _goalUrl(sessionId, suffix = '') {
+    return `${API_BASE}/api/goals/${encodeURIComponent(sessionId)}${suffix}`;
+  }
+
+  function _goalBudgetText(goal) {
+    if (!goal || goal.token_budget == null) return '';
+    return `${goal.tokens_used || 0}/${goal.token_budget}`;
+  }
+
+  function _renderAgentGoal(sessionId) {
+    const currentSid = sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId();
+    if (sessionId && currentSid && sessionId !== currentSid) return;
+    const goal = currentSid ? (_goalStateBySession.get(currentSid) || null) : null;
+    const bar = document.getElementById('agent-goal-bar');
+    const pill = document.getElementById('agent-goal-pill');
+    const statusEl = document.getElementById('agent-goal-status');
+    const objectiveEl = document.getElementById('agent-goal-objective');
+    const metaEl = document.getElementById('agent-goal-meta');
+    const popover = document.getElementById('agent-goal-popover');
+    const objectiveInput = document.getElementById('agent-goal-objective-input');
+    const budgetInput = document.getElementById('agent-goal-budget-input');
+    const pauseBtn = document.getElementById('agent-goal-pause-btn');
+    const resumeBtn = document.getElementById('agent-goal-resume-btn');
+    const continueBtn = document.getElementById('agent-goal-continue-btn');
+    if (!bar || !pill || !statusEl || !objectiveEl || !metaEl) return;
+
+    if (!goal) {
+      bar.classList.add('hidden');
+      if (popover) popover.classList.add('hidden');
+      pill.setAttribute('aria-expanded', 'false');
+      return;
+    }
+
+    bar.classList.remove('hidden');
+    statusEl.textContent = goal.status || 'goal';
+    objectiveEl.textContent = goal.objective || '';
+    const budget = _goalBudgetText(goal);
+    metaEl.textContent = budget ? `${budget} tok` : `${goal.time_used_seconds || 0}s`;
+    pill.title = `${goal.status}: ${goal.objective}`;
+    if (objectiveInput) objectiveInput.value = goal.objective || '';
+    if (budgetInput) budgetInput.value = goal.token_budget == null ? '' : String(goal.token_budget);
+    if (pauseBtn) pauseBtn.disabled = goal.status !== 'active';
+    if (resumeBtn) resumeBtn.disabled = goal.status === 'active';
+    if (continueBtn) continueBtn.disabled = goal.status !== 'active';
+  }
+
+  function _setAgentGoal(sessionId, goal) {
+    if (!sessionId) return;
+    if (goal) _goalStateBySession.set(sessionId, goal);
+    else _goalStateBySession.delete(sessionId);
+    _renderAgentGoal(sessionId);
+  }
+
+  export async function refreshAgentGoal(sessionId) {
+    const sid = sessionId || (sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId());
+    if (!sid) {
+      _renderAgentGoal(null);
+      return null;
+    }
+    try {
+      const res = await fetch(_goalUrl(sid), { credentials: 'same-origin' });
+      if (!res.ok) throw new Error(`goal ${res.status}`);
+      const data = await res.json();
+      _setAgentGoal(sid, data.goal || null);
+      return data.goal || null;
+    } catch (err) {
+      console.warn('[goal] refresh failed:', err);
+      _setAgentGoal(sid, null);
+      return null;
+    }
+  }
+
+  async function _goalFetch(sessionId, method, body, suffix = '') {
+    const opts = { method, credentials: 'same-origin', headers: {} };
+    if (body !== undefined) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+    const res = await fetch(_goalUrl(sessionId, suffix), opts);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.error || `goal ${res.status}`);
+    if ('goal' in data) _setAgentGoal(sessionId, data.goal || null);
+    return data;
+  }
+
+  function _goalFeedback(text) {
+    const el = document.getElementById('agent-goal-feedback');
+    if (el) el.textContent = text || '';
+  }
+
+  function _initAgentGoalUi() {
+    if (_goalUiReady) return;
+    _goalUiReady = true;
+    const pill = document.getElementById('agent-goal-pill');
+    const popover = document.getElementById('agent-goal-popover');
+    const saveBtn = document.getElementById('agent-goal-save-btn');
+    const pauseBtn = document.getElementById('agent-goal-pause-btn');
+    const resumeBtn = document.getElementById('agent-goal-resume-btn');
+    const clearBtn = document.getElementById('agent-goal-clear-btn');
+    const continueBtn = document.getElementById('agent-goal-continue-btn');
+    if (pill && popover) {
+      pill.addEventListener('click', () => {
+        popover.classList.toggle('hidden');
+        pill.setAttribute('aria-expanded', popover.classList.contains('hidden') ? 'false' : 'true');
+        _goalFeedback('');
+      });
+      document.addEventListener('click', (event) => {
+        if (popover.classList.contains('hidden')) return;
+        const target = event.target;
+        if (target instanceof Node && (popover.contains(target) || pill.contains(target))) return;
+        popover.classList.add('hidden');
+        pill.setAttribute('aria-expanded', 'false');
+      });
+    }
+    if (saveBtn) saveBtn.addEventListener('click', async () => {
+      const sid = sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId();
+      const objective = document.getElementById('agent-goal-objective-input')?.value?.trim() || '';
+      const budgetRaw = document.getElementById('agent-goal-budget-input')?.value || '';
+      if (!sid || !objective) return;
+      try {
+        await _goalFetch(sid, 'POST', {
+          objective,
+          token_budget: budgetRaw ? Number(budgetRaw) : null,
+          replace: true,
+        });
+        _goalFeedback('Saved');
+      } catch (err) {
+        _goalFeedback(err.message || 'Save failed');
+      }
+    });
+    if (pauseBtn) pauseBtn.addEventListener('click', () => _patchGoalStatus('paused'));
+    if (resumeBtn) resumeBtn.addEventListener('click', () => _patchGoalStatus('active'));
+    if (clearBtn) clearBtn.addEventListener('click', async () => {
+      const sid = sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId();
+      if (!sid) return;
+      try {
+        const data = await _goalFetch(sid, 'DELETE');
+        if (data.cleared) _setAgentGoal(sid, null);
+        _goalFeedback(data.cleared ? 'Cleared' : 'No goal');
+      } catch (err) {
+        _goalFeedback(err.message || 'Clear failed');
+      }
+    });
+    if (continueBtn) continueBtn.addEventListener('click', async () => {
+      const sid = sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId();
+      if (!sid) return;
+      try {
+        const data = await _goalFetch(sid, 'POST', undefined, '/continue');
+        if (!data.eligible) {
+          _goalFeedback(`Cannot continue: ${data.reason || 'unknown'}`);
+          return;
+        }
+        _goalFeedback('Continuing');
+        _watchAgentGoalRun(sid);
+      } catch (err) {
+        _goalFeedback(err.message || 'Continue failed');
+      }
+    });
+  }
+
+  async function _patchGoalStatus(status) {
+    const sid = sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId();
+    if (!sid) return;
+    try {
+      await _goalFetch(sid, 'PATCH', { status });
+      _goalFeedback(status === 'active' ? 'Resumed' : 'Paused');
+    } catch (err) {
+      _goalFeedback(err.message || 'Update failed');
+    }
+  }
+
+  export function startAgentGoalContinuation(sessionId) {
+    const sid = sessionId || (sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId());
+    if (!sid) return;
+    _watchAgentGoalRun(sid);
+  }
+
+  function _watchAgentGoalRun(sessionId) {
+    if (!sessionId) return;
+    if (_goalRunPolls.has(sessionId)) return;
+    if (sessionModule && sessionModule.markStreaming) sessionModule.markStreaming(sessionId);
+    if (sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId() === sessionId) {
+      _backgroundStreams.set(sessionId, {
+        status: 'running',
+        accumulated: '',
+        sourcesHtml: '',
+        findingsData: null,
+        abortCtrl: null,
+        query: 'Goal continuation',
+        metrics: null,
+        goalRun: true,
+      });
+      checkBackgroundStream(sessionId);
+    }
+    const pollId = window.setInterval(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/chat/stream_status/${encodeURIComponent(sessionId)}`, {
+          credentials: 'same-origin',
+        });
+        if (res.ok) return;
+      } catch (_) {
+        return;
+      }
+      window.clearInterval(pollId);
+      _goalRunPolls.delete(sessionId);
+      const entry = _backgroundStreams.get(sessionId);
+      if (entry) entry.status = 'completed';
+      refreshAgentGoal(sessionId);
+      if (sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId() === sessionId) {
+        sessionModule.selectSession(sessionId);
+      } else if (sessionModule.loadSessions) {
+        sessionModule.loadSessions();
+      }
+    }, 1500);
+    _goalRunPolls.set(sessionId, pollId);
   }
 
   // addMessage, createMsgFooter, displayMetrics, hideWelcomeScreen, showWelcomeScreen
@@ -1361,6 +1583,20 @@ import createResearchSynapse from './researchSynapse.js';
               }
               if (json.delta || json.type === 'tool_start' || json.type === 'agent_step' || json.type === 'doc_stream_delta') {
                 clearProcessingProbe();
+              }
+              if (json.type === 'goal_update') {
+                _setAgentGoal(streamSessionId, json.goal || null);
+                if (_isBg) {
+                  const bgGoal = _backgroundStreams.get(streamSessionId);
+                  if (bgGoal) bgGoal.goal = json.goal || null;
+                } else if (json.can_continue === true) {
+                  window.setTimeout(() => _watchAgentGoalRun(streamSessionId), 1200);
+                }
+                continue;
+              }
+              if (json.type === 'goal_cleared') {
+                _setAgentGoal(streamSessionId, null);
+                continue;
               }
               if (json.delta) {
                 _cancelThinkingTimer();
@@ -4510,6 +4746,8 @@ import createResearchSynapse from './researchSynapse.js';
     hideWelcomeScreen: chatRenderer.hideWelcomeScreen,
     showWelcomeScreen: chatRenderer.showWelcomeScreen,
     checkPendingResearch,
+    refreshAgentGoal,
+    startAgentGoalContinuation,
     getImageCost: chatRenderer.getImageCost,
     setDisplayOverride,
     setHideUserBubble,

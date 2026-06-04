@@ -551,6 +551,10 @@ app.include_router(setup_chat_routes(
     skills_manager=skills_manager,
 ))
 
+# Goals
+from routes.goal_routes import setup_goal_routes
+app.include_router(setup_goal_routes())
+
 # Research (background deep-research tasks)
 from routes.research_routes import setup_research_routes
 app.include_router(setup_research_routes(research_handler, session_manager=session_manager))

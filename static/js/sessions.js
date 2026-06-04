@@ -1693,6 +1693,9 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     if (window.chatModule && window.chatModule.checkPendingResearch) {
       window.chatModule.checkPendingResearch(id);
     }
+    if (window.chatModule && window.chatModule.refreshAgentGoal) {
+      window.chatModule.refreshAgentGoal(id);
+    }
     // Restore group chat state if this is a group session
     if (window.groupModule && window.groupModule.restoreState && window.groupModule.restoreState(id)) {
       if (window._syncGroupIndicator) window._syncGroupIndicator(true);

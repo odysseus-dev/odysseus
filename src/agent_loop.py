@@ -271,6 +271,9 @@ Generate an image. Line 1 = description, line 2 = model name, line 3 = WxH (e.g.
     "manage_memory": "- ```manage_memory``` — Manage the user's persistent memory (facts, identity, preferences, context that persists across chats). Line 1 = action (list/add/edit/delete/search), rest = content. Use when user says 'remember this', states identity facts like 'my name is <name>' / 'call me <name>' / 'I live in <place>', or asks about stored memories.",
     "manage_skills": "- ```manage_skills``` — Skill registry (SKILL.md format). Args (JSON): {\"action\": \"list|view|view_ref|search|add|edit|patch|publish|delete\", ...}. `list` returns the index of available skills (published + teacher-escalation drafts); `view name=foo` fetches the full SKILL.md; `view_ref name=foo path=...` loads a reference file under the skill directory. For `add`, provide an explicit kebab-case `name` and only report the exact returned name, because storage may normalize or dedupe it. Use this BEFORE doing domain work — there may already be a procedure (published or draft) that prescribes the correct steps. Drafts written by the teacher loop are authoritative guidance even though they're not yet published.",
     "manage_tasks": "- ```manage_tasks``` — Create and manage scheduled background tasks (recurring AI jobs). Args (JSON): {\"action\": \"list|create|edit|delete|pause|resume|run\", ...}",
+    "get_goal": "- ```get_goal``` — Get the current session goal with status, objective, token budget, token/time usage, and remaining token budget. Use when goal state is relevant or unclear.",
+    "create_goal": "- ```create_goal``` — Create a session goal ONLY when the user explicitly asks for a goal. Args (JSON): {\"objective\":\"...\", \"token_budget\":12345?}. Fails if this session already has a goal; do not infer goals from ordinary tasks.",
+    "update_goal": "- ```update_goal``` — Mark the current goal complete or blocked. Args (JSON): {\"status\":\"complete|blocked\"}. Use complete only after verifying the objective is achieved. Use blocked only after the same blocker repeats for at least three goal turns. Do NOT pause, resume, clear, edit, or budget-limit goals with this tool.",
     "manage_endpoints": "- ```manage_endpoints``` — Add, remove, or configure AI model API endpoints. Args (JSON): {\"action\": \"list|add|delete|enable|disable\", ...}. Use when user wants to add a new AI provider.",
     "manage_mcp": "- ```manage_mcp``` — Manage MCP (Model Context Protocol) tool servers — external tools that extend your capabilities. Args (JSON): {\"action\": \"list|add|delete|reconnect|list_tools\", ...}",
     "manage_webhooks": "- ```manage_webhooks``` — Configure outgoing webhooks (HTTP notifications on events like chat completion). Args (JSON): {\"action\": \"list|add|delete|enable|disable\", ...}",
@@ -551,6 +554,7 @@ def _build_system_prompt(
     mcp_disabled_map: Optional[Dict[str, set]] = None,
     compact: bool = False,
     owner: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
@@ -630,6 +634,13 @@ def _build_system_prompt(
     # the trusted system role. Bound up front so the insert block below can
     # always check it.
     _skills_message = None
+    _goal_message = None
+    if session_id:
+        try:
+            from src.agent_goals import goal_context_message
+            _goal_message = goal_context_message(session_id, owner=owner)
+        except Exception as _goal_err:
+            logger.debug(f"goal context injection failed (non-fatal): {_goal_err}")
     if active_document:
         set_active_document(active_document.id)
         _doc_raw = active_document.current_content or ""
@@ -948,6 +959,9 @@ def _build_system_prompt(
         if merged[i].get("role") == "user":
             last_user_idx = i
             break
+    if _goal_message:
+        merged.insert(last_user_idx, _goal_message)
+        last_user_idx += 1
     if _doc_message:
         merged.insert(last_user_idx, _doc_message)
         last_user_idx += 1  # the document message is now at last_user_idx
@@ -1357,6 +1371,7 @@ async def stream_agent_loop(
     relevant_tools: Optional[Set[str]] = None,
     fallbacks: Optional[List[tuple]] = None,
     _is_teacher_run: bool = False,
+    goals_enabled: bool = True,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
 
@@ -1380,6 +1395,15 @@ async def stream_agent_loop(
         mcp_mgr = None
 
     _t0 = time.time()
+    _goal_started_id = None
+    if goals_enabled and session_id:
+        try:
+            from src.agent_goals import get_goal as _get_goal
+            _goal_start = _get_goal(session_id, owner=owner)
+            if _goal_start and _goal_start.get("status") == "active":
+                _goal_started_id = _goal_start.get("goal_id")
+        except Exception as _goal_err:
+            logger.debug(f"goal turn snapshot failed (non-fatal): {_goal_err}")
     _needs_admin = _detect_admin_intent(messages)
     _last_user = _extract_last_user_message(messages)
     # Tool retrieval keys on recent conversation context (last few user turns),
@@ -1515,6 +1539,7 @@ async def stream_agent_loop(
         mcp_disabled_map=_mcp_disabled_map,
         compact=_is_api_model,
         owner=owner,
+        session_id=session_id if goals_enabled else None,
     )
     prep_timings["prompt_build"] = time.time() - _t2
 
@@ -2135,6 +2160,11 @@ async def stream_agent_loop(
                     f'data: {json.dumps({"type": "ui_control", "data": result})}\n\n'
                 )
 
+            if "goal" in result:
+                yield (
+                    f'data: {json.dumps({"type": "goal_update", "goal": result.get("goal")})}\n\n'
+                )
+
             # Build output for frontend tool bubble.
             # Document tools get a short summary — content goes to the editor panel.
             output_text = ""
@@ -2276,6 +2306,27 @@ async def stream_agent_loop(
         backend_gen_tps=backend_gen_tps,
         backend_prefill_tps=backend_prefill_tps,
     )
+    if goals_enabled and session_id and _goal_started_id:
+        try:
+            from src.agent_goals import account_goal_usage, can_continue_goal
+            _goal_after = account_goal_usage(
+                session_id,
+                metrics,
+                elapsed_seconds=total_duration,
+                owner=owner,
+                goal_id=_goal_started_id,
+            )
+            if _goal_after:
+                _can_continue, _continue_reason, _ = can_continue_goal(session_id, owner=owner)
+                yield f"data: {json.dumps({'type': 'goal_update', 'goal': _goal_after, 'can_continue': _can_continue, 'reason': _continue_reason})}\n\n"
+                if _can_continue:
+                    try:
+                        from src.goal_runner import schedule_goal_continuation
+                        schedule_goal_continuation(session_id, owner=owner)
+                    except Exception as _goal_schedule_err:
+                        logger.debug(f"goal continuation scheduling failed (non-fatal): {_goal_schedule_err}")
+        except Exception as _goal_err:
+            logger.warning(f"goal usage accounting failed: {_goal_err}")
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
 
     # Teacher-escalation: inline takeover visible in the chat stream.

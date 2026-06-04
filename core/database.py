@@ -181,6 +181,28 @@ class ChatMessage(Base):
         Index('ix_messages_session_time', 'session_id', 'timestamp'),  # Composite for efficient message retrieval
     )
 
+
+class AgentGoal(TimestampMixin, Base):
+    """Persistent per-session goal state for agent-mode continuation."""
+    __tablename__ = "agent_goals"
+
+    session_id = Column(String, ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True, index=True)
+    goal_id = Column(String, nullable=False, unique=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    objective = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default="active", index=True)
+    token_budget = Column(Integer, nullable=True)
+    tokens_used = Column(Integer, nullable=False, default=0)
+    time_used_seconds = Column(Integer, nullable=False, default=0)
+    continuation_count = Column(Integer, nullable=False, default=0)
+
+    session = relationship("Session", backref=backref("agent_goal", uselist=False))
+
+    __table_args__ = (
+        Index('ix_agent_goals_owner_status', 'owner', 'status'),
+    )
+
+
 class Document(TimestampMixin, Base):
     """Living document that the AI can create and edit in-place."""
     __tablename__ = "documents"
@@ -957,6 +979,52 @@ def _migrate_add_token_columns():
     except Exception as e:
         logging.getLogger(__name__).warning(f"Migration check for token columns failed: {e}")
 
+
+def _migrate_add_agent_goals_table():
+    """Create/repair the per-session agent goal table for existing installs."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_goals (
+                session_id TEXT PRIMARY KEY,
+                goal_id TEXT NOT NULL UNIQUE,
+                owner TEXT,
+                objective TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                token_budget INTEGER,
+                tokens_used INTEGER NOT NULL DEFAULT 0,
+                time_used_seconds INTEGER NOT NULL DEFAULT 0,
+                continuation_count INTEGER NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+            )
+        """)
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(agent_goals)").fetchall()]
+        for name, ddl in {
+            "owner": "ALTER TABLE agent_goals ADD COLUMN owner TEXT",
+            "token_budget": "ALTER TABLE agent_goals ADD COLUMN token_budget INTEGER",
+            "tokens_used": "ALTER TABLE agent_goals ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0",
+            "time_used_seconds": "ALTER TABLE agent_goals ADD COLUMN time_used_seconds INTEGER NOT NULL DEFAULT 0",
+            "continuation_count": "ALTER TABLE agent_goals ADD COLUMN continuation_count INTEGER NOT NULL DEFAULT 0",
+        }.items():
+            if name not in columns:
+                conn.execute(ddl)
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_agent_goals_goal_id ON agent_goals(goal_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_agent_goals_session_id ON agent_goals(session_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_agent_goals_owner ON agent_goals(owner)")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_agent_goals_status ON agent_goals(status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_agent_goals_owner_status ON agent_goals(owner, status)")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Migration check for agent_goals failed: {e}")
+
+
 def _migrate_add_owner_to_table(table_name: str, index_name: str):
     """Generic helper: add owner TEXT column + index to a table if missing."""
     import sqlite3
@@ -1062,7 +1130,7 @@ def _migrate_assign_legacy_owner():
             "calendars", "calendar_events", "integrations",
             "scheduled_tasks", "task_runs", "crew_members",
             "gallery_albums", "gallery_people", "user_tool_data",
-            "api_tokens", "webhooks",
+            "api_tokens", "webhooks", "agent_goals",
         ]
         for table in tables:
             try:
@@ -1541,6 +1609,7 @@ def init_db():
     _migrate_add_last_message_at_column()
     _migrate_add_folder_column()
     _migrate_add_token_columns()
+    _migrate_add_agent_goals_table()
     _migrate_add_mode_column()
     _migrate_add_multiuser_owner_columns()
     _migrate_add_api_token_scopes_column()

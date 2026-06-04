@@ -320,6 +320,123 @@ body.bg-pattern-sparkles {
     .chat-meta-overlay:not(:has(#current-meta:not(:empty))) {
       display: none;
     }
+    .agent-goal-bar {
+      position: relative;
+      display: flex;
+      align-items: center;
+      padding: 0 8px 5px;
+      min-height: 26px;
+      box-sizing: border-box;
+    }
+    .agent-goal-bar.hidden {
+      display: none;
+    }
+    .agent-goal-pill {
+      display: inline-grid;
+      grid-template-columns: 13px auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 6px;
+      max-width: min(720px, 100%);
+      min-height: 24px;
+      padding: 3px 8px;
+      border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--accent) 9%, var(--bg));
+      color: var(--fg);
+      font: inherit;
+      font-size: 11px;
+      line-height: 1.2;
+      cursor: pointer;
+    }
+    .agent-goal-pill svg {
+      color: var(--accent);
+      flex-shrink: 0;
+    }
+    #agent-goal-status {
+      color: var(--accent);
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 9px;
+    }
+    #agent-goal-objective {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    #agent-goal-meta {
+      color: color-mix(in srgb, var(--fg) 55%, transparent);
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .agent-goal-popover {
+      position: absolute;
+      left: 8px;
+      bottom: 34px;
+      width: min(420px, calc(100vw - 32px));
+      z-index: 50;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      box-shadow: 0 12px 32px rgba(0,0,0,0.28);
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+    .agent-goal-popover.hidden {
+      display: none;
+    }
+    #agent-goal-objective-input,
+    #agent-goal-budget-input {
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--panel) 86%, transparent);
+      color: var(--fg);
+      font: inherit;
+      font-size: 12px;
+      padding: 7px 8px;
+    }
+    #agent-goal-objective-input {
+      resize: vertical;
+      min-height: 68px;
+      max-height: 180px;
+      line-height: 1.35;
+    }
+    .agent-goal-row,
+    .agent-goal-actions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .agent-goal-row input {
+      flex: 1;
+      min-width: 0;
+    }
+    .agent-goal-row button,
+    .agent-goal-actions button {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+      color: var(--fg);
+      font: inherit;
+      font-size: 11px;
+      min-height: 28px;
+      padding: 0 9px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .agent-goal-actions {
+      flex-wrap: wrap;
+    }
+    .agent-goal-feedback {
+      min-height: 14px;
+      color: color-mix(in srgb, var(--fg) 62%, transparent);
+      font-size: 11px;
+      line-height: 1.25;
+    }
     .export-dropdown-wrap {
       position: relative;
       display: inline-flex;

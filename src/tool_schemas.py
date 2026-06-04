@@ -1056,6 +1056,46 @@ FUNCTION_TOOL_SCHEMAS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_goal",
+            "description": "Get the current session goal, including status, token budget, tokens used, elapsed time, and remaining token budget.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_goal",
+            "description": "Create a session goal only when the user explicitly asks for a goal. Fails if a goal already exists.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "objective": {"type": "string", "description": "Concrete user-requested goal objective"},
+                    "token_budget": {"type": "integer", "description": "Optional positive token budget"}
+                },
+                "required": ["objective"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_goal",
+            "description": "Mark the current goal complete or blocked. Do not use this to pause, resume, clear, or edit goals.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "enum": ["complete", "blocked"], "description": "New goal status"}
+                },
+                "required": ["status"]
+            }
+        }
+    },
 ]
 
 
@@ -1226,7 +1266,8 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             content = action
     elif tool_type in ("manage_tasks", "manage_skills", "api_call",
                         "manage_endpoints", "manage_mcp", "manage_webhooks",
-                        "manage_tokens", "manage_documents", "manage_settings"):
+                        "manage_tokens", "manage_documents", "manage_settings",
+                        "get_goal", "create_goal", "update_goal"):
         content = json.dumps(args)
     elif tool_type == "ask_teacher":
         content = args.get("model", "auto") + "\n" + args.get("problem", "")

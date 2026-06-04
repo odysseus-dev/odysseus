@@ -1003,6 +1003,28 @@
         </div>
       </div>
       <div id="pinned-tools-bar"></div>
+      <div id="agent-goal-bar" class="agent-goal-bar hidden">
+        <button type="button" id="agent-goal-pill" class="agent-goal-pill" title="Session goal" aria-haspopup="true" aria-expanded="false">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+          <span id="agent-goal-status">Goal</span>
+          <span id="agent-goal-objective"></span>
+          <span id="agent-goal-meta"></span>
+        </button>
+        <div id="agent-goal-popover" class="agent-goal-popover hidden">
+          <textarea id="agent-goal-objective-input" rows="3" maxlength="6000" aria-label="Goal objective"></textarea>
+          <div class="agent-goal-row">
+            <input id="agent-goal-budget-input" type="number" min="1" placeholder="Token budget" aria-label="Goal token budget">
+            <button type="button" id="agent-goal-save-btn">Save</button>
+          </div>
+          <div class="agent-goal-actions">
+            <button type="button" id="agent-goal-pause-btn">Pause</button>
+            <button type="button" id="agent-goal-resume-btn">Resume</button>
+            <button type="button" id="agent-goal-continue-btn">Continue</button>
+            <button type="button" id="agent-goal-clear-btn">Clear</button>
+          </div>
+          <div id="agent-goal-feedback" class="agent-goal-feedback"></div>
+        </div>
+      </div>
       <div class="chat-input-bottom" style="visibility:hidden">
         <div class="chat-input-left">
           <!-- Overflow menu (+) — always first/left -->
