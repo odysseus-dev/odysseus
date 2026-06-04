@@ -11,6 +11,24 @@ import shlex
 from fastapi import HTTPException
 from pydantic import BaseModel
 
+from core.platform_compat import IS_WINDOWS
+
+
+def _local_python_bin() -> str:
+    """Name of the python executable for a local cookbook runner.
+
+    Native Windows installs Python as ``python``, not ``python3``. The
+    Cookbook's downloader / serve / pip-fallback scripts run via Git Bash
+    on Windows (see ``shell_routes._generate_win_detached``), so a runner
+    that hard-codes ``python3`` fails with "python3: command not found" on
+    a default Windows install. Linux / macOS keep using ``python3`` because
+    that's how Homebrew / system Python ship the v3 interpreter.
+    """
+    return "python" if IS_WINDOWS else "python3"
+
+
+_LOCAL_PIP_DEFAULT = f"{_local_python_bin()} -m pip"
+
 logger = logging.getLogger(__name__)
 
 
@@ -195,7 +213,7 @@ def _pip_install_attempt(pip_cmd: str) -> str:
     )
 
 
-def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m pip", upgrade: bool = False) -> str:
+def _pip_install_fallback_chain(package: str, *, python_cmd: str = _LOCAL_PIP_DEFAULT, upgrade: bool = False) -> str:
     """Build a bash pip install fallback chain that surfaces errors.
 
     Try the active interpreter/environment first. ``--user`` is invalid
@@ -224,7 +242,7 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     elif python_cmd.strip() == "pip3":
         python_exe = "python3"
     else:
-        python_exe = "python3"
+        python_exe = _local_python_bin()
     venv_check = f'{python_exe} -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"'
     # Negated: `! venv_check` succeeds (exit 0) when NOT in a venv → `&&` tries
     # --user.  When IN a venv `! venv_check` fails → `&&` skips --user and the
