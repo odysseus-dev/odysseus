@@ -12,7 +12,19 @@ import types
 import pytest
 
 
+# Modules we temporarily override so importing routes.backup_routes binds our
+# light stubs instead of the real (heavy / auth-coupled) implementations.
+_STUBBED = ("core", "core.middleware", "src", "src.auth_helpers", "src.settings")
+
+
 def _install_stubs():
+    # Save whatever is in sys.modules now so we can put it back. backup_routes
+    # uses `from x import name`, so once it is imported it keeps its own bound
+    # references and no longer needs these entries. Leaving stub `src` / `core`
+    # modules in sys.modules would make them non-packages and break collection
+    # of every later test module that imports a real src.*/core.* submodule.
+    saved = {name: sys.modules.get(name) for name in _STUBBED}
+
     def _stub(name, **attrs):
         m = types.ModuleType(name)
         for k, v in attrs.items():
@@ -27,13 +39,24 @@ def _install_stubs():
     _stub("src.settings",
           load_settings=lambda: {}, save_settings=lambda s: None,
           load_features=lambda: {}, save_features=lambda f: None)
+    return saved
 
 
-_install_stubs()
+def _restore_stubs(saved):
+    for name, mod in saved.items():
+        if mod is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = mod
 
-from fastapi import FastAPI, Request  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
-from routes.backup_routes import setup_backup_routes  # noqa: E402
+
+_saved = _install_stubs()
+try:
+    from fastapi import FastAPI, Request  # noqa: E402
+    from fastapi.testclient import TestClient  # noqa: E402
+    from routes.backup_routes import setup_backup_routes  # noqa: E402
+finally:
+    _restore_stubs(_saved)
 
 
 class FakeMemoryManager:
