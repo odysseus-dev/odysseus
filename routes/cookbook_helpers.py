@@ -75,6 +75,21 @@ def _validate_include(v: str | None) -> str | None:
     return v
 
 
+def _validate_exclude(v: list[str] | None) -> list[str] | None:
+    """Validate a list of exclude globs (e.g. ['original/*']). Same safe glyph
+    set as include patterns — they land in a shell-quoted `--exclude` arg."""
+    if not v:
+        return None
+    if not isinstance(v, list):
+        raise HTTPException(400, "exclude must be a list of glob patterns")
+    out = []
+    for pat in v:
+        if not isinstance(pat, str) or not pat or not _INCLUDE_RE.match(pat):
+            raise HTTPException(400, "Invalid exclude pattern")
+        out.append(pat)
+    return out or None
+
+
 def _validate_remote_host(v: str | None) -> str | None:
     if v is None or v == "":
         return None
@@ -97,6 +112,28 @@ def _validate_local_dir(v: str | None) -> str | None:
     v = v.rstrip("/") or "/"
     if not _LOCAL_DIR_RE.match(v):
         raise HTTPException(400, "Invalid local_dir — must be an absolute or ~ path with no spaces or shell metacharacters")
+    return v
+
+
+# Characters never legitimate in a download-location path. The value is dropped
+# into a single-quoted ``export HF_HOME='...'`` (bash) / ``$env:HF_HOME='...'``
+# (PowerShell), so quotes/backticks/shell-metacharacters and control chars are
+# the real risk. We allow everything else (drive letters, backslashes, spaces,
+# parentheses, ``~``) so native-Windows paths like ``D:\models`` are accepted —
+# unlike _validate_local_dir, which is intentionally POSIX-only.
+_CACHE_DIR_BAD_CHARS = set("'\"`;&|$<>*?\r\n\t")
+
+
+def _validate_cache_dir(v: str | None) -> str | None:
+    if v is None:
+        return None
+    v = v.strip()
+    if v == "":
+        return None
+    if len(v) > 4096:
+        raise HTTPException(400, "Invalid download location — path too long")
+    if any(c in _CACHE_DIR_BAD_CHARS for c in v) or any(ord(c) < 32 for c in v):
+        raise HTTPException(400, "Invalid download location — contains unsupported characters")
     return v
 
 
@@ -278,8 +315,47 @@ def _user_shell_path_bootstrap() -> list[str]:
     ]
 
 
-def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
-    """Build the standalone Python scanner used by /api/model/cached."""
+def resolve_hf_hub_cache(environ: dict | None = None, base_dir: str | None = None) -> str:
+    """Resolve the effective HuggingFace hub cache directory from the environment.
+
+    Mirrors huggingface_hub's own precedence so the cache *scan* and the UI
+    *display* look exactly where `hf download` actually writes:
+        HF_HUB_CACHE / HUGGINGFACE_HUB_CACHE  →  used directly
+        HF_HOME                               →  <HF_HOME>/hub
+        (nothing set)                         →  ~/.cache/huggingface/hub
+
+    Relative paths (a common .env style, e.g. ``HF_HOME=./data/huggingface``)
+    are made absolute against ``base_dir`` — the server's working directory,
+    which is the cwd the detached `hf download` inherits, so this matches the
+    real download location. Without this, a relative HF_HOME would resolve
+    against whatever cwd the scan subprocess happens to run in (it uses the
+    home dir), landing on the wrong path.
+    """
+    env = environ if environ is not None else os.environ
+    base = base_dir or os.getcwd()
+
+    def _abs(p: str) -> str:
+        p = os.path.expanduser(p)
+        return p if os.path.isabs(p) else os.path.normpath(os.path.join(base, p))
+
+    cache = env.get("HF_HUB_CACHE") or env.get("HUGGINGFACE_HUB_CACHE")
+    if cache:
+        return _abs(cache)
+    home = env.get("HF_HOME")
+    if home:
+        return os.path.join(_abs(home), "hub")
+    return os.path.expanduser("~/.cache/huggingface/hub")
+
+
+def _cached_model_scan_script(model_dirs: list[str] | None = None, hf_cache: str | None = None) -> str:
+    """Build the standalone Python scanner used by /api/model/cached.
+
+    ``hf_cache`` is the pre-resolved hub cache dir to scan. Local callers pass
+    the server-resolved absolute path (see :func:`resolve_hf_hub_cache`) because
+    the scan subprocess runs from the home dir, so a relative HF_HOME couldn't be
+    resolved correctly inside the script. When ``None`` (remote scans) the script
+    resolves the cache from the remote host's own environment instead.
+    """
     lines = [
         "import json, os, re, shutil, subprocess, urllib.request",
         "models = []",
@@ -422,10 +498,27 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
         "            seen.add(name)",
         "            models.append({'repo_id':name,'size_bytes':size_bytes,'nb_files':1,'has_incomplete':False,'path':'ollama','backend':'ollama','is_ollama':True})",
         "        return",
-        "scan_hf(os.path.expanduser('~/.cache/huggingface/hub'))",
+    ]
+    if hf_cache is not None:
+        # Local: scan the path the server already resolved from its env + cwd.
+        lines.append(f"scan_hf({hf_cache!r})")
+    else:
+        # Remote: resolve from the remote host's own HF_* env, same precedence
+        # as resolve_hf_hub_cache (HF_HUB_CACHE / HUGGINGFACE_HUB_CACHE, else
+        # HF_HOME/hub, else the default cache).
+        lines.extend([
+            "def _hf_hub_cache():",
+            "    c = os.environ.get('HF_HUB_CACHE') or os.environ.get('HUGGINGFACE_HUB_CACHE')",
+            "    if c: return os.path.abspath(os.path.expanduser(c))",
+            "    h = os.environ.get('HF_HOME')",
+            "    if h: return os.path.join(os.path.abspath(os.path.expanduser(h)), 'hub')",
+            "    return os.path.expanduser('~/.cache/huggingface/hub')",
+            "scan_hf(_hf_hub_cache())",
+        ])
+    lines.extend([
         "scan_ollama()",
         "scan_ollama_api()",
-    ]
+    ])
     for model_dir in model_dirs or []:
         lines.append(f"scan_dir(os.path.expanduser({model_dir!r}))")
     lines.append("print(json.dumps(models))")
@@ -695,16 +788,68 @@ def _llama_cpp_rebuild_cmd() -> str:
     )
 
 
+def _repo_download_breakdown(repo_id: str, token: str | None = None) -> dict:
+    """Query HuggingFace for a repo's file breakdown so the UI can offer a
+    'full vs serving-only' download choice and show an honest progress total.
+
+    Returns {total_bytes, serving_bytes, extra_bytes, exclude_patterns,
+    has_safetensors, n_files}. "Extras" are weight files that serving
+    (vLLM/transformers/llama.cpp) doesn't need when safetensors are present:
+    Meta's ``original/`` raw checkpoint (always an extra — never used by
+    HF-ecosystem serving), plus redundant ``*.pth`` / ``*.gguf`` / ``*.bin`` /
+    ``consolidated.*`` duplicates. The safetensors gate keeps GGUF-only repos
+    safe (nothing dropped when there's no safetensors to serve from).
+    """
+    from huggingface_hub import HfApi
+
+    info = HfApi().model_info(repo_id, files_metadata=True, token=token or None)
+    files = [(s.rfilename, int(s.size or 0)) for s in (info.siblings or [])]
+    total = sum(sz for _, sz in files)
+    has_st = any(n.endswith(".safetensors") for n, _ in files)
+
+    def _is_extra(name: str) -> bool:
+        low = name.lower()
+        if name.startswith("original/") or "/original/" in name:
+            return True
+        if has_st and (low.endswith(".pth") or low.endswith(".gguf")
+                       or low.endswith(".bin") or "consolidated" in low):
+            return True
+        return False
+
+    extra = sum(sz for n, sz in files if _is_extra(n))
+    pats: list[str] = []
+    if any(n.startswith("original/") for n, _ in files):
+        pats.append("original/*")
+    if has_st:
+        for ext in (".gguf", ".pth", ".bin"):
+            if any(n.lower().endswith(ext) for n, _ in files):
+                pats.append("*" + ext)
+        if any("consolidated" in n.lower() for n, _ in files):
+            pats.append("*consolidated*")
+    return {
+        "total_bytes": total,
+        "serving_bytes": max(0, total - extra),
+        "extra_bytes": extra,
+        "exclude_patterns": pats,
+        "has_safetensors": has_st,
+        "n_files": len(files),
+    }
+
+
 class ModelDownloadRequest(BaseModel):
     repo_id: str
     include: str | None = None  # glob pattern e.g. "*Q4_K_M*"
+    exclude: list[str] | None = None  # globs to skip, e.g. ["original/*"] — used by the "serving files only" download choice to drop the raw Meta checkpoint etc.
+    expected_bytes: float | None = None  # total size of what's actually being downloaded (full repo, or serving-only subset); drives an honest progress %. Set by the client from /api/model/repo-size. Backend stores it on the task; not used for the download itself.
     hf_token: str | None = None
     env_prefix: str | None = None  # e.g. "source ~/venv/bin/activate"
     remote_host: str | None = None  # e.g. "gpu-box" — run download on this host via SSH
     ssh_port: str | None = None    # e.g. "8022" for Termux
     platform: str | None = None    # "linux", "termux", or "windows"
     local_dir: str | None = None   # base dir to download into (a per-model subfolder is created under it); None = default HF cache
+    cache_dir: str | None = None   # Cookbook-wide download location: exported as HF_HOME so hf uses the normal cache LAYOUT at this root (<cache_dir>/hub). None = default cache (HF_HOME from env / ~/.cache).
     disable_hf_transfer: bool = False  # skip the Rust hf_transfer downloader — slower but far more reliable on large files (used by retries)
+    disable_xet: bool = True  # skip the hf_xet chunk downloader (exports HF_HUB_DISABLE_XET=1). Default on: hf_xet has stalled at 0 bytes on some Windows/network setups. The Settings "Use Xet transfer" toggle flips this off for hosts where Xet works.
 
 
 class ServeRequest(BaseModel):

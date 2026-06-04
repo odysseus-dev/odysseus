@@ -24,7 +24,7 @@ import {
 import {
   initDownload,
   _setPanelField, _setPanelCheckbox,
-  _wirePanelEvents, _runPanelCmd, _runModelDownload, _buildDownloadCmd,
+  _wirePanelEvents, _runPanelCmd, _runModelDownload, _buildDownloadCmd, _resolveDownloadScope,
 } from './cookbookDownload.js';
 
 import {
@@ -72,7 +72,7 @@ function _platformIcon(platform) {
   return '';
 }
 
-export let _envState = { env: 'none', envPath: '', hfToken: '', hfTokenConfigured: false, hfTokenMasked: '', gpus: '', remoteHost: '', servers: [], modelPaths: [], platform: '', defaultServer: '' };
+export let _envState = { env: 'none', envPath: '', hfToken: '', hfTokenConfigured: false, hfTokenMasked: '', gpus: '', remoteHost: '', servers: [], modelPaths: [], platform: '', defaultServer: '', cacheDir: '', useXet: false, _hfCacheDefault: '' };
 let _lastCacheHostVal = null;
 let _cookbookOpeningSpinners = [];
 export function _lastCacheHost() { return _lastCacheHostVal; }
@@ -1268,7 +1268,7 @@ function _wireTabEvents(body) {
       if (!m) return { repo: raw, include: null };
       return { repo: m[1], include: `*${m[2]}*` };
     }
-    const triggerDownload = () => {
+    const triggerDownload = async () => {
       const rawRepo = _stripHfUrl(dlInput.value);
       if (!rawRepo) return;
       const { repo, include: autoInclude } = _splitRepoTag(rawRepo);
@@ -1312,6 +1312,19 @@ function _wireTabEvents(body) {
         } else if (env === 'conda' && envPath) {
           payload.env_prefix = 'eval "$(conda shell.bash hook)" && conda activate ' + _shellQuote(envPath);
         }
+      }
+      // Honor the Cookbook-wide download location (local) and the Xet toggle,
+      // matching the model-card download path (_runModelDownload).
+      if (_envState.cacheDir && !host) payload.cache_dir = _envState.cacheDir;
+      payload.disable_xet = !_envState.useXet;
+      // Full-repo (no :QUANT tag) → offer Full vs Serving-only + set true total
+      // for an honest %. Skipped when a :tag include already scopes the files.
+      if (!autoInclude) {
+        try {
+          const _scope = await _resolveDownloadScope(repo);
+          if (_scope.exclude) payload.exclude = _scope.exclude;
+          if (_scope.expected_bytes) payload.expected_bytes = _scope.expected_bytes;
+        } catch { /* best-effort — fall back to full download */ }
       }
       const shortName = repo.split('/').pop();
       _retryDownload(shortName, payload);
@@ -1535,6 +1548,32 @@ function _wireTabEvents(body) {
       }
     });
   }
+
+  // Download location — save on change. Persists to cookbook state (synced
+  // across devices) and applies to all subsequent Cookbook downloads + scans.
+  const dlDirInput = document.getElementById('hwfit-cachedir');
+  if (dlDirInput) {
+    dlDirInput.addEventListener('change', async () => {
+      _envState.cacheDir = dlDirInput.value.trim();
+      try { await _persistEnvState(); } catch {}
+      const flash = document.createElement('span');
+      flash.textContent = _envState.cacheDir ? 'Saved' : 'Using default cache';
+      flash.style.cssText = 'margin-left:8px;font-size:11px;color:var(--green,#50fa7b);opacity:0;transition:opacity 0.18s;flex-shrink:0;position:relative;top:1px;';
+      dlDirInput.parentNode.appendChild(flash);
+      requestAnimationFrame(() => { flash.style.opacity = '1'; });
+      setTimeout(() => { flash.style.opacity = '0'; setTimeout(() => flash.remove(), 220); }, 1400);
+    });
+  }
+
+  // Xet transfer toggle — save on change. Off (default) disables hf_xet for
+  // all Cookbook downloads via HF_HUB_DISABLE_XET; on re-enables it.
+  const xetToggle = document.getElementById('hwfit-use-xet');
+  if (xetToggle) {
+    xetToggle.addEventListener('change', async () => {
+      _envState.useXet = xetToggle.checked;
+      try { await _persistEnvState(); } catch {}
+    });
+  }
 }
 
 // ── Main render ──
@@ -1579,14 +1618,24 @@ export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
   const modelDirs = Array.isArray(s.modelDirs) && s.modelDirs.length ? s.modelDirs : ['~/.cache/huggingface/hub'];
   const activeDlDir = s.downloadDir || '';
   html += `<div class="cookbook-modeldirs" style="margin:2px 0 0 0;display:flex;flex-wrap:wrap;gap:4px;align-items:center;">`;
-  html += `<span style="width:100%;font-size:13px;font-weight:600;margin-bottom:3px;">Model Directory <span style="font-weight:400;opacity:0.5;font-size:11px;">— check the one downloads should go to</span></span>`;
+  // Local downloads go wherever the global "Download location" setting points
+  // (it's the single source of truth), so the per-dir "download here" ✓ is only
+  // meaningful for remote servers — which the local Download location can't
+  // target. For local, Model Directory is purely a scan list.
+  const _mdHeaderHint = isLocal
+    ? 'folders scanned for downloaded models — new downloads go to the Download location above'
+    : 'check the one downloads should go to';
+  html += `<span style="width:100%;font-size:13px;font-weight:600;margin-bottom:3px;">Model Directory <span style="font-weight:400;opacity:0.5;font-size:11px;">— ${_mdHeaderHint}</span></span>`;
   for (let j = 0; j < modelDirs.length; j++) {
     const isDefault = modelDirs[j] === '~/.cache/huggingface/hub';
     const dirVal = isDefault ? '' : modelDirs[j];
     const isTarget = activeDlDir === dirVal;
-    const dlBtn = `<span class="cookbook-modeldir-dl${isTarget ? ' active' : ''}" title="${isTarget ? 'Downloads go here' : 'Send downloads here'}" data-dl-dir="${esc(dirVal)}">${isTarget ? _MODELDIR_CHECK_ON : _MODELDIR_CHECK_OFF}</span>`;
+    // Remote only: per-server download target. Local uses the Download location.
+    const dlBtn = isLocal
+      ? ''
+      : `<span class="cookbook-modeldir-dl${isTarget ? ' active' : ''}" title="${isTarget ? 'Downloads go here' : 'Send downloads here'}" data-dl-dir="${esc(dirVal)}">${isTarget ? _MODELDIR_CHECK_ON : _MODELDIR_CHECK_OFF}</span>`;
     const rmBtn = isDefault ? '' : ' <span class="cookbook-modeldir-rm" title="Remove">✖</span>';
-    html += `<span class="cookbook-modeldir-tag${isDefault ? ' cookbook-modeldir-default' : ''}${isTarget ? ' cookbook-modeldir-target' : ''}" data-dir-idx="${j}" data-dir="${esc(modelDirs[j])}">${dlBtn} ${esc(modelDirs[j])}${rmBtn}</span>`;
+    html += `<span class="cookbook-modeldir-tag${isDefault ? ' cookbook-modeldir-default' : ''}${isTarget ? ' cookbook-modeldir-target' : ''}" data-dir-idx="${j}" data-dir="${esc(modelDirs[j])}">${dlBtn}${dlBtn ? ' ' : ''}${esc(modelDirs[j])}${rmBtn}</span>`;
   }
   html += `<button class="cookbook-modeldir-add" title="Add model directory">+ Add</button>`;
   const _btnStyle = 'margin-left:auto;position:relative;top:-2px;height:22px;box-sizing:border-box;display:inline-flex;align-items:center;';
@@ -1861,6 +1910,33 @@ function _renderRecipes() {
     : 'hf_...';
   html += `<input type="password" class="memory-search-input" id="hwfit-hftoken" value="${esc(_es.hfToken || '')}" placeholder="${hfPlaceholder}" style="flex:1;" />`;
   html += `</div>`;
+  html += '</div>';
+  html += '</div>';
+
+  // ── Download location block ─────────────────────────────────────────
+  // A single Cookbook-wide download location. Exported as HF_HOME for every
+  // Cookbook download (and used to resolve the cache scan), so models land —
+  // and are found — in the same place. Empty = the default HF cache, whose
+  // resolved path is shown as the placeholder so the destination is never a
+  // mystery.
+  html += '<div class="admin-card" style="flex:0 0 auto;display:flex;flex-direction:column;">';
+  html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;margin-top:-4px;">';
+  html += '<h2 style="margin:0;padding:0;line-height:1;">Download location</h2>';
+  html += '</div>';
+  html += '<p class="memory-desc doclib-desc">Where Cookbook saves downloaded models (applies to all Cookbook downloads and scans). Leave empty to use the default HuggingFace cache.</p>';
+  html += '<div class="memory-toolbar">';
+  html += `<div style="display:flex;gap:4px;align-items:center;">`;
+  const _dlDirPlaceholder = esc(_es._hfCacheDefault || '~/.cache/huggingface/hub');
+  html += `<input type="text" class="memory-search-input" id="hwfit-cachedir" value="${esc(_es.cacheDir || '')}" placeholder="${_dlDirPlaceholder}" title="Folder where Cookbook saves models. Leave empty for the default HuggingFace cache shown here. A native path is fine (e.g. D:\\models or ./data/huggingface)." style="flex:1;" />`;
+  html += `</div>`;
+  // Xet transfer toggle. Off by default — hf_xet (HuggingFace's chunk
+  // downloader) accelerates large pulls but has stalled at 0 bytes on some
+  // Windows/network setups, leaving a download spinning forever. Off → the
+  // reliable HTTPS downloader. Flip on if Xet works well on your network.
+  html += `<label class="hwfit-sf-cb" style="margin-top:7px;display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;">`;
+  html += `<input type="checkbox" id="hwfit-use-xet"${_es.useXet ? ' checked' : ''} />`;
+  html += `<span>Use Xet transfer <span style="color:var(--fg-muted);">— faster for big models, but can stall on some networks (off = reliable HTTPS)</span></span>`;
+  html += `</label>`;
   html += '</div>';
   html += '</div>';
 

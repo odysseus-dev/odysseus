@@ -2167,6 +2167,9 @@ export async function _fetchCachedModels() {
     const qp = new URLSearchParams();
     if (host) { qp.set('host', host); const _sp4 = _getPort(host); if (_sp4) qp.set('ssh_port', _sp4); const _plat = _getPlatform(host); if (_plat) qp.set('platform', _plat); }
     if (modelDirs.length) qp.set('model_dir', modelDirs.join(','));
+    // Local scan honors the Cookbook-wide download location (HF_HOME=<cacheDir>)
+    // so models downloaded there appear in the serve list.
+    if (!host && _envState.cacheDir) qp.set('cache_dir', _envState.cacheDir);
     const params = qp.toString() ? `?${qp}` : '';
     const res = await fetch(`/api/model/cached${params}`);
     if (!res.ok) throw new Error(res.statusText);

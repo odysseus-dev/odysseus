@@ -472,6 +472,9 @@ export async function _hwfitFetch(fresh = false) {
     const _cacheSrv = _envState.servers.find(s => s.host === remoteHost);
     const _cachePort = _cacheSrv?.port || '';
     const _cacheParams = new URLSearchParams({ host: remoteHost }); if (_cachePort) _cacheParams.set('ssh_port', _cachePort); if (_cacheSrv?.platform) _cacheParams.set('platform', _cacheSrv.platform);
+    // Local scan honors the Cookbook-wide download location so models saved
+    // there (HF_HOME=<cacheDir>) are found at <cacheDir>/hub.
+    if (!remoteHost && _envState.cacheDir) _cacheParams.set('cache_dir', _envState.cacheDir);
     fetch(`/api/model/cached?${_cacheParams}`, { credentials: 'same-origin' })
       .then(r => r.json())
       .then(d => {

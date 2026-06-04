@@ -32,6 +32,15 @@ function _taskBadge(task) {
     // read as a different status while the server is coming up.
     return { text: task.progress, cls: 'cookbook-task-running' };
   }
+  // Local-Windows downloads skip the reconnect loop (see _reconnectTask), so the
+  // badge isn't updated with a live %. Surface the real %/shards from the poll's
+  // _download_progress (task.progress, e.g. "42% · 3/5 shards") instead — the
+  // leading % also drives the card's ETA. Remote/POSIX keep the reconnect-driven
+  // badge (richer: speed, stall state), so don't touch those.
+  if (task.type === 'download' && task.status === 'running' && _serverIsWindows
+      && !task.remoteHost && task.progress && /\d/.test(task.progress)) {
+    return { text: task.progress, cls: 'cookbook-task-running' };
+  }
   return { text: _statusLabel(task.status, task.type), cls: 'cookbook-task-' + task.status };
 }
 
@@ -241,6 +250,19 @@ function _buildCrashReport(task, outputText) {
   report.push('', '### Last captured output', '```text', _codeFence(_lastLines(capturedOutput)), '```');
   return report.join('\n');
 }
+
+// The local server's effective HuggingFace hub cache dir (honors HF_HOME /
+// HF_HUB_CACHE from .env), reported by /api/cookbook/state. Used as the
+// "Dir:" label for default-location downloads so it reflects the real
+// destination instead of a hardcoded ~/.cache/huggingface/hub.
+let _hfCacheDir = '';
+
+// Whether the Odysseus server runs on native Windows (from /api/cookbook/state).
+// For LOCAL tasks we skip the per-card reconnect loop and trust the file-based
+// /api/cookbook/tasks/status poll (server-side Python): it reports real %/shards
+// and self-heals stale "crashed" states, which raw capture-pane parsing can't.
+// See _reconnectTask for the full rationale.
+let _serverIsWindows = false;
 
 // Shared state/functions injected by init()
 let _envState;
@@ -1065,11 +1087,21 @@ function _normalizeState(state) {
   return state;
 }
 
+// Apply the server-reported scalars (effective hub-cache dir + native-Windows
+// flag) from /api/cookbook/state into module state. Shared by _syncFromServer
+// and the background poll so the two stay in lock-step. (function decl → hoisted,
+// so the poll below can call it even though it's defined here.)
+function _applyServerState(state) {
+  if (state && state.hfCacheDir) { _hfCacheDir = state.hfCacheDir; if (_envState) _envState._hfCacheDefault = state.hfCacheDir; }
+  if (state && typeof state.serverIsWindows === 'boolean') _serverIsWindows = state.serverIsWindows;
+}
+
 export async function _syncFromServer() {
   try {
     const res = await fetch('/api/cookbook/state', { credentials: 'same-origin' });
     if (!res.ok) return false;
     const state = _normalizeState(await res.json());
+    _applyServerState(state);
     if (!state || !state.env) return false;
 
     const localTasks = _loadTasks();
@@ -1901,7 +1933,7 @@ export function _renderRunningTab() {
         <span class="cookbook-task-status ${_bdg.cls}"${_bdgTitle}>${esc(_bdg.text)}</span>
         <button class="cookbook-task-menu-btn" title="Actions">&#8942;</button>
       </div>
-      <div class="cookbook-task-sub"><span class="cookbook-task-session">${esc(task.sessionId)}</span><span class="cookbook-task-uptime" style="display:${((task.type === 'serve' || task.type === 'download') && task.status === 'running') ? '' : 'none'}"></span>${(task.type === 'download') ? `<span class="cookbook-task-dldir" title="Download destination" style="font-size:9px;color:var(--fg-muted);font-family:'Fira Code',monospace;opacity:0.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40ch;">Dir: ${esc(task.payload?.local_dir || '~/.cache/huggingface/hub')}</span>` : ''}</div>
+      <div class="cookbook-task-sub"><span class="cookbook-task-session">${esc(task.sessionId)}</span><span class="cookbook-task-uptime" style="display:${((task.type === 'serve' || task.type === 'download') && task.status === 'running') ? '' : 'none'}"></span>${(task.type === 'download') ? `<span class="cookbook-task-dldir" title="Download destination" style="font-size:9px;color:var(--fg-muted);font-family:'Fira Code',monospace;opacity:0.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40ch;">Dir: ${esc(task.payload?.local_dir || task.payload?.cache_dir || (!task.remoteHost && _hfCacheDir) || '~/.cache/huggingface/hub')}</span>` : ''}</div>
       <div class="cookbook-output-wrap cookbook-task-collapsible${_mobileCollapseDefault ? ' cookbook-task-collapsed' : ''}"><pre class="cookbook-output-pre">${esc(task.output || '')}</pre><button type="button" class="copy-code cookbook-output-copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
     `;
 
@@ -2508,6 +2540,20 @@ export function _renderRunningTab() {
 // ── Reconnect task (polling loop) ──
 
 async function _reconnectTask(el, task) {
+  // Local tasks on a native-Windows server are detached processes tracked via a
+  // <session>.pid/.log file. We deliberately skip this reconnect loop for them
+  // and defer to the file-based /api/cookbook/tasks/status poll (server-side
+  // Python, no shell): it reports real %/shards and self-heals stale "crashed"
+  // states — which raw capture-pane parsing can't — and avoids spawning a
+  // powershell.exe per card per poll.
+  // NB: PR #1389 also hardened shell_routes._create_shell to route `powershell`
+  // commands straight to cmd.exe (not Git Bash), so $env:TEMP is no longer eaten
+  // and this loop *would* now function on local Windows; we still prefer the file
+  // poll here for the richer progress. That server-side fix covers the other
+  // local-Windows shell commands (kill/has-session/copy-log) that don't route
+  // through here.
+  if (_serverIsWindows && !task.remoteHost) return;
+
   const output = el.querySelector('.cookbook-output-pre');
   const controller = new AbortController();
   el._abort = controller;
@@ -2515,6 +2561,12 @@ async function _reconnectTask(el, task) {
 
   while (!controller.signal.aborted) {
     if (!el.isConnected) {
+      controller.abort();
+      break;
+    }
+    // The flag may resolve after this loop started (a 'running' card rendered
+    // before the first state sync) — bail as soon as we learn it's local Windows.
+    if (_serverIsWindows && !task.remoteHost) {
       controller.abort();
       break;
     }
@@ -3473,6 +3525,7 @@ async function _pollBackgroundStatus() {
       const stateRes = await fetch('/api/cookbook/state', { credentials: 'same-origin' });
       if (stateRes.ok) {
         const serverState = await stateRes.json();
+        _applyServerState(serverState);
         const serverTasks = (serverState && Array.isArray(serverState.tasks)) ? serverState.tasks : [];
         if (serverTasks.length) {
           const localTasks = _loadTasks();

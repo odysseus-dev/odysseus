@@ -450,6 +450,38 @@ export async function _runPanelCmd(panel, cmd, opts = {}) {
   }
 }
 
+// ── Full-vs-serving download scope ──
+
+// Fetch a repo's size breakdown and, when it carries large extras that serving
+// doesn't need (Meta's original/ raw checkpoint, redundant *.pth/*.gguf when
+// safetensors exist), ask the user: full repo or serving files only. Returns
+// { exclude: string[]|null, expected_bytes: number|null }. The expected_bytes
+// (true total of what's actually being fetched) drives an honest progress %.
+// Best-effort — any failure falls back to a plain full download.
+export async function _resolveDownloadScope(repo) {
+  const _GB = 1024 ** 3;
+  try {
+    const res = await fetch(`/api/model/repo-size?repo_id=${encodeURIComponent(repo)}`, { credentials: 'same-origin' });
+    const d = await res.json();
+    if (!d || !d.ok) return { exclude: null, expected_bytes: null };
+    const total = d.total_bytes || 0, serving = d.serving_bytes || 0, extra = d.extra_bytes || 0;
+    const gb = (b) => (b / _GB).toFixed(1);
+    if (extra > 1.5 * _GB && Array.isArray(d.exclude_patterns) && d.exclude_patterns.length && serving > 0) {
+      const servingOnly = await uiModule.styledConfirm(
+        `${repo.split('/').pop()} is ${gb(total)} GB total, but only ${gb(serving)} GB is needed to serve it — the other ${gb(extra)} GB (e.g. the original/ raw checkpoint) isn't used by vLLM, transformers, or llama.cpp.`,
+        { confirmText: `Serving only · ${gb(serving)} GB`, cancelText: `Full repo · ${gb(total)} GB` }
+      );
+      return servingOnly
+        ? { exclude: d.exclude_patterns, expected_bytes: serving }
+        : { exclude: null, expected_bytes: total };
+    }
+    // No significant extras → full download, but set the true total for the %.
+    return { exclude: null, expected_bytes: total || null };
+  } catch {
+    return { exclude: null, expected_bytes: null };
+  }
+}
+
 // ── Model download (dedicated endpoint, tmux-backed) ──
 
 export async function _runModelDownload(panel, model, backend, hostOverride) {
@@ -502,9 +534,20 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
   if (_envState.hfToken) payload.hf_token = _envState.hfToken;
   if (host) { payload.remote_host = host; const _sp = _getPort(host); if (_sp) payload.ssh_port = _sp; }
   if (platform) payload.platform = platform;
-  // If this server has a directory flagged as the download target, send it so
-  // the backend downloads into <dir>/<model> instead of the default HF cache.
-  if (srv.downloadDir) payload.local_dir = srv.downloadDir;
+  // Where downloads go is a single source of truth per target:
+  //  • Local  → the global "Download location" setting (cache_dir → HF_HOME),
+  //    normal cache layout at <dir>/hub. The per-server Model Directory is
+  //    scan-only for local (no download-target ✓), so ignore srv.downloadDir.
+  //  • Remote → the server's own download target (local_dir, <dir>/<model>),
+  //    since a local Download location can't point into a remote filesystem.
+  if (host) {
+    if (srv.downloadDir) payload.local_dir = srv.downloadDir;
+  } else if (_envState.cacheDir) {
+    payload.cache_dir = _envState.cacheDir;
+  }
+  // hf_xet chunk downloader: off unless the user enabled it in Settings. It has
+  // stalled at 0 bytes on some Windows/network setups; off → reliable HTTPS.
+  payload.disable_xet = !_envState.useXet;
   if (isWin) {
     if (env === 'venv' && envPath) {
       payload.env_prefix = '& ' + (envPath.endsWith('\\Scripts\\Activate.ps1') ? envPath : envPath + '\\Scripts\\Activate.ps1');
@@ -571,6 +614,16 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
       }
     } catch { /* probe failed — fall through and let the user launch */ }
   }
+  // Full-repo downloads (no include scope): offer Full vs Serving-only and set
+  // the true total for an honest progress %. Skipped for include-based
+  // (gguf/quant) downloads — their include already scopes the files, and a
+  // serving-only exclude could clash with the gguf include.
+  if (!include) {
+    const _scope = await _resolveDownloadScope(repo);
+    if (_scope.exclude) payload.exclude = _scope.exclude;
+    if (_scope.expected_bytes) payload.expected_bytes = _scope.expected_bytes;
+  }
+
   const activeOnHost = tasks.find(t => t.type === 'download' && (t.status === 'running' || t.status === 'queued') && (t.remoteHost || 'local') === targetHost);
 
   if (activeOnHost) {

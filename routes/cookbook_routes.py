@@ -32,16 +32,74 @@ from routes.shell_routes import TMUX_LOG_DIR
 
 logger = logging.getLogger(__name__)
 
+
+def _ensure_windows_llama_server() -> str | None:
+    """On native Windows, make a prebuilt ``llama-server.exe`` available in
+    ``~/bin`` so the serve flow doesn't fall into the Linux-only source build
+    (git clone + cmake), which can't work on a stock Windows box.
+
+    Downloads the official llama.cpp **Vulkan** Windows build once (GPU-accelerated
+    on NVIDIA *and* AMD via the installed graphics driver — no CUDA toolkit/runtime
+    to match), extracting llama-server.exe + its DLLs next to each other. Falls
+    back to the CPU build if no Vulkan asset is found. Idempotent: returns
+    immediately if the binary is already present. Returns ~/bin or None on failure.
+    """
+    if not IS_WINDOWS:
+        return None
+    bin_dir = Path.home() / "bin"
+    exe = bin_dir / "llama-server.exe"
+    if exe.exists():
+        return str(bin_dir)
+    import io
+    import urllib.request
+    import zipfile
+
+    def _get(url: str, timeout: int) -> bytes:
+        rq = urllib.request.Request(url, headers={"User-Agent": "odysseus-cookbook"})
+        with urllib.request.urlopen(rq, timeout=timeout) as r:
+            return r.read()
+
+    try:
+        rel = json.loads(_get("https://api.github.com/repos/ggml-org/llama.cpp/releases/latest", 25).decode("utf-8"))
+        assets = rel.get("assets", [])
+
+        def _pick(*subs):
+            for a in assets:
+                n = (a.get("name") or "").lower()
+                if n.endswith(".zip") and all(s in n for s in subs):
+                    return a
+            return None
+
+        # Vulkan = one zip, GPU on any modern driver. CPU build as last resort.
+        asset = _pick("bin-win-vulkan", "x64") or _pick("bin-win-vulkan") or _pick("bin-win-cpu", "x64") or _pick("bin-win-cpu")
+        if not asset:
+            logger.warning("No prebuilt Windows llama-server asset found in latest release")
+            return None
+        logger.info(f"Provisioning prebuilt llama-server: {asset.get('name')} ({rel.get('tag_name')})")
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        blob = _get(asset["browser_download_url"], 600)
+        with zipfile.ZipFile(io.BytesIO(blob)) as z:
+            for member in z.namelist():
+                fn = os.path.basename(member)
+                if fn.lower().endswith((".exe", ".dll")):
+                    with z.open(member) as src, open(bin_dir / fn, "wb") as dst:
+                        shutil.copyfileobj(src, dst)
+        return str(bin_dir) if exe.exists() else None
+    except Exception as e:
+        logger.warning(f"Prebuilt llama-server provisioning failed: {e}")
+        return None
+
 from routes.cookbook_helpers import (
     _SSH_PORT_RE, _REMOTE_HOST_RE, _SESSION_ID_RE,
     _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_remote_host, _validate_token,
-    _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,
+    _validate_local_dir, _validate_cache_dir, _validate_exclude, _validate_ssh_port, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
     _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
     _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     _diagnose_serve_output,
+    resolve_hf_hub_cache, _repo_download_breakdown,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -284,6 +342,8 @@ def setup_cookbook_routes() -> APIRouter:
         _validate_remote_host(req.remote_host)
         req.ssh_port = _validate_ssh_port(req.ssh_port)
         req.local_dir = _validate_local_dir(req.local_dir)
+        req.cache_dir = _validate_cache_dir(req.cache_dir)
+        req.exclude = _validate_exclude(req.exclude)
         req.hf_token = req.hf_token or _load_stored_hf_token()
         _validate_token(req.hf_token)
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -304,6 +364,10 @@ def setup_cookbook_routes() -> APIRouter:
         hf_cmd = f"hf download {req.repo_id}"
         if req.include:
             hf_cmd += f" --include '{req.include}'"
+        # "Serving files only" choice → skip the raw Meta checkpoint / redundant
+        # weight formats. Patterns are validated to the include charset above.
+        for _ex in (req.exclude or []):
+            hf_cmd += f" --exclude '{_ex}'"
         if _dl_shell:
             hf_cmd += f" --local-dir {_dl_shell}"
 
@@ -313,6 +377,17 @@ def setup_cookbook_routes() -> APIRouter:
         lines.extend(_user_shell_path_bootstrap())
         if req.hf_token:
             lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
+        # Cookbook-wide download location: export HF_HOME so hf uses the normal
+        # cache LAYOUT rooted at this dir (<cache_dir>/hub). It's an env value
+        # consumed by (Windows) Python, opaque to bash, so a native-Windows path
+        # like D:\models survives single-quoting — no MSYS conversion needed.
+        if req.cache_dir:
+            lines.append(f"export HF_HOME='{_bash_squote(req.cache_dir)}'")
+        # Disable the hf_xet chunk downloader unless the user opted in. It has
+        # stalled at 0 bytes on some Windows/network setups; the plain HTTPS
+        # downloader is reliable and resumes from .incomplete files.
+        if req.disable_xet:
+            lines.append("export HF_HUB_DISABLE_XET=1")
         # Ensure pip-user scripts (e.g. hf CLI installed via --user) are on PATH
         lines.append('export PATH="$HOME/.local/bin:$PATH"')
         # When Odysseus runs from a venv (e.g. native macOS install), put its bin
@@ -358,6 +433,10 @@ def setup_cookbook_routes() -> APIRouter:
             ps_lines.append('$env:PYTHONUTF8 = "1"')
             if req.hf_token:
                 ps_lines.append(f"$env:HF_TOKEN = '{_ps_squote(req.hf_token)}'")
+            if req.cache_dir:
+                ps_lines.append(f"$env:HF_HOME = '{_ps_squote(req.cache_dir)}'")
+            if req.disable_xet:
+                ps_lines.append("$env:HF_HUB_DISABLE_XET = '1'")
             if req.env_prefix:
                 ps_lines.append(_safe_env_prefix(req.env_prefix))
             # Try hf CLI, fall back to Python huggingface_hub, then auto-install
@@ -415,6 +494,10 @@ def setup_cookbook_routes() -> APIRouter:
             runner_lines.append("deactivate 2>/dev/null; hash -r")
             if req.hf_token:
                 runner_lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
+            if req.cache_dir:
+                runner_lines.append(f"export HF_HOME='{_bash_squote(req.cache_dir)}'")
+            if req.disable_xet:
+                runner_lines.append("export HF_HUB_DISABLE_XET=1")
             if req.env_prefix:
                 runner_lines.append(_safe_env_prefix(req.env_prefix))
             else:
@@ -505,6 +588,27 @@ def setup_cookbook_routes() -> APIRouter:
         logger.info(f"Model download: {req.repo_id} (include={req.include}, session={session_id}, remote={remote})")
         logger.info(f"Download setup_cmd: {setup_cmd}")
 
+        # Clear stale download locks for this repo before launching, so a prior
+        # killed or stalled download (e.g. an hf_xet hang) can't leave a lock that
+        # blocks this one from acquiring it. HuggingFace stores per-blob locks at
+        # <cache>/.locks/models--<org>--<name>/*.lock. Safe to clear: the UI
+        # de-dupes concurrent downloads of the same repo, so any lock here is from
+        # a dead/stalled attempt. Local only — remote locks live on the remote
+        # host. Done in Python (not the bash wrapper) so a Windows cache path with
+        # backslashes/drive letters resolves correctly.
+        if not remote:
+            try:
+                _base = resolve_hf_hub_cache(environ={"HF_HOME": req.cache_dir}) if req.cache_dir else resolve_hf_hub_cache()
+                _lock_dir = Path(_base) / ".locks" / ("models--" + req.repo_id.replace("/", "--"))
+                if _lock_dir.is_dir():
+                    for _lf in _lock_dir.glob("*.lock"):
+                        try:
+                            _lf.unlink()
+                        except OSError:
+                            pass  # held by a live process (delete-pending) — leave it
+            except Exception as e:
+                logger.debug(f"Lock cleanup skipped: {e}")
+
         if setup_cmd is None:
             # LOCAL Windows: launch the bash wrapper detached; no tmux setup_cmd.
             try:
@@ -540,9 +644,34 @@ def setup_cookbook_routes() -> APIRouter:
 
         return {"ok": True, "session_id": session_id, "remote": remote or "local"}
 
+    @router.get("/api/model/repo-size")
+    async def model_repo_size(request: Request, repo_id: str):
+        """Return a HuggingFace repo's download breakdown: full size vs the
+        'serving files only' size (skipping the raw Meta ``original/`` checkpoint
+        and redundant weight formats), plus the exclude globs to achieve it.
+
+        Lets the UI offer a Full-vs-Serving choice and show an honest progress %.
+        Best-effort: returns {ok: false} on any API error so the caller can fall
+        back to a plain full download.
+        """
+        require_admin(request)
+        _validate_repo_id(repo_id)
+        token = _load_stored_hf_token()
+        try:
+            info = await asyncio.to_thread(_repo_download_breakdown, repo_id, token)
+            return {"ok": True, **info}
+        except Exception as e:
+            logger.info(f"repo-size lookup failed for {repo_id}: {e}")
+            return {"ok": False, "error": str(e)[:200]}
+
     @router.get("/api/model/cached")
-    async def model_cached(request: Request, host: str | None = None, model_dir: str | None = None, ssh_port: str | None = None, platform: str | None = None):
-        """List cached models. Scans HF cache + optional model directory."""
+    async def model_cached(request: Request, host: str | None = None, model_dir: str | None = None, ssh_port: str | None = None, platform: str | None = None, cache_dir: str | None = None):
+        """List cached models. Scans HF cache + optional model directory.
+
+        ``cache_dir`` is the Cookbook-wide download location (a UI setting). When
+        set for a local scan, the HF cache is resolved as ``<cache_dir>/hub`` so
+        the scan looks exactly where downloads with that setting were saved.
+        """
         require_admin(request)
         # Validate shell-bound inputs, matching the sibling list_gpus endpoint —
         # `host`/`ssh_port` are interpolated into an ssh command below, so an
@@ -550,6 +679,7 @@ def setup_cookbook_routes() -> APIRouter:
         host = _validate_remote_host(host)
         if ssh_port is not None and ssh_port != "" and not _SSH_PORT_RE.fullmatch(ssh_port):
             raise HTTPException(400, "Invalid ssh_port")
+        cache_dir = _validate_cache_dir(cache_dir)
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
         model_dirs = []
@@ -558,7 +688,18 @@ def setup_cookbook_routes() -> APIRouter:
                 d = d.strip()
                 if d:
                     model_dirs.append(d)
-        paths_code = _cached_model_scan_script(model_dirs)
+        # Local scans get the server-resolved hub cache (honors HF_HOME /
+        # HF_HUB_CACHE from .env, relative paths resolved against the server cwd
+        # where `hf download` runs). A UI-set cache_dir wins (it's exported as
+        # HF_HOME for downloads, so the scan must mirror it: <cache_dir>/hub).
+        # Remote scans pass None so the script resolves from the remote host.
+        if host:
+            _hf_cache = None
+        elif cache_dir:
+            _hf_cache = resolve_hf_hub_cache(environ={"HF_HOME": cache_dir})
+        else:
+            _hf_cache = resolve_hf_hub_cache()
+        paths_code = _cached_model_scan_script(model_dirs, hf_cache=_hf_cache)
 
         scan_py = TMUX_LOG_DIR / "scan_cache.py"
         scan_py.write_text(paths_code, encoding="utf-8")
@@ -907,6 +1048,13 @@ def setup_cookbook_routes() -> APIRouter:
         # process path below), regardless of the UI-supplied platform.
         local_windows = IS_WINDOWS and not remote
 
+        # Native-Windows llama.cpp serving: the bash bootstrap below would try to
+        # git-clone + cmake-build llama.cpp, which doesn't work on a stock Windows
+        # box. Provision a prebuilt llama-server.exe into ~/bin (on the wrapper's
+        # PATH) so `command -v llama-server` succeeds and it skips the build.
+        if local_windows and ("llama_cpp" in (req.cmd or "") or "llama-server" in (req.cmd or "")):
+            await asyncio.to_thread(_ensure_windows_llama_server)
+
         if not is_windows and not local_windows and not await _binary_available("tmux", remote, req.ssh_port):
             return {
                 "ok": False,
@@ -1103,7 +1251,11 @@ def setup_cookbook_routes() -> APIRouter:
                     runner_lines.append('  exec bash -i')
                 runner_lines.append('fi')
                 runner_lines.append('if ! command -v ollama &>/dev/null; then')
-                runner_lines.append('  echo "ERROR: Ollama not found on this server. Install it from https://ollama.com/download or `curl -fsSL https://ollama.com/install.sh | sh`."')
+                # NB: no backticks here — in the echo'd double-quoted string they
+                # would command-substitute and actually run the Linux installer
+                # (curl … install.sh | sh), which on Windows/Git Bash prints
+                # "intended to run on Linux and macOS only". Plain text only.
+                runner_lines.append('  echo "ERROR: Ollama not found on this server. Install it from https://ollama.com/download (Linux/macOS: curl -fsSL https://ollama.com/install.sh | sh)."')
                 runner_lines.append('  echo')
                 runner_lines.append('  echo "=== Process exited with code 127 ==="')
                 if local_windows:
@@ -1713,12 +1865,28 @@ def setup_cookbook_routes() -> APIRouter:
     async def get_cookbook_state(request: Request):
         """Load saved cookbook state (tasks, servers, presets, settings)."""
         require_admin(request)
+        state = {}
         if _cookbook_state_path.exists():
             try:
-                return _state_for_client(json.loads(_cookbook_state_path.read_text(encoding="utf-8")))
+                state = _state_for_client(json.loads(_cookbook_state_path.read_text(encoding="utf-8")))
             except Exception:
-                return {}
-        return {}
+                state = {}
+        if isinstance(state, dict):
+            # The effective local hub cache (honors HF_HOME / HF_HUB_CACHE from
+            # .env). Lets the Running tab show the real download destination
+            # instead of a hardcoded ~/.cache/huggingface/hub.
+            state["hfCacheDir"] = resolve_hf_hub_cache()
+            # Tell the client the server's OS. On native Windows, local tasks are
+            # detached processes (not tmux), and the per-card reconnect loop
+            # drives PowerShell *through Git Bash* — which eats the PowerShell
+            # `$env:TEMP`/`$p` variables, so capture-pane always fails and a LIVE
+            # download gets mis-flagged "crashed". The Running tab uses this flag
+            # to skip that loop for local tasks and trust the file-based
+            # /api/cookbook/tasks/status poll (pure server-side Python, no shell)
+            # instead. (#676's _winSessionCmd local branch doesn't help here for
+            # exactly this bash-variable-expansion reason — verified.)
+            state["serverIsWindows"] = IS_WINDOWS
+        return state
 
     @router.post("/api/cookbook/state")
     async def save_cookbook_state(request: Request):
@@ -2098,48 +2266,86 @@ def setup_cookbook_routes() -> APIRouter:
     def _cookbook_tasks_status_sync():
         import subprocess
 
-        def _download_cache_complete(repo_id: str, remote_host: str = "", ssh_port: str = "") -> bool:
-            """Best-effort check for a completed HF cache entry.
+        def _download_progress(repo_id: str, remote_host: str = "", ssh_port: str = "", cache_dir: str = "", expected_bytes: float | None = None) -> dict | None:
+            """Real byte/shard progress for a download, computed from the cache on
+            disk — hf's "Fetching N files" bar only counts whole files, which is
+            useless for multi-shard models (big shards download concurrently and
+            the bar sits at 0/N most of the run).
 
-            tmux output can stop at a stale progress line if the pane/session
-            disappears before Cookbook captures the final DOWNLOAD_OK marker.
-            In that case, trust the cache shape: a snapshot directory with files
-            and no *.incomplete blobs means HuggingFace finished materializing the
-            model.
+            Returns {downloaded, total, shards_done, shards_total, complete} (bytes)
+            or None. In-flight ``.incomplete`` sizes are read via an open handle
+            (seek-to-end) because on Windows the directory-entry size doesn't
+            update until the writer flushes/closes — so a plain stat would read a
+            stale, frozen size and make progress look stuck.
             """
             if not repo_id or "/" not in repo_id:
-                return False
-            py = (
-                "import os,sys;"
-                "repo=sys.argv[1];"
-                "base=os.environ.get('HUGGINGFACE_HUB_CACHE') or os.path.join(os.environ.get('HF_HOME', os.path.expanduser('~/.cache/huggingface')), 'hub');"
+                return None
+            body = (
+                "import os,sys,json,re,glob;"
                 "d=os.path.join(base,'models--'+repo.replace('/','--'));"
-                "snap=os.path.join(d,'snapshots');"
-                "ok=os.path.isdir(snap) and any(os.path.isdir(os.path.join(snap,x)) and os.listdir(os.path.join(snap,x)) for x in os.listdir(snap));"
-                "inc=False;"
-                "blobs=os.path.join(d,'blobs');"
-                "inc=os.path.isdir(blobs) and any(x.endswith('.incomplete') for x in os.listdir(blobs));"
-                "sys.exit(0 if ok and not inc else 1)"
+                "def fsize(p):\n"
+                "    try:\n"
+                "        f=open(p,'rb'); f.seek(0,2); n=f.tell(); f.close(); return n\n"
+                "    except Exception:\n"
+                "        try: return os.path.getsize(p)\n"
+                "        except Exception: return 0\n"
+                "downloaded=0\n"
+                "for root,_,fns in os.walk(d):\n"
+                "    for fn in fns: downloaded+=fsize(os.path.join(root,fn))\n"
+                "total=0; shards=set(); done=set();\n"
+                "snap=os.path.join(d,'snapshots');\n"
+                "if os.path.isdir(snap):\n"
+                "    for rev in os.listdir(snap):\n"
+                "        rp=os.path.join(snap,rev)\n"
+                "        idx=os.path.join(rp,'model.safetensors.index.json')\n"
+                "        if os.path.isfile(idx):\n"
+                "            try:\n"
+                "                j=json.load(open(idx)); total=int(j.get('metadata',{}).get('total_size') or 0)\n"
+                "                shards=set(j.get('weight_map',{}).values())\n"
+                "            except Exception: pass\n"
+                "        for fn in os.listdir(rp):\n"
+                "            if fn.endswith('.safetensors'): done.add(fn)\n"
+                "inc=glob.glob(os.path.join(d,'blobs','*.incomplete'));\n"
+                "shards_total=len(shards) or (len(done)+len(inc));\n"
+                "shards_done=len(done & shards) if shards else len(done);\n"
+                "complete=bool(total) and downloaded>=int(total*0.999) and not inc;\n"
+                "print(json.dumps({'downloaded':downloaded,'total':total,'shards_done':shards_done,'shards_total':shards_total,'complete':complete,'incomplete':len(inc)}))"
             )
-            if remote_host:
-                cmd = ["python3", "-c", py, repo_id]
-            else:
-                # Local Windows: python3 can hit the Microsoft Store stub. Use the
-                # real Python Odysseus is running under (guaranteed to exist).
-                import sys as _sys_local
-                cmd = [_sys_local.executable, "-c", py, repo_id]
             try:
                 if remote_host:
+                    py = (
+                        "base=os.environ.get('HF_HUB_CACHE') or os.environ.get('HUGGINGFACE_HUB_CACHE') or "
+                        "(os.path.join(os.path.abspath(os.path.expanduser(os.environ['HF_HOME'])),'hub') if os.environ.get('HF_HOME') "
+                        "else os.path.expanduser('~/.cache/huggingface/hub')); repo=sys.argv[1];\n"
+                    )
+                    # os is imported inside body's first line; ensure import precedes base calc
+                    full = "import os,sys\n" + py + body
                     ssh_base = ["ssh"]
                     if ssh_port and ssh_port != "22":
                         ssh_base.extend(["-p", str(ssh_port)])
-                    shell_cmd = " ".join(shlex.quote(x) for x in cmd)
-                    proc = subprocess.run(ssh_base + [remote_host, shell_cmd], timeout=12, capture_output=True)
+                    shell_cmd = " ".join(shlex.quote(x) for x in ["python3", "-c", full, repo_id])
+                    proc = subprocess.run(ssh_base + [remote_host, shell_cmd], timeout=15, capture_output=True)
                 else:
-                    proc = subprocess.run(cmd, timeout=12, capture_output=True)
-                return proc.returncode == 0
+                    base = resolve_hf_hub_cache(environ={"HF_HOME": cache_dir}) if cache_dir else resolve_hf_hub_cache()
+                    full = "import os,sys\nbase=sys.argv[1]; repo=sys.argv[2]\n" + body
+                    proc = subprocess.run([sys.executable, "-c", full, base, repo_id], timeout=15, capture_output=True)
+                if proc.returncode != 0:
+                    return None
+                res = json.loads(proc.stdout.decode("utf-8", errors="replace").strip())
+                # Prefer the client-supplied true total of what's actually being
+                # downloaded (full repo, or the serving-only subset) over the
+                # safetensors-index total — the index only covers *.safetensors,
+                # so for repos with extras (e.g. Meta's original/*.pth) the index
+                # total is far too small and the % would read ~100% at ~50% done.
+                if expected_bytes and expected_bytes > 0:
+                    res["total"] = int(expected_bytes)
+                    # Truly done = downloaded reached the true total AND no
+                    # .incomplete files remain (don't reuse the script's
+                    # `complete`, which was keyed off the smaller index total).
+                    res["complete"] = bool(res.get("downloaded", 0) >= int(expected_bytes * 0.999)) and res.get("incomplete", 1) == 0
+                return res
             except Exception:
-                return False
+                return None
 
         # Load saved tasks from cookbook state
         tasks = []
@@ -2303,13 +2509,28 @@ def setup_cookbook_routes() -> APIRouter:
             # when the PID is gone instead of blindly reporting "stopped".
             download_zero_files = False
             status = "unknown"
+            # Real byte/shard progress for downloads (hf's "Fetching N files" bar
+            # is whole-file-count only). Computed every poll so the card shows a
+            # live %, and reused as the completeness ground-truth below.
+            _dl_cache_dir = _payload.get("cache_dir") or "" if isinstance(_payload, dict) else ""
+            _dl_expected = _payload.get("expected_bytes") if isinstance(_payload, dict) else None
+            _dl_prog = (
+                _download_progress(_payload.get("repo_id") or model, remote, str(_tport or ""), cache_dir=_dl_cache_dir, expected_bytes=_dl_expected)
+                if task_type == "download" else None
+            )
             if is_alive or (local_win_task and full_snapshot):
                 lower = full_snapshot.lower()
                 exit_match = re.search(r"=== process exited with code\s+(-?\d+)", full_snapshot, re.I)
                 has_exit = exit_match is not None
                 exit_code = int(exit_match.group(1)) if exit_match else None
                 has_error = "error" in lower or "failed" in lower or "traceback" in lower
-                if has_exit and task_type == "serve":
+                # Ground truth wins: if the model is fully materialized in the
+                # cache (all shards present, no .incomplete), it's done —
+                # regardless of a stale FAILED/stopped line left by a killed or
+                # stalled attempt. This lets a "stopped" card self-heal to "done".
+                if task_type == "download" and (_dl_prog or {}).get("complete"):
+                    status = "completed"
+                elif has_exit and task_type == "serve":
                     # Serve tasks that exit are always errors — they should run indefinitely
                     status = "error"
                 elif has_exit and task_type == "download":
@@ -2338,7 +2559,7 @@ def setup_cookbook_routes() -> APIRouter:
                     status = "running"
             else:
                 # Session is dead — check if it completed or crashed
-                if task_type == "download" and _download_cache_complete(_payload.get("repo_id") or model, remote, str(_tport or "")):
+                if task_type == "download" and (_dl_prog or {}).get("complete"):
                     status = "completed"
                     if not progress_text:
                         progress_text = "Download complete"
@@ -2359,6 +2580,34 @@ def setup_cookbook_routes() -> APIRouter:
                 diagnosis = {"message": "No matching files were downloaded. The model repo or filename/quant pattern may be wrong (for example a ':Q4_K_M' tag that does not exist in the repo). Check the repo and the include/quant pattern."}
             output_tail = "\n".join(full_snapshot.splitlines()[-12:]) if full_snapshot else ""
 
+            # Build a real download progress string + fields from _dl_prog. This
+            # replaces hf's misleading "Fetching N files: 0/20" with a byte/shard
+            # percentage the UI can show (and use to estimate time remaining).
+            dl_pct = None
+            dl_downloaded = dl_total = shards_done = shards_total = None
+            if task_type == "download" and _dl_prog:
+                dl_downloaded = _dl_prog.get("downloaded") or 0
+                dl_total = _dl_prog.get("total") or 0
+                shards_done = _dl_prog.get("shards_done") or 0
+                shards_total = _dl_prog.get("shards_total") or 0
+                if dl_total > 0:
+                    # Cap at 99% until the cache is actually complete — the raw
+                    # byte sum can exceed the weight total (non-weight files, or
+                    # orphaned .incomplete blobs from interrupted attempts), and a
+                    # premature "100%" would contradict the shard count.
+                    dl_pct = 100 if _dl_prog.get("complete") else max(0, min(99, int(dl_downloaded * 100 / dl_total)))
+                if status in ("running", "queued"):
+                    # Lead with the % so it can drive the badge + the card's ETA
+                    # (which reads /^(\d+)%/ from the badge text). Keep it compact
+                    # for the badge; shard count follows as the honest detail.
+                    _parts = []
+                    if dl_pct is not None:
+                        _parts.append(f"{dl_pct}%")
+                    if shards_total:
+                        _parts.append(f"{shards_done}/{shards_total} shards")
+                    if _parts:
+                        progress_text = " • ".join(_parts)
+
             results.append({
                 "session_id": session_id,
                 "type": task_type,
@@ -2371,7 +2620,12 @@ def setup_cookbook_routes() -> APIRouter:
                 "cmd": _payload.get("_cmd") or "",
                 "tps": phase_info.get("tps"),
                 "reqs": phase_info.get("reqs"),
-                "pct": phase_info.get("pct"),
+                "pct": dl_pct if task_type == "download" else phase_info.get("pct"),
+                # Raw download progress so the UI can render a bar + estimate ETA.
+                "dl_downloaded": dl_downloaded,
+                "dl_total": dl_total,
+                "shards_done": shards_done,
+                "shards_total": shards_total,
                 "remote": remote or "local",
             })
 
