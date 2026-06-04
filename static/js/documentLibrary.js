@@ -1463,6 +1463,15 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     });
   }
 
+  async function importRequestError(res, fallback) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const data = await res.json();
+      detail = data.detail || data.error || data.message || detail;
+    } catch {}
+    return new Error(`${fallback}: ${detail}`);
+  }
+
   /** Import files from disk into the document library */
   async function libraryImportFiles(fileList) {
     const EXT_TO_LANG = {
@@ -1507,11 +1516,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           const res = await fetch(`${API_BASE}/api/documents/import-pdf`, {
             method: 'POST',
             body: fd,
+            credentials: 'same-origin',
           });
           if (!res.ok) {
-            let _e = `HTTP ${res.status}`;
-            try { const _j = await res.json(); _e = _j.detail || _j.error || _e; } catch {}
-            throw new Error('PDF import failed: ' + _e);
+            throw await importRequestError(res, 'PDF import failed');
           }
           imported++;
           continue;
@@ -1522,6 +1530,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           await ensureXLSX();
           const buf = await file.arrayBuffer();
           const wb = window.XLSX.read(buf, { type: 'array' });
+          let createdSheets = 0;
           for (const sheetName of wb.SheetNames) {
             const csv = window.XLSX.utils.sheet_to_csv(wb.Sheets[sheetName]);
             if (!csv.trim()) continue;
@@ -1530,9 +1539,16 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             const res = await fetch(`${API_BASE}/api/document`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
               body: JSON.stringify({ title: sheetTitle, language: 'csv', content: csv }),
             });
-            if (!res.ok) throw new Error('Server error');
+            if (!res.ok) {
+              throw await importRequestError(res, `Spreadsheet import failed for ${sheetTitle}`);
+            }
+            createdSheets++;
+          }
+          if (!createdSheets) {
+            throw new Error('Spreadsheet import failed: no readable sheets');
           }
           imported++;
         } else {
@@ -1540,9 +1556,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           const res = await fetch(`${API_BASE}/api/document`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
             body: JSON.stringify({ title: baseTitle, language, content }),
           });
-          if (!res.ok) throw new Error('Server error');
+          if (!res.ok) {
+            throw await importRequestError(res, `Import failed for ${name}`);
+          }
           imported++;
         }
       } catch (e) {
