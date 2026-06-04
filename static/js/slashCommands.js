@@ -48,6 +48,7 @@ const PROVIDER_PATTERNS = [
 ];
 const SETUP_PROVIDER_URLS = {
   deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/v1' },
+  nearai: { name: 'NEAR AI', url: 'https://cloud-api.near.ai/v1' },
   openai: { name: 'OpenAI', url: 'https://api.openai.com/v1' },
   openrouter: { name: 'OpenRouter', url: 'https://openrouter.ai/api/v1' },
   ollama: { name: 'Ollama Cloud', url: 'https://ollama.com/api' },
@@ -60,7 +61,7 @@ const SETUP_PROVIDER_URLS = {
   'opencode-go': { name: 'OpenCode Go', url: 'https://opencode.ai/zen/go/v1' },
   nvidia: { name: 'NVIDIA', url: 'https://integrate.api.nvidia.com/v1' },
 };
-const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini', 'opencode-zen', 'opencode-go', 'nvidia'];
+const SETUP_PROVIDER_NAMES = ['deepseek', 'nearai', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini', 'opencode-zen', 'opencode-go', 'nvidia'];
 const SETUP_DEVICE_AUTH_PROVIDERS = [
   { key: 'copilot', name: 'GitHub Copilot', aliases: ['github'], command: '/setup copilot' },
   { key: 'chatgpt-subscription', name: 'ChatGPT Subscription', aliases: ['chatgptsubscription', 'chatgpt-sub', 'codex'], command: '/setup chatgpt-subscription' },
@@ -88,6 +89,8 @@ function _setupProviderFromInput(input) {
   const aliases = {
     deepseekai: 'deepseek',
     deepseek: 'deepseek',
+    nearai: 'nearai',
+    near: 'nearai',
     openai: 'openai',
     chatgpt: 'openai',
     openrouter: 'openrouter',
@@ -121,6 +124,7 @@ function _extractSetupProviderCredential(input) {
   if (!raw) return null;
   const providerAliases = [
     ['deepseek ai', 'deepseek'], ['deepseek', 'deepseek'],
+    ['near ai', 'nearai'], ['nearai', 'nearai'], ['near', 'nearai'],
     ['open router', 'openrouter'], ['openrouter', 'openrouter'],
     ['ollama cloud', 'ollama'], ['ollama', 'ollama'],
     ['open ai', 'openai'], ['openai', 'openai'], ['chatgpt', 'openai'],

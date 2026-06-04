@@ -49,6 +49,9 @@ class TestDetectProvider:
         ("https://api.openai.com/v1", "openai"),
         ("https://api.x.ai/v1", "openai"),
         ("https://api.deepseek.com", "openai"),
+        # NEAR AI's confidential cloud is OpenAI-compatible, so it rides the
+        # generic dialect; only its label and curated list are special-cased.
+        ("https://cloud-api.near.ai/v1", "openai"),
         ("https://generativelanguage.googleapis.com/v1beta/openai", "openai"),
         # Ollama's OpenAI-compatible /v1 surface is generic, not native ollama.
         ("http://localhost:11434/v1", "openai"),
@@ -80,6 +83,7 @@ class TestDetectProvider:
 class TestProviderLabel:
     @pytest.mark.parametrize("url,expected", [
         ("https://api.anthropic.com/v1", "Anthropic"),
+        ("https://cloud-api.near.ai/v1", "NEAR AI"),
         ("https://ollama.com", "Ollama Cloud"),
         ("https://api.x.ai/v1", "xAI"),
         ("https://api.openai.com/v1", "OpenAI"),

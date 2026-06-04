@@ -254,6 +254,20 @@ _PROVIDER_CURATED = {
     "deepseek": [
         "deepseek-chat", "deepseek-reasoner",
     ],
+    # NEAR AI serves third-party + open models behind a single OpenAI-compatible
+    # endpoint, namespaced `vendor/model` (like OpenRouter/Together). Only chat
+    # models are curated here; embeddings/reranker/whisper/FLUX/privacy-filter
+    # land in "extra" via the namespace not matching. Prefixes (not exact
+    # versions) so minor model bumps don't fall out of the default list.
+    "nearai": [
+        "openai/gpt-5", "openai/gpt-4.1", "openai/o3", "openai/o4-mini",
+        "openai/gpt-oss-120b",
+        "anthropic/claude-opus-4", "anthropic/claude-sonnet-4", "anthropic/claude-haiku-4",
+        "google/gemini-3.5", "google/gemini-3.1", "google/gemini-2.5",
+        "deepseek-ai/DeepSeek-V4", "moonshotai/kimi-k2", "zai-org/GLM-5",
+        "Qwen/Qwen3.5", "Qwen/Qwen3.6", "qwen/qwen3.7", "Qwen/Qwen3-VL",
+        "Qwen/Qwen3-30B", "google/gemma-4",
+    ],
     "groq": [
         "openai/gpt-oss-120b", "openai/gpt-oss-20b",
         "groq/compound", "groq/compound-mini",
@@ -293,6 +307,7 @@ _PROVIDER_CURATED = {
 # inside an unrelated URL.
 _HOST_TO_CURATED = (
     ("z.ai", "zai"),
+    ("near.ai", "nearai"),
     ("deepseek.com", "deepseek"),
     ("groq.com", "groq"),
     ("mistral.ai", "mistral"),

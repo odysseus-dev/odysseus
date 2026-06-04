@@ -686,6 +686,7 @@ def _provider_label(url: str) -> str:
     if not url:
         return "provider"
     if _host_match(url, "anthropic.com"): return "Anthropic"
+    if _host_match(url, "near.ai"): return "NEAR AI"
     if _host_match(url, "ollama.com"): return "Ollama Cloud"
     if _host_match(url, "x.ai"): return "xAI"
     if _host_match(url, "openai.com"): return "OpenAI"

@@ -53,6 +53,44 @@ Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration
 
 A full hover-to-play tour lives on the landing page: [`docs/index.html`](docs/index.html).
 
+### Confidential cloud inference (TEE)
+Running models locally gives you one hard guarantee: the data never leaves the
+box. The cost is that you are bounded by your own VRAM, so in practice you run
+small or heavily quantized models. A normal cloud API removes that ceiling but
+inverts the guarantee — your prompts and completions are plaintext to the
+operator, who can read, log, or retain them.
+
+Trusted Execution Environment (TEE) inference is a third point that decouples
+those two axes. The model runs inside a hardware-isolated enclave — an Intel TDX
+confidential VM with the GPU in NVIDIA confidential-computing mode (H100/H200).
+Enclave memory (CPU and GPU) is encrypted and is not readable by the host OS,
+the hypervisor, or the operator with physical access. So you can run a
+frontier-size model that would never fit locally while keeping a confidentiality
+property close to local: the party serving the model cannot see your data in the
+clear.
+
+What makes this checkable rather than a promise is **remote attestation**.
+Before traffic is sent, the client can verify a signed quote proving (a) it is
+talking to genuine TEE hardware with confidential computing enabled, and (b) the
+exact measured boot image and workload are the expected ones (the quote carries a
+hash of the running software, not just "trust us"). NEAR AI pins the serving
+TLS key to that attested enclave, so the TLS session is bound to the measured
+code rather than only to a domain name.
+
+Honest about the trust model, since this is not magic: the guarantee rests on
+trusting Intel's and NVIDIA's attestation roots and their TEE implementations,
+and TEEs have a documented history of side-channel research. Attestation tells
+you *what code* is running; you still have to decide you trust that code (and
+that it does not log elsewhere). It is a *different* trust model from local
+inference — remote hardware/vendor trust instead of no remote trust at all — not
+a strictly superior one. For threat models where the concern is the model
+operator reading your data, it closes most of the gap; for threat models that
+reject any third-party hardware trust, local is still the only answer.
+
+Odysseus integrates NEAR AI (`https://cloud-api.near.ai/v1`) as an
+OpenAI-compatible provider that serves models this way. Add it like any other
+API provider; the attestation can be verified out of band.
+
 ## Contributing
 
 Help is welcome. The best entry points are fresh-install testing, provider setup bugs, mobile/editor polish, docs, and small focused refactors. See [CONTRIBUTING.md](CONTRIBUTING.md) and [ROADMAP.md](ROADMAP.md).

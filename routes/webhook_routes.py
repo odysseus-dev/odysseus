@@ -188,6 +188,8 @@ def setup_webhook_routes(
     # Known provider base URLs — auto-resolved from api_key prefix or model name
     KNOWN_PROVIDERS = {
         "deepseek": "https://api.deepseek.com/v1",
+        "nearai": "https://cloud-api.near.ai/v1",
+        "near": "https://cloud-api.near.ai/v1",
         "openai": "https://api.openai.com/v1",
         "mistral": "https://api.mistral.ai/v1",
         "groq": "https://api.groq.com/openai/v1",

@@ -184,6 +184,10 @@ class TestMatchProviderCurated:
     def test_deepseek_url(self):
         assert _match_provider_curated("https://api.deepseek.com/v1", "openai") == "deepseek"
 
+    def test_nearai_url(self):
+        # NEAR AI is OpenAI-dialect (provider "openai") but gets its own curated list.
+        assert _match_provider_curated("https://cloud-api.near.ai/v1", "openai") == "nearai"
+
     def test_groq_url(self):
         assert _match_provider_curated("https://api.groq.com/openai/v1", "openai") == "groq"
 
@@ -347,6 +351,29 @@ class TestCurateModels:
         assert "grok-4" in curated
         assert "grok-3-fast" in curated
         assert "grok-2" in extra
+
+    def test_nearai_curated_partitions_chat_from_utility(self):
+        # NEAR's namespaced chat models are curated; embeddings/reranker/
+        # whisper/image/privacy-filter fall through to "extra".
+        models = [
+            "openai/gpt-5.4", "anthropic/claude-sonnet-4-6", "zai-org/GLM-5.1-FP8",
+            "Qwen/Qwen3.5-122B-A10B", "google/gemini-3.5-flash",
+            "Qwen/Qwen3-Embedding-0.6B", "Qwen/Qwen3-Reranker-0.6B",
+            "openai/whisper-large-v3", "openai/privacy-filter",
+            "black-forest-labs/FLUX.2-klein-4B",
+        ]
+        curated, extra = _curate_models(models, "nearai")
+        assert "openai/gpt-5.4" in curated
+        assert "anthropic/claude-sonnet-4-6" in curated
+        assert "zai-org/GLM-5.1-FP8" in curated
+        assert "Qwen/Qwen3.5-122B-A10B" in curated
+        assert "google/gemini-3.5-flash" in curated
+        for non_chat in (
+            "Qwen/Qwen3-Embedding-0.6B", "Qwen/Qwen3-Reranker-0.6B",
+            "openai/whisper-large-v3", "openai/privacy-filter",
+            "black-forest-labs/FLUX.2-klein-4B",
+        ):
+            assert non_chat in extra
 
     def test_xai_current_grok_43_curated(self):
         curated, extra = _curate_models(["grok-4.3", "grok-4.3-fast"], "xai")
