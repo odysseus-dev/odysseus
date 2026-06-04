@@ -1339,6 +1339,43 @@ def _empty_response_fallback(
     return _error_msg, f'data: {json.dumps({"delta": _error_msg})}\n\n'
 
 
+async def _first_token_guard(agen, timeout_s):
+    """Bound the wait for the FIRST chunk of a model stream.
+
+    A reachable endpoint that accepts the request but never streams a token —
+    e.g. the prompt + tool definitions overflow a small local context (common
+    with LM Studio defaults) or the model can't tool-call, and the backend
+    stalls silently — would otherwise hang until the full agent stream timeout.
+    On first-token timeout we close the upstream stream (freeing the connection)
+    and emit an ``event: error`` the loop already forwards to the client. Once
+    the first chunk arrives the guard is transparent. See issue #280.
+    """
+    it = agen.__aiter__()
+    first = True
+    while True:
+        try:
+            chunk = await (asyncio.wait_for(it.__anext__(), timeout_s) if first else it.__anext__())
+        except StopAsyncIteration:
+            return
+        except asyncio.TimeoutError:
+            try:
+                await it.aclose()
+            except Exception:
+                pass
+            msg = (
+                f"The model accepted the request but sent no response within {int(timeout_s)}s. "
+                "In agent mode this usually means the prompt plus tool definitions exceed the "
+                "model's context window, or the model doesn't support tool calling. Raise the "
+                "model's context length (e.g. 8192+ in LM Studio) or switch to a tool-capable model."
+            )
+            # `text` is the field the SSE client renders; keep `error` too for
+            # non-UI consumers (bg monitor / scheduler) that read that key.
+            yield f'event: error\ndata: {json.dumps({"text": msg, "error": msg, "status": 504})}\n\n'
+            return
+        first = False
+        yield chunk
+
+
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
@@ -1658,6 +1695,11 @@ async def stream_agent_loop(
             _wants_mcp = any(kw in _last_content for kw in _MCP_KEYWORDS)
             all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
+        # Time-to-first-token guard: a reachable endpoint that never streams a
+        # token (small-context overflow / no tool calling) otherwise hangs until
+        # agent_stream_timeout. Cap the wait for the first chunk so we fail fast
+        # with a clear, actionable error instead of a silent stall. See #280.
+        agent_first_token_timeout = int(get_setting("agent_first_token_timeout_seconds", 60) or 60)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]
         logger.info(f"[agent-debug] round={round_num} model={model} _is_api_model={_is_api_model} tools_sent={len(_tool_names_sent)} tool_names={_tool_names_sent[:15]} relevant_tools={sorted(_relevant_tools)[:15] if _relevant_tools else 'ALL'}")
@@ -1671,7 +1713,7 @@ async def stream_agent_loop(
         # complementary cap for the rare stream that trickles bytes forever and
         # so never trips the inactivity timeout. Generous — only catches runaway.
         _round_deadline = time.time() + max(agent_stream_timeout * 4, 1200)
-        async for chunk in stream_llm_with_fallback(
+        async for chunk in _first_token_guard(stream_llm_with_fallback(
             _candidates,
             messages,
             temperature=temperature,
@@ -1679,7 +1721,7 @@ async def stream_agent_loop(
             prompt_type=prompt_type if round_num == 1 else None,
             tools=all_tool_schemas if all_tool_schemas else None,
             timeout=agent_stream_timeout,
-        ):
+        ), agent_first_token_timeout):
             if time.time() > _round_deadline:
                 logger.warning(f"[agent] round {round_num} stream exceeded wall-clock deadline; cutting off")
                 break
