@@ -646,7 +646,6 @@ async def _direct_fallback(
                 return {"error": f"write_file: {e}", "exit_code": 1}
             try:
                 def _write():
-                    import os
                     # Capture prior content (best-effort, text) so we can show a
                     # before/after diff. Missing/binary file → treat as empty.
                     old = ""
