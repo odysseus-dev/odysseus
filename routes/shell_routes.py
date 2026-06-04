@@ -1306,14 +1306,17 @@ def setup_shell_routes() -> APIRouter:
         if rc == 128:          # not a git repo
             return result
         result["is_git"] = True
+        _HEAD     = "# branch.head "
+        _UPSTREAM = "# branch.upstream "
+        _AB       = "# branch.ab "
         change_count = 0
         for line in stdout.splitlines():
-            if line.startswith("# branch.head "):
-                result["branch"] = line[15:].strip()
-            elif line.startswith("# branch.upstream "):
-                result["upstream"] = line[19:].strip()
-            elif line.startswith("# branch.ab "):
-                parts = line[12:].split()
+            if line.startswith(_HEAD):
+                result["branch"] = line[len(_HEAD):].strip()
+            elif line.startswith(_UPSTREAM):
+                result["upstream"] = line[len(_UPSTREAM):].strip()
+            elif line.startswith(_AB):
+                parts = line[len(_AB):].split()
                 if len(parts) == 2:
                     result["ahead"]  = int(parts[0].lstrip("+"))
                     result["behind"] = int(parts[1].lstrip("-"))

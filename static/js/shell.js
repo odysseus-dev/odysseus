@@ -248,7 +248,7 @@ function _renderTermTabs(workspaceId) {
       const closeBtn = document.createElement('button');
       closeBtn.className = 'shell-term-tab-close';
       closeBtn.title = 'Close terminal';
-      closeBtn.innerHTML = '×';
+      closeBtn.innerHTML = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
       closeBtn.addEventListener('click', e => { e.stopPropagation(); _closeTermTab(workspaceId, tt.id); });
       tab.appendChild(closeBtn);
     }
@@ -564,11 +564,14 @@ function _scmSection(title, files, kind, cwd) {
   const isStaged    = kind === 'staged';
   const isUntracked = kind === 'untracked';
 
+  const _svgUndo  = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>';
+  const _svgDown  = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>';
+
   const sectionActions = isStaged
-    ? `<button class="scm-sec-btn" data-git-section="unstage-all" data-cwd="${_escHtml(cwd)}" title="Unstage all">↩ all</button>`
+    ? `<button class="scm-sec-btn" data-git-section="unstage-all" data-cwd="${_escHtml(cwd)}" title="Unstage all">${_svgUndo} all</button>`
     : isUntracked ? ''
     : `<button class="scm-sec-btn" data-git-section="stage-all" data-cwd="${_escHtml(cwd)}" title="Stage all">+ all</button>
-       <button class="scm-sec-btn scm-sec-danger" data-git-section="revert-all" data-cwd="${_escHtml(cwd)}" title="Discard all">↩ all</button>`;
+       <button class="scm-sec-btn scm-sec-danger" data-git-section="revert-all" data-cwd="${_escHtml(cwd)}" title="Discard all">${_svgUndo} all</button>`;
 
   const rows = files.map(f => {
     const statusChar = isStaged ? f.xy[0] : isUntracked ? '?' : f.xy[1];
@@ -580,12 +583,12 @@ function _scmSection(title, files, kind, cwd) {
 
     let actions = '';
     if (isStaged) {
-      actions = `<button class="scm-btn" data-git-action="unstage" data-file="${efile}" data-cwd="${ecwd}" title="Unstage">↓</button>`;
+      actions = `<button class="scm-btn" data-git-action="unstage" data-file="${efile}" data-cwd="${ecwd}" title="Unstage">${_svgDown}</button>`;
     } else if (isUntracked) {
       actions = `<button class="scm-btn scm-btn-add" data-git-action="stage" data-file="${efile}" data-cwd="${ecwd}" title="Stage file">+</button>`;
     } else {
       actions = `<button class="scm-btn scm-btn-add" data-git-action="stage"  data-file="${efile}" data-cwd="${ecwd}" title="Stage">+</button>
-                 <button class="scm-btn scm-btn-danger" data-git-action="revert" data-file="${efile}" data-cwd="${ecwd}" title="Discard changes">↩</button>`;
+                 <button class="scm-btn scm-btn-danger" data-git-action="revert" data-file="${efile}" data-cwd="${ecwd}" title="Discard changes">${_svgUndo}</button>`;
     }
 
     return `<div class="scm-item" data-file="${efile}" data-cwd="${ecwd}" data-staged="${isStaged}" title="${efile}">
@@ -688,7 +691,7 @@ async function _gitCommit() {
   } catch (e) {
     alert('Commit failed:\n' + String(e));
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '✓ Commit'; }
+    if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Commit'; }
   }
 }
 
@@ -740,8 +743,8 @@ function _renderGitBar(d) {
 
   // Ahead / behind — only shown when tracking a remote
   if (d.upstream && (d.ahead > 0 || d.behind > 0)) {
-    if (aheadEl)  aheadEl.textContent  = d.ahead  > 0 ? `↑ ${d.ahead}` : '';
-    if (behindEl) behindEl.textContent = d.behind > 0 ? ` ↓ ${d.behind}` : '';
+    if (aheadEl)  aheadEl.textContent  = d.ahead  > 0 ? `+${d.ahead}` : '';
+    if (behindEl) behindEl.textContent = d.behind > 0 ? ` -${d.behind}` : '';
     if (syncEl)   syncEl.style.display = 'flex';
   } else {
     if (syncEl) syncEl.style.display = 'none';
