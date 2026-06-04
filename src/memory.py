@@ -302,17 +302,21 @@ class MemoryManager:
         
         query_lower = query.lower()
         
-        # Determine query type based on keywords
+        # Determine query type based on keywords. Match whole words, not raw
+        # substrings: otherwise short tokens like "i"/"am"/"me"/"my" match
+        # inside ordinary words ("bitcoin", "name", "time", ...) and force
+        # almost every query to be classified "identity".
+        query_tokens = set(tokenize(query_lower))
         query_type = None
-        if any(word in query_lower for word in identity_words):
+        if query_tokens & set(identity_words):
             query_type = "identity"
-        elif any(word in query_lower for word in contact_words):
+        elif query_tokens & set(contact_words):
             query_type = "contact"
-        elif any(word in query_lower for word in preference_words):
+        elif query_tokens & set(preference_words):
             query_type = "preference"
-        elif any(word in query_lower for word in task_words):
+        elif query_tokens & set(task_words):
             query_type = "task"
-        elif any(word in query_lower for word in fact_words):
+        elif query_tokens & set(fact_words):
             query_type = "fact"
         
         relevant = []
@@ -342,7 +346,6 @@ class MemoryManager:
         for memory in other_memories:
             memory_text = memory["text"].lower()
             memory_tokens = set(tokenize(memory_text))
-            query_tokens = set(tokenize(query_lower))
             
             # Calculate base Jaccard similarity
             if not query_tokens or not memory_tokens:
