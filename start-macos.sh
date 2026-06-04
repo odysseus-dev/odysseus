@@ -109,6 +109,85 @@ brew_ensure() {
   fi
 }
 
+# Start a local SearXNG (web-search backend) in Docker if one isn't already
+# reachable. Native macOS install has no brew formula for the real SearXNG
+# server, and pip-installing it from source means cloning + building static
+# assets + standing up uWSGI/Granian. SearXNG has no GPU needs, so Docker is
+# the right way to ship it even on macOS — and matches the bundled-service
+# model the README's "Docker" path already uses.
+#
+# Behaviour:
+#   * Honors SEARXNG_INSTANCE from .env. If it points at a non-default URL
+#     (anything other than localhost/127.0.0.1:8080), we assume the user
+#     already has SearXNG running somewhere else and don't touch anything.
+#   * Honors ODYSSEUS_NO_SEARXNG=1 for an explicit opt-out.
+#   * Idempotent: re-runs see the running container and start instantly.
+#   * Persistent: --restart unless-stopped, so the container survives reboots
+#     and the next ./start-macos.sh is fast. Stop it with
+#     `docker stop odysseus-searxng` when you want to free the port.
+ensure_searxng() {
+  case "${SEARXNG_INSTANCE:-http://localhost:8080}" in
+    ""|http://localhost:8080|http://127.0.0.1:8080) ;;
+    *) echo "  (SEARXNG_INSTANCE is set to a custom URL; not starting a local one)"
+       return 0 ;;
+  esac
+  if [ -n "$ODYSSEUS_NO_SEARXNG" ]; then
+    echo "  (ODYSSEUS_NO_SEARXNG=1 — skipping local SearXNG)"
+    return 0
+  fi
+  if (exec 3<>"/dev/tcp/127.0.0.1/8080") 2>/dev/null; then
+    echo "  ✓ SearXNG already running on :8080"
+    return 0
+  fi
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "  ⚠ SearXNG isn't running and Docker isn't installed."
+    echo "    Deep Research and web search will fail until you either:"
+    echo "      a) install Docker Desktop: brew install --cask docker"
+    echo "      b) point SEARXNG_INSTANCE at a remote instance in .env"
+    echo "      c) set ODYSSEUS_NO_SEARXNG=1 to silence this check"
+    return 0
+  fi
+  if ! docker info >/dev/null 2>&1; then
+    echo "  ⚠ Docker is installed but the daemon isn't running."
+    echo "    Launch Docker Desktop, then re-run this script — or set"
+    echo "    SEARXNG_INSTANCE=... in .env to use a remote SearXNG."
+    return 0
+  fi
+
+  SEARXNG_DATA="$REPO_DIR/data/searxng"
+  mkdir -p "$SEARXNG_DATA"
+
+  # Seed settings.yml from the repo template the first time, substituting a
+  # stable random secret so cookies / CSRF are consistent across restarts.
+  if [ ! -f "$SEARXNG_DATA/settings.yml" ]; then
+    local_secret="$(openssl rand -hex 16 2>/dev/null || /usr/bin/python3 -c 'import secrets;print(secrets.token_hex(16))' 2>/dev/null || echo "odysseus-$RANDOM-$RANDOM")"
+    sed "s/__SEARXNG_SECRET__/$local_secret/g" "$REPO_DIR/config/searxng/settings.yml" > "$SEARXNG_DATA/settings.yml"
+  fi
+
+  if docker ps -a --format '{{.Names}}' | grep -q '^odysseus-searxng$'; then
+    echo "  starting existing odysseus-searxng container…"
+    docker start odysseus-searxng >/dev/null
+  else
+    echo "  starting SearXNG container (first run pulls the image — may take a minute)…"
+    docker run -d --name odysseus-searxng \
+      -p 127.0.0.1:8080:8080 \
+      -v "$SEARXNG_DATA:/etc/searxng:rw" \
+      --restart unless-stopped \
+      searxng/searxng:latest >/dev/null
+  fi
+
+  for _ in $(seq 1 60); do
+    if (exec 3<>"/dev/tcp/127.0.0.1/8080") 2>/dev/null; then
+      echo "  ✓ SearXNG ready on http://127.0.0.1:8080"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "  ⚠ SearXNG container started but didn't respond within 60s."
+  echo "    Check 'docker logs odysseus-searxng' for details."
+  return 0
+}
+
 echo "▶ Checking dependencies (Homebrew)…"
 if [ -n "$PY" ]; then
   echo "  (using $("$PY" --version 2>&1) at $PY)"
@@ -147,6 +226,11 @@ if "$VENV_PY" -m pip show chromadb-client >/dev/null 2>&1; then
   "$VENV_PY" -m pip uninstall -y chromadb-client
   "$VENV_PY" -m pip install --force-reinstall chromadb
 fi
+
+# 3.5. SearXNG (web search). Docker-only and fully idempotent; runs in the
+#      background and survives this script exiting (see ensure_searxng).
+echo "▶ Ensuring SearXNG (web search) is reachable…"
+ensure_searxng
 
 # 4. First-run setup: creates data dirs and prints an initial admin password
 #    the first time (idempotent — does nothing if already set up). Suppress its
