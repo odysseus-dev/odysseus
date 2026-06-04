@@ -114,6 +114,8 @@ Odysseus is itself an AI workspace, so agents sometimes file issues for errors t
 
 **Do not file issues for:** provider quota or rate-limit errors; authentication failures from expired or missing credentials; errors in your own agent code or configuration; or network timeouts on your host. If in doubt, raise it with your human operator before filing.
 
+If it's a usage question or you're just getting started, open a thread in [Discussions](https://github.com/pewdiepie-archdaemon/odysseus/discussions) rather than filing an issue. When a real bug clears the checks above, file it through the [issue templates](https://github.com/pewdiepie-archdaemon/odysseus/issues/new/choose) and fill in every field — don't open a blank issue.
+
 ## Security
 
 Do not post secrets, API keys, private logs, personal documents, or public IPs in issues or pull requests.
