@@ -96,6 +96,8 @@ class MemoryService:
             results = self.vector_store.search(query, k=top_k)
             found = []
             for result in results:
+                if not isinstance(result, dict):
+                    continue
                 entry = by_id.get(result.get("memory_id"))
                 if entry:
                     found.append(self._to_memory(entry, metadata={"score": result.get("score")}))
