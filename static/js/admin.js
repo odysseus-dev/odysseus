@@ -340,12 +340,33 @@ document.addEventListener('click', async (e) => {
     });
     const d = await res.json().catch(() => ({}));
     if (res.ok && d.ok) {
-      btn.textContent = 'Installed ✓';
-      await loadEndpoints();
-      // If the local URL field still points at NobodyWho, re-run Test so the
-      // user sees the endpoint go green without doing anything else.
-      const input = el('adm-epLocalUrl');
-      if (input && /^nobodywho/i.test(input.value || '')) el('adm-epLocalTestBtn')?.click();
+      // Replace the WHOLE stale "not installed" message, not just the button —
+      // and re-test via the API directly (the add flow clears the URL input,
+      // so re-clicking Test cannot be relied on).
+      const msgEl = btn.closest('#adm-epLocalMsg, #adm-epApiMsg');
+      if (msgEl) { msgEl.textContent = 'NobodyWho installed — verifying endpoint…'; msgEl.className = ''; }
+      else { btn.textContent = 'Installed ✓'; }
+      await loadEndpoints();  // rows re-render with the live status
+      if (msgEl) {
+        try {
+          const fd = new FormData();
+          fd.append('base_url', 'nobodywho:local');
+          const tRes = await fetch('/api/model-endpoints/test', { method: 'POST', body: fd, credentials: 'same-origin' });
+          const t = await tRes.json();
+          const n = (t.models || []).length;
+          if (tRes.ok && n > 0) {
+            msgEl.textContent = `NobodyWho installed — online, found ${n} model${n !== 1 ? 's' : ''}`;
+          } else if (tRes.ok && t.status === 'empty') {
+            msgEl.innerHTML = 'NobodyWho installed — ' + (t.ping_error ? _emptyHintHtml(t.ping_error) : 'no models found');
+          } else {
+            msgEl.textContent = 'NobodyWho installed.';
+          }
+          msgEl.className = 'admin-success';
+        } catch (_) {
+          msgEl.textContent = 'NobodyWho installed.';
+          msgEl.className = 'admin-success';
+        }
+      }
     } else {
       btn.disabled = false;
       btn.textContent = 'Install failed — see Cookbook → Dependencies';
