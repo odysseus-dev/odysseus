@@ -275,16 +275,16 @@ class SkillsManager:
                 pass
         return out
 
-    def load(self, owner: Optional[str] = None) -> List[Dict]:
+    def load(self, owner: Optional[str] = None, include_shared: bool = False) -> List[Dict]:
+        """Return skills owned by `owner`. If include_shared=True, also include
+        skills with no owner (legacy/shared). If owner is None, return all."""
         entries = self.load_all()
         if owner is None:
             return entries
-        # SECURITY: strict ownership filter. The previous predicate also
-        # included skills with NO owner field (`not s.get("owner")`), which
-        # leaked legacy / un-stamped skills to every authenticated user.
-        # Hide them now; the owner needs to be backfilled on disk if those
-        # skills should be visible to a specific user.
-        return [s for s in entries if s.get("owner") == owner]
+        return [
+            s for s in entries
+            if s.get("owner") == owner or (include_shared and s.get("owner") is None)
+        ]
 
     # ----------------------------------------------------------------------
     # CRUD — disk-backed
@@ -479,6 +479,31 @@ class SkillsManager:
                 del usage[usage_key]
                 self._save_usage(usage)
             return True
+
+        # Fallback: legacy JSON
+        if os.path.exists(self.legacy_file):
+            try:
+                with open(self.legacy_file, "r", encoding="utf-8") as f:
+                    legacy = json.load(f)
+                if isinstance(legacy, list):
+                    new_legacy = []
+                    found = False
+                    for row in legacy:
+                        if not isinstance(row, dict):
+                            continue
+                        name = slugify(row.get("title") or row.get("id") or "skill")
+                        # Match by slugified name or raw ID for legacy entries
+                        if (name == skill_id or row.get("id") == skill_id) and (row.get("owner") or "") == (owner or ""):
+                            found = True
+                            continue
+                        new_legacy.append(row)
+                    if found:
+                        from core.atomic_io import atomic_write_json
+                        atomic_write_json(self.legacy_file, new_legacy)
+                        return True
+            except Exception as e:
+                logger.warning(f"Failed to delete legacy skill {skill_id}: {e}")
+
         return False
 
     def record_use(self, skill_id: str, owner: Optional[str] = None) -> None:
@@ -539,6 +564,7 @@ class SkillsManager:
         *,
         active_toolsets: Optional[List[str]] = None,
         platform: Optional[str] = None,
+        include_shared: bool = False,
     ) -> List[Dict]:
         """Return the `[{name, description, category, status}]` list the
         agent sees in its system prompt.
@@ -548,16 +574,12 @@ class SkillsManager:
           - Drafts written by the teacher-escalation loop
             (`source == "teacher-escalation"`). The whole point of
             the teacher loop is for the student to find the new
-            procedure on the very next turn — waiting for a manual
-            publish click defeats the loop.
-
-        Excludes user-created drafts (status=draft, source != teacher-
-        escalation) — those are work-in-progress and pollute the
-        prompt with half-finished procedures.
+            draft immediately so it can re-execute the same turn.
         """
+        skills = self.load(owner=owner, include_shared=include_shared)
         active_toolsets = active_toolsets or []
         out = []
-        for s in self.load(owner=owner):
+        for s in skills:
             status = s.get("status")
             # Published + None (pre-status legacy) always included.
             # Drafts only if the teacher wrote them.

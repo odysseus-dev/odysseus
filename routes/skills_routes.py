@@ -1070,12 +1070,14 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
     def _verify_owner(skill: dict, user: Optional[str]):
         if user is None:
             return
-        # SECURITY: strict check — previously `sk_owner and sk_owner != user`
-        # let any user mutate/read a skill that happened to have no owner
-        # field (legacy or un-stamped writes), since the truthiness guard
-        # short-circuited the comparison. Treat missing owner as not-owned.
-        if skill.get("owner") != user:
-            raise HTTPException(404, "Skill not found")
+        # SECURITY: admins can manage owner-less skills (legacy/un-stamped)
+        if skill.get("owner") == user:
+            return
+        if skill.get("owner") is None:
+            from core.middleware import auth_mgr
+            if auth_mgr.is_admin(user):
+                return
+        raise HTTPException(404, "Skill not found")
 
     def _fire_skill_added(user: Optional[str]):
         try:
@@ -1087,7 +1089,9 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
     @router.get("")
     async def list_skills(request: Request):
         user = _owner(request)
-        skills = skills_manager.load(owner=user)
+        from core.middleware import auth_mgr
+        is_admin = auth_mgr.is_admin(user) if (user and hasattr(auth_mgr, "is_admin")) else False
+        skills = skills_manager.load(owner=user, include_shared=is_admin)
         return {"skills": skills, "count": len(skills)}
 
     @router.get("/index")
@@ -1096,7 +1100,9 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         agent's system prompt sees. Useful for the UI's "what does the model
         actually have access to?" view."""
         user = _owner(request)
-        idx = skills_manager.index_for(owner=user)
+        from core.middleware import auth_mgr
+        is_admin = auth_mgr.is_admin(user) if (user and hasattr(auth_mgr, "is_admin")) else False
+        idx = skills_manager.index_for(owner=user, include_shared=is_admin)
         return {"index": idx, "count": len(idx)}
 
     @router.get("/builtin")
