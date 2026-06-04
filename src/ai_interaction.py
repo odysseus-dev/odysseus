@@ -1582,6 +1582,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
         model_spec = _settings.get("image_model", "")
     if quality == "medium" and _settings.get("image_quality"):
         quality = _settings["image_quality"]
+    requested_quality = quality if quality in ("low", "medium", "high", "auto") else "medium"
 
     # Auto-detect best available image model if still not set
     if not model_spec:
@@ -1658,14 +1659,15 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
         "size": size,
     }
 
-    # GPT image models and local diffusion support quality; DALL-E does not
+    # GPT image models and local diffusion support quality; DALL-E does not.
+    # Keep requested_quality for gallery/chat metadata even when it cannot be
+    # sent in the DALL-E API payload.
     if is_gpt_image or is_local_diffusion:
-        if quality in ("low", "medium", "high", "auto"):
-            payload["quality"] = quality
-        else:
-            payload["quality"] = "medium"
+        payload["quality"] = requested_quality
 
-    logger.info(f"Image generation: model={model_id}, size={size}, quality={quality}, prompt={prompt[:80]}")
+    metadata_quality = payload.get("quality", requested_quality)
+
+    logger.info(f"Image generation: model={model_id}, size={size}, quality={metadata_quality}, prompt={prompt[:80]}")
 
     try:
         # GPT image models can take 30-120s+ depending on quality
@@ -1702,7 +1704,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                         prompt=prompt,
                         model=model_id,
                         size=size,
-                        quality=payload.get("quality", "medium"),
+                        quality=metadata_quality,
                         session_id=session_id,
                         owner=owner,
                     ))
@@ -1750,7 +1752,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                 "image_prompt": prompt,
                 "image_model": model_id,
                 "image_size": size,
-                "image_quality": payload.get("quality", "medium"),
+                "image_quality": metadata_quality,
             }
 
     except httpx.TimeoutException:
