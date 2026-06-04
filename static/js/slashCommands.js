@@ -107,6 +107,7 @@ function _extractSetupProviderCredential(input) {
 
 function _normalizeSetupBaseUrl(raw) {
   let u = (raw || '').trim();
+  if (/^nobodywho(:.*)?$/i.test(u)) return 'nobodywho:local';  // pseudo-URL, not http(s)
   u = u.replace(/^https?:\/(?!\/)/, m => m + '/');
   u = u.replace(/^htp:/, 'http:').replace(/^htps:/, 'https:');
   if (!/^https?:\/\//i.test(u)) u = 'http://' + u;
@@ -169,6 +170,8 @@ function _showSetupEndpointChoices() {
         '<pre style="margin:4px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://localhost:11434/v1</code></pre>' +
         '<div style="margin-top:4px;">or</div>' +
         '<pre style="margin:2px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://llm-host.local:8000/v1</code></pre>' +
+        '<div style="margin-top:4px;">or built-in, no model server needed (NobodyWho):</div>' +
+        '<pre style="margin:2px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">nobodywho:local</code></pre>' +
       '</div>' +
       '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:color-mix(in srgb,var(--bg) 88%,var(--fg) 12%);">' +
         '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_API_ICON + 'API setup</div>' +
@@ -197,6 +200,12 @@ function _showSetupEndpointChoicesStreamed(options = {}) {
       kind: 'code',
       text: 'http://llm-host.local:8000/v1',
       copyText: 'http://llm-host.local:8000/v1',
+    },
+    { kind: 'p', text: 'or built-in, no model server needed (NobodyWho):' },
+    {
+      kind: 'code',
+      text: 'nobodywho:local',
+      copyText: 'nobodywho:local',
     },
     { kind: 'heading', html: SETUP_API_ICON + 'API setup' },
     { kind: 'p', text: 'Paste provider name then API key (example):' },
@@ -511,6 +520,10 @@ function maskKey(key) {
  */
 function detectProvider(input) {
   const trimmed = input.trim();
+  // NobodyWho — in-process provider, pseudo base URL (no http, no server)
+  if (/^nobodywho(:.*)?$/i.test(trimmed)) {
+    return { base_url: 'nobodywho:local', api_key: '', name: 'NobodyWho' };
+  }
   // URL or bare IP/hostname — self-hosted endpoint
   // Matches: http://..., https://..., llm-host:8080, localhost:8000, myserver:8080/v1
   if (/^https?:\/\//i.test(trimmed) || /^(\d{1,3}\.){1,3}\d{1,3}(:\d+)?/i.test(trimmed) || /^(localhost|[\w.-]+:\d{2,5})/i.test(trimmed)) {
@@ -546,6 +559,7 @@ function detectProvider(input) {
 
 function setupChatUrlForEndpoint(detected) {
   const base = (detected.base_url || '').replace(/\/+$/, '');
+  if (/^nobodywho:/i.test(base)) return base;  // in-process — the pseudo-URL is the dispatch key
   if (detected.name === 'Anthropic') return base.replace(/\/v1$/, '') + '/v1/messages';
   if (base.includes('ollama.com')) return 'https://ollama.com/api/chat';
   return base + '/chat/completions';
