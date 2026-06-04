@@ -522,7 +522,7 @@ def setup_history_routes(session_manager) -> APIRouter:
             # Build text to summarize
             convo_text = "\n".join(
                 f"{(m.role if isinstance(m, ChatMessage) else m.get('role', '')).upper()}: "
-                f"{(m.content if isinstance(m, ChatMessage) else m.get('content', ''))[:2000]}"
+                f"{(m.content or '' if isinstance(m, ChatMessage) else m.get('content') or '')[:2000]}"
                 for m in older
             )
 
