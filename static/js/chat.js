@@ -3094,6 +3094,11 @@ import createResearchSynapse from './researchSynapse.js';
     let roundText = '';
     let gotDelta = false;
     let leftSession = false;
+    let metricsData = null;
+    // "Rich" responses (tool calls, sources, doc streaming, multi-round) need the
+    // full canonical render, which is rebuilt from the saved DB record on reload.
+    // Plain text replies can be finalized in place without a reload.
+    let rich = false;
 
     const cleanup = () => {
       try { spinner.destroy(); } catch (_) {}
@@ -3136,9 +3141,19 @@ import createResearchSynapse from './researchSynapse.js';
             if (!gotDelta) { gotDelta = true; try { spinner.destroy(); } catch (_) {} }
             renderDelta();
           } else if (json.type === 'doc_stream_open') {
+            rich = true;
             if (documentModule) documentModule.streamDocOpen(json.title || '', json.lang || '');
           } else if (json.type === 'doc_stream_delta') {
+            rich = true;
             if (documentModule && json.delta) documentModule.streamDocDelta(json.delta);
+          } else if (json.type === 'metrics') {
+            metricsData = json.data || metricsData;
+          } else if (json.type === 'tool_start' || json.type === 'tool_output' ||
+                     json.type === 'tool_progress' || json.type === 'agent_step' ||
+                     json.type === 'web_sources' || json.type === 'rag_sources' ||
+                     json.type === 'research_progress' || json.type === 'research_sources' ||
+                     json.type === 'research_findings' || json.type === 'research_done') {
+            rich = true;
           }
         }
       }
@@ -3147,16 +3162,28 @@ import createResearchSynapse from './researchSynapse.js';
     }
 
     cleanup();
-    if (holder.parentNode) holder.remove();
-    if (leftSession) return true;
+    if (leftSession) { if (holder.parentNode) holder.remove(); return true; }
 
-    // Reload from the DB for the canonical final render (tools, sources, metrics).
-    if (sessionModule.getCurrentSessionId &&
-        sessionModule.getCurrentSessionId() === sessionId) {
-      sessionModule.selectSession(sessionId);
-    } else {
-      sessionModule.loadSessions();
+    const onThisSession = sessionModule.getCurrentSessionId &&
+                          sessionModule.getCurrentSessionId() === sessionId;
+
+    // Plain text reply: finalize in place. Replace the live bubble with a
+    // canonical single message (markdown + footer actions + metrics) using the
+    // same renderer history does. No history refetch, no end-of-stream flicker.
+    if (onThisSession && !rich && roundText.trim()) {
+      if (holder.parentNode) holder.remove();
+      const model = meta && meta.model;
+      const meta_ = metricsData ? Object.assign({ model }, metricsData) : { model };
+      chatRenderer.addMessage('assistant', roundText, model, meta_);
+      uiModule.scrollHistory();
+      return true;
     }
+
+    // Rich response (tools, sources, docs, multi-round) or user moved on:
+    // reload from the DB for the full canonical render.
+    if (holder.parentNode) holder.remove();
+    if (onThisSession) sessionModule.selectSession(sessionId);
+    else sessionModule.loadSessions();
     return true;
   }
 
