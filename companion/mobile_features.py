@@ -526,4 +526,256 @@ def setup_mobile_companion_routes() -> APIRouter:
         return {"items": out}
 
 
+    @router.post("/compare/record")
+    def compare_record(
+        request: Request,
+        prompt: str = Form(...),
+        model_a: str = Form(...),
+        model_b: str = Form(...),
+        winner: str = Form(...),        # "a", "b", or "tie"
+        is_blind: str = Form("false"),
+    ):
+        """Persist a comparison verdict owned by the caller. Companion scope."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to record comparisons.")
+        if winner not in ("a", "b", "tie"):
+            raise HTTPException(400, "winner must be 'a', 'b', or 'tie'")
+        import uuid as _uuid
+        from datetime import datetime as _dt
+        from core.database import SessionLocal, Comparison
+
+        owner = token_owner(request)
+        if not owner:
+            raise HTTPException(403, "Could not resolve an owner for this token.")
+        comp_id = str(_uuid.uuid4())
+        db = SessionLocal()
+        try:
+            comp = Comparison(
+                id=comp_id,
+                prompt=(prompt or "")[:500],
+                model_a=model_a,
+                model_b=model_b,
+                endpoint_a="",
+                endpoint_b="",
+                winner=winner,
+                is_blind=str(is_blind).lower() == "true",
+                voted_at=_dt.utcnow(),
+                owner=owner,
+            )
+            db.add(comp)
+            db.commit()
+        finally:
+            db.close()
+        return {"id": comp_id, "status": "ok"}
+
+    @router.delete("/compare/{comp_id}")
+    def compare_delete(request: Request, comp_id: str):
+        """Delete one of the caller's comparisons. Strict ownership: missing OR
+        cross-owner (incl. legacy null-owner shared) → 404, never confirming
+        existence to a non-owner. Companion scope."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to delete comparisons.")
+        from core.database import SessionLocal, Comparison
+
+        owner = token_owner(request)
+        db = SessionLocal()
+        try:
+            comp = db.query(Comparison).filter(Comparison.id == comp_id).first()
+            if not comp or comp.owner != owner:
+                raise HTTPException(404, "Comparison not found")
+            db.delete(comp)
+            db.commit()
+            return {"status": "deleted"}
+        finally:
+            db.close()
+
+    def _owned_calendar(db, cal_id, owner):
+        from core.database import CalendarCal
+        cal = db.query(CalendarCal).filter(CalendarCal.id == cal_id).first()
+        # Strict: the calendar must be the caller's own (not missing, not a
+        # legacy null-owner shared row) before we let them write into it.
+        if not cal or cal.owner != owner:
+            raise HTTPException(404, "Calendar not found")
+        return cal
+
+    @router.post("/events")
+    def create_event(
+        request: Request,
+        calendar_id: str = Form(...),
+        summary: str = Form(...),
+        dtstart: str = Form(...),
+        dtend: str = Form(...),
+        description: str = Form(""),
+        location: str = Form(""),
+        all_day: str = Form("false"),
+    ):
+        """Create an event in one of the caller's OWN calendars. Companion scope."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to create events.")
+        import uuid as _uuid
+        from core.database import SessionLocal, CalendarEvent
+
+        owner = token_owner(request)
+        if not owner:
+            raise HTTPException(403, "Could not resolve an owner for this token.")
+        start_dt = _cal_parse_dt(dtstart)
+        end_dt = _cal_parse_dt(dtend)
+        if start_dt is None or end_dt is None:
+            raise HTTPException(400, "dtstart and dtend must be ISO datetimes")
+        db = SessionLocal()
+        try:
+            _owned_calendar(db, calendar_id, owner)
+            uid = str(_uuid.uuid4())
+            ev = CalendarEvent(
+                uid=uid,
+                calendar_id=calendar_id,
+                summary=summary,
+                description=description or "",
+                location=location or "",
+                dtstart=start_dt,
+                dtend=end_dt,
+                all_day=str(all_day).lower() == "true",
+                status="confirmed",
+            )
+            db.add(ev)
+            db.commit()
+            return {"uid": uid, "status": "ok"}
+        finally:
+            db.close()
+
+    @router.delete("/events/{uid}")
+    def delete_event(request: Request, uid: str):
+        """Delete one of the caller's events. 404 (not 403) when the event is
+        missing or lives in a calendar the caller doesn't own. Companion scope."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to delete events.")
+        from core.database import SessionLocal, CalendarEvent
+
+        owner = token_owner(request)
+        db = SessionLocal()
+        try:
+            ev = db.query(CalendarEvent).filter(CalendarEvent.uid == uid).first()
+            if not ev:
+                raise HTTPException(404, "Event not found")
+            # Ownership is via the event's calendar — reuse the strict gate.
+            _owned_calendar(db, ev.calendar_id, owner)
+            db.delete(ev)
+            db.commit()
+            return {"status": "deleted"}
+        finally:
+            db.close()
+
+    @router.post("/email/send")
+    def email_send(
+        request: Request,
+        account_id: str = Form(...),
+        to: str = Form(...),
+        subject: str = Form(""),
+        body: str = Form(""),
+    ):
+        """Send a plain-text email from one of the caller's OWN accounts.
+        Owner-asserted before creds are read. Companion scope."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to send email.")
+        from email.mime.text import MIMEText
+        from email.utils import parseaddr
+        from routes.email_helpers import _assert_owns_account, _get_email_config, _send_smtp_message
+
+        owner = token_owner(request)
+        if not owner:
+            raise HTTPException(403, "Could not resolve an owner for this token.")
+        _assert_owns_account(account_id, owner)
+
+        recipients = [r.strip() for r in to.replace(";", ",").split(",") if r.strip()]
+        if not recipients or not all("@" in parseaddr(r)[1] for r in recipients):
+            raise HTTPException(400, "Provide at least one valid recipient address.")
+
+        cfg = _get_email_config(account_id, owner=owner)
+        from_addr = cfg.get("from_address") or cfg.get("smtp_user") or ""
+        if not cfg.get("smtp_host") or not from_addr:
+            raise HTTPException(400, "This account has no SMTP configuration.")
+        msg = MIMEText(body or "", _charset="utf-8")
+        msg["Subject"] = subject or ""
+        msg["From"] = from_addr
+        msg["To"] = ", ".join(recipients)
+        try:
+            _send_smtp_message(cfg, from_addr, recipients, msg.as_string())
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(502, f"Send failed: {e}")
+        return {"status": "sent", "to": recipients}
+
+    @router.patch("/assistant")
+    def assistant_patch(
+        request: Request,
+        name: str = Form(None),
+        user_name: str = Form(None),
+        personality: str = Form(None),
+        greeting: str = Form(None),
+        model: str = Form(None),
+        timezone: str = Form(None),
+    ):
+        """Update (creating if absent) the caller's personal assistant. Companion
+        scope. Refuses synthetic/non-human owners."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to edit the assistant.")
+        import uuid as _uuid
+        from core.database import SessionLocal, CrewMember
+
+        owner = token_owner(request)
+        if not owner or owner in _ASSISTANT_SYNTHETIC:
+            raise HTTPException(400, "Cannot edit an assistant for this token owner.")
+        db = SessionLocal()
+        try:
+            crew = db.query(CrewMember).filter(
+                CrewMember.owner == owner,
+                CrewMember.is_default_assistant == True,  # noqa: E712
+            ).first()
+            if crew is None:
+                crew = CrewMember(
+                    id=str(_uuid.uuid4()),
+                    owner=owner,
+                    name=name or "Assistant",
+                    is_default_assistant=True,
+                    is_active=True,
+                )
+                db.add(crew)
+            # Strict: never mutate a row we don't own (paranoia; query already scopes).
+            elif crew.owner != owner:
+                raise HTTPException(404, "Assistant not found")
+            for field, value in (
+                ("name", name), ("user_name", user_name), ("personality", personality),
+                ("greeting", greeting), ("model", model), ("timezone", timezone),
+            ):
+                if value is not None:
+                    setattr(crew, field, value)
+            db.commit()
+            db.refresh(crew)
+            return {"assistant": _assistant_dict(crew)}
+        finally:
+            db.close()
+
+    @router.get("/skills/{name}/markdown")
+    def skill_markdown(request: Request, name: str):
+        """Raw SKILL.md for one of the caller's skills. 404 for a skill the
+        caller doesn't own (it isn't in their scoped list). Companion scope."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to read skills.")
+        from core.constants import DATA_DIR
+        from services.memory.skills import SkillsManager
+
+        owner = token_owner(request)
+        sm = SkillsManager(DATA_DIR)
+        match = next(
+            (s for s in sm.load(owner=owner) if s.get("name") == name or s.get("id") == name),
+            None,
+        )
+        if not match:
+            raise HTTPException(404, "Skill not found")
+        md = sm.read_skill_md(match.get("name"), owner=owner)
+        if md is None:
+            raise HTTPException(404, "Skill source unavailable")
+        return {"name": match.get("name"), "markdown": md}
+
     return router

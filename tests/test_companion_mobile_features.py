@@ -106,34 +106,28 @@ def test_scope_cookie_session_always_allowed():
     assert has_companion_scope(_request(api_token=False)) is True
 
 
-# ── router smoke: only the read endpoints register in this tier ─────────────
+# ── router smoke: this tier adds WRITE endpoints, but NOT admin ones ─────────
 
-def test_router_registers_only_read_endpoints():
-    paths = {route.path for route in setup_mobile_companion_routes().routes}
-    for p in (
-        "/api/companion/documents",
-        "/api/companion/gallery",
-        "/api/companion/calendars",
-        "/api/companion/events",
-        "/api/companion/email/messages",
-        "/api/companion/skills",
-        "/api/companion/assistant",
-    ):
-        assert p in paths, f"missing read endpoint {p}"
-    # write / admin endpoints must NOT leak into the read-only tier
-    for p in (
-        "/api/companion/email/send",
-        "/api/companion/events",  # POST shares the path; verified by method below
-        "/api/companion/terminal/exec",
-        "/api/companion/vault/unlock",
-        "/api/companion/admin/status",
-    ):
-        if p == "/api/companion/events":
-            continue
-        assert p not in paths, f"unexpected non-read endpoint {p}"
+def test_router_registers_read_and_write_but_not_admin():
     methods = {(r.path, m) for r in setup_mobile_companion_routes().routes for m in getattr(r, "methods", []) or []}
-    assert ("/api/companion/events", "GET") in methods
-    assert ("/api/companion/events", "POST") not in methods
+    paths = {p for p, _ in methods}
+    # reads still present
+    for p in ("/api/companion/documents", "/api/companion/gallery", "/api/companion/calendars",
+              "/api/companion/email/messages", "/api/companion/skills", "/api/companion/assistant"):
+        assert p in paths, f"missing read endpoint {p}"
+    # write endpoints now present (this tier)
+    assert ("/api/companion/compare/record", "POST") in methods
+    assert ("/api/companion/compare/{comp_id}", "DELETE") in methods
+    assert ("/api/companion/events", "POST") in methods
+    assert ("/api/companion/events/{uid}", "DELETE") in methods
+    assert ("/api/companion/email/send", "POST") in methods
+    assert ("/api/companion/assistant", "PATCH") in methods
+    assert ("/api/companion/skills/{name}/markdown", "GET") in methods
+    # admin-gated tools must NOT leak in until tier 3
+    for p in ("/api/companion/terminal/exec", "/api/companion/vault/unlock", "/api/companion/vault/status",
+              "/api/companion/mcp/servers", "/api/companion/cookbook/state", "/api/companion/contacts",
+              "/api/companion/admin/status"):
+        assert p not in paths, f"admin endpoint {p} must not appear before tier 3"
 
 
 # ── Behavioural endpoint tests ──────────────────────────────────────────────
@@ -406,3 +400,207 @@ def test_documents_bad_pagination_falls_back_to_defaults(monkeypatch):
     from companion.mobile_features import DEFAULT_PAGE_LIMIT
     res = _handler("/documents")(_bearer("alice"), limit="abc", offset="-9")
     assert res["limit"] == DEFAULT_PAGE_LIMIT and res["offset"] == 0
+
+
+# ── route-level WRITE owner-scoping (tier 2) ────────────────────────────────
+# The write handlers (this tier) are driven through a separate tiny fake-query
+# harness (prefixed _W to avoid colliding with the read harness above): it adds
+# the mutating verbs the writes need — add / delete / commit / refresh — that the
+# read harness doesn't. The security crux: writes stamp/verify the RESOLVED owner;
+# cross-owner or null-owner writes/deletes are refused (404/403), never mutated.
+
+
+class _WPred:
+    def __init__(self, fn):
+        self.fn = fn
+
+    def __call__(self, r):
+        return self.fn(r)
+
+    def __or__(self, o):
+        return _WPred(lambda r: self(r) or o(r))
+
+
+class _WCol:
+    __hash__ = None
+
+    def __init__(self, name):
+        self.name = name
+
+    def __eq__(self, v):
+        return _WPred(lambda r: getattr(r, self.name) == v)
+
+    def in_(self, vs):
+        s = set(vs)
+        return _WPred(lambda r: getattr(r, self.name) in s)
+
+
+class _Comparison:
+    id = _WCol("id"); owner = _WCol("owner")
+
+    def __init__(self, **kw):
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
+class _CalendarCal:
+    id = _WCol("id"); owner = _WCol("owner")
+
+
+class _CalendarEvent:
+    uid = _WCol("uid"); calendar_id = _WCol("calendar_id")
+
+    def __init__(self, **kw):
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
+class _CrewMember:
+    owner = _WCol("owner"); is_default_assistant = _WCol("is_default_assistant")
+
+    def __init__(self, **kw):
+        self.id = self.name = self.user_name = self.personality = None
+        self.model = self.greeting = self.timezone = self.avatar = None
+        self.is_active = True; self.is_default_assistant = False; self.owner = None
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
+class _WQuery:
+    def __init__(self, rows):
+        self.rows = list(rows)
+
+    def filter(self, *ps):
+        self.rows = [r for r in self.rows if all(p(r) for p in ps)]
+        return self
+
+    def all(self):
+        return list(self.rows)
+
+    def first(self):
+        return self.rows[0] if self.rows else None
+
+
+class _WDB:
+    def __init__(self, by_model):
+        self.by_model = by_model
+        self.added = []; self.deleted = []; self.committed = False
+
+    def query(self, model):
+        return _WQuery(self.by_model.get(model, []))
+
+    def add(self, o):
+        self.added.append(o)
+
+    def delete(self, o):
+        self.deleted.append(o)
+
+    def commit(self):
+        self.committed = True
+
+    def refresh(self, o):
+        pass
+
+    def close(self):
+        pass
+
+
+def _route(path, method):
+    for r in setup_mobile_companion_routes().routes:
+        if getattr(r, "path", "") == path and method in getattr(r, "methods", set()):
+            return r.endpoint
+    raise AssertionError(f"{method} {path} not found")
+
+
+def _req(owner="alice", scopes=("companion",)):
+    return SimpleNamespace(state=SimpleNamespace(
+        api_token=True, api_token_owner=owner, api_token_scopes=list(scopes), current_user="api"))
+
+
+@pytest.fixture
+def db(monkeypatch):
+    import companion.mobile_features as mf
+    dbmod = sys.modules["core.database"]
+
+    def _install(by_model):
+        d = _WDB(by_model)
+        monkeypatch.setattr(dbmod, "SessionLocal", lambda: d, raising=False)
+        for m, name in ((_Comparison, "Comparison"), (_CalendarCal, "CalendarCal"),
+                        (_CalendarEvent, "CalendarEvent"), (_CrewMember, "CrewMember")):
+            monkeypatch.setattr(dbmod, name, m, raising=False)
+        monkeypatch.setattr(mf, "get_current_user", lambda request: "api", raising=False)
+        return d
+    return _install
+
+
+def test_compare_record_stamps_owner(db):
+    d = db({_Comparison: []})
+    res = _route("/api/companion/compare/record", "POST")(
+        _req(), prompt="p", model_a="a", model_b="b", winner="a", is_blind="false")
+    assert res["status"] == "ok" and d.added[0].owner == "alice"
+
+
+def test_compare_record_requires_owner(db):
+    db({_Comparison: []})
+    with pytest.raises(HTTPException) as e:
+        _route("/api/companion/compare/record", "POST")(
+            _req(owner=None), prompt="p", model_a="a", model_b="b", winner="a", is_blind="false")
+    assert e.value.status_code == 403
+
+
+def test_compare_delete_cross_owner_404(db):
+    d = db({_Comparison: [_Comparison(id="c1", owner="bob")]})
+    with pytest.raises(HTTPException) as e:
+        _route("/api/companion/compare/{comp_id}", "DELETE")(_req(), comp_id="c1")
+    assert e.value.status_code == 404 and d.deleted == []
+
+
+def test_event_create_into_cross_owner_calendar_404(db):
+    d = db({_CalendarCal: [_CalendarCal()], _CalendarEvent: []})
+    d.by_model[_CalendarCal][0].id = "b"; d.by_model[_CalendarCal][0].owner = "bob"
+    with pytest.raises(HTTPException) as e:
+        _route("/api/companion/events", "POST")(
+            _req(), calendar_id="b", summary="x",
+            dtstart="2026-06-04T10:00:00", dtend="2026-06-04T11:00:00",
+            description="", location="", all_day="false")
+    assert e.value.status_code == 404 and d.added == []
+
+
+def test_event_delete_cross_owner_404(db):
+    cal = _CalendarCal(); cal.id = "b"; cal.owner = "bob"
+    ev = _CalendarEvent(uid="e1", calendar_id="b")
+    d = db({_CalendarCal: [cal], _CalendarEvent: [ev]})
+    with pytest.raises(HTTPException) as e:
+        _route("/api/companion/events/{uid}", "DELETE")(_req(), uid="e1")
+    assert e.value.status_code == 404 and d.deleted == []
+
+
+def test_assistant_patch_refuses_synthetic_owner(db):
+    db({_CrewMember: []})
+    with pytest.raises(HTTPException) as e:
+        _route("/api/companion/assistant", "PATCH")(
+            _req(owner="api"), name="x", user_name=None, personality=None,
+            greeting=None, model=None, timezone=None)
+    assert e.value.status_code == 400
+
+
+def test_assistant_patch_creates_for_owner(db):
+    d = db({_CrewMember: []})
+    res = _route("/api/companion/assistant", "PATCH")(
+        _req(), name="Ally", user_name=None, personality=None,
+        greeting=None, model=None, timezone=None)
+    assert res["assistant"]["name"] == "Ally"
+    assert d.added and d.added[0].owner == "alice" and d.added[0].is_default_assistant is True
+
+
+def test_email_send_null_owner_403(db, monkeypatch):
+    calls = []
+    helpers = types.ModuleType("routes.email_helpers")
+    helpers._assert_owns_account = lambda a, o: calls.append((a, o))
+    helpers._get_email_config = lambda account_id=None, owner="": {}
+    helpers._send_smtp_message = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "routes.email_helpers", helpers)
+    with pytest.raises(HTTPException) as e:
+        _route("/api/companion/email/send", "POST")(
+            _req(owner=None), account_id="a", to="x@y.test", subject="", body="")
+    assert e.value.status_code == 403 and calls == []  # never reached the ownership check
