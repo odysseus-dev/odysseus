@@ -13,6 +13,10 @@ let modalEl = null;
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
+function safeRasterDataUrl(raw) {
+  const value = String(raw || '').trim();
+  return /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(value) ? value : '';
+}
 
 /* ── Tab switching ── */
 const ADMIN_TABS = new Set(['services', 'integrations', 'tools', 'users', 'system']);
@@ -2069,15 +2073,16 @@ function initAccount() {
               const r = await fetch('/api/auth/2fa/setup', { method: 'POST', credentials: 'same-origin' });
               if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Failed'); }
               const setup = await r.json();
+              const qrCode = safeRasterDataUrl(setup.qr_code);
               // Show QR code + manual secret + verify input
               tfaContent.innerHTML = `
                 <div style="text-align:center;margin-bottom:12px;">
-                  <img src="${setup.qr_code}" alt="QR Code" style="border-radius:8px;max-width:200px;">
+                  ${qrCode ? `<img src="${esc(qrCode)}" alt="QR Code" style="border-radius:8px;max-width:200px;">` : ''}
                 </div>
                 <div style="font-size:11px;opacity:0.5;text-align:center;margin-bottom:8px;">
                   Scan with your authenticator app, or enter manually:
                 </div>
-                <div style="font-family:monospace;font-size:12px;text-align:center;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;margin-bottom:12px;word-break:break-all;user-select:all;cursor:text;">${setup.secret}</div>
+                <div style="font-family:monospace;font-size:12px;text-align:center;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;margin-bottom:12px;word-break:break-all;user-select:all;cursor:text;">${esc(setup.secret)}</div>
                 <input id="tfa-verify-code" type="text" placeholder="Enter 6-digit code to verify" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:13px;box-sizing:border-box;text-align:center;letter-spacing:3px;margin-bottom:6px;">
                 <div class="settings-row" style="justify-content:flex-end;">
                   <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>
