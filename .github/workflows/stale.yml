@@ -1,0 +1,49 @@
+name: Close Stale Issues and PRs
+
+# Gently drains the backlog. Inactive issues/PRs get a warning label first,
+# then close after a further grace period. Anything still being discussed,
+# pinned, security-related, or accepted is exempt.
+
+on:
+  schedule:
+    - cron: "30 1 * * *"  # daily, 01:30 UTC
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/stale@v9
+        with:
+          days-before-issue-stale: 60
+          days-before-issue-close: 14
+          days-before-pr-stale: 30
+          days-before-pr-close: 14
+          stale-issue-label: stale
+          stale-pr-label: stale
+          exempt-issue-labels: "pinned,security,roadmap,keep,in-progress,help wanted,good first issue"
+          exempt-pr-labels: "pinned,security,keep,in-progress"
+          exempt-all-milestones: true
+          stale-issue-message: >
+            This issue has had no activity for 60 days and is now marked `stale`.
+            If it is still relevant, leave a comment or add new information and the
+            label will be removed. Otherwise it will be closed in 14 days. This keeps
+            the tracker focused — it is not a judgement on the report.
+          close-issue-message: >
+            Closing as stale after no further activity. If this is still happening on
+            the latest version, please reopen with updated reproduction steps. Thanks
+            for helping keep the tracker clean.
+          stale-pr-message: >
+            This pull request has had no activity for 30 days and is now marked `stale`.
+            Rebase, push an update, or leave a comment to keep it open. It will be closed
+            in 14 days otherwise — you can always reopen when you are ready to continue.
+          close-pr-message: >
+            Closing as stale after no further activity. Reopen any time you would like to
+            pick this back up. Thanks for the contribution.
+          ascending: true  # process oldest first
+          operations-per-run: 200

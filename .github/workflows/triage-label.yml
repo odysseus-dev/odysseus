@@ -1,0 +1,28 @@
+name: Triage New Issues
+
+# Stamps every newly opened issue with `needs-triage` so the maintainer can see
+# at a glance what has not been looked at yet. Removing the label (or adding any
+# other label) is the signal that triage has happened.
+
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions:
+  issues: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Add needs-triage label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              labels: ["needs-triage"]
+            });

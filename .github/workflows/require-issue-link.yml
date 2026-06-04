@@ -1,0 +1,71 @@
+name: Require Issue Link
+
+# Nudges every PR to reference an issue. The PR template already asks for this;
+# this makes it visible to the maintainer instead of relying on the honour system.
+#
+# Uses pull_request_target so it can label/comment on PRs from forks, but it ONLY
+# reads the event payload (PR title/body) and never checks out or runs head code,
+# so the elevated token is not exposed to untrusted contributions.
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: require-issue-link-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check-issue-link:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check for a linked issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const body = pr.body || "";
+            const title = pr.title || "";
+
+            // Matches: Fixes #12, Closes #12, Resolves #12, Part of #12,
+            // and cross-repo refs like Fixes owner/repo#12, plus full issue URLs.
+            const linkPattern =
+              /\b(close[sd]?|fixe?[sd]?|resolve[sd]?|part of|relate[sd]? to)\b[:\s]+(#\d+|[\w.-]+\/[\w.-]+#\d+|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+)/i;
+
+            const hasLink = linkPattern.test(body) || linkPattern.test(title);
+
+            const label = "needs-issue-link";
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issue_number = pr.number;
+
+            const current = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number });
+            const hasLabel = current.data.some(l => l.name === label);
+
+            if (hasLink) {
+              if (hasLabel) {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number, name: label })
+                  .catch(() => {});
+              }
+              core.info("Linked issue found — OK.");
+              return;
+            }
+
+            if (!hasLabel) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [label] });
+              const marker = "<!-- require-issue-link -->";
+              await github.rest.issues.createComment({
+                owner, repo, issue_number,
+                body: `${marker}\nThanks for the PR! It doesn't reference an issue yet.\n\n` +
+                  `Please link the issue this addresses by adding one of the following to the PR description:\n\n` +
+                  "```\nFixes #123\nCloses #123\nPart of #123\n```\n\n" +
+                  `If there is no issue yet, please [open one](https://github.com/${owner}/${repo}/issues/new/choose) first so the change can be discussed and de-duplicated. ` +
+                  `This label will clear automatically once a link is added.`
+              });
+            }
+            core.warning("No linked issue found — labelled needs-issue-link.");
