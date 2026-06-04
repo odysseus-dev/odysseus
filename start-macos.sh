@@ -134,10 +134,31 @@ if [ ! -d venv ]; then
   "$PY" -m venv venv
 fi
 VENV_PY="./venv/bin/python3"
-echo "▶ Installing Python packages (first run downloads a few — can take a few minutes)…"
 "$VENV_PY" -m pip install --quiet --upgrade pip
-# Not --quiet: this is the slow step, so show progress (and any real errors).
-"$VENV_PY" -m pip install -r requirements.txt
+
+# Skip the slow `pip install -r requirements.txt` when the file hasn't changed
+# since the last run (#2502). The hash lives inside venv/ (already gitignored)
+# so it never touches the repo. On hash mismatch — fresh checkout, requirements
+# change, or first run — reinstall and record the new hash. The hash is a
+# plain md5 of requirements.txt's bytes; collisions aren't a correctness
+# concern here (worst case: a useless reinstall, not a wrong install).
+HASH_FILE="venv/.requirements_hash"
+WANT_HASH="$(md5 -q requirements.txt 2>/dev/null || /usr/bin/md5sum requirements.txt 2>/dev/null | awk '{print $1}')"
+HAVE_HASH=""
+[ -f "$HASH_FILE" ] && HAVE_HASH="$(cat "$HASH_FILE" 2>/dev/null || true)"
+if [ -z "$WANT_HASH" ]; then
+  # Neither BSD md5 nor coreutils md5sum is available — bail to a forced
+  # install rather than silently skip, so we don't strand a broken venv.
+  echo "▶ Installing Python packages (no md5 tool available — can't cache check, installing fresh)…"
+  "$VENV_PY" -m pip install -r requirements.txt
+elif [ "$WANT_HASH" = "$HAVE_HASH" ]; then
+  echo "▶ Skipping pip install (requirements.txt unchanged since $HASH_FILE)…"
+else
+  echo "▶ Installing Python packages (first run downloads a few — can take a few minutes)…"
+  # Not --quiet: this is the slow step, so show progress (and any real errors).
+  "$VENV_PY" -m pip install -r requirements.txt
+  echo "$WANT_HASH" > "$HASH_FILE"
+fi
 
 # chromadb-client (HTTP-only) conflicts with the full chromadb package. If
 # it got installed (e.g., from an older requirements-optional.txt), remove

@@ -109,11 +109,23 @@ if (-not (Test-Path $venvPy)) {
     Write-Host "venv already exists - skipping creation."
 }
 
-# 3. Install / update dependencies
-Write-Step "Installing dependencies (first run can take a few minutes)"
-& $venvPy -m pip install --upgrade pip --quiet
-& $venvPy -m pip install -r requirements.txt
-if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed. Scroll up for the pip error." }
+# 3. Install / update dependencies — skip when requirements.txt is unchanged
+#    since the last run, so warm launches don't pay the 10–20s pip cost.
+#    Mirrors the same hash check in start-macos.sh (#2502).
+Write-Step "Checking dependencies"
+$hashFile = Join-Path $PSScriptRoot "venv\.requirements_hash"
+$wantHash = (Get-FileHash -Path (Join-Path $PSScriptRoot "requirements.txt") -Algorithm MD5).Hash.ToLower()
+$haveHash = ""
+if (Test-Path $hashFile) { $haveHash = (Get-Content $hashFile -Raw -ErrorAction SilentlyContinue).Trim() }
+if ($wantHash -eq $haveHash) {
+    Write-Host "venv already up to date (requirements.txt unchanged) - skipping pip install."
+} else {
+    Write-Step "Installing dependencies (first run can take a few minutes)"
+    & $venvPy -m pip install --upgrade pip --quiet
+    & $venvPy -m pip install -r requirements.txt
+    if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed. Scroll up for the pip error." }
+    Set-Content -Path $hashFile -Value $wantHash -NoNewline
+}
 
 # 4. First-time setup (creates data dirs, DB, .env, admin user)
 Write-Step "Running first-time setup"
