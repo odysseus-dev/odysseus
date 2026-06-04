@@ -346,14 +346,17 @@ document.addEventListener('click', async (e) => {
       const msgEl = btn.closest('#adm-epLocalMsg, #adm-epApiMsg');
       if (msgEl) { msgEl.textContent = 'NobodyWho installed — verifying endpoint…'; msgEl.className = ''; }
       else { btn.textContent = 'Installed ✓'; }
-      await loadEndpoints();  // rows re-render with the live status
-      if (msgEl) {
-        try {
-          const fd = new FormData();
-          fd.append('base_url', 'nobodywho:local');
-          const tRes = await fetch('/api/model-endpoints/test', { method: 'POST', body: fd, credentials: 'same-origin' });
-          const t = await tRes.json();
-          const n = (t.models || []).length;
+      try {
+        // Re-POST the endpoint: the create route's dedupe branch re-probes
+        // and PERSISTS the model list on the existing row — the stateless
+        // /test route verifies but leaves cached_models empty, which left
+        // the endpoint list saying "no models" while the toast said online.
+        const fd = new FormData();
+        fd.append('base_url', 'nobodywho:local');
+        const tRes = await fetch('/api/model-endpoints', { method: 'POST', body: fd, credentials: 'same-origin' });
+        const t = await tRes.json();
+        const n = (t.models || []).length;
+        if (msgEl) {
           if (tRes.ok && n > 0) {
             msgEl.textContent = `NobodyWho installed — online, found ${n} model${n !== 1 ? 's' : ''}`;
           } else if (tRes.ok && t.status === 'empty') {
@@ -362,11 +365,12 @@ document.addEventListener('click', async (e) => {
             msgEl.textContent = 'NobodyWho installed.';
           }
           msgEl.className = 'admin-success';
-        } catch (_) {
-          msgEl.textContent = 'NobodyWho installed.';
-          msgEl.className = 'admin-success';
         }
+      } catch (_) {
+        if (msgEl) { msgEl.textContent = 'NobodyWho installed.'; msgEl.className = 'admin-success'; }
       }
+      await loadEndpoints();  // row now reflects the persisted model list
+      try { window.modelsModule?.refreshModels?.(true); } catch (_) {}  // picker too
     } else {
       btn.disabled = false;
       btn.textContent = 'Install failed — see Cookbook → Dependencies';
