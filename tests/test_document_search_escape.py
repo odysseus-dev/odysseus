@@ -53,7 +53,10 @@ def _seed(*titles):
 def test_underscore_is_literal_not_wildcard(library):
     import asyncio
     _seed("a_b note", "axbxc note")
-    res = asyncio.run(library(request=None, search="a_b"))
+    res = asyncio.run(library(
+        request=None, search="a_b", language=None, sort="recent",
+        offset=0, limit=50, archived=False,
+    ))
     titles = {it["title"] for it in res["documents"]}
     assert titles == {"a_b note"}
 
@@ -61,5 +64,8 @@ def test_underscore_is_literal_not_wildcard(library):
 def test_plain_token_still_matches(library):
     import asyncio
     _seed("hello world", "goodbye")
-    res = asyncio.run(library(request=None, search="hello"))
+    res = asyncio.run(library(
+        request=None, search="hello", language=None, sort="recent",
+        offset=0, limit=50, archived=False,
+    ))
     assert {it["title"] for it in res["documents"]} == {"hello world"}
