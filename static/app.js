@@ -3863,7 +3863,6 @@ function startOdysseusApp() {
     attachStrip.style.backgroundColor = '';
   });
 
-<<<<<<< HEAD
   // ── Compare-mode file drop shield ──────────────────────────────────────────
   // Compare reuses #chat-container, but each pane renders into a sandboxed
   // <iframe>. Iframes swallow drag-and-drop events: a file dropped on a pane is
