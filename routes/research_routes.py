@@ -572,19 +572,22 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                 ep_headers = dict(r_headers)
 
         if not ep_url or not ep_model:
-            _merge(*resolve_endpoint("chat"))
+            _merge(*resolve_endpoint("chat", owner=user))
         if not ep_url or not ep_model:
-            _merge(*resolve_endpoint("research"))
+            _merge(*resolve_endpoint("research", owner=user))
         if not ep_url or not ep_model:
-            _merge(*resolve_endpoint("utility"))
+            _merge(*resolve_endpoint("utility", owner=user))
         if not ep_url or not ep_model:
-            # Last resort: any enabled endpoint
+            # Last resort: any enabled endpoint VISIBLE to the caller. Going
+            # through the unscoped first-enabled query would let a research-
+            # capable user spin off a follow-up chat using another user's
+            # private endpoint (and its decrypted api_key / base_url). See
+            # the docstring on `_owned_enabled_endpoint` above.
             from src.database import SessionLocal
-            from src.database import ModelEndpoint
             from src.endpoint_resolver import normalize_base, build_chat_url, build_headers
             db = SessionLocal()
             try:
-                ep = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).first()
+                ep = _owned_enabled_endpoint(db, user)
                 if ep:
                     base = normalize_base(ep.base_url)
                     fallback_url = build_chat_url(base)
