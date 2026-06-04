@@ -21,24 +21,27 @@ from sqlalchemy.orm import sessionmaker
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _load_db_module():
+def _load_db_module(monkeypatch):
     # Load core/database.py directly by path to avoid the heavy core
     # package __init__ (pyotp/cryptography aren't installed in CI envs).
+    # Use monkeypatch.setitem so sys.modules is restored at teardown — a raw
+    # assignment left this by-path copy of core.database in place and broke
+    # every later-collected test that imports the real module.
     if "core" not in sys.modules:
         core_pkg = types.ModuleType("core")
         core_pkg.__path__ = []
-        sys.modules["core"] = core_pkg
+        monkeypatch.setitem(sys.modules, "core", core_pkg)
     spec = importlib.util.spec_from_file_location(
         "core.database", str(ROOT / "core" / "database.py")
     )
     cdb = importlib.util.module_from_spec(spec)
-    sys.modules["core.database"] = cdb
+    monkeypatch.setitem(sys.modules, "core.database", cdb)
     spec.loader.exec_module(cdb)
     return cdb
 
 
-def _load_cli():
-    sys.path.insert(0, str(ROOT / "scripts" / "_lib"))
+def _load_cli(monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / "scripts" / "_lib"))
     path = ROOT / "scripts" / "odysseus-docs"
     loader = importlib.machinery.SourceFileLoader("odysseus_docs_cli", str(path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -61,14 +64,14 @@ def _run_search(cli, query):
     return [row["id"] for row in captured[0]]
 
 
-def test_multiword_search_matches_terms_in_any_position():
-    cdb = _load_db_module()
+def test_multiword_search_matches_terms_in_any_position(monkeypatch):
+    cdb = _load_db_module(monkeypatch)
     engine = create_engine("sqlite:///:memory:")
     cdb.Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     cdb.SessionLocal = Session
 
-    cli = _load_cli()
+    cli = _load_cli(monkeypatch)
 
     db = Session()
     # "machine" lives in the content, "learning" in the title — never
