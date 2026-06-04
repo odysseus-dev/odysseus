@@ -11,7 +11,7 @@ from src.tool_security import (
     is_public_blocked_tool,
     blocked_tools_for_owner,
 )
-from src.tool_execution import _do_edit_file, execute_tool_block
+from src.tool_execution import _do_edit_file
 from src.agent_tools import ToolBlock
 
 
@@ -34,13 +34,20 @@ def test_blocked_tools_for_owner_includes_edit_file_for_non_admin(monkeypatch):
 @pytest.mark.asyncio
 async def test_edit_file_blocked_at_execution_for_non_admin(monkeypatch):
     # Execution-level gate: a non-admin owner must be refused even if the tool
-    # reaches execute_tool_block.
+    # reaches execute_tool_block. edit_file stays admin-gated by tool_security
+    # after #2684 (ALWAYS_AVAILABLE only changed advertisement, not execution).
+    #
+    # Resolve execute_tool_block from the live module object (te) rather than a
+    # top-level import: other test modules pop src.tool_execution from
+    # sys.modules and re-import it, so a stale top-level reference would call a
+    # different module's function than the one monkeypatch targets — silently
+    # bypassing the admin gate.
     import src.tool_execution as te
     monkeypatch.setattr(te, "_owner_is_admin", lambda owner: False)
     ws = tempfile.mkdtemp()
     p = os.path.join("/tmp", "ef_block.txt")
     open(p, "w").write("a\n")
-    _desc, result = await execute_tool_block(
+    _desc, result = await te.execute_tool_block(
         ToolBlock("edit_file", json.dumps({"path": p, "old_string": "a", "new_string": "b"})),
         owner="bob",
     )
