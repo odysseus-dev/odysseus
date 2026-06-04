@@ -8,6 +8,7 @@ must be scoped to the calendar being synced.
 """
 import tempfile
 import uuid
+from datetime import datetime
 
 import pytest
 from sqlalchemy import create_engine
@@ -30,7 +31,11 @@ def _setup():
         db.query(CalendarEvent).delete(); db.query(CalendarCal).delete()
         db.add(CalendarCal(id="calA", owner="alice", name="A"))
         db.add(CalendarCal(id="calB", owner="bob", name="B"))
-        db.add(CalendarEvent(uid="shared@svc", calendar_id="calA", summary="Alice event"))
+        # dtstart/dtend are NOT NULL in the schema, so seed valid values.
+        db.add(CalendarEvent(
+            uid="shared@svc", calendar_id="calA", summary="Alice event",
+            dtstart=datetime(2026, 6, 4, 9, 0), dtend=datetime(2026, 6, 4, 10, 0),
+        ))
         db.commit()
     finally:
         db.close()
