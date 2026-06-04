@@ -1489,6 +1489,8 @@ export async function loadSessions() {
 }
 
 export async function selectSession(id, { keepSidebar = false } = {}) {
+  // Guard: entity-link anchors (#document-x, #note-x, etc.) are not session IDs
+  if (/^(document|note|image|email|event|task|skill|research)-/.test(id)) return;
   // Exit compare mode cleanly if active
   if (window.compareModule && window.compareModule.isActive()) {
     window.compareModule.deactivate(true);
