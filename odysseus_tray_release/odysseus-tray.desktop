@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Odysseus Tray
+Comment=Start/stop Odysseus AI workspace
+Exec=python3 /home/fireboy/odysseus/odysseus_tray.py
+Icon=utilities-terminal
+Terminal=false
+Type=Application
+Categories=Utility;
+StartupNotify=false
