@@ -66,6 +66,33 @@ odysseus-run-tmux      # start ChromaDB + Odysseus in a tmux session
 Or start the pieces manually: `odysseus-chroma run --path ./data/chroma --host 0.0.0.0 --port 8100`, then `odysseus`.
 To update the pinned inputs later, run `nix flake update`.
 
+### NixOS / nix-darwin modules
+
+Deploy Odysseus as a managed service. Add the flake as an input, then import
+the module for your platform:
+
+**NixOS** (`configuration.nix`):
+```nix
+imports = [ inputs.odysseus.nixosModules.default ];
+services.odysseus = {
+  enable = true;
+  # environmentFile = "/run/secrets/odysseus-env";  # API keys, LLM_HOST, etc.
+};
+```
+
+**nix-darwin / macOS** (`darwin-configuration.nix`):
+```nix
+imports = [ inputs.odysseus.darwinModules.default ];
+services.odysseus.enable = true;
+```
+
+The module runs the app plus a bundled ChromaDB (and, opt-in,
+SearXNG / llama.cpp) as system services. Mutable data lives under
+`services.odysseus.dataDir` (default `/var/lib/odysseus/data`), and all Python
+dependencies are bundled via nixpkgs — no venv or pip at runtime. See the
+`services.odysseus.*` options for ports, `searxng`, `llamaCpp`,
+`extraPythonPackages`, and `openFirewall`.
+
 ### Apple Silicon
 Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
 M-series Mac, run Odysseus natively:
