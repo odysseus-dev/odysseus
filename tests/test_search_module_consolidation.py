@@ -36,7 +36,7 @@ def test_src_search_package_exports_still_resolve():
 
 
 def test_src_search_cache_content_query_alias_services():
-    for name in ("cache",):
+    for name in ("cache", "content", "query"):
         src_mod = importlib.import_module(f"src.search.{name}")
         svc_mod = importlib.import_module(f"services.search.{name}")
         assert src_mod is svc_mod, f"src.search.{name} should alias services.search.{name}"
