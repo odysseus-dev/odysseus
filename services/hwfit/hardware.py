@@ -537,6 +537,11 @@ def _detect_windows():
             "gpu_vram_gb": d.get("gpu_vram_gb"),
             "gpu_count": _as_int(d.get("gpu_count"), 0),
             "backend": d.get("gpu_backend", "cpu_x86"),
+            # Mark the host OS so downstream ranking knows this is Windows even on
+            # a CUDA box: vLLM/SGLang are blocked on Windows (only llama.cpp/Ollama
+            # run), so the Cookbook must recommend GGUF-only there — the CUDA
+            # backend alone is indistinguishable from Linux without this.
+            "platform": "windows",
             "homogeneous": True,
             "gpu_error": None,
         }

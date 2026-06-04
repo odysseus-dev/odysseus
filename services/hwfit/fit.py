@@ -587,6 +587,13 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
     gpu_family = (system.get("gpu_family") or "").lower()
     consumer_amd = system_backend == "rocm" and gpu_family == "rdna"
 
+    # Windows: vLLM and SGLang are blocked there (routes/cookbook_routes.py emits
+    # "vLLM is not supported on Windows"), so llama.cpp/Ollama — i.e. GGUF — is the
+    # only serving path, regardless of GPU vendor. A CUDA Windows box looks just
+    # like Linux/CUDA by backend alone, so key off the platform flag that
+    # _detect_windows() sets and treat Windows GGUF-only like Apple Silicon.
+    windows = system.get("platform") == "windows"
+
     for m in models:
         native_q = _native_quant(m)
 
@@ -615,7 +622,11 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
         # servable path, so a model needs a real GGUF to be recommended.
         # Otherwise the Cookbook rates vLLM-only AWQ/GPTQ builds "GOOD" on a
         # Radeon that can't actually serve them.
-        if (apple_silicon or consumer_amd) and not (m.get("is_gguf") or m.get("gguf_sources")):
+        #
+        # Windows is the same regardless of GPU vendor: vLLM/SGLang don't run
+        # there, so an AWQ/GPTQ/FP8 safetensors model with no GGUF alternate can
+        # be downloaded but never served. Require a real GGUF on Windows too.
+        if (apple_silicon or consumer_amd or windows) and not (m.get("is_gguf") or m.get("gguf_sources")):
             continue
 
         # Format filter: AWQ tab -> only AWQ models, FP4 tab -> FP4-family models, etc.
