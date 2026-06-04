@@ -320,7 +320,7 @@ To expose Odysseus on a local network or Tailscale with HTTPS:
 4. Install the `mkcert` CA on any other device you want to access Odysseus from (e.g., for iOS, email the `rootCA.pem` to yourself, install the profile, and trust it in Certificate Trust Settings).
 
 ### Optional Dependencies
-`requirements-optional.txt` contains packages that unlock extra features. It is not installed by default.
+`requirements-optional.txt` contains packages that unlock extra features. It is not installed by default. It can be installed by uncommenting the two lines under "Optional requirements"
 
 | Package | Feature unlocked |
 |---------|-----------------|

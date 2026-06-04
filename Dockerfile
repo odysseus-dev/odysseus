@@ -26,6 +26,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Optional requirements -- Add optional requirements for extra functionality by uncommenting the two lines below
+
+# COPY requirements-optional.txt .
+# RUN pip install --no-cache-dir -r requirements-optional.txt
+
 # Copy app code
 COPY . .
 
