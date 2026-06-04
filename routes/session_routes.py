@@ -16,9 +16,25 @@ from src.auth_helpers import get_current_user, effective_user
 
 def _sanitize_export_filename(name: str) -> str:
     """Return a conservative filename safe for Content-Disposition."""
-    name = name or ""
+    name = name if isinstance(name, str) else ""
     name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
     return name[:128]
+
+
+# Blind-compare helper sessions are created with this name prefix. Their real
+# model must never surface in the session list / sidebar — otherwise a blind
+# comparison can be de-anonymized before the user votes (issue #1285).
+COMPARE_SESSION_PREFIX = "[CMP] "
+
+
+def _public_model(name: str, model: str) -> str:
+    """Blank out the real model of blind-compare helper sessions so the
+    session list can't be used to map a neutral pane label ("Model A") back
+    to its model. The Compare UI tracks models client-side, so hiding it here
+    costs the sidebar nothing. See issue #1285."""
+    if (name or "").startswith(COMPARE_SESSION_PREFIX):
+        return ""
+    return model
 
 
 def _verify_session_owner(request: Request, session_id: str, session_manager=None):
@@ -127,6 +143,18 @@ def _pick_endpoint_for_sort(owner=None):
         return url, model, headers
     return None, None, None
 
+
+_HIDDEN_SYSTEM_SESSION_NAMES = {
+    "[Task] Chat Sessions Tidy",
+    "[Task] Documents Tidy",
+    "[Task] Memory Tidy",
+    "[Task] Research Tidy",
+    "[Task] Email Mark Boundaries",
+    "[Task] Email Tags",
+    "[Task] Skills Audit",
+}
+
+
 def setup_session_routes(session_manager: SessionManager, config: dict, webhook_manager=None):
     """Setup session routes with the provided manager and config"""
 
@@ -199,11 +227,13 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             for s in rows:
                 if (s.name or "").strip() in ("Nobody", "Incognito"):
                     continue
+                if (s.name or "").strip() in _HIDDEN_SYSTEM_SESSION_NAMES:
+                    continue
                 db_ids.add(s.id)
                 sessions.append({
                     "id": s.id,
                     "name": s.name,
-                    "model": s.model,
+                    "model": _public_model(s.name, s.model),
                     "endpoint_url": s.endpoint_url,
                     "rag": s.rag,
                     "archived": s.archived,
@@ -227,11 +257,11 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             # missing from the DB query above) that the user owns.
             user_sessions = session_manager.get_sessions_for_user(user)
             for sid, s in user_sessions.items():
-                if sid not in db_ids and not s.archived and (s.name or "").strip() not in ("Nobody", "Incognito"):
+                if sid not in db_ids and not s.archived and (s.name or "").strip() not in ("Nobody", "Incognito") and (s.name or "").strip() not in _HIDDEN_SYSTEM_SESSION_NAMES:
                     sessions.append({
                         "id": s.id,
                         "name": s.name,
-                        "model": s.model,
+                        "model": _public_model(s.name, s.model),
                         "endpoint_url": s.endpoint_url,
                         "rag": s.rag,
                         "archived": s.archived,
