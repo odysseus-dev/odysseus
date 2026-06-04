@@ -616,10 +616,12 @@ def setup_email_routes():
         the fallback config lookup is scoped to this user's accounts only.
         """
         conn = None
+        reused = False
         try:
-            conn = _imap_connect(account_id, owner=owner)
+            conn, reused = _pooled_connect(account_id, owner=owner)
             select_status, _ = conn.select(_q(folder), readonly=True)
             if select_status != "OK":
+                _pooled_release(account_id, conn, ok=False, owner=owner)
                 return {"emails": [], "total": 0, "folder": folder, "error": f"Folder not found: {folder}"}
 
             from_clause = ""
@@ -732,7 +734,7 @@ def setup_email_routes():
                     if _uid:
                         _uids.add(str(_uid).encode())
                 if not _uids:
-                    conn.logout()
+                    _pooled_release(account_id, conn, ok=True, owner=owner)
                     return {"emails": [], "total": 0, "folder": folder}
                 data = [b" ".join(sorted(_uids, key=lambda x: int(x) if str(x, "ascii", "ignore").isdigit() else 0))]
                 status = "OK"
@@ -742,7 +744,7 @@ def setup_email_routes():
                 status, data = _imap_uid_search(conn, "ALL")
 
             if status != "OK" or not data[0]:
-                conn.logout()
+                _pooled_release(account_id, conn, ok=True, owner=owner)
                 return {"emails": [], "total": 0, "folder": folder}
 
             uid_list = data[0].split()
@@ -952,10 +954,7 @@ def setup_email_routes():
             return {"emails": [], "total": 0, "error": f"Mail operation failed: {detail[:180]}" if detail else "Mail operation failed"}
         finally:
             if conn:
-                try:
-                    conn.logout()
-                except Exception:
-                    pass
+                _pooled_release(account_id, conn, ok=True, owner=owner)
 
     @router.get("/list")
     async def list_emails(

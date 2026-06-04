@@ -377,12 +377,17 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
     # Multi-GPU filter: skip the row if the resolved quant is a GGUF tier
     # (Q*/IQ-prefixed) — vLLM/SGLang can't serve those, so showing them on
     # a 2+ GPU rig just clutters the list with unservable candidates.
+    # However, if the user EXPLICITLY asks for a GGUF quant (target_quant is set),
+    # do NOT filter it out — let them see it as "too_tight" or "cpu_offload".
     if gpu_count >= 2 and quant_to_try and quant_to_try.upper().startswith(("Q2", "Q3", "Q4", "Q5", "Q6", "Q8", "IQ")):
-        return None
+        if not target_quant:
+            return None
 
     result = _try_quant_at(model, quant_to_try, ctx, effective_vram, 0 if native_gpu_only else eff_ram)
 
     if result is None:
+        if target_quant and not preq:
+            quant_to_try = target_quant
         # Model doesn't fit on the user's current hardware. Surface it
         # anyway with a "too_tight" badge instead of silently dropping
         # it — without this, editing the hardware config to try LARGER

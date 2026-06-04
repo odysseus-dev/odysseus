@@ -215,13 +215,19 @@ def _rewrite_loopback_for_docker(base_url: str, *, container_local: bool = False
 # A model ID matches if it starts with or equals a curated entry.
 _PROVIDER_CURATED = {
     "openai": [
-        "gpt-5.2", "gpt-5.2-pro", "gpt-5", "gpt-5-pro", "gpt-5-mini", "gpt-5-nano",
-        "gpt-4o", "gpt-4o-mini", "o3", "o4-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
-        "gpt-image-1.5", "gpt-image-1", "dall-e-3", "tts-1", "whisper-1",
+        "gpt-4o", "gpt-4o-mini", "o1", "o1-mini", "o3-mini",
+        "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo",
+        "dall-e-3", "tts-1", "whisper-1",
     ],
     "anthropic": [
-        "claude-sonnet-4", "claude-opus-4", "claude-haiku-4",
-        "claude-sonnet-4-5", "claude-haiku-3-5",
+        "claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022",
+        "claude-3-opus-20240229",
+    ],
+    "gemini": [
+        "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-pro-exp",
+    ],
+    "xai": [
+        "grok-2", "grok-2-vision", "grok-beta",
     ],
     "zai": [
         "glm-5", "glm-5.1", "glm-5v-turbo", "glm-4.7", "glm-4.7-flash",
@@ -235,12 +241,11 @@ _PROVIDER_CURATED = {
         "deepseek-chat", "deepseek-reasoner",
     ],
     "groq": [
-        "openai/gpt-oss-120b", "openai/gpt-oss-20b",
-        "groq/compound", "groq/compound-mini",
-        "llama-3.1-8b-instant",
         "llama-3.3-70b-versatile",
-        "llama-4-scout-17b-16e-instruct",
-        "llama-4-maverick-17b-128e-instruct",
+        "llama-3.1-8b-instant",
+        "mixtral-8x7b-32768",
+        "gemma2-9b-it",
+        "deepseek-r1-distill-llama-70b",
     ],
     "mistral": [
         "mistral-large-latest", "mistral-medium-latest", "mistral-small-latest",
