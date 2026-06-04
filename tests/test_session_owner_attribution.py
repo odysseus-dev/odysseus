@@ -62,26 +62,44 @@ def _restore_module_and_parent_attr(dotted_name, saved_module, saved_attr):
         setattr(pkg, attr, saved_attr)
 
 
+def _set_module_and_parent_attr(dotted_name, module):
+    """Install a module at both sys.modules *and* the parent-package attribute.
+
+    Setting only sys.modules[...] leaves the parent `core` package attribute
+    pointing at the previous (real) module, so a later import resolving through
+    the parent would bypass the stub — and, symmetrically, a stub left on the
+    parent attribute would poison later tests. Controlling both keeps the two
+    views consistent so the finally block can fully undo them.
+    """
+    sys.modules[dotted_name] = module
+    pkg_name, _, attr = dotted_name.rpartition(".")
+    pkg = sys.modules.get(pkg_name)
+    if pkg is not None:
+        setattr(pkg, attr, module)
+
+
+# Modules whose import-time effects leak through both sys.modules and the parent
+# `core`/`routes` package attributes. core.database/core.models are stubbed so
+# routes.session_routes imports under conftest's MagicMock sqlalchemy shim;
+# core.session_manager and routes.session_routes are (re)imported fresh. Each is
+# captured at both levels and restored in the finally block so this file cannot
+# poison later tests via `import core.<...>` / `import routes.session_routes`.
 _TEMP_STUBS = ("core.database", "core.models")
-_saved = {name: sys.modules.get(name, _ABSENT) for name in _TEMP_STUBS}
-_saved["core.session_manager"] = sys.modules.get("core.session_manager", _ABSENT)
-_sr_saved = _save_module_and_parent_attr("routes.session_routes")
+_MANAGED = _TEMP_STUBS + ("core.session_manager", "routes.session_routes")
+_saved = {name: _save_module_and_parent_attr(name) for name in _MANAGED}
 try:
     for _name in _TEMP_STUBS:
-        sys.modules[_name] = MagicMock(name=_name)
-    sys.modules.pop("core.session_manager", None)
-    # Clear the sys.modules entry AND the parent `routes` attribute so the
-    # stubbed import below produces a fresh module with no stale binding behind it.
+        _set_module_and_parent_attr(_name, MagicMock(name=_name))
+    # Clear sys.modules AND the parent package attribute for the modules we
+    # re-import so the stubbed import below yields fresh modules with no stale
+    # binding reachable behind them.
+    _restore_module_and_parent_attr("core.session_manager", _ABSENT, _ABSENT)
     _restore_module_and_parent_attr("routes.session_routes", _ABSENT, _ABSENT)
     importlib.import_module("core.session_manager")
     import routes.session_routes as SR  # noqa: E402
 finally:
-    for _name, _val in _saved.items():
-        if _val is _ABSENT:
-            sys.modules.pop(_name, None)
-        else:
-            sys.modules[_name] = _val
-    _restore_module_and_parent_attr("routes.session_routes", *_sr_saved)
+    for _name, _save in _saved.items():
+        _restore_module_and_parent_attr(_name, *_save)
 
 from fastapi import HTTPException  # noqa: E402
 from src.auth_helpers import effective_user  # noqa: E402

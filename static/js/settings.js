@@ -1558,6 +1558,7 @@ async function initResearchSearchSettings() {
 /* ── Agent Settings (AI tab) ── */
 async function initAgentSettings() {
   var toolsInput = el('set-agentMaxTools');
+  var roundsInput = el('set-agentMaxRounds');
   var msg = el('set-agentMsg');
   if (!toolsInput) return;
 
@@ -1565,23 +1566,41 @@ async function initAgentSettings() {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
     if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
+    if (roundsInput && settings.agent_max_rounds) roundsInput.value = settings.agent_max_rounds;
   } catch (e) {}
 
+  // Clamp + coerce a raw input to an int in [lo, hi]; falls back to `dflt`
+  // when blank/non-numeric. Mirrors the server-side validation.
+  function clampInt(raw, lo, hi, dflt) {
+    var n = parseInt(raw, 10);
+    if (isNaN(n)) return dflt;
+    return Math.max(lo, Math.min(n, hi));
+  }
+
   async function save() {
-    var val = parseInt(toolsInput.value, 10) || 0;
+    var tools = clampInt(toolsInput.value, 0, 1000, 0);
+    var rounds = roundsInput ? clampInt(roundsInput.value, 1, 200, 20) : null;
+    toolsInput.value = tools;                       // reflect the clamped value
+    if (roundsInput) roundsInput.value = rounds;
+    var payload = { agent_max_tool_calls: tools };
+    if (rounds != null) payload.agent_max_rounds = rounds;
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_max_tool_calls: val })
+        body: JSON.stringify(payload)
       });
-      msg.textContent = val > 0 ? 'Limit: ' + val + ' tool calls per message' : 'Unlimited';
+      msg.textContent = (tools > 0 ? 'Limit: ' + tools + ' tool calls' : 'Unlimited tool calls') +
+        (rounds != null ? ' · ' + rounds + ' steps/message' : '');
       msg.style.color = 'var(--fg)';
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
   toolsInput.addEventListener('change', save);
+  if (roundsInput) roundsInput.addEventListener('change', save);
   var cur = parseInt(toolsInput.value, 10) || 0;
-  msg.textContent = cur > 0 ? 'Limit: ' + cur + ' tool calls per message' : 'Unlimited';
+  var curR = roundsInput ? (parseInt(roundsInput.value, 10) || 20) : null;
+  msg.textContent = (cur > 0 ? 'Limit: ' + cur + ' tool calls' : 'Unlimited tool calls') +
+    (curR != null ? ' · ' + curR + ' steps/message' : '');
 }
 
 /* ═══════════════════════════════════════════

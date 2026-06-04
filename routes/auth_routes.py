@@ -438,9 +438,24 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(403, "Admin only")
         body = await request.json()
         current = _load_settings()
+        # Per-key validation for numeric settings: coerce to int and clamp to a
+        # sane range so a bad value can't disable the agent or let it run away.
+        _INT_RANGES = {
+            "agent_max_rounds": (1, 200),
+            "agent_max_tool_calls": (0, 1000),  # 0 = unlimited
+        }
         for key in DEFAULT_SETTINGS:
-            if key in body:
-                current[key] = body[key]
+            if key not in body:
+                continue
+            val = body[key]
+            if key in _INT_RANGES:
+                lo, hi = _INT_RANGES[key]
+                try:
+                    val = int(val)
+                except (TypeError, ValueError):
+                    raise HTTPException(400, f"{key} must be an integer")
+                val = max(lo, min(val, hi))
+            current[key] = val
         _save_settings(current)
         return current
 

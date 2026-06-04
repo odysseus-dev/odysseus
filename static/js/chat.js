@@ -781,6 +781,10 @@ import createResearchSynapse from './researchSynapse.js';
       if (incognitoChk && incognitoChk.checked) {
         fd.append('incognito', 'true');
       }
+      const _ws = (Storage.KEYS && Storage.get(Storage.KEYS.WORKSPACE, '')) || '';
+      if (_ws) {
+        fd.append('workspace', _ws);
+      }
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
       }
@@ -1835,6 +1839,44 @@ import createResearchSynapse from './researchSynapse.js';
                       if (_tsS) _rEl.appendChild(_tsS);
                     }
                   }
+                }
+              } else if (json.type === 'rounds_exhausted') {
+                // The agent hit the per-turn step limit while still working.
+                // Offer a Continue button instead of stalling silently.
+                // NOTE: append to the chat-history container (bottom), NOT the
+                // message body — the body innerHTML is re-rendered at stream
+                // finalize, which would wipe a note placed inside it.
+                const _chatBox = document.getElementById('chat-history');
+                if (!_isBg && _chatBox) {
+                  // Drop any prior box so repeated cap-hits each get a fresh
+                  // Continue at the bottom (multiple continues in a row).
+                  const _old = _chatBox.querySelector('.rounds-exhausted');
+                  if (_old) _old.remove();
+                  const note = document.createElement('div');
+                  note.className = 'stopped-indicator rounds-exhausted';
+                  const label = document.createElement('span');
+                  label.className = 'rounds-exhausted-label';
+                  label.textContent = `Reached the ${json.rounds || ''}-step limit — not finished.`;
+                  note.appendChild(label);
+                  const contBtn = document.createElement('button');
+                  contBtn.className = 'continue-btn';
+                  contBtn.title = 'Continue the task';
+                  contBtn.textContent = 'Continue ▸';
+                  const _holder = currentHolder;
+                  contBtn.addEventListener('click', () => {
+                    note.remove();
+                    _hideUserBubble = true;
+                    _pendingContinue = _holder;
+                    const msgInput = uiModule.el('message');
+                    if (msgInput) {
+                      msgInput.value = 'You hit the step limit before finishing — the task is not complete. Continue from exactly where you left off and keep going until it is done. Do NOT repeat work already done.';
+                      const sb = document.querySelector('.send-btn');
+                      if (sb) sb.click();
+                    }
+                  });
+                  note.appendChild(contBtn);
+                  _chatBox.appendChild(note);
+                  try { note.scrollIntoView({ block: 'end', behavior: 'smooth' }); } catch (_) { uiModule.scrollHistory && uiModule.scrollHistory(); }
                 }
               } else if (json.type === 'attachments') {
                 if (_isBg) continue;
