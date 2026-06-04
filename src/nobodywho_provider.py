@@ -19,8 +19,9 @@ Key differences from HTTP providers, handled in this module:
     refs (e.g. pinned models) are passed straight through — NobodyWho
     downloads and caches them on first use.
   - Loaded models are expensive (GB of RAM/VRAM). A small cache keeps the most
-    recently used model(s) resident — default 1 — and evicts idle ones when a
-    different model is requested, mirroring LM Studio's JIT behaviour.
+    recently used model(s) resident — default 1 — and evicts idle ones BEFORE
+    a different model loads (so the loader sizes its GPU offload against the
+    VRAM the evictee frees), mirroring LM Studio's JIT behaviour.
 
 The ``nobodywho`` package is an optional dependency (requirements-optional.txt)
 and is imported lazily so the rest of the app never pays for it.
@@ -671,14 +672,21 @@ class NobodyWhoManager:
             gc.collect()
             logger.warning(f"NobodyWho: dropped failed chat for {source}; will reload on next use")
 
-    def _evict_idle(self, keep: str) -> None:
-        """Drop least-recently-used resident chats beyond the cap (best effort)."""
+    def _evict_idle(self, keep: str, incoming: int = 0) -> None:
+        """Drop least-recently-used resident chats beyond the cap (best effort).
+
+        ``incoming`` counts models about to load but not yet registered. The
+        switch path evicts BEFORE loading the replacement: llama.cpp sizes its
+        GPU offload against free VRAM at load time, so load-then-evict commits
+        the new model to CPU layers while the VRAM the evictee frees moments
+        later sits idle. Mid-generation chats are never evicted; for those the
+        post-load pass cleans up once they go idle."""
         with self._registry_lock:
             candidates = sorted(
                 (k for k in self._chats if k != keep),
                 key=lambda k: self._chats[k].last_used,
             )
-            excess = len(self._chats) - self._max_loaded()
+            excess = len(self._chats) + incoming - self._max_loaded()
             evicted = []
             for k in candidates:
                 if excess <= 0:
@@ -709,6 +717,9 @@ class NobodyWhoManager:
                     lc.last_used = time.time()
                     return lc
             mod = self._import()
+            # Free the outgoing model's VRAM first — the loader decides how
+            # many layers fit on the GPU from what is free right now.
+            self._evict_idle(keep=source, incoming=1)
             n_ctx = self.resolve_n_ctx(source)
             use_gpu = os.getenv("NOBODYWHO_USE_GPU", "1").strip().lower() not in ("0", "false", "no")
             logger.info(f"NobodyWho: loading model {source} (n_ctx={n_ctx}, gpu={use_gpu})")

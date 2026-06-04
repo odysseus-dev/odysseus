@@ -571,6 +571,38 @@ async def test_engine_crash_evicts_chat_for_reload(tmp_path, monkeypatch):
     assert "".join(e["delta"] for e in events if "delta" in e) == "Hello there!"
 
 
+async def test_switching_models_evicts_before_load(tmp_path, monkeypatch):
+    """The resident model must be gone BEFORE the replacement's weights load:
+    the loader sizes its GPU offload against free VRAM at load time, so
+    load-then-evict commits the new model to CPU layers while the VRAM the
+    eviction frees moments later sits idle."""
+    monkeypatch.setenv("NOBODYWHO_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "no-hub-here"))
+    monkeypatch.delenv("NOBODYWHO_MAX_LOADED_MODELS", raising=False)
+    _gguf(tmp_path, "Alpha.gguf")
+    _gguf(tmp_path, "Beta.gguf")
+    mgr = _available_manager()
+
+    resident_at_load = []
+
+    class _RecordingModel(_FakeModel):
+        @staticmethod
+        async def load_model_async(model_path, *a, **k):
+            resident_at_load.append(
+                sorted(os.path.basename(k) for k in mgr._chats)
+            )
+            return _FakeModel(model_path)
+
+    mgr._mod.Model = _RecordingModel
+
+    [e async for e in mgr.astream("Alpha", [{"role": "user", "content": "x"}])]
+    [e async for e in mgr.astream("Beta", [{"role": "user", "content": "x"}])]
+
+    # Alpha was idle, so it must have been evicted before Beta's load ran.
+    assert resident_at_load == [[], []]
+    assert sorted(os.path.basename(k) for k in mgr._chats) == ["Beta.gguf"]
+
+
 async def test_acquire_cancel_safe_does_not_leak_lock():
     """Cancelling a task queued on the generation lock must not leave the lock
     held forever once the current holder releases it."""
