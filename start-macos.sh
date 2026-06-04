@@ -154,6 +154,14 @@ fi
 echo "▶ Preparing Odysseus…"
 ODYSSEUS_SKIP_RUN_HINT=1 ./venv/bin/python setup.py
 
+# Setup-only mode (used by service-macos.sh install): everything is prepared,
+# skip the foreground launch.
+if [ -n "$ODYSSEUS_SETUP_ONLY" ]; then
+  trap - ERR
+  echo "✓ Setup complete."
+  exit 0
+fi
+
 # 5. Launch. Bind to loopback by default; opt into LAN/Tailscale with
 #    ODYSSEUS_HOST=0.0.0.0.
 URL_HOST="$HOST"
