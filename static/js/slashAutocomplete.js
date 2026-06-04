@@ -220,14 +220,26 @@ export function initSlashAutocomplete(textarea) {
   textarea.addEventListener('focus', () => { if (textarea.value.startsWith('/')) refresh(); });
   textarea.addEventListener('blur', () => { setTimeout(hide, 120); });  // delay so click works
 
-  textarea.addEventListener('keydown', (e) => {
+  // Listen on `document` in the CAPTURE phase, not on the textarea, so this
+  // runs BEFORE the composer's own bubble-phase Enter handler that submits the
+  // message. The popup wires up via a late async import, so a bubble listener
+  // on the textarea registers after the composer's and loses the Enter — the
+  // command menu can't be chosen with the keyboard (issue #2478). Capturing on
+  // an ancestor wins regardless of registration order; we filter to the
+  // composer and stopImmediatePropagation on the keys we consume so the submit
+  // path doesn't also fire. (Mirrors the capture-phase pattern slashCommands.js
+  // already uses against the same handler.)
+  document.addEventListener('keydown', (e) => {
     if (!visible || !items.length) return;
+    if (e.target !== textarea) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
+      e.stopImmediatePropagation();
       selectedIdx = (selectedIdx + 1) % items.length;
       _render(popup, items, selectedIdx, textarea.value);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
+      e.stopImmediatePropagation();
       selectedIdx = (selectedIdx - 1 + items.length) % items.length;
       _render(popup, items, selectedIdx, textarea.value);
     } else if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
@@ -238,16 +250,19 @@ export function initSlashAutocomplete(textarea) {
       const exactHit = items.find(it => it.token === v || it.aliases.includes(v));
       if (e.key === 'Enter' && exactHit) {
         // User typed the whole command — let the normal submit path handle it
+        // (do NOT stop propagation here, so the composer can send it).
         hide();
         return;
       }
       e.preventDefault();
+      e.stopImmediatePropagation();
       insert(items[selectedIdx].token);
     } else if (e.key === 'Escape') {
       e.preventDefault();
+      e.stopImmediatePropagation();
       hide();
     }
-  });
+  }, true);
 
   // Re-position on window resize / scroll
   window.addEventListener('resize', () => { if (visible) _position(popup, textarea); });
