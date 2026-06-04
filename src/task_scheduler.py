@@ -225,9 +225,10 @@ RETIRED_HOUSEKEEPING_ACTIONS = frozenset({
 def _digest_windows(now):
     """(label, start, end) buckets for the calendar check-in digest.
 
-    The windows are contiguous so no event is dropped between buckets — an
-    earlier version started the 30-day window at now+8d while the week window
-    ended at now+7d, so events ~7-8 days out fell into no bucket.
+    The windows are contiguous and consumed as half-open [start, end) ranges,
+    so no event is dropped between buckets and a boundary event is not listed
+    twice. An earlier version started the 30-day window at now+8d while the
+    week window ended at now+7d, so events ~7-8 days out fell into no bucket.
     """
     return [
         ("today_tomorrow", now, now + timedelta(days=2)),
@@ -1119,7 +1120,7 @@ class TaskScheduler:
                     _e = end.replace(tzinfo=None) if end.tzinfo else end
                     evs = _db.query(_CE).filter(
                         _CE.dtstart >= _s,
-                        _CE.dtstart <= _e,
+                        _CE.dtstart < _e,
                         _CE.status != "cancelled",
                     ).order_by(_CE.dtstart).all()
                     if not evs:
