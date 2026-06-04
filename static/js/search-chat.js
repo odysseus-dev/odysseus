@@ -2,6 +2,7 @@
 
 import uiModule from './ui.js';
 import sessionModule from './sessions.js';
+import { nextSearchOverlayZIndex } from './searchStacking.js';
 
 let API_BASE = '';
 let debounceTimer = null;
@@ -13,6 +14,7 @@ function el(id) { return document.getElementById(id); }
 export function openSearch() {
   const overlay = el('search-overlay');
   if (!overlay) return;
+  overlay.style.zIndex = String(nextSearchOverlayZIndex());
   overlay.classList.remove('hidden');
   const input = el('search-input');
   if (input) {
