@@ -140,12 +140,6 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         # Lazy purge: incognito sessions are ephemeral by design — wipe leftovers
         # from the DB and session_manager so they vanish on the next page refresh.
         # BUT: skip sessions that were created within the last 10 minutes.
-        # Without that guard, the purge nukes the active "Nobody" session on the
-        # very first /api/sessions call after creation, killing the in-flight
-        # chat. The frontend's own _cleanupIncognitoSessions handler knows which
-        # session is current and won't delete the live one — this server-side
-        # purge exists only to catch ghosts the frontend missed (tab close,
-        # crash). Only clean up rows old enough to be definitely orphaned.
         try:
             from datetime import datetime as _dt, timedelta as _td
             _cutoff = _dt.utcnow() - _td(minutes=10)
@@ -170,36 +164,25 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 _purge_db.close()
         except Exception:
             pass
-        user_sessions = session_manager.get_sessions_for_user(user)
-        # Fetch folder info from DB for each session
+
+        # Fetch sessions from DB — this is the source of truth for the list.
+        # This ensures we see more than the 100 sessions loaded into RAM at boot,
+        # and that deleted sessions vanish immediately even if a ghost remains.
         db = SessionLocal()
+        sessions = []
         try:
-            folder_map = {}
-            token_map = {}
-            important_map = {}
-            created_map = {}
-            updated_map = {}
-            last_msg_map = {}
-            mode_map = {}
-            msg_count_map = {}
-            rows = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count).filter(DbSession.archived == False).all()
-            for row in rows:
-                folder_map[row.id] = row.folder
-                token_map[row.id] = (row.total_input_tokens or 0) + (row.total_output_tokens or 0)
-                important_map[row.id] = row.is_important or False
-                created_map[row.id] = row.created_at.isoformat() if row.created_at else None
-                updated_map[row.id] = row.updated_at.isoformat() if row.updated_at else None
-                # Fall back to updated_at then created_at so sessions that
-                # predate the column (or have no messages) still sort sanely.
-                last_msg_map[row.id] = (
-                    row.last_message_at.isoformat() if row.last_message_at
-                    else (row.updated_at.isoformat() if row.updated_at
-                          else (row.created_at.isoformat() if row.created_at else None))
-                )
-                mode_map[row.id] = row.mode
-                msg_count_map[row.id] = row.message_count or 0
-            # Sessions with active documents that have content
             from sqlalchemy import func
+            from src.auth_helpers import owner_filter
+            
+            q = db.query(DbSession).filter(DbSession.archived == False)
+            if user:
+                q = owner_filter(q, DbSession, user)
+            
+            # Sort by last_accessed so the most relevant appear first
+            rows = q.order_by(DbSession.last_accessed.desc()).all()
+            db_ids = set()
+
+            # Sessions with active documents that have content
             doc_session_ids = set(
                 r[0] for r in db.query(Document.session_id)
                 .filter(Document.is_active == True,
@@ -212,24 +195,59 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 .filter(GalleryImage.session_id != None)
                 .distinct().all()
             )
+
+            for s in rows:
+                if (s.name or "").strip() in ("Nobody", "Incognito"):
+                    continue
+                db_ids.add(s.id)
+                sessions.append({
+                    "id": s.id,
+                    "name": s.name,
+                    "model": s.model,
+                    "endpoint_url": s.endpoint_url,
+                    "rag": s.rag,
+                    "archived": s.archived,
+                    "folder": getattr(s, "folder", None),
+                    "total_tokens": (getattr(s, "total_input_tokens", 0) or 0) + (getattr(s, "total_output_tokens", 0) or 0),
+                    "is_important": getattr(s, "is_important", False) or False,
+                    "created_at": s.created_at.isoformat() if s.created_at else None,
+                    "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+                    "last_message_at": (
+                        s.last_message_at.isoformat() if getattr(s, "last_message_at", None)
+                        else (s.updated_at.isoformat() if s.updated_at
+                              else (s.created_at.isoformat() if s.created_at else None))
+                    ),
+                    "has_documents": s.id in doc_session_ids,
+                    "has_images": s.id in img_session_ids,
+                    "mode": getattr(s, "mode", None),
+                    "message_count": getattr(s, "message_count", 0) or 0
+                })
+
+            # ALSO include in-memory "ghost" sessions (never persisted, or
+            # missing from the DB query above) that the user owns.
+            user_sessions = session_manager.get_sessions_for_user(user)
+            for sid, s in user_sessions.items():
+                if sid not in db_ids and not s.archived and (s.name or "").strip() not in ("Nobody", "Incognito"):
+                    sessions.append({
+                        "id": s.id,
+                        "name": s.name,
+                        "model": s.model,
+                        "endpoint_url": s.endpoint_url,
+                        "rag": s.rag,
+                        "archived": s.archived,
+                        "folder": None,
+                        "total_tokens": 0,
+                        "is_important": getattr(s, "is_important", False) or False,
+                        "created_at": None,
+                        "updated_at": None,
+                        "last_message_at": None,
+                        "has_documents": s.id in doc_session_ids,
+                        "has_images": s.id in img_session_ids,
+                        "mode": getattr(s, "mode", None),
+                        "message_count": getattr(s, "message_count", 0) or 0
+                    })
         finally:
             db.close()
-
-        sessions = [{"id": s.id, "name": s.name, "model": s.model,
-                     "endpoint_url": s.endpoint_url, "rag": s.rag,
-                     "archived": s.archived, "folder": folder_map.get(s.id),
-                     "total_tokens": token_map.get(s.id, 0),
-                     "is_important": important_map.get(s.id, False),
-                     "created_at": created_map.get(s.id),
-                     "updated_at": updated_map.get(s.id),
-                     "last_message_at": last_msg_map.get(s.id),
-                     "has_documents": s.id in doc_session_ids,
-                     "has_images": s.id in img_session_ids,
-                     "mode": mode_map.get(s.id),
-                     "message_count": msg_count_map.get(s.id, 0)}
-                    for s in user_sessions.values()
-                    if not s.archived
-                    and (s.name or "").strip() not in ("Nobody", "Incognito")]
 
         return sessions
     

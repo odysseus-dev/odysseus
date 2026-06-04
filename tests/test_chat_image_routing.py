@@ -1,5 +1,19 @@
 import json
+import sys
 from types import SimpleNamespace
+
+# Ensure project root is in sys.path
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Other tests (like test_companion_pairing.py) stub src.endpoint_resolver 
+# during collection with an incomplete set of attributes, causing ImportErrors 
+# here. Clean it up if it's a stub.
+_endpoint_resolver = sys.modules.get("src.endpoint_resolver")
+if _endpoint_resolver is not None and not getattr(_endpoint_resolver, "__file__", None):
+    sys.modules.pop("src.endpoint_resolver", None)
+    # model_routes also imports it, so it needs a reload too
+    sys.modules.pop("routes.model_routes", None)
 
 from routes import chat_routes
 
