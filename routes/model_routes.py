@@ -1021,21 +1021,24 @@ def setup_model_routes(model_discovery):
                     def _probe_one(key: str, data: Dict[str, Any]):
                         try:
                             ids = _probe_endpoint(data["base"], data.get("api_key"), timeout=data.get("timeout") or 2)
-                            return key, data["endpoint_ids"], ids, None
+                            return key, data["endpoint_ids"], data["base"], ids, None
                         except Exception as e:
-                            return key, data["endpoint_ids"], None, e
+                            return key, data["endpoint_ids"], data["base"], None, e
 
                     if groups:
                         with ThreadPoolExecutor(max_workers=min(4, len(groups))) as pool:
                             futures = [pool.submit(_probe_one, key, data) for key, data in groups.items()]
                             for fut in as_completed(futures):
-                                key, endpoint_ids, ids, err = fut.result()
+                                key, endpoint_ids, base_url, ids, err = fut.result()
                                 st = _refresh_state.setdefault(key, {})
-                                if ids:
+                                # An empty result from the in-process provider's
+                                # filesystem scan is authoritative (files deleted),
+                                # not a transient outage — accept it.
+                                if ids or (err is None and is_nobodywho_url(base_url)):
                                     for ep_id in endpoint_ids:
                                         ep_obj = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
                                         if ep_obj:
-                                            ep_obj.cached_models = json.dumps(ids)
+                                            ep_obj.cached_models = json.dumps(ids) if ids else None
                                             changed = True
                                     st["last_success"] = _time.time()
                                     st["fail_count"] = 0
@@ -1790,9 +1793,13 @@ def setup_model_routes(model_discovery):
                 except Exception as exc:
                     logger.warning("Manual model refresh failed for endpoint %s at %s: %s", ep_id, base, exc)
                     probed = []
-                if probed:
+                # Keeping cached models on an empty probe protects against a
+                # briefly-down HTTP server — but the in-process provider's
+                # probe is a filesystem scan, so an empty result is the truth
+                # (the files were deleted), not an outage. Trust it.
+                if probed or is_nobodywho_url(base):
                     all_models = probed
-                    ep.cached_models = json.dumps(all_models)
+                    ep.cached_models = json.dumps(probed) if probed else None
                     db.commit()
                     _invalidate_models_cache()
                     response.headers["X-Model-Refresh-Status"] = "refreshed"
