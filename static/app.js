@@ -2683,8 +2683,19 @@ function initializeEventListeners() {
     // Apply saved visibility on load
     applyUIVis(loadUIVis());
 
-    // Generic draggable for all .modal elements
-    const _sharedDragModalIds = new Set(['settings-modal']);
+    // Generic draggable for all .modal elements.
+    // Modals listed here are driven by the shared windowDrag.js helper
+    // (makeWindowDraggable) instead — skip them so the two systems don't both
+    // bind. Critically, the legacy MutationObserver below resets the content's
+    // inline position whenever the modal's class changes; windowDrag.js toggles
+    // a `modal-dragging` class on drag start, which fired that reset mid-drag
+    // and snapped the window back to center ("jumps a couple cm, no longer under
+    // the cursor"). Only the modals that are STATIC in index.html (cookbook,
+    // memory/brain, theme, settings) ever got double-bound — the rest are built
+    // dynamically after this runs.
+    const _sharedDragModalIds = new Set([
+      'settings-modal', 'cookbook-modal', 'memory-modal', 'theme-modal',
+    ]);
     try { document.querySelectorAll('.modal').forEach(m => {
       if (_sharedDragModalIds.has(m.id)) return;
       const content = m.querySelector('.modal-content');
