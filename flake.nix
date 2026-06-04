@@ -9,6 +9,12 @@
       url = "github:LnL7/nix-darwin";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Lets shell.nix / default.nix reuse the flake's devShell for non-flake
+    # `nix-shell` users. Source only — not imported as a flake.
+    flake-compat = {
+      url = "github:edolstra/flake-compat";
+      flake = false;
+    };
   };
 
   # Nix code is split out of this file (cf. the native-nix effort in issue #605):
@@ -23,6 +29,7 @@
       nixpkgs,
       flake-utils,
       nix-darwin,
+      ...
     }:
     let
       inherit (import ./nix/lib.nix)
