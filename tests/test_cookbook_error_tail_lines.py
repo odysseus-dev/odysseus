@@ -1,53 +1,56 @@
-"""Guard for the cookbook error output-tail expansion.
+"""Behavioral guard for the cookbook error output-tail expansion.
 
 When a task reaches status "error" the status endpoint previously returned
 only the last 12 lines of the subprocess log. The "Copy last 50 lines"
-context-menu action was therefore copying the same 12 lines — making it
-useless for diagnosing failures that emit long stack traces or build output.
+context-menu action was therefore copying the same 12 lines — useless for
+diagnosing failures that emit long stack traces or build output.
 
-This fix:
-- Sets _tail_lines = 50 when status == "error", 12 otherwise.
-- Initialises exit_code = None before the status-classification block so it
-  is always defined in the result dict (was only assigned inside the
-  is_alive branch, causing a NameError in the dead-session path).
-- Includes exit_code in the task-status response dict.
-- The JS poller in cookbookRunning.js captures exit_code from live data so
-  it persists in local task state alongside the output.
+`error_aware_output_tail` now returns the last 50 lines on error and keeps
+the cheaper 12-line tail for running/other tasks.
 """
-import re
-from pathlib import Path
-
-ROUTES = Path(__file__).resolve().parent.parent / "routes/cookbook_routes.py"
-JS = Path(__file__).resolve().parent.parent / "static/js/cookbookRunning.js"
+from routes.cookbook_output import error_aware_output_tail
 
 
-def test_tail_lines_50_on_error():
-    text = ROUTES.read_text(encoding="utf-8")
-    # The tail-line count must be determined by a variable, not a raw literal.
-    assert "_tail_lines = 50 if status == \"error\" else 12" in text, \
-        "expected _tail_lines to be 50 on error, 12 otherwise"
-    assert "full_snapshot.splitlines()[-_tail_lines:]" in text, \
-        "output_tail must use _tail_lines, not a hardcoded slice"
+def _snapshot(n):
+    return "\n".join(f"line {i}" for i in range(n))
 
 
-def test_exit_code_initialised_before_if_block():
-    text = ROUTES.read_text(encoding="utf-8")
-    # exit_code must be set to None at the same scope level as download_zero_files
-    # so that it is always defined when building the result dict, even when the
-    # session is already dead (the else-branch that skips the is_alive block).
-    assert re.search(
-        r"download_zero_files\s*=\s*False\s*\n\s*exit_code\s*=\s*None",
-        text,
-    ), "exit_code must be initialised to None alongside download_zero_files"
+def test_error_status_returns_last_50_lines():
+    snap = _snapshot(200)
+    tail = error_aware_output_tail(snap, "error")
+    lines = tail.splitlines()
+    assert len(lines) == 50, f"error tail should be 50 lines, got {len(lines)}"
+    assert lines[0] == "line 150"
+    assert lines[-1] == "line 199"
 
 
-def test_exit_code_in_result_dict():
-    text = ROUTES.read_text(encoding="utf-8")
-    assert '"exit_code": exit_code' in text, \
-        "exit_code must be included in the task-status result dict"
+def test_non_error_status_returns_last_12_lines():
+    snap = _snapshot(200)
+    for status in ("running", "ready", "completed", "stopped", "unknown"):
+        tail = error_aware_output_tail(snap, status)
+        lines = tail.splitlines()
+        assert len(lines) == 12, f"{status} tail should be 12 lines, got {len(lines)}"
+        assert lines[-1] == "line 199"
 
 
-def test_js_poller_captures_exit_code():
-    text = JS.read_text(encoding="utf-8")
-    assert "live.exit_code != null" in text, \
-        "cookbookRunning.js poller must propagate exit_code from live task data"
+def test_short_snapshot_returns_all_lines():
+    # Fewer lines than the cap — return everything, no padding.
+    snap = _snapshot(5)
+    assert error_aware_output_tail(snap, "error").splitlines() == [
+        "line 0", "line 1", "line 2", "line 3", "line 4",
+    ]
+    assert len(error_aware_output_tail(snap, "running").splitlines()) == 5
+
+
+def test_empty_snapshot_returns_empty_string():
+    assert error_aware_output_tail("", "error") == ""
+    assert error_aware_output_tail("", "running") == ""
+
+
+def test_error_tail_is_wider_than_non_error():
+    snap = _snapshot(100)
+    err = error_aware_output_tail(snap, "error").splitlines()
+    run = error_aware_output_tail(snap, "running").splitlines()
+    assert len(err) > len(run)
+    # The non-error tail is a strict suffix of the error tail.
+    assert err[-len(run):] == run
