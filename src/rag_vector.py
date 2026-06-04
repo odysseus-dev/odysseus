@@ -56,18 +56,22 @@ class VectorRAG:
     def _initialize_system(self) -> bool:
         try:
             from src.chroma_client import get_chroma_client
+
+            # Connect to Chroma before loading local embeddings. When ChromaDB
+            # is still starting or disabled, this avoids downloading/loading
+            # FastEmbed just to immediately mark the RAG store unhealthy.
+            client = get_chroma_client()
+            self._collection = client.get_or_create_collection(
+                name=COLLECTION_NAME,
+                metadata={"hnsw:space": "cosine"},
+            )
+
             from src.embeddings import get_embedding_client
 
             self._model = get_embedding_client()
             if self._model is None:
                 raise RuntimeError("No embedding backend available")
             logger.info(f"Embedding: {self._model.url} model={self._model.model}")
-
-            client = get_chroma_client()
-            self._collection = client.get_or_create_collection(
-                name=COLLECTION_NAME,
-                metadata={"hnsw:space": "cosine"},
-            )
 
             count = self._collection.count()
             logger.info(f"VectorRAG ready ({count} docs)")

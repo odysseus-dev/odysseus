@@ -156,17 +156,22 @@ class ToolIndex:
 
     def __init__(self):
         from src.chroma_client import get_chroma_client
+
+        # Chroma availability is the hard gate for this index. Check it before
+        # loading local embeddings so a missing ChromaDB service does not pull
+        # FastEmbed during background warmup.
+        client = get_chroma_client()
+        self._collection = client.get_or_create_collection(
+            name=COLLECTION_NAME,
+            metadata={"hnsw:space": "cosine"},
+        )
+
         from src.embeddings import get_embedding_client
 
         self._embedder = get_embedding_client()
         if not self._embedder:
             raise RuntimeError("No embedding client available")
 
-        client = get_chroma_client()
-        self._collection = client.get_or_create_collection(
-            name=COLLECTION_NAME,
-            metadata={"hnsw:space": "cosine"},
-        )
         self._fingerprint = ""
         self._mcp_generation = -1
         self._healthy = True

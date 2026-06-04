@@ -249,6 +249,11 @@ class ChatProcessor:
         if use_rag:
             try:
                 rag_manager = getattr(self.personal_docs_manager, 'rag_manager', None)
+                if not rag_manager:
+                    from src.rag_singleton import get_rag_manager
+                    rag_manager = get_rag_manager()
+                    if rag_manager:
+                        self.personal_docs_manager.rag_manager = rag_manager
                 if rag_manager:
                     results = rag_manager.search(message, k=5, owner=owner)
                     # Filter by similarity threshold

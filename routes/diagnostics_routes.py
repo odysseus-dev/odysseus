@@ -32,8 +32,15 @@ def setup_diagnostics_routes(
     @router.get("/api/rag/stats")
     async def get_rag_stats(request: Request) -> Dict[str, Any]:
         require_admin(request)
-        if rag_available and rag_manager:
-            return rag_manager.get_stats()
+        rag = rag_manager
+        if not rag:
+            try:
+                from src.rag_singleton import get_rag_manager
+                rag = get_rag_manager()
+            except Exception as e:
+                logger.debug("RAG stats lazy init failed: %s", e)
+        if rag:
+            return rag.get_stats()
         return {"error": "RAG system not available"}
 
     @router.get("/api/test/youtube")

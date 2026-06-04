@@ -25,12 +25,63 @@ from src.search import update_search_config
 
 logger = logging.getLogger(__name__)
 
+class DeferredVectorStore:
+    """Proxy that stays unhealthy until a real vector store is installed.
+
+    Routes keep a reference to this object at setup time, so a background
+    startup task can attach the expensive Chroma/FastEmbed-backed store later
+    without rebuilding routers or blocking the web UI during import.
+    """
+
+    def __init__(self):
+        self.store = None
+
+    @property
+    def healthy(self) -> bool:
+        return bool(self.store and getattr(self.store, "healthy", False))
+
+    def set_store(self, store):
+        self.store = store
+
+    def __getattr__(self, name):
+        if self.store is None:
+            raise AttributeError(name)
+        return getattr(self.store, name)
+
+
 def create_directories():
     """Create necessary directories if they don't exist."""
     for directory in (DATA_DIR, PERSONAL_DIR, RUNBOOK_DIR, UPLOAD_DIR):
         os.makedirs(directory, exist_ok=True)
-        
-def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
+
+
+def initialize_memory_vector_store(memory_manager, rag_manager=None):
+    """Initialize the optional semantic memory vector store.
+
+    This may touch ChromaDB and the embedding backend, so app.py runs it in a
+    background thread after the UI is already serving.
+    """
+    memory_vector = None
+    try:
+        from src.memory_vector import MemoryVectorStore
+        embedding_model = getattr(rag_manager, '_model', None) if rag_manager else None
+        memory_vector = MemoryVectorStore(DATA_DIR, embedding_model=embedding_model)
+        if memory_vector.healthy:
+            # Rebuild index from existing memories if empty
+            if memory_vector.count() == 0:
+                existing = memory_manager.load()
+                if existing:
+                    memory_vector.rebuild(existing)
+                    logger.info(f"Rebuilt memory vector index from {len(existing)} existing entries")
+            logger.info("MemoryVectorStore initialized")
+            return memory_vector
+        logger.warning("MemoryVectorStore DEGRADED: ChromaDB vector memory unavailable")
+    except Exception as e:
+        logger.warning(f"MemoryVectorStore DEGRADED: {e}")
+    return None
+
+
+def initialize_managers(base_dir: str, rag_manager=None, eager_memory_vector: bool = True) -> Dict[str, Any]:
     """
     Initialize all manager and handler instances.
 
@@ -53,26 +104,14 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
     api_key_manager = APIKeyManager(DATA_DIR)
     preset_manager = PresetManager(DATA_DIR)
 
-    # Initialize memory vector store (share embedding model with RAG if available)
-    memory_vector = None
-    try:
-        from src.memory_vector import MemoryVectorStore
-        embedding_model = getattr(rag_manager, '_model', None) if rag_manager else None
-        memory_vector = MemoryVectorStore(DATA_DIR, embedding_model=embedding_model)
-        if memory_vector.healthy:
-            # Rebuild index from existing memories if empty
-            if memory_vector.count() == 0:
-                existing = memory_manager.load()
-                if existing:
-                    memory_vector.rebuild(existing)
-                    logger.info(f"Rebuilt memory vector index from {len(existing)} existing entries")
-            logger.info("MemoryVectorStore initialized")
-        else:
-            logger.warning("MemoryVectorStore DEGRADED: ChromaDB vector memory unavailable")
-            memory_vector = None
-    except Exception as e:
-        logger.warning(f"MemoryVectorStore DEGRADED: {e}")
-        memory_vector = None
+    # Initialize semantic memory vectors only when explicitly requested. app.py
+    # defers this to a background task so Docker users can reach the UI while
+    # Chroma/FastEmbed come up.
+    memory_vector = DeferredVectorStore()
+    if eager_memory_vector:
+        memory_vector.set_store(initialize_memory_vector_store(memory_manager, rag_manager))
+    else:
+        logger.info("MemoryVectorStore initialization deferred until after startup")
 
     memory_provider_registry = MemoryProviderRegistry([
         NativeMemoryProvider(memory_manager, memory_vector),

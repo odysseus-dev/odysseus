@@ -432,33 +432,23 @@ from services.youtube import init_youtube
 init_youtube()
 
 # ========= RAG (vector document RAG) =========
-# VectorRAG (ChromaDB-backed personal-document semantic search). Initialized
-# lazily via get_rag_manager() — returns None if ChromaDB isn't reachable
-# (no server running on the configured host:port), in which case personal-doc
-# routes return a clean 503 instead of busy-retrying every request.
-#
-# Note: this was previously hardcoded off because chromadb 1.4.1 / pydantic
-# 2.12 were mutually incompatible at the time. With the current pins
-# (chromadb 1.5.x + pydantic 2.13.x) the init works and Personal Docs
-# (POST /api/personal/add_directory etc.) is functional again.
+# VectorRAG (ChromaDB-backed personal-document semantic search) is intentionally
+# not initialized at module import time. Loading local embeddings can download
+# model files, and ChromaDB may still be starting in docker compose. Routes that
+# need RAG retry lazily via get_rag_manager(); startup also kicks a background
+# warmup after the UI is already accepting traffic.
 from src.rag_singleton import get_rag_manager
-rag_manager = get_rag_manager()
-rag_available = rag_manager is not None
-if rag_available:
-    logger.info("Vector document RAG initialized")
-else:
-    logger.info(
-        "Vector document RAG not available at startup "
-        "(ChromaDB may not be reachable yet — routes will retry lazily)"
-    )
+rag_manager = None
+rag_available = False
+logger.info("Vector document RAG initialization deferred")
 
 # ========= IMPORT CONFIG =========
 from src.config import config
 
 # ========= COMPONENT INITIALIZATION =========
-from src.app_initializer import initialize_managers
+from src.app_initializer import initialize_managers, initialize_memory_vector_store
 
-components = initialize_managers(BASE_DIR, rag_manager)
+components = initialize_managers(BASE_DIR, rag_manager, eager_memory_vector=False)
 
 session_manager   = components["session_manager"]
 from src.assistant_log import set_session_manager as _set_asst_sm
@@ -841,7 +831,7 @@ app.router.lifespan_context = _lifespan
 
 
 async def _startup_event():
-    global upload_cleanup_task
+    global upload_cleanup_task, rag_manager, rag_available
     logger.info("Application starting up...")
     webhook_manager.set_loop(asyncio.get_running_loop())
     # Wipe any leftover incognito sessions from previous process — they're
@@ -874,6 +864,39 @@ async def _startup_event():
         _startup_tasks.append(start_bg_monitor())
     except Exception as _e:
         logger.warning("Failed to start background-job monitor: %s", _e)
+
+    # RAG and semantic-memory vectors can touch ChromaDB and local embedding
+    # models. Run them off-thread after startup has begun so Docker users can
+    # load the UI while vector services warm or degrade.
+    async def _warmup_vector_services():
+        global rag_manager, rag_available
+        try:
+            rag = await asyncio.to_thread(get_rag_manager)
+            if rag:
+                rag_manager = rag
+                rag_available = True
+                personal_docs_mgr.rag_manager = rag
+                set_ai_rag_manager(rag_manager, personal_docs_mgr)
+                logger.info("Vector document RAG initialized in background")
+            else:
+                logger.info(
+                    "Vector document RAG not available yet "
+                    "(ChromaDB may still be starting — routes retry lazily)"
+                )
+        except Exception as e:
+            logger.warning(f"Vector document RAG warmup failed (non-critical): {type(e).__name__}: {e}")
+
+        try:
+            store = await asyncio.to_thread(initialize_memory_vector_store, memory_manager, rag_manager)
+            if store and hasattr(memory_vector, "set_store"):
+                memory_vector.set_store(store)
+                chat_processor.memory_vector = memory_vector
+                set_ai_memory_manager(memory_manager, memory_vector)
+                logger.info("MemoryVectorStore installed in background")
+        except Exception as e:
+            logger.warning(f"Memory vector warmup failed (non-critical): {type(e).__name__}: {e}")
+
+    _startup_tasks.append(asyncio.create_task(_warmup_vector_services()))
     # MCP servers can be slow or blocked by local tooling. Connect them after
     # the web server is accepting traffic instead of delaying the whole UI.
     async def _startup_mcp_connections():

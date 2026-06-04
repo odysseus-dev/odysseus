@@ -28,18 +28,21 @@ class MemoryVectorStore:
         try:
             from src.chroma_client import get_chroma_client
 
+            # Connect to Chroma before loading local embeddings. If the vector
+            # DB is unavailable, semantic memory can degrade without pulling a
+            # FastEmbed model during startup/background warmup.
+            client = get_chroma_client()
+            self._collection = client.get_or_create_collection(
+                name=self.COLLECTION_NAME,
+                metadata={"hnsw:space": "cosine"},
+            )
+
             if self._model is None:
                 from src.embeddings import get_embedding_client
                 self._model = get_embedding_client()
                 if self._model is None:
                     raise RuntimeError("No embedding backend available")
                 logger.info(f"MemoryVectorStore using embeddings: {self._model.url}")
-
-            client = get_chroma_client()
-            self._collection = client.get_or_create_collection(
-                name=self.COLLECTION_NAME,
-                metadata={"hnsw:space": "cosine"},
-            )
 
             self._healthy = True
             count = self._collection.count()
