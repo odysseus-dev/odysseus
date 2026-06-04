@@ -11,7 +11,7 @@ from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
-from src.auth_helpers import get_current_user, effective_user
+from src.auth_helpers import get_current_user, effective_user, require_user
 
 
 def _sanitize_export_filename(name: str) -> str:
