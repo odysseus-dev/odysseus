@@ -403,17 +403,25 @@ class TaskScheduler:
         notifications and prevent cross-tenant drain. `body` is the result
         text — populated when output_target='notification' so the client can
         show a rich browser Notification, not just a toast."""
-        self._pending_notifications.append({
+        note = {
             "task_name": task_name,
             "status": status,
             "task_id": task_id,
             "owner": owner,
             "body": (body[:500] + "…") if body and len(body) > 500 else body,
             "timestamp": _utcnow().isoformat() + "Z",
-        })
+        }
+        self._pending_notifications.append(note)
         # Cap at 50 to avoid unbounded growth
         if len(self._pending_notifications) > 50:
             self._pending_notifications = self._pending_notifications[-50:]
+        # Push to WebSocket subscribers if the channel is available
+        try:
+            from routes.ws_routes import push_notification
+            if owner:
+                push_notification(owner, note)
+        except Exception:
+            pass
 
     def pop_notifications(self, owner: str = None) -> list:
         """Return and clear pending notifications.
