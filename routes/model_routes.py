@@ -339,7 +339,8 @@ def _truthy(value: str | None) -> bool:
 _NON_CHAT_PREFIXES = (
     "dall-e", "tts-", "whisper", "text-embedding", "embedding",
     "davinci", "babbage", "moderation", "omni-moderation",
-    "sora", "gpt-image", "chatgpt-image",
+    "sora", "gpt-image", "chatgpt-image", "rerank", "reranker",
+    "clip", "stable-diffusion",
 )
 _NON_CHAT_CONTAINS = (
     "-realtime", "-transcribe", "-tts", "-codex",
@@ -695,6 +696,14 @@ def _visible_models(cached_models, hidden_models, pinned_models=None):
         return merged
     hidden = set(_normalize_model_ids(hidden_models))
     return [m for m in merged if m not in hidden]
+
+
+def _first_visible_chat_model(cached_models, hidden_models, pinned_models=None) -> str:
+    """Return the first visible model that is safe to use as a chat default."""
+    for model_id in _visible_models(cached_models, hidden_models, pinned_models):
+        if _is_chat_model(model_id):
+            return model_id
+    return ""
 
 
 def setup_model_routes(model_discovery):
@@ -1594,11 +1603,15 @@ def setup_model_routes(model_discovery):
                 return {"endpoint_id": "", "endpoint_url": "", "model": ""}
             base = _normalize_base(ep.base_url)
             chat_url = build_chat_url(base)
+            if model and not _is_chat_model(model):
+                model = ""
             if not model and (getattr(ep, "cached_models", None) or getattr(ep, "pinned_models", None)):
                 try:
-                    visible = _visible_models(ep.cached_models, getattr(ep, "hidden_models", None), getattr(ep, "pinned_models", None))
-                    if visible:
-                        model = visible[0]
+                    model = _first_visible_chat_model(
+                        ep.cached_models,
+                        getattr(ep, "hidden_models", None),
+                        getattr(ep, "pinned_models", None),
+                    )
                 except Exception:
                     pass
             return {"endpoint_id": ep.id, "endpoint_url": chat_url, "model": model}

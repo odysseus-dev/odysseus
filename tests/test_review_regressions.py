@@ -570,6 +570,105 @@ def test_default_chat_admin_skips_hidden_first_model(monkeypatch):
     assert result["model"] == "visible-model"
 
 
+def test_default_chat_skips_non_chat_cached_models(monkeypatch):
+    """Fallback model selection must not preselect embedding/rerank models."""
+    _install_model_route_import_stubs(monkeypatch)
+    import routes.model_routes as model_routes
+
+    ep = SimpleNamespace(
+        id="ep1",
+        base_url="http://localhost:11434",
+        is_enabled=True,
+        owner=None,
+        cached_models='["text-embedding-3-small", "rerank-english-v3.0", "gpt-4o-mini"]',
+        hidden_models=None,
+    )
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _FakeModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: _FakeDb([ep]))
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: {})
+    monkeypatch.setattr(model_routes, "owner_filter", lambda q, m, u, **kw: q)
+    monkeypatch.setattr(model_routes, "_normalize_base", lambda base: base.rstrip("/"))
+    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user="admin"),
+        app=SimpleNamespace(state=SimpleNamespace(
+            auth_manager=SimpleNamespace(is_admin=lambda user: True)
+        )),
+    )
+
+    result = _default_chat_endpoint()(request)
+    assert result["model"] == "gpt-4o-mini"
+
+
+def test_default_chat_replaces_configured_non_chat_default(monkeypatch):
+    """A stale saved non-chat default should fall forward to a visible chat model."""
+    _install_model_route_import_stubs(monkeypatch)
+    import routes.model_routes as model_routes
+
+    ep = SimpleNamespace(
+        id="ep1",
+        base_url="http://localhost:11434",
+        is_enabled=True,
+        owner=None,
+        cached_models='["text-embedding-3-small", "gpt-4o-mini"]',
+        hidden_models=None,
+    )
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _FakeModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: _FakeDb([ep]))
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: {
+        "default_endpoint_id": "ep1",
+        "default_model": "text-embedding-3-small",
+    })
+    monkeypatch.setattr(model_routes, "owner_filter", lambda q, m, u, **kw: q)
+    monkeypatch.setattr(model_routes, "_normalize_base", lambda base: base.rstrip("/"))
+    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user="admin"),
+        app=SimpleNamespace(state=SimpleNamespace(
+            auth_manager=SimpleNamespace(is_admin=lambda user: True)
+        )),
+    )
+
+    result = _default_chat_endpoint()(request)
+    assert result["model"] == "gpt-4o-mini"
+
+
+def test_default_chat_returns_empty_when_no_visible_chat_model(monkeypatch):
+    """Do not fall back to an embedding-only model list for chat."""
+    _install_model_route_import_stubs(monkeypatch)
+    import routes.model_routes as model_routes
+
+    ep = SimpleNamespace(
+        id="ep1",
+        base_url="http://localhost:11434",
+        is_enabled=True,
+        owner=None,
+        cached_models='["text-embedding-3-small", "rerank-english-v3.0"]',
+        hidden_models=None,
+    )
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _FakeModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: _FakeDb([ep]))
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: {})
+    monkeypatch.setattr(model_routes, "owner_filter", lambda q, m, u, **kw: q)
+    monkeypatch.setattr(model_routes, "_normalize_base", lambda base: base.rstrip("/"))
+    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user="admin"),
+        app=SimpleNamespace(state=SimpleNamespace(
+            auth_manager=SimpleNamespace(is_admin=lambda user: True)
+        )),
+    )
+
+    result = _default_chat_endpoint()(request)
+    assert result["model"] == ""
+
+
 def test_default_chat_all_models_hidden_returns_empty_model(monkeypatch):
     """When all cached models are hidden, get_default_chat returns model: ''."""
     _install_model_route_import_stubs(monkeypatch)

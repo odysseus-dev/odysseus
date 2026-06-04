@@ -261,7 +261,8 @@ class TestIsChatModel:
 
     @pytest.mark.parametrize("model_id", [
         "dall-e-3", "tts-1", "whisper-1", "text-embedding-3-small",
-        "gpt-image-1", "sora-1",
+        "gpt-image-1", "sora-1", "rerank-english-v3.0",
+        "stable-diffusion-xl", "clip-vit-large-patch14",
     ])
     def test_non_chat_models(self, model_id):
         assert _is_chat_model(model_id) is False
