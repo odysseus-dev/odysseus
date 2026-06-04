@@ -221,9 +221,13 @@ def get_context_length(endpoint_url: str, model: str) -> int:
     Falls back to DEFAULT_CONTEXT if unavailable.
     """
     if is_nobodywho_url(endpoint_url):
-        # In-process provider: the serving context is whatever we allocate per
-        # chat (NOBODYWHO_CTX) — there is no HTTP endpoint to ask.
-        return configured_n_ctx()
+        # In-process provider: report the per-model allocation (trained max,
+        # capped by what fits this machine's memory — Cookbook-consistent).
+        try:
+            from src.nobodywho_provider import manager as _nbw_manager
+            return _nbw_manager.context_length(model)
+        except Exception:
+            return configured_n_ctx()
     configured_kind = _configured_endpoint_kind(endpoint_url)
     is_local = _is_local_endpoint(endpoint_url)
     if not is_local and model in _context_cache:

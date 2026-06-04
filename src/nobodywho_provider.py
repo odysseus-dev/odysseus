@@ -32,9 +32,10 @@ import glob
 import json
 import logging
 import os
+import struct
 import threading
 import time
-from typing import AsyncIterator, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,106 @@ def configured_n_ctx() -> int:
         return max(512, val)
     except Exception:
         return _DEFAULT_N_CTX
+
+
+# ── GGUF header metadata (for per-model context sizing) ──
+
+_GGUF_SCALARS = {
+    0: ("<B", 1), 1: ("<b", 1), 2: ("<H", 2), 3: ("<h", 2), 4: ("<I", 4),
+    5: ("<i", 4), 6: ("<f", 4), 7: ("<?", 1), 10: ("<Q", 8), 11: ("<q", 8),
+    12: ("<d", 8),
+}
+
+
+def _gguf_metadata(path: str, max_keys: int = 256) -> Dict[str, Any]:
+    """Read scalar key/values from a GGUF header (architecture, context
+    length, attention shape). Cheap: stops at the tokenizer section or after
+    ``max_keys`` — the keys we need come first by convention."""
+    meta: Dict[str, Any] = {}
+    try:
+        with open(path, "rb") as f:
+            magic, version, _n_tensors, n_kv = struct.unpack("<IIQQ", f.read(24))
+            if magic != 0x46554747 or version < 2:  # b"GGUF", v2+ (u64 counts)
+                return meta
+
+            def rd_str() -> str:
+                (n,) = struct.unpack("<Q", f.read(8))
+                return f.read(n).decode("utf-8", errors="replace")
+
+            def rd_val(t: int):
+                if t in _GGUF_SCALARS:
+                    fmt, size = _GGUF_SCALARS[t]
+                    return struct.unpack(fmt, f.read(size))[0]
+                if t == 8:
+                    return rd_str()
+                if t == 9:  # array: parse through small ones, bail on huge
+                    (et,) = struct.unpack("<I", f.read(4))
+                    (n,) = struct.unpack("<Q", f.read(8))
+                    if n > 4096:
+                        raise StopIteration  # vocab etc. — past what we need
+                    return [rd_val(et) for _ in range(n)]
+                raise StopIteration  # unknown type — stop cleanly
+
+            for _ in range(min(n_kv, max_keys)):
+                key = rd_str()
+                if key.startswith("tokenizer."):
+                    break  # everything we care about precedes the tokenizer
+                (t,) = struct.unpack("<I", f.read(4))
+                meta[key] = rd_val(t)
+    except StopIteration:
+        pass
+    except Exception as e:
+        logger.debug(f"GGUF metadata read failed for {path}: {e}")
+    return meta
+
+
+def _kv_bytes_per_token(meta: Dict[str, Any]) -> Optional[int]:
+    """Bytes of KV cache one context token costs, from real header shape.
+
+    Standard attention: K+V, f16, per layer: 2 * n_kv_heads * head_dim * 2.
+    deepseek2 (MLA) caches a compressed latent instead — far smaller.
+    Returns None when the arch keys aren't recognized (caller falls back).
+    """
+    arch = meta.get("general.architecture")
+    if not arch:
+        return None
+
+    def g(key: str, default=None):
+        return meta.get(f"{arch}.{key}", default)
+
+    n_layer = g("block_count")
+    if not n_layer:
+        return None
+    if arch == "deepseek2":
+        rank = g("attention.kv_lora_rank")
+        rope = g("rope.dimension_count") or 0
+        if rank:
+            return int(n_layer) * (int(rank) + int(rope)) * 2  # f16 latent
+        return None
+    n_head = g("attention.head_count")
+    emb = g("embedding_length")
+    if not (n_head and emb):
+        return None
+    n_kv_head = g("attention.head_count_kv") or n_head
+    head_dim = g("attention.key_length") or (int(emb) // int(n_head))
+    return 2 * int(n_layer) * int(n_kv_head) * int(head_dim) * 2
+
+
+def _memory_budget_gb() -> Optional[float]:
+    """Usable model memory on this machine — the same number Cookbook's fit
+    estimates use (services/hwfit), so both surfaces agree by construction."""
+    try:
+        from services.hwfit.hardware import detect_system
+        system = detect_system()
+        vram = max((g.get("vram_gb") or 0) for g in system.get("gpus") or [{}])
+        if vram:
+            return float(vram)
+        ram = system.get("ram_gb")
+        if ram:
+            return float(ram) * 0.6  # CPU-only: leave room for the OS
+    except Exception as e:
+        logger.debug(f"hardware detection unavailable: {e}")
+    return None
 
 
 def _is_remote_ref(model_id: str) -> bool:
@@ -184,6 +285,8 @@ class NobodyWhoManager:
         # model id -> absolute gguf path, rebuilt by list_models()
         self._id_to_path: Dict[str, str] = {}
         self._scan_cache: Tuple[float, List[str]] = (0.0, [])
+        # source -> (file signature, resolved n_ctx)
+        self._n_ctx_cache: Dict[str, Tuple[Tuple[int, int], int]] = {}
 
     # ── availability ──
 
@@ -324,6 +427,80 @@ class NobodyWhoManager:
             )
         return path
 
+    # ── context sizing ──
+
+    def resolve_n_ctx(self, source: str) -> int:
+        """Context window to allocate for ``source``.
+
+        NOBODYWHO_CTX set explicitly  -> use it (clamped to the trained max)
+        unset                         -> min(trained max, fits-in-memory, cap)
+        no local file / unknown arch  -> conservative default
+
+        "fits-in-memory" inverts Cookbook's estimate with better inputs: real
+        weight size from disk, real KV bytes/token from the GGUF header, and
+        the same hardware budget services/hwfit reports — so the number here
+        matches what Cookbook promised for this machine.
+        """
+        explicit = os.getenv("NOBODYWHO_CTX", "").strip()
+        is_local = os.path.isfile(source)
+        sig = (0, 0)
+        if is_local:
+            try:
+                st = os.stat(source)
+                sig = (int(st.st_size), int(st.st_mtime))
+            except Exception:
+                is_local = False
+        cached = self._n_ctx_cache.get(source)
+        if cached and cached[0] == sig:
+            return cached[1]
+
+        meta = _gguf_metadata(source) if is_local else {}
+        arch = meta.get("general.architecture")
+        trained = meta.get(f"{arch}.context_length") if arch else None
+
+        if explicit:
+            n_ctx = configured_n_ctx()
+            if trained:
+                n_ctx = min(n_ctx, int(trained))
+        else:
+            try:
+                cap = max(2048, int(os.getenv("NOBODYWHO_MAX_CTX", "16384")))
+            except Exception:
+                cap = 16384
+            candidates = [cap]
+            if trained:
+                candidates.append(int(trained))
+            kv_per_token = _kv_bytes_per_token(meta)
+            budget_gb = _memory_budget_gb() if kv_per_token else None
+            if kv_per_token and budget_gb:
+                # The budget is a CEILING, not free memory — on unified-memory
+                # machines it's the same pool the OS, browser, and everything
+                # else live in, and model memory is wired (unswappable).
+                # Treating the ceiling as ours alone can freeze the whole
+                # host. Margins, in order: take 80% of the ceiling, subtract
+                # the weights, subtract a 2GB reserve for llama.cpp compute
+                # buffers + the app, then let the KV cache use at most HALF
+                # of whatever survives.
+                usable = budget_gb * 0.8 * (1 << 30)
+                free = usable - sig[0] - 2 * (1 << 30)
+                kv_budget = max(0.0, free * 0.5)
+                # Floor at 2048 (a tiny KV) so a barely-fitting model still
+                # chats; we never inflate beyond that when memory says no.
+                candidates.append(max(2048, int(kv_budget // kv_per_token)))
+            elif not trained:
+                candidates.append(_DEFAULT_N_CTX)  # nothing known — stay safe
+            n_ctx = min(candidates)
+
+        self._n_ctx_cache[source] = (sig, n_ctx)
+        return n_ctx
+
+    def context_length(self, model_id: str) -> int:
+        """Per-model context for UI/budgeting — the allocation, honestly."""
+        try:
+            return self.resolve_n_ctx(self.resolve_source(model_id))
+        except Exception:
+            return configured_n_ctx()
+
     # ── chat lifecycle ──
 
     def _max_loaded(self) -> int:
@@ -380,7 +557,7 @@ class NobodyWhoManager:
                     lc.last_used = time.time()
                     return lc
             mod = self._import()
-            n_ctx = configured_n_ctx()
+            n_ctx = self.resolve_n_ctx(source)
             use_gpu = os.getenv("NOBODYWHO_USE_GPU", "1").strip().lower() not in ("0", "false", "no")
             logger.info(f"NobodyWho: loading model {source} (n_ctx={n_ctx}, gpu={use_gpu})")
             t0 = time.time()

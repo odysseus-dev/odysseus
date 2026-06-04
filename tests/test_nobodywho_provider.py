@@ -621,6 +621,84 @@ def test_probe_endpoint_lists_local_ggufs(tmp_path, monkeypatch):
     assert mr._probe_endpoint(CANONICAL_URL) == ["Qwen3-4B-Q4_K_M"]
 
 
+def _write_gguf(path, kvs):
+    """Minimal GGUF v3 writer: header + scalar/string metadata, no tensors."""
+    import struct as _s
+
+    def _str(s):
+        b = s.encode()
+        return _s.pack("<Q", len(b)) + b
+
+    blob = _s.pack("<IIQQ", 0x46554747, 3, 0, len(kvs))
+    for key, val in kvs.items():
+        blob += _str(key)
+        if isinstance(val, str):
+            blob += _s.pack("<I", 8) + _str(val)
+        else:
+            blob += _s.pack("<I", 4) + _s.pack("<I", int(val))  # uint32
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(blob)
+
+
+def test_resolve_n_ctx_auto_sizes_from_header_and_budget(tmp_path, monkeypatch):
+    """Auto n_ctx = min(trained max, fits-in-memory, cap): the GGUF header
+    gives trained context + real KV shape; the hwfit budget gives memory."""
+    import src.nobodywho_provider as nbw
+
+    monkeypatch.delenv("NOBODYWHO_CTX", raising=False)
+    monkeypatch.setenv("NOBODYWHO_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "no-hub-here"))
+    # 32 layers x 8 kv-heads x 128 head-dim x 2 (K+V) x 2B = 131072 B/token
+    _write_gguf(tmp_path / "Dense-32L.gguf", {
+        "general.architecture": "llama",
+        "llama.context_length": 131072,
+        "llama.block_count": 32,
+        "llama.attention.head_count": 32,
+        "llama.attention.head_count_kv": 8,
+        "llama.embedding_length": 4096,
+    })
+    monkeypatch.setattr(nbw, "_memory_budget_gb", lambda: 9.0)
+
+    mgr = _unavailable_manager()
+    src = mgr.resolve_source("Dense-32L")
+    # ample budget: fit (~21k here) exceeds the conservative default cap, so
+    # the cap binds — the budget is shared unified memory, never ours alone
+    assert mgr.resolve_n_ctx(src) == 16384
+
+    # tight budget: 3GB*0.8 - 2GB reserve leaves ~0.4GB; KV may use half of
+    # it (~1.6k tokens) — the 2048 floor binds so the chat stays usable
+    monkeypatch.setattr(nbw, "_memory_budget_gb", lambda: 3.0)
+    mgr2 = _unavailable_manager()
+    assert mgr2.resolve_n_ctx(src) == 2048
+
+    # explicit env override wins, clamped to the trained max
+    monkeypatch.setenv("NOBODYWHO_CTX", "200000")
+    mgr3 = _unavailable_manager()
+    assert mgr3.resolve_n_ctx(src) == 131072
+    monkeypatch.setenv("NOBODYWHO_CTX", "2048")
+    mgr4 = _unavailable_manager()
+    assert mgr4.resolve_n_ctx(src) == 2048
+
+
+def test_resolve_n_ctx_respects_small_trained_max(tmp_path, monkeypatch):
+    import src.nobodywho_provider as nbw
+
+    monkeypatch.delenv("NOBODYWHO_CTX", raising=False)
+    monkeypatch.setenv("NOBODYWHO_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "no-hub-here"))
+    _write_gguf(tmp_path / "Tiny-2k.gguf", {
+        "general.architecture": "llama",
+        "llama.context_length": 2048,
+        "llama.block_count": 12,
+        "llama.attention.head_count": 12,
+        "llama.embedding_length": 768,
+    })
+    monkeypatch.setattr(nbw, "_memory_budget_gb", lambda: 18.0)
+    mgr = _unavailable_manager()
+    # never allocate beyond what the model was trained for
+    assert mgr.resolve_n_ctx(mgr.resolve_source("Tiny-2k")) == 2048
+
+
 def test_empty_state_hint_is_actionable(monkeypatch):
     """A reachable NobodyWho endpoint with zero models must tell a
     non-technical user what to do next, not just "no models found"."""
