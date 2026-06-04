@@ -763,6 +763,23 @@ def _decode_header(raw):
     return " ".join(decoded)
 
 
+def _safe_decode_payload(payload: bytes, charset: str | None) -> str:
+    """Decode an email body payload, tolerating bogus/unknown charset labels.
+
+    ``bytes.decode(charset, errors="replace")`` only covers byte-level decode
+    errors — an unknown codec name (e.g. a malformed ``charset="x-unknown"``
+    from spam/misconfigured senders) raises ``LookupError`` *before* the
+    error-handler is consulted. Header decoding already guards this (see
+    ``_decode_header``); the body path used the same unsafe pattern and would
+    make the whole message unreadable. Fall back to utf-8."""
+    if payload is None:
+        return ""
+    try:
+        return payload.decode(charset or "utf-8", errors="replace")
+    except (LookupError, ValueError):
+        return payload.decode("utf-8", errors="replace")
+
+
 def _detect_sent_folder(conn):
     """Find the server's Sent folder name. Returns 'Sent' if nothing matches.
 
@@ -1018,13 +1035,11 @@ def _extract_html(msg):
             if ct == "text/html" and "attachment" not in cd:
                 payload = part.get_payload(decode=True)
                 if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    return payload.decode(charset, errors="replace")
+                    return _safe_decode_payload(payload, part.get_content_charset())
     elif msg.get_content_type() == "text/html":
         payload = msg.get_payload(decode=True)
         if payload:
-            charset = msg.get_content_charset() or "utf-8"
-            return payload.decode(charset, errors="replace")
+            return _safe_decode_payload(payload, msg.get_content_charset())
     return None
 
 
@@ -1037,13 +1052,11 @@ def _extract_text(msg):
             if ct == "text/plain" and "attachment" not in cd:
                 payload = part.get_payload(decode=True)
                 if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    text_parts.append(payload.decode(charset, errors="replace"))
+                    text_parts.append(_safe_decode_payload(payload, part.get_content_charset()))
             elif ct == "text/html" and not text_parts and "attachment" not in cd:
                 payload = part.get_payload(decode=True)
                 if payload:
-                    charset = part.get_content_charset() or "utf-8"
-                    raw_html = payload.decode(charset, errors="replace")
+                    raw_html = _safe_decode_payload(payload, part.get_content_charset())
                     text = re.sub(r"<br\s*/?>", "\n", raw_html, flags=re.I)
                     text = re.sub(r"<[^>]+>", "", text)
                     text = html.unescape(text)
@@ -1052,8 +1065,7 @@ def _extract_text(msg):
     else:
         payload = msg.get_payload(decode=True)
         if payload:
-            charset = msg.get_content_charset() or "utf-8"
-            return payload.decode(charset, errors="replace")
+            return _safe_decode_payload(payload, msg.get_content_charset())
     return ""
 
 
