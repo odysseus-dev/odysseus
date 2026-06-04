@@ -172,6 +172,9 @@ _USER_TZ_OFFSET_MIN: ContextVar = ContextVar("user_tz_offset_min", default=None)
 
 def set_user_tz_offset(offset_min):
     """Set the current user's UTC offset for this async context."""
+    if offset_min in (None, ""):
+        _USER_TZ_OFFSET_MIN.set(None)
+        return
     try:
         v = int(offset_min)
     except (TypeError, ValueError):
@@ -182,6 +185,50 @@ def set_user_tz_offset(offset_min):
 def get_user_tz_offset():
     """Read the current user's UTC offset (minutes east of UTC), or None."""
     return _USER_TZ_OFFSET_MIN.get()
+
+
+def _calendar_user_now(tz_hint: str = "", offset_min=None, now_utc: datetime = None) -> datetime:
+    """Return the browser user's current datetime for prompt anchoring.
+
+    Prefer the IANA timezone name because it carries DST rules. Fall back to
+    the browser's current UTC offset when only an offset is available, and then
+    to server-local time for legacy callers.
+    """
+    from datetime import timezone as _tz, timedelta as _td
+
+    if now_utc is None:
+        now_utc = datetime.now(_tz.utc)
+    elif now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=_tz.utc)
+    else:
+        now_utc = now_utc.astimezone(_tz.utc)
+
+    tz_hint = (tz_hint or "").strip()
+    if tz_hint:
+        try:
+            from zoneinfo import ZoneInfo
+            return now_utc.astimezone(ZoneInfo(tz_hint))
+        except Exception:
+            pass
+
+    try:
+        if offset_min not in (None, ""):
+            offset = int(offset_min)
+            return now_utc.astimezone(_tz(_td(minutes=offset)))
+    except (TypeError, ValueError):
+        pass
+
+    return now_utc.astimezone()
+
+
+def _format_utc_offset(dt: datetime) -> str:
+    offset = dt.utcoffset()
+    if offset is None:
+        return "+00:00"
+    total_minutes = int(offset.total_seconds() // 60)
+    sign = "+" if total_minutes >= 0 else "-"
+    total_minutes = abs(total_minutes)
+    return f"{sign}{total_minutes // 60:02d}:{total_minutes % 60:02d}"
 
 
 def parse_due_for_user(s: str) -> str:
@@ -1196,7 +1243,7 @@ def setup_calendar_routes() -> APIRouter:
         Output: {"ok": true, "event": {"summary", "dtstart", "dtend",
                   "all_day", "location", "description"}, "confidence": 0.0-1.0}
 
-        Anchored on the server's current date/time so phrases like
+        Anchored on the browser user's current date/time so phrases like
         "tomorrow", "next Tuesday", "in 30 minutes" resolve correctly.
         Uses the "utility" endpoint (small / fast model) to keep latency low.
         """
@@ -1212,6 +1259,7 @@ def setup_calendar_routes() -> APIRouter:
         if not text:
             raise HTTPException(400, "text is required")
         tz_hint = (body.get("tz") or "").strip()
+        tz_offset = body.get("tz_offset", body.get("tzOffset"))
 
         url, model, headers = resolve_endpoint("utility")
         if not url:
@@ -1219,15 +1267,22 @@ def setup_calendar_routes() -> APIRouter:
         if not url or not model:
             return {"ok": False, "error": "No LLM endpoint configured"}
 
-        now = datetime.now()
+        now = _calendar_user_now(tz_hint, tz_offset)
         now_iso = now.strftime("%Y-%m-%dT%H:%M:%S")
+        offset_label = _format_utc_offset(now)
+        tz_context = (
+            f"User timezone: {tz_hint} (UTC{offset_label}). "
+            if tz_hint
+            else f"User UTC offset: UTC{offset_label}. "
+        )
         # The model gets only the schema it needs to fill out; we re-validate
         # everything client-side too.
         system_prompt = (
             "You are a calendar event parser. Read the user's one-line "
             "description and emit STRICT JSON describing the event. "
             f"Today is {now.strftime('%A, %Y-%m-%d')} ({now_iso}). "
-            + (f"User timezone: {tz_hint}. " if tz_hint else "")
+            f"Local time is {now.strftime('%H:%M')} UTC{offset_label}. "
+            + tz_context
             + "Resolve relative dates (\"tomorrow\", \"friday\", \"next monday\", "
               "\"in 30 minutes\") against today. Default duration is 60 minutes "
               "when no end time is given. If the text mentions a date with no "

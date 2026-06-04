@@ -37,6 +37,43 @@ from src.agent_tools import (
 logger = logging.getLogger(__name__)
 
 
+def _current_date_time_context(now_utc=None) -> str:
+    """Build the per-request date context, preferring the browser UTC offset."""
+    from datetime import datetime as _dt, timezone as _tz
+
+    if now_utc is None:
+        utc_now = _dt.now(_tz.utc)
+    elif now_utc.tzinfo is None:
+        utc_now = now_utc.replace(tzinfo=_tz.utc)
+    else:
+        utc_now = now_utc.astimezone(_tz.utc)
+
+    try:
+        from routes.calendar_routes import (
+            _calendar_user_now,
+            _format_utc_offset,
+            get_user_tz_offset,
+        )
+        _now = _calendar_user_now(offset_min=get_user_tz_offset(), now_utc=utc_now)
+        _off_fmt = _format_utc_offset(_now)
+    except Exception:
+        _now = utc_now.astimezone()
+        _off = _now.strftime('%z')  # e.g. +0900
+        _off_fmt = (f"{_off[:3]}:{_off[3:]}" if _off else "+00:00")
+
+    return (
+        f"## Current date and time\n"
+        f"Today is {_now.strftime('%A, %B %-d, %Y')} ({_now.strftime('%Y-%m-%d')}). "
+        f"Local time is {_now.strftime('%-I:%M %p')} ({_now.strftime('%Z') or 'local'}, UTC{_off_fmt}); "
+        f"current UTC time is {utc_now.strftime('%H:%M')}. "
+        f"Use this for any 'today'/'tomorrow'/'this week' reasoning — do NOT "
+        f"infer the date from training data or from event timestamps.\n"
+        f"When scheduling a task (manage_tasks), scheduled_time is in UTC: "
+        f"subtract the offset above from the user's local time "
+        f"(local {_now.strftime('%H:%M')} = {utc_now.strftime('%H:%M')} UTC right now).\n\n"
+    )
+
+
 def _load_mcp_disabled_map() -> Dict[str, set]:
     """Load per-server disabled tool sets from the database."""
     from core.database import McpServer, SessionLocal
@@ -597,27 +634,11 @@ def _build_system_prompt(
     set_active_model(model)
 
     # Current date/time — every request. Models default to their
-    # training-cutoff date when "today" is asked otherwise (was
-    # rendering April 2026 dates as "today" when the actual date is
-    # May 19, 2026). System TZ-local so calendar/email date math
-    # matches what the user sees.
+    # training-cutoff date when "today" is asked otherwise. Prefer the
+    # browser user's UTC offset when present so calendar/email date math
+    # matches what the user sees, not the server timezone.
     try:
-        from datetime import datetime as _dt, timezone as _tz
-        _now = _dt.now().astimezone()
-        _utc = _dt.now(_tz.utc)
-        _off = _now.strftime('%z')  # e.g. +0900
-        _off_fmt = (f"{_off[:3]}:{_off[3:]}" if _off else "+00:00")
-        agent_prompt = (
-            f"## Current date and time\n"
-            f"Today is {_now.strftime('%A, %B %-d, %Y')} ({_now.strftime('%Y-%m-%d')}). "
-            f"Local time is {_now.strftime('%-I:%M %p')} ({_now.strftime('%Z')}, UTC{_off_fmt}); "
-            f"current UTC time is {_utc.strftime('%H:%M')}. "
-            f"Use this for any 'today'/'tomorrow'/'this week' reasoning — do NOT "
-            f"infer the date from training data or from event timestamps.\n"
-            f"When scheduling a task (manage_tasks), scheduled_time is in UTC: "
-            f"subtract the offset above from the user's local time "
-            f"(local {_now.strftime('%H:%M')} = {_utc.strftime('%H:%M')} UTC right now).\n\n"
-        ) + agent_prompt
+        agent_prompt = _current_date_time_context() + agent_prompt
     except Exception:
         pass
 

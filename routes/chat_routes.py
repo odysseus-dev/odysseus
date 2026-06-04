@@ -360,9 +360,8 @@ def setup_chat_routes(
         # times in the USER's tz, not the server's. See calendar_routes.
         try:
             _tz_hdr = request.headers.get("x-tz-offset")
-            if _tz_hdr is not None:
-                from routes.calendar_routes import set_user_tz_offset
-                set_user_tz_offset(_tz_hdr)
+            from routes.calendar_routes import set_user_tz_offset
+            set_user_tz_offset(_tz_hdr)
         except Exception:
             pass
 
