@@ -1093,4 +1093,474 @@ def setup_shell_routes() -> APIRouter:
             return {"ok": True, "output": out.decode("utf-8", errors="replace")[-400:]}
         return {"ok": False, "error": err.decode("utf-8", errors="replace")[-400:]}
 
+    # ── Shell filesystem endpoints ────────────────────────────────────────────
+    # Both endpoints are restricted to the user's home directory. Paths outside
+    # that root are rejected with 403 — no traversal is possible.
+
+    _HOME = Path(os.path.expanduser("~")).resolve()
+
+    _TEXT_EXTS = {
+        '.py', '.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs',
+        '.html', '.htm', '.css', '.scss', '.less',
+        '.json', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf', '.env',
+        '.md', '.txt', '.rst', '.csv', '.log', '.gitignore', '.gitattributes',
+        '.sh', '.bash', '.zsh', '.fish', '.ps1', '.bat', '.cmd',
+        '.sql', '.r', '.rb', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.hpp',
+        '.xml', '.svg', '.dockerfile', '.makefile', '.lock', '',
+    }
+    _MAX_FILE_BYTES = 500_000  # 500 KB hard cap
+
+    def _safe_path(raw: str) -> Path:
+        """Resolve *raw* and assert it sits inside _HOME. Raises HTTPException on violation."""
+        try:
+            p = Path(raw).resolve()
+        except Exception:
+            raise HTTPException(400, "Invalid path")
+        try:
+            p.relative_to(_HOME)
+        except ValueError:
+            raise HTTPException(403, f"Path must be inside {_HOME}")
+        return p
+
+    @router.get("/api/shell/browse")
+    async def shell_browse(request: Request, path: str = ""):
+        """List directory contents — folders then files, sorted alphabetically.
+        Restricted to the user's home directory. Admin only."""
+        _require_admin(request)
+        _reject_cross_site(request)
+        target = _safe_path(path) if path else _HOME
+        if not target.exists() or not target.is_dir():
+            raise HTTPException(404, "Directory not found")
+
+        dirs, files = [], []
+        try:
+            for item in sorted(target.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+                if item.name.startswith('.'):
+                    continue
+                try:
+                    if item.is_dir():
+                        dirs.append({"name": item.name, "path": str(item)})
+                    elif item.is_file():
+                        files.append({
+                            "name": item.name,
+                            "path": str(item),
+                            "size": item.stat().st_size,
+                            "ext": item.suffix.lower(),
+                        })
+                except OSError:
+                    pass
+        except PermissionError:
+            pass
+
+        parent = str(target.parent) if target != _HOME else None
+        return {"path": str(target), "root": str(_HOME), "parent": parent, "dirs": dirs, "files": files}
+
+    @router.get("/api/shell/readfile")
+    async def shell_readfile(request: Request, path: str):
+        """Read a text file from the local filesystem. 500 KB limit. Admin only."""
+        _require_admin(request)
+        _reject_cross_site(request)
+        target = _safe_path(path)
+        if not target.exists() or not target.is_file():
+            raise HTTPException(404, "File not found")
+        if target.suffix.lower() not in _TEXT_EXTS:
+            raise HTTPException(400, "Binary file — cannot display")
+        size = target.stat().st_size
+        if size > _MAX_FILE_BYTES:
+            raise HTTPException(400, f"File too large ({size // 1024} KB > 500 KB)")
+        try:
+            content = target.read_text(encoding="utf-8", errors="replace")
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+        return {"path": str(target), "name": target.name, "ext": target.suffix.lower(), "content": content}
+
+    # ── Git integration endpoints ─────────────────────────────────────────────
+
+    class _GitFileReq(BaseModel):
+        path: str       # repo root (abs path inside _HOME)
+        file: str = ""  # relative file; empty = all files
+
+    class _GitCommitReq(BaseModel):
+        path: str
+        message: str
+
+    async def _git_run(*args, cwd: str, timeout: int = 10):
+        """Run a git sub-command, return (returncode, stdout, stderr)."""
+        proc = await asyncio.create_subprocess_exec(
+            "git", *args, cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return proc.returncode, stdout.decode("utf-8", errors="replace"), \
+               stderr.decode("utf-8", errors="replace")
+
+    @router.get("/api/shell/gitstatus")
+    async def shell_gitstatus(request: Request, path: str = ""):
+        """git status --porcelain for the given directory. Admin only."""
+        _require_admin(request)
+        _reject_cross_site(request)
+        target = _safe_path(path) if path else _HOME
+        try:
+            rc, stdout, _ = await _git_run("status", "--porcelain", "-uall",
+                                           cwd=str(target))
+            if rc == 128:
+                return {"is_git": False, "files": [], "cwd": str(target)}
+            files = []
+            for line in stdout.splitlines():
+                if len(line) < 3:
+                    continue
+                xy = line[:2]
+                fname = line[3:]
+                if " -> " in fname:          # renamed: "old -> new"
+                    fname = fname.split(" -> ", 1)[1]
+                files.append({"xy": xy, "file": fname.strip()})
+            return {"is_git": True, "files": files, "cwd": str(target)}
+        except asyncio.TimeoutError:
+            return {"is_git": False, "files": [], "error": "git timed out", "cwd": str(target)}
+        except Exception as exc:
+            return {"is_git": False, "files": [], "error": str(exc), "cwd": str(target)}
+
+    @router.get("/api/shell/gitdiff")
+    async def shell_gitdiff(request: Request, path: str, file: str,
+                            staged: bool = False):
+        """git diff for a single file. Admin only."""
+        _require_admin(request)
+        _reject_cross_site(request)
+        repo = _safe_path(path)
+        # Verify the file path stays inside _HOME
+        file_full = (repo / file).resolve()
+        try:
+            file_full.relative_to(_HOME)
+        except ValueError:
+            raise HTTPException(403, "File outside allowed root")
+
+        git_args = ("diff", "--cached", "--", file) if staged \
+                   else ("diff", "HEAD", "--", file)
+        try:
+            _, stdout, _ = await _git_run(*git_args, cwd=str(repo))
+            diff = stdout
+            # Untracked / brand-new file → show full content as all-added
+            if not diff.strip() and file_full.is_file():
+                try:
+                    content = file_full.read_text(encoding="utf-8", errors="replace")
+                    lines_out = [f"+{l}" for l in content.splitlines()]
+                    diff = (f"--- /dev/null\n+++ b/{file}\n"
+                            f"@@ -0,0 +1,{len(lines_out)} @@\n"
+                            + "\n".join(lines_out))
+                except Exception:
+                    diff = ""
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "git diff timed out")
+        return {"diff": diff, "file": file}
+
+    @router.post("/api/shell/gitstage")
+    async def shell_gitstage(request: Request, req: _GitFileReq):
+        """git add <file> (or all). Admin only."""
+        _require_admin(request)
+        repo = _safe_path(req.path)
+        args = ("add", req.file) if req.file else ("add", "-A")
+        rc, _, stderr = await _git_run(*args, cwd=str(repo))
+        if rc != 0:
+            raise HTTPException(400, stderr.strip())
+        return {"ok": True}
+
+    @router.post("/api/shell/gitunstage")
+    async def shell_gitunstage(request: Request, req: _GitFileReq):
+        """git restore --staged <file> (or all). Admin only."""
+        _require_admin(request)
+        repo = _safe_path(req.path)
+        args = ("restore", "--staged", req.file) if req.file \
+               else ("restore", "--staged", ".")
+        rc, _, stderr = await _git_run(*args, cwd=str(repo))
+        if rc != 0:
+            raise HTTPException(400, stderr.strip())
+        return {"ok": True}
+
+    @router.post("/api/shell/gitrestore")
+    async def shell_gitrestore(request: Request, req: _GitFileReq):
+        """git restore <file> — discard working-tree changes. Admin only."""
+        _require_admin(request)
+        repo = _safe_path(req.path)
+        args = ("restore", req.file) if req.file else ("restore", ".")
+        rc, _, stderr = await _git_run(*args, cwd=str(repo))
+        if rc != 0:
+            raise HTTPException(400, stderr.strip())
+        return {"ok": True}
+
+    @router.get("/api/shell/gitinfo")
+    async def shell_gitinfo(request: Request, path: str = ""):
+        """Branch name, ahead/behind, change count, last commit. Admin only."""
+        _require_admin(request)
+        _reject_cross_site(request)
+        target = _safe_path(path) if path else _HOME
+        cwd = str(target)
+
+        result = {"is_git": False, "branch": None, "ahead": 0, "behind": 0,
+                  "changes": 0, "last_commit": None, "upstream": None}
+
+        # Branch info + ahead/behind + change count — all from one command
+        rc, stdout, _ = await _git_run(
+            "status", "--branch", "--porcelain=2", "-uall", cwd=cwd
+        )
+        if rc == 128:          # not a git repo
+            return result
+        result["is_git"] = True
+        change_count = 0
+        for line in stdout.splitlines():
+            if line.startswith("# branch.head "):
+                result["branch"] = line[15:].strip()
+            elif line.startswith("# branch.upstream "):
+                result["upstream"] = line[19:].strip()
+            elif line.startswith("# branch.ab "):
+                parts = line[12:].split()
+                if len(parts) == 2:
+                    result["ahead"]  = int(parts[0].lstrip("+"))
+                    result["behind"] = int(parts[1].lstrip("-"))
+            elif not line.startswith("#"):
+                change_count += 1
+        result["changes"] = change_count
+
+        # Last commit short hash + subject
+        rc2, out2, _ = await _git_run(
+            "log", "-1", "--format=%h %s", cwd=cwd
+        )
+        if rc2 == 0 and out2.strip():
+            result["last_commit"] = out2.strip()
+
+        return result
+
+    @router.post("/api/shell/gitcommit")
+    async def shell_gitcommit(request: Request, req: _GitCommitReq):
+        """git commit -m <message>. Admin only."""
+        _require_admin(request)
+        msg = req.message.strip()
+        if not msg:
+            raise HTTPException(400, "Commit message required")
+        repo = _safe_path(req.path)
+        rc, stdout, stderr = await _git_run("commit", "-m", msg,
+                                            cwd=str(repo), timeout=30)
+        output = (stdout + stderr).strip()
+        if rc != 0:
+            raise HTTPException(400, output)
+        return {"ok": True, "output": output}
+
     return router
+
+
+# ── Interactive PTY — registered via app.mount() in app.py ───────────────────
+# Using app.mount() with a pure ASGI callable bypasses FastAPI's routing and
+# Starlette's BaseHTTPMiddleware middleware-stack snapshot, both of which can
+# cause WebSocket routes added after middleware setup to return 404.
+
+try:
+    from winpty import PtyProcess as _WinPty
+    _WINPTY_OK = True
+except ImportError:
+    _WinPty = None
+    _WINPTY_OK = False
+
+_PTY_HOME = Path(os.path.expanduser("~")).resolve()
+_log = logging.getLogger(__name__)
+_PTY_READ_BYTES = 65536
+
+
+class _WinPtyAdapter:
+    """Wrap pywinpty's PtyProcess in a uniform interface.
+    Its read() takes a byte count and BLOCKS until data or EOF (raising
+    EOFError at end) — so we run it in an executor thread."""
+    def __init__(self, p): self._p = p
+    def read_blocking(self):
+        # pywinpty .read(num_bytes): blocks, returns str, raises EOFError at end
+        return self._p.read(_PTY_READ_BYTES)
+    def write(self, data): self._p.write(data)
+    def set_size(self, rows, cols):
+        try: self._p.setwinsize(rows, cols)
+        except Exception: pass
+    def alive(self):
+        try: return self._p.isalive()
+        except Exception: return False
+    def kill(self):
+        try: self._p.terminate(force=True)
+        except Exception: pass
+
+
+class _PosixPtyAdapter:
+    """Wrap a POSIX master fd in the same interface. read_blocking() uses a
+    blocking os.read on the master fd; EOF raises EOFError."""
+    def __init__(self, master_fd, subproc):
+        self._fd = master_fd
+        self._sub = subproc
+    def read_blocking(self):
+        data = os.read(self._fd, _PTY_READ_BYTES)  # blocks; b'' = EOF
+        if not data:
+            raise EOFError
+        return data.decode("utf-8", errors="replace")
+    def write(self, data):
+        os.write(self._fd, data.encode() if isinstance(data, str) else data)
+    def set_size(self, rows, cols):
+        try:
+            import struct, termios as _t
+            fcntl.ioctl(self._fd, _t.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+        except Exception: pass
+    def alive(self):
+        return self._sub.returncode is None
+    def kill(self):
+        try: self._sub.terminate()
+        except Exception: pass
+        try: os.close(self._fd)
+        except Exception: pass
+
+
+def _pty_authorized(scope) -> bool:
+    """Validate the session cookie directly from the ASGI scope. The PTY socket
+    bypasses AuthMiddleware (it runs before the middleware stack), so we must
+    enforce auth here — this endpoint is a full interactive shell."""
+    app = scope.get("app")
+    state = getattr(app, "state", None)
+    # Auth explicitly disabled (AUTH_ENABLED=false) — dev mode, trust caller.
+    if getattr(state, "auth_enabled", True) is False:
+        return True
+    # Loopback bypass (LOCALHOST_BYPASS=true) — trust requests from 127.0.0.1.
+    if getattr(state, "localhost_bypass", False):
+        client = scope.get("client") or ("", 0)
+        if client[0] in ("127.0.0.1", "::1"):
+            return True
+    auth = getattr(state, "auth_manager", None)
+    if auth is None:
+        return True
+    # Parse the Cookie header out of the raw ASGI headers
+    cookie_hdr = ""
+    for k, v in scope.get("headers", []):
+        if k == b"cookie":
+            cookie_hdr = v.decode("latin-1")
+            break
+    token = None
+    for part in cookie_hdr.split(";"):
+        name, _, val = part.strip().partition("=")
+        if name == "odysseus_session":
+            token = val
+            break
+    if not token or not auth.validate_token(token):
+        return False
+    user = auth.get_username_for_token(token)
+    return bool(user) and auth.is_admin(user)
+
+
+async def _run_pty_session(ws, cwd: str, cols: int, rows: int) -> None:
+    """Spawn a PTY shell and wire it bidirectionally to a WebSocket."""
+    from starlette.websockets import WebSocketDisconnect as _WSD
+    await ws.accept()
+
+    try:
+        cwd_path = Path(cwd).resolve()
+        cwd_path.relative_to(_PTY_HOME)
+        cwd_str = str(cwd_path)
+    except Exception:
+        cwd_str = str(_PTY_HOME)
+
+    loop = asyncio.get_event_loop()
+    adapter = None
+
+    try:
+        if IS_WINDOWS:
+            if not _WINPTY_OK:
+                await ws.send_text(
+                    "\r\n\x1b[33mpywinpty not installed.\x1b[0m\r\n"
+                    "Run:  pip install pywinpty  then restart the server.\r\n"
+                )
+                await ws.close()
+                return
+            shell = find_bash() or "cmd.exe"
+            argv = [shell, "-l", "-i"] if "bash" in shell.lower() else [shell]
+            p = _WinPty.spawn(argv, cwd=cwd_str, dimensions=(rows, cols))
+            adapter = _WinPtyAdapter(p)
+        else:
+            if not PTY_SUPPORTED:
+                await ws.send_text("\r\nPTY not supported on this platform.\r\n")
+                await ws.close()
+                return
+            import struct, termios as _termios
+            master_fd, slave_fd = pty.openpty()
+            fcntl.ioctl(slave_fd, _termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+            _bash = find_bash() or "/bin/bash"
+            _subproc = await asyncio.create_subprocess_exec(
+                _bash, "-l", "-i",
+                stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
+                cwd=cwd_str, preexec_fn=os.setsid,
+            )
+            os.close(slave_fd)
+            adapter = _PosixPtyAdapter(master_fd, _subproc)
+
+        # Reader: blocking reads in a thread, forwarded to the socket.
+        async def _reader():
+            while True:
+                try:
+                    out = await loop.run_in_executor(None, adapter.read_blocking)
+                except EOFError:
+                    break
+                except Exception:
+                    break
+                if out:
+                    try:
+                        await ws.send_text(out)
+                    except Exception:
+                        break
+            try:
+                await ws.send_text("\r\n\x1b[2m[session ended]\x1b[0m\r\n")
+                await ws.close()
+            except Exception:
+                pass
+
+        reader_task = asyncio.create_task(_reader())
+        try:
+            while True:
+                raw = await ws.receive_text()
+                msg = json.loads(raw)
+                if msg.get("type") == "input":
+                    adapter.write(msg.get("data", ""))
+                elif msg.get("type") == "resize":
+                    adapter.set_size(int(msg.get("rows", rows)), int(msg.get("cols", cols)))
+        except _WSD:
+            pass
+        except Exception:
+            pass
+        finally:
+            reader_task.cancel()
+
+    except Exception as exc:
+        _log.error("PTY error: %s", exc, exc_info=True)
+        try:
+            await ws.send_text(f"\r\nPTY failed: {exc}\r\n")
+            await ws.close()
+        except Exception:
+            pass
+    finally:
+        if adapter:
+            adapter.kill()
+
+
+async def pty_ws_asgi(scope, receive, send):
+    """Pure ASGI handler for the interactive PTY WebSocket, dispatched by the
+    middleware-stack interceptor in app.py (which runs before Starlette's
+    snapshotted router, avoiding the WebSocket-route 404 problem)."""
+    from starlette.websockets import WebSocket as _SW
+
+    if scope["type"] != "websocket":
+        await send({"type": "http.response.start", "status": 404,
+                    "headers": [[b"content-length", b"0"]]})
+        await send({"type": "http.response.body", "body": b""})
+        return
+
+    ws = _SW(scope, receive, send)
+
+    if not _pty_authorized(scope):
+        await ws.close(code=4403)  # policy violation: not an authenticated admin
+        return
+
+    from urllib.parse import parse_qs
+    qs = parse_qs(scope.get("query_string", b"").decode())
+    cwd = qs.get("cwd", [""])[0]
+    cols = int(qs.get("cols", ["120"])[0])
+    rows = int(qs.get("rows", ["30"])[0])
+    await _run_pty_session(ws, cwd, cols, rows)

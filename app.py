@@ -154,7 +154,9 @@ from routes.auth_routes import setup_auth_routes, SESSION_COOKIE
 auth_manager = AuthManager()
 app.state.auth_manager = auth_manager
 AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() != "false"
+app.state.auth_enabled = AUTH_ENABLED  # read by the PTY WebSocket auth check
 LOCALHOST_BYPASS = os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
+app.state.localhost_bypass = LOCALHOST_BYPASS
 if LOCALHOST_BYPASS:
     logger.warning("LOCALHOST_BYPASS is enabled, loopback requests bypass authentication. Do not expose this instance to a network.")
 
@@ -633,8 +635,22 @@ calendar_router = setup_calendar_routes()
 app.include_router(calendar_router)
 
 # Shell (user-facing command execution)
-from routes.shell_routes import setup_shell_routes
+from routes.shell_routes import setup_shell_routes, pty_ws_asgi as _pty_ws_asgi
 app.include_router(setup_shell_routes())
+
+# Starlette 1.x eagerly snapshots app.router when add_middleware() is called,
+# so @app.websocket() and app.mount() routes added afterwards return 404.
+# Intercepting at the middleware_stack level bypasses this entirely.
+_orig_stack = app.middleware_stack or app.build_middleware_stack()
+
+async def _pty_ws_interceptor(scope, receive, send):
+    if scope.get("type") == "websocket" and \
+            scope.get("path", "").rstrip("/") == "/api/shell/pty-ws":
+        await _pty_ws_asgi(scope, receive, send)
+    else:
+        await _orig_stack(scope, receive, send)
+
+app.middleware_stack = _pty_ws_interceptor
 
 # Cookbook (model download/serve/cache, cookbook state sync)
 from routes.cookbook_routes import setup_cookbook_routes

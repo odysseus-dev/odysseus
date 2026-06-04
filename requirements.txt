@@ -1,5 +1,7 @@
 fastapi
 uvicorn
+websockets        # WebSocket protocol support for uvicorn (Shell PTY terminal)
+pywinpty; platform_system == "Windows"   # interactive PTY on Windows (Shell terminal)
 python-multipart
 python-dotenv
 httpx
