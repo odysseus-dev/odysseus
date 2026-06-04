@@ -2099,6 +2099,37 @@
               </div>
             </div>
           </div>
+          <div class="admin-card" id="adm-codexRuntimeCard">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M12 3l7 4v10l-7 4-7-4V7l7-4z"/><path d="M12 12l7-4"/><path d="M12 12v9"/><path d="M12 12L5 8"/></svg>Codex Runtime <span id="adm-codexState" class="admin-badge admin-badge-off" style="margin-left:6px;">loading</span></h2>
+            <div class="admin-toggle-sub" id="adm-codexSummary" style="margin-bottom:10px">Checking runtime...</div>
+            <div class="admin-model-form">
+              <div class="admin-model-form-row" style="align-items:flex-start;gap:10px;flex-wrap:wrap;">
+                <div style="min-width:170px;flex:1;">
+                  <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.4;font-weight:600;">Default</div>
+                  <div id="adm-codexDefault" style="font-size:12px;word-break:break-word;">-</div>
+                </div>
+                <div style="min-width:170px;flex:1;">
+                  <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.4;font-weight:600;">Models</div>
+                  <div id="adm-codexModels" style="font-size:12px;word-break:break-word;">-</div>
+                </div>
+                <div style="min-width:150px;flex:1;">
+                  <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.4;font-weight:600;">CLI</div>
+                  <div id="adm-codexCli" style="font-size:12px;word-break:break-word;">-</div>
+                </div>
+              </div>
+              <div class="admin-model-form-row" style="align-items:center;gap:6px;">
+                <code id="adm-codexSetupCommand" style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;padding:6px 8px;background:rgba(0,0,0,0.08);border-radius:4px;">docker compose exec odysseus codex login --device-auth</code>
+                <button class="admin-btn-sm" id="adm-codexCopyLogin" style="width:54px;text-align:center;">Copy</button>
+              </div>
+              <div class="admin-model-form-row" style="align-items:center;gap:6px;flex-wrap:wrap;">
+                <button class="admin-btn-sm" id="adm-codexRefresh">Refresh</button>
+                <button class="admin-btn-sm" id="adm-codexProbe">Probe</button>
+                <button class="admin-btn-add" id="adm-codexReconcile">Reconcile</button>
+                <span id="adm-codexMsg" style="font-size:11px;min-height:16px;"></span>
+              </div>
+              <div id="adm-codexDiagnostics" class="adm-ep-inline-msg" style="margin-top:2px;"></div>
+            </div>
+          </div>
           <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Added Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoints)</span></h2>
             <div class="admin-toggle-sub" style="margin-bottom:10px">Manage the endpoints you've added.</div>

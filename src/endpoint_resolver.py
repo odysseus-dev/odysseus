@@ -165,6 +165,12 @@ def _ollama_api_root(base: str) -> str:
 
 def build_chat_url(base: str) -> str:
     """Return the correct chat endpoint URL for a given base."""
+    try:
+        from src.codex_runtime import is_codex_runtime_url
+        if is_codex_runtime_url(base):
+            return base.rstrip("/") + "/chat/completions"
+    except Exception:
+        pass
     base = resolve_url(base)
     provider = _detect_provider(base)
     if provider == "anthropic":
@@ -176,6 +182,12 @@ def build_chat_url(base: str) -> str:
 
 def build_models_url(base: str) -> str:
     """Return the provider-specific model-list endpoint URL for a base."""
+    try:
+        from src.codex_runtime import is_codex_runtime_url
+        if is_codex_runtime_url(base):
+            return base.rstrip("/") + "/models"
+    except Exception:
+        pass
     base = resolve_url(base)
     provider = _detect_provider(base)
     if provider == "anthropic":

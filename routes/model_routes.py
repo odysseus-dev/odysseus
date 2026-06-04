@@ -29,6 +29,18 @@ from src.auth_helpers import _auth_disabled, owner_filter
 
 logger = logging.getLogger(__name__)
 
+_MODEL_CACHE_INVALIDATORS = []
+
+
+def invalidate_models_cache() -> None:
+    """Clear model route caches registered by setup_model_routes()."""
+    for callback in list(_MODEL_CACHE_INVALIDATORS):
+        try:
+            callback()
+        except Exception as exc:
+            logger.debug("Model cache invalidation callback failed: %s", exc)
+
+
 _SPEECH_ENDPOINT_SETTINGS = (
     ("tts_provider", "tts_model", "tts-1", "Text to Speech"),
     ("stt_provider", "stt_model", "base", "Speech to Text"),
@@ -336,7 +348,7 @@ def _truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in ("true", "1", "yes", "on")
 
 
-_ENDPOINT_KINDS = {"auto", "local", "api", "proxy"}
+_ENDPOINT_KINDS = {"auto", "local", "api", "proxy", "codex"}
 _REFRESH_MODES = {"auto", "manual", "disabled"}
 
 
@@ -350,6 +362,8 @@ def _normalize_refresh_mode(value: Any, endpoint_kind: str = "auto") -> str:
     kind = _normalize_endpoint_kind(endpoint_kind)
     if mode in ("manual", "disabled"):
         return mode
+    if kind == "codex":
+        return "manual"
     if mode == "auto" and kind != "proxy":
         return "auto"
     # Proxies default to manual cached-first behavior. Normal local/API
@@ -584,7 +598,7 @@ def _classify_endpoint(base_url: str, endpoint_kind: str = "auto") -> str:
     kind = _normalize_endpoint_kind(endpoint_kind)
     if kind == "local":
         return "local"
-    if kind in ("api", "proxy"):
+    if kind in ("api", "proxy", "codex"):
         return "api"
     try:
         host = urlparse(base_url).hostname or ""
@@ -616,6 +630,10 @@ def _effective_endpoint_kind(ep: Any, base_url: str) -> str:
 def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
     For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
+    from src.codex_runtime import codex_runtime_models, is_codex_runtime_url
+    if is_codex_runtime_url(base_url):
+        return codex_runtime_models()
+
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
     if _detect_provider(base) == "anthropic":
@@ -1134,6 +1152,14 @@ def setup_model_routes(model_discovery):
     # within ~8s of the user noticing.
     _LOCAL_PROBE_TTL = 8.0
     _local_probe_cache: Dict[str, Any] = {"data": None, "time": 0.0}
+
+    def _invalidate_route_caches() -> None:
+        _invalidate_models_cache()
+        _local_probe_cache["data"] = None
+        _local_probe_cache["time"] = 0.0
+
+    if _invalidate_route_caches not in _MODEL_CACHE_INVALIDATORS:
+        _MODEL_CACHE_INVALIDATORS.append(_invalidate_route_caches)
 
     @router.get("/model-endpoints/probe-local")
     async def probe_local_endpoints(request: Request):

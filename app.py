@@ -713,6 +713,9 @@ app.include_router(setup_codex_routes(
 ))
 app.include_router(setup_claude_routes())
 
+from routes.codex_runtime_routes import setup_codex_runtime_routes
+app.include_router(setup_codex_runtime_routes())
+
 from routes.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
 
@@ -846,6 +849,11 @@ async def _startup_event():
     global upload_cleanup_task
     logger.info("Application starting up...")
     webhook_manager.set_loop(asyncio.get_running_loop())
+    try:
+        from src.codex_runtime import ensure_codex_runtime_endpoint_registered
+        ensure_codex_runtime_endpoint_registered()
+    except Exception as e:
+        logger.warning("Codex Runtime endpoint registration failed (non-critical): %s", e)
     # Wipe any leftover incognito sessions from previous process — they're
     # ephemeral by design and must not survive a restart.
     try:

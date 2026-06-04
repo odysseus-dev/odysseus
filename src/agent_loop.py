@@ -483,6 +483,13 @@ _ADMIN_SCHEMA_NAMES = frozenset([
     "create_session", "list_sessions", "send_to_session", "pipeline",
     "ask_teacher", "list_models", "search_chats",
 ])
+
+_CODEX_RUNTIME_AGENT_PREFACE = (
+    "Codex Runtime: this model is reached through Codex app-server, but "
+    "Odysseus owns agent orchestration. Do not use Codex-side shell, file-edit, "
+    "browser, MCP, or approval tools. When a tool is needed, write the fenced "
+    "Odysseus tool block described below so Odysseus can execute it."
+)
 _TOOL_SELECTION_TIMEOUT_SECONDS = 1.5
 
 
@@ -1491,6 +1498,11 @@ async def stream_agent_loop(
     # default to fenced tools, otherwise fall through to keyword + host checks.
     _endpoint_supports: Optional[bool] = None
     try:
+        from src.codex_runtime import is_codex_runtime_url as _is_codex_runtime_url
+        _is_codex_runtime = _is_codex_runtime_url(endpoint_url)
+    except Exception:
+        _is_codex_runtime = False
+    try:
         from core.database import SessionLocal as _SL, ModelEndpoint as _ME
         _db = _SL()
         try:
@@ -1538,7 +1550,8 @@ async def stream_agent_loop(
     if _endpoint_supports is True:
         _is_api_model = True
     elif (
-        _endpoint_supports is False
+        _is_codex_runtime
+        or _endpoint_supports is False
         or _model_no_tools
         or _is_ollama_native
         or _ollama_openai_compat
@@ -1553,6 +1566,11 @@ async def stream_agent_loop(
         compact=_is_api_model,
         owner=owner,
     )
+    if _is_codex_runtime:
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = _CODEX_RUNTIME_AGENT_PREFACE + "\n\n" + str(messages[0].get("content") or "")
+        else:
+            messages.insert(0, {"role": "system", "content": _CODEX_RUNTIME_AGENT_PREFACE})
     prep_timings["prompt_build"] = time.time() - _t2
 
     _t3 = time.time()

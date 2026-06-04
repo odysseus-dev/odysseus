@@ -29,6 +29,24 @@ COPY requirements.txt requirements-optional.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && if [ "$INSTALL_OPTIONAL" = "true" ]; then pip install --no-cache-dir -r requirements-optional.txt; fi
 
+# Codex Runtime. Pin the CLI so app-server JSON-RPC behavior is stable.
+RUN npm install -g @openai/codex@0.137.0 \
+    && mv /usr/local/bin/codex /usr/local/bin/codex-real \
+    && printf '%s\n' \
+        '#!/bin/sh' \
+        'set -e' \
+        'if [ "$(id -u)" = "0" ] && command -v gosu >/dev/null 2>&1; then' \
+        '  PUID="${PUID:-1000}"' \
+        '  PGID="${PGID:-1000}"' \
+        '  CODEX_HOME="${CODEX_HOME:-/app/data/codex}"' \
+        '  mkdir -p "$CODEX_HOME"' \
+        '  chown -R "$PUID:$PGID" "$CODEX_HOME" 2>/dev/null || true' \
+        '  exec gosu "$PUID:$PGID" /usr/local/bin/codex-real "$@"' \
+        'fi' \
+        'exec /usr/local/bin/codex-real "$@"' \
+        > /usr/local/bin/codex \
+    && chmod +x /usr/local/bin/codex
+
 # Copy app code
 COPY . .
 

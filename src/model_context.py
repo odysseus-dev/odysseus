@@ -49,7 +49,7 @@ def _configured_endpoint_kind(url: str) -> Optional[str]:
                 if target != base and not target.startswith(base + "/"):
                     continue
                 kind = (getattr(ep, "endpoint_kind", None) or "auto").strip().lower()
-                if kind in ("local", "api", "proxy"):
+                if kind in ("local", "api", "proxy", "codex"):
                     return kind
                 if getattr(ep, "api_key", None):
                     parsed = urlparse(base)
@@ -261,7 +261,7 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
     # Large OpenAI-compatible proxies can make /models expensive. If the
     # endpoint is explicitly configured as API/proxy, prefer known context
     # metadata (or the default) over downloading the full catalog.
-    if configured_kind in ("api", "proxy"):
+    if configured_kind in ("api", "proxy", "codex"):
         if known:
             logger.info(f"Using known context window for {model}: {known}")
             return known

@@ -458,6 +458,12 @@ class TestSetupProbeSafety:
 
         assert _probe_endpoint("https://api.anthropic.com/v1") == ANTHROPIC_MODELS
 
+    def test_codex_runtime_probe_uses_env_models(self, monkeypatch):
+        monkeypatch.setenv("CODEX_RUNTIME_MODELS", "codex-a,codex-b")
+        monkeypatch.setenv("CODEX_RUNTIME_DEFAULT_MODEL", "codex-c")
+
+        assert _probe_endpoint("codex://runtime") == ["codex-c", "codex-a", "codex-b"]
+
 def test_ollama_endpoint_error_message_includes_troubleshooting():
     msg = model_routes._model_endpoint_error_message(
         "http://localhost:11434/v1",
