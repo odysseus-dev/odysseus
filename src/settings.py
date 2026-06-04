@@ -85,6 +85,11 @@ DEFAULT_SETTINGS = {
     "research_search_provider": "",
     "research_max_tokens": 16384,
     "research_extraction_timeout_seconds": 90,
+    # Lightweight planning/query LLM calls happen before any search starts.
+    # Keep them separately tunable so slow local backends are not capped by
+    # the old 30s/60s per-call defaults.
+    "research_planning_timeout_seconds": 90,
+    "research_query_timeout_seconds": 90,
     "research_extraction_concurrency": 3,
     # Hard wall-clock cap on a single deep-research run. The previous 600s
     # (10 min) default cut off slow local / edge LLMs mid-synthesis; 1800s

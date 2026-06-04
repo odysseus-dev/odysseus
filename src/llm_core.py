@@ -1363,6 +1363,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     # can detect thinking-in-progress (some models output </think> but no <think>)
     _thinking_model = _supports_thinking(model)
     _first_content_sent = False
+    _in_think_tag = False        # True while consuming <think>…</think> content
+    _think_open_stripped = False  # opening <think> tag already removed
 
     def _emit_tool_calls():
         """Build the tool_calls event string if any were accumulated."""
@@ -1444,14 +1446,53 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                             yield f'data: {json.dumps({"delta": reasoning, "thinking": True})}\n\n'
                                         content = delta.get("content") or ""
                                         if content:
-                                            # Some thinking backends start normal content with a
-                                            # stray closing tag. Repair only that shape; do not
-                                            # wrap every first token for model families like
-                                            # MiniMax, which often stream ordinary answers.
-                                            if _thinking_model and not _first_content_sent and content.lstrip().lower().startswith("</think"):
-                                                content = "<think>" + content
-                                            _first_content_sent = True
-                                            yield f'data: {json.dumps({"delta": content})}\n\n'
+                                            stripped = content.lstrip()
+                                            # Auto-detect <think>…</think> in content stream.
+                                            # Covers Qwen3-derived models (Qwopus, QwQ forks) whose
+                                            # names don't match _THINKING_MODEL_PATTERNS but still
+                                            # emit literal <think> markup via llama.cpp --jinja.
+                                            if not _first_content_sent and not _thinking_model and not _in_think_tag and stripped.lower().startswith("<think"):
+                                                _thinking_model = True
+                                                _in_think_tag = True
+                                            if _in_think_tag:
+                                                close_idx = content.lower().find("</think>")
+                                                if close_idx != -1:
+                                                    # Split: up-to-</think> → thinking, remainder → content
+                                                    think_part = content[:close_idx]
+                                                    if not _think_open_stripped:
+                                                        # Strip the opening <think[...] > from the first chunk.
+                                                        # Use a dedicated flag — _first_content_sent stays False
+                                                        # throughout the think block, so it must not be reused.
+                                                        tag_end = think_part.lower().find(">")
+                                                        if tag_end != -1:
+                                                            think_part = think_part[tag_end + 1:]
+                                                        _think_open_stripped = True
+                                                    regular_part = content[close_idx + len("</think>"):]
+                                                    _in_think_tag = False
+                                                    if think_part:
+                                                        yield f'data: {json.dumps({"delta": think_part, "thinking": True})}\n\n'
+                                                    if regular_part:
+                                                        _first_content_sent = True
+                                                        yield f'data: {json.dumps({"delta": regular_part})}\n\n'
+                                                else:
+                                                    # Still inside <think>: route to thinking channel
+                                                    if not _think_open_stripped:
+                                                        # Strip the opening <think[...] > tag (first chunk only)
+                                                        tag_end = stripped.lower().find(">")
+                                                        if tag_end != -1:
+                                                            content = stripped[tag_end + 1:]
+                                                        _think_open_stripped = True
+                                                    if content:
+                                                        yield f'data: {json.dumps({"delta": content, "thinking": True})}\n\n'
+                                            else:
+                                                # Some thinking backends start normal content with a
+                                                # stray closing tag. Repair only that shape; do not
+                                                # wrap every first token for model families like
+                                                # MiniMax, which often stream ordinary answers.
+                                                if _thinking_model and not _first_content_sent and stripped.lower().startswith("</think"):
+                                                    content = "<think>" + content
+                                                _first_content_sent = True
+                                                yield f'data: {json.dumps({"delta": content})}\n\n'
                                         # Native tool calls — accumulate across chunks
                                         for tc in delta.get("tool_calls") or []:
                                             if tc is None:
