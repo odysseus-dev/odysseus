@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COOKBOOK_RUNNING = ROOT / "static" / "js" / "cookbookRunning.js"
+COOKBOOK_ROUTES = ROOT / "routes" / "cookbook_routes.py"
 
 
 def _source() -> str:
@@ -28,3 +29,10 @@ def test_cookbook_advertised_bind_urls_keep_connectable_host():
     assert "function _endpointFromAdvertisedUrl" in src
     assert "_isAnyBindHost(u.hostname) ? currentHost" in src
     assert "host = u.hostname || host;" not in src
+
+
+def test_cookbook_auto_registration_preserves_served_model_name():
+    src = COOKBOOK_ROUTES.read_text(encoding="utf-8")
+    assert "--served-model-name" in src
+    assert "pinned_models" in src
+    assert "_merge_pinned" in src

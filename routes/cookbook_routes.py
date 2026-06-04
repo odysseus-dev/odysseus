@@ -835,6 +835,47 @@ def setup_cookbook_routes() -> APIRouter:
 
         short_name = req.repo_id.split("/")[-1] if "/" in req.repo_id else req.repo_id
         display_name = short_name or "Local model"
+        pinned_models = []
+        try:
+            parts = shlex.split(req.cmd)
+        except Exception:
+            parts = req.cmd.split()
+        i = 0
+        while i < len(parts):
+            part = parts[i]
+            if part == "--served-model-name":
+                j = i + 1
+                while j < len(parts) and not parts[j].startswith("-"):
+                    if parts[j] not in pinned_models:
+                        pinned_models.append(parts[j])
+                    j += 1
+                i = j
+                continue
+            if part.startswith("--served-model-name="):
+                name = part.split("=", 1)[1].strip()
+                if name and name not in pinned_models:
+                    pinned_models.append(name)
+            i += 1
+
+        def _merge_pinned(existing_raw: str | None) -> str | None:
+            merged = []
+            if existing_raw:
+                try:
+                    current = json.loads(existing_raw)
+                    if isinstance(current, list):
+                        for item in current:
+                            val = str(item).strip()
+                            if val and val not in merged:
+                                merged.append(val)
+                except Exception:
+                    for item in re.split(r"[\n,]", existing_raw):
+                        val = item.strip()
+                        if val and val not in merged:
+                            merged.append(val)
+            for item in pinned_models:
+                if item and item not in merged:
+                    merged.append(item)
+            return json.dumps(merged) if merged else None
 
         # If the serve command opts models into OpenAI tool-calling, record it so
         # agent_loop trusts emitted tool_calls instead of the name heuristic.
@@ -850,6 +891,8 @@ def setup_cookbook_routes() -> APIRouter:
                 existing.name = display_name
                 if supports_tools is not None:
                     existing.supports_tools = supports_tools
+                if pinned_models:
+                    existing.pinned_models = _merge_pinned(existing.pinned_models)
                 db.commit()
                 logger.info(f"Updated existing local model endpoint: {base_url}")
                 return existing.id
@@ -863,6 +906,7 @@ def setup_cookbook_routes() -> APIRouter:
                 is_enabled=True,
                 model_type="llm",
                 supports_tools=supports_tools,
+                pinned_models=_merge_pinned(None),
             )
             db.add(ep)
             db.commit()

@@ -554,13 +554,13 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "api_call",
-            "description": "Call a registered API integration (RSS reader, git forge, bookmark manager, smart home, etc.). Check the system context for available integrations and their endpoints.",
+            "description": "Call an external registered API integration only (RSS reader, git forge, bookmark manager, smart home, etc.). Do not use this for Odysseus' own /api/* routes, Memory, Documents, Notes, Tasks, Settings, or model endpoints; use the named tool or app_api for those.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "integration": {"type": "string", "description": "Integration name or ID (e.g. 'Miniflux', 'Gitea')"},
+                    "integration": {"type": "string", "description": "External integration name or ID exactly as listed in the system context (e.g. 'Miniflux', 'Gitea'). Not 'Memory' or another internal Odysseus surface."},
                     "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"], "description": "HTTP method"},
-                    "path": {"type": "string", "description": "API endpoint path (e.g. '/v1/entries?status=unread&limit=20')"},
+                    "path": {"type": "string", "description": "Path on the external integration API (e.g. '/v1/entries?status=unread&limit=20'). For internal Odysseus paths like /api/memory, use app_api or manage_memory instead."},
                     "body": {"type": "object", "description": "JSON request body (for POST/PUT/PATCH)"}
                 },
                 "required": ["integration", "method", "path"]

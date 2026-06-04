@@ -357,8 +357,27 @@ class TestClassifyEndpoint:
 
         assert result["reachable"] is True
         assert result["status_code"] == 200
-        assert seen == [("GET", "http://100.117.136.97:34521/v1")]
+        assert seen == [("GET", "http://100.117.136.97:34521/health")]
         assert all(not url.endswith("/models") for _, url in seen)
+
+    def test_ping_endpoint_accepts_root_health_for_v1_namespace(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        seen = []
+
+        def fake_get(url, headers=None, timeout=None, **kwargs):
+            seen.append(("GET", url))
+            request = httpx.Request("GET", url)
+            if url == "http://llama:8000/health":
+                return httpx.Response(200, request=request)
+            return httpx.Response(404, request=request)
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+
+        result = _ping_endpoint("http://llama:8000/v1", timeout=1)
+
+        assert result["reachable"] is True
+        assert result["status_code"] == 200
+        assert seen == [("GET", "http://llama:8000/health")]
 
 
 # ── setup probing ──

@@ -753,6 +753,28 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
         pass
 
     try:
+        root = base
+        for suffix in ("/v1", "/api"):
+            if root.endswith(suffix):
+                root = root[: -len(suffix)].rstrip("/")
+                break
+        if root and root != base:
+            # OpenAI-compatible servers often expose health/version at the
+            # server root while GET /v1 correctly returns 404 because /v1 is
+            # only an API namespace.
+            for path in ("/health", "/version", "/ping"):
+                try:
+                    r = httpx.get(root + path, headers=headers, timeout=timeout, verify=llm_verify())
+                    result = _result_from_response(r)
+                    if result["reachable"]:
+                        return result
+                    last_error = result.get("error")
+                except Exception as e:
+                    last_error = str(e)[:120]
+    except Exception:
+        pass
+
+    try:
         r = httpx.get(base, headers=headers, timeout=timeout, verify=llm_verify())
         return _result_from_response(r)
     except Exception as e:

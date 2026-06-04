@@ -56,6 +56,16 @@ def _load_mcp_disabled_map() -> Dict[str, set]:
         db.close()
     return disabled_map
 
+
+def _has_enabled_api_integrations() -> bool:
+    """Return True when api_call has at least one configured target."""
+    try:
+        from src.integrations import load_integrations
+        return any(item.get("enabled", True) for item in load_integrations())
+    except Exception as exc:
+        logger.debug("API integration check failed: %s", exc)
+        return False
+
 # System prompt that tells the LLM about available tools.
 # Always injected — the LLM decides whether to use them.
 _AGENT_PREAMBLE = """\
@@ -1404,6 +1414,8 @@ async def stream_agent_loop(
     mcp_mgr = get_mcp_manager()
     prep_timings: Dict[str, float] = {}
     disabled_tools = set(disabled_tools or [])
+    if not _has_enabled_api_integrations():
+        disabled_tools.add("api_call")
     public_blocked_tools = blocked_tools_for_owner(owner)
     if public_blocked_tools:
         disabled_tools.update(public_blocked_tools)
