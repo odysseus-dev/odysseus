@@ -193,7 +193,7 @@ For NVIDIA/AMD GPU support, also read the comments in the selected overlay file:
 often accept only a single Compose file and do not reliably honor `COMPOSE_FILE`
 or multiple `-f` overlays. CLI users should keep using the `COMPOSE_FILE`
 overlay workflow above. For stack UIs, point the stack at one of the standalone
-files instead, which bundles the base stack plus the GPU settings:
+files instead, which bundle the base stack plus the GPU settings:
 
 - `docker-compose.gpu-nvidia.yml` — still requires the NVIDIA Container Toolkit
   on the host.
