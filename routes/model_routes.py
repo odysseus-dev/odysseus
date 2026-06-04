@@ -632,7 +632,13 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
     if is_nobodywho_url(base):
-        # In-process provider: "probing" is a local GGUF scan, no HTTP.
+        # In-process provider: "probing" is a local GGUF scan, no HTTP. The
+        # scan works even without the nobodywho package — but the models are
+        # unusable then, so report none and let callers ping: that surfaces
+        # the install offer instead of a healthy-looking endpoint that fails
+        # on the first chat.
+        if not _nobodywho.is_available():
+            return []
         try:
             return _nobodywho.list_models(max_age=0.0)
         except Exception as e:
@@ -1080,6 +1086,8 @@ def setup_model_routes(model_discovery):
             provider = _detect_provider(base)
             # Use cached models — background refresh keeps them updated
             model_ids = _cached_model_ids(ep)
+            if provider == "nobodywho" and not _nobodywho.is_available():
+                model_ids = []  # engine missing — nothing here is chat-able
             ep_model_type = getattr(ep, "model_type", None) or "llm"
             # Filter out hidden (probe-failed) models
             hidden = _hidden_model_ids(ep)
@@ -1427,7 +1435,12 @@ def setup_model_routes(model_discovery):
                 # admin-pinned IDs that a probe would never surface.
                 status = "online" if (all_models or pinned) else "offline"
                 ping = None
-                if not all_models and not pinned and r.is_enabled:
+                if is_nobodywho_url(r.base_url) and not _nobodywho.is_available():
+                    # Cached models can't mask a missing engine: without the
+                    # package nothing here is usable — show the install offer.
+                    status = "offline"
+                    ping = _nobodywho.ping()
+                elif not all_models and not pinned and r.is_enabled:
                     ping = _ping_endpoint(r.base_url, r.api_key, timeout=1.0)
                     if ping.get("reachable"):
                         status = "empty"

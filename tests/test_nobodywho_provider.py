@@ -619,9 +619,23 @@ def test_probe_endpoint_lists_local_ggufs(tmp_path, monkeypatch):
     monkeypatch.setenv("NOBODYWHO_MODELS_DIR", str(tmp_path))
     monkeypatch.setenv("HF_HOME", str(tmp_path / "no-hub-here"))
     _gguf(tmp_path, "Qwen3-4B-Q4_K_M.gguf")
-    monkeypatch.setattr(mr, "_nobodywho", _unavailable_manager())
+    monkeypatch.setattr(mr, "_nobodywho", _available_manager())
 
     assert mr._probe_endpoint(CANONICAL_URL) == ["Qwen3-4B-Q4_K_M"]
+
+
+def test_probe_reports_no_models_when_engine_missing(tmp_path, monkeypatch):
+    """GGUFs on disk are unusable without the package — the probe must say
+    "no models" so the endpoint pings and surfaces the install offer, instead
+    of looking healthy and failing on the first chat."""
+    import routes.model_routes as mr
+
+    monkeypatch.setenv("NOBODYWHO_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "no-hub-here"))
+    _gguf(tmp_path, "Qwen3-4B-Q4_K_M.gguf")
+    monkeypatch.setattr(mr, "_nobodywho", _unavailable_manager())
+
+    assert mr._probe_endpoint(CANONICAL_URL) == []
 
 
 def _write_gguf(path, kvs):
