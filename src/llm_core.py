@@ -1194,11 +1194,20 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                             yield f'data: {json.dumps({"delta": reasoning, "thinking": True})}\n\n'
                                         content = delta.get("content") or ""
                                         if content:
+                                            stripped = content.lstrip()
+                                            # Auto-detect thinking models by stream content: if the first
+                                            # chunk opens with <think>, treat this session as a thinking
+                                            # model regardless of the registered name patterns. Covers
+                                            # Qwen3-derived models (e.g. Qwopus, QwQ forks) whose names
+                                            # do not match _THINKING_MODEL_PATTERNS but still emit
+                                            # <think>…</think> in the content stream via llama.cpp --jinja.
+                                            if not _first_content_sent and not _thinking_model and stripped.lower().startswith("<think"):
+                                                _thinking_model = True
                                             # Some thinking backends start normal content with a
                                             # stray closing tag. Repair only that shape; do not
                                             # wrap every first token for model families like
                                             # MiniMax, which often stream ordinary answers.
-                                            if _thinking_model and not _first_content_sent and content.lstrip().lower().startswith("</think"):
+                                            if _thinking_model and not _first_content_sent and stripped.lower().startswith("</think"):
                                                 content = "<think>" + content
                                             _first_content_sent = True
                                             yield f'data: {json.dumps({"delta": content})}\n\n'
