@@ -276,6 +276,7 @@ class NobodyWhoManager:
     def __init__(self):
         self._mod = None
         self._import_error: Optional[str] = None
+        self._import_failed_at: float = 0.0
         self._registry_lock = threading.Lock()
         self._chats: Dict[str, _LoadedChat] = {}
         # Per-source load locks so two requests for the same model don't load
@@ -291,17 +292,26 @@ class NobodyWhoManager:
     # ── availability ──
 
     def _import(self):
-        """Import nobodywho once; cache the module or the failure reason."""
+        """Import nobodywho; cache success forever, failure only briefly.
+
+        The failure cache must expire: Cookbook's Dependencies tab can pip
+        install the package into this very interpreter while it runs, and a
+        permanent negative cache would keep reporting "not installed" until a
+        restart. A failed import attempt is cheap, so retry every 15s.
+        """
         if self._mod is not None:
             return self._mod
         if self._import_error is not None:
-            raise NobodyWhoUnavailable(self._import_error)
+            if time.time() - self._import_failed_at < 15.0:
+                raise NobodyWhoUnavailable(self._import_error)
+            self._import_error = None  # may have just been installed — retry
         try:
             import nobodywho  # noqa: PLC0415 — heavy native lib, lazy on purpose
             self._mod = nobodywho
             return nobodywho
         except Exception as e:  # ImportError or native-lib load failure
             self._import_error = f"{INSTALL_HINT} ({type(e).__name__}: {e})"
+            self._import_failed_at = time.time()
             raise NobodyWhoUnavailable(self._import_error)
 
     def is_available(self) -> bool:

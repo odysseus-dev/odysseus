@@ -909,6 +909,7 @@ def setup_shell_routes() -> APIRouter:
             {"name": "docker", "pip": "", "desc": "Required only for Docker-backed launch commands", "category": "System", "target": "remote", "kind": "system", "install_hint": "Install Docker on the selected server and allow this user to run docker."},
             # ── LLM ── installs on GPU servers for model serving/downloading
             {"name": "hf_transfer", "pip": "hf_transfer", "desc": "Fast model downloads from HuggingFace", "category": "LLM", "target": "remote"},
+            {"name": "nobodywho", "pip": "nobodywho", "desc": "In-process GGUF chat for the NobodyWho endpoint — no model server needed", "category": "LLM", "target": "local"},
             {"name": "llama_cpp", "pip": "llama-cpp-python[server]", "desc": "Serve GGUF models via llama.cpp", "category": "LLM", "target": "remote"},
             {"name": "sglang", "pip": "sglang[all]", "desc": "Serve HF safetensors models via SGLang", "category": "LLM", "target": "remote"},
             {"name": "vllm", "pip": "vllm", "desc": "High-throughput LLM serving engine", "category": "LLM", "target": "remote"},
@@ -1046,6 +1047,7 @@ def setup_shell_routes() -> APIRouter:
             "rembg[gpu]", "hf_transfer", "llama-cpp-python[server]", "sglang[all]", "diffusers", "diffusers[torch]",
             "TTS", "bark", "faster-whisper", "playwright", "realesrgan", "gfpgan",
             "insightface", "onnxruntime-gpu", "onnxruntime", "hdbscan", "vllm",
+            "nobodywho",
         }
         if pip_name not in known:
             return {"ok": False, "error": f"Unknown package: {pip_name}"}

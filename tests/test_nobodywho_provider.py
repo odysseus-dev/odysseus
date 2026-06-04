@@ -113,8 +113,11 @@ def _available_manager(cached_models=()):
 
 
 def _unavailable_manager():
+    import time as _time
+
     mgr = NobodyWhoManager()
     mgr._import_error = "NobodyWho is not installed. Install it with: pip install nobodywho"
+    mgr._import_failed_at = _time.time()  # fresh failure — within the retry TTL
     return mgr
 
 
@@ -697,6 +700,22 @@ def test_resolve_n_ctx_respects_small_trained_max(tmp_path, monkeypatch):
     mgr = _unavailable_manager()
     # never allocate beyond what the model was trained for
     assert mgr.resolve_n_ctx(mgr.resolve_source("Tiny-2k")) == 2048
+
+
+def test_failed_import_is_retried_after_ttl(monkeypatch):
+    """Cookbook's Dependencies tab can pip-install nobodywho into the running
+    interpreter; a permanent negative import cache would keep the endpoint
+    saying "not installed" until restart. Failures must expire and retry."""
+    import sys as _sys
+    import time as _time
+
+    mgr = _unavailable_manager()
+    # The package "gets installed" while we're running:
+    monkeypatch.setitem(_sys.modules, "nobodywho", _FakeNobodyWho())
+    assert not mgr.is_available()  # fresh failure still cached (within TTL)
+    mgr._import_failed_at = _time.time() - 60  # age the failure past the TTL
+    assert mgr.is_available()  # retried, found the new install
+    assert mgr.availability_error() is None
 
 
 def test_empty_state_hint_is_actionable(monkeypatch):
