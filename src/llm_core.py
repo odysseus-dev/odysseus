@@ -317,6 +317,9 @@ def _detect_provider(url: str) -> str:
         return "openrouter"
     if _host_match(url, "groq.com"):
         return "groq"
+    from src.copilot import is_copilot_base
+    if is_copilot_base(url):
+        return "copilot"
     return "openai"
 
 
@@ -327,6 +330,14 @@ def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str
     if provider == "openrouter":
         h.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
         h.setdefault("X-OpenRouter-Title", "Odysseus")
+    if provider == "copilot":
+        # Ensure the Copilot-required headers are present even when the caller
+        # didn't pass pre-built headers (e.g. model listing). build_headers()
+        # already injects these for the live chat path; setdefault keeps any
+        # request-specific values (x-initiator/vision) the caller set.
+        from src.copilot import copilot_headers
+        for k, v in copilot_headers(None).items():
+            h.setdefault(k, v)
     return h
 
 
@@ -340,6 +351,8 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "openai.com"): return "OpenAI"
     if _host_match(url, "openrouter.ai"): return "OpenRouter"
     if _host_match(url, "groq.com"): return "Groq"
+    from src.copilot import is_copilot_base
+    if is_copilot_base(url): return "GitHub Copilot"
     if _host_match(url, "mistral.ai"): return "Mistral"
     if _host_match(url, "deepseek.com"): return "DeepSeek"
     if _host_match(url, "googleapis.com"): return "Google"
@@ -911,6 +924,9 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         )
     else:
         target_url = url
+        if provider == "copilot":
+            from src.copilot import apply_request_headers
+            apply_request_headers(h, messages_copy)
         payload = {
             "model": model,
             "messages": messages_copy,
@@ -1058,6 +1074,9 @@ async def llm_call_async(
     else:
         target_url = url
         h = _provider_headers(provider, headers)
+        if provider == "copilot":
+            from src.copilot import apply_request_headers
+            apply_request_headers(h, messages_copy)
         payload = {
             "model": model,
             "messages": messages_copy,
@@ -1182,6 +1201,9 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         if tools:
             payload["tools"] = tools
         h = _provider_headers(provider, headers)
+        if provider == "copilot":
+            from src.copilot import apply_request_headers
+            apply_request_headers(h, messages_copy)
 
     # Short connect timeout: a reachable peer answers SYN in <100ms even on
     # Tailscale. 3s is plenty; 30s let one dead upstream wedge the UI.

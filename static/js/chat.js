@@ -844,7 +844,7 @@ import createResearchSynapse from './researchSynapse.js';
       var _charNameInit = presetsModule.getCharacterName ? presetsModule.getCharacterName() : '';
       if (_charNameInit) roleLabel = _charNameInit;
       const roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-      holder.innerHTML = `<div class="role">${roleLabel} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
+      holder.innerHTML = `<div class="role">${uiModule.esc(roleLabel)} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
       _applyModelColor(holder.querySelector('.role'), modelName);
       holder.style.position = 'relative';
       
@@ -2002,7 +2002,7 @@ import createResearchSynapse from './researchSynapse.js';
                 const node = document.createElement('div')
                 node.className = 'agent-thread-node running';
                 const cmdHtml = cmd ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : '';
-                node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">\u25B6</span><span class="agent-thread-tool">${toolLabel}</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
+                node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">\u25B6</span><span class="agent-thread-tool">${esc(toolLabel)}</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
                 // Expand/collapse via delegated click handler (init at module bottom).
                 threadWrap.appendChild(node);
                 currentToolBubble = node;
@@ -2132,10 +2132,19 @@ import createResearchSynapse from './researchSynapse.js';
                 if (json.screenshot && currentToolBubble) {
                   const contentEl = currentToolBubble.querySelector('.agent-thread-content');
                   if (contentEl) {
-                    const details = document.createElement('details');
-                    details.className = 'agent-tool-output';
-                    details.innerHTML = `<summary>Screenshot</summary><img src="${json.screenshot}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" />`;
-                    contentEl.appendChild(details);
+                    const screenshotSrc = chatRenderer.safeToolScreenshotSrc(json.screenshot);
+                    if (screenshotSrc) {
+                      const details = document.createElement('details');
+                      details.className = 'agent-tool-output';
+                      const summary = document.createElement('summary');
+                      summary.textContent = 'Screenshot';
+                      const img = document.createElement('img');
+                      img.src = screenshotSrc;
+                      img.style.cssText = 'max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)';
+                      details.appendChild(summary);
+                      details.appendChild(img);
+                      contentEl.appendChild(details);
+                    }
                   }
                 }
                 // --- Reload sessions after manage_session tool (delete, rename, etc.) ---
@@ -3271,7 +3280,7 @@ import createResearchSynapse from './researchSynapse.js';
       var meta = sessionModule.getSessions().find(function(s) { return s.id === sessionId; });
       var roleLabel = _shortModel(meta && meta.model);
       var roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-      holder.innerHTML = '<div class="role">' + roleLabel + ' <span class="role-timestamp">' + roleTs + '</span></div><div class="body"></div>';
+      holder.innerHTML = '<div class="role">' + uiModule.esc(roleLabel) + ' <span class="role-timestamp">' + roleTs + '</span></div><div class="body"></div>';
       _applyModelColor(holder.querySelector('.role'), meta && meta.model);
 
       var bodyDiv = holder.querySelector('.body');
@@ -4073,7 +4082,7 @@ import createResearchSynapse from './researchSynapse.js';
       const roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
       const agentMeta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
       const agentModelLabel = _shortModel(agentMeta?.model);
-      holder.innerHTML = `<div class="role">${agentModelLabel} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
+      holder.innerHTML = `<div class="role">${uiModule.esc(agentModelLabel)} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
       _applyModelColor(holder.querySelector('.role'), agentMeta?.model);
       box.appendChild(holder);
 

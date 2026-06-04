@@ -10,7 +10,7 @@ Follows the direct-helper + mocked-DB style of tests/test_null_owner_gates.py.
 
 import os
 import sys
-import types
+import importlib
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -18,27 +18,73 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# routes.session_routes imports several heavy modules at import time that blow up
-# under conftest's sqlalchemy/* MagicMock stubs (declarative classes). Stub them
-# so we can import the module and exercise _verify_session_owner with a mock DB.
-_STUBS = {
-    "core.database": {"Session": MagicMock(), "SessionLocal": MagicMock(),
-                      "Document": MagicMock(), "GalleryImage": MagicMock()},
-    "core.session_manager": {"SessionManager": MagicMock()},
-    "core.models": {"ChatMessage": MagicMock()},
-    "src.request_models": {"SessionResponse": MagicMock()},
-}
-for _name, _attrs in _STUBS.items():
-    if _name not in sys.modules:
-        _m = types.ModuleType(_name)
-        for _k, _v in _attrs.items():
-            setattr(_m, _k, _v)
-        sys.modules[_name] = _m
+# Stub heavy ORM modules so routes.session_routes can be imported under
+# conftest's MagicMock sqlalchemy shim. Both the stubs and the cached route
+# module — including the parent `routes` package attribute — are restored in the
+# finally block to prevent poisoning later tests via `import routes.session_routes`.
+_ABSENT = object()
+
+
+def _save_module_and_parent_attr(dotted_name):
+    """Capture a module's sys.modules entry *and* its parent-package attribute.
+
+    Importing ``routes.session_routes`` also sets ``session_routes`` on the
+    parent ``routes`` package object, and ``import routes.session_routes as X``
+    resolves ``X`` through that parent attribute — so restoring sys.modules
+    alone leaves the stale stub-bound module reachable. Returns a (module, attr)
+    pair to hand back to _restore_module_and_parent_attr.
+    """
+    saved_module = sys.modules.get(dotted_name, _ABSENT)
+    pkg_name, _, attr = dotted_name.rpartition(".")
+    pkg = sys.modules.get(pkg_name)
+    saved_attr = getattr(pkg, attr, _ABSENT) if pkg is not None else _ABSENT
+    return saved_module, saved_attr
+
+
+def _restore_module_and_parent_attr(dotted_name, saved_module, saved_attr):
+    """Restore (or remove) both the sys.modules entry and the parent attribute.
+
+    Passing _ABSENT for both clears the cache, which is how we drop any stale
+    entry before the stubbed import.
+    """
+    if saved_module is _ABSENT:
+        sys.modules.pop(dotted_name, None)
+    else:
+        sys.modules[dotted_name] = saved_module
+    pkg_name, _, attr = dotted_name.rpartition(".")
+    pkg = sys.modules.get(pkg_name)
+    if pkg is None:
+        return
+    if saved_attr is _ABSENT:
+        if hasattr(pkg, attr):
+            delattr(pkg, attr)
+    else:
+        setattr(pkg, attr, saved_attr)
+
+
+_TEMP_STUBS = ("core.database", "core.models")
+_saved = {name: sys.modules.get(name, _ABSENT) for name in _TEMP_STUBS}
+_saved["core.session_manager"] = sys.modules.get("core.session_manager", _ABSENT)
+_sr_saved = _save_module_and_parent_attr("routes.session_routes")
+try:
+    for _name in _TEMP_STUBS:
+        sys.modules[_name] = MagicMock(name=_name)
+    sys.modules.pop("core.session_manager", None)
+    # Clear the sys.modules entry AND the parent `routes` attribute so the
+    # stubbed import below produces a fresh module with no stale binding behind it.
+    _restore_module_and_parent_attr("routes.session_routes", _ABSENT, _ABSENT)
+    importlib.import_module("core.session_manager")
+    import routes.session_routes as SR  # noqa: E402
+finally:
+    for _name, _val in _saved.items():
+        if _val is _ABSENT:
+            sys.modules.pop(_name, None)
+        else:
+            sys.modules[_name] = _val
+    _restore_module_and_parent_attr("routes.session_routes", *_sr_saved)
 
 from fastapi import HTTPException  # noqa: E402
-
 from src.auth_helpers import effective_user  # noqa: E402
-import routes.session_routes as SR  # noqa: E402
 
 
 def _req(**state):

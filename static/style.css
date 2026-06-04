@@ -35810,3 +35810,66 @@ body.theme-frosted .modal {
      is already ≥16px and never zoomed — leave it so we don't shrink it. */
   .doc-email-richbody.doc-font-m { font-size: 16px !important; }
 }
+
+/* GitHub Copilot device-flow connect block (model endpoints → API) */
+.adm-copilot-connect {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.adm-copilot-connect #adm-copilotStatus { flex-basis: 100%; margin-top: 0; }
+.adm-copilot-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.adm-copilot-wait {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+.adm-copilot-coderow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.adm-copilot-code-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.adm-copilot-code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  padding: 4px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  user-select: all;
+}
+.adm-copilot-copy { margin-left: auto; }
+.adm-copilot-auth {
+  text-align: center;
+  text-decoration: none;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+.adm-copilot-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}

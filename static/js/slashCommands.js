@@ -4735,11 +4735,47 @@ function _clearSetupCommandInput() {
   }
 }
 
+// GitHub Copilot device-flow sign-in, driven from chat (mirrors the Settings
+// "Connect GitHub Copilot" button). Replies via the setup guide messages.
+async function _setupCopilot() {
+  _clearSetupGuideMessages();
+  await _setupReply('Starting GitHub Copilot sign-in…');
+  let start;
+  try {
+    const r = await fetch(`${API_BASE}/api/copilot/device/start`, { method: 'POST', body: new FormData(), credentials: 'same-origin' });
+    start = await r.json();
+    if (!r.ok) { await _setupReply(start.detail || 'Failed to start Copilot sign-in.'); return; }
+  } catch (e) { await _setupReply('Request failed.'); return; }
+  const authUrl = start.verification_uri_complete || start.verification_uri || '';
+  await _setupReply(`Opening GitHub — approve the request (code ${start.user_code}). Waiting…`);
+  try { if (authUrl) window.open(authUrl, '_blank', 'noopener'); } catch (e) {}
+  const deadline = Date.now() + (start.expires_in || 900) * 1000;
+  const stepMs = Math.max((start.interval || 5), 2) * 1000;
+  const poll = async () => {
+    if (Date.now() > deadline) { await _setupReply('Copilot sign-in expired — run /setup copilot again.'); return; }
+    try {
+      const fd = new FormData(); fd.append('poll_id', start.poll_id);
+      const r = await fetch(`${API_BASE}/api/copilot/device/poll`, { method: 'POST', body: fd, credentials: 'same-origin' });
+      const d = await r.json();
+      if (d.status === 'authorized') {
+        const n = ((d.endpoint && d.endpoint.models) || []).length;
+        await _setupReply(`Connected — ${n} Copilot model${n !== 1 ? 's' : ''} available.`);
+        if (modelsModule) modelsModule.refreshModels(true);
+        return;
+      }
+      if (d.status === 'failed') { await _setupReply('Copilot sign-in failed (' + (d.error || 'denied') + ').'); return; }
+    } catch (e) { /* transient — keep polling */ }
+    setTimeout(poll, stepMs);
+  };
+  setTimeout(poll, stepMs);
+}
+
 async function _cmdSetup(args, ctx) {
   _hideWelcomeScreen();
   _clearSetupCommandInput();
   const topic = (args[0] || '').trim().toLowerCase();
   const topicArgs = args.slice(1);
+  if (topic === 'copilot' || topic === 'github') { await _setupCopilot(); return true; }
   const provider = _setupProviderFromInput(topic);
   if (provider) {
     _clearSetupGuideMessages();
@@ -5464,7 +5500,7 @@ const COMMANDS = {
     category: 'Getting started',
     help: 'Add local or API model endpoints',
     handler: _cmdSetup,
-    usage: '/setup local URL  ·  /setup groq KEY  ·  /setup endpoint'
+    usage: '/setup local URL  ·  /setup groq KEY  ·  /setup copilot  ·  /setup endpoint'
   },
   demo: {
     alias: ['tour'],
@@ -5844,7 +5880,9 @@ async function handleSlashCommand(input) {
   let args = parts.slice(1);
   const ctx = _makeCtx();
   let _userShown = false;
-  function _showUser() { if (!_userShown) { _userShown = true; _addMessage('user', input); _persistMsg('user', input); } }
+  // Tag the echoed command with source:'slash' so it renders in the transcript
+  // but is excluded from LLM context (get_context_messages), like the replies.
+  function _showUser() { if (!_userShown) { _userShown = true; _addMessage('user', input); _persistMsg('user', input, { source: 'slash' }); } }
 
   try {
     // --- Check for --help / -h on any command ---

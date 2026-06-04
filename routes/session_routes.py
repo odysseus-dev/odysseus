@@ -57,6 +57,40 @@ def _content_to_text(content) -> str:
     return ""
 
 
+def _message_role(message) -> str:
+    if isinstance(message, ChatMessage):
+        return message.role or ""
+    if isinstance(message, dict):
+        return message.get("role", "") or ""
+    return getattr(message, "role", "") or ""
+
+
+def _message_text(message) -> str:
+    if isinstance(message, ChatMessage):
+        content = message.content
+    elif isinstance(message, dict):
+        content = message.get("content")
+    else:
+        content = getattr(message, "content", None)
+    return _content_to_text(content)
+
+
+def _message_metadata(message) -> dict:
+    if isinstance(message, ChatMessage):
+        metadata = message.metadata
+    elif isinstance(message, dict):
+        metadata = message.get("metadata")
+    else:
+        metadata = getattr(message, "metadata", None)
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _reject_compact_during_active_run(session_id: str) -> None:
+    from src import agent_runs
+    if agent_runs.is_active(session_id):
+        raise HTTPException(409, "Session has an active run; try compacting after it finishes")
+
+
 def _verify_session_owner(request: Request, session_id: str, session_manager=None):
     """Verify the current user owns the session. Raises 404 if not.
 
@@ -872,6 +906,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             session = session_manager.get_session(session_id)
         except KeyError:
             raise HTTPException(404, f"Session {session_id} not found")
+        _reject_compact_during_active_run(session_id)
 
         history = list(session.history or [])
         if len(history) < 6:
@@ -897,7 +932,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
 
         prior_compactions = sum(
             1 for m in history
-            if (m.metadata or {}).get("compacted") or "[Conversation summary" in (m.content or "")
+            if _message_metadata(m).get("compacted") or "[Conversation summary" in _message_text(m)
         )
         prompt = SELF_SUMMARY_SYSTEM_PROMPT.replace(
             "{count}", str(len(older))
@@ -905,7 +940,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             "{n}", str(prior_compactions + 1)
         )
         convo_text = "\n".join(
-            f"{m.role.upper()}: {(m.content or '')[:2000]}"
+            f"{_message_role(m).upper()}: {_message_text(m)[:2000]}"
             for m in older
         )
         try:

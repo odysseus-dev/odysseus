@@ -273,7 +273,10 @@ class SessionManager:
 
             db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
             if db_session:
-                db_session.message_count = keep_count
+                # keep_count can exceed the real message total (e.g. the AI tool
+                # defaults to keep_count=10 on a short session); message_count must
+                # track the rows that actually remain, not the requested cap.
+                db_session.message_count = min(keep_count, len(db_messages))
                 db_session.updated_at = datetime.now(timezone.utc)
 
             db.commit()
