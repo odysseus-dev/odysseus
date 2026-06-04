@@ -1,0 +1,28 @@
+name: ci / PR conflict check
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 */6 * * *'   # every 6 hours — offset from the hour to avoid runner queues
+  workflow_dispatch:
+
+# pull-requests: write  — add/remove labels and post comments on PRs
+# issues: write         — required by the REST issues API used for labels/comments
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  check-conflicts:
+    name: Scan open PRs for merge conflicts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          sparse-checkout: .github/scripts
+
+      - uses: actions/github-script@v7
+        with:
+          script: return require('./.github/scripts/check-conflicts.js')({github, context, core})
