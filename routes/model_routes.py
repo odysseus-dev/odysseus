@@ -1588,6 +1588,11 @@ def setup_model_routes(model_discovery):
                 existing_models = _cached_model_ids(existing)
                 _existing_pinned = _normalize_model_ids(getattr(existing, "pinned_models", None))
                 existing_kind = _effective_endpoint_kind(existing, existing.base_url)
+                # Don't hardcode "online": a re-POSTed endpoint with zero
+                # models must report "empty" (with the get-a-model hint) so
+                # callers — e.g. the post-install verification — can show the
+                # next step instead of a bare success.
+                _existing_status = "online" if (existing_models or _existing_pinned) else "empty"
                 return {
                     "id": existing.id,
                     "name": existing.name,
@@ -1599,7 +1604,8 @@ def setup_model_routes(model_discovery):
                     ),
                     "pinned_models": _existing_pinned,
                     "online": True,
-                    "status": "online",
+                    "status": _existing_status,
+                    "ping_error": _empty_state_hint(existing.base_url) if _existing_status == "empty" else None,
                     "existing": True,
                     "endpoint_kind": existing_kind,
                     "category": _classify_endpoint(existing.base_url, existing_kind),
