@@ -334,6 +334,14 @@ export const ERROR_PATTERNS = [
     ],
   },
   {
+    pattern: /flashinfer.*(?:fp4|cutlass|gemm)|fp4_gemm_cutlass|cutlass.*(?:fp4|sm120)|\bnvcc\b.*flashinfer|\bcicc\b/i,
+    message: 'vLLM is compiling FlashInfer/CUTLASS FP4 kernels during startup.',
+    suggestion: 'Suggested action: wait for the first compile to finish if the host is healthy; otherwise stop the serve, free RAM/swap/GPU memory, and retry with limited build parallelism.',
+    fixes: [
+      { label: 'Copy diagnosis bundle', action: (panel) => _diagnosisCopyBundle(panel) },
+    ],
+  },
+  {
     pattern: /torch\.cuda\.is_available\(\).*False|No CUDA runtime/i,
     message: 'vLLM needs a visible CUDA/ROCm GPU.',
     suggestion: 'Suggested action: switch this serve config to llama.cpp for CPU/local serving, or choose a GPU server.',

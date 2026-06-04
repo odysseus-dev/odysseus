@@ -141,6 +141,14 @@ def setup_cookbook_routes() -> APIRouter:
                 [{"label": "update vLLM, Transformers, and kernels on this server", "op": "dependency", "package": "vllm transformers kernels"}],
             ),
             (
+                r"flashinfer.*(?:fp4|cutlass|gemm)|fp4_gemm_cutlass|cutlass.*(?:fp4|sm120)|\bnvcc\b.*flashinfer|\bcicc\b",
+                "vLLM is compiling FlashInfer/CUTLASS FP4 kernels during startup.",
+                [
+                    {"label": "wait for first compile if the host is healthy", "op": "manual"},
+                    {"label": "retry after freeing RAM/swap/GPU memory", "op": "manual"},
+                ],
+            ),
+            (
                 r"Address already in use|bind.*address.*in use",
                 "Port is already in use.",
                 [{"label": "retry on port 8001", "op": "replace", "flag": "--port", "value": "8001"}],
@@ -1130,6 +1138,11 @@ def setup_cookbook_routes() -> APIRouter:
                 # there via --user and the non-login serve shell otherwise can't
                 # find the `vllm` CLI ("command not found"). Mirrors llama.cpp above.
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
+                if re.search(r"(?:fp4|nvfp4|modelopt|flashinfer|cutlass)", req.cmd, re.I):
+                    runner_lines.append('export MAX_JOBS="${MAX_JOBS:-1}"')
+                    runner_lines.append('export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-1}"')
+                    runner_lines.append('export NINJAFLAGS="${NINJAFLAGS:--j1}"')
+                    runner_lines.append('echo "[odysseus] Limiting kernel build parallelism for FP4/NVFP4-style vLLM startup."')
                 runner_lines.append('if ! command -v vllm &>/dev/null; then')
                 runner_lines.append('  echo "ERROR: vLLM is not installed."')
                 runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')

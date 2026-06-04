@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import subprocess
 import sys
 
@@ -300,6 +301,21 @@ def test_serve_runner_preserves_command_exit_code():
     assert "ODYSSEUS_CMD_EXIT=$?" in script
     assert 'echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="' in script
     assert 'echo "=== Process exited with code $? ==="' not in script
+
+
+def test_vllm_fp4_compile_diagnosis_and_limited_parallelism():
+    root = Path(__file__).resolve().parent.parent
+    routes_source = (root / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+    diagnosis_source = (root / "static" / "js" / "cookbook-diagnosis.js").read_text(encoding="utf-8")
+
+    assert "fp4_gemm_cutlass" in routes_source
+    assert "FlashInfer/CUTLASS FP4" in routes_source
+    assert 'export MAX_JOBS="${MAX_JOBS:-1}"' in routes_source
+    assert 'export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-1}"' in routes_source
+    assert 'export NINJAFLAGS="${NINJAFLAGS:--j1}"' in routes_source
+
+    assert "fp4_gemm_cutlass" in diagnosis_source
+    assert "FlashInfer/CUTLASS FP4" in diagnosis_source
 
 
 def test_pip_serve_runner_emits_download_ok_before_exit_marker():
