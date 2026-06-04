@@ -31,9 +31,11 @@ def _seed():
         db.add(CalendarCal(id="calA", owner="alice", name="A"))
         db.add(CalendarCal(id="calB", owner="bob", name="B"))
         db.add(CalendarEvent(uid="a1", calendar_id="calA", summary="Alice mtg",
-                             dtstart=datetime(2026, 6, 10, 9, 0), status="confirmed"))
+                             dtstart=datetime(2026, 6, 10, 9, 0),
+                             dtend=datetime(2026, 6, 10, 10, 0), status="confirmed"))
         db.add(CalendarEvent(uid="b1", calendar_id="calB", summary="Bob secret",
-                             dtstart=datetime(2026, 6, 10, 10, 0), status="confirmed"))
+                             dtstart=datetime(2026, 6, 10, 10, 0),
+                             dtend=datetime(2026, 6, 10, 11, 0), status="confirmed"))
         db.commit()
     finally:
         db.close()
@@ -58,7 +60,8 @@ def test_cancelled_excluded_and_window_respected():
     try:
         db2 = _TS()
         db2.add(CalendarEvent(uid="a2", calendar_id="calA", summary="cancelled",
-                              dtstart=datetime(2026, 6, 11), status="cancelled"))
+                              dtstart=datetime(2026, 6, 11),
+                              dtend=datetime(2026, 6, 11, 1, 0), status="cancelled"))
         db2.commit(); db2.close()
         s, e = datetime(2026, 6, 1), datetime(2026, 6, 30)
         out = _checkin_calendar_events(db, "alice", s, e)
