@@ -23,6 +23,11 @@ import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handle
 import createResearchSynapse from './researchSynapse.js';
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
+  // Agent mode only: once the endpoint probe confirms the model is reachable
+  // but no token has arrived, wait this many seconds before auto-cancelling.
+  // Without it the user sits on the full agent timeout while the model
+  // silently stalls on the tool-definition prompt (see issue #280).
+  const AGENT_STALL_GRACE_S = 50;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 
   let API_BASE = '';
@@ -527,6 +532,7 @@ import createResearchSynapse from './researchSynapse.js';
     let timedOut = false;
     let processingProbeTimer = null;
     let processingProbeAbort = null;
+    let agentStallTimer = null;
     let _renderStream = () => {};
     let _cancelThinkingTimer = () => {};
     let _removeThinkingSpinner = () => {};
@@ -538,6 +544,10 @@ import createResearchSynapse from './researchSynapse.js';
       if (processingProbeAbort) {
         try { processingProbeAbort.abort(); } catch (_) {}
         processingProbeAbort = null;
+      }
+      if (agentStallTimer) {
+        clearInterval(agentStallTimer);
+        agentStallTimer = null;
       }
     };
 
@@ -860,7 +870,38 @@ import createResearchSynapse from './researchSynapse.js';
                 spinner.updateMessage('Still waiting for model');
               } else if (status.alive) {
                 const latency = status.latency_ms ? ` (${status.latency_ms}ms)` : '';
-                spinner.updateMessage(`Endpoint online${latency}; waiting for first token`);
+                if (_isAgent) {
+                  // The endpoint is reachable but the agent run produced no
+                  // token. The usual cause is the model choking on the
+                  // tool-definition prompt — context too small (common with
+                  // LM Studio defaults) or no tool-calling support — and some
+                  // backends stall silently instead of erroring, leaving the
+                  // user on the full agent timeout. Flag the likely fix and,
+                  // if nothing arrives within a generous window, auto-cancel
+                  // with reason='agent-stall'. See issue #280.
+                  let _agentWait = AGENT_STALL_GRACE_S;
+                  spinner.updateMessage(`Model online${latency} — no agent response; cancelling in ${_agentWait}s`);
+                  agentStallTimer = setInterval(() => {
+                    if (!spinner || !spinner.element || (currentAbort && currentAbort.signal.aborted) || accumulated) {
+                      clearInterval(agentStallTimer);
+                      agentStallTimer = null;
+                      return;
+                    }
+                    _agentWait--;
+                    if (_agentWait > 0) {
+                      spinner.updateMessage(`Model online${latency} — no agent response; cancelling in ${_agentWait}s`);
+                    } else {
+                      clearInterval(agentStallTimer);
+                      agentStallTimer = null;
+                      if (currentAbort && !currentAbort.signal.aborted) {
+                        currentAbort._reason = 'agent-stall';
+                        currentAbort.abort();
+                      }
+                    }
+                  }, 1000);
+                } else {
+                  spinner.updateMessage(`Endpoint online${latency}; waiting for first token`);
+                }
               } else {
                 // Probe confirms the endpoint isn't responding. Don't
                 // sit on a hung fetch — give the user 5s to read the
@@ -2600,6 +2641,22 @@ import createResearchSynapse from './researchSynapse.js';
               offlineNote.innerHTML =
                 `<span style="color: var(--color-error);">[${offlineMsg}]</span>`;
               holder.querySelector('.body').appendChild(offlineNote);
+            }
+            currentAbort = null;
+            return;
+          }
+
+          if (abortReason === 'agent-stall') {
+            const stallMsg = "No response in agent mode. The model is reachable but produced nothing — usually it needs a larger context window for the tool definitions, or a model that supports tool calling. Increase the model's context length (e.g. 8192+ in LM Studio) or switch models, then try again.";
+            if (holder && !accumulated) {
+              holder.querySelector('.body').innerHTML =
+                `<div style="color: var(--color-error); font-style: italic; padding: 4px 0;">[${stallMsg}]</div>`;
+            } else if (holder && accumulated) {
+              const stallNote = document.createElement('div');
+              stallNote.className = 'stopped-indicator';
+              stallNote.innerHTML =
+                `<span style="color: var(--color-error);">[${stallMsg}]</span>`;
+              holder.querySelector('.body').appendChild(stallNote);
             }
             currentAbort = null;
             return;
