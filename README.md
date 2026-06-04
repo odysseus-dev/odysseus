@@ -58,12 +58,30 @@ Contributing? See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and
 pull request guidelines.
 
 ### Docker (recommended)
+Clone this repository
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
 cp .env.example .env       # optional, but recommended for explicit defaults
+```
+
+Start the application either with Nvidia or AMD supported graphic cards or go by CPU only.
+
+#### **CPU only**
+```bash
 docker compose up -d --build
 ```
+
+#### **NVIDIA**
+```bash
+docker compose -f docker-compose.gpu-nvidia.yml up --build -d
+```
+
+#### **AMD**
+```bash
+docker compose -f docker-compose.gpu-amd.yml up --build -d
+```
+
 Open `http://localhost:7000` when the containers are healthy. Docker Compose
 binds the web UI to `127.0.0.1` by default. If the port is taken, set
 `APP_PORT=7001` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0`
