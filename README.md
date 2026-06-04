@@ -324,7 +324,7 @@ To expose Odysseus on a local network or Tailscale with HTTPS:
 
 | Package | Feature unlocked |
 |---------|-----------------|
-| `nobodywho` | [NobodyWho](https://nobodywho.ooo) as an in-process local AI provider — chat with GGUF models with no separate model server. Add the endpoint `nobodywho:local` in **Settings → Add Models** (or click the **NobodyWho** quickstart button), then drop `.gguf` files into `data/models/` or pin a `huggingface:owner/repo/file.gguf` ref. Env knobs: `NOBODYWHO_MODELS_DIR`, `NOBODYWHO_CTX` (default 8192), `NOBODYWHO_MAX_LOADED_MODELS` (default 1), `NOBODYWHO_USE_GPU` (default 1). |
+| `nobodywho` | [NobodyWho](https://nobodywho.ooo) as an in-process local AI provider — chat with GGUF models with no separate model server. Add the endpoint `nobodywho:local` in **Settings → Add Models** (or via `/setup`, or the **NobodyWho** quickstart button — the UI offers a one-click install if the package is missing), then get models via Cookbook, drop `.gguf` files into `data/models/`, or pin a `huggingface:owner/repo/file.gguf` ref. Context is auto-sized per model from its GGUF header and available memory. Env knobs: `NOBODYWHO_MODELS_DIR`, `NOBODYWHO_CTX` (explicit context override), `NOBODYWHO_MAX_CTX` (auto-sizing cap, default 16384), `NOBODYWHO_MAX_LOADED_MODELS` (default 1), `NOBODYWHO_USE_GPU` (default 1). |
 | `faster-whisper` | Local speech-to-text (microphone -> text) via the "local" STT provider. |
 | `duckduckgo-search` | DuckDuckGo as a search provider option. |
 | `PyMuPDF` | PDF page rendering in the side viewer panel and form-filling. (Note: AGPL-3.0) |
