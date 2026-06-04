@@ -190,6 +190,10 @@
   })();
   </script>
   <script defer src="/static/lib/highlight.min.js"></script>
+  <!-- xterm.js — full terminal emulator used by the Shell workspace -->
+  <link rel="stylesheet" href="/static/lib/xterm.css">
+  <script src="/static/lib/xterm.js"></script>
+  <script src="/static/lib/xterm-addon-fit.js"></script>
   <!-- Inter font — self-hosted, no Google dependencies -->
   <style>
     @font-face { font-family: 'Inter'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-Regular.woff2') format('woff2'); }
@@ -761,6 +765,21 @@
         </div>
       </div>
 
+      <!-- Shell section -->
+      <div class="section" id="shell-section">
+        <div class="section-header-flex">
+          <span class="section-title" id="shell-section-title" style="cursor:pointer;" title="Open Shell workspace">
+            <svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            <span>Shell</span>
+          </span>
+          <button type="button" class="section-header-btn list-item-plus-btn" id="shell-new-tab-btn" title="New terminal">
+            <svg class="list-item-plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span class="list-item-plus-label">new</span>
+          </button>
+        </div>
+        <div id="shell-tab-list"></div>
+      </div>
+
       <div class="section" id="email-section">
         <div class="section-header-flex">
           <span class="section-title" id="email-section-title" style="cursor:pointer;" title="Open email inbox"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg><span>Email</span></span>
@@ -1197,7 +1216,121 @@
     </div>
 
 
+    <!-- ═══════════════════════ Shell workspace ════════════════════════════ -->
+    <!-- Sits inside chat-container (position:relative) and covers it fully   -->
+    <div id="shell-workspace" class="shell-workspace" style="display:none">
+      <div class="shell-body" id="shell-body">
+        <!-- Terminal panel -->
+        <div class="shell-terminal" id="shell-terminal">
+          <!-- Chrome-style terminal sub-tabs -->
+          <div class="shell-term-tabbar" id="shell-term-tabbar"></div>
+          <div class="shell-cwd-bar" id="shell-cwd-bar"></div>
+          <div class="shell-terminal-body" id="shell-terminal-body"></div>
+        </div>
+        <!-- Resize divider -->
+        <div class="shell-divider" id="shell-divider" title="Drag to resize"></div>
+        <!-- File explorer (tabbed: Explorer + Source Control) -->
+        <div class="shell-explorer" id="shell-explorer">
+          <!-- Tab bar -->
+          <div class="shell-explorer-tabs">
+            <button class="shell-etab shell-etab-active" id="shell-etab-explorer" title="File Explorer">EXPLORER</button>
+            <button class="shell-etab" id="shell-etab-scm" title="Source Control">
+              SCM<span class="shell-scm-badge" id="shell-scm-badge" style="display:none">0</span>
+            </button>
+            <div class="shell-etab-spacer"></div>
+            <button class="shell-explorer-btn" id="shell-explorer-refresh" title="Refresh active panel">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            </button>
+          </div>
+
+          <!-- ── Explorer panel ── -->
+          <div id="shell-panel-explorer" class="shell-epanel">
+            <div class="shell-tree" id="shell-tree"></div>
+            <!-- Vertical resize handle between tree and viewer -->
+            <div class="shell-v-resize" id="shell-v-resize" title="Drag to resize"></div>
+            <div class="shell-viewer" id="shell-viewer" style="display:none">
+              <div class="shell-viewer-header">
+                <span class="shell-viewer-name" id="shell-viewer-name"></span>
+                <button class="shell-explorer-btn" id="shell-viewer-close" title="Close file">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+              <div class="shell-viewer-body">
+                <pre class="shell-viewer-pre"><code id="shell-viewer-code"></code></pre>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── Source Control panel ── -->
+          <div id="shell-panel-scm" class="shell-epanel" style="display:none">
+            <!-- Scrollable file list (staged / changes / untracked) -->
+            <div class="shell-scm-list" id="shell-scm-list"></div>
+            <!-- Diff viewer (shown when a file is clicked) -->
+            <div class="shell-scm-diff" id="shell-scm-diff" style="display:none">
+              <div class="shell-scm-diff-hdr">
+                <span class="shell-scm-diff-title" id="shell-scm-diff-title"></span>
+                <button class="shell-explorer-btn" id="shell-scm-diff-close" title="Close diff">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+              <pre class="shell-scm-diff-pre" id="shell-scm-diff-pre"></pre>
+            </div>
+            <!-- Commit bar (pinned to bottom) -->
+            <div class="shell-scm-commit">
+              <textarea id="shell-scm-msg" class="shell-scm-msg"
+                        placeholder="Commit message (Ctrl+Enter to commit)" rows="2"></textarea>
+              <button id="shell-scm-commit-btn" class="shell-scm-commit-btn">✓ Commit</button>
+            </div>
+          </div>
+
+          <!-- ── Git status bar (always visible, bottom of right panel) ── -->
+          <div id="shell-git-bar" class="shell-git-bar" title="Git repository info">
+            <span class="git-bar-item" id="git-bar-branch">
+              <svg class="git-bar-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+              <span id="git-bar-branch-text">—</span>
+            </span>
+            <span class="git-bar-sep"></span>
+            <span class="git-bar-item git-bar-sync" id="git-bar-sync" style="display:none">
+              <span id="git-bar-ahead"></span>
+              <span id="git-bar-behind"></span>
+            </span>
+            <span class="git-bar-item git-bar-changes" id="git-bar-changes" style="display:none" title="Click to open Source Control">
+              <svg class="git-bar-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              <span id="git-bar-changes-text"></span>
+            </span>
+            <span class="git-bar-sep git-bar-sep-commit"></span>
+            <span class="git-bar-item git-bar-commit" id="git-bar-commit" style="display:none" title="Last commit">
+              <svg class="git-bar-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="1.05" y1="12" x2="7" y2="12"/><line x1="17.01" y1="12" x2="22.96" y2="12"/></svg>
+              <span id="git-bar-commit-text"></span>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- ════════════════════════════════════════════════════════════════════ -->
   </main>
+
+  <!-- Folder picker modal (body-level so it's above everything) -->
+  <div id="shell-picker-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Open folder">
+    <div class="shell-picker-box">
+      <div class="shell-picker-header">
+        <span>Open Folder</span>
+        <button id="shell-picker-x" class="modal-close-btn" title="Cancel">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="shell-picker-crumb" id="shell-picker-crumb"></div>
+      <div class="shell-picker-list" id="shell-picker-list"></div>
+      <div class="shell-picker-footer">
+        <span class="shell-picker-sel-label" id="shell-picker-sel">Select a folder above</span>
+        <div class="shell-picker-actions">
+          <button id="shell-picker-cancel" class="btn btn-secondary">Cancel</button>
+          <button id="shell-picker-ok" class="btn btn-primary" disabled>Open</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <button id="scroll-bottom-btn" class="scroll-nav-btn" title="Scroll to bottom">▼</button>
   <script nonce="{{CSP_NONCE}}">
   (function(){
