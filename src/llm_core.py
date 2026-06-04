@@ -1424,7 +1424,10 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                             _usage_data["prefill_tps"] = round(_tm["prompt_per_second"], 2)
                                     yield f'data: {json.dumps({"type": "usage", "data": _usage_data})}\n\n'
                                 elif "choices" in j:
-                                    delta = j["choices"][0].get("delta") or {}
+                                    _c0 = (j["choices"] or [None])[0]
+                                    if _c0 is None:
+                                        continue
+                                    delta = _c0.get("delta") or {}
                                     if isinstance(delta, dict):
                                         # Text content
                                         # Reasoning tokens (VLLM --reasoning-parser, e.g. Qwen3/DeepSeek-R1, Nemotron). vLLM 0.20.2 / NIM emit the field as `reasoning`; older builds use `reasoning_content`. Accept either.
