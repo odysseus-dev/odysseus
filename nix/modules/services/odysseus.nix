@@ -4,8 +4,7 @@
 # from this nested module file. Exposes { nixosModule, darwinModule }.
 { src }:
 let
-  inherit (import ../overlays/python.nix) mkRuntimeLibs;
-  inherit (import ../packages/packages.nix) mkOdysseusPackage;
+  inherit (import ../../lib.nix) mkOdysseusPackage mkRuntimeLibs;
   # Tools the app shells out to / probes with shutil.which at runtime
   # (Cookbook background jobs, the Browser MCP via npx, remote server probes).
   mkServiceTools =
@@ -160,9 +159,10 @@ in
             world-readable.
           '';
         };
+
+        openFirewall = lib.mkEnableOption "opening the firewall for the Odysseus app port";
       };
 
-      imports = [ ../security/firewall.nix ];
 
       config = mkIf cfg.enable {
         users.users.${cfg.user} = {
@@ -311,6 +311,8 @@ in
             EnvironmentFile = "-${cfg.environmentFile}";
           };
         };
+
+        networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
       };
     };
 

@@ -11,10 +11,12 @@
     };
   };
 
-  # The Nix code is split into nix/modules/ (see baksteendebrik's proposal in
-  # issue #605): overlays/python.nix builds the app's Python env, packages/
-  # builds the derivation + container, services/ holds the NixOS & nix-darwin
-  # service modules, security/ the firewall, checks/ the integration tests.
+  # Nix code is split out of this file (cf. the native-nix effort in issue #605):
+  #   nix/lib.nix                       — mkRuntimeLibs / mkPythonEnv /
+  #                                       mkOdysseusPackage / mkContainer
+  #   nix/modules/services/odysseus.nix — the NixOS & nix-darwin service modules
+  #                                       (Chroma, SearXNG, firewall, app)
+  #   nix/modules/checks/integration.nix — the integration tests
   outputs =
     {
       self,
@@ -23,8 +25,12 @@
       nix-darwin,
     }:
     let
-      inherit (import ./nix/modules/overlays/python.nix) mkRuntimeLibs mkPythonEnv;
-      inherit (import ./nix/modules/packages/packages.nix) mkOdysseusPackage mkContainer;
+      inherit (import ./nix/lib.nix)
+        mkOdysseusPackage
+        mkContainer
+        mkRuntimeLibs
+        mkPythonEnv
+        ;
       odysseusModules = import ./nix/modules/services/odysseus.nix { src = ./.; };
     in
     flake-utils.lib.eachDefaultSystem (
