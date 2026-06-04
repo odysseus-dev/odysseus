@@ -57,6 +57,9 @@ Use that for the first login, then change it in **Settings**.
 Contributing? See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and
 pull request guidelines.
 
+Writing or shipping agent skills? See the public
+[SKILL.md format reference](docs/skills/format.md).
+
 ### Docker (recommended)
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
