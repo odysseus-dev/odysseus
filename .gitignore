@@ -89,3 +89,5 @@ docs/windows-port/
 compound.config.json
 *.error.log
 _scratch/
+
+docker-compose.override.yml
