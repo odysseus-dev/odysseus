@@ -1,7 +1,13 @@
 """Tests for the calendar check-in digest windows (src/task_scheduler.py)."""
 from datetime import datetime, timedelta
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
-from src.task_scheduler import _digest_windows
+from src.task_scheduler import (
+    _calendar_digest_display_dt,
+    _calendar_window_bounds,
+    _digest_windows,
+)
 
 
 def test_windows_are_contiguous_with_no_gap():
@@ -20,3 +26,27 @@ def test_event_seven_and_a_half_days_out_is_covered():
     event = now + timedelta(days=7, hours=12)  # fell in the old 7-8 day gap
     buckets = [label for label, start, end in _digest_windows(now) if start <= event <= end]
     assert buckets, "event ~7.5 days out should land in a digest window"
+
+
+def test_calendar_window_bounds_keep_local_and_utc_forms():
+    start = datetime(2026, 6, 10, 0, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+    end = start + timedelta(days=1)
+
+    assert _calendar_window_bounds(start, end) == (
+        datetime(2026, 6, 10, 0, 0),
+        datetime(2026, 6, 11, 0, 0),
+        datetime(2026, 6, 9, 15, 0),
+        datetime(2026, 6, 10, 15, 0),
+    )
+
+
+def test_calendar_digest_display_dt_converts_utc_stored_events():
+    ev = SimpleNamespace(dtstart=datetime(2026, 6, 9, 15, 30), is_utc=True)
+
+    got = _calendar_digest_display_dt(ev, "Asia/Tokyo")
+
+    assert got.year == 2026
+    assert got.month == 6
+    assert got.day == 10
+    assert got.hour == 0
+    assert got.minute == 30

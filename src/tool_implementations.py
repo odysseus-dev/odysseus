@@ -2043,7 +2043,10 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_calendar tool calls: list/create/update/delete calendar events (local SQLite)."""
     from datetime import datetime, timedelta
     from core.database import SessionLocal, CalendarCal, CalendarEvent, Note
-    from routes.calendar_routes import _ensure_default_calendar, _parse_dt, _parse_dt_pair, parse_due_for_user, _resolve_base_uid
+    from routes.calendar_routes import (
+        _ensure_default_calendar, _parse_dt, _parse_event_dt_for_storage,
+        parse_due_for_user, _resolve_base_uid,
+    )
     import uuid as _uuid
 
     try:
@@ -2120,9 +2123,9 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         )
         return "" if reminder_only.match(desc) else desc
 
-    def _parse_event_dt(raw: str) -> tuple[datetime, bool]:
+    def _parse_event_dt(raw: str, all_day: bool = False) -> tuple[datetime, bool]:
         """Parse agent event datetimes in the user's timezone when available."""
-        return _parse_dt_pair(parse_due_for_user(raw))
+        return _parse_event_dt_for_storage(parse_due_for_user(raw), all_day=all_day)
 
     def _create_calendar_reminder(summary: str, location: str, dtstart: datetime,
                                   all_day: bool, minutes_before: int,
@@ -2278,13 +2281,13 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
 
             all_day = bool(args.get("all_day", False))
             try:
-                dtstart, dtstart_is_utc = _parse_event_dt(dtstart_str)
+                dtstart, dtstart_is_utc = _parse_event_dt(dtstart_str, all_day=all_day)
             except ValueError as e:
                 return {"error": f"Could not parse dtstart {dtstart_str!r}: {e}", "exit_code": 1}
             dtend_raw = args.get("dtend") or args.get("end") or args.get("end_time")
             if dtend_raw:
                 try:
-                    dtend, dtend_is_utc = _parse_event_dt(dtend_raw)
+                    dtend, dtend_is_utc = _parse_event_dt(dtend_raw, all_day=all_day)
                     dtstart_is_utc = dtstart_is_utc or dtend_is_utc
                 except ValueError as e:
                     return {"error": f"Could not parse dtend {dtend_raw!r}: {e}", "exit_code": 1}
@@ -2429,12 +2432,21 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 _eff_all_day = (
                     args["all_day"] if args.get("all_day") is not None else ev.all_day
                 )
-                ev.dtstart, _su = _parse_event_dt(args["dtstart"])
+                ev.dtstart, _su = _parse_event_dt(args["dtstart"], all_day=_eff_all_day)
                 ev.is_utc = bool(_su and not _eff_all_day)
             if args.get("dtend") is not None:
-                ev.dtend, _eu = _parse_event_dt(args["dtend"])
+                _eff_all_day = (
+                    args["all_day"] if args.get("all_day") is not None else ev.all_day
+                )
+                ev.dtend, _eu = _parse_event_dt(args["dtend"], all_day=_eff_all_day)
+                if _eff_all_day:
+                    ev.is_utc = False
+                elif _eu:
+                    ev.is_utc = True
             if args.get("all_day") is not None:
                 ev.all_day = args["all_day"]
+                if ev.all_day:
+                    ev.is_utc = False
             # Tag/category + importance updates (any of these aliases).
             _tag = (args.get("event_type") or args.get("tag")
                     or args.get("category") or args.get("type"))

@@ -11,6 +11,7 @@ was already fixed for the analogous issue.
 import json
 import tempfile
 import uuid
+from datetime import datetime
 
 import pytest
 from sqlalchemy import create_engine
@@ -86,5 +87,49 @@ async def test_update_event_dtstart_anchored_to_user_tz(tokyo_offset):
         # And concretely: 14:00 Tokyo is 05:00 UTC, stored naive-UTC.
         assert ev.dtstart.hour == 5
         assert bool(ev.is_utc) is True
+    finally:
+        db.close()
+
+
+async def test_all_day_event_keeps_user_calendar_date(tokyo_offset):
+    from src.tool_implementations import do_manage_calendar
+
+    owner = "allday-" + uuid.uuid4().hex[:6]
+
+    created = await do_manage_calendar(json.dumps({
+        "action": "create_event",
+        "summary": "Tokyo holiday",
+        "dtstart": "2026-06-10",
+        "all_day": True,
+    }), owner=owner)
+    assert created.get("exit_code", 0) == 0, created
+    uid = created["uid"]
+
+    db = _TS()
+    try:
+        ev = db.query(CalendarEvent).filter(CalendarEvent.uid == uid).first()
+        assert ev.dtstart == datetime(2026, 6, 10)
+        assert ev.dtend == datetime(2026, 6, 11)
+        assert bool(ev.all_day) is True
+        assert bool(ev.is_utc) is False
+    finally:
+        db.close()
+
+    updated = await do_manage_calendar(json.dumps({
+        "action": "update_event",
+        "uid": uid,
+        "dtstart": "2026-06-12",
+        "dtend": "2026-06-13",
+        "all_day": True,
+    }), owner=owner)
+    assert updated.get("exit_code", 0) == 0, updated
+
+    db = _TS()
+    try:
+        ev = db.query(CalendarEvent).filter(CalendarEvent.uid == uid).first()
+        assert ev.dtstart == datetime(2026, 6, 12)
+        assert ev.dtend == datetime(2026, 6, 13)
+        assert bool(ev.all_day) is True
+        assert bool(ev.is_utc) is False
     finally:
         db.close()

@@ -24,3 +24,11 @@ def test_malformed_scheduled_time_returns_none():
 def test_valid_scheduled_time_still_computes():
     now = datetime(2026, 6, 2, 8, 0)
     assert compute_next_run("daily", "09:00", after=now) == datetime(2026, 6, 2, 9, 0)
+
+
+def test_valid_scheduled_time_with_timezone_stores_naive_utc():
+    now_utc = datetime(2026, 6, 2, 12, 0)  # 21:00 on June 2 in Tokyo.
+    assert (
+        compute_next_run("daily", "09:00", after=now_utc, tz_name="Asia/Tokyo")
+        == datetime(2026, 6, 3, 0, 0)
+    )

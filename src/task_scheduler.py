@@ -236,6 +236,35 @@ def _digest_windows(now):
     ]
 
 
+def _calendar_window_bounds(start: datetime, end: datetime):
+    """Return local-naive and UTC-naive bounds for a calendar digest window."""
+    if start.tzinfo is not None:
+        local_start = start.replace(tzinfo=None)
+        utc_start = start.astimezone(timezone.utc).replace(tzinfo=None)
+    else:
+        local_start = utc_start = start
+    if end.tzinfo is not None:
+        local_end = end.replace(tzinfo=None)
+        utc_end = end.astimezone(timezone.utc).replace(tzinfo=None)
+    else:
+        local_end = utc_end = end
+    return local_start, local_end, utc_start, utc_end
+
+
+def _calendar_digest_display_dt(ev, tz_name: str | None):
+    """Render UTC-stored event instants in the crew/user timezone for check-ins."""
+    dt = getattr(ev, "dtstart", None)
+    if dt is None:
+        return dt
+    if getattr(ev, "is_utc", False) and tz_name:
+        try:
+            from zoneinfo import ZoneInfo
+            return dt.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name))
+        except Exception:
+            return dt
+    return dt
+
+
 class TaskScheduler:
     def __init__(self, session_manager):
         self._session_manager = session_manager
@@ -1110,18 +1139,26 @@ class TaskScheduler:
         # Calendar: today+tomorrow, this week, month ahead
         # Pull directly from DB so we can include event_type and importance.
         try:
-            from core.database import SessionLocal as _SL, CalendarEvent as _CE
+            from sqlalchemy import and_ as _and, or_ as _or
+            from core.database import SessionLocal as _SL, CalendarEvent as _CE, CalendarCal as _CC
             _db = _SL()
             try:
                 for label, start, end in _digest_windows(now):
-                    # Strip timezone for naive DB comparison
-                    _s = start.replace(tzinfo=None) if start.tzinfo else start
-                    _e = end.replace(tzinfo=None) if end.tzinfo else end
-                    evs = _db.query(_CE).filter(
-                        _CE.dtstart >= _s,
-                        _CE.dtstart <= _e,
+                    local_s, local_e, utc_s, utc_e = _calendar_window_bounds(start, end)
+                    q = _db.query(_CE).join(_CC).filter(
                         _CE.status != "cancelled",
-                    ).order_by(_CE.dtstart).all()
+                        _or(
+                            _and(_CE.is_utc.is_(True), _CE.dtstart >= utc_s, _CE.dtstart <= utc_e),
+                            _and(
+                                _or(_CE.is_utc.is_(False), _CE.is_utc.is_(None)),
+                                _CE.dtstart >= local_s,
+                                _CE.dtstart <= local_e,
+                            ),
+                        ),
+                    )
+                    if task.owner is not None:
+                        q = q.filter(_CC.owner == task.owner)
+                    evs = q.order_by(_CE.dtstart).all()
                     if not evs:
                         continue
                     # Group by importance for richer output
@@ -1136,7 +1173,12 @@ class TaskScheduler:
                             continue
                         marker = {"critical": "[!!]", "high": "[!]", "normal": "  ", "low": " ·"}[tier]
                         for ev in items:
-                            t = ev.dtstart.strftime("%a %b %d %H:%M")
+                            display_dt = _calendar_digest_display_dt(ev, tz_name) or ev.dtstart
+                            t = (
+                                display_dt.strftime("%a %b %d all day")
+                                if getattr(ev, "all_day", False)
+                                else display_dt.strftime("%a %b %d %H:%M")
+                            )
                             tag = f" ({ev.event_type})" if ev.event_type else ""
                             loc = f" @ {ev.location}" if ev.location else ""
                             lines.append(f"{marker} {t} — {ev.summary}{tag}{loc}")

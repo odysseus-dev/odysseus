@@ -302,6 +302,30 @@ def _parse_dt_pair(s: str):
         return _parse_dt(s), False
 
 
+def _parse_all_day_dt(s: str) -> datetime:
+    """Parse an all-day value as a local calendar date, not a UTC instant."""
+    s = (s or "").strip()
+    if not s:
+        raise ValueError("empty datetime string")
+    try:
+        if len(s) == 10:
+            d = date.fromisoformat(s)
+            return datetime(d.year, d.month, d.day)
+        _s2 = s.replace("Z", "+00:00") if s.endswith("Z") else s
+        parsed = datetime.fromisoformat(_s2)
+        return datetime(parsed.year, parsed.month, parsed.day)
+    except ValueError:
+        parsed = _parse_dt(s)
+        return datetime(parsed.year, parsed.month, parsed.day)
+
+
+def _parse_event_dt_for_storage(s: str, all_day: bool = False):
+    """Parse event datetime storage fields, preserving all-day calendar dates."""
+    if all_day:
+        return _parse_all_day_dt(s), False
+    return _parse_dt_pair(s)
+
+
 def _parse_dt(s: str) -> datetime:
     """Parse a date/datetime string.
 
@@ -804,9 +828,9 @@ def setup_calendar_routes() -> APIRouter:
             # Use the tz-detecting parser so events posted with an offset
             # (e.g. "2026-05-13T10:00:00+09:00" or "...Z") get stored as UTC
             # and flagged for proper Z-suffix on read-back.
-            dtstart, _is_utc = _parse_dt_pair(data.dtstart)
+            dtstart, _is_utc = _parse_event_dt_for_storage(data.dtstart, data.all_day)
             if data.dtend:
-                dtend, _end_utc = _parse_dt_pair(data.dtend)
+                dtend, _end_utc = _parse_event_dt_for_storage(data.dtend, data.all_day)
                 # If start was tz-aware but end was naive (or vice-versa),
                 # trust whichever flag is True — they should match.
                 _is_utc = _is_utc or _end_utc
@@ -866,16 +890,21 @@ def setup_calendar_routes() -> APIRouter:
                 ev.description = data.description
             if data.location is not None:
                 ev.location = data.location
+            _eff_all_day = data.all_day if data.all_day is not None else ev.all_day
             if data.dtstart is not None:
-                ev.dtstart, _s_utc = _parse_dt_pair(data.dtstart)
+                ev.dtstart, _s_utc = _parse_event_dt_for_storage(data.dtstart, _eff_all_day)
                 # When the incoming payload carries tz info, mark the row as
                 # UTC-stored so the serializer adds Z. Don't flip the flag
                 # off if start arrives naive but end was UTC — only escalate.
-                if _s_utc:
+                if _eff_all_day:
+                    ev.is_utc = False
+                elif _s_utc:
                     ev.is_utc = True
             if data.dtend is not None:
-                ev.dtend, _e_utc = _parse_dt_pair(data.dtend)
-                if _e_utc:
+                ev.dtend, _e_utc = _parse_event_dt_for_storage(data.dtend, _eff_all_day)
+                if _eff_all_day:
+                    ev.is_utc = False
+                elif _e_utc:
                     ev.is_utc = True
             if data.all_day is not None:
                 ev.all_day = data.all_day
