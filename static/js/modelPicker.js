@@ -254,6 +254,13 @@ function _initModelPickerDropdown() {
     let slug = slash > 0 ? mid.substring(0, slash) : 'other';
     return _PROVIDER_ALIAS[slug] || slug;
   }
+  function _selectorKey(value) {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'unknown';
+  }
   const _collapsedProviders = new Set(_loadList('odysseus-model-collapsed'));
   let _justExpandedProvider = null;
 
@@ -283,18 +290,25 @@ function _initModelPickerDropdown() {
     function _addSection(label) {
       const el = document.createElement('div');
       el.className = 'mp-section-label';
+      el.dataset.testid = 'model-picker-section';
+      el.dataset.section = _selectorKey(label);
       el.textContent = label;
       listEl.appendChild(el);
     }
     function _addEmpty(text) {
       const empty = document.createElement('div');
       empty.className = 'model-switch-empty';
+      empty.dataset.testid = 'model-picker-empty';
       empty.textContent = text;
       listEl.appendChild(empty);
     }
     function _addRow(m) {
       const row = document.createElement('div');
       row.className = 'model-switch-item';
+      row.dataset.testid = 'model-picker-option';
+      row.dataset.modelId = m.mid || '';
+      row.dataset.stale = m.stale ? 'true' : 'false';
+      if (m.endpointId) row.dataset.endpointId = m.endpointId;
       if (m.stale) {
         row.classList.add('model-switch-stale');
         row.style.opacity = '0.45';
@@ -330,8 +344,11 @@ function _initModelPickerDropdown() {
       const favDot = document.createElement('button');
       favDot.type = 'button';
       favDot.className = 'mp-fav-dot' + (favs.includes(m.mid) ? ' active' : '');
+      favDot.dataset.testid = 'model-picker-favorite';
+      favDot.dataset.modelId = m.mid || '';
       favDot.textContent = '●';
       const _setFavState = (on) => {
+        favDot.dataset.favorited = on ? 'true' : 'false';
         favDot.classList.toggle('active', on);
         favDot.title = on ? 'Remove from favorites' : 'Add to favorites';
         favDot.setAttribute('aria-label', on ? 'Remove from favorites' : 'Add to favorites');
@@ -418,6 +435,9 @@ function _initModelPickerDropdown() {
         const isCollapsed = _collapsedProviders.has(provider);
         const header = document.createElement('div');
         header.className = 'mp-provider-header';
+        header.dataset.testid = 'model-picker-provider-header';
+        header.dataset.provider = provider;
+        header.dataset.collapsed = isCollapsed ? 'true' : 'false';
         header.innerHTML =
           `<svg class="mp-provider-chevron${isCollapsed ? ' collapsed' : ''}" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`
           + `<span class="mp-provider-name">${_providerDisplayName(provider)}</span>`
@@ -440,6 +460,8 @@ function _initModelPickerDropdown() {
         if (!isCollapsed) {
           const group = document.createElement('div');
           group.className = 'mp-provider-group' + (_justExpandedProvider === provider ? ' mp-just-expanded' : '');
+          group.dataset.testid = 'model-picker-provider-group';
+          group.dataset.provider = provider;
           models.forEach(m => {
             _addRow(m);
             // Move the just-appended row into the group container
