@@ -42,6 +42,16 @@ def test_qwen35_moe_still_gets_expert_parallel():
     assert "VLLM_USE_FLASHINFER_SAMPLER=0" in opts["envVars"]
 
 
+def test_qwen35_a17b_moe_gets_expert_parallel():
+    # Catalog-covered variant (services/hwfit/data/hf_models.json has
+    # Qwen3.5-397B-A17B rows). The MoE suffix gate is a generic A<number>B match,
+    # so a real A17B MoE model still reaches the expert-parallel path even though
+    # 17 is not in the old a10b/a22b/a3b list.
+    opts = _detect("Qwen/Qwen3.5-397B-A17B")
+    assert "--enable-expert-parallel" in opts["flags"]
+    assert "VLLM_USE_FLASHINFER_SAMPLER=0" in opts["envVars"]
+
+
 def test_qwen3_moe_unaffected():
     # Regression guard: the non-3.5 qwen3 MoE path must keep working.
     opts = _detect("Qwen3-235B-A22B")
