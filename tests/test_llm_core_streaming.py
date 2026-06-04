@@ -9,6 +9,7 @@ corrupting — its arguments) and must preserve extra_content per call.
 """
 import json
 import asyncio
+import logging
 
 from src import llm_core
 
@@ -75,6 +76,30 @@ def _drive(monkeypatch, lines, model="gemini-3.1-pro-preview-customtools"):
 
 def _sse(delta):
     return "data: " + json.dumps({"choices": [{"delta": delta}]})
+
+
+def test_minimax_null_stream_entries_do_not_drop_valid_siblings(monkeypatch, caplog):
+    caplog.set_level(logging.ERROR, logger="src.llm_core")
+    lines = [
+        _sse({"content": "Hello "}),
+        "data: " + json.dumps({"choices": [None], "usage": None}),
+        _sse({"tool_calls": [
+            None,
+            {"index": 0, "id": "call_ok", "type": "function",
+             "function": {"name": "bash", "arguments": "{}"}},
+        ]}),
+        _sse({"content": "world"}),
+        "data: [DONE]",
+    ]
+
+    events = _drive(monkeypatch, lines, model="MiniMax-M3")
+
+    assert "".join(e.get("delta", "") for e in events if not e.get("thinking")) == "Hello world"
+    usage = next(e["data"] for e in events if e.get("type") == "usage")
+    assert usage == {"input_tokens": 0, "output_tokens": 0}
+    calls = next(e["calls"] for e in events if e.get("type") == "tool_calls")
+    assert calls == [{"id": "call_ok", "name": "bash", "arguments": "{}"}]
+    assert "Error parsing stream data" not in caplog.text
 
 
 def test_parallel_calls_with_null_index_do_not_collide(monkeypatch):

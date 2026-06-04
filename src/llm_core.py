@@ -1551,7 +1551,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                 j = json.loads(data)
                                 # Usage chunk (from stream_options)
                                 _choices = j.get("choices") or []
-                                _delta0 = _choices[0].get("delta") if (_choices and _choices[0] is not None) else None
+                                _choice0 = _choices[0] if _choices and isinstance(_choices[0], dict) else None
+                                _delta0 = _choice0.get("delta") if _choice0 else None
                                 # Capture usage whenever the chunk carries it and
                                 # the delta has no actual output. Some gateways /
                                 # local servers attach usage to the FINAL delta,
@@ -1567,6 +1568,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                 )
                                 if "usage" in j and not _delta_has_output:
                                     u = j["usage"] or {}
+                                    if not isinstance(u, dict):
+                                        u = {}
                                     _usage_data = {"input_tokens": u.get("prompt_tokens", 0), "output_tokens": u.get("completion_tokens", 0)}
                                     # llama.cpp puts a `timings` block alongside `usage` with the
                                     # TRUE generation speed (predicted_per_second) — pure decode,
@@ -1580,11 +1583,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                         if _tm.get("prompt_per_second"):
                                             _usage_data["prefill_tps"] = round(_tm["prompt_per_second"], 2)
                                     yield f'data: {json.dumps({"type": "usage", "data": _usage_data})}\n\n'
-                                elif "choices" in j:
-                                    _c0 = (j["choices"] or [None])[0]
-                                    if _c0 is None:
-                                        continue
-                                    delta = _c0.get("delta") or {}
+                                elif _choice0 is not None:
+                                    delta = _choice0.get("delta") or {}
                                     if isinstance(delta, dict):
                                         # Text content
                                         # Reasoning tokens (VLLM --reasoning-parser, e.g. Qwen3/DeepSeek-R1, Nemotron). vLLM 0.20.2 / NIM emit the field as `reasoning`; older builds use `reasoning_content`. Some OpenAI-compatible Ollama builds use `thinking`.
@@ -1650,9 +1650,11 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                                     yield f'data: {json.dumps({"delta": content})}\n\n'
                                         # Native tool calls — accumulate across chunks
                                         for tc in delta.get("tool_calls") or []:
-                                            if tc is None:
+                                            if not isinstance(tc, dict):
                                                 continue
                                             func = tc.get("function") or {}
+                                            if not isinstance(func, dict):
+                                                func = {}
                                             raw_idx = tc.get("index")
                                             if raw_idx is None:
                                                 # Gemini's OpenAI-compat layer omits `index` on
