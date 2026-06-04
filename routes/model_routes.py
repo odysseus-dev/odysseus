@@ -18,6 +18,7 @@ from core.database import SessionLocal, ModelEndpoint, Session as DbSession
 from core.middleware import require_admin
 from src.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS
 from src.nobodywho_provider import is_nobodywho_url, manager as _nobodywho
+from src.tls_overrides import llm_verify
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
 from src.endpoint_resolver import (
     normalize_base as _normalize_base,
@@ -644,7 +645,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         if api_key:
             headers["x-api-key"] = api_key
         try:
-            r = httpx.get(url, headers=headers, timeout=timeout)
+            r = httpx.get(url, headers=headers, timeout=timeout, verify=llm_verify())
             r.raise_for_status()
             data = r.json()
             models = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
@@ -665,7 +666,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     url = build_models_url(base)
     headers = build_headers(api_key, base)
     try:
-        r = httpx.get(url, headers=headers, timeout=timeout)
+        r = httpx.get(url, headers=headers, timeout=timeout, verify=llm_verify())
         r.raise_for_status()
         data = r.json()
         # OpenAI format: {"data": [{"id": "model-name"}]}
@@ -700,7 +701,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         parsed = urlparse(base)
         if parsed.port == 11434 or "ollama" in (parsed.hostname or "").lower():
             root = base[:-3].rstrip("/") if base.endswith("/v1") else base
-            r = httpx.get(root + "/api/tags", timeout=timeout)
+            r = httpx.get(root + "/api/tags", timeout=timeout, verify=llm_verify())
             r.raise_for_status()
             data = r.json()
             models = [m.get("name") or m.get("model") for m in (data.get("models") or []) if m.get("name") or m.get("model")]
@@ -764,7 +765,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
                     break
             for path in ("/api/version", "/api/tags"):
                 try:
-                    r = httpx.get(root + path, timeout=timeout)
+                    r = httpx.get(root + path, timeout=timeout, verify=llm_verify())
                     result = _result_from_response(r)
                     if result["reachable"]:
                         return result
@@ -775,7 +776,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
         pass
 
     try:
-        r = httpx.get(base, headers=headers, timeout=timeout)
+        r = httpx.get(base, headers=headers, timeout=timeout, verify=llm_verify())
         return _result_from_response(r)
     except Exception as e:
         last_error = str(e)[:120]
@@ -1029,8 +1030,8 @@ def setup_model_routes(model_discovery):
                     db.close()
                 if changed:
                     _invalidate_models_cache()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning('Background endpoint refresh failed: %s', e)
             finally:
                 for st in _refresh_state.values():
                     st["inflight"] = False

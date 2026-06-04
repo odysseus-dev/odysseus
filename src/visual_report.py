@@ -25,8 +25,26 @@ from src.research_utils import strip_thinking
 from urllib.parse import urlparse
 
 import markdown
+import nh3
 
 logger = logging.getLogger(__name__)
+
+# Tags/attributes permitted in rendered research-report HTML. Starts from nh3's
+# safe defaults (which drop <script>, inline event handlers, and javascript:
+# URLs) and adds back only the formatting the report itself emits: the
+# collapsible raw-findings block (<details>/<summary>), heading anchors for the
+# table of contents (id), codehilite classes, table alignment, and the
+# target/rel that _md_to_html puts on external links.
+_REPORT_ALLOWED_TAGS = set(nh3.ALLOWED_TAGS) | {"details", "summary"}
+_REPORT_ALLOWED_ATTRS = {k: set(v) for k, v in nh3.ALLOWED_ATTRIBUTES.items()}
+for _h in ("h1", "h2", "h3", "h4", "h5", "h6"):
+    _REPORT_ALLOWED_ATTRS.setdefault(_h, set()).add("id")
+for _t in ("span", "code", "pre", "div", "table", "td", "th"):
+    _REPORT_ALLOWED_ATTRS.setdefault(_t, set()).add("class")
+for _t in ("td", "th"):
+    _REPORT_ALLOWED_ATTRS.setdefault(_t, set()).add("align")
+_REPORT_ALLOWED_ATTRS.setdefault("a", set()).update({"href", "title", "target", "rel"})
+_REPORT_ALLOWED_ATTRS.setdefault("img", set()).update({"src", "alt", "title"})
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -48,7 +66,14 @@ def _autolink_urls(md_text: str) -> str:
 
 
 def _md_to_html(md_text: str) -> str:
-    """Convert markdown to HTML with common extensions."""
+    """Convert markdown to HTML with common extensions.
+
+    Research-report markdown is assembled from LLM output over crawled web
+    pages (untrusted content), and report pages are served under a relaxed
+    `script-src 'unsafe-inline'` CSP. python-markdown passes raw HTML through
+    verbatim, so the rendered output is allowlist-sanitized to strip any
+    <script>/inline-event-handler/javascript: markup before it reaches the page.
+    """
     md_text = _autolink_urls(md_text)
     result = markdown.markdown(
         md_text,
@@ -63,6 +88,14 @@ def _md_to_html(md_text: str) -> str:
         r'<a href="(https?://)',
         r'<a target="_blank" rel="noopener noreferrer" href="\1',
         result,
+    )
+    # Sanitize: report content is untrusted and the report CSP allows inline
+    # scripts, so strip active content while keeping the formatting above.
+    result = nh3.clean(
+        result,
+        tags=_REPORT_ALLOWED_TAGS,
+        attributes=_REPORT_ALLOWED_ATTRS,
+        link_rel=None,
     )
     return result
 
@@ -1864,7 +1897,7 @@ def generate_visual_report(
         restore_btn_html=restore_btn_html,
         timestamp=timestamp,
         category_css=_category_css(category),
-        body_class=f"category-{category}" if category else "",
+        body_class=f"category-{html.escape(str(category))}" if category else "",
         session_id_js=json_dumps_str(session_id or ""),
         spare_images_js=_json_for_script(spare_images),
     )

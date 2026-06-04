@@ -37,7 +37,7 @@ from routes.chat_helpers import (
     clean_thinking_for_save,
     _enforce_chat_privileges,
 )
-from src.action_intents import message_needs_tools as _message_needs_tools
+from src.action_intents import classify_tool_intent as _classify_tool_intent
 
 logger = logging.getLogger(__name__)
 
@@ -229,6 +229,26 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
         db.close()
 
 
+def _set_user_time_from_request(request: Request) -> None:
+    """Copy browser timezone headers into the per-request context.
+
+    This is intentionally ephemeral: it is used only while building prompts
+    and running tools for this request. It is not persisted or logged.
+    """
+    try:
+        tz_offset = request.headers.get("x-tz-offset")
+        tz_name = request.headers.get("x-tz-name")
+        from src.user_time import clear_user_time_context, set_user_tz_name, set_user_tz_offset
+
+        clear_user_time_context()
+        if tz_offset is not None:
+            set_user_tz_offset(tz_offset)
+        if tz_name:
+            set_user_tz_name(tz_name)
+    except Exception:
+        pass
+
+
 def setup_chat_routes(
     session_manager,
     chat_handler,
@@ -247,6 +267,8 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     @router.post("/api/chat", response_model=Dict[str, str])
     async def chat_endpoint(request: Request, chat_request: ChatRequest) -> Dict[str, str]:
+        _set_user_time_from_request(request)
+
         message = chat_request.message
         session = chat_request.session
         att_ids = chat_request.attachments or []
@@ -355,16 +377,7 @@ def setup_chat_routes(
         except Exception as e:
             raise HTTPException(400, f"Request parsing error: {e}")
 
-        # Stash the user's UTC offset (in minutes east of UTC) from the
-        # frontend so tools like manage_notes interpret natural-language
-        # times in the USER's tz, not the server's. See calendar_routes.
-        try:
-            _tz_hdr = request.headers.get("x-tz-offset")
-            if _tz_hdr is not None:
-                from routes.calendar_routes import set_user_tz_offset
-                set_user_tz_offset(_tz_hdr)
-        except Exception:
-            pass
+        _set_user_time_from_request(request)
 
         form_data = await request.form()
         message = form_data.get("message")
@@ -393,10 +406,15 @@ def setup_chat_routes(
         # its way through a plain chat request (and fail, especially with the
         # shell disabled).
         auto_escalated = False
-        if chat_mode == "chat" and isinstance(message, str) and _message_needs_tools(message):
+        _tool_intent = _classify_tool_intent(message) if isinstance(message, str) else None
+        if chat_mode == "chat" and _tool_intent and _tool_intent.needs_tools:
             chat_mode = "agent"
             auto_escalated = True
-            logger.info("chat→agent auto-escalation: message matched tool-intent pattern")
+            logger.info(
+                "chat→agent auto-escalation: category=%s reason=%s",
+                _tool_intent.category,
+                _tool_intent.reason,
+            )
         active_doc_id = form_data.get("active_doc_id", "").strip()
         logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
 
@@ -507,7 +525,24 @@ def setup_chat_routes(
                 _doc_q = _doc_db.query(DBDocument).filter(DBDocument.id == active_doc_id)
                 active_doc = _owner_session_filter(_doc_q, ctx.user).first()
                 if active_doc:
-                    logger.info(f"[doc-inject] found by ID: title={active_doc.title!r}, lang={active_doc.language!r}, is_active={active_doc.is_active}, content_len={len(active_doc.current_content or '')}")
+                    doc_session = active_doc.session_id
+                    doc_owner = getattr(active_doc, "owner", None)
+                    if doc_owner and ctx.user and doc_owner != ctx.user:
+                        logger.warning(
+                            "[doc-inject] ignoring active_doc_id %s owned by another user",
+                            active_doc_id,
+                        )
+                        active_doc = None
+                    elif doc_session and doc_session != session:
+                        logger.warning(
+                            "[doc-inject] ignoring stale active_doc_id %s from session %s while in session %s",
+                            active_doc_id,
+                            doc_session,
+                            session,
+                        )
+                        active_doc = None
+                    else:
+                        logger.info(f"[doc-inject] found by ID: title={active_doc.title!r}, lang={active_doc.language!r}, is_active={active_doc.is_active}, content_len={len(active_doc.current_content or '')}")
                 else:
                     logger.warning(f"[doc-inject] NOT FOUND by ID {active_doc_id}")
             if not active_doc:

@@ -8554,6 +8554,9 @@ import * as Modals from './modalManager.js';
       if (window.hljs) {
         preview.querySelectorAll('pre code').forEach(b => window.hljs.highlightElement(b));
       }
+      if (markdownModule && markdownModule.renderMermaid) {
+        markdownModule.renderMermaid(preview);
+      }
       preview.style.display = '';
       wrap.style.display = 'none';
     } else {

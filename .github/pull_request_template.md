@@ -2,6 +2,10 @@
 
 <!-- One paragraph: what changed and why. "Fixed bug" and "Added feature" are not summaries. -->
 
+## Target branch
+
+- [ ] This PR targets **`dev`**, not `main`. All PRs land in `dev`; `main` is curated by the maintainer at each release. If your PR is on `main` by accident, click "Edit" on this PR and change the base.
+
 ## Linked Issue
 
 <!-- Every PR should be linked to an issue.
