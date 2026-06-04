@@ -1997,6 +1997,307 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         logger.exception("check_email_urgency action failed")
         return str(e), False
 
+def _resolve_scan_folders(acc, scan_mode: str) -> list:
+    """Resolve IMAP folder names from a scan mode ('inbox' or 'all_mail').
+    Provider-aware: folder names vary across email providers."""
+    if scan_mode == "all_mail":
+        host = (acc.imap_host or "").lower()
+        if "gmail" in host or "googlemail" in host:
+            return ["[Gmail]/All Mail"]
+        # Outlook, Office 365, Hotmail, Live
+        if "outlook" in host or "office365" in host or "hotmail" in host or "live.com" in host:
+            return ["Archive"]
+        # iCloud
+        if "icloud" in host or "me.com" in host or "mac.com" in host:
+            return ["Archive"]
+        # Yahoo
+        if "yahoo" in host or "ymail" in host:
+            return ["Archive"]
+        # Fastmail
+        if "fastmail" in host:
+            return ["Archive"]
+        # Migadu and other generic IMAP servers — Archive is the most common
+        return ["Archive"]
+    return ["INBOX"]
+
+async def action_apply_email_labels(owner: str, **kwargs) -> Tuple[str, bool]:
+    """Scan unread emails, classify them with the LLM using user-defined
+    categories, and move each email to the matching label/folder.
+
+    Settings (all under settings.json):
+    - email_label_scan_folders: list of IMAP folders to scan (default: ["INBOX"])
+    - email_label_limit: max emails to process per run (default: 50)
+    - email_label_method: "imap" or "oauth" (default: "imap")
+    - email_label_categories: list of {"label": str, "description": str}
+
+    Provider-aware folder names are resolved from the account's imap_host
+    so Gmail, Outlook, and generic IMAP servers all work without manual config.
+    """
+    from src.settings import load_settings
+    try:
+        import json as _json
+        import asyncio as _aio
+        import email as _email_mod
+        from core.database import SessionLocal as _SL, EmailAccount as _EA
+        from routes.email_helpers import _imap_connect, _decode_header, _imap_move, _q
+        from src.endpoint_resolver import resolve_endpoint, resolve_utility_fallback_candidates
+        from src.llm_core import llm_call_async_with_fallback
+        settings = load_settings()
+        scan_mode = settings.get("email_label_scan_folders") or "inbox"
+        limit = int(settings.get("email_label_limit") or 50)
+        method = (settings.get("email_label_method") or "imap").lower()
+        categories = settings.get("email_label_categories") or []
+
+        if not categories:
+            return "No label categories configured — add categories in Settings.", False
+
+        # ── 1. Resolve LLM endpoint.
+        url, model, headers = resolve_endpoint("utility", owner=owner)
+        if not url or not model:
+            url, model, headers = resolve_endpoint("default", owner=owner)
+        if not url or not model:
+            return "No LLM endpoint available", False
+        candidates = [(url, model, headers)] + (resolve_utility_fallback_candidates(owner=owner) or [])
+
+        # ── 2. Enumerate enabled accounts for this owner.
+        db = _SL()
+        try:
+            from sqlalchemy import and_ as _and, or_ as _or
+            q = db.query(_EA).filter(_EA.enabled == True)  # noqa: E712
+            if owner:
+                unowned = _or(_EA.owner == None, _EA.owner == "")  # noqa: E711
+                same_mailbox = _or(_EA.imap_user == owner, _EA.from_address == owner)
+                q = q.filter(_or(_EA.owner == owner, _and(unowned, same_mailbox)))
+            accounts = q.all()
+        finally:
+            db.close()
+
+        if not accounts:
+            raise TaskNoop("no email accounts configured")
+
+        # ── 3. Detect provider from imap_host so folder names are correct.
+        def _detect_provider(imap_host: str) -> str:
+            h = (imap_host or "").lower()
+            if "gmail" in h or "googlemail" in h:
+                return "gmail"
+            if "outlook" in h or "office365" in h or "hotmail" in h or "live.com" in h:
+                return "outlook"
+            return "generic"
+
+        # Build the LLM prompt once — shared across all emails.
+        category_lines = "\n".join(
+            f'- "{c["label"]}": {c["description"]}' for c in categories
+        )
+        label_names = [c["label"] for c in categories]
+        category_prompt = (
+            "You are classifying ONE unread email into exactly one of the following categories.\n"
+            f"Categories:\n{category_lines}\n\n"
+            'Return ONLY JSON: {"label": "<category name>", "reason": "<one short phrase>"}.\n'
+            'If no category fits, return {"label": "none", "reason": "..."}.\n'
+            "Do not add any text outside the JSON.\n\n"
+        )
+
+        moved = 0
+        skipped = 0
+        failed = 0
+        processed = 0
+        moved_log = []
+        skipped_log = []
+        failed_log = []
+
+        for acc in accounts:
+            if processed >= limit:
+                break
+
+            provider = _detect_provider(acc.imap_host or "")
+
+            # Resolve OAuth token if method is oauth and account supports it.
+            oauth_token = None
+            if method == "oauth" and getattr(acc, "auth_type", "") == "oauth":
+                try:
+                    from src.email_oauth import get_access_token
+                    oauth_token = await _aio.to_thread(get_access_token, acc.id)
+                except Exception as _oe:
+                    logger.warning(f"apply_labels: OAuth token fetch failed for {acc.id}: {_oe}")
+
+            for folder in _resolve_scan_folders(acc, scan_mode):
+                if processed >= limit:
+                    break
+
+                def _fetch_unread(account=acc, src_folder=folder):
+                    """Fetch unread email headers from one folder. Runs in a thread."""
+                    results = []
+                    try:
+                        conn = _imap_connect(account.id, owner=owner)
+                        try:
+                            st, _ = conn.select(_q(src_folder), readonly=False)
+                            if st != "OK":
+                                return results
+                            st2, data = conn.uid("SEARCH", None, "UNSEEN")
+                            if st2 != "OK" or not data or not data[0]:
+                                return results
+                            uids = data[0].split()
+                            for uid_b in uids:
+                                uid = uid_b.decode() if isinstance(uid_b, bytes) else str(uid_b)
+                                try:
+                                    st3, msg_data = conn.uid("FETCH", uid_b, "(RFC822.HEADER BODY.PEEK[TEXT]<0.800>)")
+                                    if st3 != "OK" or not msg_data:
+                                        continue
+                                    raw = b""
+                                    for part in msg_data:
+                                        if isinstance(part, tuple) and part[1]:
+                                            raw += part[1] + b"\n\n"
+                                    if not raw:
+                                        continue
+                                    msg = _email_mod.message_from_bytes(raw)
+                                    subject = _decode_header(msg.get("Subject") or "")
+                                    from_raw = _decode_header(msg.get("From") or "")
+                                    body_snippet = ""
+                                    try:
+                                        if msg.is_multipart():
+                                            for part in msg.walk():
+                                                if part.get_content_type() == "text/plain":
+                                                    body_snippet = part.get_payload(decode=True).decode("utf-8", errors="ignore")[:800]
+                                                    break
+                                        else:
+                                            body_snippet = (msg.get_payload(decode=True) or b"").decode("utf-8", errors="ignore")[:800]
+                                    except Exception:
+                                        body_snippet = ""
+                                    results.append({
+                                        "uid": uid,
+                                        "subject": subject,
+                                        "from": from_raw,
+                                        "body": body_snippet.strip(),
+                                    })
+                                except Exception as _fe:
+                                    logger.debug(f"apply_labels: fetch uid {uid} failed: {_fe}")
+                        finally:
+                            try:
+                                conn.logout()
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        logger.warning(f"apply_labels: IMAP scan failed for {acc.id}/{src_folder}: {e}")
+                    return results
+
+                items = await _aio.to_thread(_fetch_unread)
+
+                for item in items:
+                    if processed >= limit:
+                        break
+                    processed += 1
+
+                    # ── 4. Classify with LLM.
+                    prompt = (
+                        category_prompt
+                        + f"Email:\nFrom: {item['from']}\nSubject: {item['subject']}\n"
+                        + f"Snippet:\n{item['body']}\n"
+                    )
+                    try:
+                        raw = await llm_call_async_with_fallback(
+                            candidates,
+                            [{"role": "user", "content": prompt}],
+                            temperature=0.1, max_tokens=100, timeout=30,
+                        )
+                        txt = (raw or "").strip()
+                        if txt.startswith("```"):
+                            txt = txt.strip("`")
+                            nl = txt.find("\n")
+                            if nl >= 0:
+                                txt = txt[nl + 1:]
+                        s = txt.find("{")
+                        e = txt.rfind("}")
+                        if s < 0 or e <= s:
+                            skipped += 1
+                            skipped_log.append(f"- {item.get('from','?')} \"{item.get('subject','?')}\" → no JSON")
+                            continue
+                        obj = _json.loads(txt[s:e + 1])
+                        label = (obj.get("label") or "").strip()
+                        if not label or label.lower() == "none" or label not in label_names:
+                            skipped += 1
+                            skipped_log.append(f"- {item.get('from','?')} \"{item.get('subject','?')}\" → none")
+                            continue
+                    except Exception as _ce:
+                        logger.debug(f"apply_labels: LLM classify failed for uid {item['uid']}: {_ce}")
+                        failed += 1
+                        failed_log.append(f"- {item.get('from','?')} \"{item.get('subject','?')}\" → LLM error")
+                        continue
+
+                    # ── 5. Move email to label.
+                    # Gmail labels are exposed as IMAP folders directly by name.
+                    # Outlook and generic providers use the label name as-is.
+                    dest_folder = label  # works for Gmail, Outlook, and generic IMAP
+
+                    success = False
+                    if method == "oauth" and oauth_token:
+                        # Gmail API move via OAuth — labels/modify endpoint.
+                        try:
+                            import httpx as _httpx
+                            # Resolve Gmail label id from name.
+                            resp = await _httpx.AsyncClient().get(
+                                "https://gmail.googleapis.com/gmail/v1/users/me/labels",
+                                headers={"Authorization": f"Bearer {oauth_token}"},
+                                timeout=10,
+                            )
+                            if resp.status_code == 200:
+                                all_labels = resp.json().get("labels", [])
+                                label_id = next(
+                                    (l["id"] for l in all_labels if l["name"].lower() == label.lower()),
+                                    None,
+                                )
+                                if label_id:
+                                    # Use message_id from RFC822 header to find Gmail message id.
+                                    search_resp = await _httpx.AsyncClient().get(
+                                        f"https://gmail.googleapis.com/gmail/v1/users/me/messages",
+                                        headers={"Authorization": f"Bearer {oauth_token}"},
+                                        params={"q": f"rfc822msgid:{item['uid']}"},
+                                        timeout=10,
+                                    )
+                                    if search_resp.status_code == 200:
+                                        msgs = search_resp.json().get("messages", [])
+                                        if msgs:
+                                            msg_id = msgs[0]["id"]
+                                            mod_resp = await _httpx.AsyncClient().post(
+                                                f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}/modify",
+                                                headers={"Authorization": f"Bearer {oauth_token}"},
+                                                json={"addLabelIds": [label_id], "removeLabelIds": ["INBOX"]},
+                                                timeout=10,
+                                            )
+                                            success = mod_resp.status_code == 200
+                        except Exception as _ge:
+                            logger.warning(f"apply_labels: Gmail API move failed for uid {item['uid']}: {_ge}")
+
+                    if not success:
+                        # Fall back to IMAP move.
+                        success = await _aio.to_thread(
+                            _imap_move, item["uid"], dest_folder, folder, acc.id, owner
+                        )
+
+                    if success:
+                        moved += 1
+                        moved_log.append(f"- {item.get('from','?')} \"{item.get('subject','?')}\" → {dest_folder}")
+                        logger.info(f"apply_labels: moved uid {item['uid']} → {dest_folder}")
+                    else:
+                        failed += 1
+                        failed_log.append(f"- {item.get('from','?')} \"{item.get('subject','?')}\" → {dest_folder} (move failed)")
+
+        summary_parts = [f"Processed {processed} emails: {moved} moved, {skipped} skipped (no match), {failed} failed."]
+        if moved_log:
+            summary_parts.append("\nMoved:\n" + "\n".join(moved_log))
+        if failed_log:
+            summary_parts.append("\nFailed:\n" + "\n".join(failed_log))
+        if skipped_log:
+            summary_parts.append("\nSkipped:\n" + "\n".join(skipped_log))
+        summary = "\n".join(summary_parts)
+        logger.info(f"apply_labels: {summary}")
+        return summary, True
+
+    except TaskNoop:
+        raise
+    except Exception as e:
+        logger.exception("apply_email_labels action failed")
+        return str(e), False
+
 
 BUILTIN_ACTIONS = {
     "tidy_sessions": action_tidy_sessions,
@@ -2017,6 +2318,7 @@ BUILTIN_ACTIONS = {
     "test_skills": action_test_skills,
     "audit_skills": action_audit_skills,
     "check_email_urgency": action_check_email_urgency,
+    "apply_email_labels": action_apply_email_labels,
     # ping_notes removed from the registry — runs only inside `_note_pings_loop`.
 }
 
@@ -2037,4 +2339,5 @@ BUILTIN_ACTION_INFO = {
     "test_skills": "Run the per-skill Test on every skill: agent run + LLM judge → records verdict on the skill (pass/needs_work/fail/inconclusive). Advisory only — never rewrites or demotes anything.",
     "audit_skills": "Audit unaudited skills after enough new skills are added: test, narrow metadata, self-edit/retry, optional teacher rewrite, tag duplicates/trivial skills, and publish/draft using the auto-approve threshold.",
     "check_email_urgency": "Scan unread emails hourly, tag urgent/reply-soon/newsletter/marketing/spam, and send a reminder when a new email needs a fast reply.",
+    "apply_email_labels": "Classify unread emails with the LLM and move each one to a matching label/folder. Folders, per-run limit, move method (IMAP or OAuth), and label categories are configured in Settings.",
 }

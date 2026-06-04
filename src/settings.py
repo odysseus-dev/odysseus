@@ -149,6 +149,13 @@ DEFAULT_SETTINGS = {
         "Newsletters, marketing, automated digests, and FYI-only updates are "
         "NOT urgent."
     ),
+    # Email label action settings. Folders, per-run limit, move method,
+    # and user-defined label categories live here; running/paused state
+    # and schedule are controlled by the task scheduler.
+    "email_label_scan_folders": ["INBOX"],
+    "email_label_limit": 50,
+    "email_label_method": "imap",  # "imap" or "oauth"
+    "email_label_categories": [],  # [{"label": "Vagas", "description": "LinkedIn, recruitment"}, ...]
     # Keyboard shortcuts (action: key combination)
     "keybinds": {
         "search": "ctrl+k",

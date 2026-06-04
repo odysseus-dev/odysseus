@@ -916,16 +916,24 @@ def _detect_spam_folder(conn):
 
 
 def _imap_move(uid, dest, src="INBOX", account_id: str | None = None, owner: str = ""):
-    """Move a single IMAP UID from src folder to dest. Returns True on success."""
+    """Move a single IMAP UID from src folder to dest. Returns True on success.
+    Uses UID-based commands so sequence numbers don't shift after each EXPUNGE."""
     c = None
     try:
         c = _imap_connect(account_id, owner=owner)
         c.select(_q(src))
-        status, _ = c.copy(uid, _q(dest))
+        status, data = c.uid("COPY", uid, _q(dest))
+        logger.info(f"IMAP move {uid} → {dest}: COPY status={status} data={data}")
         if status != "OK":
             return False
-        c.store(uid, "+FLAGS", "\\Deleted")
-        c.expunge()
+        store_status, store_data = c.uid("STORE", uid, "+FLAGS", "\\Deleted")
+        logger.info(f"IMAP move {uid} → {dest}: STORE status={store_status} data={store_data}")
+        if store_status != "OK":
+            return False
+        exp_status, exp_data = c.expunge()
+        logger.info(f"IMAP move {uid} → {dest}: EXPUNGE status={exp_status} data={exp_data}")
+        if exp_status != "OK":
+            return False
         return True
     except Exception as e:
         logger.warning(f"IMAP move {uid} → {dest} failed: {e}")

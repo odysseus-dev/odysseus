@@ -205,6 +205,32 @@ async function _saveUrgentEmailSettings(prompt) {
   });
 }
 
+let _emailLabelSettings = null;
+async function _fetchEmailLabelSettings() {
+  if (_emailLabelSettings) return _emailLabelSettings;
+  try {
+    const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+    _emailLabelSettings = await res.json();
+  } catch (e) {
+    _emailLabelSettings = {
+      email_label_scan_folders: ['INBOX'],
+      email_label_limit: 50,
+      email_label_method: 'imap',
+      email_label_categories: [],
+    };
+  }
+  return _emailLabelSettings;
+}
+async function _saveEmailLabelSettings(settings) {
+  _emailLabelSettings = { ...(_emailLabelSettings || {}), ...settings };
+  await fetch('/api/auth/settings', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+}
+
 let _triggerEvents = null;
 async function _fetchEvents() {
   if (_triggerEvents) return _triggerEvents;
@@ -1082,8 +1108,40 @@ function _showForm(existing, initTaskType, initTriggerType) {
         const sel = document.getElementById('task-form-action');
         const extra = document.getElementById('task-form-action-extra');
         if (!sel || !extra) return;
-        if (sel.value !== 'check_email_urgency') {
+        if (sel.value !== 'check_email_urgency' && sel.value !== 'apply_email_labels') {
           extra.innerHTML = '';
+          return;
+        }
+        if (sel.value === 'apply_email_labels') {
+          const s = await _fetchEmailLabelSettings();
+          const cats = (s.email_label_categories || []).map(c => `${c.label}: ${c.description}`).join('\n');
+          extra.innerHTML = `
+            <label class="task-form-label">Label categories</label>
+            <textarea id="task-form-label-categories" class="task-form-input task-form-textarea" rows="5"
+              placeholder="One per line: LabelName: description of emails that go here&#10;e.g. Vagas: LinkedIn, recruitment emails"></textarea>
+            <div class="memory-desc" style="font-size:11px;margin-top:4px;">One category per line in the format <strong>Label: description</strong>. The label must already exist in your email client.</div>
+            <label class="task-form-label" style="margin-top:10px;">Folders to scan</label>
+            <select id="task-form-label-folders" class="task-form-input">
+              <option value="inbox">Inbox only</option>
+              <option value="all_mail">All Mail</option>
+            </select>
+            <label class="task-form-label" style="margin-top:10px;">Max emails per run</label>
+            <input id="task-form-label-limit" type="number" min="1" max="500" class="task-form-input" value="50" />
+            <label class="task-form-label" style="margin-top:10px;">Move method</label>
+            <select id="task-form-label-method" class="task-form-input">
+              <option value="imap">IMAP</option>
+              <option value="oauth">OAuth (Gmail API)</option>
+            </select>
+            <div class="memory-desc" style="font-size:11px;margin-top:4px;">OAuth requires a Gmail account connected via OAuth in Settings → Integrations.</div>
+          `;
+          const catsEl = document.getElementById('task-form-label-categories');
+          const foldersEl = document.getElementById('task-form-label-folders');
+          const limitEl = document.getElementById('task-form-label-limit');
+          const methodEl = document.getElementById('task-form-label-method');
+          if (catsEl) catsEl.value = cats;
+          if (foldersEl) foldersEl.value = s.email_label_scan_folders || 'inbox';
+          if (limitEl) limitEl.value = s.email_label_limit || 50;
+          if (methodEl) methodEl.value = s.email_label_method || 'imap';
           return;
         }
         extra.innerHTML = `
@@ -1439,6 +1497,28 @@ function _showForm(existing, initTaskType, initTriggerType) {
           await _saveUrgentEmailSettings(urgentPrompt);
         } catch (e) {
           if (uiModule) uiModule.showError('Failed to save urgency rules');
+          return;
+        }
+      }
+      if (action === 'apply_email_labels') {
+        const catsRaw = document.getElementById('task-form-label-categories')?.value || '';
+        const categories = catsRaw.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+          const idx = l.indexOf(':');
+          if (idx < 1) return null;
+          return { label: l.slice(0, idx).trim(), description: l.slice(idx + 1).trim() };
+        }).filter(Boolean);
+        const folders = document.getElementById('task-form-label-folders')?.value || 'inbox';
+        const limit = parseInt(document.getElementById('task-form-label-limit')?.value || '50', 10);
+        const method = document.getElementById('task-form-label-method')?.value || 'imap';
+        try {
+          await _saveEmailLabelSettings({
+            email_label_categories: categories,
+            email_label_scan_folders: folders,
+            email_label_limit: limit,
+            email_label_method: method,
+          });
+        } catch (e) {
+          if (uiModule) uiModule.showError('Failed to save label settings');
           return;
         }
       }
