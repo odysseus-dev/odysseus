@@ -33,6 +33,7 @@ services/data/
 # IDE / Editor
 .aider*
 .claude/
+.gemini/
 .vscode/
 .idea/
 *.swp
