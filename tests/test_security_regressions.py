@@ -860,19 +860,14 @@ def test_web_fetch_guard_blocks_redirect_into_private(monkeypatch):
 
     class _Resp:
         status_code = 302
+        url = "http://public.example/start"
         headers = {"location": "http://169.254.169.254/latest/meta-data/"}
 
-    class _FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def get(self, url): return _Resp()
-
-    monkeypatch.setattr(httpx, "Client", _FakeClient)
+    monkeypatch.setattr(httpx, "get", lambda url, **kwargs: _Resp())
 
     with _pytest.raises(httpx.RequestError) as exc:
         content._get_public_url("http://public.example/start", headers={}, timeout=5)
-    assert "non-public" in str(exc.value)
+    assert "Blocked" in str(exc.value)
 
 
 # ── audit fixes (2026-06-01): email XSS, attachment traversal, authz ──

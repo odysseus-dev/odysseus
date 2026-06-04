@@ -4,7 +4,7 @@
 import uiModule from './ui.js';
 import markdownModule from './markdown.js';
 import { addAITTSButton } from './tts-ai.js';
-import { providerLogo } from './providers.js';
+import { providerLogo, providerLabel } from './providers.js';
 import settingsModule from './settings.js';
 import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
@@ -577,6 +577,12 @@ export function applyModelColor(roleEl, modelName) {
       if (logoHtml) html += '<span class="role-provider-logo" style="opacity:0.7">' + logoHtml + '</span>';
       html += short + '</div>';
       html += '<div><span class="ctx-label">Model</span> ' + modelName.split('/').pop() + '</div>';
+      // Provider = the serving endpoint, distinct from the model vendor/logo
+      // (e.g. the same model via OpenRouter vs Copilot vs Anthropic direct).
+      const _epUrl = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
+        ? window.sessionModule.getCurrentEndpointUrl() : null;
+      const _provLabel = providerLabel(_epUrl);
+      if (_provLabel) html += '<div><span class="ctx-label">Provider</span> ' + uiModule.esc(_provLabel) + '</div>';
       // Show static context initially, then fetch real from server
       const _realCtx = window._realContextLengths && window._realContextLengths[modelName];
       if (_realCtx) {
