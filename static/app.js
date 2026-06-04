@@ -41,6 +41,7 @@ import * as researchPanelModule from './js/research/panel.js';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
+import shellModule from './js/shell.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 
@@ -3418,6 +3419,7 @@ function startOdysseusApp() {
   chatModule.init(API_BASE);
   chatModule.initListeners();
   groupModule.init(API_BASE);
+  shellModule.init();
   // Initialize compare module
   if (compareModule) {
     compareModule.init(API_BASE);
