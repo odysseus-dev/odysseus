@@ -160,11 +160,18 @@ def _gguf_metadata(path: str, max_keys: int = 256) -> Dict[str, Any]:
     return meta
 
 
-def _kv_bytes_per_token(meta: Dict[str, Any]) -> Optional[int]:
-    """Bytes of KV cache one context token costs, from real header shape.
+def _kv_cache_cost(meta: Dict[str, Any]) -> Optional[Tuple[int, int]]:
+    """KV-cache cost of one loaded chat: ``(bytes_per_token, fixed_bytes)``.
 
-    Standard attention: K+V, f16, per layer: 2 * n_kv_heads * head_dim * 2.
-    deepseek2 (MLA) caches a compressed latent instead — far smaller.
+    ``bytes_per_token`` grows with n_ctx; ``fixed_bytes`` does not. Standard
+    attention: K+V, f16, per layer: n_kv_heads * (k_dim + v_dim) * 2 — all of
+    it per-token. Three header shapes shrink that:
+      - sliding-window layers (``attention.sliding_window_pattern``) cap their
+        KV at the window size — a fixed cost, not a per-token one — and may
+        use narrower heads (``key/value_length_swa``);
+      - shared-KV layers (``attention.shared_kv_layers``, gemma-3n/4 family:
+        the trailing layers) reuse an earlier layer's cache and allocate none;
+      - deepseek2 (MLA) caches a compressed latent instead — far smaller.
     Returns None when the arch keys aren't recognized (caller falls back).
     """
     arch = meta.get("general.architecture")
@@ -177,19 +184,134 @@ def _kv_bytes_per_token(meta: Dict[str, Any]) -> Optional[int]:
     n_layer = g("block_count")
     if not n_layer:
         return None
+    n_layer = int(n_layer)
     if arch == "deepseek2":
         rank = g("attention.kv_lora_rank")
         rope = g("rope.dimension_count") or 0
         if rank:
-            return int(n_layer) * (int(rank) + int(rope)) * 2  # f16 latent
+            return n_layer * (int(rank) + int(rope)) * 2, 0  # f16 latent
         return None
     n_head = g("attention.head_count")
     emb = g("embedding_length")
     if not (n_head and emb):
         return None
-    n_kv_head = g("attention.head_count_kv") or n_head
-    head_dim = g("attention.key_length") or (int(emb) // int(n_head))
-    return 2 * int(n_layer) * int(n_kv_head) * int(head_dim) * 2
+    n_kv_head = int(g("attention.head_count_kv") or n_head)
+    k_dim = int(g("attention.key_length") or (int(emb) // int(n_head)))
+    v_dim = int(g("attention.value_length") or k_dim)
+
+    pattern = g("attention.sliding_window_pattern")
+    window = g("attention.sliding_window")
+    if pattern is not None and window:
+        if isinstance(pattern, list):
+            # Authoritative per-layer flags: truthy = sliding-window. Pad a
+            # short array with global layers — overestimating is the safe way
+            # to be wrong here.
+            swa = [bool(x) for x in pattern[:n_layer]]
+            swa += [False] * (n_layer - len(swa))
+        else:
+            # Periodic form (HF convention): every Nth layer is global.
+            period = max(1, int(pattern))
+            swa = [(i + 1) % period != 0 for i in range(n_layer)]
+        # Trailing shared-KV layers ride on earlier caches — drop them before
+        # counting what actually gets allocated.
+        shared = min(max(int(g("attention.shared_kv_layers") or 0), 0), n_layer)
+        own = swa[: n_layer - shared]
+        n_swa_own = sum(own)
+        n_global_own = len(own) - n_swa_own
+        k_swa = int(g("attention.key_length_swa") or k_dim)
+        v_swa = int(g("attention.value_length_swa") or v_dim)
+        per_token = n_global_own * n_kv_head * (k_dim + v_dim) * 2
+        fixed = n_swa_own * n_kv_head * (k_swa + v_swa) * 2 * int(window)
+        return per_token, fixed
+
+    return n_layer * n_kv_head * (k_dim + v_dim) * 2, 0
+
+
+# Tensors llama.cpp keeps in host memory rather than VRAM, by name prefix.
+# The gemma-3n/4 per-layer token embeddings are looked up on the CPU and never
+# uploaded; they are a GB-scale slice of the GGUF, so charging them against
+# the GPU budget makes barely-fitting models look impossible.
+_HOST_RESIDENT_TENSOR_PREFIXES = ("per_layer_token_embd.",)
+
+
+def _gguf_host_resident_bytes(path: str) -> int:
+    """Stored bytes of tensors llama.cpp keeps in host memory (see
+    _HOST_RESIDENT_TENSOR_PREFIXES).
+
+    Sizes come from tensor-table offset deltas, so no quant-format math is
+    needed. Unlike ``_gguf_metadata`` this walks the whole KV section
+    (including the tokenizer) to reach the tensor table — a one-off cost the
+    caller pays only for archs whose header marks per-layer embeddings.
+    Returns 0 when anything looks off: the full file stays charged, which is
+    the conservative direction."""
+    try:
+        with open(path, "rb") as f:
+            magic, version, n_tensors, n_kv = struct.unpack("<IIQQ", f.read(24))
+            if magic != 0x46554747 or version < 2 or not n_tensors:
+                return 0
+            alignment = 32
+
+            def rd_str() -> str:
+                (n,) = struct.unpack("<Q", f.read(8))
+                return f.read(n).decode("utf-8", errors="replace")
+
+            def skip_str() -> None:
+                (n,) = struct.unpack("<Q", f.read(8))
+                f.seek(n, 1)
+
+            def skip_val(t: int) -> None:
+                if t in _GGUF_SCALARS:
+                    f.seek(_GGUF_SCALARS[t][1], 1)
+                elif t == 8:
+                    skip_str()
+                elif t == 9:
+                    (et,) = struct.unpack("<I", f.read(4))
+                    (n,) = struct.unpack("<Q", f.read(8))
+                    if et in _GGUF_SCALARS:
+                        f.seek(n * _GGUF_SCALARS[et][1], 1)
+                    elif et == 8:
+                        for _ in range(n):
+                            skip_str()
+                    else:
+                        raise ValueError(f"unknown array element type {et}")
+                else:
+                    raise ValueError(f"unknown value type {t}")
+
+            for _ in range(n_kv):
+                key = rd_str()
+                (t,) = struct.unpack("<I", f.read(4))
+                if key == "general.alignment" and t in _GGUF_SCALARS:
+                    fmt, size = _GGUF_SCALARS[t]
+                    alignment = int(struct.unpack(fmt, f.read(size))[0]) or 32
+                else:
+                    skip_val(t)
+
+            infos = []
+            for _ in range(n_tensors):
+                name = rd_str()
+                (n_dims,) = struct.unpack("<I", f.read(4))
+                f.seek(8 * n_dims + 4, 1)  # dims + dtype: offsets carry the sizes
+                (offset,) = struct.unpack("<Q", f.read(8))
+                infos.append((offset, name))
+
+            data_start = f.tell()
+            if data_start % alignment:
+                data_start += alignment - (data_start % alignment)
+            data_size = os.path.getsize(path) - data_start
+            if data_size <= 0:
+                return 0
+            infos.sort()
+            total = 0
+            for i, (offset, name) in enumerate(infos):
+                if not name.startswith(_HOST_RESIDENT_TENSOR_PREFIXES):
+                    continue
+                end = infos[i + 1][0] if i + 1 < len(infos) else data_size
+                if end > offset:
+                    total += end - offset
+            return int(total)
+    except Exception as e:
+        logger.debug(f"GGUF tensor scan failed for {path}: {e}")
+        return 0
 
 
 def _memory_budget_gb() -> Optional[float]:
@@ -453,10 +575,12 @@ class NobodyWhoManager:
         unset                         -> min(trained max, fits-in-memory, cap)
         no local file / unknown arch  -> conservative default
 
-        "fits-in-memory" inverts Cookbook's estimate with better inputs: real
-        weight size from disk, real KV bytes/token from the GGUF header, and
-        the same hardware budget services/hwfit reports — so the number here
-        matches what Cookbook promised for this machine.
+        "fits-in-memory" inverts Cookbook's estimate with better inputs: the
+        GPU-resident weight size (file size minus host-kept tensors such as
+        gemma-3n/4 per-layer embeddings), the KV cost split into per-token and
+        fixed sliding-window parts from the GGUF header, and the same hardware
+        budget services/hwfit reports — so the number here matches what
+        Cookbook promised for this machine.
         """
         explicit = os.getenv("NOBODYWHO_CTX", "").strip()
         is_local = os.path.isfile(source)
@@ -487,23 +611,34 @@ class NobodyWhoManager:
             candidates = [cap]
             if trained:
                 candidates.append(int(trained))
-            kv_per_token = _kv_bytes_per_token(meta)
-            budget_gb = _memory_budget_gb() if kv_per_token else None
-            if kv_per_token and budget_gb:
+            kv_cost = _kv_cache_cost(meta)
+            budget_gb = _memory_budget_gb() if kv_cost else None
+            if kv_cost and budget_gb:
+                per_token, fixed_kv = kv_cost
                 # The budget is a CEILING, not free memory — on unified-memory
                 # machines it's the same pool the OS, browser, and everything
                 # else live in, and model memory is wired (unswappable).
                 # Treating the ceiling as ours alone can freeze the whole
                 # host. Margins, in order: take 80% of the ceiling, subtract
-                # the weights, subtract a 2GB reserve for llama.cpp compute
-                # buffers + the app, then let the KV cache use at most HALF
+                # the GPU-resident weights (host-kept per-layer embeddings
+                # don't count), subtract a 2GB reserve for llama.cpp compute
+                # buffers + the app, then let the KV cache — the fixed
+                # sliding windows plus the per-token part — use at most HALF
                 # of whatever survives.
+                weights = sig[0]
+                if arch and meta.get(f"{arch}.embedding_length_per_layer_input"):
+                    weights -= min(_gguf_host_resident_bytes(source), weights)
                 usable = budget_gb * 0.8 * (1 << 30)
-                free = usable - sig[0] - 2 * (1 << 30)
-                kv_budget = max(0.0, free * 0.5)
-                # Floor at 2048 (a tiny KV) so a barely-fitting model still
-                # chats; we never inflate beyond that when memory says no.
-                candidates.append(max(2048, int(kv_budget // kv_per_token)))
+                free = usable - weights - 2 * (1 << 30)
+                kv_budget = max(0.0, free * 0.5 - fixed_kv)
+                if per_token > 0:
+                    # Floor at 2048 (a tiny KV) so a barely-fitting model
+                    # still chats; we never inflate beyond that when memory
+                    # says no.
+                    candidates.append(max(2048, int(kv_budget // per_token)))
+                # per_token == 0 (every own layer windowed): more context
+                # costs no extra KV, so memory cannot bind n_ctx — the cap
+                # and the trained max decide.
             elif not trained:
                 candidates.append(_DEFAULT_N_CTX)  # nothing known — stay safe
             n_ctx = min(candidates)

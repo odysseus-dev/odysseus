@@ -638,21 +638,38 @@ def test_probe_reports_no_models_when_engine_missing(tmp_path, monkeypatch):
     assert mr._probe_endpoint(CANONICAL_URL) == []
 
 
-def _write_gguf(path, kvs):
-    """Minimal GGUF v3 writer: header + scalar/string metadata, no tensors."""
+def _write_gguf(path, kvs, tensors=None):
+    """Minimal GGUF v3 writer: header + metadata (uint32 / string / bool
+    array) and an optional tensor table.
+
+    ``tensors`` is a list of ``(name, nbytes)`` laid out in order with
+    32-byte-aligned offsets and zero-filled data, like the real format — so
+    the offset-delta size scan has something true to measure."""
     import struct as _s
 
     def _str(s):
         b = s.encode()
         return _s.pack("<Q", len(b)) + b
 
-    blob = _s.pack("<IIQQ", 0x46554747, 3, 0, len(kvs))
+    tensors = tensors or []
+    blob = _s.pack("<IIQQ", 0x46554747, 3, len(tensors), len(kvs))
     for key, val in kvs.items():
         blob += _str(key)
         if isinstance(val, str):
             blob += _s.pack("<I", 8) + _str(val)
+        elif isinstance(val, list):  # array of bool (SWA layer pattern)
+            blob += _s.pack("<IIQ", 9, 7, len(val))
+            blob += b"".join(_s.pack("<?", bool(v)) for v in val)
         else:
             blob += _s.pack("<I", 4) + _s.pack("<I", int(val))  # uint32
+    offset = 0
+    for name, nbytes in tensors:
+        blob += _str(name) + _s.pack("<IQIQ", 1, nbytes, 0, offset)  # 1-dim, f32
+        last_end = offset + nbytes
+        offset = last_end + (-last_end) % 32  # next tensor starts aligned
+    if tensors:
+        blob += b"\0" * ((-len(blob)) % 32)   # data section starts aligned
+        blob += b"\0" * last_end
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(blob)
 
@@ -714,6 +731,128 @@ def test_resolve_n_ctx_respects_small_trained_max(tmp_path, monkeypatch):
     mgr = _unavailable_manager()
     # never allocate beyond what the model was trained for
     assert mgr.resolve_n_ctx(mgr.resolve_source("Tiny-2k")) == 2048
+
+
+def test_kv_cost_sliding_window_and_shared_layers(tmp_path):
+    """gemma-3n/4-style headers: only global non-shared layers cost per-token
+    KV; sliding-window layers cost a fixed window at their own (narrower)
+    head dims; trailing shared-KV layers allocate nothing of their own."""
+    import src.nobodywho_provider as nbw
+
+    path = tmp_path / "Swa-42L.gguf"
+    _write_gguf(path, {
+        "general.architecture": "gemma4",
+        "gemma4.context_length": 131072,
+        "gemma4.block_count": 42,
+        "gemma4.embedding_length": 2560,
+        "gemma4.attention.head_count": 8,
+        "gemma4.attention.head_count_kv": 2,
+        "gemma4.attention.key_length": 512,
+        "gemma4.attention.value_length": 512,
+        "gemma4.attention.key_length_swa": 256,
+        "gemma4.attention.value_length_swa": 256,
+        "gemma4.attention.sliding_window": 512,
+        # 5 windowed : 1 global, like the real family
+        "gemma4.attention.sliding_window_pattern": ([True] * 5 + [False]) * 7,
+        "gemma4.attention.shared_kv_layers": 18,
+    })
+    per_token, fixed = nbw._kv_cache_cost(nbw._gguf_metadata(str(path)))
+    # own layers = first 24: 4 global (every 6th) + 20 windowed
+    assert per_token == 4 * 2 * (512 + 512) * 2
+    assert fixed == 20 * 2 * (256 + 256) * 2 * 512
+
+
+def test_kv_cost_periodic_pattern_int_form():
+    """The pattern can also be a period (HF convention): every Nth layer is
+    global, the rest are windowed at the same dims when no *_swa keys exist."""
+    import src.nobodywho_provider as nbw
+
+    per_token, fixed = nbw._kv_cache_cost({
+        "general.architecture": "toy",
+        "toy.block_count": 8,
+        "toy.embedding_length": 512,   # head_dim 128
+        "toy.attention.head_count": 4,
+        "toy.attention.sliding_window": 1024,
+        "toy.attention.sliding_window_pattern": 4,
+    })
+    assert per_token == 2 * 4 * (128 + 128) * 2          # layers 4 and 8
+    assert fixed == 6 * 4 * (128 + 128) * 2 * 1024
+
+
+def test_resolve_n_ctx_all_swa_layers_unbound_by_memory(tmp_path, monkeypatch):
+    """When every own layer is windowed, more context costs no extra KV — a
+    tight budget must not collapse n_ctx to the floor; the cap decides."""
+    import src.nobodywho_provider as nbw
+
+    monkeypatch.delenv("NOBODYWHO_CTX", raising=False)
+    monkeypatch.setenv("NOBODYWHO_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "no-hub-here"))
+    _write_gguf(tmp_path / "AllSwa.gguf", {
+        "general.architecture": "swaonly",
+        "swaonly.context_length": 131072,
+        "swaonly.block_count": 16,
+        "swaonly.embedding_length": 1024,
+        "swaonly.attention.head_count": 8,
+        "swaonly.attention.sliding_window": 512,
+        "swaonly.attention.sliding_window_pattern": [True] * 16,
+    })
+    # 3GB budget floors the Dense-32L case above; here it must not bind
+    monkeypatch.setattr(nbw, "_memory_budget_gb", lambda: 3.0)
+    mgr = _unavailable_manager()
+    assert mgr.resolve_n_ctx(mgr.resolve_source("AllSwa")) == 16384
+
+
+def test_gguf_host_resident_bytes_measures_per_layer_embeddings(tmp_path):
+    """Tensor sizes come from offset deltas (no quant math): the scan must
+    report exactly the per-layer-embedding slice, and 0 when there is none."""
+    import src.nobodywho_provider as nbw
+
+    path = tmp_path / "Ple.gguf"
+    _write_gguf(path, {"general.architecture": "gemma4"}, tensors=[
+        ("token_embd.weight", 1000),            # pads to 1024
+        ("per_layer_token_embd.weight", 4096),  # already aligned
+        ("blk.0.attn_q.weight", 333),
+    ])
+    assert nbw._gguf_host_resident_bytes(str(path)) == 4096
+
+    no_ple = tmp_path / "NoPle.gguf"
+    _write_gguf(no_ple, {"general.architecture": "llama"},
+                tensors=[("token_embd.weight", 64)])
+    assert nbw._gguf_host_resident_bytes(str(no_ple)) == 0
+
+
+def test_resolve_n_ctx_gates_host_tensor_scan_on_ple_marker(tmp_path, monkeypatch):
+    """The full-header tensor walk runs only for archs whose header marks
+    per-layer embeddings — everything else keeps the cheap path."""
+    import src.nobodywho_provider as nbw
+
+    monkeypatch.delenv("NOBODYWHO_CTX", raising=False)
+    monkeypatch.setenv("NOBODYWHO_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "no-hub-here"))
+    base = {
+        "context_length": 131072,
+        "block_count": 32,
+        "attention.head_count": 32,
+        "attention.head_count_kv": 8,
+        "embedding_length": 4096,
+    }
+    _write_gguf(tmp_path / "Plain.gguf",
+                {"general.architecture": "llama",
+                 **{f"llama.{k}": v for k, v in base.items()}})
+    _write_gguf(tmp_path / "Ple.gguf",
+                {"general.architecture": "gemma4",
+                 "gemma4.embedding_length_per_layer_input": 256,
+                 **{f"gemma4.{k}": v for k, v in base.items()}})
+    monkeypatch.setattr(nbw, "_memory_budget_gb", lambda: 9.0)
+    scanned = []
+    monkeypatch.setattr(nbw, "_gguf_host_resident_bytes",
+                        lambda p: scanned.append(p) or 0)
+
+    mgr = _unavailable_manager()
+    mgr.resolve_n_ctx(mgr.resolve_source("Plain"))
+    assert scanned == []
+    mgr.resolve_n_ctx(mgr.resolve_source("Ple"))
+    assert [os.path.basename(p) for p in scanned] == ["Ple.gguf"]
 
 
 def test_reset_import_cache_clears_failure_immediately(monkeypatch):
