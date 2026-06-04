@@ -8978,6 +8978,14 @@ import * as Modals from './modalManager.js';
 
   /** Open the document panel immediately for a doc being streamed in */
   export function streamDocOpen(title, language) {
+    // Discard any pending AI-edit diff before this stream changes the active
+    // document. When the AI streams a NEW document while an unapproved diff is
+    // open on the current one, streamDocOpen reassigns activeDocId below; if the
+    // stale diff isn't cleared first, a later exitDiffMode applies the old doc's
+    // content to the new one and overwrites it (issue #2467). activeDocId still
+    // points at the previously-active doc here, so exitDiffMode(true) restores
+    // and saves THAT doc — same guard handleDocUpdate/switchToDoc use.
+    if (_diffModeActive) exitDiffMode(true);
     // If already streaming a doc, reuse it (don't create a second temp doc)
     if (_streamDocId && docs.has(_streamDocId)) {
       const existing = docs.get(_streamDocId);
@@ -9199,6 +9207,16 @@ import * as Modals from './modalManager.js';
   /** Handle SSE doc_update event from AI */
   export function handleDocUpdate(data) {
     const streamingId = streamDocFinalize();
+    // Discard any pending AI-edit diff before this update changes the active
+    // document. The diff state (_diffModeActive/_diffOldContent/...) is a
+    // module-global singleton bound to whatever doc was active when the diff
+    // opened; if we switch documents without clearing it, a later tab switch or
+    // Accept/Reject-All flushes the stale diff's content into the now-active
+    // doc and silently overwrites it (issue #2467). activeDocId still points at
+    // the previously-active doc here, so exitDiffMode(true) restores and saves
+    // THAT doc before we reassign activeDocId below — mirroring switchToDoc()
+    // and enterDiffMode().
+    if (_diffModeActive) exitDiffMode(true);
     let docId = data.doc_id;
     const newContent = data.content || '';
 
