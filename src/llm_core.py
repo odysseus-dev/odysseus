@@ -67,7 +67,7 @@ _host_health_lock = threading.Lock()
 _model_activity: Dict[str, float] = {}
 
 def _model_activity_key(url: str, model: str) -> str:
-    return f"{(url or '').strip().rstrip()}|{(model or '').strip()}"
+    return f"{(url or '').strip()}|{(model or '').strip()}"
 
 def note_model_activity(url: str, model: str):
     """Record that a real upstream request used this endpoint/model."""
@@ -317,6 +317,9 @@ def _detect_provider(url: str) -> str:
         return "openrouter"
     if _host_match(url, "groq.com"):
         return "groq"
+    from src.copilot import is_copilot_base
+    if is_copilot_base(url):
+        return "copilot"
     return "openai"
 
 
@@ -327,6 +330,14 @@ def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str
     if provider == "openrouter":
         h.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
         h.setdefault("X-OpenRouter-Title", "Odysseus")
+    if provider == "copilot":
+        # Ensure the Copilot-required headers are present even when the caller
+        # didn't pass pre-built headers (e.g. model listing). build_headers()
+        # already injects these for the live chat path; setdefault keeps any
+        # request-specific values (x-initiator/vision) the caller set.
+        from src.copilot import copilot_headers
+        for k, v in copilot_headers(None).items():
+            h.setdefault(k, v)
     return h
 
 
@@ -340,6 +351,8 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "openai.com"): return "OpenAI"
     if _host_match(url, "openrouter.ai"): return "OpenRouter"
     if _host_match(url, "groq.com"): return "Groq"
+    from src.copilot import is_copilot_base
+    if is_copilot_base(url): return "GitHub Copilot"
     if _host_match(url, "mistral.ai"): return "Mistral"
     if _host_match(url, "deepseek.com"): return "DeepSeek"
     if _host_match(url, "googleapis.com"): return "Google"
@@ -884,7 +897,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     non_sys = []
     for m in messages_copy:
         if m.get("role") == "system":
-            sys_parts.append(m["content"])
+            sys_parts.append(m.get('content') or '')
         else:
             non_sys.append(m)
     if sys_parts:
@@ -911,6 +924,9 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         )
     else:
         target_url = url
+        if provider == "copilot":
+            from src.copilot import apply_request_headers
+            apply_request_headers(h, messages_copy)
         payload = {
             "model": model,
             "messages": messages_copy,
@@ -1028,7 +1044,7 @@ async def llm_call_async(
     non_sys = []
     for m in messages_copy:
         if m.get("role") == "system":
-            sys_parts.append(m["content"])
+            sys_parts.append(m.get('content') or '')
         else:
             non_sys.append(m)
     if sys_parts:
@@ -1058,6 +1074,9 @@ async def llm_call_async(
     else:
         target_url = url
         h = _provider_headers(provider, headers)
+        if provider == "copilot":
+            from src.copilot import apply_request_headers
+            apply_request_headers(h, messages_copy)
         payload = {
             "model": model,
             "messages": messages_copy,
@@ -1088,6 +1107,9 @@ async def llm_call_async(
                     f"LLM async call to {target_url} failed in {duration:.2f}s "
                     f"(attempt {attempt}): HTTP {r.status_code} {friendly}"
                 )
+                if r.status_code in (429, 502, 503, 504) and attempt < max_retries:
+                    await asyncio.sleep(LLMConfig.RETRY_DELAY)
+                    continue
                 raise HTTPException(r.status_code, friendly)
             logger.info(f"LLM async call to {target_url} succeeded in {duration:.2f}s (attempt {attempt})")
             _clear_host_dead(target_url)
@@ -1109,7 +1131,9 @@ async def llm_call_async(
             duration = time.time() - start
             _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
             logger.warning(f"LLM async connect to {target_url} failed after {duration:.2f}s: {e}{_tail}")
-            raise HTTPException(503, f"Cannot reach {_host_key(target_url)}: {e}")
+            if _cooled or attempt >= max_retries:
+                raise HTTPException(503, f"Cannot reach {_host_key(target_url)}: {e}")
+            await asyncio.sleep(LLMConfig.RETRY_DELAY)
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
             duration = time.time() - start
             logger.warning(f"LLM async call attempt {attempt} failed after {duration:.2f}s: {e}")
@@ -1138,7 +1162,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     non_sys = []
     for m in messages_copy:
         if m.get("role") == "system":
-            sys_parts.append(m["content"])
+            sys_parts.append(m.get('content') or '')
         else:
             non_sys.append(m)
     if sys_parts:
@@ -1177,6 +1201,9 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         if tools:
             payload["tools"] = tools
         h = _provider_headers(provider, headers)
+        if provider == "copilot":
+            from src.copilot import apply_request_headers
+            apply_request_headers(h, messages_copy)
 
     # Short connect timeout: a reachable peer answers SYN in <100ms even on
     # Tailscale. 3s is plenty; 30s let one dead upstream wedge the UI.
@@ -1358,6 +1385,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     # can detect thinking-in-progress (some models output </think> but no <think>)
     _thinking_model = _supports_thinking(model)
     _first_content_sent = False
+    _in_think_tag = False        # True while consuming <think>…</think> content
+    _think_open_stripped = False  # opening <think> tag already removed
 
     def _emit_tool_calls():
         """Build the tool_calls event string if any were accumulated."""
@@ -1439,14 +1468,53 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                             yield f'data: {json.dumps({"delta": reasoning, "thinking": True})}\n\n'
                                         content = delta.get("content") or ""
                                         if content:
-                                            # Some thinking backends start normal content with a
-                                            # stray closing tag. Repair only that shape; do not
-                                            # wrap every first token for model families like
-                                            # MiniMax, which often stream ordinary answers.
-                                            if _thinking_model and not _first_content_sent and content.lstrip().lower().startswith("</think"):
-                                                content = "<think>" + content
-                                            _first_content_sent = True
-                                            yield f'data: {json.dumps({"delta": content})}\n\n'
+                                            stripped = content.lstrip()
+                                            # Auto-detect <think>…</think> in content stream.
+                                            # Covers Qwen3-derived models (Qwopus, QwQ forks) whose
+                                            # names don't match _THINKING_MODEL_PATTERNS but still
+                                            # emit literal <think> markup via llama.cpp --jinja.
+                                            if not _first_content_sent and not _thinking_model and not _in_think_tag and stripped.lower().startswith("<think"):
+                                                _thinking_model = True
+                                                _in_think_tag = True
+                                            if _in_think_tag:
+                                                close_idx = content.lower().find("</think>")
+                                                if close_idx != -1:
+                                                    # Split: up-to-</think> → thinking, remainder → content
+                                                    think_part = content[:close_idx]
+                                                    if not _think_open_stripped:
+                                                        # Strip the opening <think[...] > from the first chunk.
+                                                        # Use a dedicated flag — _first_content_sent stays False
+                                                        # throughout the think block, so it must not be reused.
+                                                        tag_end = think_part.lower().find(">")
+                                                        if tag_end != -1:
+                                                            think_part = think_part[tag_end + 1:]
+                                                        _think_open_stripped = True
+                                                    regular_part = content[close_idx + len("</think>"):]
+                                                    _in_think_tag = False
+                                                    if think_part:
+                                                        yield f'data: {json.dumps({"delta": think_part, "thinking": True})}\n\n'
+                                                    if regular_part:
+                                                        _first_content_sent = True
+                                                        yield f'data: {json.dumps({"delta": regular_part})}\n\n'
+                                                else:
+                                                    # Still inside <think>: route to thinking channel
+                                                    if not _think_open_stripped:
+                                                        # Strip the opening <think[...] > tag (first chunk only)
+                                                        tag_end = stripped.lower().find(">")
+                                                        if tag_end != -1:
+                                                            content = stripped[tag_end + 1:]
+                                                        _think_open_stripped = True
+                                                    if content:
+                                                        yield f'data: {json.dumps({"delta": content, "thinking": True})}\n\n'
+                                            else:
+                                                # Some thinking backends start normal content with a
+                                                # stray closing tag. Repair only that shape; do not
+                                                # wrap every first token for model families like
+                                                # MiniMax, which often stream ordinary answers.
+                                                if _thinking_model and not _first_content_sent and stripped.lower().startswith("</think"):
+                                                    content = "<think>" + content
+                                                _first_content_sent = True
+                                                yield f'data: {json.dumps({"delta": content})}\n\n'
                                         # Native tool calls — accumulate across chunks
                                         for tc in delta.get("tool_calls") or []:
                                             if tc is None:

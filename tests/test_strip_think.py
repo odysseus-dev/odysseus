@@ -23,3 +23,22 @@ def test_strip_think_cases():
     
     # 6. Multiple blocks (closed + unclosed)
     assert strip_think("Hello! <think> closed </think> Here is the answer. <think> unclosed") == "Hello! Here is the answer."
+
+
+def test_strip_think_handles_thought_tags():
+    assert strip_think("<thought>internal reasoning</thought>Final answer.") == "Final answer."
+
+
+def test_strip_think_handles_gemma4_thought_channel():
+    text = "<|channel>thought\ninternal reasoning<channel|>Final answer."
+    assert strip_think(text) == "Final answer."
+
+
+def test_strip_think_handles_empty_gemma4_thought_channel():
+    text = "<|channel>thought\n<channel|>Final answer."
+    assert strip_think(text) == "Final answer."
+
+
+def test_strip_think_unwraps_gemma4_response_channel():
+    text = "<|channel>thought\ninternal reasoning<channel|><|channel>response\nFinal answer.<channel|>"
+    assert strip_think(text) == "Final answer."

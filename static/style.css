@@ -3478,6 +3478,38 @@ body.bg-pattern-sparkles {
     .continue-btn:hover {
       opacity:0.8;
     }
+
+    /* Round-cap "Continue" affordance — a cohesive centered pill at the chat
+       bottom (not the bare red in-message stopped style). */
+    .rounds-exhausted {
+      justify-content:center;
+      gap:12px;
+      width:fit-content;
+      max-width:90%;
+      margin:14px auto 4px;
+      padding:7px 8px 7px 16px;
+      border:1px solid var(--border);
+      border-radius:999px;
+      background:color-mix(in srgb, var(--fg) 4%, transparent);
+      opacity:1;
+    }
+    .rounds-exhausted .rounds-exhausted-label {
+      color:color-mix(in srgb, var(--fg) 60%, transparent);
+      font-size:0.95em;
+    }
+    .rounds-exhausted .continue-btn {
+      font-size:0.9em;
+      font-weight:600;
+      opacity:1;
+      color:var(--bg);
+      background:var(--accent, var(--red));
+      border-radius:999px;
+      padding:4px 14px;
+      line-height:1.3;
+    }
+    .rounds-exhausted .continue-btn:hover {
+      opacity:0.88;
+    }
     .ctx-indicator {
       display:inline-flex; align-items:center; gap:1px;
       font-size:0.75rem;
@@ -35781,4 +35813,67 @@ body.theme-frosted .modal {
   /* Email compose rich-body. Medium (15px) zooms, so bump it; large (17px)
      is already ≥16px and never zoomed — leave it so we don't shrink it. */
   .doc-email-richbody.doc-font-m { font-size: 16px !important; }
+}
+
+/* GitHub Copilot device-flow connect block (model endpoints → API) */
+.adm-copilot-connect {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.adm-copilot-connect #adm-copilotStatus { flex-basis: 100%; margin-top: 0; }
+.adm-copilot-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.adm-copilot-wait {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+.adm-copilot-coderow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.adm-copilot-code-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.adm-copilot-code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  padding: 4px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  user-select: all;
+}
+.adm-copilot-copy { margin-left: auto; }
+.adm-copilot-auth {
+  text-align: center;
+  text-decoration: none;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+.adm-copilot-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
 }

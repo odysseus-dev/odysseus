@@ -76,6 +76,15 @@ function _hlSearch(text) {
                        '<mark class="doclib-search-hl">$1</mark>');
   } catch { return esc; }
 }
+
+function _safeResearchHref(raw) {
+  try {
+    const parsed = new URL(String(raw || '').trim(), window.location.origin);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return _esc(parsed.href);
+  } catch {}
+  return '';
+}
+
 let _libraryEscHandler = null;
 let _librarySelectMode = false;
 let _librarySelectedIds = new Set();
@@ -2649,7 +2658,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         const data = await res.json();
         _researchItems = data.research || data || [];
       } catch (e) {
-        grid.innerHTML = `<div class="hwfit-loading">Failed to load: ${e.message}</div>`;
+        grid.innerHTML = `<div class="hwfit-loading">Failed to load: ${_esc(e.message)}</div>`;
         return;
       }
       _renderResearchGrid();
@@ -2691,9 +2700,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const sources = Array.isArray(detail.sources) ? detail.sources : [];
       const sourcesList = sources.slice(0, 12).map((src, i) => {
         const title = _esc(src.title || src.url || `Source ${i + 1}`);
-        const url = src.url || '';
+        const url = _safeResearchHref(src.url);
         return url
-          ? `<li><a href="${_esc(url)}" target="_blank" rel="noopener">${title}</a></li>`
+          ? `<li><a href="${url}" target="_blank" rel="noopener">${title}</a></li>`
           : `<li>${title}</li>`;
       }).join('');
       const sourcesHtml = sources.length

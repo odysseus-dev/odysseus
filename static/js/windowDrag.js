@@ -149,6 +149,13 @@ export function makeWindowDraggable(modal, options = {}) {
   const _startDrag = (cx, cy) => {
     dragging = true;
     if (modal) modal.classList.add('modal-dragging');
+    // Cancel any in-flight open animation so we don't pin a mid-animation
+    // rect and then jump once the animation settles.
+    try {
+      content.getAnimations()
+        .filter(a => a.playState !== 'finished')
+        .forEach(a => a.cancel());
+    } catch (_) {}
     const rect = content.getBoundingClientRect();
     if (onDragStart) {
       try { onDragStart({ rect, cx, cy }); } catch (_) {}

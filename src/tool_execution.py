@@ -12,11 +12,19 @@ import collections
 import json
 import logging
 import os
+import pathlib
 import sys
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
+
+# Persistent working directory for agent subprocesses.
+# Resolves to <repo_root>/data, which is the bind-mounted volume in Docker
+# (/app/data) and the local data directory for manual installs.
+# Using this as cwd and HOME prevents the agent from silently creating files
+# in ephemeral container layers that are lost on the next rebuild.
+_AGENT_WORKDIR = str(pathlib.Path(__file__).parent.parent / "data")
 
 MAX_OUTPUT_CHARS = 10_000
 MAX_READ_CHARS = 20_000
@@ -591,6 +599,7 @@ async def _direct_fallback(
         "TERM": "xterm-256color",
         "COLUMNS": "120",
         "LINES": "40",
+        "HOME": _AGENT_WORKDIR,
     }
 
     try:
@@ -600,6 +609,7 @@ async def _direct_fallback(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,
+                cwd=_AGENT_WORKDIR,
             )
             stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
                 proc,
@@ -626,6 +636,7 @@ async def _direct_fallback(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,
+                cwd=_AGENT_WORKDIR,
             )
             stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
                 proc,

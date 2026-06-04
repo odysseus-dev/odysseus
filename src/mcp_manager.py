@@ -30,6 +30,33 @@ def _format_mcp_connection_error(name: str, command: str = "", args: Optional[Li
     return raw_error
 
 
+def _format_mcp_params(input_schema: Any) -> str:
+    """Render an MCP tool's JSON-Schema inputs as a compact prompt hint.
+
+    Without this the agent only sees a tool's name + description and has to
+    guess its arguments (issue #2509). Produces e.g.
+    ` Args (JSON): {"path": string (required), "limit": integer}` — names,
+    coarse types, and required-ness, kept short so it stays prompt-friendly.
+    Returns "" when there are no parameters.
+    """
+    if not isinstance(input_schema, dict):
+        return ""
+    props = input_schema.get("properties")
+    if not isinstance(props, dict) or not props:
+        return ""
+    required = set(input_schema.get("required") or [])
+    parts = []
+    for pname, pinfo in props.items():
+        pinfo = pinfo if isinstance(pinfo, dict) else {}
+        ptype = pinfo.get("type") or "any"
+        if isinstance(ptype, list):
+            ptype = "|".join(str(x) for x in ptype)
+        tag = f'"{pname}": {ptype}'
+        if pname in required:
+            tag += " (required)"
+        parts.append(tag)
+    return " Args (JSON): {" + ", ".join(parts) + "}"
+
 
 class McpManager:
     """Manages MCP server connections and tool routing."""
@@ -376,6 +403,7 @@ class McpManager:
                     "name": tool["name"],
                     "qualified_name": f"mcp__{server_id}__{tool['name']}",
                     "description": tool.get("description", ""),
+                    "input_schema": tool.get("input_schema") or {},
                     "is_disabled": tool["name"] in disabled,
                 })
         return result
@@ -439,7 +467,11 @@ class McpManager:
             for t in server_tools:
                 # Truncate long descriptions
                 desc = t['description'][:120] + '...' if len(t['description']) > 120 else t['description']
-                lines.append(f"  - {t['qualified_name']}: {desc}")
+                # Include the tool's declared inputs so the model calls it with
+                # real argument names instead of guessing from the description
+                # alone (issue #2509).
+                args_hint = _format_mcp_params(t.get("input_schema"))
+                lines.append(f"  - {t['qualified_name']}: {desc}{args_hint}")
 
         result = "\n".join(lines)
         self._cached_prompt_desc = result

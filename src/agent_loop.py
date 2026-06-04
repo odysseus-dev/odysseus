@@ -468,13 +468,14 @@ _API_HOSTS = frozenset([
     "api.together.xyz", "api.fireworks.ai",
     "api.perplexity.ai", "api.x.ai",
     "ollama.com", "api.venice.ai",
+    "api.githubcopilot.com",
     # Local OpenAI-compatible endpoints (llama.cpp, vLLM, LM Studio, etc.).
     # Without these, `_is_api_model` falls back to keyword sniffing on the
     # model name, so well-behaved local servers don't get native tool
     # schemas and the agent silently degrades to fenced-block parsing.
     "localhost", "127.0.0.1", "host.docker.internal",
 ])
-_MCP_KEYWORDS = frozenset(["browse", "browser", "website", "calendar", "event", "email",
+_MCP_KEYWORDS = frozenset(["mcp", "browse", "browser", "website", "calendar", "event", "email",
                            "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed"])
 _ADMIN_SCHEMA_NAMES = frozenset([
     "manage_session", "manage_skills", "manage_tasks",
@@ -1642,6 +1643,11 @@ async def stream_agent_loop(
     _doc_opened = False    # whether doc_stream_open was sent
     _doc_last_len = 0      # last content length sent
 
+    # Set when the loop runs out of rounds while the agent was still actively
+    # using tools — i.e. it was cut off, not finished. Drives a "Continue" event
+    # so the user can resume instead of the turn silently stalling.
+    _exhausted_rounds = False
+
     for round_num in range(1, max_rounds + 1):
         round_response = ""
         round_reasoning = ""  # reasoning_content deltas (DeepSeek-thinking, vLLM --reasoning-parser)
@@ -2299,6 +2305,20 @@ async def stream_agent_loop(
 
         # Separator in accumulated response
         full_response += "\n\n"
+    else:
+        # The for-loop completed every allowed round WITHOUT an early `break`
+        # (a `break` fires on "done", budget, or error). Reaching this `else`
+        # means the agent kept working until it ran out of rounds — so offer
+        # Continue instead of stopping silently. This catches ALL exhaustion
+        # paths, including a verifier `continue` on the final round (the old
+        # bottom-of-loop flag missed those).
+        _exhausted_rounds = True
+
+    # If the loop hit the round cap while still working, tell the client so it
+    # can show a "Continue" affordance instead of the turn just stopping.
+    if _exhausted_rounds:
+        logger.info("[agent] round cap (%d) reached mid-task — emitting rounds_exhausted", max_rounds)
+        yield f'data: {json.dumps({"type": "rounds_exhausted", "rounds": max_rounds})}\n\n'
 
     # If the response is completely empty and no tools were executed,
     # yield a fallback message so the user is not left hanging.
