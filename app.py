@@ -184,6 +184,8 @@ if AUTH_ENABLED:
     import re as _re
     AUTH_EXEMPT_PATTERNS = [
         _re.compile(r"^/api/tasks/[^/]+/webhook/[^/]+/?$"),
+        _re.compile(r"^/api/engineering-missions/public/[^/]+(?:/export/(?:markdown|json))?/?$"),
+        _re.compile(r"^/engineering/reports/[^/]+/?$"),
     ]
 
     def _is_auth_exempt(path: str) -> bool:
@@ -648,6 +650,10 @@ app.include_router(setup_hwfit_routes())
 from routes.compare_routes import setup_compare_routes
 app.include_router(setup_compare_routes(session_manager))
 
+# Engineering Missions (GitHub PR review cockpit)
+from routes.engineering_mission_routes import setup_engineering_mission_routes
+app.include_router(setup_engineering_mission_routes())
+
 # User Preferences
 from routes.prefs_routes import setup_prefs_routes
 app.include_router(setup_prefs_routes())
@@ -775,6 +781,18 @@ async def serve_tasks(request: Request):
 @app.get("/library")
 async def serve_library(request: Request):
     return await serve_index(request)
+
+@app.get("/engineering")
+async def serve_engineering(request: Request):
+    return await serve_index(request)
+
+@app.get("/engineering/missions/{mission_id}")
+async def serve_engineering_mission(request: Request, mission_id: str):
+    return await serve_index(request)
+
+@app.get("/engineering/reports/{share_token}")
+async def serve_engineering_public_report(request: Request, share_token: str):
+    return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/engineering-report.html"))
 
 @app.get("/backgrounds")
 async def serve_backgrounds(request: Request):

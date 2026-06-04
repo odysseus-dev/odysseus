@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Engineering Mission Report — Odysseus</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="engineering-public-page">
+  <main class="engineering-public-shell">
+    <header class="engineering-public-header">
+      <div>
+        <p class="engineering-public-kicker">Odysseus Engineering Mission</p>
+        <h1 id="public-report-title">Loading report...</h1>
+        <p id="public-report-summary" class="engineering-public-summary"></p>
+      </div>
+      <div class="engineering-public-actions">
+        <a id="public-export-md" class="memory-toolbar-btn engineering-action-link" href="#" download aria-disabled="true">Markdown</a>
+        <a id="public-export-json" class="memory-toolbar-btn engineering-action-link" href="#" download aria-disabled="true">JSON</a>
+        <button id="public-copy-link" class="memory-toolbar-btn" type="button">Copy Link</button>
+      </div>
+    </header>
+    <section class="engineering-public-meta">
+      <span id="public-report-status" class="engineering-status">loading</span>
+      <a id="public-report-target" href="#" target="_blank" rel="noopener noreferrer"></a>
+    </section>
+    <section id="public-report-timeline" class="engineering-timeline engineering-public-timeline"></section>
+    <article id="public-report-body" class="engineering-report engineering-public-report">
+      <div class="doclib-empty">Loading published mission...</div>
+    </article>
+  </main>
+  <script type="module" src="/static/js/engineeringReportPage.js"></script>
+</body>
+</html>

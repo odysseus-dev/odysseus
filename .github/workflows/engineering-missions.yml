@@ -1,0 +1,64 @@
+name: Engineering Missions
+
+on:
+  pull_request:
+    paths:
+      - "routes/engineering_mission_routes.py"
+      - "app.py"
+      - "core/database.py"
+      - "static/js/engineeringMissions.js"
+      - "static/js/engineeringReportPage.js"
+      - "static/engineering-report.html"
+      - "static/style.css"
+      - "static/ts/engineeringMissions.ts"
+      - "tools/github-diff-analyzer/**"
+      - "tests/test_engineering_missions.py"
+      - "docs/engineering-missions*"
+      - "README.md"
+      - ".github/workflows/engineering-missions.yml"
+  push:
+    branches: [main]
+    paths:
+      - "routes/engineering_mission_routes.py"
+      - "app.py"
+      - "core/database.py"
+      - "static/js/engineeringMissions.js"
+      - "static/js/engineeringReportPage.js"
+      - "static/engineering-report.html"
+      - "static/style.css"
+      - "static/ts/engineeringMissions.ts"
+      - "tools/github-diff-analyzer/**"
+      - "tests/test_engineering_missions.py"
+      - "docs/engineering-missions*"
+      - "README.md"
+      - ".github/workflows/engineering-missions.yml"
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Compile changed Python modules
+        run: python -m py_compile routes/engineering_mission_routes.py core/database.py
+      - name: Run Engineering Missions tests
+        run: pytest tests/test_engineering_missions.py
+      - name: Syntax-check Engineering Mission UI modules
+        run: |
+          node --check static/js/engineeringMissions.js
+          node --check static/js/engineeringReportPage.js
+
+  go-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Test diff analyzer
+        working-directory: tools/github-diff-analyzer
+        run: go test ./...

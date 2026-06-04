@@ -11,6 +11,7 @@ import presetsModule from './js/presets.js';
 import searchModule from './js/search.js';
 import chatModule from './js/chat.js';
 import compareModule from './js/compare/index.js';
+import engineeringMissionsModule from './js/engineeringMissions.js';
 import documentModule from './js/document.js';
 import searchChatModule from './js/search-chat.js';
 import markdownModule from './js/markdown.js';
@@ -822,6 +823,13 @@ function initializeEventListeners() {
         _startFreshChat();
         compareModule.toggleMode();
       }
+    });
+  }
+
+  const toolEngineeringBtn = el('tool-engineering-btn');
+  if (toolEngineeringBtn) {
+    toolEngineeringBtn.addEventListener('click', () => {
+      if (engineeringMissionsModule) engineeringMissionsModule.toggle();
     });
   }
 
@@ -2388,6 +2396,7 @@ function initializeEventListeners() {
     // inside the Tools section in the sidebar.
     'tool-calendar':       '#tool-calendar-btn',
     'tool-compare':        '#tool-compare-btn',
+    'tool-engineering':    '#tool-engineering-btn',
     'tool-cookbook':       '#tool-cookbook-btn',
     'tool-research':       '#tool-research-btn',
     'tool-gallery':        '#tool-gallery-btn',
@@ -3422,6 +3431,9 @@ function startOdysseusApp() {
   if (compareModule) {
     compareModule.init(API_BASE);
   }
+  if (engineeringMissionsModule) {
+    engineeringMissionsModule.init(API_BASE);
+  }
   researchPanelModule.init(API_BASE, markdownModule, sessionModule);
   // Initialize document editor module
   if (documentModule) {
@@ -3448,6 +3460,7 @@ function startOdysseusApp() {
   // Rail tool buttons — delegate to sidebar tool buttons
   const _railToolMap = {
     'rail-compare':   'tool-compare-btn',
+    'rail-engineering': 'tool-engineering-btn',
     'rail-research':  'tool-research-btn',
     'rail-cookbook':   'tool-cookbook-btn',
     'rail-archive':   'tool-library-btn',

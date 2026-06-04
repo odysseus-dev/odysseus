@@ -16,6 +16,7 @@ A self-hosted AI workspace -- meant to be the self-hosted version of the UI expe
   - **Cookbook** -- Scans your hardware, recommends models, click to download and serve.. easy!<br>　<sub>built on [llmfit](https://github.com/AlexsJones/llmfit) · VRAM-aware · GGUF / FP8 / AWQ · fit scoring · vLLM / llama.cpp serving</sub>
   - **Deep Research** -- multi-step runs that gather, read, and synthesize sources into a nice visual report.<br>　<sub>adapted from [Tongyi DeepResearch](https://github.com/Alibaba-NLP/DeepResearch)</sub>
   - **Compare** -- a fun tool to compare models side by side. Test completely blind, no bias!<br>　<sub>multi-model · blind test · synthesis</sub>
+  - **Engineering Missions** -- portfolio-grade GitHub PR review cockpit with replayable reports, exports, and tokenized public links.<br>　<sub>FastAPI · SQLAlchemy · Go diff analyzer · TypeScript contracts · public report pages · GitHub Actions</sub>
   - **Documents** -- YOU write the text, AI is there to assist, not the opposite.<br>　<sub>multi-tab editor · markdown · HTML · CSV · syntax highlighting · AI edits · suggestions</sub>
   - **Memory / Skills** -- Persistent memory and skills, your agent evolves over time as it better understands you and your tasks!<br>　<sub>ChromaDB · fastembed (ONNX) · vector + keyword retrieval · import/export</sub>
   - **Email** -- IMAP/SMTP inbox with AI triage built in: urgency reminders, auto-tag, auto-summary, auto-reply drafts, auto-spam.<br>　<sub>IMAP · SMTP · per-account routing · CalDAV-aware</sub>
@@ -42,6 +43,28 @@ A full, hover-to-play tour lives on the landing page (`docs/index.html`).
 ![Notes & Tasks](docs/notes.gif)
 
 </details>
+
+## Engineering Missions
+Engineering Missions is a fullstack systems slice inside Odysseus: paste a
+GitHub pull request URL, fetch PR metadata through the GitHub API, run a local
+Go diff-analysis worker, optionally synthesize with the configured utility
+model, persist the mission receipt, and replay/export the final report.
+
+Why it matters for engineering portfolios:
+- Shows product thinking: a cockpit, mission history, timeline, shareable report pages, and Markdown/JSON exports.
+- Shows backend depth: authenticated FastAPI routes, owner-scoped persistence, tokenized public links, and deterministic fallbacks.
+- Shows polyglot fluency: Python application code, Go analysis worker, JavaScript UI, TypeScript API contracts, HTML/CSS, and CI.
+- Shows operational care: reports remain useful even when no AI model is configured, and public access uses revocable share tokens instead of exposing private history.
+
+Try it at `/engineering`, then open a saved mission at
+`/engineering/missions/{mission_id}` or publish a public report at
+`/engineering/reports/{share_token}`.
+
+![Engineering Missions cockpit](docs/engineering-missions-cockpit.png)
+
+Read the full case study in [docs/engineering-missions.md](docs/engineering-missions.md),
+including the architecture diagram, demo script, verification checklist, and
+public report screenshot.
 
 ## Quick Start
 

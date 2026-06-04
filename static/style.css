@@ -35731,3 +35731,439 @@ body.theme-frosted .modal {
      is already ≥16px and never zoomed — leave it so we don't shrink it. */
   .doc-email-richbody.doc-font-m { font-size: 16px !important; }
 }
+
+/* Engineering Missions */
+.engineering-modal-content {
+  width: min(1040px, 96vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.engineering-body {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.engineering-left,
+.engineering-right {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.engineering-run-card,
+.engineering-history-card,
+.engineering-report-card {
+  min-width: 0;
+}
+
+.engineering-history-card,
+.engineering-report-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.engineering-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.engineering-card-head h2 {
+  margin: 0;
+  padding: 0;
+  line-height: 1.1;
+}
+
+.engineering-form {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.engineering-label {
+  font-size: 11px;
+  opacity: 0.65;
+}
+
+.engineering-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.engineering-url-input {
+  min-width: 0;
+  width: 100%;
+}
+
+.engineering-run-btn {
+  min-width: 58px;
+  white-space: nowrap;
+}
+
+.engineering-check-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  opacity: 0.72;
+}
+
+.engineering-pill,
+.engineering-status {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 10px;
+  line-height: 1.35;
+  font-family: 'Fira Code', ui-monospace, monospace;
+  color: var(--fg-muted, #aaa);
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+}
+
+.engineering-status-completed {
+  color: #8fd19e;
+  border-color: color-mix(in srgb, #8fd19e 45%, var(--border));
+}
+
+.engineering-status-running,
+.engineering-status-queued {
+  color: #e5c07b;
+  border-color: color-mix(in srgb, #e5c07b 45%, var(--border));
+}
+
+.engineering-status-failed {
+  color: var(--accent-error, #e06c75);
+  border-color: color-mix(in srgb, var(--accent-error, #e06c75) 55%, var(--border));
+}
+
+.engineering-history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.engineering-history-item {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+  color: var(--fg);
+  border-radius: 7px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "main status"
+    "main time";
+  gap: 4px 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.engineering-history-item:hover,
+.engineering-history-item.active {
+  border-color: var(--accent, var(--red));
+}
+
+.engineering-history-main {
+  grid-area: main;
+  min-width: 0;
+}
+
+.engineering-history-title,
+.engineering-history-url {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.engineering-history-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.engineering-history-url,
+.engineering-history-time,
+.engineering-subtitle {
+  font-size: 10px;
+  opacity: 0.55;
+}
+
+.engineering-history-time {
+  grid-area: time;
+  text-align: right;
+}
+
+.engineering-history-item .engineering-status {
+  grid-area: status;
+}
+
+.engineering-report-head {
+  align-items: flex-start;
+}
+
+.engineering-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.engineering-action-link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.engineering-action-link[aria-disabled="true"] {
+  pointer-events: none;
+  opacity: 0.45;
+}
+
+.engineering-timeline {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.engineering-step {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  background: color-mix(in srgb, var(--panel) 76%, transparent);
+}
+
+.engineering-step-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  margin-top: 4px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.engineering-step.completed .engineering-step-dot {
+  background: #8fd19e;
+}
+
+.engineering-step.running .engineering-step-dot,
+.engineering-step.queued .engineering-step-dot {
+  background: #e5c07b;
+}
+
+.engineering-step.failed .engineering-step-dot {
+  background: var(--accent-error, #e06c75);
+}
+
+.engineering-step-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.engineering-step-title {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.engineering-step-detail {
+  font-size: 10px;
+  opacity: 0.58;
+  line-height: 1.35;
+}
+
+.engineering-report {
+  overflow: auto;
+  min-height: 0;
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+}
+
+.engineering-report h1,
+.engineering-report h2,
+.engineering-report h3 {
+  margin-top: 0.9em;
+  margin-bottom: 0.45em;
+  letter-spacing: 0;
+}
+
+.engineering-report h1 {
+  font-size: 18px;
+}
+
+.engineering-report h2 {
+  font-size: 14px;
+}
+
+.engineering-report p,
+.engineering-report li,
+.engineering-report td,
+.engineering-report th {
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.engineering-report table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+
+.engineering-report th,
+.engineering-report td {
+  border: 1px solid var(--border);
+  padding: 5px 6px;
+  vertical-align: top;
+}
+
+.engineering-report code {
+  font-size: 11px;
+}
+
+.engineering-error {
+  color: var(--accent-error, #e06c75);
+}
+
+@media (max-width: 860px) {
+  .engineering-modal-content {
+    width: 100vw;
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+  .engineering-body {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+  .engineering-timeline {
+    grid-template-columns: 1fr;
+  }
+  .engineering-report-card {
+    min-height: 560px;
+  }
+}
+
+.engineering-public-page {
+  min-height: 100vh;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel) 75%, #111 25%), var(--bg) 42%),
+    var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui, Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  margin: 0;
+}
+
+.engineering-public-shell {
+  width: min(1120px, calc(100vw - 28px));
+  margin: 0 auto;
+  padding: 32px 0 48px;
+}
+
+.engineering-public-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: start;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 18px;
+  margin-bottom: 14px;
+}
+
+.engineering-public-kicker {
+  margin: 0 0 8px;
+  color: var(--accent, var(--red));
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.engineering-public-header h1 {
+  margin: 0;
+  font-size: clamp(24px, 4vw, 42px);
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
+.engineering-public-summary {
+  margin: 10px 0 0;
+  color: var(--fg-muted, #aaa);
+  line-height: 1.5;
+  max-width: 760px;
+}
+
+.engineering-public-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.engineering-public-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 12px 0 16px;
+}
+
+.engineering-public-meta a {
+  color: var(--fg-muted, #aaa);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.engineering-public-timeline {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: 16px 0;
+}
+
+.engineering-public-report {
+  min-height: 520px;
+  max-height: none;
+  overflow: visible;
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+}
+
+@media (max-width: 760px) {
+  .engineering-public-shell {
+    width: min(100vw - 20px, 1120px);
+    padding-top: 18px;
+  }
+  .engineering-public-header {
+    grid-template-columns: 1fr;
+  }
+  .engineering-public-actions {
+    justify-content: flex-start;
+  }
+  .engineering-public-timeline {
+    grid-template-columns: 1fr;
+  }
+}

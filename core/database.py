@@ -403,6 +403,33 @@ class Comparison(TimestampMixin, Base):
     )
 
 
+class EngineeringMission(TimestampMixin, Base):
+    """Auditable engineering workflow run, starting with GitHub PR reviews."""
+    __tablename__ = "engineering_missions"
+
+    id = Column(String, primary_key=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    kind = Column(String, nullable=False, default="pr_review")
+    status = Column(String, nullable=False, default="queued")  # queued | running | completed | failed
+    target_url = Column(Text, nullable=False)
+    title = Column(String, nullable=False, default="Engineering Mission")
+    summary = Column(Text, nullable=True)
+    report_markdown = Column(Text, nullable=True)
+    payload = Column(JSON, default=dict)
+    audit_log = Column(JSON, default=list)
+    public_report = Column(Boolean, default=False, nullable=False)
+    share_token = Column(String, nullable=True)
+    error = Column(Text, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    published_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index('ix_engineering_missions_owner_updated', 'owner', 'updated_at'),
+        Index('ix_engineering_missions_kind_status', 'kind', 'status'),
+        Index('ix_engineering_missions_share_token', 'share_token', unique=True),
+    )
+
+
 class Signature(TimestampMixin, Base):
     """User-saved visual signatures (image stamps).
 
@@ -1554,6 +1581,24 @@ def _migrate_seed_email_account():
         logging.getLogger(__name__).warning(f"seed email account migration: {e}")
 
 
+def _migrate_add_engineering_mission_share_columns():
+    """Add publish/share fields for saved Engineering Mission reports."""
+    try:
+        with engine.begin() as conn:
+            cols = {r[1] for r in conn.execute(text("PRAGMA table_info(engineering_missions)")).fetchall()}
+            if not cols:
+                return
+            if "public_report" not in cols:
+                conn.execute(text("ALTER TABLE engineering_missions ADD COLUMN public_report BOOLEAN DEFAULT 0 NOT NULL"))
+            if "share_token" not in cols:
+                conn.execute(text("ALTER TABLE engineering_missions ADD COLUMN share_token VARCHAR"))
+            if "published_at" not in cols:
+                conn.execute(text("ALTER TABLE engineering_missions ADD COLUMN published_at DATETIME"))
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_engineering_missions_share_token ON engineering_missions (share_token)"))
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"engineering mission share migration failed: {e}")
+
+
 # WARNING: Foreign-key enforcement is enabled globally for all SQLite connections.
 # Any future migrations or schema changes that temporarily violate foreign-key
 # constraints will fail. To perform such operations, foreign_keys must be
@@ -1565,6 +1610,7 @@ def init_db():
     """
     _migrate_model_endpoints()
     Base.metadata.create_all(bind=engine)
+    _migrate_add_engineering_mission_share_columns()
     _migrate_add_hidden_models_column()
     _migrate_add_cached_models_column()
     _migrate_add_pinned_models_column()
