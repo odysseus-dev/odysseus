@@ -1,0 +1,115 @@
+name: Claude Code Review
+
+# Automated PR review powered by Claude.
+# Setup guide: .claude/rules/CLAUDE_CODE_REVIEW.md
+#
+# Runs only when a PR is marked "Ready for review" (or opened as a
+# non-draft). Draft PRs are skipped, and the review does NOT re-run on
+# every push — keep iterating in draft, then click "Ready for review"
+# again when you want a fresh pass.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+    paths:
+      - "**/*.py"
+      - "**/*.js"
+      - "**/*.ts"
+      - "**/*.css"
+      - "**/*.html"
+      - "**/*.sh"
+      - "**/*.yml"
+      - "**/*.yaml"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "requirements*.txt"
+      - "!.github/workflows/claude*.yml"
+
+jobs:
+  claude-review:
+    # Never review drafts. A PR opened directly as a draft still fires
+    # the "opened" event, so this guard is what enforces ready-only.
+    if: >-
+      !github.event.pull_request.draft
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+
+    steps:
+      - name: Skip if a run for this commit already exists
+        id: dedup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PEER_RUN=$(gh api \
+            "repos/${{ github.repository }}/actions/runs?head_sha=${{ github.sha }}&per_page=10" \
+            --jq "[.workflow_runs[] | select(.name == \"${{ github.workflow }}\" and .id != ${{ github.run_id }} and .conclusion != \"cancelled\" and .conclusion != \"skipped\" and .status != \"queued\")] | first | .id // empty" \
+            2>/dev/null || true)
+          if [ -n "$PEER_RUN" ]; then
+            echo "::notice::Skipping duplicate run — SHA ${{ github.sha }} already handled by run $PEER_RUN"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip if PR already merged or closed
+        if: steps.dedup.outputs.skip != 'true'
+        id: pr-state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          STATE=$(gh pr view ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} --json state -q '.state')
+          if [ "$STATE" != "OPEN" ]; then
+            echo "::notice::Skipping — PR #${{ github.event.pull_request.number }} is $STATE"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout repository
+        if: steps.dedup.outputs.skip != 'true' && steps.pr-state.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Load review prompt
+        if: steps.dedup.outputs.skip != 'true' && steps.pr-state.outputs.skip != 'true'
+        id: prompt
+        run: |
+          PROMPT_FILE=".claude/rules/review-prompt.md"
+          if [ ! -f "$PROMPT_FILE" ]; then
+            echo "::error::Missing $PROMPT_FILE — cannot run review."
+            exit 1
+          fi
+          # Stream the prompt file verbatim into the step env so the prompt
+          # lives in Markdown, not in this workflow. Random delimiter avoids
+          # any clash with the file's own contents.
+          DELIM="REVIEW_PROMPT_EOF_$(openssl rand -hex 8)"
+          {
+            echo "REVIEW_PROMPT<<$DELIM"
+            cat "$PROMPT_FILE"
+            echo "$DELIM"
+          } >> "$GITHUB_ENV"
+
+      - name: Run Claude Code Review
+        if: steps.dedup.outputs.skip != 'true' && steps.pr-state.outputs.skip != 'true'
+        id: claude-review
+        uses: anthropics/claude-code-action@v1
+        env:
+          # Consumed by gh/Bash inside the prompt (see review-prompt.md).
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Prompt body lives in .claude/rules/review-prompt.md — edit it
+          # there; no need to touch this workflow.
+          prompt: ${{ env.REVIEW_PROMPT }}
+
+          # https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
+          # Swap --model haiku for sonnet or opus here for deeper (pricier) reviews.
+          claude_args: '--model haiku --allowed-tools "Read,Grep,Glob,mcp__github_inline_comment__create_inline_comment,mcp__github__get_pull_request_review_comments,Bash(gh pr review:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh pr ready:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*),Bash(gh api:*)"'
