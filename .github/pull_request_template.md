@@ -18,6 +18,19 @@ Fixes #
 - [ ] Documentation only
 - [ ] CI / tooling / configuration
 
+## Model Used
+
+<!--
+  Which AI model produced or assisted with this change? This helps reviewers
+  calibrate, and applies to everyone — human and AI alike. Include where you can:
+    - Provider + model name (e.g. Claude, GPT, Gemini)
+    - Exact model ID / version (e.g. claude-opus-4-8, gpt-5.1)
+    - Context window and reasoning mode, if relevant
+  If no AI was used, write "None — human-authored".
+-->
+
+None — human-authored
+
 ## Checklist
 
 - [ ] I searched [open issues](https://github.com/pewdiepie-archdaemon/odysseus/issues) and [open PRs](https://github.com/pewdiepie-archdaemon/odysseus/pulls) — this is not a duplicate.
