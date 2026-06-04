@@ -494,7 +494,7 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
     chat_messages = []
     for m in messages:
         if m.get("role") == "system":
-            system_parts.append(m["content"])
+            system_parts.append(m.get("content") or "")
         elif m.get("role") == "tool":
             # Convert OpenAI tool result to Anthropic format
             chat_messages.append({
