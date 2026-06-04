@@ -301,18 +301,24 @@ class MemoryManager:
         fact_words = ["what", "when", "where", "how", "why", "explain", "describe", "information", "know"]
         
         query_lower = query.lower()
-        
+        # Classify on WHOLE words, not substrings. With `word in query_lower`
+        # the 1-char "i" (and "me"/"am") is a substring of almost every query,
+        # so nearly all queries were typed "identity" and the contact/
+        # preference/task/fact branches were unreachable, force-injecting the
+        # user's identity memories regardless of relevance.
+        query_tokens = set(re.findall(r"[a-z0-9']+", query_lower))
+
         # Determine query type based on keywords
         query_type = None
-        if any(word in query_lower for word in identity_words):
+        if query_tokens & set(identity_words):
             query_type = "identity"
-        elif any(word in query_lower for word in contact_words):
+        elif query_tokens & set(contact_words):
             query_type = "contact"
-        elif any(word in query_lower for word in preference_words):
+        elif query_tokens & set(preference_words):
             query_type = "preference"
-        elif any(word in query_lower for word in task_words):
+        elif query_tokens & set(task_words):
             query_type = "task"
-        elif any(word in query_lower for word in fact_words):
+        elif query_tokens & set(fact_words):
             query_type = "fact"
         
         relevant = []
