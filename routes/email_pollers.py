@@ -99,6 +99,36 @@ async def _run_auto_summarize_once(do_summary: bool = True, do_reply: bool = Tru
         _save_settings(s2)
 
 
+def _latest_inbox_fallback_uids(conn, reconnect):
+    """Latest INBOX UIDs via ``SEARCH ALL``, with a poisoned-socket guard (#1613).
+
+    On a large Gmail mailbox the fallback ``SEARCH ALL`` can time out mid-reply,
+    leaving its enormous ``* SEARCH <uids…>`` line unread on the socket. The next
+    command (the downstream re-select / EXAMINE) then reads those leftover bytes
+    and fails with ``EXAMINE => unexpected response: b'325188 …'``. Reconnecting
+    on failure guarantees the downstream command starts from a clean socket.
+
+    Returns ``(uids, conn)`` — ``conn`` is the live connection to keep using: the
+    same one on success, a fresh one (via ``reconnect()``) if we had to recover.
+    """
+    try:
+        conn.select("INBOX", readonly=True)
+        status, data = conn.uid("SEARCH", None, "ALL")
+        uids = []
+        if status == "OK" and data and data[0]:
+            for u in reversed(data[0].split()[-8:]):
+                uids.append(("INBOX", u))
+            logger.info("Email task SINCE scan found no messages; fell back to latest INBOX messages")
+        return uids, conn
+    except Exception as _e:
+        logger.warning(f"Latest-INBOX fallback scan failed: {_e}")
+        try:
+            conn.logout()
+        except Exception:
+            pass
+        return [], reconnect()
+
+
 async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None, progress_cb=None) -> str:
     """Single pass of the auto-summarize/reply scan.
 
@@ -201,16 +231,12 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         # the latest visible inbox messages so Clear cache -> Run again can
         # actually repopulate AI reply/summary/tag caches.
         if not uid_list:
-            try:
-                conn.select("INBOX", readonly=True)
-                status, data = conn.uid("SEARCH", None, "ALL")
-                if status == "OK" and data and data[0]:
-                    for u in reversed(data[0].split()[-8:]):
-                        uid_list.append(("INBOX", u))
-                    logger.info("Email task SINCE scan found no messages; fell back to latest INBOX messages")
-            except Exception as _e:
-                logger.warning(f"Latest-INBOX fallback scan failed: {_e}")
-        # Re-select INBOX as default for downstream code
+            _fb_uids, conn = _latest_inbox_fallback_uids(
+                conn, lambda: _imap_connect(account_id, owner=account_owner)
+            )
+            uid_list.extend(_fb_uids)
+        # Re-select INBOX as default for downstream code (on a clean socket even
+        # if the SEARCH ALL fallback above failed — see #1613).
         conn.select("INBOX", readonly=True)
         if not uid_list:
             return "No recent emails"
@@ -731,8 +757,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                     from src.settings import load_settings as _ls
                                     _pub = (_ls().get("app_public_url") or "").rstrip("/")
                                     uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
-                                    from urllib.parse import quote as _q
-                                    open_url = f"{_pub}/#email={_q(_folder, safe='')}:{uid_str}" if _pub else ""
+                                    from urllib.parse import quote as _url_q
+                                    open_url = f"{_pub}/#email={_url_q(_folder, safe='')}:{uid_str}" if _pub else ""
 
                                     alert_subject = f"[{urgency.upper()}] {subject}"
                                     alert_body = (
@@ -829,7 +855,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                             _req.post, url, json=payload, headers=req_headers, timeout=120
                         )
                         if not resp.ok:
-                            logger.warning(f"Auto-classify {uid.decode()} HTTP {resp.status_code}: {resp.text[:200]}")
+                            logger.warning(f"Auto-classify {uid.decode() if isinstance(uid, bytes) else str(uid)} HTTP {resp.status_code}: {resp.text[:200]}")
                         else:
                             rdata = resp.json()
                             m = (rdata.get("choices") or [{}])[0].get("message", {})
@@ -860,7 +886,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                 if is_spam and auto_spam and spam_folder:
                                     if _imap_move(uid, spam_folder, account_id=account_id, owner=account_owner):
                                         moved_to = spam_folder
-                                        logger.info(f"Auto-spam moved uid={uid.decode()} to {spam_folder}: {spam_reason}")
+                                        logger.info(f"Auto-spam moved uid={uid.decode() if isinstance(uid, bytes) else str(uid)} to {spam_folder}: {spam_reason}")
 
                                 _c = _sql3.connect(SCHEDULED_DB)
                                 _c.execute("""
@@ -868,7 +894,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                     (message_id, owner, uid, folder, subject, sender, tags, spam_verdict,
                                      spam_reason, moved_to, model_used, created_at)
                                     VALUES (?, ?, ?, 'INBOX', ?, ?, ?, ?, ?, ?, ?, ?)
-                                """, (message_id, account_owner or "", uid.decode(), subject, sender,
+                                """, (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid), subject, sender,
                                       json.dumps(tags), 1 if is_spam else 0,
                                       spam_reason, moved_to, model, datetime.utcnow().isoformat()))
                                 _c.commit()

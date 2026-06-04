@@ -63,7 +63,7 @@ def _validate_caldav_ip(host: str) -> None:
 
 def validate_caldav_url(raw_url: str) -> str:
     """Validate and normalize a user-provided CalDAV URL before server-side use."""
-    url = (raw_url or "").strip()
+    url = (raw_url if isinstance(raw_url, str) else "").strip()
     if not url:
         raise ValueError("CalDAV URL is required")
     parsed = urlparse(url)
@@ -103,6 +103,25 @@ def _to_utc_naive(dt):
         return dt, False  # naive → treat as local
     # date-only (all-day)
     return datetime(dt.year, dt.month, dt.day), True
+
+
+def _find_existing_event(db, pending, uid_val, calendar_id):
+    """Find the event to update for THIS calendar.
+
+    CalendarEvent.uid is the global primary key, so an unscoped lookup by uid
+    returns whatever row holds that VEVENT uid — including another owner's.
+    The old code then reassigned that row's calendar_id, moving (stealing)
+    another user's event into the syncing calendar whenever the two share a
+    uid (shared/subscribed/public calendars, or two accounts on one server).
+    Scope the lookup to the calendar being synced; a genuine cross-user uid
+    collision then fails the PK insert inside the per-calendar try/except
+    instead of hijacking the row. (import_ics was already fixed this way.)
+    """
+    from core.database import CalendarEvent
+    return pending.get(uid_val) or db.query(CalendarEvent).filter(
+        CalendarEvent.uid == uid_val,
+        CalendarEvent.calendar_id == calendar_id,
+    ).first()
 
 
 def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
@@ -235,9 +254,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                             else ""
                         )
 
-                        existing = pending.get(uid_val) or db.query(CalendarEvent).filter(
-                            CalendarEvent.uid == uid_val,
-                        ).first()
+                        existing = _find_existing_event(db, pending, uid_val, local_cal.id)
                         if existing:
                             existing.calendar_id = local_cal.id
                             existing.summary = summary

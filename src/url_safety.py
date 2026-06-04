@@ -56,6 +56,8 @@ def check_outbound_url(
     Returns ``(ok, reason)``. ``ok`` is True only when the URL is safe to fetch.
     ``resolver`` is injectable so callers/tests can avoid real DNS.
     """
+    if not isinstance(url, str):
+        return False, "URL must be a string"
     if not url or not url.strip():
         return False, "URL is required"
     try:

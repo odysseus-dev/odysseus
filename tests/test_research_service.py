@@ -139,6 +139,7 @@ class TestDictBackCompat:
                     "sources": [
                         {"url": "https://x.example", "title": "X",
                          "snippet": "s", "relevance": 0.9},
+                        "bad source row",
                     ],
                     "sections": ["intro"],
                     "tokens_used": 42,

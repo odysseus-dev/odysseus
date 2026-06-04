@@ -4,6 +4,7 @@
 // ============================================
 import Storage from './js/storage.js';
 import uiModule from './js/ui.js';
+import workspaceModule from './js/workspace.js';
 import fileHandlerModule from './js/fileHandler.js';
 import modelsModule from './js/models.js';
 import ragModule from './js/rag.js';
@@ -13,6 +14,7 @@ import chatModule from './js/chat.js';
 import compareModule from './js/compare/index.js';
 import documentModule from './js/document.js';
 import searchChatModule from './js/search-chat.js';
+import { makeWindowDraggable } from './js/windowDrag.js';
 import markdownModule from './js/markdown.js';
 import chatRenderer from './js/chatRenderer.js';
 import sessionModule from './js/sessions.js';
@@ -303,7 +305,9 @@ function initializeEventListeners() {
           label = (raw || '').trim() || 'Assistant';
         }
         const body = child.querySelector('.body');
-        const text = body ? (body.innerText || body.textContent || '').trim() : '';
+        // Prefer dataset.raw (original markdown) over innerText (rendered HTML as text)
+        // to avoid extra newlines and formatting artifacts.
+        const text = body ? (body.dataset.raw || body.innerText || body.textContent || '').trim() : '';
         if (text) parts.push(`${label}: ${text}`);
       } else if (child.classList?.contains('agent-thread')) {
         const lines = ['[Tool calls]'];
@@ -532,6 +536,13 @@ function initializeEventListeners() {
         return;
       }
 
+      // Model picker popup — close before opening any modals
+      const modelPickerMenu = document.getElementById('model-picker-menu');
+      if (modelPickerMenu && modelPickerMenu.classList.contains('open')) {
+        modelPickerMenu.classList.remove('open');
+        return;
+      }
+
       // Close one modal at a time (last in DOM = topmost)
       // Map modal id → sidebar list-item id to clear active state
       const modalItemMap = {
@@ -543,7 +554,7 @@ function initializeEventListeners() {
       };
 
       // Dynamic modals (removed from DOM on close)
-      const dynamicModals = ['library-modal', 'archive-modal', 'doclib-modal', 'gallery-modal', 'tasks-modal'];
+      const dynamicModals = ['library-modal', 'archive-modal', 'doclib-modal', 'gallery-modal', 'tasks-modal', 'email-lib-modal'];
       for (const id of dynamicModals) {
         const m = document.getElementById(id);
         if (id === 'gallery-modal') {
@@ -1677,6 +1688,7 @@ function initializeEventListeners() {
   }
   setupToggle('web-toggle-btn', 'web-toggle', 'web');
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
+  try { workspaceModule.initWorkspace(); } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)
   const overflowDocBtn = el('overflow-doc-btn');
@@ -2674,82 +2686,38 @@ function initializeEventListeners() {
     // Apply saved visibility on load
     applyUIVis(loadUIVis());
 
-    // Generic draggable for all .modal elements
-    const _sharedDragModalIds = new Set(['settings-modal']);
-    try { document.querySelectorAll('.modal').forEach(m => {
-      if (_sharedDragModalIds.has(m.id)) return;
-      const content = m.querySelector('.modal-content');
-      const header = m.querySelector('.modal-header');
-      if (!content || !header) return;
-      let dragX, dragY, startLeft, startTop, dragging = false;
-
-      // Reset to flex-centered position each time modal opens
-      new MutationObserver(() => {
-        if (!m.classList.contains('hidden')) {
-          content.style.position = '';
-          content.style.left = '';
-          content.style.top = '';
-          content.style.right = '';
-          content.style.bottom = '';
-          content.style.margin = '';
-        }
-      }).observe(m, { attributes: true, attributeFilter: ['class'] });
-
-      function startDrag(clientX, clientY) {
-        dragging = true;
-        const rect = content.getBoundingClientRect();
-        dragX = clientX; dragY = clientY;
-        startLeft = rect.left; startTop = rect.top;
-        // Switch to fixed so it can be freely positioned
-        content.style.position = 'fixed';
-        content.style.left = startLeft + 'px';
-        content.style.top = startTop + 'px';
-        content.style.margin = '0';
-      }
-
-      header.addEventListener('mousedown', (e) => {
-        if (e.target.closest('.close-btn')) return;
-        e.preventDefault();
-        startDrag(e.clientX, e.clientY);
-        document.addEventListener('mousemove', onDrag);
-        document.addEventListener('mouseup', stopDrag);
-      });
-      function onDrag(e) {
-        if (!dragging) return;
-        content.style.left = (startLeft + e.clientX - dragX) + 'px';
-        content.style.top = (startTop + e.clientY - dragY) + 'px';
-      }
-      function stopDrag() {
-        dragging = false;
-        document.removeEventListener('mousemove', onDrag);
-        document.removeEventListener('mouseup', stopDrag);
-      }
-
-      // Touch drag is desktop-only — on mobile, modals are bottom sheets and
-      // ui.js handles swipe-down-to-dismiss. Attaching this listener fights
-      // the swipe-dismiss gesture.
-      if (window.innerWidth > 768) {
-        header.addEventListener('touchstart', (e) => {
-          if (e.target.closest('.close-btn')) return;
-          const t = e.touches[0];
-          startDrag(t.clientX, t.clientY);
-          document.addEventListener('touchmove', onTouchDrag, { passive: false });
-          document.addEventListener('touchend', stopTouchDrag);
+    // The only two modals without a per-module makeWindowDraggable call. Wire
+    // them onto the shared helper, drag-only, to match their old behavior.
+    try {
+      ['custom-preset-modal', 'rename-session-modal'].forEach((id) => {
+        const m = document.getElementById(id);
+        if (!m) return;
+        const content = m.querySelector('.modal-content');
+        const header = m.querySelector('.modal-header');
+        if (!content || !header) return;
+        makeWindowDraggable(m, {
+          content, header,
+          skipSelector: '.close-btn',
+          enableDock: false,
+          enableResize: false,
         });
-      }
-      function onTouchDrag(e) {
-        if (!dragging) return;
-        e.preventDefault();
-        const t = e.touches[0];
-        content.style.left = (startLeft + t.clientX - dragX) + 'px';
-        content.style.top = (startTop + t.clientY - dragY) + 'px';
-      }
-      function stopTouchDrag() {
-        dragging = false;
-        document.removeEventListener('touchmove', onTouchDrag);
-        document.removeEventListener('touchend', stopTouchDrag);
-      }
-    }); } catch(e) { console.error('Modal drag init error:', e); }
+        // Re-center on open (these persist in the DOM). Guard on the
+        // hidden→visible edge so it never fires mid-drag.
+        let wasHidden = m.classList.contains('hidden');
+        new MutationObserver(() => {
+          const isHidden = m.classList.contains('hidden');
+          if (wasHidden && !isHidden) {
+            content.style.position = '';
+            content.style.left = '';
+            content.style.top = '';
+            content.style.right = '';
+            content.style.bottom = '';
+            content.style.margin = '';
+          }
+          wasHidden = isHidden;
+        }).observe(m, { attributes: true, attributeFilter: ['class'] });
+      });
+    } catch (e) { console.error('Dialog drag init error:', e); }
   })();
 
   // ── Modal minimize → dock ──

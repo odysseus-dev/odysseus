@@ -23,6 +23,44 @@ import {
   // browser loads it once. See cookbook-hwfit.js.
 } from './cookbook.js';
 import uiModule from './ui.js';
+
+// Tiny HTML-escape — keeps the file standalone instead of leaning on a
+// shared helper that may not be exported from this module's import surface.
+function _diagEsc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Pick an icon for a diagnosis-action button based on the label. The icon
+// renders on the LEFT of the button text. Keeps the strokes consistent
+// across the set so they read as one family.
+function _diagFixIcon(label) {
+  const l = String(label || '').toLowerCase();
+  const _svg = (path) => `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="cookbook-diag-btn-ico" aria-hidden="true">${path}</svg>`;
+  if (l.startsWith('retry') || l.includes('relaunch') || l.includes('restart')) {
+    // Circular-arrow refresh
+    return _svg('<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>');
+  }
+  if (l.startsWith('copy')) {
+    return _svg('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>');
+  }
+  if (l.startsWith('edit')) {
+    return _svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/>');
+  }
+  if (l.startsWith('open') || l.includes('dependencies')) {
+    return _svg('<path d="M14 3h7v7"/><path d="M21 3l-9 9"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/>');
+  }
+  if (l.startsWith('install') || l.includes('upgrade')) {
+    return _svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>');
+  }
+  if (l.startsWith('kill') || l.startsWith('stop')) {
+    return _svg('<rect x="6" y="6" width="12" height="12" rx="1"/>');
+  }
+  if (l.startsWith('switch') || l.includes('use ')) {
+    return _svg('<polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>');
+  }
+  // Default: lightbulb (generic "suggestion")
+  return _svg('<path d="M9 21h6"/><path d="M12 17v4"/><path d="M12 3a6 6 0 0 0-4 10.5c1 1 1.5 2 1.5 3.5h5c0-1.5.5-2.5 1.5-3.5A6 6 0 0 0 12 3Z"/>');
+}
 import spinnerModule from './spinner.js';
 
 // ── Error diagnosis ──
@@ -120,17 +158,12 @@ export const ERROR_PATTERNS = [
   },
   {
     pattern: /not divisible by weight quantization|quantization block/i,
-    message: 'Model quantization format incompatible with this vLLM version. Try a different quant (AWQ) or update vLLM.',
+    message: 'FP8 MoE quantization is incompatible with this tensor-parallel split.',
+    suggestion: 'Suggested action: retry with a lower tensor-parallel size, such as TP=4 or TP=2. If it still fails, use a non-FP8/GGUF version of the model.',
     fixes: [
-      { label: 'Update vLLM on server', action: (panel) => {
-        const taskEl = panel.closest('.cookbook-task');
-        const task = taskEl ? _loadTasks().find(t => t.sessionId === taskEl.dataset.taskId) : null;
-        const host = task?.remoteHost || '';
-        const prefix = _buildEnvPrefix();
-        const pipCmd = prefix ? prefix + ' pip install -U vllm' : 'pip install -U vllm';
-        const cmd = host ? _sshCmd(host, pipCmd) : pipCmd;
-        _launchServeTask('update-vllm', 'pip-update', cmd);
-      }},
+      { label: 'Retry with TP=4', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '4') },
+      { label: 'Retry with TP=2', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '2') },
+      { label: 'Edit serve', action: (panel) => _openServeEditFromDiagnosis(panel) },
     ],
   },
   {
@@ -528,53 +561,14 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
     ? `Suggested action: ${fixes[0].label}.`
     : 'Suggested action: copy the error and adjust the serve settings.');
 
-  const header = document.createElement('div');
-  header.className = 'cookbook-diag-header';
-
-  const fold = document.createElement('button');
-  fold.className = 'cookbook-diag-fold';
-  fold.type = 'button';
-  fold.innerHTML = '<span class="cookbook-diag-chevron">▾</span><span>Error message:</span>';
-  header.appendChild(fold);
-
-  const copy = document.createElement('button');
-  copy.className = 'cookbook-diag-copy';
-  copy.type = 'button';
-  copy.title = 'Copy troubleshooting bundle';
-  copy.setAttribute('aria-label', 'Copy troubleshooting bundle');
-  copy.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
-  copy.addEventListener('click', (e) => {
-    e.stopPropagation();
-    _copyText(_diagnosisCopyBundle(task, diagnosis, sourceText, suggestionText));
-    copy.classList.add('copied');
-    copy.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-    setTimeout(() => {
-      if (!copy.isConnected) return;
-      copy.classList.remove('copied');
-      copy.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
-    }, 1200);
-  });
-  header.appendChild(copy);
-
-  const dismiss = document.createElement('button');
-  dismiss.className = 'cookbook-diag-dismiss';
-  dismiss.type = 'button';
-  dismiss.title = 'Dismiss error';
-  dismiss.setAttribute('aria-label', 'Dismiss error');
-  dismiss.textContent = '×';
-  dismiss.addEventListener('click', (e) => {
-    e.stopPropagation();
-    panel._diagDismissed = diagnosis.message;
-    _clearDiagnosis(panel);
-  });
-  header.appendChild(dismiss);
-
-  diag.appendChild(header);
+  // Simplified diagnosis card: just the error message + suggestion + fix
+  // button(s). Removed the fold toggle, copy button, and × dismiss — they
+  // made the card noisy without earning their keep. _diagCollapsed is kept
+  // as a stub so callers don't have to change.
+  panel._diagCollapsed = false;
 
   const body = document.createElement('div');
   body.className = 'cookbook-diag-body';
-  body.classList.toggle('hidden', panel._diagCollapsed);
-  fold.querySelector('.cookbook-diag-chevron').textContent = panel._diagCollapsed ? '▸' : '▾';
   const msg = document.createElement('div');
   msg.className = 'cookbook-diag-message';
   msg.textContent = diagnosis.message;
@@ -583,12 +577,6 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
   suggestion.className = 'cookbook-diag-suggestion';
   suggestion.textContent = suggestionText;
   body.appendChild(suggestion);
-  fold.addEventListener('click', (e) => {
-    e.stopPropagation();
-    panel._diagCollapsed = !panel._diagCollapsed;
-    body.classList.toggle('hidden', panel._diagCollapsed);
-    fold.querySelector('.cookbook-diag-chevron').textContent = panel._diagCollapsed ? '▸' : '▾';
-  });
   diag.appendChild(body);
 
   const runFix = async (fix, button, busyLabel = fix.label, onStart = null, onDone = null) => {
@@ -627,7 +615,7 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
         const btn = document.createElement('button');
         btn.className = 'cookbook-btn cookbook-diag-btn';
         btn.type = 'button';
-        btn.textContent = fix.label;
+        btn.innerHTML = _diagFixIcon(fix.label) + '<span class="cookbook-diag-btn-label">' + _diagEsc(fix.label) + '</span>';
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
           runFix(fix, btn);
@@ -653,7 +641,7 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
     for (const fix of fixes) {
       const item = document.createElement('button');
       item.type = 'button';
-      item.textContent = fix.label;
+      item.innerHTML = _diagFixIcon(fix.label) + '<span class="cookbook-diag-btn-label">' + _diagEsc(fix.label) + '</span>';
       item.addEventListener('click', async (e) => {
         e.stopPropagation();
         if (item.dataset.busy || trigger.dataset.busy) return;

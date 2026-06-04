@@ -560,6 +560,15 @@ function _rerenderCachedModels() {
         + `</div>`;
 
       let panelHtml = `<div class="hwfit-serve-panel">${_slotsHtml}`;
+      // Warn when serving a model whose download hasn't fully completed —
+      // the user CAN still hit Launch (vLLM/llama-server will start, then
+      // crash trying to read missing shards), but they should know.
+      if (m && (m.status === 'downloading' || m.status === 'stalled' || m.has_incomplete)) {
+        const _warnText = m.status === 'stalled'
+          ? `This model looks like a stale download shell (${esc(m.size || '0 KB')}). The weights aren't on disk — the serve will fail to load. Re-download first, or pick another model.`
+          : `This model's download isn't complete yet (${esc(m.size || 'partial')}). The serve will start but is likely to crash on a missing shard. Wait for the download to finish, or relaunch after it's done.`;
+        panelHtml += `<div class="hwfit-serve-warn" style="margin:0 0 8px;padding:6px 10px;border-radius:5px;font-size:11px;background:color-mix(in srgb, var(--color-warning, #f0ad4e) 14%, transparent);border:1px solid color-mix(in srgb, var(--color-warning, #f0ad4e) 40%, transparent);color:var(--color-warning, #f0ad4e);display:flex;gap:6px;align-items:flex-start;line-height:1.4;"><span aria-hidden="true">⚠</span><span>${_warnText}</span></div>`;
+      }
       // Row 1: Backend + Server + Env
       panelHtml += `<div class="hwfit-serve-row">`;
       const _backendChoices = _isWindows()
@@ -595,13 +604,15 @@ function _rerenderCachedModels() {
       // Row 2: Core settings
       panelHtml += `<div class="hwfit-serve-row hwfit-backend-vllm hwfit-backend-sglang hwfit-backend-llamacpp">`;
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('TP','Tensor Parallelism — split model across N GPUs')}<select class="hwfit-sf" data-field="tp">${tpOpts}</select></label>`;
-      panelHtml += `<label>${_l('Context','Max tokens per request. Lower = less VRAM')}<input type="text" class="hwfit-sf" data-field="ctx" value="${esc(sv('ctx', '8192'))}" /></label>`;
+      // ctx resets to the model's max on every panel open (the real ctx slider
+      // lives in the Scan/Download toolbar — see cookbook.js .hwfit-ctx-control).
+      panelHtml += `<label>${_l('Context','Max tokens per request — resets to the model max on every open. Lower = less VRAM')}<input type="text" class="hwfit-sf" data-field="ctx" value="${esc(m.context_length || m.context || '20000')}" /></label>`;
       panelHtml += `<label>${_l('GPU','Which GPU to use. Leave empty for default')}<input type="text" class="hwfit-sf" data-field="gpu_id" value="${esc(sv('gpu_id', ''))}" placeholder="auto" style="width:50px;" /></label>`;
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('GPU Mem','Fraction of GPU memory (0.0–1.0). Lower if OOM')}<input type="text" class="hwfit-sf" data-field="gpu_mem" value="${esc(sv('gpu_mem', '0.90'))}" /></label>`;
       panelHtml += `<label class="hwfit-backend-vllm">${_l('Swap','CPU swap space in GB. Leave empty to omit (removed in newer vLLM)')}<input type="text" class="hwfit-sf" data-field="swap" value="${esc(sv('swap', ''))}" placeholder="off" /></label>`;
-      panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('Max Seqs','Maximum concurrent requests. Lower = less memory. Default 8 — prosumer GPUs often OOM on vLLM default 256 during CUDA graph capture.')}<input type="text" class="hwfit-sf" data-field="max_seqs" value="${esc(sv('max_seqs', '8'))}" placeholder="8" /></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('Max Seqs','Maximum concurrent requests. Lower = less memory. Default 4 — prosumer GPUs often OOM on vLLM default 256 during CUDA graph capture.')}<input type="text" class="hwfit-sf" data-field="max_seqs" value="${esc(sv('max_seqs', '4'))}" placeholder="4" /></label>`;
       panelHtml += `<label>${_l('Dtype','Data type for weights. auto picks best for GPU')}<select class="hwfit-sf" data-field="dtype">${dtypeOpts}</select></label>`;
-      panelHtml += `<label class="hwfit-backend-vllm">${_l('KV Cache','vLLM --kv-cache-dtype. auto uses the model/runtime default; fp8 reduces KV memory for long context.')}<select class="hwfit-sf" data-field="vllm_kv_cache_dtype">${vllmKvCacheOpts}</select></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm">${_l('KV Cache','vLLM --kv-cache-dtype. auto uses the model/runtime default; fp8 reduces KV memory for long context.')}<select class="hwfit-sf" data-field="vllm_kv_cache_dtype" style="height:32px;">${vllmKvCacheOpts}</select></label>`;
       panelHtml += `</div>`;
       // Row 2b: Diffusers settings
       const diffDtypeOpts = ['bfloat16','float16','float32'].map(d => `<option value="${d}"${sv('diff_dtype','bfloat16')===d?' selected':''}>${d}</option>`).join('');
@@ -694,7 +705,7 @@ function _rerenderCachedModels() {
         if (!_specMethods.includes(_specMethod)) _specMethods.unshift(_specMethod);
         const _specOpts = _specMethods.map(m =>
           `<option value="${m}"${m === _specMethod ? ' selected' : ''}>${m}</option>`).join('');
-        panelHtml += `<label class="hwfit-sf-cb hwfit-spec-group"><input type="checkbox" class="hwfit-sf" data-field="speculative" /> Speculative <select class="hwfit-sf hwfit-spec-method" data-field="spec_method" title="vLLM --speculative-config method">${_specOpts}</select><span class="hwfit-numstep"><button type="button" class="hwfit-numstep-btn" data-step="-1" tabindex="-1" aria-label="Decrease">‹</button><input type="number" class="hwfit-sf hwfit-spec-tokens" data-field="spec_tokens" value="${esc(_specTokens)}" min="1" max="10" title="num_speculative_tokens" /><button type="button" class="hwfit-numstep-btn" data-step="1" tabindex="-1" aria-label="Increase">›</button></span></label>`;
+        panelHtml += `<label class="hwfit-sf-cb hwfit-spec-group"><input type="checkbox" class="hwfit-sf" data-field="speculative" /> Speculative <select class="hwfit-sf hwfit-spec-method" data-field="spec_method" title="vLLM --speculative-config method">${_specOpts}</select><span class="hwfit-numstep"><button type="button" class="hwfit-numstep-btn" data-step="-1" tabindex="-1" aria-label="Decrease">‹</button><input type="number" class="hwfit-sf hwfit-spec-tokens" data-field="spec_tokens" value="${esc(_specTokens)}" min="1" max="10" title="num_speculative_tokens" /><button type="button" class="hwfit-numstep-btn" data-step="1" tabindex="-1" aria-label="Increase">›</button></span><span class="hwfit-help-chip hwfit-help-chip-inline" title="MTP / speculative decoding is supported on a few model families only — turn it on when the model card explicitly recommends it. On supported models it can boost inference throughput up to ~3×; on unsupported models it will either be ignored or fail to launch." style="margin-left:6px;">?</span></label>`;
       }
       if (_opts2.envVars.length) panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="moe_env" /> MoE Env Vars</label>`;
       panelHtml += `</div>`;
@@ -719,7 +730,7 @@ function _rerenderCachedModels() {
       // pushes Cancel + Launch to the right.
       panelHtml += `<span class="hwfit-serve-actions-spacer"></span>`;
       panelHtml += `<button class="cookbook-btn hwfit-serve-cancel" type="button" title="Close this configuration panel">Cancel</button>`;
-      panelHtml += `<button class="cookbook-btn hwfit-serve-launch">Launch</button>`;
+      panelHtml += `<button class="cookbook-btn hwfit-serve-launch"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;flex-shrink:0;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Launch</button>`;
       panelHtml += `</div>`;
       panelHtml += `</div>`;
 
@@ -1654,6 +1665,37 @@ function _rerenderCachedModels() {
             cancelText: 'Close',
           });
           return;
+        }
+        // Pre-launch GPU probe — common failure pattern: vLLM/SGLang launched
+        // on a host where no GPU is visible (driver missing, $CUDA_VISIBLE_DEVICES
+        // unset, container without --gpus). Catch it BEFORE the user spends
+        // minutes watching the task fail.
+        const _needsGpu = ['vllm', 'sglang'].includes(serveState.backend)
+          || (serveState.backend === 'diffusers');
+        if (_needsGpu) {
+          try {
+            const _probeHost = (_envState.remoteHost || '').trim();
+            const _probeParams = new URLSearchParams();
+            if (_probeHost) {
+              _probeParams.set('host', _probeHost);
+              const _sp = (_envState.servers || []).find(s => s.host === _probeHost)?.port;
+              if (_sp) _probeParams.set('ssh_port', _sp);
+            }
+            const _probeRes = await fetch('/api/cookbook/gpus' + (_probeParams.toString() ? '?' + _probeParams : ''), { credentials: 'same-origin' });
+            const _probeData = await _probeRes.json();
+            const _probeGpus = Array.isArray(_probeData) ? _probeData : (_probeData.gpus || []);
+            if (!_probeGpus.length) {
+              const _proceed = await window.styledConfirm(
+                `No GPU detected on ${_probeHost ? _probeHost : 'this host'}. ${serveState.backend.toUpperCase()} needs a visible CUDA/ROCm accelerator to start — launching now will most likely crash early.\n\nLaunch anyway?`,
+                { title: 'No GPU detected', confirmText: 'Launch anyway', cancelText: 'Cancel', danger: true },
+              );
+              if (!_proceed) return;
+            }
+          } catch {
+            // Network / probe failure — don't block. Better to let the launch
+            // proceed than to silently refuse because the probe endpoint
+            // hiccuped (the user can read the real error in the task output).
+          }
         }
         // Save in the { _byRepo, _lastUsed } schema — no legacy flat keys at
         // the root so per-model state doesn't leak between models.

@@ -678,10 +678,11 @@ function createSessionItem(s) {
     } else {
       _forceSidebarOpen();
     }
-    // Fire API and reload in background
-    fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' })
-      .then(() => loadSessions())
-      .catch(() => loadSessions());
+    // Await API deletion, then reload the authoritative list from the server
+    try {
+      await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
+    } catch (e) { /* network error — session may still exist server-side */ }
+    await loadSessions();
   });
 
   archiveItem.addEventListener('click', async () => {
@@ -2156,7 +2157,14 @@ async function _checkServerStream(sessionId) {
     // Skip if this is a research stream — research has its own progress UI
     if (info.mode === 'research' || info.is_research) return;
 
-    // Server is still streaming — show spinner and poll
+    // Live-resume the detached run: replay its buffer then stream live tokens
+    // (#2539). Falls back to the spinner+poll path below if unavailable.
+    if (window.chatModule && window.chatModule.resumeStream) {
+      const attached = await window.chatModule.resumeStream(sessionId);
+      if (attached) return;
+    }
+
+    // Fallback: server is still streaming, show spinner and poll.
     const box = document.getElementById('chat-history');
     if (!box) return;
 

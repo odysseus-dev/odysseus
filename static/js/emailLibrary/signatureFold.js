@@ -133,7 +133,7 @@ export function _foldSummary(label, iconSvg, meta) {
 // "On <date>, <addr> wrote:". Returns a display string like
 // "Jane Doe · Mon, Apr 18, 2026 at 9:31 AM" or `''`.
 export function _extractQuoteMeta(html) {
-  if (!html) return '';
+  if (typeof html !== 'string' || !html) return '';
   const txt = html
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<[^>]+>/g, ' ')
@@ -154,7 +154,11 @@ export function _extractQuoteMeta(html) {
   let date = sentMatch ? sentMatch[1].trim() : '';
 
   if (!from && !date) {
-    const gmail = txt.match(/On\s+([^,]+?,[^,]+?\d{4}[^,]*),?\s+(.+?)\s+wrote\s*:/i);
+    // The date may carry up to three commas before the year: the standard
+    // US Gmail attribution is "On Mon, Apr 18, 2026 at 9:31 AM, Jane wrote:"
+    // (weekday and day-of-month each add one). A single-comma pattern never
+    // reached the year there, so the fold lost its sender/date headline.
+    const gmail = txt.match(/On\s+((?:[^,]*,){0,3}?[^,]*?\d{4}[^,]*),?\s+(.+?)\s+wrote\s*:/i);
     if (gmail) { date = gmail[1].trim(); from = gmail[2].trim(); }
   }
 
@@ -298,7 +302,7 @@ export function _foldSignature(html, hintSig) {
   m = html.match(/<div[^>]*id=["'](?:Signature|signature|divRplyFwdMsg)["'][\s\S]*$/i);
   if (m) return wrap(html.slice(0, html.length - m[0].length), '', m[0]);
 
-  m = html.match(/(<br>|\n)\s*--\s*(<br>|\n)([\s\S]*)$/i);
+  m = html.match(/(<br\s*\/?>|\n)\s*--\s*(<br\s*\/?>|\n)([\s\S]*)$/i);
   if (m) {
     const idx = html.lastIndexOf(m[0]);
     return wrap(html.slice(0, idx), m[1], m[3]);

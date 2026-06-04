@@ -7,6 +7,18 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Pre-import real heavy modules BEFORE any test file's module-level stubs can
+# replace them with MagicMock. Some test files (e.g. test_llm_core_sanitize_*)
+# stub sqlalchemy/core.database at module scope with `if mod not in sys.modules`,
+# which fires during collection. If the real module hasn't been imported yet,
+# the stub wins and contaminates every subsequent test that needs the real ORM.
+try:
+    import sqlalchemy  # noqa: F401
+    import sqlalchemy.orm  # noqa: F401
+    import core.database  # noqa: F401
+except ImportError:
+    pass  # not installed — the stubs below will handle it
+
 def _has_module(mod_name: str) -> bool:
     try:
         return importlib.util.find_spec(mod_name) is not None

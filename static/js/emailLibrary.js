@@ -1721,7 +1721,7 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
 async function _loadScheduled(grid, sp) {
   const res = await fetch(`${API_BASE}/api/email/scheduled`);
   const data = await res.json();
-  sp.destroy();
+  if (sp) sp.destroy();
   const items = data.scheduled || [];
   grid.innerHTML = '';
   const stats = document.getElementById('email-lib-stats');
