@@ -178,7 +178,10 @@ export async function refreshModels(force = false) {
     _loadingSpinner.start();
     try {
       if (!_fetchInflight) {
-        _fetchInflight = fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' })
+        // force also asks the BACKEND to refresh its endpoint caches —
+        // without ?refresh=true a forced call still renders the server's
+        // 30s-cached list (e.g. a model downloaded seconds ago is missing).
+        _fetchInflight = fetch(`${API_BASE}/api/models${force ? '?refresh=true' : ''}`, { credentials: 'same-origin' })
           .then(async (res) => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return res.json();

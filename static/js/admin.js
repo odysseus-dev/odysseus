@@ -308,6 +308,14 @@ function _emptyHintHtml(text) {
   );
 }
 
+// Cookbook fires this when a model download completes — refresh the endpoint
+// list so in-process providers (NobodyWho) show the new model without a page
+// reload. Second pass picks up the backend's forced background cache sweep.
+document.addEventListener('odysseus:models-changed', () => {
+  loadEndpoints().catch(() => {});
+  setTimeout(() => loadEndpoints().catch(() => {}), 5000);
+});
+
 // One delegated handler for every place the hint renders (test result, add
 // toasts, endpoint rows — rows re-render on refresh, so per-render binding
 // would leak or miss). Closes Settings, then opens Cookbook the same way

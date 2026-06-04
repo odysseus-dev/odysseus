@@ -714,6 +714,21 @@ function _refreshDepsAfterInstall(task) {
   } catch {}
 }
 
+function _refreshModelListsAfterDownload(task) {
+  // A finished download can land a GGUF where in-process providers
+  // (NobodyWho) discover it directly from disk — refresh the main model
+  // selector and notify the Settings endpoint list so the new model shows
+  // up without a manual page reload. The second pass picks up the result
+  // of the backend's forced (background) cache sweep.
+  if (!task || task.type !== 'download' || task.payload?._dep) return;
+  const kick = () => {
+    try { window.modelsModule?.refreshModels?.(true); } catch {}
+    document.dispatchEvent(new CustomEvent('odysseus:models-changed'));
+  };
+  kick();
+  setTimeout(kick, 4500);
+}
+
 export function _removeTask(sessionId) {
   _tombstoneTask(sessionId);  // so sync/poll can't resurrect it
   const tasks = _loadTasks().filter(t => t.sessionId !== sessionId);
@@ -2602,6 +2617,7 @@ async function _reconnectTask(el, task) {
                   }
                   _showCookbookNotif();
                   _refreshDepsAfterInstall(task);
+                  _refreshModelListsAfterDownload(task);
                   _renderRunningTab();
                   _processQueue();
                 } catch { /* swallow — next polling cycle will retry */ }
@@ -2836,6 +2852,7 @@ async function _reconnectTask(el, task) {
               const _sb2 = el.querySelector('.cookbook-task-serve-btn'); if (_sb2) _sb2.style.display = '';
               _showCookbookNotif();
               _refreshDepsAfterInstall(task);
+              _refreshModelListsAfterDownload(task);
               fetch('/api/shell/exec', {
                 method: 'POST', credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
