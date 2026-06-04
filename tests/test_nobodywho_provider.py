@@ -306,8 +306,6 @@ async def test_astream_replays_history_and_reports_usage(tmp_path, monkeypatch):
 
     chat = mgr._chats[mgr.resolve_source("TinyChat")].chat
     assert chat.n_ctx == 2048
-    # Bare-`tools` templates (Gemma 4) need the name defined or rendering fails
-    assert chat.template_variables == {"tools": False}
     assert chat.system_prompt == "Be nice."
     assert chat.history == [
         {"role": "user", "content": "Hi"},
@@ -317,6 +315,25 @@ async def test_astream_replays_history_and_reports_usage(tmp_path, monkeypatch):
     assert chat.sampler == ("temperature", 0.4)
     # generation lock must be released after the stream completes
     assert not mgr._chats[mgr.resolve_source("TinyChat")].lock.locked()
+
+
+async def test_astream_defaults_system_prompt_when_absent(tmp_path, monkeypatch):
+    """Setters must never run against an empty conversation: NobodyWho
+    (<= 1.4.0) sync-renders inside setters, and templates that index
+    `messages[0]` unguarded (Gemma 4) crash that empty render and kill the
+    worker. A request with no system message gets the default system prompt."""
+    from src.nobodywho_provider import DEFAULT_SYSTEM_PROMPT
+
+    monkeypatch.setenv("NOBODYWHO_MODELS_DIR", str(tmp_path))
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "no-hub-here"))
+    _gguf(tmp_path, "TinyChat.gguf")
+    mgr = _available_manager()
+
+    [e async for e in mgr.astream("TinyChat", [{"role": "user", "content": "hi"}])]
+    chat = mgr._chats[mgr.resolve_source("TinyChat")].chat
+    assert chat.system_prompt == DEFAULT_SYSTEM_PROMPT  # never None on an empty history
+    assert chat.history == []
+    assert chat.asked == ["hi"]
 
 
 async def test_astream_enforces_max_tokens(tmp_path, monkeypatch):

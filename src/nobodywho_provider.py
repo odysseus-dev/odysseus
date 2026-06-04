@@ -53,6 +53,15 @@ _NON_CHAT_GGUF_MARKERS = ("mmproj", "projector")
 
 _DEFAULT_N_CTX = 8192
 
+# Used when a request carries no system message. NobodyWho (<= 1.4.0)
+# sync-renders the chat template inside setters (set_system_prompt,
+# set_chat_history) even while the conversation is still empty, and templates
+# that index `messages[0]` without a guard — e.g. Gemma 4's, line 179 — fail
+# that empty render with a minijinja "undefined value" error, which kills the
+# worker thread. A non-empty system prompt guarantees every setter sees at
+# least one message, so the empty render can never happen.
+DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
+
 
 def is_nobodywho_url(url: str) -> bool:
     """True when a configured endpoint URL routes to the in-process provider."""
@@ -354,17 +363,7 @@ class NobodyWhoManager:
             t0 = time.time()
             model = await mod.Model.load_model_async(source, use_gpu)
             # The constructor allocates the context — keep it off the event loop.
-            #
-            # template_variables={"tools": False}: several chat templates
-            # (e.g. Gemma 4) reference a bare `tools` variable without an
-            # `is defined` guard. HF transformers implicitly defines tools=None,
-            # but NobodyWho's strict renderer leaves it undefined when no tools
-            # are registered and the whole render fails with "undefined value".
-            # Defining it falsy keeps those templates working; we never register
-            # NobodyWho-native tools (the agent uses the fenced-block path).
-            chat = await asyncio.to_thread(
-                mod.ChatAsync, model, n_ctx, template_variables={"tools": False}
-            )
+            chat = await asyncio.to_thread(mod.ChatAsync, model, n_ctx)
             logger.info(f"NobodyWho: model loaded in {time.time() - t0:.1f}s")
             lc = _LoadedChat(chat, source)
             with self._registry_lock:
@@ -490,6 +489,11 @@ class NobodyWhoManager:
         try:
             lc.last_used = time.time()
             system_text, history, prompt = self.prepare_conversation(messages)
+            if not system_text:
+                # Never run setters against an empty conversation — see
+                # DEFAULT_SYSTEM_PROMPT for why (worker-killing empty render
+                # in NobodyWho <= 1.4.0 on Gemma-4-style templates).
+                system_text = DEFAULT_SYSTEM_PROMPT
             chat = lc.chat
             await chat.set_sampler_config(self._sampler_for(temperature))
             await chat.set_system_prompt(system_text)
