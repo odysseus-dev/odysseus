@@ -27,10 +27,35 @@ from urllib.parse import urlparse
 import markdown
 
 logger = logging.getLogger(__name__)
+_FENCE_LINE_RE = re.compile(r'^[ \t]{0,3}(`{3,}|~{3,})')
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _iter_markdown_content_lines(md_text: str):
+    """Yield markdown lines that are outside fenced code blocks."""
+    in_fence = False
+    fence_char = ""
+    fence_len = 0
+    offset = 0
+    for line in md_text.splitlines(keepends=True):
+        m = _FENCE_LINE_RE.match(line)
+        if m:
+            marker = m.group(1)
+            marker_char = marker[0]
+            after_marker = line[m.end():].strip()
+            if not in_fence:
+                in_fence = True
+                fence_char = marker_char
+                fence_len = len(marker)
+            elif marker_char == fence_char and len(marker) >= fence_len and not after_marker:
+                in_fence = False
+            offset += len(line)
+            continue
+        if not in_fence:
+            yield line, offset
+        offset += len(line)
 
 def _autolink_urls(md_text: str) -> str:
     """Convert bare URLs to markdown links before processing.
@@ -95,14 +120,20 @@ def _extract_headings(md_text: str) -> List[Dict[str, str]]:
             seen_slugs[slug] = 0
         return slug
 
-    for m in re.finditer(r'^(#{2,3})\s+(.+)$', md_text, re.MULTILINE):
+    for line, _offset in _iter_markdown_content_lines(md_text):
+        m = re.match(r'^(#{2,3})\s+(.+)$', line)
+        if not m:
+            continue
         level = len(m.group(1))
         text = _plain_heading_text(m.group(2))
         if not text:
             continue
         headings.append({"level": level, "text": text, "slug": _make_slug(text)})
     if not headings:
-        for m in re.finditer(r'^\*\*([^*]+)\*\*\s*$', md_text, re.MULTILINE):
+        for line, _offset in _iter_markdown_content_lines(md_text):
+            m = re.match(r'^\*\*([^*]+)\*\*\s*$', line)
+            if not m:
+                continue
             text = _plain_heading_text(m.group(1)).rstrip(':')
             if 3 < len(text) < 80:
                 headings.append({"level": 2, "text": text, "slug": _make_slug(text)})
@@ -1646,19 +1677,22 @@ def _extract_report_title(markdown_text: str, fallback: str):
         return fallback, markdown_text
 
     # Walk through headings (h1 first, then h2 anywhere) and use the first
-    # non-generic one. Track the chosen match so we can strip it from the body.
+    # non-generic one. Track the chosen line so we can strip it from the body.
     candidates = []
     for level, pattern in ((1, r'^# +(.+?)\s*$'), (2, r'^## +(.+?)\s*$')):
-        for m in re.finditer(pattern, markdown_text, re.MULTILINE):
+        for line, offset in _iter_markdown_content_lines(markdown_text):
+            m = re.match(pattern, line)
+            if not m:
+                continue
             cand = m.group(1).strip().rstrip('#').strip()
             if cand and cand.lower() not in _GENERIC_HEADINGS:
-                candidates.append((level, m, cand))
+                candidates.append((level, offset, offset + len(line), cand))
 
     # Prefer h1 over h2; among same-level, prefer the earliest.
-    candidates.sort(key=lambda t: (t[0], t[1].start()))
+    candidates.sort(key=lambda t: (t[0], t[1]))
     if candidates:
-        _level, match, title = candidates[0]
-        stripped = markdown_text[:match.start()] + markdown_text[match.end():]
+        _level, start, end, title = candidates[0]
+        stripped = markdown_text[:start] + markdown_text[end:]
         return title, stripped.lstrip()
     return fallback, markdown_text
 
