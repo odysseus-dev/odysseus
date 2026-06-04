@@ -13,6 +13,10 @@ let modalEl = null;
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
+function safeRasterDataUrl(raw) {
+  const value = String(raw || '').trim();
+  return /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(value) ? value : '';
+}
 
 /* ── Tab switching ── */
 const ADMIN_TABS = new Set(['services', 'integrations', 'tools', 'users', 'system']);
@@ -1554,6 +1558,7 @@ async function initResearchSearchSettings() {
 /* ── Agent Settings (AI tab) ── */
 async function initAgentSettings() {
   var toolsInput = el('set-agentMaxTools');
+  var roundsInput = el('set-agentMaxRounds');
   var msg = el('set-agentMsg');
   if (!toolsInput) return;
 
@@ -1561,23 +1566,41 @@ async function initAgentSettings() {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
     if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
+    if (roundsInput && settings.agent_max_rounds) roundsInput.value = settings.agent_max_rounds;
   } catch (e) {}
 
+  // Clamp + coerce a raw input to an int in [lo, hi]; falls back to `dflt`
+  // when blank/non-numeric. Mirrors the server-side validation.
+  function clampInt(raw, lo, hi, dflt) {
+    var n = parseInt(raw, 10);
+    if (isNaN(n)) return dflt;
+    return Math.max(lo, Math.min(n, hi));
+  }
+
   async function save() {
-    var val = parseInt(toolsInput.value, 10) || 0;
+    var tools = clampInt(toolsInput.value, 0, 1000, 0);
+    var rounds = roundsInput ? clampInt(roundsInput.value, 1, 200, 20) : null;
+    toolsInput.value = tools;                       // reflect the clamped value
+    if (roundsInput) roundsInput.value = rounds;
+    var payload = { agent_max_tool_calls: tools };
+    if (rounds != null) payload.agent_max_rounds = rounds;
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_max_tool_calls: val })
+        body: JSON.stringify(payload)
       });
-      msg.textContent = val > 0 ? 'Limit: ' + val + ' tool calls per message' : 'Unlimited';
+      msg.textContent = (tools > 0 ? 'Limit: ' + tools + ' tool calls' : 'Unlimited tool calls') +
+        (rounds != null ? ' · ' + rounds + ' steps/message' : '');
       msg.style.color = 'var(--fg)';
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
   toolsInput.addEventListener('change', save);
+  if (roundsInput) roundsInput.addEventListener('change', save);
   var cur = parseInt(toolsInput.value, 10) || 0;
-  msg.textContent = cur > 0 ? 'Limit: ' + cur + ' tool calls per message' : 'Unlimited';
+  var curR = roundsInput ? (parseInt(roundsInput.value, 10) || 20) : null;
+  msg.textContent = (cur > 0 ? 'Limit: ' + cur + ' tool calls' : 'Unlimited tool calls') +
+    (curR != null ? ' · ' + curR + ' steps/message' : '');
 }
 
 /* ═══════════════════════════════════════════
@@ -2069,15 +2092,16 @@ function initAccount() {
               const r = await fetch('/api/auth/2fa/setup', { method: 'POST', credentials: 'same-origin' });
               if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Failed'); }
               const setup = await r.json();
+              const qrCode = safeRasterDataUrl(setup.qr_code);
               // Show QR code + manual secret + verify input
               tfaContent.innerHTML = `
                 <div style="text-align:center;margin-bottom:12px;">
-                  <img src="${setup.qr_code}" alt="QR Code" style="border-radius:8px;max-width:200px;">
+                  ${qrCode ? `<img src="${esc(qrCode)}" alt="QR Code" style="border-radius:8px;max-width:200px;">` : ''}
                 </div>
                 <div style="font-size:11px;opacity:0.5;text-align:center;margin-bottom:8px;">
                   Scan with your authenticator app, or enter manually:
                 </div>
-                <div style="font-family:monospace;font-size:12px;text-align:center;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;margin-bottom:12px;word-break:break-all;user-select:all;cursor:text;">${setup.secret}</div>
+                <div style="font-family:monospace;font-size:12px;text-align:center;padding:6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;margin-bottom:12px;word-break:break-all;user-select:all;cursor:text;">${esc(setup.secret)}</div>
                 <input id="tfa-verify-code" type="text" placeholder="Enter 6-digit code to verify" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-family:inherit;font-size:13px;box-sizing:border-box;text-align:center;letter-spacing:3px;margin-bottom:6px;">
                 <div class="settings-row" style="justify-content:flex-end;">
                   <span id="tfa-msg" style="font-size:11px;margin-right:auto;"></span>

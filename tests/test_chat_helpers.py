@@ -1,5 +1,5 @@
 import pytest
-from routes.chat_helpers import needs_auto_name
+from routes.chat_helpers import clean_thinking_for_save, needs_auto_name
 
 
 @pytest.mark.parametrize("name,expected", [
@@ -27,3 +27,44 @@ from routes.chat_helpers import needs_auto_name
 ])
 def test_needs_auto_name(name, expected):
     assert needs_auto_name(name) == expected, f"needs_auto_name({name!r}) should be {expected}"
+
+
+def test_clean_thinking_for_save_extracts_gemma4_thought_channel():
+    content, metadata = clean_thinking_for_save(
+        "<|channel>thought\ninternal reasoning<channel|>Final answer.",
+        {"model": "google/gemma-4-31B-it"},
+    )
+
+    assert content == "Final answer."
+    assert metadata["thinking"] == "internal reasoning"
+    assert metadata["model"] == "google/gemma-4-31B-it"
+
+
+def test_clean_thinking_for_save_strips_empty_gemma4_thought_channel():
+    content, metadata = clean_thinking_for_save(
+        "<|channel>thought\n<channel|>Final answer.",
+        {"model": "google/gemma-4-31B-it"},
+    )
+
+    assert content == "Final answer."
+    assert "thinking" not in metadata
+
+
+def test_clean_thinking_for_save_unwraps_gemma4_response_channel():
+    content, metadata = clean_thinking_for_save(
+        "<|channel>thought\ninternal reasoning<channel|><|channel>response\nFinal answer.<channel|>",
+        {"model": "google/gemma-4-31B-it"},
+    )
+
+    assert content == "Final answer."
+    assert metadata["thinking"] == "internal reasoning"
+
+
+def test_clean_thinking_for_save_extracts_thought_tag():
+    content, metadata = clean_thinking_for_save(
+        "<thought>internal reasoning</thought>Final answer.",
+        {},
+    )
+
+    assert content == "Final answer."
+    assert metadata["thinking"] == "internal reasoning"

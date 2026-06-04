@@ -90,4 +90,51 @@ export function providerLogo(modelId) {
   return null;
 }
 
-export default { providerLogo };
+// Host suffix → friendly provider label. The model-info card shows this so the
+// SAME model name served by DIFFERENT routes is distinguishable (e.g.
+// `claude-haiku` via OpenRouter vs GitHub Copilot vs Anthropic direct); the logo
+// only reflects the model vendor, not the actual endpoint. Patterns are anchored
+// to the end of the hostname (^|.)domain$ so a host like `max.airlines.com`
+// doesn't match `x.ai`.
+const _ENDPOINT_LABELS = [
+  [/(^|\.)githubcopilot\.com$/i, "GitHub Copilot"],
+  [/(^|\.)openrouter\.ai$/i, "OpenRouter"],
+  [/(^|\.)anthropic\.com$/i, "Anthropic"],
+  [/(^|\.)openai\.com$/i, "OpenAI"],
+  [/(^|\.)(generativelanguage|aiplatform)\.googleapis\.com$/i, "Google"],
+  [/(^|\.)bedrock[\w.-]*\.amazonaws\.com$/i, "AWS Bedrock"],
+  [/(^|\.)deepseek\.com$/i, "DeepSeek"],
+  [/(^|\.)mistral\.ai$/i, "Mistral"],
+  [/(^|\.)groq\.com$/i, "Groq"],
+  [/(^|\.)together\.(ai|xyz)$/i, "Together"],
+  [/(^|\.)fireworks\.ai$/i, "Fireworks"],
+  [/(^|\.)perplexity\.ai$/i, "Perplexity"],
+  [/(^|\.)x\.ai$/i, "xAI"],
+];
+
+/**
+ * Friendly label for the endpoint that served a model, from its URL.
+ * Returns "Local" for loopback/LAN hosts, a known provider name when matched,
+ * else the bare host. Null when no URL is available.
+ */
+export function providerLabel(endpointUrl) {
+  if (!endpointUrl || typeof endpointUrl !== "string") return null;
+  let host;
+  try {
+    host = new URL(endpointUrl).hostname;
+  } catch (_) {
+    // Not a full URL (e.g. bare host[:port]) — strip scheme/path/port best-effort.
+    host = endpointUrl.replace(/^[a-z]+:\/\//i, "").split("/")[0].split(":")[0];
+  }
+  if (!host) return null;
+  if (/^(localhost|127\.|0\.0\.0\.0|::1|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(host)) {
+    return "Local";
+  }
+  for (const [re, label] of _ENDPOINT_LABELS) {
+    if (re.test(host)) return label;
+  }
+  // Unknown host → drop a leading "api." for a cleaner readout.
+  return host.replace(/^api\./i, "");
+}
+
+export default { providerLogo, providerLabel };

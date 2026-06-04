@@ -340,6 +340,14 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         ok = auth_manager.rename_user(old_username, new_username, user)
         if not ok:
             raise HTTPException(400, "Cannot rename user")
+        # The owner-rename loop above updated ApiToken.owner in the DB, but the
+        # bearer-token cache still maps each token to the OLD owner. Without
+        # refreshing it, the renamed user's API tokens resolve to the old (now
+        # non-existent) owner and stop reaching their data until the cache next
+        # goes dirty. Invalidate it now, like the token CRUD routes do.
+        invalidator = getattr(request.app.state, "invalidate_token_cache", None)
+        if callable(invalidator):
+            invalidator()
         return {"ok": True, "username": new_username, "renamed_self": old_username == user}
 
     @router.post("/signup-toggle", deprecated=True)
@@ -430,9 +438,24 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(403, "Admin only")
         body = await request.json()
         current = _load_settings()
+        # Per-key validation for numeric settings: coerce to int and clamp to a
+        # sane range so a bad value can't disable the agent or let it run away.
+        _INT_RANGES = {
+            "agent_max_rounds": (1, 200),
+            "agent_max_tool_calls": (0, 1000),  # 0 = unlimited
+        }
         for key in DEFAULT_SETTINGS:
-            if key in body:
-                current[key] = body[key]
+            if key not in body:
+                continue
+            val = body[key]
+            if key in _INT_RANGES:
+                lo, hi = _INT_RANGES[key]
+                try:
+                    val = int(val)
+                except (TypeError, ValueError):
+                    raise HTTPException(400, f"{key} must be an integer")
+                val = max(lo, min(val, hi))
+            current[key] = val
         _save_settings(current)
         return current
 

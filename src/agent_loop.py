@@ -177,6 +177,7 @@ TOOL_SECTIONS = {
 <shell command>
 ```
 Run any shell command. Output is returned to you. Use for: installing packages, checking files, git, curl, system info, etc.
+NEVER use bash to create or change files — no `>`/`>>` redirects, no heredocs (`cat > f << 'EOF'`), no `tee`, `sed -i`, `awk -i`, no `python -c` that writes. To CREATE or fully rewrite a file use `write_file`; to change part of an existing file use `edit_file`. Those show a diff and are the ONLY allowed way to write files. (bash is for read-only inspection: `ls`, `cat` to READ, `grep`, `git status`/`git diff`, builds, installs.)
 For LONG-running commands (package installs, pip/npm, ffmpeg, model downloads, training, builds — anything that may take more than ~20s), make the FIRST line `#!bg` to run it in the BACKGROUND. You get a job id back immediately and are automatically re-invoked with the full output when it finishes — so you never block the chat waiting. Example:
 ```bash
 #!bg
@@ -220,6 +221,12 @@ Read a file and return its contents.""",
 ```
 Write content to a file. First line is the path, rest is the content.""",
 
+    "edit_file": """\
+```edit_file
+{"path": "<file path>", "old_string": "<exact text to replace>", "new_string": "<replacement>", "replace_all": false}
+```
+Edit an EXISTING file by exact string replacement. PREFER this over bash (sed/echo/redirects) for changing files — it shows a before/after diff. `old_string` must match the file exactly and be unique unless `replace_all` is true. Use write_file to create a new file.""",
+
     "create_document": """\
 ```create_document
 <title>
@@ -236,7 +243,7 @@ old text to find
 new replacement text
 <<<END>>>
 ```
-PREFERRED way to change an existing document. Find exact text and replace it. Multiple FIND/REPLACE blocks per call OK. Use this for any edit smaller than a full rewrite — adding a function, fixing a bug, tweaking a section, renaming things. **If a document is open in the editor, treat it as the user's current context: don't ask which file they mean, and don't create a new one — just edit_document the active one.** Do NOT re-send the whole file with update_document for small changes.""",
+Edit a document OPEN IN THE EDITOR PANEL — NOT a file on disk. For files on disk (home folder, project files, any real path like ~/sweden.txt) use `edit_file` instead. Find exact text and replace it. Multiple FIND/REPLACE blocks per call OK. Use for any edit smaller than a full rewrite. **If a document is open in the editor, treat it as the user's current context: don't ask which file they mean, and don't create a new one — just edit_document the active one.** Do NOT re-send the whole file with update_document for small changes.""",
 
     "update_document": """\
 ```update_document
@@ -461,13 +468,14 @@ _API_HOSTS = frozenset([
     "api.together.xyz", "api.fireworks.ai",
     "api.perplexity.ai", "api.x.ai",
     "ollama.com", "api.venice.ai",
+    "api.githubcopilot.com",
     # Local OpenAI-compatible endpoints (llama.cpp, vLLM, LM Studio, etc.).
     # Without these, `_is_api_model` falls back to keyword sniffing on the
     # model name, so well-behaved local servers don't get native tool
     # schemas and the agent silently degrades to fenced-block parsing.
     "localhost", "127.0.0.1", "host.docker.internal",
 ])
-_MCP_KEYWORDS = frozenset(["browse", "browser", "website", "calendar", "event", "email",
+_MCP_KEYWORDS = frozenset(["mcp", "browse", "browser", "website", "calendar", "event", "email",
                            "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed"])
 _ADMIN_SCHEMA_NAMES = frozenset([
     "manage_session", "manage_skills", "manage_tasks",
@@ -1379,6 +1387,7 @@ async def stream_agent_loop(
     owner: Optional[str] = None,
     relevant_tools: Optional[Set[str]] = None,
     fallbacks: Optional[List[tuple]] = None,
+    workspace: Optional[str] = None,
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -1545,6 +1554,27 @@ async def stream_agent_loop(
         compact=_is_api_model,
         owner=owner,
     )
+    if workspace:
+        # PREPEND (not append) so it dominates the large base prompt — appended
+        # at the end, small models ignored it and asked the user for code. The
+        # folder IS the project; the agent must explore it, not ask.
+        _ws_note = (
+            f"## ACTIVE WORKSPACE — READ FIRST\n"
+            f"The user is working in this folder: {workspace}\n"
+            f"It IS the project. bash/python run with cwd set here and "
+            f"read_file/write_file are confined to it (paths outside are rejected).\n"
+            f"When the user says \"the code\" / \"this project\" / \"the workspace\" "
+            f"or asks to review/find/edit something WITHOUT a path, they mean THIS "
+            f"folder. Do NOT ask the user for code or a path, and do NOT read a file "
+            f"literally named \"workspace\". ALWAYS start by exploring it yourself: "
+            f"run `bash` → `git ls-files` (or `ls -R`) to see the files, then "
+            f"read_file the relevant ones by path RELATIVE to the workspace."
+        )
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = _ws_note + "\n\n" + (messages[0].get("content") or "")
+        else:
+            messages.insert(0, {"role": "system", "content": _ws_note})
+        logger.info("[workspace] active for this turn: %s", workspace)
     prep_timings["prompt_build"] = time.time() - _t2
 
     _t3 = time.time()
@@ -1634,6 +1664,11 @@ async def stream_agent_loop(
     _doc_acc = ""          # accumulated tool-call JSON arguments
     _doc_opened = False    # whether doc_stream_open was sent
     _doc_last_len = 0      # last content length sent
+
+    # Set when the loop runs out of rounds while the agent was still actively
+    # using tools — i.e. it was cut off, not finished. Drives a "Continue" event
+    # so the user can resume instead of the turn silently stalling.
+    _exhausted_rounds = False
 
     for round_num in range(1, max_rounds + 1):
         round_response = ""
@@ -2104,6 +2139,7 @@ async def stream_agent_loop(
                         disabled_tools=disabled_tools,
                         owner=owner,
                         progress_cb=_push_progress,
+                        workspace=workspace,
                     )
                 finally:
                     # Sentinel so the drainer knows to stop.
@@ -2219,6 +2255,9 @@ async def stream_agent_loop(
             if result.get("images"):
                 img = result["images"][0]
                 tool_output_data["screenshot"] = f"data:{img['mimeType']};base64,{img['data']}"
+            # Forward a file-write diff for inline before/after rendering
+            if "diff" in result:
+                tool_output_data["diff"] = result["diff"]
             yield f'data: {json.dumps(tool_output_data)}\n\n'
 
             # Native document tools open in the editor + carry the REAL doc id.
@@ -2261,6 +2300,10 @@ async def stream_agent_loop(
             if result.get("doc_id"):
                 tool_event["doc_id"] = result["doc_id"]
                 tool_event["doc_title"] = result.get("title", "")
+            # Persist the file-write/edit diff so it re-renders on reload — without
+            # this the diff shows live but vanishes from saved history.
+            if result.get("diff"):
+                tool_event["diff"] = result["diff"]
             tool_events.append(tool_event)
             if block.tool_type in _VERIFIER_EFFECTFUL_TOOLS:
                 _effectful_used = True
@@ -2285,6 +2328,20 @@ async def stream_agent_loop(
 
         # Separator in accumulated response
         full_response += "\n\n"
+    else:
+        # The for-loop completed every allowed round WITHOUT an early `break`
+        # (a `break` fires on "done", budget, or error). Reaching this `else`
+        # means the agent kept working until it ran out of rounds — so offer
+        # Continue instead of stopping silently. This catches ALL exhaustion
+        # paths, including a verifier `continue` on the final round (the old
+        # bottom-of-loop flag missed those).
+        _exhausted_rounds = True
+
+    # If the loop hit the round cap while still working, tell the client so it
+    # can show a "Continue" affordance instead of the turn just stopping.
+    if _exhausted_rounds:
+        logger.info("[agent] round cap (%d) reached mid-task — emitting rounds_exhausted", max_rounds)
+        yield f'data: {json.dumps({"type": "rounds_exhausted", "rounds": max_rounds})}\n\n'
 
     # If the response is completely empty and no tools were executed,
     # yield a fallback message so the user is not left hanging.
