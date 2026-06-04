@@ -42,6 +42,8 @@ from routes.model_routes import (
     _classify_endpoint,
     _effective_endpoint_kind,
     _probe_endpoint,
+    _probe_model_availability,
+    _models_probe_candidates,
     _ping_endpoint,
     _parse_model_list,
     _normalize_refresh_mode,
@@ -463,6 +465,22 @@ class TestSetupProbeSafety:
         monkeypatch.setenv("CODEX_RUNTIME_DEFAULT_MODEL", "codex-c")
 
         assert _probe_endpoint("codex://runtime") == ["codex-c", "codex-a", "codex-b"]
+
+    def test_codex_runtime_probe_candidates_keep_codex_named_models(self):
+        models = ["gpt-5.5", "gpt-5.3-codex-spark", "codex-local"]
+
+        assert _models_probe_candidates("codex://runtime", models) == (models, 0)
+
+    def test_codex_runtime_model_probe_does_not_use_http_probe(self, monkeypatch):
+        monkeypatch.setattr(
+            model_routes,
+            "_probe_single_model",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("codex runtime should not be HTTP-probed")),
+        )
+
+        result = _probe_model_availability("codex://runtime", "", "gpt-5.3-codex-spark", timeout=8)
+
+        assert result == {"status": "ok", "latency_ms": 0, "source": "codex_runtime"}
 
 def test_ollama_endpoint_error_message_includes_troubleshooting():
     msg = model_routes._model_endpoint_error_message(
