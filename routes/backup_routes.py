@@ -101,24 +101,68 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
         # ── Skills ──
         if "skills" in body and isinstance(body["skills"], list):
             existing = skills_manager.load_all()
-            existing_ids = {s.get("id") for s in existing}
-            existing_titles = {s.get("title", "").strip().lower() for s in existing}
+            existing_names = {s.get("name") for s in existing if s.get("name")}
+            existing_ids = {s.get("id") for s in existing if s.get("id")}
+            existing_titles = {
+                (s.get("title") or s.get("description") or "").strip().lower()
+                for s in existing
+            }
             added = 0
             for skill in body["skills"]:
-                if not isinstance(skill, dict) or not skill.get("title"):
+                if not isinstance(skill, dict):
                     continue
-                # Skip if same id or same title already exists
-                if skill.get("id") in existing_ids:
+                title = (
+                    skill.get("title") or skill.get("description")
+                    or skill.get("name") or ""
+                ).strip()
+                if not title:
                     continue
-                if skill["title"].strip().lower() in existing_titles:
+                sid = skill.get("id") or skill.get("name")
+                if sid and sid in existing_ids:
                     continue
-                if user and not skill.get("owner"):
-                    skill["owner"] = user
-                existing.append(skill)
-                existing_ids.add(skill.get("id"))
-                existing_titles.add(skill["title"].strip().lower())
+                nm = skill.get("name")
+                if nm and nm in existing_names:
+                    continue
+                if title.lower() in existing_titles:
+                    continue
+                owner = skill.get("owner")
+                if user and not owner:
+                    owner = user
+                # Skills live on disk as SKILL.md files; the old JSON-era
+                # skills_manager.save() no longer exists. Write each new skill
+                # via add_skill (source="user" skips auto-dedup — this is an
+                # explicit backup restore).
+                result = skills_manager.add_skill(
+                    title=title,
+                    name=skill.get("name"),
+                    description=skill.get("description"),
+                    problem=skill.get("problem", ""),
+                    solution=skill.get("solution", ""),
+                    steps=skill.get("steps"),
+                    tags=skill.get("tags"),
+                    source="user",
+                    teacher_model=skill.get("teacher_model"),
+                    confidence=skill.get("confidence", 0.8),
+                    owner=owner,
+                    category=skill.get("category", "general"),
+                    when_to_use=skill.get("when_to_use"),
+                    procedure=skill.get("procedure"),
+                    pitfalls=skill.get("pitfalls"),
+                    verification=skill.get("verification"),
+                    platforms=skill.get("platforms"),
+                    requires_toolsets=skill.get("requires_toolsets"),
+                    fallback_for_toolsets=skill.get("fallback_for_toolsets"),
+                    status=skill.get("status", "draft"),
+                    version=skill.get("version", "1.0.0"),
+                )
+                if result.get("_deduped"):
+                    continue
+                if result.get("name"):
+                    existing_names.add(result["name"])
+                if result.get("id"):
+                    existing_ids.add(result["id"])
+                existing_titles.add(title.lower())
                 added += 1
-            skills_manager.save(existing)
             imported.append(f"{added} skills")
 
         # ── Presets ──
