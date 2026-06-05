@@ -87,8 +87,11 @@ async function loadUsers() {
           <input type="number" min="0" value="${maxMsg}" data-priv="max_messages_per_day" data-user="${esc(u.username)}" style="width:70px;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:12px;text-align:center;">
         </div>`;
         // Allowed models — checkbox list
-        const allowedSet = new Set((u.privileges && u.privileges.allowed_models) || []);
-        const allEmpty = allowedSet.size === 0;
+        const allowedModels = Array.isArray(u.privileges && u.privileges.allowed_models)
+          ? u.privileges.allowed_models
+          : [];
+        const allowedSet = new Set(allowedModels);
+        const modelsRestricted = !!(u.privileges && u.privileges.allowed_models_restricted);
         html += `<div style="padding:4px 0;">
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <span style="font-size:12px;">Allowed models</span>
@@ -97,7 +100,7 @@ async function loadUsers() {
               <a href="#" class="priv-models-none" data-user="${esc(u.username)}" style="font-size:10px;opacity:0.5;">None</a>
             </div>
           </div>
-          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${allEmpty ? 'All models allowed (no restrictions)' : allowedSet.size + ' model(s) allowed'}</div>
+          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${!modelsRestricted ? 'All models allowed (no restrictions)' : (allowedSet.size === 0 ? 'No models allowed' : allowedSet.size + ' model(s) allowed')}</div>
           <div class="priv-models-list" data-user="${esc(u.username)}">
             <span style="opacity:0.4;font-size:11px;">Loading models...</span>
           </div>
@@ -119,7 +122,7 @@ async function loadUsers() {
           // Load models list on first expand
           if (!_modelsLoaded && !privPanel.classList.contains('hidden')) {
             _modelsLoaded = true;
-            _loadModelsForUser(u.username, allowedSet, privPanel);
+            _loadModelsForUser(u.username, allowedSet, modelsRestricted, privPanel);
           }
         });
 
@@ -199,7 +202,7 @@ async function loadUsers() {
   } catch (e) { list.innerHTML = '<div class="admin-error">Failed to load users</div>'; }
 }
 
-async function _loadModelsForUser(username, allowedSet, privPanel) {
+async function _loadModelsForUser(username, allowedSet, modelsRestricted, privPanel) {
   const listEl = privPanel.querySelector(`.priv-models-list[data-user="${username}"]`);
   if (!listEl) return;
   try {
@@ -216,9 +219,9 @@ async function _loadModelsForUser(username, allowedSet, privPanel) {
       listEl.innerHTML = '<span style="opacity:0.4;font-size:11px;">No models available</span>';
       return;
     }
-    const allEmpty = allowedSet.size === 0;
+    let restricted = modelsRestricted;
     listEl.innerHTML = sortModelObjects(allModels).map(m => {
-      const checked = allEmpty || allowedSet.has(m.mid) ? 'checked' : '';
+      const checked = !restricted || allowedSet.has(m.mid) ? 'checked' : '';
       return `<label>
         <input type="checkbox" class="priv-model-cb" data-mid="${esc(m.mid)}" ${checked}>
         <span>${esc(m.display)}</span>
@@ -232,14 +235,15 @@ async function _loadModelsForUser(username, allowedSet, privPanel) {
       listEl.querySelectorAll('.priv-model-cb').forEach(cb => {
         if (cb.checked) checked.push(cb.dataset.mid);
       });
-      // If all are checked, send empty array (= no restrictions)
-      const value = checked.length === allModels.length ? [] : checked;
+      // All checked means unrestricted; zero checked means explicitly no models.
+      restricted = checked.length !== allModels.length;
+      const value = restricted ? checked : [];
       const hint = privPanel.querySelector('.priv-models-list[data-user]')?.previousElementSibling?.querySelector('div[style*="opacity"]');
-      if (hint) hint.textContent = value.length === 0 ? 'All models allowed (no restrictions)' : value.length + ' model(s) allowed';
+      if (hint) hint.textContent = !restricted ? 'All models allowed (no restrictions)' : (value.length === 0 ? 'No models allowed' : value.length + ' model(s) allowed');
       fetch(`/api/auth/users/${encodeURIComponent(username)}/privileges`, {
         method: 'PUT', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ allowed_models: value }),
+        body: JSON.stringify({ allowed_models: value, allowed_models_restricted: restricted }),
       }).catch(() => {});
     }
     listEl.querySelectorAll('.priv-model-cb').forEach(cb => cb.addEventListener('change', _saveModels));

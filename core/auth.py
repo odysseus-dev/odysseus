@@ -30,10 +30,12 @@ DEFAULT_PRIVILEGES = {
     "can_manage_memory": True,
     "max_messages_per_day": 0,
     "allowed_models": [],
+    "allowed_models_restricted": False,
 }
 
 # Admins get everything
 ADMIN_PRIVILEGES = {k: (True if isinstance(v, bool) else (0 if isinstance(v, int) else [])) for k, v in DEFAULT_PRIVILEGES.items()}
+ADMIN_PRIVILEGES["allowed_models_restricted"] = False
 
 DEFAULT_AUTH_PATH = os.path.join(
     Path(__file__).parent.parent, "data", "auth.json"

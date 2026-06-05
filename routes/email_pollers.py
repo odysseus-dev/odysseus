@@ -210,7 +210,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         if auto_cal:
             for sent_name in ("Sent", "INBOX/Sent", "Sent Items", "[Gmail]/Sent Mail"):
                 try:
-                    st, _ = conn.select(sent_name, readonly=True)
+                    st, _ = conn.select(_q(sent_name), readonly=True)
                     if st == "OK":
                         folders_to_scan.append(sent_name)
                         break
@@ -1046,7 +1046,7 @@ def _scheduled_poll_once() -> dict:
                 try:
                     with _imap(row_account_id, owner=row_owner) as imap:
                         sent_folder = _detect_sent_folder(imap)
-                        imap.append(sent_folder, "\\Seen", None, outer.as_bytes())
+                        imap.append(_q(sent_folder), "\\Seen", None, outer.as_bytes())
                 except Exception as e:
                     logger.warning(f"Failed to append scheduled {sid} to Sent: {e}")
 

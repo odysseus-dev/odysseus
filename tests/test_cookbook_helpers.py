@@ -238,6 +238,8 @@ def test_pip_install_attempt_failure_propagates_real_exit_code():
     """Run the generated snippet against a deliberately broken pip install
     to confirm the subshell exits with pip's non-zero status."""
     snippet = _pip_install_attempt("python3 -m pip install __nonexistent_package_12345__")
+    if sys.platform == "win32":
+        snippet = snippet.replace("$", "\\$")
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
@@ -250,6 +252,8 @@ def test_pip_install_attempt_failure_propagates_real_exit_code():
 def test_pip_install_attempt_success_exits_zero():
     """When pip succeeds, the subshell should exit 0."""
     snippet = _pip_install_attempt("python3 -c 'pass'")
+    if sys.platform == "win32":
+        snippet = snippet.replace("$", "\\$")
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
@@ -262,6 +266,8 @@ def test_pip_install_attempt_success_exits_zero():
 def test_pip_install_attempt_surfaces_stderr_on_failure():
     """On failure, the last 5 lines of pip output should appear in stdout."""
     snippet = _pip_install_attempt("python3 -m pip install __nonexistent_package_12345__")
+    if sys.platform == "win32":
+        snippet = snippet.replace("$", "\\$")
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
@@ -351,6 +357,15 @@ def test_validate_serve_cmd_accepts_llama_advanced_controls():
         '|| python3 -m llama_cpp.server --model "$MODEL_FILE" --host 0.0.0.0 --port 8000'
     )
 
+    assert _validate_serve_cmd(cmd) == cmd
+
+
+def test_validate_serve_cmd_accepts_windows_printf_format():
+    cmd = (
+        "python -m llama_cpp.server --model "
+        "\"$(printf %s ${HOME}'/.cache/huggingface/hub/models--unsloth--Qwen3.5-2B-GGUF/snapshots/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-Q4_K_M.gguf')\" "
+        "--host 0.0.0.0 --port 8000 --n_gpu_layers 99 --n_ctx 32768 --flash_attn true --type_k q4_0 --type_v q4_0"
+    )
     assert _validate_serve_cmd(cmd) == cmd
 
 
@@ -481,11 +496,13 @@ def test_llama_cpp_rebuild_cmd_clears_cached_build_paths():
 def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):
     """The command should succeed even when neither path exists yet."""
     import os
+    from core.platform_compat import find_bash, git_bash_path
 
+    bash = find_bash() or "bash"
     env = dict(os.environ)
-    env["HOME"] = str(tmp_path)
+    env["HOME"] = git_bash_path(tmp_path)
     result = subprocess.run(
-        ["bash", "-c", _llama_cpp_rebuild_cmd()],
+        [bash, "-c", _llama_cpp_rebuild_cmd()],
         capture_output=True, text=True, env=env, timeout=10,
     )
 

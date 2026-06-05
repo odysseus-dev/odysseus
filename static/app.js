@@ -1555,6 +1555,7 @@ function initializeEventListeners() {
   const MODE_TOOLS = [
     { btnId: 'web-toggle-btn',  checkboxId: 'web-toggle',  stateKey: 'web' },
     { btnId: 'bash-toggle-btn', checkboxId: 'bash-toggle', stateKey: 'bash' },
+    { btnId: 'plan-toggle-btn', checkboxId: 'plan-toggle', stateKey: 'plan' },
   ];
 
   function _modeKey(stateKey, mode) { return `${stateKey}_${mode}`; }
@@ -1563,6 +1564,9 @@ function initializeEventListeners() {
     const state = loadToggleState();
     const key = _modeKey(stateKey, mode);
     if (Object.prototype.hasOwnProperty.call(state, key)) return !!state[key];
+    // Plan mode is opt-in: never default it on, otherwise every agent turn
+    // would be forced into planning.
+    if (stateKey === 'plan') return false;
     return mode === 'agent'; // default: ON in agent, OFF in chat
   }
 
@@ -1575,6 +1579,7 @@ function initializeEventListeners() {
   const TOOL_TOGGLE_TOAST_LABELS = {
     web: 'Web search',
     bash: 'Shell',
+    plan: 'Plan mode',
   };
 
   function showToolToggleToast(stateKey, active) {
@@ -1688,6 +1693,81 @@ function initializeEventListeners() {
   }
   setupToggle('web-toggle-btn', 'web-toggle', 'web');
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
+  try { workspaceModule.initWorkspace(); } catch (_) {}
+  setupToggle('plan-toggle-btn', 'plan-toggle', 'plan');
+
+  // Set plan mode on/off directly (checkbox + button state + saved pref) WITHOUT
+  // going through the button's click handler — used by the plan menu and by the
+  // "Approve & Run" flow. Going through .click() would hit the plan-menu
+  // intercept below (a stored plan re-opens the menu instead of toggling), which
+  // is exactly the bug that left approved plans stuck in plan mode.
+  function _setPlanMode(on) {
+    const btn = el('plan-toggle-btn');
+    const chk = el('plan-toggle');
+    const mode = (loadToggleState().mode) || 'chat';
+    if (chk) chk.checked = !!on;
+    if (btn) { btn.classList.toggle('active', !!on); btn.setAttribute('aria-pressed', String(!!on)); }
+    saveToolPref('plan', mode, !!on);
+  }
+  window._setPlanMode = _setPlanMode;
+
+  // ── Plan-button menu ──
+  // When a plan exists for this chat, clicking the plan button opens a small
+  // menu (Show plan / Plan mode on-off) instead of plain-toggling — so the plan
+  // window can be re-opened and docked at any time while the agent works. With
+  // no plan, the button behaves as before (one-click toggle).
+  (function initPlanMenu() {
+    const planBtn = el('plan-toggle-btn');
+    if (!planBtn) return;
+    const _hasPlan = () => { try { return !!(window._getStoredPlan && window._getStoredPlan()); } catch (_) { return false; } };
+    const _close = () => { const m = document.getElementById('plan-menu'); if (m) m.remove(); };
+    function _open() {
+      _close();
+      const planChk = el('plan-toggle');
+      const on = !!(planChk && planChk.checked);
+      const menu = document.createElement('div');
+      menu.id = 'plan-menu';
+      menu.className = 'overflow-menu plan-menu';
+      menu.innerHTML =
+        '<button type="button" class="overflow-menu-item" data-act="show">'
+        + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'
+        + '<span>Show plan</span></button>'
+        + '<button type="button" class="overflow-menu-item" data-act="toggle">'
+        + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>'
+        + '<span>Plan mode: ' + (on ? 'On' : 'Off') + '</span></button>';
+      document.body.appendChild(menu);
+      const r = planBtn.getBoundingClientRect();
+      menu.style.position = 'fixed';
+      menu.style.left = Math.round(r.left) + 'px';
+      menu.style.top = Math.round(r.top - menu.offsetHeight - 6) + 'px';
+      menu.querySelector('[data-act="show"]').addEventListener('click', () => {
+        _close();
+        const txt = window._getStoredPlan ? window._getStoredPlan() : '';
+        if (txt && window.planWindowModule) window.planWindowModule.openPlanWindow(txt, null);
+      });
+      menu.querySelector('[data-act="toggle"]').addEventListener('click', () => {
+        _close();
+        _setPlanMode(!on);   // flip state directly (no click → no menu re-open)
+      });
+      // Dismiss on any outside click (capture so it beats other handlers) / Escape.
+      setTimeout(() => {
+        const off = (e) => {
+          if (!menu.contains(e.target) && e.target !== planBtn) {
+            _close(); document.removeEventListener('click', off, true); document.removeEventListener('keydown', esc, true);
+          }
+        };
+        const esc = (e) => { if (e.key === 'Escape') { _close(); document.removeEventListener('click', off, true); document.removeEventListener('keydown', esc, true); } };
+        document.addEventListener('click', off, true);
+        document.addEventListener('keydown', esc, true);
+      }, 0);
+    }
+    planBtn.addEventListener('click', (e) => {
+      // With a stored plan, the button opens the menu (Show plan / toggle).
+      // Without one, it falls through to the normal one-click toggle.
+      if (_hasPlan()) { e.preventDefault(); e.stopImmediatePropagation(); _open(); }
+    }, true);  // capture phase: intercept before setupToggle's bubble handler
+  })();
+
   try { workspaceModule.initWorkspace(); } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)
@@ -2417,7 +2497,7 @@ function initializeEventListeners() {
   };
 
   // Keys hidden by default on first run (no localStorage yet)
-  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn']);
+  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn', 'text-emojis']);
 
   // Keys that need admin to toggle off (reserved for future use)
   const UI_VIS_ADMIN_ONLY = new Set([]);
@@ -2445,11 +2525,9 @@ function initializeEventListeners() {
     document.querySelectorAll('.section[draggable]').forEach(el => {
       el.setAttribute('draggable', dragEnabled ? 'true' : 'false');
     });
-    // Text-only emojis toggle. Default is ON (the checkbox defaults to
-    // checked because text-emojis isn't in UI_VIS_DEFAULT_OFF), so treat
-    // an absent value as enabled — otherwise the toggle looked on at
-    // startup but the effect only activated after the user flipped it.
-    applyTextEmojis(state['text-emojis'] !== false);
+    // Text-only emojis toggle. Default is OFF so model-emitted shortcodes
+    // like `:blush:` render through the normal monochrome emoji path.
+    applyTextEmojis(state['text-emojis'] === true);
     // Hide thinking sections toggle (show-thinking: checked=show, unchecked=hide)
     document.body.classList.toggle('hide-thinking', state['show-thinking'] === false);
   }

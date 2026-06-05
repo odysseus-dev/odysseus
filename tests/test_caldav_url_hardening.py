@@ -88,6 +88,7 @@ def test_sync_caldav_decrypts_stored_password_and_validates_url(monkeypatch):
         "_resolve_caldav_host_ips",
         lambda host: [ipaddress.ip_address("93.184.216.34")],
     )
+    saved = {}
     prefs_mod = types.ModuleType("routes.prefs_routes")
     prefs_mod._load_for_user = lambda owner: {
         "caldav": {
@@ -96,6 +97,7 @@ def test_sync_caldav_decrypts_stored_password_and_validates_url(monkeypatch):
             "password": "enc:stored",
         }
     }
+    prefs_mod._save_for_user = lambda owner, prefs: saved.update({"owner": owner, "prefs": prefs})
     monkeypatch.setitem(sys.modules, "routes.prefs_routes", prefs_mod)
 
     secret_mod = types.ModuleType("src.secret_storage")
@@ -104,7 +106,7 @@ def test_sync_caldav_decrypts_stored_password_and_validates_url(monkeypatch):
 
     captured = {}
 
-    def fake_sync_blocking(owner, url, username, password):
+    def fake_sync_blocking(owner, url, username, password, account_id=""):
         captured.update(
             {
                 "owner": owner,
@@ -136,7 +138,7 @@ def test_calendar_routes_use_hardened_caldav_client_and_secret_storage():
     text = Path("routes/calendar_routes.py").read_text(encoding="utf-8")
 
     assert "validate_caldav_url(body.get(\"url\", \"\"))" in text
-    assert "cfg[\"password\"] = encrypt(body[\"password\"])" in text
+    assert "encrypt(body[\"password\"])" in text
     assert "pw = decrypt(pw)" in text
     assert "follow_redirects=False, trust_env=False" in text
     assert "Redirects are not followed for CalDAV safety" in text

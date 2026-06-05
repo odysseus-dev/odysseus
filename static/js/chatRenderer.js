@@ -1005,7 +1005,12 @@ document.addEventListener('click', function(e) {
 // matching module via a dynamic import (avoids circular deps —
 // sessions.js itself imports chatRenderer.js).
 document.addEventListener('click', function(e) {
-  const a = e.target && e.target.closest && e.target.closest('a[href]');
+  // Walk past Text nodes — clicking link text yields a Text node target
+  // whose .closest is undefined, so preventDefault never fires and the
+  // browser performs a default hash-navigation that resets the session.
+  let _t = e.target;
+  while (_t && _t.nodeType === Node.TEXT_NODE) _t = _t.parentElement;
+  const a = _t && _t.closest && _t.closest('a[href]');
   if (!a) return;
   const href = a.getAttribute('href') || '';
   if (!href.startsWith('#')) return;

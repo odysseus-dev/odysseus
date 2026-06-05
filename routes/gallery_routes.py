@@ -526,18 +526,24 @@ def setup_gallery_routes() -> APIRouter:
             albums = q.order_by(GalleryAlbum.created_at.desc()).all()
             result = []
             for a in albums:
-                count = db.query(GalleryImage).filter(
+                _count_q = db.query(GalleryImage).filter(
                     GalleryImage.album_id == a.id, GalleryImage.is_active == True
-                ).count()
+                )
+                if user:
+                    _count_q = _count_q.filter(GalleryImage.owner == user)
+                count = _count_q.count()
                 cover_url = None
                 if a.cover_id:
                     cover = db.query(GalleryImage).filter(GalleryImage.id == a.cover_id).first()
                     if cover:
                         cover_url = f"/api/generated-image/{cover.filename}"
                 elif count > 0:
-                    first = db.query(GalleryImage).filter(
+                    _cover_q = db.query(GalleryImage).filter(
                         GalleryImage.album_id == a.id, GalleryImage.is_active == True
-                    ).order_by(GalleryImage.created_at.desc()).first()
+                    )
+                    if user:
+                        _cover_q = _cover_q.filter(GalleryImage.owner == user)
+                    first = _cover_q.order_by(GalleryImage.created_at.desc()).first()
                     if first:
                         cover_url = f"/api/generated-image/{first.filename}"
                 result.append({
@@ -670,7 +676,14 @@ def setup_gallery_routes() -> APIRouter:
             if req.favorite is not None:
                 img.favorite = req.favorite
             if req.album_id is not None:
-                img.album_id = req.album_id if req.album_id else None
+                if req.album_id:
+                    # Validate the target album belongs to the caller before
+                    # moving the image into it — mirrors add_to_album, so you
+                    # cannot file your image into another user's album.
+                    _get_or_404_album(db, req.album_id, user)
+                    img.album_id = req.album_id
+                else:
+                    img.album_id = None
             db.commit()
             db.refresh(img)
             return _image_to_dict(img)

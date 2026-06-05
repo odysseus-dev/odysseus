@@ -427,6 +427,15 @@ export const ERROR_PATTERNS = [
     ],
   },
   {
+    pattern: /Windows Error 0xc000001d|Illegal instruction|0xc000001d/i,
+    message: 'AVX2 Instruction Set Mismatch: the precompiled llama-cpp-python wheel requires CPU features (AVX2/FMA) that your processor or virtual machine lacks.',
+    suggestion: 'Suggested action: switch this serve config to Ollama (highly recommended, has dynamic CPU fallbacks), or choose a remote Linux GPU server.',
+    fixes: [
+      { label: 'Switch to Ollama', action: (panel) => _openServeEditFromDiagnosis(panel, { backend: 'ollama' }) },
+      { label: 'Choose remote server', action: (panel) => _openServeEditFromDiagnosis(panel) },
+    ],
+  },
+  {
     pattern: /CUDA Toolkit not found|Unable to find cudart library|missing:\s*CUDA_CUDART/i,
     message: 'llama.cpp found nvcc, but the CUDA runtime library is missing.',
     suggestion: 'Suggested action: relaunch with the updated runner so llama.cpp builds CPU-only, or install a complete CUDA toolkit/runtime on this server for GPU llama.cpp.',

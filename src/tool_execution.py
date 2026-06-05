@@ -1263,6 +1263,41 @@ async def execute_tool_block(
         logger.info("Tool executed: %s (%d options, multi=%s)", desc, len(options), multi)
         return desc, result
 
+    # update_plan: the agent writes back to the active plan — tick an item done
+    # or revise steps (e.g. when the user asks to change something). Pure UI
+    # marker: returns a `plan_update` payload the agent loop turns into a
+    # `plan_update` SSE event; the frontend replaces the stored plan and refreshes
+    # the docked plan window. Does NOT end the turn.
+    if tool == "update_plan":
+        import json as _json
+        raw = (content or "").strip()
+        plan = ""
+        try:
+            parsed = _json.loads(raw) if raw else {}
+        except (ValueError, TypeError):
+            parsed = {}
+        if isinstance(parsed, dict) and parsed.get("plan"):
+            plan = str(parsed.get("plan", "")).strip()
+        else:
+            # Plain-string call (raw checklist) or JSON without a usable `plan`.
+            plan = raw
+        if not plan:
+            return "update_plan: invalid", {
+                "error": "update_plan needs a non-empty `plan` (the full updated checklist as markdown).",
+                "exit_code": 1,
+            }
+        plan = plan[:8192]
+        done = plan.count("- [x]") + plan.count("- [X]")
+        total = done + plan.count("- [ ]")
+        desc = f"update_plan: {done}/{total} done" if total else "update_plan"
+        result = {
+            "plan_update": {"plan": plan},
+            "output": f"Plan updated ({done}/{total} steps complete)." if total else "Plan updated.",
+            "exit_code": 0,
+        }
+        logger.info("Tool executed: %s", desc)
+        return desc, result
+
     # Background execution: a `bash` block whose first line is the `#!bg`
     # marker runs DETACHED — returns a job id immediately so the chat stream
     # isn't held open for a multi-minute install/ffmpeg/download. The always-on

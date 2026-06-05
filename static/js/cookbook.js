@@ -161,8 +161,17 @@ function _getPort(hostOrTask) {
 
 /** Get platform for a given host (or task object). Returns 'windows', 'termux', 'linux', or '' */
 export function _getPlatform(hostOrTask) {
-  if (!hostOrTask) return _envState.platform || '';
-  if (typeof hostOrTask === 'object') return hostOrTask.platform || _getPlatform(hostOrTask.remoteHost);
+  const isWinBrowser = (window.navigator.userAgent || window.navigator.platform || '').toLowerCase().includes('win');
+  if (!hostOrTask || hostOrTask === 'local') {
+    return _envState.platform || (isWinBrowser ? 'windows' : '');
+  }
+  if (typeof hostOrTask === 'object') {
+    const h = hostOrTask.remoteHost;
+    if (!h || h === 'local') {
+      return hostOrTask.platform || _envState.platform || (isWinBrowser ? 'windows' : '');
+    }
+    return hostOrTask.platform || _getPlatform(h);
+  }
   const srv = _envState.servers.find(s => s.host === hostOrTask);
   return srv?.platform || '';
 }
@@ -637,7 +646,7 @@ async function _fetchDependencies() {
     const data = await resp.json();
     const pkgs = data.packages || [];
     if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No packages found</div>'; return; }
-    const _winUnsupported = new Set(['diffusers', 'hf_transfer', 'vllm', 'rembg', 'gfpgan']);
+    const _winUnsupported = new Set(['vllm', 'rembg', 'gfpgan']);
 
     const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
