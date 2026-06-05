@@ -1580,9 +1580,12 @@ class TaskScheduler:
         try:
             from core.database import SessionLocal, ModelEndpoint
             from src.endpoint_resolver import normalize_base, build_headers
+            from src.auth_helpers import owner_filter
             db2 = SessionLocal()
             try:
-                eps = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+                ep_q = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+                ep_q = owner_filter(ep_q, ModelEndpoint, task.owner or None)
+                eps = ep_q.all()
                 for ep in eps:
                     if normalize_base(ep.base_url) in endpoint_url or endpoint_url in normalize_base(ep.base_url):
                         headers = build_headers(ep.api_key, normalize_base(ep.base_url))
@@ -1603,7 +1606,7 @@ class TaskScheduler:
         # chat uses but with the utility list (`utility_model_fallbacks`).
         try:
             from src.endpoint_resolver import resolve_utility_fallback_candidates
-            _task_fallbacks = resolve_utility_fallback_candidates()
+            _task_fallbacks = resolve_utility_fallback_candidates(owner=task.owner or None)
         except Exception:
             _task_fallbacks = []
         async for event_str in stream_agent_loop(
@@ -1646,7 +1649,7 @@ class TaskScheduler:
                 else:
                     grace_context += "No tool results were captured."
                 grace_context += "\n\nSummarize what you accomplished and what's still pending. Be concise."
-                _grace_candidates = [(endpoint_url, model, headers)] + resolve_utility_fallback_candidates()
+                _grace_candidates = [(endpoint_url, model, headers)] + resolve_utility_fallback_candidates(owner=task.owner or None)
                 full_text = await llm_call_async_with_fallback(
                     _grace_candidates,
                     messages=[
@@ -1674,6 +1677,8 @@ class TaskScheduler:
         # Resolve endpoint/model: research settings > task settings > session defaults
         endpoint_url = task.endpoint_url
         model = task.model
+        headers = {}
+        headers_from_resolver = False
 
         if not endpoint_url or not model:
             try:
@@ -1683,9 +1688,13 @@ class TaskScheduler:
                     endpoint_url or None,
                     model or None,
                     None,
+                    owner=task.owner or None,
                 )
                 endpoint_url = ep_url or endpoint_url
                 model = ep_model or model
+                if ep_headers is not None:
+                    headers = ep_headers
+                    headers_from_resolver = True
             except Exception:
                 pass
 
@@ -1697,16 +1706,19 @@ class TaskScheduler:
         self._last_run_model = model
 
         # Resolve headers
-        headers = {}
         try:
             from core.database import ModelEndpoint
             from src.endpoint_resolver import normalize_base, build_headers
+            from src.auth_helpers import owner_filter
             db2 = db
-            eps = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
-            for ep in eps:
-                if normalize_base(ep.base_url) in endpoint_url or endpoint_url in normalize_base(ep.base_url):
-                    headers = build_headers(ep.api_key, normalize_base(ep.base_url))
-                    break
+            if not headers_from_resolver:
+                ep_q = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+                ep_q = owner_filter(ep_q, ModelEndpoint, task.owner or None)
+                eps = ep_q.all()
+                for ep in eps:
+                    if normalize_base(ep.base_url) in endpoint_url or endpoint_url in normalize_base(ep.base_url):
+                        headers = build_headers(ep.api_key, normalize_base(ep.base_url))
+                        break
         except Exception:
             pass
 

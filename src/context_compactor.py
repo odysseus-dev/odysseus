@@ -307,6 +307,7 @@ async def maybe_compact(
     model: str,
     messages: List[Dict],
     headers: Optional[Dict] = None,
+    owner: Optional[str] = None,
 ) -> tuple:
     """Check context usage and compact if above threshold.
 
@@ -353,7 +354,7 @@ async def maybe_compact(
     )
 
     # Use utility model if configured, otherwise fall back to session model
-    util_url, util_model, util_headers = resolve_endpoint("utility")
+    util_url, util_model, util_headers = resolve_endpoint("utility", owner=owner)
     compact_url = util_url or endpoint_url
     compact_model = util_model or model
     compact_headers = util_headers if util_url else headers

@@ -365,7 +365,7 @@ async def test_build_chat_context_incognito_does_not_duplicate_current_user_mess
     def fake_add_user_message(sess, chat_handler, preprocessed, incognito=False):
         sess.messages.append({"role": "user", "content": preprocessed.user_content})
 
-    async def fake_maybe_compact(sess, endpoint_url, model, messages, headers):
+    async def fake_maybe_compact(sess, endpoint_url, model, messages, headers, owner=None):
         return messages, 123, False
 
     monkeypatch.setattr(chat_helpers, "preprocess", fake_preprocess)
