@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import sys
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
@@ -594,7 +595,38 @@ async def _call_mcp_tool(
         if fallback:
             return fallback
 
+    # generate_image runs as a text-only MCP tool, so the saved image URL never
+    # reaches the agent loop's structured forwarding (which renders the image via
+    # buildImageBubble on result["image_url"]). Lift it out of the tool's stdout so
+    # the image renders deterministically — no dependence on the model echoing the
+    # URL into its prose (which it mangles/hallucinates).
+    if tool == "generate_image":
+        _promote_image_fields(result)
+
     return result
+
+
+def _promote_image_fields(result: Dict) -> None:
+    """Lift the image URL (+ prompt/model/size) from a successful generate_image MCP
+    text result into structured fields the agent loop already forwards to
+    buildImageBubble. Only acts on a dict result with exit_code 0; matches the
+    generated-image URL by pattern (absolute or relative) so it's robust to the
+    result's wording."""
+    if not isinstance(result, dict) or result.get("exit_code") != 0:
+        return
+    out = result.get("stdout") or ""
+    m = re.search(r'(?:https?://[^\s)\]]+)?/api/generated-image/[A-Za-z0-9._-]+', out)
+    if not m:
+        return
+    result["image_url"] = m.group(0).strip()
+    for field, pat in (
+        ("image_prompt", r'^Generated image for:\s*(.+)$'),
+        ("image_model", r'^model:\s*(.+)$'),
+        ("image_size", r'^size:\s*(.+)$'),
+    ):
+        fm = re.search(pat, out, re.M)
+        if fm:
+            result[field] = fm.group(1).strip()
 
 
 _BG_MARKERS = {"#!bg", "#bg", "# bg", "#background", "# background", "@background", "# @background"}
