@@ -81,7 +81,8 @@ def parse_skill_source(url: str) -> ResolvedSource:
             raise SkillImportError(reason)
         with httpx.Client(follow_redirects=True, timeout=20.0) as client:
             r = client.get(raw)
-            r.raise_for_status()
+            if r.status_code >= 400:
+                raise _github_response_error(r)
             final = str(r.url)
             _assert_github_url(final, context="redirect target")
             # Page may embed a github link; prefer final URL if redirected.
@@ -139,13 +140,38 @@ def _api_contents_url(src: ResolvedSource, rel_path: str = "") -> str:
     return f"{base}?ref={quote(src.ref, safe='')}"
 
 
+def _github_response_error(response: httpx.Response) -> SkillImportError:
+    """Turn a failed GitHub HTTP response into a user-visible import error."""
+    status = response.status_code
+    detail = ""
+    try:
+        body = response.json()
+        if isinstance(body, dict):
+            detail = str(body.get("message") or "").strip()
+    except Exception:
+        detail = (response.text or "").strip()[:200]
+
+    low = detail.lower()
+    if status == 403 and "rate limit" in low:
+        return SkillImportError(
+            "GitHub API rate limit exceeded — try again in a bit"
+            + (f" ({detail})" if detail else "")
+        )
+    if status == 404:
+        return SkillImportError("path not found on GitHub")
+    if detail:
+        return SkillImportError(f"GitHub request failed ({status}): {detail}")
+    return SkillImportError(f"GitHub request failed ({status})")
+
+
 def _fetch_bytes(url: str) -> bytes:
     ok, reason = check_outbound_url(url)
     if not ok:
         raise SkillImportError(reason)
     with httpx.Client(follow_redirects=True, timeout=30.0) as client:
         r = client.get(url, headers={"Accept": "application/vnd.github+json"})
-        r.raise_for_status()
+        if r.status_code >= 400:
+            raise _github_response_error(r)
         _assert_github_url(str(r.url), context="redirect target")
         if len(r.content) > MAX_FILE_BYTES:
             raise SkillImportError(f"file too large: {url}")
@@ -169,9 +195,8 @@ def _list_github_dir(src: ResolvedSource, rel_dir: str, out: Dict[str, str], *, 
         raise SkillImportError(reason)
     with httpx.Client(follow_redirects=True, timeout=30.0) as client:
         r = client.get(url, headers={"Accept": "application/vnd.github+json"})
-        if r.status_code == 404:
-            raise SkillImportError("path not found on GitHub")
-        r.raise_for_status()
+        if r.status_code >= 400:
+            raise _github_response_error(r)
         _assert_github_url(str(r.url), context="redirect target")
         entries = r.json()
     if not isinstance(entries, list):

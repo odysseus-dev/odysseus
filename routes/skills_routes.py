@@ -1230,7 +1230,8 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             raise HTTPException(400, str(e)) from e
         except httpx.HTTPError as e:
             logger.warning("skill import fetch failed: %s", e)
-            raise HTTPException(502, "Could not download skill from URL") from e
+            detail = str(e).strip() or "Could not download skill from URL"
+            raise HTTPException(502, detail) from e
         except Exception as e:
             logger.error("skill import failed: %s", e)
             raise HTTPException(500, "Skill import failed") from e

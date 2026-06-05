@@ -49,6 +49,7 @@ def test_rejects_non_github():
 def test_fetch_bytes_rejects_cross_host_redirect(monkeypatch):
     class _Resp:
         url = "https://evil.example/secret"
+        status_code = 200
         content = b"x"
 
         def raise_for_status(self):
@@ -126,3 +127,52 @@ def test_list_github_dir_accepts_api_github_response(monkeypatch):
     src = ResolvedSource(owner="o", repo="r", ref="main", path="")
     _list_github_dir(src, "", out)
     assert "SKILL.md" in out
+
+
+def _mock_httpx_client(monkeypatch, response):
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, headers=None):
+            return response
+
+    monkeypatch.setattr("services.memory.skill_importer.httpx.Client", _Client)
+    monkeypatch.setattr(
+        "services.memory.skill_importer.check_outbound_url",
+        lambda url: (True, ""),
+    )
+
+
+def test_list_github_dir_surfaces_rate_limit(monkeypatch):
+    class _Resp:
+        url = "https://api.github.com/repos/o/r/contents?ref=main"
+        status_code = 403
+
+        def json(self):
+            return {"message": "API rate limit exceeded for 203.0.113.1"}
+
+    _mock_httpx_client(monkeypatch, _Resp())
+    src = ResolvedSource(owner="o", repo="r", ref="main", path="")
+    with pytest.raises(SkillImportError, match="rate limit"):
+        _list_github_dir(src, "", {})
+
+
+def test_fetch_bytes_surfaces_github_error_detail(monkeypatch):
+    class _Resp:
+        url = "https://raw.githubusercontent.com/o/r/main/SKILL.md"
+        status_code = 403
+        content = b""
+
+        def json(self):
+            return {"message": "Forbidden"}
+
+    _mock_httpx_client(monkeypatch, _Resp())
+    with pytest.raises(SkillImportError, match="GitHub request failed \\(403\\): Forbidden"):
+        _fetch_bytes("https://raw.githubusercontent.com/o/r/main/SKILL.md")
