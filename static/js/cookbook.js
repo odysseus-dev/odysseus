@@ -32,6 +32,19 @@ import {
   _fetchCachedModels, _cachedAllModels, _filterCachedList, _rerenderCachedModels, _deleteCachedModel,
 } from './cookbookServe.js';
 
+export function _refreshCookbookI18n(root) {
+  if (typeof window === 'undefined') return;
+  const target = root || document.getElementById('cookbook-modal') || document;
+  requestAnimationFrame(() => {
+    window.odysseusI18n?.applyTranslations?.(target);
+  });
+}
+
+if (typeof window !== 'undefined' && !window._cookbookI18nRefreshBound) {
+  window._cookbookI18nRefreshBound = true;
+  window.addEventListener('odysseus:languagechange', () => _refreshCookbookI18n());
+}
+
 const STORAGE_KEY = 'cookbook-presets';
 const LAST_STATE_KEY = 'cookbook-last-state';
 const SERVE_STATE_KEY = 'cookbook-serve-state';
@@ -1795,6 +1808,7 @@ function _renderRecipes() {
   html += '</div></div>';
 
   body.innerHTML = html;
+  _refreshCookbookI18n(body);
   _wireTabEvents(body);
 
   // Auto-init What Fits

@@ -117,6 +117,8 @@ function translatePattern(language, source) {
   if (match) return `${match[1]} 项研究`;
   match = text.match(/^(\d+)\s+Selected$/i);
   if (match) return `已选择 ${match[1]} 项`;
+  match = text.match(/^(\d+)\s+selected$/i);
+  if (match) return `已选择 ${match[1]} 项`;
   match = text.match(/^(\d+)\s+tasks?$/i);
   if (match) return `${match[1]} 个任务`;
   match = text.match(/^(\d+)\s+documents?$/i);
@@ -145,6 +147,8 @@ function translatePattern(language, source) {
   if (match) return `每 ${match[1]} 次 ${translate(language, match[2].replace(/s$/, ''))}`;
   match = text.match(/^Limit:\s+(\d+)\s+tool calls per message$/i);
   if (match) return `限制：每条消息 ${match[1]} 次工具调用`;
+  match = text.match(/^(.+?)\s+([▲▼])$/);
+  if (match) return `${translate(language, match[1])} ${match[2]}`;
   match = text.match(/^in\s+(\d+)([mhd])$/i);
   if (match) return `${match[1]}${{ m: '分钟', h: '小时', d: '天' }[match[2].toLowerCase()]}后`;
   match = text.match(/^(\d+)([mhd])\s+ago$/i);

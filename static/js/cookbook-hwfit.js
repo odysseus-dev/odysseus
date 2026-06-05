@@ -23,6 +23,7 @@ import {
   _MODELDIR_CHECK_OFF,
   _serverEntryHtml,
   _copyText,
+  _refreshCookbookI18n,
   // Import cookbook.js WITHOUT a ?v= query — the same plain specifier every other
   // importer uses. A query mismatch loads cookbook.js twice as two separate modules
   // (two _envState objects), which silently sent downloads to the wrong server.
@@ -868,6 +869,7 @@ export function _hwfitRenderList(el, models) {
     else if (hasHw) msg = 'No models fit — the hardware probe may have under-reported. Try Rescan.';
     else msg = 'No models fit your hardware';
     el.innerHTML = `<div class="hwfit-loading">${msg}</div>`;
+    _refreshCookbookI18n(el);
     return;
   }
   const sortSel = document.getElementById('hwfit-sort');
@@ -952,6 +954,7 @@ export function _hwfitRenderList(el, models) {
     html += `</div>`;
   }
   el.innerHTML = html;
+  _refreshCookbookI18n(el);
   // Click row → expand inline action panel
   el.querySelectorAll('.hwfit-row:not(.hwfit-header)').forEach(row => {
     row.addEventListener('click', () => {
@@ -1083,6 +1086,7 @@ export function _expandModelRow(row, modelData) {
 
   row.insertAdjacentHTML('afterend', html);
   const panel = row.nextElementSibling;
+  _refreshCookbookI18n(panel);
 
   // Wire download button
   const dlBtn = panel.querySelector('.hwfit-dl-btn');

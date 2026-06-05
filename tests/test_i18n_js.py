@@ -55,6 +55,27 @@ def test_language_normalization():
 
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_cookbook_dynamic_labels_are_translated():
+    js = f"""
+    import {{ translate }} from '{_I18N.as_posix()}';
+    console.log(JSON.stringify([
+      translate('zh', 'Scan / Download'),
+      translate('zh', 'Trending models that fit your hardware'),
+      translate('zh', 'Detected hardware'),
+      translate('zh', 'Fit ▼'),
+      translate('zh', 'perfect')
+    ]));
+    """
+    assert json.loads(_run_js(js)) == [
+        "扫描/下载",
+        "适合你硬件的热门模型",
+        "检测到的硬件",
+        "适配 ▼",
+        "完美",
+    ]
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_skip_selector_protects_user_content_zones():
     js = f"""
     import {{ shouldSkipElementForI18n }} from '{_I18N.as_posix()}';
