@@ -39,9 +39,9 @@ _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _SSH_PORT_RE = re.compile(r"^\d{1,5}$")
 _GPU_LIST_RE = re.compile(r"^\d+(?:,\d+)*$")
 # A download target directory. Absolute or ~-relative path; safe path glyphs
-# only (no quotes, shell metacharacters, or spaces) since it lands in a shell
+# only (no quotes or shell metacharacters) since it lands in a shell
 # command. A leading ~ is expanded to $HOME at command-build time.
-_LOCAL_DIR_RE = re.compile(r"^~?/[A-Za-z0-9._/-]*$|^~$")
+_LOCAL_DIR_RE = re.compile(r"^~?/[A-Za-z0-9._/ -]*$|^~$|^[A-Za-z]:[\\/][A-Za-z0-9._/\\ -]*$")
 _WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
