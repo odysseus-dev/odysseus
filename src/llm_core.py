@@ -56,6 +56,9 @@ _response_cache = {}
 #   - any success resets the failure counter immediately
 DEAD_HOST_COOLDOWN = 20.0
 _HOST_FAIL_THRESHOLD = 2
+# Codex WebSocket transport is experimental and currently disabled; the SSE
+# path below is the proven transport (emits text deltas + tool_calls).
+_CODEX_USE_WEBSOCKET = False
 _dead_hosts: Dict[str, float] = {}
 _host_fails: Dict[str, int] = {}
 # Guards the two maps above. The synchronous llm_call() runs inside FastAPI's
@@ -124,6 +127,9 @@ def _clear_host_dead(url: str) -> None:
 # 100-500ms TCP+TLS handshake. Lazy init so we bind to the running event loop.
 _http_client: Optional[httpx.AsyncClient] = None
 _http_limits = httpx.Limits(max_connections=100, max_keepalive_connections=30, keepalive_expiry=30.0)
+_codex_ws_cache: Dict[str, Dict] = {}
+_codex_ws_lock = asyncio.Lock()
+_codex_ws_idle_seconds = 300.0
 
 def _get_http_client() -> httpx.AsyncClient:
     """Return process-wide AsyncClient. Per-request timeout is passed at call time."""
@@ -311,6 +317,13 @@ def _detect_provider(url: str) -> str:
     """
     if _is_ollama_native_url(url):
         return "ollama"
+    if _host_match(url, "chatgpt.com"):
+        try:
+            path = (urlparse(url).path or "").rstrip("/")
+        except Exception:
+            path = ""
+        if path.startswith("/backend-api"):
+            return "openai_codex"
     if _host_match(url, "anthropic.com"):
         return "anthropic"
     if _host_match(url, "openrouter.ai"):
@@ -348,6 +361,7 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "anthropic.com"): return "Anthropic"
     if _host_match(url, "ollama.com"): return "Ollama Cloud"
     if _host_match(url, "x.ai"): return "xAI"
+    if _host_match(url, "chatgpt.com"): return "OpenAI Codex"
     if _host_match(url, "openai.com"): return "OpenAI"
     if _host_match(url, "openrouter.ai"): return "OpenRouter"
     if _host_match(url, "groq.com"): return "Groq"
@@ -750,6 +764,278 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
 
     return merged
 
+
+def _split_internal_headers(headers: Optional[Dict]) -> tuple[Dict[str, str], Dict[str, str]]:
+    """Separate Odysseus routing metadata from headers sent upstream."""
+    public: Dict[str, str] = {}
+    internal: Dict[str, str] = {}
+    if isinstance(headers, str):
+        try:
+            headers = json.loads(headers)
+        except Exception:
+            headers = None
+    if isinstance(headers, dict):
+        for k, v in headers.items():
+            key = str(k)
+            if key.lower().startswith("_odysseus_"):
+                internal[key] = v
+            elif v is not None:
+                public[key] = v
+    return public, internal
+
+
+def _codex_owner_from_headers(headers: Optional[Dict]) -> str:
+    _, internal = _split_internal_headers(headers)
+    return str(internal.get("_odysseus_owner") or internal.get("_odysseus_user") or "")
+
+
+def _codex_reasoning_effort(internal_headers: Dict, owner: str) -> Optional[str]:
+    """Resolve the per-request Codex reasoning effort.
+
+    Priority: explicit per-request header (`_odysseus_reasoning_effort`, set by
+    the composer dropdown) → per-user/global `codex_reasoning_effort` setting →
+    None (build_codex_payload then uses the model default)."""
+    val = internal_headers.get("_odysseus_reasoning_effort")
+    if val not in (None, ""):
+        return str(val)
+    try:
+        from src.settings import get_user_setting
+        return get_user_setting("codex_reasoning_effort", owner, None)
+    except Exception:
+        return None
+
+
+def _codex_replay_map(messages: Optional[List[Dict]]) -> Dict[str, list]:
+    """Build a {first_tool_call_id: verbatim_output_items} map for Codex
+    reasoning replay, read from the UN-sanitized message list.
+
+    Returns {} unless the `codex_reasoning_replay` setting is enabled, so the
+    default behaviour is the verified id-less path. The `_codex_output_items`
+    field is attached in-memory by the agent loop and never persisted; it is
+    keyed here by the turn's first tool_call id, which build_codex_payload
+    recomputes from the sanitized assistant message."""
+    try:
+        from src.settings import get_setting
+        if not get_setting("codex_reasoning_replay", False):
+            return {}
+    except Exception:
+        return {}
+    out: Dict[str, list] = {}
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        items = m.get("_codex_output_items")
+        if not items:
+            continue
+        first_id = next(
+            (str(tc.get("id")) for tc in (m.get("tool_calls") or [])
+             if isinstance(tc, dict) and tc.get("id")),
+            None,
+        )
+        if first_id:
+            out[first_id] = items
+    return out
+
+
+def _codex_extract_text(data: dict) -> str:
+    if not isinstance(data, dict):
+        return ""
+    if isinstance(data.get("output_text"), str):
+        return data["output_text"]
+    parts: List[str] = []
+    for item in data.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "message":
+            for block in item.get("content") or []:
+                if isinstance(block, dict):
+                    txt = block.get("text") or block.get("output_text") or ""
+                    if txt:
+                        parts.append(txt)
+        elif item.get("type") == "function_call" and item.get("arguments"):
+            continue
+    return "".join(parts)
+
+
+def _codex_stream_usage(response_obj: dict) -> Optional[Dict]:
+    usage = response_obj.get("usage") if isinstance(response_obj, dict) else None
+    if not isinstance(usage, dict):
+        return None
+    # input_tokens already INCLUDES cached tokens on the Responses API, so the
+    # cached count is the prompt-cache read for this turn — the single number
+    # that tells you whether reasoning replay / a stable prefix is hitting cache.
+    details = usage.get("input_tokens_details")
+    cached = (details.get("cached_tokens", 0) or 0) if isinstance(details, dict) else 0
+    out = {
+        "input_tokens": usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0,
+        "output_tokens": usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0,
+    }
+    if cached:
+        out["cached_tokens"] = cached
+    return out
+
+
+def _codex_ws_url(url: str) -> str:
+    out = (url or "").rstrip("/")
+    if out.startswith("https://"):
+        return "wss://" + out[len("https://"):]
+    if out.startswith("http://"):
+        return "ws://" + out[len("http://"):]
+    return out
+
+
+async def _codex_connect_ws(url: str, headers: Dict[str, str]):
+    import websockets
+    ws_url = _codex_ws_url(url)
+    try:
+        return await websockets.connect(ws_url, additional_headers=headers, ping_interval=30, ping_timeout=20)
+    except TypeError:
+        return await websockets.connect(ws_url, extra_headers=headers, ping_interval=30, ping_timeout=20)
+
+
+async def _codex_close_ws(ws) -> None:
+    try:
+        await ws.close()
+    except Exception:
+        pass
+
+
+async def _codex_acquire_ws(session_id: str, url: str, headers: Dict[str, str]):
+    now = time.time()
+    async with _codex_ws_lock:
+        stale = [
+            sid for sid, entry in _codex_ws_cache.items()
+            if not entry.get("busy") and now - float(entry.get("last_used") or 0) > _codex_ws_idle_seconds
+        ]
+        for sid in stale:
+            entry = _codex_ws_cache.pop(sid, None)
+            if entry:
+                asyncio.create_task(_codex_close_ws(entry.get("ws")))
+        entry = _codex_ws_cache.get(session_id)
+        if entry and not entry.get("busy") and not getattr(entry.get("ws"), "closed", False):
+            entry["busy"] = True
+            return entry.get("ws"), True
+        if entry and not entry.get("busy"):
+            _codex_ws_cache.pop(session_id, None)
+            asyncio.create_task(_codex_close_ws(entry.get("ws")))
+
+    ws = await _codex_connect_ws(url, headers)
+    async with _codex_ws_lock:
+        _codex_ws_cache[session_id] = {"ws": ws, "busy": True, "last_used": now}
+    return ws, False
+
+
+async def _codex_release_ws(session_id: str, ws, keep: bool) -> None:
+    async with _codex_ws_lock:
+        entry = _codex_ws_cache.get(session_id)
+        if not keep or getattr(ws, "closed", False):
+            if entry and entry.get("ws") is ws:
+                _codex_ws_cache.pop(session_id, None)
+            asyncio.create_task(_codex_close_ws(ws))
+            return
+        if entry and entry.get("ws") is ws:
+            entry["busy"] = False
+            entry["last_used"] = time.time()
+
+
+def _codex_event_to_sse(event: dict, tool_calls: Dict[int, Dict], current_tool_idx: List[int]) -> tuple[List[str], bool]:
+    chunks: List[str] = []
+    done = False
+    evt = event.get("type") or ""
+    if evt == "error":
+        msg = event.get("message") or event.get("code") or "Codex error"
+        chunks.append(f'event: error\ndata: {json.dumps({"error": msg, "status": 400})}\n\n')
+        return chunks, True
+    if evt == "response.failed":
+        err = ((event.get("response") or {}).get("error") or {})
+        msg = err.get("message") or "Codex response failed"
+        chunks.append(f'event: error\ndata: {json.dumps({"error": msg, "status": 502})}\n\n')
+        return chunks, True
+    if evt in {"response.output_text.delta", "response.refusal.delta"}:
+        text = event.get("delta") or ""
+        if text:
+            chunks.append(f'data: {json.dumps({"delta": text})}\n\n')
+        return chunks, False
+    if evt in {"response.reasoning_summary_text.delta", "response.reasoning_text.delta"}:
+        text = event.get("delta") or ""
+        if text:
+            chunks.append(f'data: {json.dumps({"delta": text, "thinking": True})}\n\n')
+        return chunks, False
+    if evt == "response.output_item.added":
+        item = event.get("item") or {}
+        if item.get("type") == "function_call":
+            current_tool_idx[0] = int(event.get("output_index") or len(tool_calls))
+            tool_calls[current_tool_idx[0]] = {
+                "id": item.get("call_id") or item.get("id") or f"call_{current_tool_idx[0]}",
+                "name": item.get("name") or "",
+                "arguments": item.get("arguments") or "",
+            }
+        return chunks, False
+    if evt == "response.function_call_arguments.delta":
+        idx = int(event.get("output_index") if event.get("output_index") is not None else current_tool_idx[0])
+        if idx < 0:
+            idx = len(tool_calls)
+        if idx not in tool_calls:
+            tool_calls[idx] = {"id": f"call_{idx}", "name": "", "arguments": ""}
+        delta = event.get("delta") or ""
+        tool_calls[idx]["arguments"] += delta
+        if delta and tool_calls[idx].get("name") in ("create_document", "update_document", "edit_document"):
+            chunks.append(f'data: {json.dumps({"type": "tool_call_delta", "index": idx, "name": tool_calls[idx]["name"], "arg_delta": delta})}\n\n')
+        return chunks, False
+    if evt == "response.output_item.done":
+        item = event.get("item") or {}
+        if item.get("type") == "function_call":
+            idx = int(event.get("output_index") if event.get("output_index") is not None else current_tool_idx[0])
+            if idx not in tool_calls:
+                tool_calls[idx] = {"id": item.get("call_id") or item.get("id") or f"call_{idx}", "name": item.get("name") or "", "arguments": ""}
+            if item.get("name"):
+                tool_calls[idx]["name"] = item.get("name")
+            if item.get("arguments"):
+                tool_calls[idx]["arguments"] = item.get("arguments")
+        return chunks, False
+    if evt in {"response.completed", "response.done", "response.incomplete"}:
+        if tool_calls:
+            chunks.append(f'data: {json.dumps({"type": "tool_calls", "calls": [tool_calls[i] for i in sorted(tool_calls)]})}\n\n')
+        usage = _codex_stream_usage(event.get("response") or {})
+        if usage:
+            chunks.append(f'data: {json.dumps({"type": "usage", "data": usage})}\n\n')
+        chunks.append("data: [DONE]\n\n")
+        done = True
+    return chunks, done
+
+
+async def _stream_codex_websocket(target_url: str, payload: dict, headers: Dict[str, str], session_id: str):
+    ws, _reused = await _codex_acquire_ws(session_id, target_url, headers)
+    keep = True
+    emitted = False
+    tool_calls: Dict[int, Dict] = {}
+    current_tool_idx = [-1]
+    try:
+        await ws.send(json.dumps({"type": "response.create", **payload}))
+        while True:
+            raw = await asyncio.wait_for(ws.recv(), timeout=LLMConfig.STREAM_TIMEOUT)
+            if isinstance(raw, (bytes, bytearray)):
+                raw = raw.decode("utf-8", errors="replace")
+            try:
+                event = json.loads(raw)
+            except Exception:
+                continue
+            chunks, done = _codex_event_to_sse(event, tool_calls, current_tool_idx)
+            for chunk in chunks:
+                if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
+                    emitted = True
+                yield chunk
+            if done:
+                return
+    except Exception as e:
+        keep = False
+        if emitted:
+            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+        else:
+            raise
+    finally:
+        await _codex_release_ws(session_id, ws, keep)
+
 def _normalize_anthropic_url(url: str) -> str:
     """Ensure Anthropic URL points to /v1/messages."""
     url = url.rstrip("/")
@@ -830,6 +1116,9 @@ def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT,
     provider = _detect_provider(base_chat_url)
     if provider == "anthropic":
         return list(ANTHROPIC_MODELS)
+    if provider == "openai_codex":
+        from src.openai_codex import CODEX_MODELS
+        return list(CODEX_MODELS)
     try:
         h = {}
         if headers:
@@ -1024,6 +1313,42 @@ async def llm_call_async_with_fallback(candidates, messages, **kwargs) -> str:
     raise last_err if last_err else HTTPException(503, "All fallback candidates failed")
 
 
+async def _codex_collect_text(target_url: str, payload: dict, headers: Dict[str, str], timeout: float) -> str:
+    """Codex Responses API is streaming-only. POST with stream=true, read the
+    SSE event stream, and accumulate the text deltas into one string. Used by
+    the non-streaming `llm_call_async` path (auto-naming, agent text calls)."""
+    payload = {**payload, "stream": True}
+    stream_timeout = httpx.Timeout(connect=3.0, read=float(timeout), write=30.0, pool=5.0)
+    parts: list[str] = []
+    client = _get_http_client()
+    async with client.stream('POST', target_url, json=payload, headers=headers, timeout=stream_timeout) as r:
+        if r.status_code != 200:
+            raw = (await r.aread()).decode(errors="replace")
+            raise HTTPException(r.status_code, _format_upstream_error(r.status_code, raw, target_url))
+        async for line in r.aiter_lines():
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                event = json.loads(data)
+            except Exception:
+                continue
+            evt = event.get("type") or ""
+            if evt == "error":
+                msg = event.get("message") or event.get("code") or "Codex error"
+                raise HTTPException(400, f"Codex error: {msg}")
+            if evt == "response.failed":
+                err = ((event.get("response") or {}).get("error") or {})
+                raise HTTPException(502, err.get("message") or "Codex response failed")
+            if evt in {"response.output_text.delta", "response.refusal.delta"}:
+                delta = event.get("delta") or ""
+                if delta:
+                    parts.append(delta)
+    return "".join(parts)
+
+
 async def llm_call_async(
     url: str,
     model: str,
@@ -1033,7 +1358,8 @@ async def llm_call_async(
     headers: Optional[Dict] = None,
     timeout: int = LLMConfig.STREAM_TIMEOUT,
     max_retries: int = LLMConfig.MAX_RETRIES,
-    prompt_type: Optional[str] = None
+    prompt_type: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
@@ -1058,22 +1384,39 @@ async def llm_call_async(
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
 
+    public_headers, internal_headers = _split_internal_headers(headers)
+
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
-        h = _build_anthropic_headers(headers)
+        h = _build_anthropic_headers(public_headers)
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens)
     elif provider == "ollama":
         target_url = _normalize_ollama_url(url)
         h = {"Content-Type": "application/json"}
-        if headers:
-            h.update(headers)
+        if public_headers:
+            h.update(public_headers)
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+    elif provider == "openai_codex":
+        from src.openai_codex import build_codex_payload, resolve_codex_headers
+        target_url = url.rstrip("/")
+        owner = str(internal_headers.get("_odysseus_owner") or internal_headers.get("_odysseus_user") or "")
+        h = await resolve_codex_headers(owner, session_id=session_id, websocket=False)
+        payload = build_codex_payload(
+            model, messages_copy, temperature, max_tokens, session_id=session_id,
+            reasoning_effort=_codex_reasoning_effort(internal_headers, owner),
+            replay_items=_codex_replay_map(messages),
+        )
+        # Codex Responses API is streaming-only — collect the SSE deltas into a
+        # single string instead of doing a non-streaming POST (which 400s).
+        _codex_text = await _codex_collect_text(target_url, payload, h, timeout)
+        _set_cached_response(cache_key, _codex_text)
+        return _codex_text
     else:
         target_url = url
-        h = _provider_headers(provider, headers)
+        h = _provider_headers(provider, public_headers)
         if provider == "copilot":
             from src.copilot import apply_request_headers
             apply_request_headers(h, messages_copy)
@@ -1119,6 +1462,8 @@ async def llm_call_async(
                     response = _parse_anthropic_response(data)
                 elif provider == "ollama":
                     response = _parse_ollama_response(data)
+                elif provider == "openai_codex":
+                    response = _codex_extract_text(data)
                 else:
                     msg = data["choices"][0]["message"]
                     response = msg.get("content") or msg.get("reasoning_content") or ""
@@ -1144,7 +1489,7 @@ async def llm_call_async(
 async def stream_llm(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
-                     tools: Optional[List[Dict]] = None):
+                     tools: Optional[List[Dict]] = None, session_id: Optional[str] = None):
     """Stream LLM responses with improved error handling.
 
     Yields SSE chunks:
@@ -1170,18 +1515,30 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     else:
         messages_copy = non_sys
 
+    public_headers, internal_headers = _split_internal_headers(headers)
+
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
-        h = _build_anthropic_headers(headers)
+        h = _build_anthropic_headers(public_headers)
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens, stream=True, tools=tools)
     elif provider == "ollama":
         target_url = _normalize_ollama_url(url)
         h = {"Content-Type": "application/json"}
-        if headers:
-            h.update(headers)
+        if public_headers:
+            h.update(public_headers)
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
             stream=True, tools=tools, num_ctx=get_context_length(url, model),
+        )
+    elif provider == "openai_codex":
+        from src.openai_codex import build_codex_payload, resolve_codex_headers
+        target_url = url.rstrip("/")
+        owner = str(internal_headers.get("_odysseus_owner") or internal_headers.get("_odysseus_user") or "")
+        h = await resolve_codex_headers(owner, session_id=session_id, websocket=False)
+        payload = build_codex_payload(
+            model, messages_copy, temperature, max_tokens, tools=tools, session_id=session_id,
+            reasoning_effort=_codex_reasoning_effort(internal_headers, owner),
+            replay_items=_codex_replay_map(messages),
         )
     else:
         target_url = url
@@ -1200,7 +1557,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             payload[tok_key] = max_tokens
         if tools:
             payload["tools"] = tools
-        h = _provider_headers(provider, headers)
+        h = _provider_headers(provider, public_headers)
         if provider == "copilot":
             from src.copilot import apply_request_headers
             apply_request_headers(h, messages_copy)
@@ -1213,6 +1570,147 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         yield f'event: error\ndata: {json.dumps({"error": f"Upstream {_host_key(target_url)} unreachable (cooldown active)", "status": 503})}\n\n'
         return
     note_model_activity(target_url, model)
+
+    # ── OpenAI Codex Responses streaming ──
+    if provider == "openai_codex":
+        if session_id and _CODEX_USE_WEBSOCKET:
+            try:
+                from src.openai_codex import resolve_codex_headers
+                ws_headers = await resolve_codex_headers(owner, session_id=session_id, websocket=True)
+                async for chunk in _stream_codex_websocket(target_url, payload, ws_headers, session_id):
+                    yield chunk
+                return
+            except Exception as e:
+                logger.info(f"Codex WebSocket unavailable before output, falling back to SSE: {e}")
+
+        _codex_tool_calls: Dict[int, Dict] = {}
+        _current_tool_idx = -1
+        # Verbatim output items (reasoning / message / function_call) in emission
+        # order, captured so the agent loop can replay the model's encrypted
+        # reasoning on the next round for prompt-cache continuity (Part B). Only
+        # consumed when the codex_reasoning_replay setting is enabled.
+        _codex_output_items: List[Dict] = []
+
+        def _codex_emit_tool_calls():
+            if not _codex_tool_calls:
+                return None
+            calls = [_codex_tool_calls[i] for i in sorted(_codex_tool_calls)]
+            return f'data: {json.dumps({"type": "tool_calls", "calls": calls})}\n\n'
+
+        def _codex_emit_output_items():
+            if not _codex_output_items:
+                return None
+            return f'data: {json.dumps({"type": "codex_output_items", "items": _codex_output_items})}\n\n'
+
+        try:
+            client = _get_http_client()
+            async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
+                _clear_host_dead(target_url)
+                if r.status_code != 200:
+                    raw = (await r.aread()).decode(errors="replace")
+                    friendly = _format_upstream_error(r.status_code, raw, target_url)
+                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    return
+                async for line in r.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data or data == "[DONE]":
+                        continue
+                    try:
+                        event = json.loads(data)
+                    except Exception:
+                        continue
+                    evt = event.get("type") or ""
+                    if evt == "error":
+                        msg = event.get("message") or event.get("code") or "Codex error"
+                        yield f'event: error\ndata: {json.dumps({"error": msg, "status": 400})}\n\n'
+                        return
+                    if evt == "response.failed":
+                        err = ((event.get("response") or {}).get("error") or {})
+                        msg = err.get("message") or "Codex response failed"
+                        yield f'event: error\ndata: {json.dumps({"error": msg, "status": 502})}\n\n'
+                        return
+                    if evt in {"response.output_text.delta", "response.refusal.delta"}:
+                        text = event.get("delta") or ""
+                        if text:
+                            yield f'data: {json.dumps({"delta": text})}\n\n'
+                        continue
+                    if evt in {"response.reasoning_summary_text.delta", "response.reasoning_text.delta"}:
+                        text = event.get("delta") or ""
+                        if text:
+                            yield f'data: {json.dumps({"delta": text, "thinking": True})}\n\n'
+                        continue
+                    if evt == "response.output_item.added":
+                        item = event.get("item") or {}
+                        if item.get("type") == "function_call":
+                            _current_tool_idx = int(event.get("output_index") or len(_codex_tool_calls))
+                            _codex_tool_calls[_current_tool_idx] = {
+                                "id": item.get("call_id") or item.get("id") or f"call_{_current_tool_idx}",
+                                "name": item.get("name") or "",
+                                "arguments": item.get("arguments") or "",
+                            }
+                        continue
+                    if evt == "response.function_call_arguments.delta":
+                        idx = int(event.get("output_index") if event.get("output_index") is not None else _current_tool_idx)
+                        if idx < 0:
+                            idx = len(_codex_tool_calls)
+                        if idx not in _codex_tool_calls:
+                            _codex_tool_calls[idx] = {"id": f"call_{idx}", "name": "", "arguments": ""}
+                        delta = event.get("delta") or ""
+                        _codex_tool_calls[idx]["arguments"] += delta
+                        if delta and _codex_tool_calls[idx].get("name") in ("create_document", "update_document", "edit_document"):
+                            yield f'data: {json.dumps({"type": "tool_call_delta", "index": idx, "name": _codex_tool_calls[idx]["name"], "arg_delta": delta})}\n\n'
+                        continue
+                    if evt == "response.output_item.done":
+                        item = event.get("item") or {}
+                        _itype = item.get("type")
+                        # Capture the model's output items verbatim (in order) for
+                        # optional reasoning replay. encrypted_content rides on the
+                        # reasoning items because we request it in the payload.
+                        if _itype in ("reasoning", "message", "function_call"):
+                            _codex_output_items.append(item)
+                        if _itype == "function_call":
+                            idx = int(event.get("output_index") if event.get("output_index") is not None else _current_tool_idx)
+                            if idx not in _codex_tool_calls:
+                                _codex_tool_calls[idx] = {"id": item.get("call_id") or item.get("id") or f"call_{idx}", "name": item.get("name") or "", "arguments": ""}
+                            if item.get("name"):
+                                _codex_tool_calls[idx]["name"] = item.get("name")
+                            if item.get("arguments"):
+                                _codex_tool_calls[idx]["arguments"] = item.get("arguments")
+                        continue
+                    if evt in {"response.completed", "response.done", "response.incomplete"}:
+                        oi_event = _codex_emit_output_items()
+                        if oi_event:
+                            yield oi_event
+                        tc_event = _codex_emit_tool_calls()
+                        if tc_event:
+                            yield tc_event
+                        usage = _codex_stream_usage(event.get("response") or {})
+                        if usage:
+                            yield f'data: {json.dumps({"type": "usage", "data": usage})}\n\n'
+                        yield "data: [DONE]\n\n"
+                        return
+                oi_event = _codex_emit_output_items()
+                if oi_event:
+                    yield oi_event
+                tc_event = _codex_emit_tool_calls()
+                if tc_event:
+                    yield tc_event
+                yield "data: [DONE]\n\n"
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            _cooled = _mark_host_dead(target_url)
+            _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
+            logger.warning(f"Codex stream connect to {target_url} failed: {e}{_tail}")
+            yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
+        except httpx.ReadTimeout:
+            yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
+        except httpx.NetworkError:
+            yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
+        except Exception as e:
+            logger.error(f"Codex stream error: {e}")
+            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+        return
 
     # ── Native Ollama streaming ──
     if provider == "ollama":

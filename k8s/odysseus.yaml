@@ -1,0 +1,451 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: odysseus
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: odysseus-data
+  namespace: odysseus
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: odysseus-logs
+  namespace: odysseus
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chromadb-data
+  namespace: odysseus
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: searxng-data
+  namespace: odysseus
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ntfy-cache
+  namespace: odysseus
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: searxng-settings
+  namespace: odysseus
+data:
+  settings.yml: |
+    use_default_settings: true
+
+    general:
+      debug: false
+      instance_name: "odysseus-searxng"
+
+    search:
+      safe_search: 0
+      autocomplete: ""
+      formats:
+        - html
+        - json
+
+    server:
+      bind_address: "0.0.0.0"
+      port: 8080
+      secret_key: "odysseus-local-searxng-json-2026-06-03"
+      limiter: false
+      image_proxy: true
+
+    ui:
+      static_use_hash: true
+
+    outgoing:
+      request_timeout: 10.0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chromadb
+  namespace: odysseus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chromadb
+  template:
+    metadata:
+      labels:
+        app: chromadb
+    spec:
+      enableServiceLinks: false
+      nodeSelector:
+        kubernetes.io/hostname: hypabolic-macpro6-1
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoSchedule
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: chromadb
+          image: docker.io/chromadb/chroma:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: ANONYMIZED_TELEMETRY
+              value: "FALSE"
+          volumeMounts:
+            - name: data
+              mountPath: /chroma/chroma
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: chromadb-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chromadb
+  namespace: odysseus
+spec:
+  selector:
+    app: chromadb
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: searxng
+  namespace: odysseus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: searxng
+  template:
+    metadata:
+      labels:
+        app: searxng
+    spec:
+      enableServiceLinks: false
+      nodeSelector:
+        kubernetes.io/hostname: hypabolic-macpro6-1
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoSchedule
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: searxng
+          image: docker.io/searxng/searxng:2026.5.31-7159b8aed
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+          args:
+            - |
+              set -eu
+              if [ ! -s /etc/searxng/settings.yml ]; then
+                cp /tmp/searxng-settings.yml /etc/searxng/settings.yml
+              fi
+              exec /usr/local/searxng/entrypoint.sh
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: SEARXNG_BASE_URL
+              value: http://searxng:8080/
+          securityContext:
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - SETGID
+                - SETUID
+                - DAC_OVERRIDE
+          volumeMounts:
+            - name: data
+              mountPath: /etc/searxng
+            - name: settings
+              mountPath: /tmp/searxng-settings.yml
+              subPath: settings.yml
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: searxng-data
+        - name: settings
+          configMap:
+            name: searxng-settings
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: searxng
+  namespace: odysseus
+spec:
+  selector:
+    app: searxng
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ntfy
+  namespace: odysseus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ntfy
+  template:
+    metadata:
+      labels:
+        app: ntfy
+    spec:
+      enableServiceLinks: false
+      nodeSelector:
+        kubernetes.io/hostname: hypabolic-macpro6-1
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoSchedule
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: ntfy
+          image: docker.io/binwiederhier/ntfy:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+          ports:
+            - containerPort: 80
+              name: http
+          env:
+            - name: NTFY_BASE_URL
+              value: http://ntfy:80
+          volumeMounts:
+            - name: cache
+              mountPath: /var/cache/ntfy
+      volumes:
+        - name: cache
+          persistentVolumeClaim:
+            claimName: ntfy-cache
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ntfy
+  namespace: odysseus
+spec:
+  selector:
+    app: ntfy
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: odysseus
+  namespace: odysseus
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: odysseus
+  template:
+    metadata:
+      labels:
+        app: odysseus
+    spec:
+      enableServiceLinks: false
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
+      imagePullSecrets:
+        - name: harbor-robot
+      nodeSelector:
+        kubernetes.io/hostname: hypabolic-macpro6-1
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoSchedule
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: odysseus
+          image: harbor.homelab/atomic/odysseus:homelab-20260603-1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 7000
+              hostPort: 7000
+              name: http
+          env:
+            - name: LLM_HOST
+              value: 127.0.0.1
+            - name: LLM_HOSTS
+              value: 127.0.0.1
+            - name: OLLAMA_BASE_URL
+              value: http://127.0.0.1:8088/v1
+            - name: SEARXNG_INSTANCE
+              value: http://searxng:8080
+            - name: CHROMADB_HOST
+              value: chromadb
+            - name: CHROMADB_PORT
+              value: "8000"
+            - name: DATABASE_URL
+              value: sqlite:///./data/app.db
+            - name: AUTH_ENABLED
+              value: "true"
+            - name: LOCALHOST_BYPASS
+              value: "false"
+            - name: ODYSSEUS_ADMIN_USER
+              value: admin
+            - name: ALLOWED_ORIGINS
+              value: http://localhost,http://127.0.0.1,http://10.0.1.252,http://odysseus.homelab,https://odyssey.matthewgribben.com
+            - name: SECURE_COOKIES
+              value: "true"
+            - name: FASTEMBED_MODEL
+              value: sentence-transformers/all-MiniLM-L6-v2
+            - name: ODYSSEUS_SCRIPT_HOST
+              value: 127.0.0.1
+            - name: NTFY_BASE_URL
+              value: http://ntfy:80
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 7000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 7000
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: logs
+              mountPath: /app/logs
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: odysseus-data
+        - name: logs
+          persistentVolumeClaim:
+            claimName: odysseus-logs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: odysseus
+  namespace: odysseus
+spec:
+  selector:
+    app: odysseus
+  ports:
+    - name: http
+      port: 80
+      targetPort: 7000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: odysseus
+  namespace: odysseus
+spec:
+  ingressClassName: public
+  rules:
+    - host: odysseus.homelab
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: odysseus
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: odysseus-public
+  namespace: odysseus
+spec:
+  ingressClassName: public
+  tls:
+    - hosts:
+        - odyssey.matthewgribben.com
+      secretName: odysseus-origin-tls
+  rules:
+    - host: odyssey.matthewgribben.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: odysseus
+                port:
+                  number: 80

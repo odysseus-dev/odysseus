@@ -675,6 +675,16 @@ function initEndpointForm() {
   const provider = el('adm-epProvider');
   const urlInput = el('adm-epUrl');
   const kindSel = el('adm-epKind');
+  const codexPanel = el('adm-openaiCodexPanel');
+  const codexStatus = el('adm-openaiCodexStatus');
+  const codexDevice = el('adm-openaiCodexDevice');
+  const codexUrl = el('adm-openaiCodexUrl');
+  const codexCode = el('adm-openaiCodexCode');
+  const codexExpiry = el('adm-openaiCodexExpiry');
+  const codexSignInBtn = el('adm-openaiCodexSignInBtn');
+  const codexLogoutBtn = el('adm-openaiCodexLogoutBtn');
+  let codexPollTimer = null;
+  let codexPollLoginId = null;
 
   // Custom provider picker — mirrors the (now hidden) <select id="adm-epProvider">
   // so the rest of this function (which reads provider.value and dispatches
@@ -723,10 +733,144 @@ function initEndpointForm() {
     });
   }
 
+  function _isCodexSelected() {
+    return provider.value === 'openai-codex';
+  }
+
+  function _setCodexUi() {
+    const isCodex = _isCodexSelected();
+    const apiKey = el('adm-epApiKey');
+    const epType = el('adm-epType');
+    const apiTest = el('adm-epApiTestBtn');
+    const addBtn = el('adm-epAddBtn');
+    if (codexPanel) codexPanel.classList.toggle('hidden', !isCodex);
+    if (codexPanel) codexPanel.style.display = isCodex ? 'flex' : 'none';
+    if (apiKey) apiKey.style.display = isCodex ? 'none' : '';
+    if (epType) epType.style.display = isCodex ? 'none' : '';
+    if (apiTest) apiTest.style.display = isCodex ? 'none' : '';
+    if (addBtn) addBtn.style.display = isCodex ? 'none' : '';
+    if (isCodex) {
+      urlInput.value = '';
+      urlInput.placeholder = 'OpenAI Codex uses ChatGPT subscription sign-in';
+      _loadCodexStatus();
+    } else {
+      urlInput.placeholder = 'Base URL or pick provider';
+    }
+  }
+
+  async function _loadCodexStatus() {
+    if (!codexStatus) return;
+    try {
+      const res = await fetch('/api/openai-codex/status', { credentials: 'same-origin' });
+      const d = await res.json();
+      if (d.connected) {
+        codexStatus.textContent = `Connected${d.account_id ? ` — ${d.account_id}` : ''}`;
+        codexStatus.className = 'admin-success';
+        if (codexLogoutBtn) codexLogoutBtn.classList.remove('hidden');
+        if (codexSignInBtn) codexSignInBtn.textContent = 'Reconnect';
+      } else {
+        codexStatus.textContent = d.error ? `Disconnected — ${d.error}` : 'Not connected';
+        codexStatus.className = '';
+        if (codexLogoutBtn) codexLogoutBtn.classList.add('hidden');
+        if (codexSignInBtn) codexSignInBtn.textContent = 'Sign in with OpenAI';
+      }
+    } catch (_) {
+      codexStatus.textContent = 'Unable to check Codex connection';
+      codexStatus.className = 'admin-error';
+    }
+  }
+
+  function _stopCodexPolling() {
+    if (codexPollTimer) clearTimeout(codexPollTimer);
+    codexPollTimer = null;
+    codexPollLoginId = null;
+  }
+
+  async function _pollCodex(intervalSeconds) {
+    if (!codexPollLoginId) return;
+    try {
+      const res = await fetch(`/api/openai-codex/device/poll/${encodeURIComponent(codexPollLoginId)}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      const d = await res.json();
+      if (d.status === 'connected') {
+        _stopCodexPolling();
+        if (codexDevice) codexDevice.classList.add('hidden');
+        if (codexStatus) {
+          codexStatus.textContent = `Connected${d.account_id ? ` — ${d.account_id}` : ''}`;
+          codexStatus.className = 'admin-success';
+        }
+        if (d.endpoint_id) _recentlyAddedEpId = String(d.endpoint_id);
+        await loadEndpoints();
+        if (settingsModule && typeof settingsModule.refreshAiModelEndpoints === 'function') {
+          settingsModule.refreshAiModelEndpoints();
+        }
+        return;
+      }
+      if (d.status === 'expired' || d.status === 'error') {
+        _stopCodexPolling();
+        if (codexStatus) {
+          codexStatus.textContent = d.error || 'OpenAI sign-in failed';
+          codexStatus.className = 'admin-error';
+        }
+        return;
+      }
+      const nextInterval = Number(d.interval_seconds || intervalSeconds || 5);
+      codexPollTimer = setTimeout(() => _pollCodex(nextInterval), Math.max(2, nextInterval) * 1000);
+    } catch (e) {
+      codexPollTimer = setTimeout(() => _pollCodex(intervalSeconds || 5), Math.max(5, intervalSeconds || 5) * 1000);
+    }
+  }
+
+  if (codexSignInBtn) {
+    codexSignInBtn.addEventListener('click', async () => {
+      _stopCodexPolling();
+      codexSignInBtn.disabled = true;
+      if (codexStatus) {
+        codexStatus.textContent = 'Starting OpenAI sign-in...';
+        codexStatus.className = '';
+      }
+      try {
+        const res = await fetch('/api/openai-codex/device/start', { method: 'POST', credentials: 'same-origin' });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.detail || 'Unable to start sign-in');
+        codexPollLoginId = d.login_id;
+        if (codexUrl) {
+          const href = d.verification_uri_complete || d.verification_uri || '#';
+          codexUrl.href = href;
+          codexUrl.textContent = d.verification_uri || href;
+        }
+        if (codexCode) codexCode.textContent = d.user_code || '';
+        if (codexExpiry) codexExpiry.textContent = d.expires_at ? `Expires ${new Date(d.expires_at).toLocaleTimeString()}` : '';
+        if (codexDevice) codexDevice.classList.remove('hidden');
+        if (codexStatus) codexStatus.textContent = 'Waiting for OpenAI confirmation...';
+        _pollCodex(Number(d.interval_seconds || 5));
+      } catch (e) {
+        if (codexStatus) {
+          codexStatus.textContent = e && e.message ? e.message : 'OpenAI sign-in failed';
+          codexStatus.className = 'admin-error';
+        }
+      }
+      codexSignInBtn.disabled = false;
+    });
+  }
+
+  if (codexLogoutBtn) {
+    codexLogoutBtn.addEventListener('click', async () => {
+      _stopCodexPolling();
+      await fetch('/api/openai-codex/logout', { method: 'POST', credentials: 'same-origin' });
+      if (codexDevice) codexDevice.classList.add('hidden');
+      await _loadCodexStatus();
+    });
+  }
+
   provider.addEventListener('change', () => {
-    if (provider.value) urlInput.value = provider.value;
+    if (_isCodexSelected()) urlInput.value = '';
+    else if (provider.value) urlInput.value = provider.value;
     else urlInput.value = '';
     if (kindSel) kindSel.value = provider.value ? 'api' : 'proxy';
+    _setCodexUi();
   });
   urlInput.addEventListener('input', () => {
     if (provider.value && urlInput.value.trim() !== provider.value) {
@@ -734,12 +878,15 @@ function initEndpointForm() {
       if (kindSel) kindSel.value = 'proxy';
       _renderPickerMenu();
       _syncPickerCurrent();
+      _setCodexUi();
     }
   });
   if (kindSel) kindSel.value = provider.value ? 'api' : (kindSel.value || 'proxy');
   function _apiEndpointKind() {
     return (kindSel && kindSel.value) ? kindSel.value : (provider.value ? 'api' : 'proxy');
   }
+  _setCodexUi();
+
   function _normalizeBaseUrl(raw) {
     let u = raw.trim();
     // Fix common protocol typos
@@ -818,6 +965,7 @@ function initEndpointForm() {
       msg.textContent = ''; msg.className = '';
       const rawUrl = (urlInput.value || provider.value).trim();
       const apiKey = el('adm-epApiKey').value.trim();
+      if (_isCodexSelected()) return;
       if (!rawUrl) { msg.textContent = 'Select a provider or enter a base URL'; msg.className = 'admin-error'; return; }
       if (provider.value && !apiKey) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
       const url = provider.value && rawUrl === provider.value ? rawUrl : _normalizeBaseUrl(rawUrl);
@@ -865,6 +1013,7 @@ function initEndpointForm() {
     msg.textContent = ''; msg.className = '';
     const rawUrl = (urlInput.value || provider.value).trim();
     const apiKey = el('adm-epApiKey').value.trim();
+    if (_isCodexSelected()) return;
     if (!rawUrl) { msg.textContent = 'Select a provider or enter a base URL'; msg.className = 'admin-error'; return; }
     if (provider.value && !apiKey) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
     // Normalize URL (fix typos, add /v1, strip wrong paths)

@@ -89,7 +89,7 @@ Bundled in `static/fonts/`:
 
 ## Python dependencies
 
-Core (`requirements.txt`) and optional (`requirements-optional.txt`):
+Core (`requirements.txt`), deployment (`requirements-deploy.txt`), and optional (`requirements-optional.txt`):
 
 | Package | License |
 |---|---|
@@ -117,9 +117,10 @@ Core (`requirements.txt`) and optional (`requirements-optional.txt`):
 | qrcode\[pil] | BSD-3-Clause |
 | croniter | MIT |
 | pytest / pytest-asyncio | MIT / Apache-2.0 |
-| duckduckgo-search (optional) | MIT |
+| duckduckgo-search (deployment/optional) | MIT |
+| pdfminer.six (deployment/optional) | MIT |
 | markitdown (optional — Office/EPUB text extraction) | MIT |
-| **PyMuPDF** *(optional — form-filling only)* | **AGPL-3.0** — see note below |
+| **PyMuPDF** *(deployment/optional — PDF viewer + form-filling)* | **AGPL-3.0** — see note below |
 
 ## Companion services (interoperated with, not bundled)
 
@@ -145,12 +146,13 @@ concerns from earlier are resolved:
 - **PDF text extraction** now uses **`pypdf`** (BSD-3-Clause) and **encoding
   detection** uses **`charset-normalizer`** (MIT). chardet (LGPL-2.1) has been
   removed entirely.
-- **PyMuPDF (AGPL-3.0)** is no longer a core dependency. It is **optional** and
-  used *only* by the PDF form-filling feature (`src/pdf_forms.py` and the form
-  endpoints in `routes/document_routes.py`), lazy-imported and listed in
-  `requirements-optional.txt`. The MIT core runs without it. If you choose to
-  install it, AGPL's network clause then applies to *that feature* for your
-  deployment (Artifex also sells a commercial PyMuPDF license that lifts this).
+- **PyMuPDF (AGPL-3.0)** is no longer a native core dependency. It is used by
+  the PDF viewer and form-filling feature (`src/pdf_runtime.py`,
+  `src/pdf_forms.py`, and the form/render endpoints in `routes/document_routes.py`),
+  lazy-imported, and listed in `requirements-deploy.txt` / `requirements-optional.txt`.
+  The MIT core runs without it. If you install or deploy it, AGPL's network
+  clause then applies to *that feature* for your deployment (Artifex also sells
+  a commercial PyMuPDF license that lifts this).
 - **`caldav`** (Python lib) is **dual-licensed GPL-3.0-or-later OR Apache-2.0**.
   Odysseus uses it under **Apache-2.0**, which is permissive and MIT-compatible.
 - **`markitdown`** (Microsoft) is **MIT** and used only as an *optional* dependency for Office/EPUB text

@@ -205,10 +205,12 @@ class DeepResearcher:
         progress_callback: Optional[Callable] = None,
         search_provider: Optional[str] = None,
         category: Optional[str] = None,
+        session_id: Optional[str] = None,
     ):
         self.llm_endpoint = llm_endpoint
         self.llm_model = llm_model
         self.llm_headers = llm_headers
+        self.session_id = session_id
         self.search_provider_override = search_provider
         self.category = category
         self.max_rounds = max_rounds
@@ -385,6 +387,7 @@ class DeepResearcher:
             max_tokens=max_tokens,
             headers=self.llm_headers,
             timeout=timeout,
+            session_id=self.session_id,
         )
         return strip_thinking(response)
 

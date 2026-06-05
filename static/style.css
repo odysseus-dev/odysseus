@@ -2573,6 +2573,24 @@ body.bg-pattern-sparkles {
     .mode-toggle-btn + .mode-toggle-btn {
       border-left: none;
     }
+    /* OpenAI Codex reasoning-effort selector — compact, matches the composer. */
+    .reasoning-effort-select {
+      background: var(--bg);
+      color: color-mix(in srgb, var(--fg) 70%, transparent);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 500;
+      padding: 0 6px;
+      height: 26px;
+      cursor: pointer;
+      max-width: 150px;
+    }
+    .reasoning-effort-select:hover {
+      color: var(--fg);
+      border-color: color-mix(in srgb, var(--fg) 30%, var(--border));
+    }
     /* Message count badge in the chat-meta header (next to the title).
        Auto-hides when empty so a brand-new chat doesn't show "0 msgs". */
     .chat-meta-count {

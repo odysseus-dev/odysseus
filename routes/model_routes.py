@@ -220,6 +220,10 @@ _PROVIDER_CURATED = {
         "gpt-4o", "gpt-4o-mini", "o3", "o4-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
         "gpt-image-1.5", "gpt-image-1", "dall-e-3", "tts-1", "whisper-1",
     ],
+    "openai_codex": [
+        "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark",
+        "gpt-5.2-codex", "gpt-5.2", "gpt-5.1-codex-max", "gpt-5.1-codex-mini", "gpt-5.1",
+    ],
     "anthropic": [
         "claude-sonnet-4", "claude-opus-4", "claude-haiku-4",
         "claude-sonnet-4-5", "claude-haiku-3-5",
@@ -284,6 +288,7 @@ _HOST_TO_CURATED = (
     ("x.ai", "xai"),
     ("openrouter.ai", "openrouter"),
     ("ollama.com", "ollama"),
+    ("chatgpt.com", "openai_codex"),
 )
 
 
@@ -618,6 +623,9 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
+    if _detect_provider(base) == "openai_codex":
+        from src.openai_codex import CODEX_MODELS
+        return list(CODEX_MODELS)
     if _detect_provider(base) == "anthropic":
         # Try Anthropic's /v1/models endpoint first
         url = build_models_url(base)
@@ -702,6 +710,8 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
     """Reachability probe that does not require installed/listed models."""
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
+    if _detect_provider(base) == "openai_codex":
+        return {"reachable": True, "status_code": 200, "error": None}
     headers = build_headers(api_key, base)
 
     # Ollama exposes /v1/models (OpenAI-compatible) AND native /api/version,

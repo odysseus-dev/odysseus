@@ -1,0 +1,659 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: personal-homepage-minio-hypabolic
+  annotations:
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  claimRef:
+    namespace: personal-homepage
+    name: personal-homepage-minio-data
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/personal-homepage-personal-homepage-minio-data-pvc-3027eb87-d1f3-4efb-a643-287bd64c6388
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: personal-homepage-minio-data
+  namespace: personal-homepage
+spec:
+  volumeName: personal-homepage-minio-hypabolic
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: personal-homepage-postgres-hypabolic
+  annotations:
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  claimRef:
+    namespace: personal-homepage
+    name: postgres-data-personal-homepage-postgres-0
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/personal-homepage-postgres-data-personal-homepage-postgres-0-pvc-9abca28d-d873-4f46-8ecc-a4ea661f59e4
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data-personal-homepage-postgres-0
+  namespace: personal-homepage
+spec:
+  volumeName: personal-homepage-postgres-hypabolic
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: personal-homepage-uat-minio-hypabolic
+  annotations:
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  claimRef:
+    namespace: personal-homepage-uat
+    name: personal-homepage-minio-data
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/personal-homepage-uat-personal-homepage-minio-data-pvc-e5be8431-8adb-4a42-ad09-fa772fa918e9
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: personal-homepage-minio-data
+  namespace: personal-homepage-uat
+spec:
+  volumeName: personal-homepage-uat-minio-hypabolic
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: personal-homepage-uat-postgres-hypabolic
+  annotations:
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  claimRef:
+    namespace: personal-homepage-uat
+    name: postgres-data-personal-homepage-postgres-0
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/personal-homepage-uat-postgres-data-personal-homepage-postgres-0-pvc-99e45248-3913-4b5f-be53-08a3ef11ce14
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data-personal-homepage-postgres-0
+  namespace: personal-homepage-uat
+spec:
+  volumeName: personal-homepage-uat-postgres-hypabolic
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: n8n-minio-hypabolic
+  annotations:
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  claimRef:
+    namespace: n8n
+    name: minio-data
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/n8n-minio-data-pvc-fc335f49-5620-4c65-bd69-36babd73df77
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+  namespace: n8n
+spec:
+  volumeName: n8n-minio-hypabolic
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: n8n-data-hypabolic
+  annotations:
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  claimRef:
+    namespace: n8n
+    name: n8n-data
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/n8n-n8n-data-pvc-861f9de3-7827-49f5-969e-08283c6d17f7
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: n8n-data
+  namespace: n8n
+spec:
+  volumeName: n8n-data-hypabolic
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: n8n-postgres-hypabolic
+  annotations:
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  claimRef:
+    namespace: n8n
+    name: postgres-data
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/n8n-postgres-data-pvc-80091160-709d-4de6-b45b-a31220bc37b3
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: n8n
+spec:
+  volumeName: n8n-postgres-hypabolic
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: n8n-research-ingest-vault-hypabolic
+  annotations:
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+spec:
+  capacity:
+    storage: 2Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  claimRef:
+    namespace: n8n
+    name: research-ingest-vault
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/n8n-research-ingest-vault-pvc-005f344b-43ea-4b2c-8781-7aeef0b3f90d
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: research-ingest-vault
+  namespace: n8n
+spec:
+  volumeName: n8n-research-ingest-vault-hypabolic
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: atomic-api-artifacts-hypabolic
+  annotations:
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  claimRef:
+    namespace: atomic-platform
+    name: atomic-api-artifacts
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/atomic-platform-atomic-api-artifacts-pvc-739db751-cb28-44de-b762-a1aa8c22c265
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: atomic-api-artifacts
+  namespace: atomic-platform
+spec:
+  volumeName: atomic-api-artifacts-hypabolic
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: atomic-postgres-hypabolic
+  annotations:
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+spec:
+  capacity:
+    storage: 8Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  claimRef:
+    namespace: atomic-platform
+    name: data-atomic-postgres-0
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/atomic-platform-data-atomic-postgres-0-pvc-9c40b95b-8896-489d-bc5b-fae017008467
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-atomic-postgres-0
+  namespace: atomic-platform
+spec:
+  volumeName: atomic-postgres-hypabolic
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 8Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: hypabolic-marketing-stage-postgres-hypabolic
+  annotations:
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+spec:
+  capacity:
+    storage: 2Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  claimRef:
+    namespace: hypabolic-marketing-web-stage
+    name: data-hypabolic-marketing-postgres-0
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/hypabolic-marketing-web-stage-data-hypabolic-marketing-postgres-0-pvc-40aa920c-e080-46ee-9fa9-10f93b16a56b
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-hypabolic-marketing-postgres-0
+  namespace: hypabolic-marketing-web-stage
+spec:
+  volumeName: hypabolic-marketing-stage-postgres-hypabolic
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: hypabolic-marketing-prod-postgres-hypabolic
+  annotations:
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  claimRef:
+    namespace: hypabolic-marketing-web
+    name: data-hypabolic-marketing-postgres-0
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/hypabolic-marketing-web-data-hypabolic-marketing-postgres-0-pvc-48e51a56-0d98-4edb-a62b-44695013b132
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-hypabolic-marketing-postgres-0
+  namespace: hypabolic-marketing-web
+spec:
+  volumeName: hypabolic-marketing-prod-postgres-hypabolic
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: dev-mongodb-hypabolic
+  annotations:
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+spec:
+  capacity:
+    storage: 128Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  claimRef:
+    namespace: dev
+    name: mongodb-storage-mongodb-0
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/dev-mongodb-storage-mongodb-0-pvc-37e605bf-619c-47a6-8368-bfbda3694413
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongodb-storage-mongodb-0
+  namespace: dev
+spec:
+  volumeName: dev-mongodb-hypabolic
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 128Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: dev-postgres-hypabolic
+  annotations:
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  claimRef:
+    namespace: dev
+    name: postgres-storage-postgres-0
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/dev-postgres-storage-postgres-0-pvc-42c96307-672d-486e-9710-2b21b0ca2dfe
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-storage-postgres-0
+  namespace: dev
+spec:
+  volumeName: dev-postgres-hypabolic
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: portainer-hypabolic
+  annotations:
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  claimRef:
+    namespace: portainer
+    name: portainer
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/portainer-portainer-pvc-d94fe36e-f10c-4dcf-a37d-915b1eaa4611
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: portainer
+  namespace: portainer
+spec:
+  volumeName: portainer-hypabolic
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 10Gi

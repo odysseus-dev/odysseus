@@ -19,6 +19,17 @@ _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
 
 logger = logging.getLogger(__name__)
 
+
+def _headers_with_owner(headers, owner: str | None, reasoning_effort: str | None = None):
+    out = dict(headers or {}) if isinstance(headers, dict) else {}
+    if owner is not None:
+        out["_odysseus_owner"] = owner
+    # Per-request OpenAI Codex reasoning effort (carried as internal routing
+    # metadata; ignored by non-Codex providers, stripped before upstream).
+    if reasoning_effort:
+        out["_odysseus_reasoning_effort"] = str(reasoning_effort)
+    return out
+
 # Model-name substrings that are NOT chat/generation models — research must
 # never pick these as its model. An OpenAI-style endpoint often lists
 # `text-embedding-ada-002` etc. first in its model list, which is why research
@@ -344,6 +355,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         extraction_timeout: Optional[int] = Field(default=None, ge=15, le=3600)
         extraction_concurrency: Optional[int] = Field(default=None, ge=1, le=12)
         category: Optional[str] = None
+        reasoning_effort: Optional[str] = None  # OpenAI Codex effort (off|minimal|low|medium|high)
 
     @router.post("/api/research/start")
     async def research_start(body: ResearchStartRequest, request: Request):
@@ -441,7 +453,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             llm_endpoint=ep_url,
             llm_model=ep_model,
             max_time=body.max_time,
-            llm_headers=ep_headers,
+            llm_headers=_headers_with_owner(ep_headers, user, body.reasoning_effort),
             max_rounds=effective_max_rounds,
             search_provider=body.search_provider or None,
             category=body.category or None,

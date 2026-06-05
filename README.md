@@ -322,13 +322,14 @@ To expose Odysseus on a local network or Tailscale with HTTPS:
 4. Install the `mkcert` CA on any other device you want to access Odysseus from (e.g., for iOS, email the `rootCA.pem` to yourself, install the profile, and trust it in Certificate Trust Settings).
 
 ### Optional Dependencies
-`requirements-optional.txt` contains packages that unlock extra features. It is not installed by default.
+Docker/deployment images install the search and PDF runtime dependencies needed by the web UI. Native installs keep AGPL-sensitive or heavier extras in `requirements-optional.txt`; install it only when you need those features locally.
 
 | Package | Feature unlocked |
 |---------|-----------------|
 | `faster-whisper` | Local speech-to-text (microphone -> text) via the "local" STT provider. |
-| `duckduckgo-search` | DuckDuckGo as a search provider option. |
-| `PyMuPDF` | PDF page rendering in the side viewer panel and form-filling. (Note: AGPL-3.0) |
+| `duckduckgo-search` | DuckDuckGo as a search provider option. Included in Docker/deployment images. |
+| `pdfminer.six` | PDF text extraction for PDFs found during web/deep research. Included in Docker/deployment images. |
+| `PyMuPDF` | PDF page rendering in the side viewer panel and form-filling. Included in Docker/deployment images. (Note: AGPL-3.0) |
 | `markitdown` | Office/EPUB document text extraction (converts .docx/.xlsx/.pptx/.xls/.epub to Markdown). |
 
 ## Security Notes

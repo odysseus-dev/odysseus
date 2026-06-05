@@ -29,6 +29,11 @@ COPY requirements.txt requirements-optional.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && if [ "$INSTALL_OPTIONAL" = "true" ]; then pip install --no-cache-dir -r requirements-optional.txt; fi
 
+# Deployment image deps for features exposed by the web app. These stay
+# separate from native core requirements because PyMuPDF is AGPL-3.0.
+COPY requirements-deploy.txt .
+RUN pip install --no-cache-dir -r requirements-deploy.txt
+
 # Copy app code
 COPY . .
 

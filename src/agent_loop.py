@@ -38,6 +38,13 @@ from src.agent_tools import (
 logger = logging.getLogger(__name__)
 
 
+def _headers_with_owner(headers: Optional[Dict], owner: Optional[str]) -> Dict:
+    out = dict(headers or {}) if isinstance(headers, dict) else {}
+    if owner is not None:
+        out["_odysseus_owner"] = owner
+    return out
+
+
 def _load_mcp_disabled_map() -> Dict[str, set]:
     """Load per-server disabled tool sets from the database."""
     from core.database import McpServer, SessionLocal
@@ -1129,6 +1136,7 @@ def _append_tool_results(
     used_native: bool,
     round_num: int,
     round_reasoning: str = "",
+    codex_output_items: Optional[list] = None,
 ):
     """Append tool execution results back into the message history for the next LLM round.
 
@@ -1177,6 +1185,14 @@ def _append_tool_results(
             }
             for j, tc in enumerate(native_tool_calls)
         ]
+        # Carry the model's verbatim Codex output items (reasoning + tool calls)
+        # so the codex payload builder can replay the encrypted reasoning on the
+        # next round for prompt-cache continuity. This is an Odysseus-only,
+        # in-memory field: _sanitize_llm_messages strips it for every provider,
+        # and the codex branch reads it from the un-sanitized message list. It is
+        # never persisted (the saved transcript is built separately).
+        if codex_output_items:
+            assistant_msg["_codex_output_items"] = codex_output_items
         messages.append(assistant_msg)
         for j, tc in enumerate(native_tool_calls):
             result_text = tool_result_texts[j] if j < len(tool_result_texts) else ""
@@ -1298,7 +1314,7 @@ def _build_actions_snapshot(tool_events: list, limit: int = 8000) -> str:
 
 async def _run_verifier_subagent(
     instruction: str, actions_snapshot: str,
-    *, endpoint_url: str, model: str, headers: dict,
+    *, endpoint_url: str, model: str, headers: dict, session_id: Optional[str] = None,
 ) -> list:
     """Fresh-context completion verifier. A second model instance with NO
     shared history reads the user's request + a record of what the agent did
@@ -1331,6 +1347,7 @@ async def _run_verifier_subagent(
             url=endpoint_url, model=model,
             messages=[{"role": "user", "content": prompt}],
             headers=headers, temperature=0.0, max_tokens=600, timeout=60,
+            session_id=session_id,
         )
     except Exception as e:
         logger.warning(f"[agent] verifier subagent failed: {e}")
@@ -1674,6 +1691,7 @@ async def stream_agent_loop(
         round_response = ""
         round_reasoning = ""  # reasoning_content deltas (DeepSeek-thinking, vLLM --reasoning-parser)
         native_tool_calls = []  # populated if model uses function calling
+        codex_output_items = []  # verbatim Codex output items for reasoning replay
         # Reset doc streaming state per round
         _doc_acc = ""
         _doc_opened = False
@@ -1729,7 +1747,7 @@ async def stream_agent_loop(
         # Primary target + any configured fallback models. stream_llm_with_fallback
         # only switches on a pre-content failure, so streamed output is never
         # duplicated; the dead-host cooldown keeps repeat primary attempts cheap.
-        _candidates = [(endpoint_url, model, headers)] + list(fallbacks or [])
+        _candidates = [(endpoint_url, model, _headers_with_owner(headers, owner))] + list(fallbacks or [])
         # stream_llm enforces a per-read INACTIVITY timeout (httpx read=timeout),
         # which kills a wedged/silent endpoint. This wall-clock deadline is the
         # complementary cap for the rare stream that trickles bytes forever and
@@ -1743,6 +1761,7 @@ async def stream_agent_loop(
             prompt_type=prompt_type if round_num == 1 else None,
             tools=all_tool_schemas if all_tool_schemas else None,
             timeout=agent_stream_timeout,
+            session_id=session_id,
         ):
             if time.time() > _round_deadline:
                 logger.warning(f"[agent] round {round_num} stream exceeded wall-clock deadline; cutting off")
@@ -1792,6 +1811,8 @@ async def stream_agent_loop(
                                 if len(decoded) > _doc_last_len:
                                     _doc_last_len = len(decoded)
                                     yield f'data: {json.dumps({"type": "doc_stream_delta", "content": decoded})}\n\n'
+                    elif data.get("type") == "codex_output_items":
+                        codex_output_items = data.get("items", []) or []
                     elif data.get("type") == "tool_calls":
                         native_tool_calls = data.get("calls", [])
                         logger.info(f"Agent round {round_num}: received {len(native_tool_calls)} native tool call(s)")
@@ -1916,7 +1937,8 @@ async def stream_agent_loop(
                     }]
                     _raw = await llm_call_async(
                         url=endpoint_url, model=model, messages=_synth_messages,
-                        headers=headers, temperature=0.3, max_tokens=max_tokens, timeout=60,
+                        headers=_headers_with_owner(headers, owner), temperature=0.3, max_tokens=max_tokens, timeout=60,
+                        session_id=session_id,
                     )
                     _synth = _THINK_RE.sub("", strip_tool_blocks(_raw or "")).strip()
                 except Exception as _e:
@@ -1989,7 +2011,8 @@ async def stream_agent_loop(
                 _vfail = await _run_verifier_subagent(
                     _verifier_instruction,
                     _build_actions_snapshot(tool_events),
-                    endpoint_url=endpoint_url, model=model, headers=headers,
+                    endpoint_url=endpoint_url, model=model, headers=_headers_with_owner(headers, owner),
+                    session_id=session_id,
                 )
                 if _vfail:
                     _verifier_rounds += 1
@@ -2319,7 +2342,8 @@ async def stream_agent_loop(
         # Feed results back to LLM for next round
         _append_tool_results(messages, round_response, native_tool_calls,
                              tool_results, tool_result_texts, used_native, round_num,
-                             round_reasoning=round_reasoning)
+                             round_reasoning=round_reasoning,
+                             codex_output_items=codex_output_items)
 
         # Emit agent_step event
         yield (

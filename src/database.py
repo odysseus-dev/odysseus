@@ -13,6 +13,8 @@ from core.database import (  # explicit re-exports for IDE/type-checker visibili
     DocumentVersion,
     GalleryImage,
     ModelEndpoint,
+    ProviderOAuthCredential,
+    ProviderOAuthDeviceLogin,
     McpServer,
     Comparison,
     ApiToken,

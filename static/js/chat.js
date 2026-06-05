@@ -153,9 +153,60 @@ import createResearchSynapse from './researchSynapse.js';
   /**
    * Initialize with dependencies
    */
+  // ── OpenAI Codex reasoning-effort dropdown ──
+  // The control is per-session: the choice persists per session id in
+  // localStorage, falling back to the last-used global default. It is only
+  // shown when the active session's endpoint is the Codex backend.
+  const _REASONING_EFFORT_KEY = 'odysseus-reasoning-effort';
+  function _isCodexEndpoint() {
+    try {
+      return (sessionModule.getCurrentEndpointUrl() || '').includes('chatgpt.com/backend-api');
+    } catch (_) { return false; }
+  }
+  // Effort applies to the chat model when it's a Codex endpoint, AND to the
+  // Deep Research model whenever research is active (research uses its own,
+  // possibly-Codex model; the backend ignores the value for non-Codex models).
+  function _reasoningEffortApplicable() {
+    if (_isCodexEndpoint()) return true;
+    try { const r = uiModule.el('research-toggle'); if (r && r.checked) return true; } catch (_) {}
+    return false;
+  }
+  function _refreshReasoningEffortUI() {
+    const sel = uiModule.el('reasoning-effort-select');
+    if (!sel) return;
+    if (!_reasoningEffortApplicable()) { sel.style.display = 'none'; return; }
+    sel.style.display = '';
+    let sid = '';
+    try { sid = sessionModule.getCurrentSessionId() || ''; } catch (_) {}
+    const stored = (sid && localStorage.getItem(`${_REASONING_EFFORT_KEY}:${sid}`))
+      || localStorage.getItem(_REASONING_EFFORT_KEY) || 'medium';
+    if ([...sel.options].some(o => o.value === stored)) sel.value = stored;
+  }
+  function _setupReasoningEffort() {
+    const sel = uiModule.el('reasoning-effort-select');
+    if (!sel || sel._wired) return;
+    sel._wired = true;
+    sel.addEventListener('change', () => {
+      let sid = '';
+      try { sid = sessionModule.getCurrentSessionId() || ''; } catch (_) {}
+      if (sid) localStorage.setItem(`${_REASONING_EFFORT_KEY}:${sid}`, sel.value);
+      localStorage.setItem(_REASONING_EFFORT_KEY, sel.value);
+    });
+    document.addEventListener('odysseus:model-picked', _refreshReasoningEffortUI);
+    const ta = document.getElementById('message');
+    if (ta) ta.addEventListener('focus', _refreshReasoningEffortUI);
+    // Toggling Deep Research changes applicability — refresh on those clicks.
+    ['research-toggle-btn', 'research-toggle'].forEach((id) => {
+      const node = document.getElementById(id);
+      if (node) node.addEventListener('click', () => setTimeout(_refreshReasoningEffortUI, 0));
+    });
+    _refreshReasoningEffortUI();
+  }
+
   export function init(apiBase) {
     API_BASE = apiBase;
     initSlashCommands({ apiBase, isStreaming: () => isStreaming });
+    _setupReasoningEffort();
     // Initialize email inbox
     emailInbox.init(documentModule);
     // Wire the slash-command autocomplete popup on the chat composer. The
@@ -787,6 +838,13 @@ import createResearchSynapse from './researchSynapse.js';
       }
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
+      }
+      // Per-session OpenAI Codex reasoning effort (composer dropdown). Applies
+      // to the chat model (Codex endpoint) or the Deep Research model when
+      // research is active; harmless on others (backend ignores it).
+      if (_reasoningEffortApplicable()) {
+        const _effSel = el('reasoning-effort-select');
+        if (_effSel && _effSel.value) fd.append('reasoning_effort', _effSel.value);
       }
 
 

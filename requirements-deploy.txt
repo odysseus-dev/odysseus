@@ -1,0 +1,14 @@
+# Dependencies installed in the Docker/deployment image so the web UI features
+# work out of the box. Keep AGPL-sensitive or deployment-only packages here
+# instead of forcing them into native developer installs.
+
+# DuckDuckGo provider used by search and deep research.
+duckduckgo-search
+
+# PDF extraction for PDFs discovered during web/deep research.
+pdfminer.six
+
+# PDF page rendering in the side viewer panel and form-filling.
+# NOTE: PyMuPDF is AGPL-3.0. Running it in a network-served deployment brings
+# AGPL obligations; see ACKNOWLEDGMENTS.md.
+PyMuPDF

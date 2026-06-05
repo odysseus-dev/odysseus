@@ -86,6 +86,7 @@ class ResearchHandler:
                     progress_callback=on_progress,
                     _task_entry=entry,
                     llm_headers=llm_headers,
+                    session_id=session_id,
                 )
                 entry["result"] = result
                 entry["status"] = "done"
@@ -236,6 +237,7 @@ class ResearchHandler:
         progress_callback=None,
         _task_entry: dict = None,
         llm_headers: dict = None,
+        session_id: str = None,
     ) -> str:
         """
         Run iterative deep research using the LLM-in-the-loop DeepResearcher.
@@ -263,6 +265,7 @@ class ResearchHandler:
                 llm_endpoint=llm_endpoint,
                 llm_model=llm_model,
                 llm_headers=llm_headers,
+                session_id=session_id,
                 max_rounds=8,
                 max_time=max_time,
                 max_report_tokens=int(get_setting("research_max_tokens", 8192)),

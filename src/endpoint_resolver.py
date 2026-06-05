@@ -167,6 +167,12 @@ def build_chat_url(base: str) -> str:
     """Return the correct chat endpoint URL for a given base."""
     base = resolve_url(base)
     provider = _detect_provider(base)
+    if provider == "openai_codex":
+        if base.rstrip("/").endswith("/codex/responses"):
+            return base.rstrip("/")
+        if base.rstrip("/").endswith("/codex"):
+            return base.rstrip("/") + "/responses"
+        return base.rstrip("/") + "/codex/responses"
     if provider == "anthropic":
         return _anthropic_api_root(base) + "/v1/messages"
     if provider == "ollama":
@@ -178,6 +184,8 @@ def build_models_url(base: str) -> str:
     """Return the provider-specific model-list endpoint URL for a base."""
     base = resolve_url(base)
     provider = _detect_provider(base)
+    if provider == "openai_codex":
+        return base.rstrip("/") + "/models"
     if provider == "anthropic":
         return _anthropic_api_root(base) + "/v1/models"
     if provider == "ollama":
@@ -189,6 +197,8 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     """Build auth headers for an endpoint."""
     provider = _detect_provider(base)
     headers: Dict[str, str] = {}
+    if provider == "openai_codex":
+        return headers
     if provider == "anthropic":
         if api_key:
             headers["x-api-key"] = api_key

@@ -1,0 +1,209 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: harbor-redis-hypabolic
+  annotations:
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+spec:
+  accessModes:
+    - ReadWriteOnce
+  capacity:
+    storage: 1Gi
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/harbor-data-harbor-redis-0-pvc-22d283f2-4921-440c-b35a-9c4cb2d10c2e
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-harbor-redis-0
+  namespace: harbor
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  volumeName: harbor-redis-hypabolic
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: harbor-database-hypabolic
+  annotations:
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+spec:
+  accessModes:
+    - ReadWriteOnce
+  capacity:
+    storage: 1Gi
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/harbor-database-data-harbor-database-0-pvc-4c5c5df0-4752-42db-a67a-403361c8432a
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: database-data-harbor-database-0
+  namespace: harbor
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  volumeName: harbor-database-hypabolic
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: harbor-trivy-hypabolic
+  annotations:
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+spec:
+  accessModes:
+    - ReadWriteOnce
+  capacity:
+    storage: 5Gi
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/harbor-data-harbor-trivy-0-pvc-819247db-d2c8-471b-86ed-e2a9d7293efc
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-harbor-trivy-0
+  namespace: harbor
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  volumeName: harbor-trivy-hypabolic
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: harbor-jobservice-hypabolic
+  annotations:
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+spec:
+  accessModes:
+    - ReadWriteOnce
+  capacity:
+    storage: 1Gi
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/harbor-harbor-jobservice-pvc-cbeada76-d0bf-448c-8b51-08809f80c98d
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: harbor-jobservice
+  namespace: harbor
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  volumeName: harbor-jobservice-hypabolic
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: harbor-registry-hypabolic
+  annotations:
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+spec:
+  accessModes:
+    - ReadWriteOnce
+  capacity:
+    storage: 5Gi
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/harbor-harbor-registry-pvc-f5211d92-0bb7-4b7b-a240-70a3321c2566
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: harbor-registry
+  namespace: harbor
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  volumeName: harbor-registry-hypabolic

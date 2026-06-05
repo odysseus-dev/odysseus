@@ -306,6 +306,7 @@ class ResearchHandler:
                         category=category,
                         extraction_timeout=extraction_timeout,
                         extraction_concurrency=extraction_concurrency,
+                        session_id=session_id,
                     ),
                     timeout=hard_timeout,
                 )
@@ -675,6 +676,7 @@ class ResearchHandler:
         category: str = None,
         extraction_timeout: int = None,
         extraction_concurrency: int = None,
+        session_id: str = None,
     ) -> str:
         """
         Run iterative deep research using the LLM-in-the-loop DeepResearcher.
@@ -750,6 +752,7 @@ class ResearchHandler:
                 progress_callback=progress_callback,
                 search_provider=search_provider,
                 category=category,
+                session_id=session_id,
             )
             if _task_entry is not None:
                 _task_entry["researcher"] = researcher

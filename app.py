@@ -716,6 +716,9 @@ app.include_router(setup_codex_routes(
 ))
 app.include_router(setup_claude_routes())
 
+from routes.openai_codex_routes import setup_openai_codex_routes
+app.include_router(setup_openai_codex_routes())
+
 from routes.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
 

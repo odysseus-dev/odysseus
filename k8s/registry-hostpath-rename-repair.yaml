@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: registry-claim-hypabolic
+  annotations:
+    hostPathProvisionerIdentity: hypabolic-macpro6-1
+    pv.kubernetes.io/provisioned-by: microk8s.io/hostpath
+spec:
+  accessModes:
+    - ReadWriteMany
+  capacity:
+    storage: 20Gi
+  hostPath:
+    path: /var/snap/microk8s/common/default-storage/container-registry-registry-claim-pvc-d83a6242-e2e9-493a-aab7-217f15c1c2b3
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - hypabolic-macpro6-1
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry-claim-hypabolic
+  namespace: container-registry
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: microk8s-hostpath
+  volumeMode: Filesystem
+  volumeName: registry-claim-hypabolic

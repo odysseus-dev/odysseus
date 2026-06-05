@@ -99,6 +99,18 @@ DEFAULT_SETTINGS = {
     # unbounded model/API bill. Other values are bounded to [60, 86400].
     # Tune via Settings or by editing data/settings.json.
     "research_run_timeout_seconds": 1800,
+    # OpenAI Codex (ChatGPT-subscription) reasoning effort. One of
+    # minimal|low|medium|high (or "off" to send no reasoning block and let the
+    # model use its built-in default). The chat composer can override this
+    # per-session via the _odysseus_reasoning_effort request header.
+    "codex_reasoning_effort": "medium",
+    # Replay the model's encrypted reasoning (and tool calls) verbatim across
+    # agent tool-loop rounds, matching the codex CLI / pi. Improves reasoning
+    # continuity and prompt-cache reads on later rounds. OFF by default: it
+    # re-sends function_call ids that must pair with their reasoning items, and
+    # a mismatch 400s — enable once verified against the live Codex endpoint.
+    # Watch the per-round `cached_tokens` in usage to confirm cache hits.
+    "codex_reasoning_replay": False,
     "agent_max_tool_calls": 0,
     "agent_max_rounds": 20,  # per-message agent step cap (clamped 1..200)
     "agent_input_token_budget": 6000,
@@ -240,6 +252,9 @@ _PER_USER_KEYS = {
     "default_endpoint_id", "default_model", "default_model_fallbacks",
     "utility_endpoint_id", "utility_model", "utility_model_fallbacks",
     "research_endpoint_id", "research_model",
+    # Each user picks their own Codex reasoning effort (the composer dropdown
+    # persists here when no per-session override is sent).
+    "codex_reasoning_effort",
 }
 
 

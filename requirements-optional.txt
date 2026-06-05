@@ -14,14 +14,20 @@ faster-whisper
 
 # DuckDuckGo as a search provider option.
 # Install if you want DDG in the search-provider dropdown.
+# Docker/deployment images install this via requirements-deploy.txt.
 # Alternatives: SearXNG, Brave, Tavily, Serper, Google PSE.
 duckduckgo-search
+
+# PDF extraction for PDFs discovered during web/deep research.
+# Docker/deployment images install this via requirements-deploy.txt.
+pdfminer.six
 
 # PDF form-filling feature (fillable AcroForm detection, field extraction,
 # value/annotation/signature stamping, page rendering for the form overlay).
 # NOTE: PyMuPDF is AGPL-3.0. Installing it brings AGPL obligations for a
 # network-served app — see ACKNOWLEDGMENTS.md. The MIT core (PDF *text*
 # extraction via pypdf) works without it; this only unlocks form-filling.
+# Docker/deployment images install this via requirements-deploy.txt.
 PyMuPDF
 
 # Office / EPUB document text extraction (chat attachments + the personal-docs

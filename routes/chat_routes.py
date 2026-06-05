@@ -47,6 +47,18 @@ _active_streams: Dict[str, dict] = {}
 _IMAGE_MODEL_PREFIXES = ("gpt-image", "dall-e", "chatgpt-image")
 
 
+def _headers_with_owner(headers, owner: str | None, reasoning_effort: str | None = None):
+    out = dict(headers or {}) if isinstance(headers, dict) else {}
+    if owner is not None:
+        out["_odysseus_owner"] = owner
+    # Per-session Codex reasoning effort from the composer dropdown. Ignored by
+    # every non-Codex provider; carried as internal routing metadata so it never
+    # leaks upstream (see llm_core._split_internal_headers).
+    if reasoning_effort:
+        out["_odysseus_reasoning_effort"] = str(reasoning_effort)
+    return out
+
+
 def _stream_set(session_id: str, **fields) -> None:
     """Update fields on the active-stream entry for `session_id`, or
     no-op if the entry has already been popped. Using .get() avoids a
@@ -326,7 +338,8 @@ def setup_chat_routes(
             try:
                 _r_ep, _r_model, _r_headers = _resolve_research_endpoint(sess)
                 research_ctx = await research_handler.call_research_service(
-                    message, _r_ep, _r_model, llm_headers=_r_headers
+                    message, _r_ep, _r_model, llm_headers=_headers_with_owner(_r_headers, get_current_user(request), chat_request.reasoning_effort),
+                    session_id=session,
                 )
                 ctx.messages.insert(
                     len(ctx.preface),
@@ -339,10 +352,11 @@ def setup_chat_routes(
             sess.endpoint_url,
             sess.model,
             ctx.messages,
-            headers=sess.headers,
+            headers=_headers_with_owner(sess.headers, get_current_user(request), chat_request.reasoning_effort),
             temperature=ctx.preset.temperature,
             max_tokens=ctx.preset.max_tokens,
             prompt_type=preset_id,
+            session_id=session,
         )
         _clean_reply, _clean_md = clean_thinking_for_save(reply, {"model": sess.model})
         sess.add_message(ChatMessage("assistant", _clean_reply, metadata=_clean_md))
@@ -423,6 +437,9 @@ def setup_chat_routes(
                 _tool_intent.reason,
             )
         active_doc_id = form_data.get("active_doc_id", "").strip()
+        # Per-session Codex reasoning effort (composer dropdown). Empty = fall
+        # back to the user's saved `codex_reasoning_effort` setting in llm_core.
+        reasoning_effort = (form_data.get("reasoning_effort") or "").strip() or None
         logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
 
         try:
@@ -754,15 +771,19 @@ def setup_chat_routes(
                         if _prior_report:
                             logger.info(f"Continuing research for session {session} with {len(_src_urls)} prior URLs")
 
+                    # Research uses its own (possibly Codex) model — thread the
+                    # composer's per-session reasoning effort into both the query
+                    # synthesis and the research run so the dropdown applies here.
+                    _r_headers_eff = _headers_with_owner(_r_headers, _user, reasoning_effort)
                     # Synthesize conversation into a focused research query
                     _research_query = await research_handler.synthesize_query(
-                        sess, message, _r_ep, _r_model, _r_headers,
+                        sess, message, _r_ep, _r_model, _r_headers_eff,
                     )
                     logger.info(f"Research query: {_research_query[:120]}")
 
                     research_handler.start_research(
                         session, _research_query, _r_ep, _r_model,
-                        llm_headers=_r_headers,
+                        llm_headers=_r_headers_eff,
                         prior_report=_prior_report,
                         prior_findings=_prior_findings,
                         prior_urls=_prior_urls,
@@ -875,7 +896,7 @@ def setup_chat_routes(
                 _answered_by = None  # set if the selected model failed and a fallback answered
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
                 try:
-                    _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
+                    _chat_candidates = [(sess.endpoint_url, sess.model, _headers_with_owner(sess.headers, _user, reasoning_effort))] + _fallback_candidates
                     async for chunk in stream_llm_with_fallback(
                         _chat_candidates,
                         messages,
@@ -888,6 +909,7 @@ def setup_chat_routes(
                         max_tokens=ctx.preset.max_tokens,
                         prompt_type=preset_id,
                         tools=None,
+                        session_id=session,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -1002,7 +1024,7 @@ def setup_chat_routes(
                         sess.endpoint_url,
                         sess.model,
                         messages,
-                        headers=sess.headers,
+                        headers=_headers_with_owner(sess.headers, None, reasoning_effort),
                         temperature=ctx.preset.temperature,
                         max_tokens=ctx.preset.max_tokens,
                         prompt_type=preset_id,
@@ -1273,7 +1295,7 @@ def setup_chat_routes(
                     sess.endpoint_url,
                     sess.model,
                     messages,
-                    headers=sess.headers,
+                    headers=_headers_with_owner(sess.headers, get_current_user(request)),
                     temperature=0.7,
                     # 0 = let the server decide (no cap). A hardcoded 4096 made
                     # local reasoning models (Qwen3 / R1) burn the whole budget
@@ -1281,6 +1303,7 @@ def setup_chat_routes(
                     # on "Rewriting...". Same fix as the chat max_tokens cap.
                     max_tokens=0,
                     tools=None,
+                    session_id=session_id,
                 ):
                     if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                         try:

@@ -1110,6 +1110,14 @@
           </button>
         </div>
         <div class="chat-input-right">
+          <!-- Reasoning effort (OpenAI Codex only; shown when a Codex model is selected) -->
+          <select id="reasoning-effort-select" class="reasoning-effort-select" title="Reasoning effort" aria-label="Reasoning effort" style="display:none;">
+            <option value="off">Reasoning: Auto</option>
+            <option value="minimal">Reasoning: Minimal</option>
+            <option value="low">Reasoning: Low</option>
+            <option value="medium" selected>Reasoning: Medium</option>
+            <option value="high">Reasoning: High</option>
+          </select>
           <!-- Agent / Chat mode toggle -->
           <div class="mode-toggle">
             <button type="button" class="mode-toggle-btn active" id="mode-agent-btn" aria-pressed="true">Agent</button>
@@ -2083,6 +2091,7 @@
                   <option value="https://api.anthropic.com" data-logo="anthropic">Anthropic</option>
                   <option value="https://api.deepseek.com/v1" data-logo="deepseek" selected>DeepSeek</option>
                   <option value="https://api.openai.com/v1" data-logo="openai">OpenAI</option>
+                  <option value="openai-codex" data-logo="openai">OpenAI Codex</option>
                   <option value="https://openrouter.ai/api/v1" data-logo="openrouter">OpenRouter</option>
                   <option value="https://ollama.com/api" data-logo="ollama">Ollama Cloud</option>
                   <option value="https://api.groq.com/openai/v1" data-logo="groq">Groq</option>
@@ -2107,6 +2116,18 @@
                   <button class="admin-btn-sm" id="adm-epApiTestBtn" style="width:55px;text-align:center;">Test</button>
                   <button class="admin-btn-sm hidden" id="adm-epApiCancelTestBtn" style="width:62px;text-align:center;">Cancel</button>
                   <button class="admin-btn-add" id="adm-epAddBtn" style="width:55px;text-align:center;">Add</button>
+                </div>
+                <div id="adm-openaiCodexPanel" class="hidden" style="flex-direction:column;gap:8px;font-size:12px;">
+                  <div id="adm-openaiCodexStatus" style="opacity:0.72;">Checking connection...</div>
+                  <div id="adm-openaiCodexDevice" class="hidden" style="line-height:1.6;">
+                    <div>Visit <a id="adm-openaiCodexUrl" href="#" target="_blank" rel="noopener" class="accent-link"></a></div>
+                    <div>Code: <strong id="adm-openaiCodexCode" style="letter-spacing:1px;"></strong></div>
+                    <div id="adm-openaiCodexExpiry" style="opacity:0.65;"></div>
+                  </div>
+                  <div style="display:flex;gap:8px;align-items:center;">
+                    <button class="admin-btn-add" id="adm-openaiCodexSignInBtn" type="button" style="width:auto;">Sign in with OpenAI</button>
+                    <button class="admin-btn-sm hidden" id="adm-openaiCodexLogoutBtn" type="button" style="width:auto;">Logout</button>
+                  </div>
                 </div>
                 <div id="adm-epApiMsg" class="adm-ep-inline-msg"></div>
               </div>

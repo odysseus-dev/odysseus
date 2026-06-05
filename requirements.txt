@@ -41,5 +41,6 @@ mcp
 pyotp
 qrcode[pil]
 croniter
+websockets
 pytest
 pytest-asyncio

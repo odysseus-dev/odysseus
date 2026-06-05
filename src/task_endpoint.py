@@ -10,4 +10,7 @@ def resolve_task_endpoint(fallback_url=None, fallback_model=None, fallback_heade
     Falls back to the provided values when the setting is empty or the
     endpoint cannot be resolved.
     """
-    return resolve_endpoint("task", fallback_url, fallback_model, fallback_headers, owner=owner)
+    url, model, headers = resolve_endpoint("task", fallback_url, fallback_model, fallback_headers, owner=owner)
+    if owner:
+        headers = {**(headers or {}), "_odysseus_owner": owner}
+    return url, model, headers

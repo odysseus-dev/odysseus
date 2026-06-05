@@ -2,7 +2,7 @@ import os
 import logging
 import sqlite3
 from datetime import datetime, timezone
-from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
+from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, UniqueConstraint, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
@@ -360,6 +360,48 @@ class ModelEndpoint(TimestampMixin, Base):
     # is the historical default. When non-null, the model picker only shows
     # the endpoint to that user (admins always see everything).
     owner = Column(String, nullable=True, index=True)
+
+
+class ProviderOAuthCredential(TimestampMixin, Base):
+    """Encrypted OAuth credentials for model providers that do not use API keys."""
+    __tablename__ = "provider_oauth_credentials"
+
+    id = Column(String, primary_key=True, index=True)
+    provider = Column(String, nullable=False, index=True)
+    owner = Column(String, nullable=True, index=True)
+    access_token = Column(EncryptedText, nullable=True)
+    refresh_token = Column(EncryptedText, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    account_id = Column(String, nullable=True)
+    status = Column(String, nullable=True, default="connected")
+    error = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("provider", "owner", name="uq_provider_oauth_provider_owner"),
+        Index("ix_provider_oauth_provider_owner", "provider", "owner"),
+    )
+
+
+class ProviderOAuthDeviceLogin(TimestampMixin, Base):
+    """Short-lived pending OAuth device-code login state."""
+    __tablename__ = "provider_oauth_device_logins"
+
+    id = Column(String, primary_key=True, index=True)
+    provider = Column(String, nullable=False, index=True)
+    owner = Column(String, nullable=True, index=True)
+    device_auth_id = Column(EncryptedText, nullable=False)
+    user_code = Column(EncryptedText, nullable=True)
+    verification_uri = Column(String, nullable=True)
+    verification_uri_complete = Column(Text, nullable=True)
+    expires_at = Column(DateTime, nullable=False)
+    interval_seconds = Column(Integer, nullable=False, default=5)
+    status = Column(String, nullable=True, default="pending")
+    error = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_provider_oauth_device_provider_owner", "provider", "owner"),
+        Index("ix_provider_oauth_device_expires", "expires_at"),
+    )
 
 class McpServer(TimestampMixin, Base):
     """Admin-configured MCP (Model Context Protocol) tool servers."""
