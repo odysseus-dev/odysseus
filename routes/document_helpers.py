@@ -7,6 +7,8 @@ import os
 import re
 from typing import Any, Dict, Optional
 
+from src.auth_helpers import _auth_disabled
+
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
@@ -77,7 +79,7 @@ def _verify_doc_owner(db, doc: Document, user: str):
     openable / cloneable. We trust that column first and only fall back to
     the session join for any not-yet-backfilled legacy row.
     """
-    if user is None:
+    if user is None and not _auth_disabled():
         raise HTTPException(403, "Authentication required")
     if doc.owner is not None:
         if doc.owner != user:

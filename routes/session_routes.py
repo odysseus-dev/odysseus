@@ -11,7 +11,7 @@ from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
-from src.auth_helpers import get_current_user, effective_user
+from src.auth_helpers import _auth_disabled, get_current_user, effective_user
 
 
 def _sanitize_export_filename(name: str) -> str:
@@ -72,7 +72,7 @@ def _verify_session_owner(request: Request, session_id: str, session_manager=Non
     that only care about persisted sessions keep their exact prior behavior.
     """
     user = effective_user(request)
-    if not user:
+    if not user and not _auth_disabled():
         raise HTTPException(403, "Authentication required")
     db = SessionLocal()
     try:
@@ -658,7 +658,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         db = SessionLocal()
         try:
             q = db.query(DbSession).filter(DbSession.archived == True)
-            if not user:
+            if not user and not _auth_disabled():
                 raise HTTPException(403, "Authentication required")
             q = q.filter(DbSession.owner == user)
             if search:
@@ -797,7 +797,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     @router.post("/sessions/save")
     def sessions_save_now(request: Request):
         user = effective_user(request)
-        if not user:
+        if not user and not _auth_disabled():
             raise HTTPException(401, "Not authenticated")
         session_manager.save_sessions()
         return {"ok": True, "path": SESSIONS_FILE}
