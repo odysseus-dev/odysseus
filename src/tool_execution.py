@@ -36,6 +36,52 @@ def find_powershell() -> "str | None":
     Returns the executable path, or None if neither is on PATH."""
     return shutil.which("pwsh") or shutil.which("powershell")
 
+
+
+def _windows_full_path() -> str:
+    """Return a PATH string that merges the machine and user PATH from the
+    Windows registry with the current process PATH.  This matters when Odysseus
+    starts without a full interactive-user shell (e.g. via pythonw, a service,
+    or a terminal that didn't source the user profile) so that tools installed
+    to the user PATH (Scoop, Chocolatey shims, pipx, …) are found.
+
+    Returns the current process PATH unchanged when disabled via the
+    ``windows_enrich_path`` setting or when not running on Windows."""
+    if os.name != "nt":
+        return os.environ.get("PATH", "")
+    try:
+        from src.settings import get_setting
+        if not get_setting("windows_enrich_path", True):
+            return os.environ.get("PATH", "")
+    except Exception:
+        pass
+    try:
+        import winreg
+        paths: list[str] = []
+        for hive, subkey in (
+            (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+            (winreg.HKEY_CURRENT_USER, r"Environment"),
+        ):
+            try:
+                with winreg.OpenKey(hive, subkey) as key:
+                    val, _ = winreg.QueryValueEx(key, "Path")
+                    paths.append(winreg.ExpandEnvironmentStrings(val))
+            except OSError:
+                pass
+        registry_path = os.pathsep.join(p for p in paths if p)
+        proc_path = os.environ.get("PATH", "")
+        seen: set[str] = set()
+        merged: list[str] = []
+        for segment in (proc_path + os.pathsep + registry_path).split(os.pathsep):
+            s = segment.strip()
+            if s and s.lower() not in seen:
+                seen.add(s.lower())
+                merged.append(s)
+        return os.pathsep.join(merged)
+    except Exception:
+        return os.environ.get("PATH", "")
+
+
 def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
     """Build a unified diff of a file write for display in the chat.
 
@@ -680,6 +726,7 @@ async def _direct_fallback(
         "COLUMNS": "120",
         "LINES": "40",
         "HOME": _AGENT_WORKDIR,
+        "PATH": _windows_full_path(),
     }
 
     try:

@@ -1321,6 +1321,7 @@ async function loadBuiltinTools() {
     const res = await fetch('/api/tools', { credentials: 'same-origin' });
     const data = await res.json();
     const tools = data.tools || [];
+    const windowsEnrichPath = data.windows_enrich_path !== false;
     if (!tools.length) { list.innerHTML = '<div class="admin-empty">No tools found</div>'; return; }
 
     // Group by category
@@ -1368,6 +1369,19 @@ async function loadBuiltinTools() {
             <span class="admin-slider"></span>
           </label>
         </div>`;
+        if (t.id === 'powershell') {
+          html += `
+        <div class="admin-tool-suboption" style="padding:4px 12px 6px 28px;display:flex;align-items:center;justify-content:space-between;gap:8px;opacity:0.8;">
+          <div class="admin-tool-info" style="flex:1;">
+            <span class="admin-tool-name" style="font-size:11px;">Enrich PATH on Windows</span>
+            <span class="admin-tool-desc" style="font-size:10px;">Merge machine &amp; user PATH from registry so tools installed via Scoop, Chocolatey, etc. are found by subprocesses</span>
+          </div>
+          <label class="admin-switch" style="flex-shrink:0;">
+            <input type="checkbox" id="adm-windows-enrich-path" ${windowsEnrichPath ? 'checked' : ''}>
+            <span class="admin-slider"></span>
+          </label>
+        </div>`;
+        }
       }
       html += '</div></div>';
     }
@@ -1398,10 +1412,11 @@ async function loadBuiltinTools() {
       const allChecks = list.querySelectorAll('input[data-tool-id]');
       const disabled = [];
       allChecks.forEach(c => { if (!c.checked) disabled.push(c.dataset.toolId); });
+      const enrichToggle = document.getElementById('adm-windows-enrich-path');
       await fetch('/api/tools', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ disabled }),
+        body: JSON.stringify({ disabled, windows_enrich_path: enrichToggle ? enrichToggle.checked : true }),
         credentials: 'same-origin',
       });
     }
@@ -1422,6 +1437,10 @@ async function loadBuiltinTools() {
         _updateCatCounter(chk.closest('.admin-tool-category'));
       });
     });
+
+    // Wire Windows PATH enrichment toggle
+    const enrichToggle = document.getElementById('adm-windows-enrich-path');
+    if (enrichToggle) enrichToggle.addEventListener('change', _saveToolState);
 
     // Wire category-level toggle (enable/disable all in category)
     list.querySelectorAll('input[data-tool-cat-toggle]').forEach(chk => {

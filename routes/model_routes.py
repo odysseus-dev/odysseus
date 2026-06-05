@@ -2103,10 +2103,14 @@ def setup_model_routes(model_discovery):
         tools = []
         for tag in sorted(TOOL_TAGS):
             tools.append({"id": tag, "enabled": tag not in disabled})
-        return {"tools": tools}
+        return {
+            "tools": tools,
+            "windows_enrich_path": settings.get("windows_enrich_path", True),
+        }
 
     class ToolsUpdate(BaseModel):
         disabled: list = []
+        windows_enrich_path: bool = True
 
     @router.post("/tools")
     def update_tools(body: ToolsUpdate, request: Request):
@@ -2114,7 +2118,8 @@ def setup_model_routes(model_discovery):
         require_admin(request)
         settings = _load_settings()
         settings["disabled_tools"] = body.disabled
+        settings["windows_enrich_path"] = body.windows_enrich_path
         _save_settings(settings)
-        return {"ok": True, "disabled": body.disabled}
+        return {"ok": True, "disabled": body.disabled, "windows_enrich_path": body.windows_enrich_path}
 
     return router

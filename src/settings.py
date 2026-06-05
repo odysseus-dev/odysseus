@@ -29,6 +29,7 @@ def _invalidate_caches():
 # ── Default values ──
 
 DEFAULT_SETTINGS = {
+    "windows_enrich_path": True,
     "image_gen_enabled": True,
     "image_model": "",
     "image_quality": "medium",
