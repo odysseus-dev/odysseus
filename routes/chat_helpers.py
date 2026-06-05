@@ -121,7 +121,7 @@ def needs_auto_name(name: str) -> bool:
     if name.startswith("Chat:") or name == "Chat":
         return True
     # Default frontend name: "modelname HH:MM:SS AM/PM"
-    if re.match(r'^.+ \d{1,2}:\d{2}:\d{2}\s*(AM|PM)$', name):
+    if re.match(r"^.+ \d{1,2}:\d{2}:\d{2}(\s*(AM|PM))?$", name, re.IGNORECASE):
         return True
     return False
 
@@ -148,8 +148,9 @@ async def auto_name_session(session_manager, sess):
         if not first_msg:
             return
 
+        owner = getattr(sess, "owner", None)
         t_url, t_model, t_headers = resolve_task_endpoint(
-            sess.endpoint_url, sess.model, sess.headers,
+            sess.endpoint_url, sess.model, sess.headers, owner=owner,
         )
         if not t_model:
             logger.debug("[auto-name] No model provided, skipping")
@@ -311,7 +312,24 @@ def fire_message_event(request, webhook_manager, session_id: str, sess, message:
     fire_event("message_sent", user)
 
 
-def resolve_session_auth(sess, session_id: str):
+def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
+    if not session_url or not endpoint_base:
+        return False
+    try:
+        from src.endpoint_resolver import build_chat_url, normalize_base
+
+        sess_url = session_url.rstrip("/")
+        base = normalize_base(endpoint_base).rstrip("/")
+        return sess_url in {
+            base,
+            base + "/chat/completions",
+            build_chat_url(base).rstrip("/"),
+        }
+    except Exception:
+        return False
+
+
+def resolve_session_auth(sess, session_id: str, owner: Optional[str] = None):
     """Ensure session has auth headers — resolve from endpoint DB if missing."""
     has_auth = sess.headers and isinstance(sess.headers, dict) and any(
         k.lower() in ('authorization', 'x-api-key') for k in sess.headers
@@ -320,19 +338,33 @@ def resolve_session_auth(sess, session_id: str):
         return
 
     try:
-        from src.endpoint_resolver import build_headers
+        from src.endpoint_resolver import build_headers, normalize_base
         db = SessionLocal()
         try:
-            domain = sess.endpoint_url.split("//")[1].split("/")[0] if "//" in sess.endpoint_url else ""
-            if domain:
-                ep = db.query(ModelEndpoint).filter(ModelEndpoint.base_url.contains(domain)).first()
-                if ep and ep.api_key:
-                    sess.headers = build_headers(ep.api_key, ep.base_url)
-                    db.query(DBSession).filter(DBSession.id == session_id).update(
-                        {"headers": json.dumps(sess.headers)}
-                    )
-                    db.commit()
-                    logger.info(f"Resolved and persisted auth headers for session {session_id} from endpoint {ep.name}")
+            target_url = getattr(sess, "endpoint_url", "") or ""
+            if not target_url:
+                return
+            q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+            if owner:
+                # Missing headers usually means "recover from the saved endpoint".
+                # Scope that lookup to the session owner, otherwise two users
+                # with similar endpoint URLs can borrow each other's API key.
+                from src.auth_helpers import owner_filter
+                q = owner_filter(q, ModelEndpoint, owner)
+            for ep in q.all():
+                if not _session_url_matches_endpoint(target_url, ep.base_url or ""):
+                    continue
+                if not ep.api_key:
+                    return
+                base = normalize_base(ep.base_url or "")
+                sess.headers = build_headers(ep.api_key, base)
+                update_q = db.query(DBSession).filter(DBSession.id == session_id)
+                if owner:
+                    update_q = update_q.filter(DBSession.owner == owner)
+                update_q.update({"headers": sess.headers})
+                db.commit()
+                logger.info(f"Resolved and persisted auth headers for session {session_id} from endpoint {ep.name}")
+                return
         finally:
             db.close()
     except Exception as e:
@@ -557,6 +589,8 @@ def _normalize_thinking(text: str) -> str:
     import re
     if not text:
         return text
+    from src.text_helpers import normalize_thinking_markup
+    text = normalize_thinking_markup(text)
     reasoning_prefix_re = re.compile(
         r'^\s*(?:thinking(?:\s+process)?\s*:|the user |i need |i should |i will |they are |the question |i can )',
         re.IGNORECASE,
@@ -667,6 +701,10 @@ def _extract_thinking_meta(text: str) -> dict | None:
     import re
     if not text:
         return None
+    from src.text_helpers import normalize_thinking_markup
+    original_text = text
+    text = normalize_thinking_markup(text)
+    normalized_changed = text != original_text
 
     # Check for <think> tags (native or injected)
     time_match = re.search(r'<think(?:ing)?\s+time="([\d.]+)"', text)
@@ -697,6 +735,9 @@ def _extract_thinking_meta(text: str) -> dict | None:
             if thinking and reply:
                 return {"thinking": thinking, "reply": reply, "time": think_time}
 
+    if normalized_changed and text.strip() and text.strip() != original_text.strip():
+        return {"thinking": "", "reply": text.strip(), "time": think_time}
+
     return None
 
 
@@ -705,7 +746,8 @@ def clean_thinking_for_save(content: str, metadata: dict | None = None) -> tuple
     md = dict(metadata) if metadata else {}
     info = _extract_thinking_meta(content)
     if info:
-        md["thinking"] = info["thinking"]
+        if info.get("thinking"):
+            md["thinking"] = info["thinking"]
         if info.get("time"):
             md["thinking_time"] = info["time"]
         return info["reply"], md
@@ -749,8 +791,10 @@ def save_assistant_response(
     # Extract thinking into metadata (don't pollute message content with <think> tags)
     _think_info = _extract_thinking_meta(full_response)
     if _think_info:
-        md["thinking"] = _think_info["thinking"]
-        md["thinking_time"] = _think_info.get("time")
+        if _think_info.get("thinking"):
+            md["thinking"] = _think_info["thinking"]
+        if _think_info.get("time"):
+            md["thinking_time"] = _think_info.get("time")
         _content = _think_info["reply"]
     else:
         _content = full_response
@@ -806,7 +850,7 @@ def run_post_response_tasks(
         from services.memory.memory_extractor import extract_and_store
         from src.task_endpoint import resolve_task_endpoint
         t_url, t_model, t_headers = resolve_task_endpoint(
-            sess.endpoint_url, sess.model, sess.headers,
+            sess.endpoint_url, sess.model, sess.headers, owner=owner,
         )
         asyncio.create_task(extract_and_store(
             sess, memory_manager, memory_vector,
@@ -843,7 +887,7 @@ def run_post_response_tasks(
             from services.memory.skill_extractor import maybe_extract_skill
             from src.task_endpoint import resolve_task_endpoint
             s_url, s_model, s_headers = resolve_task_endpoint(
-                sess.endpoint_url, sess.model, sess.headers,
+                sess.endpoint_url, sess.model, sess.headers, owner=owner,
             )
             logger.debug("[skill-extract] dispatching extractor (model=%s)", s_model)
             asyncio.create_task(maybe_extract_skill(

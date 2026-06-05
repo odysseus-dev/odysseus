@@ -1,11 +1,10 @@
-"""Keep src.search and services.search content extraction behavior aligned."""
+"""Content extraction behavior for the canonical services.search.content module."""
 
 import pytest
 
 pytest.importorskip("bs4")
 
 from services.search import content as service_content
-from src.search import content as src_content
 
 
 class _FakeResponse:
@@ -20,7 +19,7 @@ class _FakeResponse:
         return None
 
 
-@pytest.mark.parametrize("module", [src_content, service_content])
+@pytest.mark.parametrize("module", [service_content])
 def test_content_fetcher_extracts_og_image_and_body_fallback(module, tmp_path, monkeypatch):
     html = """
     <html>

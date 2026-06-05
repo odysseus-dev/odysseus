@@ -297,6 +297,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         # owner-scoped DB rows before changing auth so the account keeps
         # access to its sessions, docs, email accounts, tasks, etc.
         try:
+            from sqlalchemy import func
             from core.database import Base, SessionLocal
             db = SessionLocal()
             try:
@@ -306,7 +307,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                         continue
                     (
                         db.query(model)
-                        .filter(model.owner == old_username)
+                        .filter(func.lower(model.owner) == old_username)
                         .update({"owner": new_username}, synchronize_session=False)
                     )
                 db.commit()
@@ -324,15 +325,29 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             from routes.prefs_routes import _load as _load_prefs, _save as _save_prefs
             prefs = _load_prefs()
             users = prefs.get("_users") if isinstance(prefs, dict) else None
-            if isinstance(users, dict) and old_username in users and new_username not in users:
-                users[new_username] = users.pop(old_username)
-                _save_prefs(prefs)
+            if isinstance(users, dict):
+                prefs_key = next(
+                    (k for k in users if str(k).strip().lower() == old_username),
+                    None,
+                )
+                new_taken = any(str(k).strip().lower() == new_username for k in users)
+                if prefs_key is not None and not new_taken:
+                    users[new_username] = users.pop(prefs_key)
+                    _save_prefs(prefs)
         except Exception as e:
             logger.warning("Failed to rename user prefs %s -> %s: %s", old_username, new_username, e)
 
         ok = auth_manager.rename_user(old_username, new_username, user)
         if not ok:
             raise HTTPException(400, "Cannot rename user")
+        # The owner-rename loop above updated ApiToken.owner in the DB, but the
+        # bearer-token cache still maps each token to the OLD owner. Without
+        # refreshing it, the renamed user's API tokens resolve to the old (now
+        # non-existent) owner and stop reaching their data until the cache next
+        # goes dirty. Invalidate it now, like the token CRUD routes do.
+        invalidator = getattr(request.app.state, "invalidate_token_cache", None)
+        if callable(invalidator):
+            invalidator()
         return {"ok": True, "username": new_username, "renamed_self": old_username == user}
 
     @router.post("/signup-toggle", deprecated=True)
@@ -368,6 +383,17 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         ok = auth_manager.delete_user(body.username, user)
         if not ok:
             raise HTTPException(400, "Cannot delete user")
+        # delete_user removes the user's ApiToken rows, but the bearer-auth
+        # middleware serves from an in-memory prefix->token cache that only
+        # rebuilds when flagged dirty. Without this, a deleted user's already
+        # cached token keeps authenticating until some other token op or a
+        # restart clears the cache. Mirror what the token routes do.
+        try:
+            invalidator = getattr(request.app.state, "invalidate_token_cache", None)
+            if invalidator:
+                invalidator()
+        except Exception:
+            pass
         return {"ok": True}
 
     # ---- Feature visibility (admin-managed) ----
@@ -412,9 +438,24 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(403, "Admin only")
         body = await request.json()
         current = _load_settings()
+        # Per-key validation for numeric settings: coerce to int and clamp to a
+        # sane range so a bad value can't disable the agent or let it run away.
+        _INT_RANGES = {
+            "agent_max_rounds": (1, 200),
+            "agent_max_tool_calls": (0, 1000),  # 0 = unlimited
+        }
         for key in DEFAULT_SETTINGS:
-            if key in body:
-                current[key] = body[key]
+            if key not in body:
+                continue
+            val = body[key]
+            if key in _INT_RANGES:
+                lo, hi = _INT_RANGES[key]
+                try:
+                    val = int(val)
+                except (TypeError, ValueError):
+                    raise HTTPException(400, f"{key} must be an integer")
+                val = max(lo, min(val, hi))
+            current[key] = val
         _save_settings(current)
         return current
 

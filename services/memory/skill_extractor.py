@@ -48,6 +48,21 @@ MIN_CONFIDENCE = 0.6
 CONTEXT_WINDOW = 12
 
 
+def _skill_dicts(skills):
+    for skill in skills or []:
+        if isinstance(skill, dict):
+            yield skill
+
+
+def _has_duplicate_title(skills, title: str) -> bool:
+    wanted = title.lower()
+    for skill in _skill_dicts(skills):
+        existing = skill.get("title", "")
+        if isinstance(existing, str) and existing.lower() == wanted:
+            return True
+    return False
+
+
 async def maybe_extract_skill(
     session,
     skills_manager,
@@ -191,10 +206,9 @@ async def maybe_extract_skill(
 
         # Check for duplicate skills
         existing = skills_manager.load(owner=owner)
-        for sk in existing:
-            if sk.get("title", "").lower() == title.lower():
-                logger.debug("[skill-extract] '%s' already exists — dropped as duplicate", title)
-                return None
+        if _has_duplicate_title(existing, title):
+            logger.debug("[skill-extract] '%s' already exists — dropped as duplicate", title)
+            return None
 
         entry = skills_manager.add_skill(
             title=title,

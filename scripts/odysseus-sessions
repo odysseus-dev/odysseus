@@ -27,6 +27,12 @@ except ModuleNotFoundError as e:
 
 
 def _serialize(s: "DbSession") -> dict:
+    def _int_or_zero(value) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
     return {
         "id": s.id,
         "name": s.name,
@@ -37,9 +43,9 @@ def _serialize(s: "DbSession") -> dict:
         "archived": bool(s.archived),
         "rag": bool(s.rag),
         "is_important": bool(s.is_important),
-        "message_count": s.message_count or 0,
-        "total_input_tokens": s.total_input_tokens or 0,
-        "total_output_tokens": s.total_output_tokens or 0,
+        "message_count": _int_or_zero(s.message_count),
+        "total_input_tokens": _int_or_zero(s.total_input_tokens),
+        "total_output_tokens": _int_or_zero(s.total_output_tokens),
         "last_accessed": s.last_accessed.isoformat() if s.last_accessed else "",
         "created_at": s.created_at.isoformat() if s.created_at else "",
     }

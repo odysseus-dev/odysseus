@@ -49,6 +49,7 @@ from routes.model_routes import (
     _ping_endpoint,
     _probe_single_model,
     _classify_endpoint,
+    _rewrite_loopback_for_docker,
     _PROVIDER_CURATED,
 )
 
@@ -77,7 +78,7 @@ class TestProbeEndpointParsing:
         _patch_resolve(monkeypatch)
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(
+            lambda url, headers=None, timeout=None, verify=None, **kwargs: _resp(
                 200, json={"data": [{"id": "gpt-4o"}, {"id": "gpt-4o-mini"}]}),
         )
         assert _probe_endpoint("https://api.example.com/v1", "key") == ["gpt-4o", "gpt-4o-mini"]
@@ -88,7 +89,7 @@ class TestProbeEndpointParsing:
         # honoring both the "name" and "model" keys.
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(
+            lambda url, headers=None, timeout=None, verify=None, **kwargs: _resp(
                 200, json={"models": [{"name": "llama3:8b"}, {"model": "qwen3:4b"}]}),
         )
         assert _probe_endpoint("https://api.example.com/v1") == ["llama3:8b", "qwen3:4b"]
@@ -97,7 +98,7 @@ class TestProbeEndpointParsing:
         _patch_resolve(monkeypatch)
         seen = []
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
             seen.append(url)
             if url.endswith("/api/tags"):
                 return _resp(200, json={"models": [{"name": "llama3:8b"}]})
@@ -113,7 +114,7 @@ class TestProbeEndpointParsing:
         _patch_resolve(monkeypatch)
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(200, json={"data": []}),
+            lambda url, headers=None, timeout=None, verify=None, **kwargs: _resp(200, json={"data": []}),
         )
         assert _probe_endpoint("https://api.example.com/v1") == []
 
@@ -125,7 +126,7 @@ class TestPingEndpoint:
         _patch_resolve(monkeypatch)
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(200),
+            lambda url, headers=None, timeout=None, verify=None, **kwargs: _resp(200),
         )
         assert _ping_endpoint("https://api.example.com/v1", "key") == {
             "reachable": True, "status_code": 200, "error": None,
@@ -136,7 +137,7 @@ class TestPingEndpoint:
         # A 401 means the server answered — surface the status, not "offline".
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(401),
+            lambda url, headers=None, timeout=None, verify=None, **kwargs: _resp(401),
         )
         assert _ping_endpoint("https://api.example.com/v1", "bad") == {
             "reachable": False, "status_code": 401, "error": "HTTP 401",
@@ -145,7 +146,7 @@ class TestPingEndpoint:
     def test_detects_odysseus_login_redirect(self, monkeypatch):
         _patch_resolve(monkeypatch)
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
             return _resp(302, headers={"location": "/login?next=/"})
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
@@ -157,7 +158,7 @@ class TestPingEndpoint:
     def test_generic_redirect_reported(self, monkeypatch):
         _patch_resolve(monkeypatch)
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
             return _resp(301, headers={"location": "https://elsewhere.example/"})
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
@@ -168,7 +169,7 @@ class TestPingEndpoint:
     def test_transport_error_is_unreachable(self, monkeypatch):
         _patch_resolve(monkeypatch)
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
             raise httpx.ConnectError("Connection refused")
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
@@ -180,7 +181,7 @@ class TestPingEndpoint:
     def test_ollama_native_version_fallback(self, monkeypatch):
         _patch_resolve(monkeypatch)
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
             if url.endswith("/api/version"):
                 return _resp(200)
             # The OpenAI-compatible /v1/models surface is down on this build.
@@ -190,6 +191,47 @@ class TestPingEndpoint:
         assert _ping_endpoint("http://localhost:11434/v1") == {
             "reachable": True, "status_code": 200, "error": None,
         }
+
+
+# ── Docker loopback rewrite ──
+
+class TestDockerLoopbackRewrite:
+    def test_manual_loopback_rewrites_to_docker_host_when_available(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: True)
+        monkeypatch.setattr(model_routes, "_container_loopback_reachable", lambda base_url: False)
+        assert (
+            _rewrite_loopback_for_docker("http://localhost:8000/v1")
+            == "http://host.docker.internal:8000/v1"
+        )
+
+    def test_reachable_container_loopback_stays_local_even_without_container_flag(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: True)
+        monkeypatch.setattr(model_routes, "_container_loopback_reachable", lambda base_url: True)
+        assert (
+            _rewrite_loopback_for_docker("http://127.0.0.1:8001/v1")
+            == "http://127.0.0.1:8001/v1"
+        )
+
+    def test_cookbook_container_local_loopback_stays_inside_container(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: True)
+        assert (
+            _rewrite_loopback_for_docker("http://localhost:8000/v1", container_local=True)
+            == "http://localhost:8000/v1"
+        )
+
+    def test_bind_address_becomes_connectable_loopback_for_container_local(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: True)
+        assert (
+            _rewrite_loopback_for_docker("http://0.0.0.0:8000/v1", container_local=True)
+            == "http://127.0.0.1:8000/v1"
+        )
+
+    def test_bind_address_becomes_connectable_loopback_on_native_install(self, monkeypatch):
+        monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: False)
+        assert (
+            _rewrite_loopback_for_docker("http://0.0.0.0:8000/v1")
+            == "http://127.0.0.1:8000/v1"
+        )
 
 
 # ── _probe_single_model: completion probe ──

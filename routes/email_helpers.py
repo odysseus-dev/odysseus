@@ -266,6 +266,48 @@ COMPOSE_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 SCHEDULED_DB = DATA_DIR / "scheduled_emails.db"
 
 
+OWNER_SCOPED_EMAIL_CACHE_TABLES = {
+    "email_summaries",
+    "email_ai_replies",
+    "email_calendar_extractions",
+    "email_urgency_alerts",
+}
+
+
+def _email_cache_owner_clause(owner: str = "") -> tuple[str, tuple[str, ...]]:
+    owner = (owner or "").strip()
+    if owner:
+        return "owner = ?", (owner,)
+    return "(owner = '' OR owner IS NULL)", ()
+
+
+def _ensure_owner_scoped_email_cache_table(conn, table: str, create_sql: str, columns: list[str]):
+    """Rebuild legacy Message-ID-only cache tables with owner in the PK."""
+    conn.execute(create_sql)
+    try:
+        info = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        cols = [r[1] for r in info]
+        pk_cols = [r[1] for r in sorted((r for r in info if r[5]), key=lambda r: r[5])]
+        if "owner" in cols and pk_cols == ["message_id", "owner"]:
+            return
+
+        conn.execute(f"ALTER TABLE {table} RENAME TO {table}__old")
+        conn.execute(create_sql)
+        old_cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table}__old)").fetchall()]
+        copy_cols = [c for c in columns if c != "owner" and c in old_cols]
+        source_owner = "COALESCE(owner, '')" if "owner" in old_cols else "''"
+        target_cols = ["owner", *copy_cols]
+        select_exprs = [source_owner, *copy_cols]
+        conn.execute(
+            f"INSERT OR IGNORE INTO {table} ({', '.join(target_cols)}) "
+            f"SELECT {', '.join(select_exprs)} FROM {table}__old"
+        )
+        conn.execute(f"DROP TABLE {table}__old")
+    except Exception as _mig_e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"{table} owner-migration skipped: {_mig_e}")
+
+
 def attachment_extract_dir(folder: str, uid: str) -> Path:
     """Containment-safe extraction directory for an attachment.
 
@@ -297,33 +339,39 @@ def _init_scheduled_db():
             send_at TEXT NOT NULL,
             created_at TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending',
-            error TEXT
+            error TEXT,
+            owner TEXT DEFAULT ''
         )
     """)
-    # Email summary cache (keyed by Message-ID)
-    conn.execute("""
+    # Email summary cache. SECURITY: Message-IDs are global, so AI-derived
+    # cache rows must be owner-scoped just like email_tags.
+    _ensure_owner_scoped_email_cache_table(conn, "email_summaries", """
         CREATE TABLE IF NOT EXISTS email_summaries (
-            message_id TEXT PRIMARY KEY,
+            message_id TEXT,
+            owner TEXT DEFAULT '',
             uid TEXT,
             folder TEXT,
             subject TEXT,
             sender TEXT,
             summary TEXT NOT NULL,
             model_used TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (message_id, owner)
         )
-    """)
+    """, ["message_id", "owner", "uid", "folder", "subject", "sender", "summary", "model_used", "created_at"])
     # Email AI reply cache (pre-generated draft replies)
-    conn.execute("""
+    _ensure_owner_scoped_email_cache_table(conn, "email_ai_replies", """
         CREATE TABLE IF NOT EXISTS email_ai_replies (
-            message_id TEXT PRIMARY KEY,
+            message_id TEXT,
+            owner TEXT DEFAULT '',
             uid TEXT,
             folder TEXT,
             reply TEXT NOT NULL,
             model_used TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (message_id, owner)
         )
-    """)
+    """, ["message_id", "owner", "uid", "folder", "reply", "model_used", "created_at"])
     # Email tags / spam classification cache. SECURITY: keyed by
     # (message_id, owner) because Message-IDs are GLOBAL (a newsletter goes
     # to many users with the same Message-ID). Without owner-scoping, a
@@ -383,17 +431,20 @@ def _init_scheduled_db():
         # Best-effort — log via the module logger if available
         import logging as _lg
         _lg.getLogger(__name__).warning(f"email_tags owner-migration skipped: {_mig_e}")
-    conn.execute("""
+    _ensure_owner_scoped_email_cache_table(conn, "email_calendar_extractions", """
         CREATE TABLE IF NOT EXISTS email_calendar_extractions (
-            message_id TEXT PRIMARY KEY,
+            message_id TEXT,
+            owner TEXT DEFAULT '',
             uid TEXT,
             events_created INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (message_id, owner)
         )
-    """)
-    conn.execute("""
+    """, ["message_id", "owner", "uid", "events_created", "created_at"])
+    _ensure_owner_scoped_email_cache_table(conn, "email_urgency_alerts", """
         CREATE TABLE IF NOT EXISTS email_urgency_alerts (
-            message_id TEXT PRIMARY KEY,
+            message_id TEXT,
+            owner TEXT DEFAULT '',
             uid TEXT,
             folder TEXT,
             subject TEXT,
@@ -401,9 +452,10 @@ def _init_scheduled_db():
             urgency TEXT,
             reason TEXT,
             alerted INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (message_id, owner)
         )
-    """)
+    """, ["message_id", "owner", "uid", "folder", "subject", "sender", "urgency", "reason", "alerted", "created_at"])
     conn.execute("""
         CREATE TABLE IF NOT EXISTS email_event_seen (
             owner TEXT NOT NULL,
@@ -435,6 +487,35 @@ def _init_scheduled_db():
             conn.execute("ALTER TABLE scheduled_emails ADD COLUMN account_id TEXT")
         if "odysseus_kind" not in cols:
             conn.execute("ALTER TABLE scheduled_emails ADD COLUMN odysseus_kind TEXT")
+        if "owner" not in cols:
+            conn.execute("ALTER TABLE scheduled_emails ADD COLUMN owner TEXT DEFAULT ''")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_scheduled_emails_owner_status ON scheduled_emails(owner, status)")
+        # Backfill owner on legacy rows from the owning email account so the
+        # owner-scoped list/cancel routes surface pre-migration scheduled
+        # sends to the right user (the poller already resolves these by
+        # account at send time; this aligns the UI with that).
+        legacy_accounts = conn.execute(
+            "SELECT DISTINCT account_id FROM scheduled_emails "
+            "WHERE (owner IS NULL OR owner = '') AND account_id IS NOT NULL AND account_id != ''"
+        ).fetchall()
+        if legacy_accounts:
+            try:
+                from core.database import SessionLocal as _SL, EmailAccount as _EA
+                _db = _SL()
+                try:
+                    for (acct_id,) in legacy_accounts:
+                        row = _db.query(_EA.owner).filter(_EA.id == acct_id).first()
+                        acct_owner = (row[0] or "") if row else ""
+                        if acct_owner:
+                            conn.execute(
+                                "UPDATE scheduled_emails SET owner = ? "
+                                "WHERE account_id = ? AND (owner IS NULL OR owner = '')",
+                                (acct_owner, acct_id),
+                            )
+                finally:
+                    _db.close()
+            except Exception:
+                pass
     except Exception:
         pass
     # Lazy migration: add turns_json to email_boundaries for server-side
@@ -608,7 +689,32 @@ def _list_email_accounts() -> list[dict]:
 
 # ── IMAP helpers ──
 
-_IMAP_TIMEOUT_SECONDS = 15
+def _coerce_imap_timeout_seconds(raw: str | None) -> int:
+    try:
+        value = int(raw or "30")
+    except (TypeError, ValueError):
+        value = 30
+    return max(5, min(value, 300))
+
+
+_IMAP_TIMEOUT_SECONDS = _coerce_imap_timeout_seconds(os.environ.get("ODYSSEUS_IMAP_TIMEOUT_SECONDS"))
+
+
+def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int = _IMAP_TIMEOUT_SECONDS):
+    """Open an IMAP connection using the configured security mode."""
+    port = int(port or 993)
+    if starttls:
+        conn = imaplib.IMAP4(host, port, timeout=timeout)
+        conn.starttls()
+    elif port == 993:
+        conn = imaplib.IMAP4_SSL(host, port, timeout=timeout)
+    else:
+        conn = imaplib.IMAP4(host, port, timeout=timeout)
+    try:
+        conn.sock.settimeout(timeout)
+    except Exception:
+        pass
+    return conn
 
 def _imap_connect(account_id: str | None = None, owner: str = ""):
     # SECURITY: passing `owner` scopes the fallback config lookup so a brand
@@ -622,17 +728,12 @@ def _imap_connect(account_id: str | None = None, owner: str = ""):
     # The last branch is critical: previously this fell into IMAP4_SSL
     # for any non-STARTTLS port, which would fail the TLS handshake on
     # plain local servers (Dovecot on 31143, etc.).
-    if cfg.get("imap_starttls"):
-        conn = imaplib.IMAP4(cfg["imap_host"], cfg["imap_port"], timeout=_IMAP_TIMEOUT_SECONDS)
-        conn.starttls()
-    elif int(cfg.get("imap_port") or 993) == 993:
-        conn = imaplib.IMAP4_SSL(cfg["imap_host"], cfg["imap_port"], timeout=_IMAP_TIMEOUT_SECONDS)
-    else:
-        conn = imaplib.IMAP4(cfg["imap_host"], cfg["imap_port"], timeout=_IMAP_TIMEOUT_SECONDS)
-    try:
-        conn.sock.settimeout(_IMAP_TIMEOUT_SECONDS)
-    except Exception:
-        pass
+    conn = _open_imap_connection(
+        cfg["imap_host"],
+        cfg["imap_port"],
+        starttls=bool(cfg.get("imap_starttls")),
+        timeout=_IMAP_TIMEOUT_SECONDS,
+    )
     conn.login(cfg["imap_user"], cfg["imap_password"])
     return conn
 
@@ -701,7 +802,13 @@ def _decode_header(raw):
     decoded = []
     for data, charset in parts:
         if isinstance(data, bytes):
-            decoded.append(data.decode(charset or "utf-8", errors="replace"))
+            try:
+                decoded.append(data.decode(charset or "utf-8", errors="replace"))
+            except (LookupError, ValueError):
+                # Unknown/invalid MIME charset (e.g. a malformed or spam header
+                # like =?x-unknown-charset?B?...?=). errors="replace" only covers
+                # byte-decode errors, not codec lookup, so fall back to utf-8.
+                decoded.append(data.decode("utf-8", errors="replace"))
         else:
             decoded.append(data)
     return " ".join(decoded)
@@ -795,22 +902,27 @@ def _detect_spam_folder(conn):
         return None
 
 
-def _imap_move(uid, dest, src="INBOX"):
+def _imap_move(uid, dest, src="INBOX", account_id: str | None = None, owner: str = ""):
     """Move a single IMAP UID from src folder to dest. Returns True on success."""
+    c = None
     try:
-        c = _imap_connect()
+        c = _imap_connect(account_id, owner=owner)
         c.select(_q(src))
         status, _ = c.copy(uid, _q(dest))
         if status != "OK":
-            c.logout()
             return False
         c.store(uid, "+FLAGS", "\\Deleted")
         c.expunge()
-        c.logout()
         return True
     except Exception as e:
         logger.warning(f"IMAP move {uid} → {dest} failed: {e}")
         return False
+    finally:
+        if c:
+            try:
+                c.logout()
+            except Exception:
+                pass
 
 
 def _extract_attachment_text(msg, max_chars: int = 6000) -> str:
@@ -1001,7 +1113,9 @@ def _fetch_sender_thread_context(sender_addr: str,
                                  exclude_folder: str = "INBOX",
                                  limit: int = 3,
                                  max_chars_per_email: int = 1500,
-                                 max_attachment_chars: int = 4000) -> str:
+                                 max_attachment_chars: int = 4000,
+                                 account_id: str | None = None,
+                                 owner: str = "") -> str:
     """Pull the last N emails from `sender_addr` (across common folders),
     extract their body snippets + attachment text, and return one formatted
     block ready to be glued into an LLM system prompt as "REFERENCED MATERIAL".
@@ -1023,7 +1137,7 @@ def _fetch_sender_thread_context(sender_addr: str,
         seen_uids.add((exclude_folder or "INBOX", str(exclude_uid)))
 
     try:
-        conn = _imap_connect()
+        conn = _imap_connect(account_id, owner=owner)
     except Exception as e:
         logger.warning(f"sender-thread-context: imap connect failed: {e}")
         return ""
@@ -1106,7 +1220,12 @@ def _fetch_sender_thread_context(sender_addr: str,
     return "\n\n=====\n\n".join(blocks)
 
 
-def _pre_retrieve_context(body: str, sender: str) -> tuple:
+def _pre_retrieve_context(
+    body: str,
+    sender: str,
+    account_id: str | None = None,
+    owner: str = "",
+) -> tuple:
     """Extract key terms from an incoming email and search past emails + contacts.
 
     Returns (context_snippets, terms_list). Best-effort; never raises.
@@ -1130,18 +1249,37 @@ def _pre_retrieve_context(body: str, sender: str) -> tuple:
         # ── Known-sender check: only retrieve context for senders we already
         # have a relationship with. New / cold senders get an empty context.
         sender_addr = email.utils.parseaddr(sender or "")[1].lower()
-        is_known = False
+        # The CardDAV address book is global admin data backed by a single
+        # Radicale instance, so only fold it into reply context for an admin /
+        # single-user owner. Non-admin owners still get their own (owner-scoped)
+        # IMAP history below, just not the shared contacts.
         try:
-            from routes.contacts_routes import _fetch_contacts
-            for c in _fetch_contacts() or []:
-                if (c.get("email") or "").lower() == sender_addr:
-                    is_known = True
-                    break
+            from src.tool_security import owner_is_admin_or_single_user
+            contacts_allowed = owner_is_admin_or_single_user(owner or None)
         except Exception:
-            pass
+            contacts_allowed = not bool(owner)
+        is_known = False
+        if contacts_allowed:
+            try:
+                from routes.contacts_routes import _fetch_contacts
+                for c in _fetch_contacts() or []:
+                    # Contacts are normalized to plural `emails` lists, but
+                    # keep the legacy singular key fallback for older data.
+                    contact_emails = []
+                    raw_emails = c.get("emails")
+                    if isinstance(raw_emails, list):
+                        contact_emails.extend(str(e or "") for e in raw_emails)
+                    legacy_email = c.get("email")
+                    if legacy_email:
+                        contact_emails.append(str(legacy_email))
+                    if any((addr or "").strip().lower() == sender_addr for addr in contact_emails):
+                        is_known = True
+                        break
+            except Exception:
+                pass
         if not is_known and sender_addr:
             try:
-                with _imap() as _ck:
+                with _imap(account_id, owner=owner) as _ck:
                     _ck.select("INBOX", readonly=True)
                     st_known, dk = _ck.search(None, f'(FROM "{sender_addr}")')
                     if st_known == "OK" and dk and dk[0]:
@@ -1179,7 +1317,7 @@ def _pre_retrieve_context(body: str, sender: str) -> tuple:
             return context_snippets, terms_list
 
         try:
-            ctx_conn = _imap_connect()
+            ctx_conn = _imap_connect(account_id, owner=owner)
             for folder in ["INBOX", "Sent", "Archive", "Drafts"]:
                 try:
                     st_sel, _sd = ctx_conn.select(_q(folder), readonly=True)
@@ -1223,18 +1361,18 @@ def _pre_retrieve_context(body: str, sender: str) -> tuple:
 
         try:
             from routes.contacts_routes import _fetch_contacts
-            all_contacts = _fetch_contacts()
+            all_contacts = _fetch_contacts() if contacts_allowed else []
             for term in terms_list:
                 t_lower = term.lower()
                 matches = [c for c in all_contacts
                            if t_lower in (c.get("name") or "").lower()
-                           or t_lower in (c.get("email") or "").lower()]
+                           or any(t_lower in (e or "").lower() for e in (c.get("emails") or []))]
                 for c in matches[:2]:
                     parts = [f"Name: {c.get('name','')}"]
-                    if c.get("email"):
-                        parts.append(f"Email: {c['email']}")
-                    if c.get("phone"):
-                        parts.append(f"Phone: {c['phone']}")
+                    if c.get("emails"):
+                        parts.append(f"Email: {', '.join(c['emails'])}")
+                    if c.get("phones"):
+                        parts.append(f"Phone: {', '.join(c['phones'])}")
                     context_snippets.append(f"[Contact match for \"{term}\"] " + ", ".join(parts))
         except Exception:
             pass

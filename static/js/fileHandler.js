@@ -17,6 +17,10 @@ let API_BASE = '';
 let _uploadSpinners = [];
 const _previewUrls = new WeakMap();
 
+const MAX_FILES = 10;
+const MAX_VISIBLE = 3;
+let _expanded = false;
+
 function _getPreviewUrl(f) {
   if (!f) return '';
   let url = _previewUrls.get(f);
@@ -49,10 +53,6 @@ export function openPicker() {
   document.getElementById('file-input').click();
 }
 
-const MAX_VISIBLE = 3;
-const MAX_EXPAND = 6;   // beyond this, the badge stays collapsed (too many chips to preview)
-let _expanded = false;
-
 /**
  * Render the attachment strip with pending files.
  * 1-3 files: show individual chips.
@@ -80,11 +80,9 @@ export function renderAttachStrip() {
     label.className = 'thumb-collapsed-label';
     badge.appendChild(label);
     badge.title = pendingFiles.map(f => f.name || 'pasted-image').join('\n');
-    const canExpand = total <= MAX_EXPAND;
-    badge.style.cursor = canExpand ? 'pointer' : 'default';
+    badge.style.cursor = 'pointer';
     badge.addEventListener('click', (e) => {
       if (e.target.closest('.thumb-collapsed-x')) return;
-      if (!canExpand) return;   // too many files — don't expand into chips
       _expanded = true;
       renderAttachStrip();
     });
@@ -112,7 +110,7 @@ function _createChip(f, idx) {
     chip.classList.add('thumb-image');  // lets CSS overlay the remove-X on the corner (mobile)
     const img = document.createElement('img');
     img.className = 'thumb-img';
-    img.src = URL.createObjectURL(f);
+    img.src = _getPreviewUrl(f);
     img.alt = f.name || 'image';
     chip.appendChild(img);
   } else {
@@ -172,6 +170,17 @@ export async function uploadPending() {
       method: 'POST',
       body: fd
     });
+    if (!res.ok) {
+      // Surface the failure instead of swallowing it. Previously a non-OK
+      // response (e.g. 429 rate limit, 413 too large) was ignored: the files
+      // silently vanished and the chat sent with no attachments, so the model
+      // "didn't even see them" (issue #1346). Show the server's reason and keep
+      // pendingFiles so the strip re-renders for a retry (see finally below).
+      let detail = '';
+      try { const e = await res.json(); detail = e.detail || e.error || ''; } catch (_) {}
+      _showToast('Upload failed' + (detail ? ': ' + detail : ` (HTTP ${res.status})`));
+      return [];
+    }
     const data = await res.json();
     uploaded = (data.files || []);
     pendingFiles = [];          // clear only on success
@@ -189,8 +198,6 @@ export async function uploadPending() {
     renderAttachStrip();
   }
 }
-
-const MAX_FILES = 10;
 
 /**
  * Add files to pending list (capped at MAX_FILES)
