@@ -82,14 +82,14 @@ def _detect_nvidia():
     # Retry through a login shell with the common CUDA bin dirs on PATH.
     if not out and _remote_host:
         out = _run(
-            "bash -lc 'export PATH=\"$PATH:/usr/bin:/usr/local/bin:/usr/local/cuda/bin\"; "
+            "bash -lc 'export PATH=\"$PATH:/usr/bin:/usr/local/bin:/usr/local/cuda/bin:/usr/lib/wsl/lib\"; "
             "nvidia-smi --query-gpu=memory.total,name --format=csv,noheader,nounits'"
         )
     # Last resort: call nvidia-smi by absolute path. Some hosts have a login
     # shell that isn't bash (or a profile that errors), so the bash -lc retry
     # above still comes back empty even though the binary is right there.
     if not out and _remote_host:
-        for _p in ("/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi", "/usr/local/cuda/bin/nvidia-smi"):
+        for _p in ("/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi", "/usr/local/cuda/bin/nvidia-smi", "/usr/lib/wsl/lib/nvidia-smi"):
             out = _run(f"{_p} --query-gpu=memory.total,name --format=csv,noheader,nounits")
             if out:
                 break
