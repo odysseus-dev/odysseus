@@ -618,6 +618,10 @@ from routes.document_routes import setup_document_routes
 document_router = setup_document_routes(session_manager, upload_handler)
 app.include_router(document_router)
 
+# Projects (grouped sessions with shared context and synthesized memory)
+from routes.project_routes import setup_project_routes
+app.include_router(setup_project_routes(session_manager))
+
 # Signatures (reusable image stamps)
 from routes.signature_routes import setup_signature_routes
 app.include_router(setup_signature_routes())
