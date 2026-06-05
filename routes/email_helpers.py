@@ -714,6 +714,10 @@ def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int 
         conn.sock.settimeout(timeout)
     except Exception:
         pass
+    # Raise the IMAP line-length limit from the default 1 MB to 50 MB so that
+    # large mailboxes (tens of thousands of messages) don't crash with
+    # "got more than 1000000 bytes" on UID SEARCH ALL.  (#2883)
+    imaplib._MAXLINE = 50_000_000
     return conn
 
 def _imap_connect(account_id: str | None = None, owner: str = ""):
