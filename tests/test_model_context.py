@@ -136,6 +136,64 @@ class TestEstimateTokens:
         # 4 overhead + 0 content
         assert tokens == 4
 
+    def test_tool_calls_string_args(self):
+        messages = [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "write_file",
+                            "arguments": '{"path": "foo.txt", "content": "hello"}'
+                        }
+                    }
+                ]
+            }
+        ]
+        tokens = estimate_tokens(messages)
+        # 4 overhead
+        # + 10 overhead for tool_call
+        # + int((len("write_file") + len('{"path": "foo.txt", "content": "hello"}')) * 0.3)
+        # 10 + 38 = 48 chars * 0.3 = 14 tokens
+        # Total = 4 + 10 + 14 = 28
+        assert tokens == 28
+
+    def test_tool_calls_dict_args(self):
+        messages = [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "write_file",
+                            "arguments": {"path": "foo.txt", "content": "hello"}
+                        }
+                    }
+                ]
+            }
+        ]
+        tokens = estimate_tokens(messages)
+        # Should serialize arguments dict to JSON string: {"path": "foo.txt", "content": "hello"}
+        # Same character count/calculation as above
+        assert tokens == 28
+
+    def test_tool_calls_malformed_ignored(self):
+        messages = [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    "not-a-dict",
+                    {"type": "function", "function": "not-a-dict"},
+                    {"type": "function"},
+                ]
+            }
+        ]
+        tokens = estimate_tokens(messages)
+        # Only per-message overhead
+        assert tokens == 4
+
     def test_scales_with_length(self):
         short = estimate_tokens([{"role": "user", "content": "short"}])
         long_text = "a" * 10000

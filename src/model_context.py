@@ -369,4 +369,30 @@ def estimate_tokens(messages: List[Dict]) -> int:
             for item in content:
                 if isinstance(item, dict) and item.get("type") == "text":
                     total += int(len(item.get("text", "")) * 0.3)
+
+        # Estimate tokens for tool_calls if present (issue #2748)
+        tool_calls = msg.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for tc in tool_calls:
+                if isinstance(tc, dict):
+                    func = tc.get("function")
+                    if isinstance(func, dict):
+                        name = func.get("name") or ""
+                        arguments = func.get("arguments") or ""
+
+                        name_len = len(name) if isinstance(name, str) else 0
+
+                        if isinstance(arguments, str):
+                            args_len = len(arguments)
+                        elif isinstance(arguments, dict):
+                            try:
+                                import json
+
+                                args_len = len(json.dumps(arguments))
+                            except Exception:
+                                args_len = len(str(arguments))
+                        else:
+                            args_len = 0
+
+                        total += 10 + int((name_len + args_len) * 0.3)
     return total
