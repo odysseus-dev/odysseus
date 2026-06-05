@@ -111,6 +111,122 @@ def test_compare_start_allows_owned_registered_endpoint_for_non_admin(monkeypatc
         assert s.headers
 
 
+def test_compare_start_rejects_another_users_private_endpoint(monkeypatch):
+    # bob owns the endpoint at this URL; alice supplying the same URL gets no
+    # match from the owner-scoped lookup (owner_filter drops bob's private row),
+    # so compare treats it exactly like a raw unregistered URL → 403. She can
+    # neither bind a session to his endpoint nor copy his key.
+    import routes.compare_routes as cr
+
+    monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
+
+    def _scoped(db, base, owner):
+        # Only the owner ("bob") can see this private row; everyone else → None.
+        if owner == "bob":
+            return SimpleNamespace(id=9, api_key="sk-bob", base_url=base)
+        return None
+
+    monkeypatch.setattr(cr, "_owned_endpoint_by_url", _scoped)
+
+    created = {}
+
+    def _create_session(session_id, **_):
+        created[session_id] = SimpleNamespace(headers={})
+
+    start = _compare_start_route(
+        SimpleNamespace(create_session=_create_session, sessions=_SessionStore(created))
+    )
+    with pytest.raises(HTTPException) as exc:
+        start(
+            _compare_request(user="alice"),
+            prompt="p",
+            model_a="a",
+            model_b="b",
+            endpoint_a="http://10.0.0.5:9000/v1",
+            endpoint_b="http://10.0.0.5:9000/v1",
+        )
+
+    assert exc.value.status_code == 403
+    # Nothing was created → no session bound to bob's endpoint, no key copied.
+    assert created == {}
+
+
+def test_compare_start_binds_session_to_registered_endpoint_url(monkeypatch):
+    # The session must dial the registered endpoint's OWN normalized base URL,
+    # never the raw caller-supplied string. Mint the owned row with a base URL
+    # that differs from the messy raw input so a regression to `endpoint_url=
+    # endpoint` would surface here.
+    import routes.compare_routes as cr
+    from src.endpoint_resolver import build_chat_url, normalize_base
+
+    monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
+    owned = SimpleNamespace(id=7, api_key="sk-secret", base_url="http://127.0.0.1:8000/v1")
+    monkeypatch.setattr(cr, "_owned_endpoint_by_url", lambda *a, **k: owned)
+
+    created = {}
+    captured = {}
+
+    def _create_session(session_id, **kw):
+        created[session_id] = SimpleNamespace(headers={})
+        captured[session_id] = kw
+
+    start = _compare_start_route(
+        SimpleNamespace(create_session=_create_session, sessions=_SessionStore(created))
+    )
+    raw_url = "http://127.0.0.1:8000/v1/"  # trailing slash → not byte-identical
+    start(
+        _compare_request(),
+        prompt="p",
+        model_a="a",
+        model_b="b",
+        endpoint_a=raw_url,
+        endpoint_b=raw_url,
+    )
+
+    expected = build_chat_url(normalize_base(owned.base_url))
+    assert captured and all(kw["endpoint_url"] == expected for kw in captured.values())
+    # The owned endpoint's key is copied into each session's headers.
+    for s in created.values():
+        assert s.headers
+
+
+def test_compare_start_admin_raw_endpoint_carries_no_borrowed_key(monkeypatch):
+    # Explicit admin/raw-endpoint behavior: an admin may pass a raw URL that
+    # matches no registered endpoint. It is allowed (the reject helper is a
+    # no-op for admins), the session keeps the raw URL, and — because nothing
+    # matched — no key/headers are inherited from any endpoint row.
+    import routes.compare_routes as cr
+
+    monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
+    monkeypatch.setattr(cr, "_owned_endpoint_by_url", lambda *a, **k: None)
+
+    created = {}
+    captured = {}
+
+    def _create_session(session_id, **kw):
+        created[session_id] = SimpleNamespace(headers={})
+        captured[session_id] = kw
+
+    start = _compare_start_route(
+        SimpleNamespace(create_session=_create_session, sessions=_SessionStore(created))
+    )
+    raw_url = "http://198.51.100.7:1234/v1"
+    start(
+        _compare_request(user="root", is_admin=True),
+        prompt="p",
+        model_a="a",
+        model_b="b",
+        endpoint_a=raw_url,
+        endpoint_b=raw_url,
+    )
+
+    assert len(created) == 2
+    for kw in captured.values():
+        assert kw["endpoint_url"] == raw_url  # raw URL preserved for admins
+    for s in created.values():
+        assert s.headers == {}  # no borrowed key/headers
+
+
 def test_compare_endpoint_key_lookup_is_owner_scoped():
     body = Path("routes/compare_routes.py").read_text(encoding="utf-8")
     start_body = body.split("def start_comparison", 1)[1].split("# Store comparison record", 1)[0]
@@ -118,6 +234,9 @@ def test_compare_endpoint_key_lookup_is_owner_scoped():
 
     assert "_reject_raw_endpoint_url_for_non_admin" in start_body
     assert "_owned_endpoint_by_url(db, base, user)" in start_body
+    # The session binds to the resolved endpoint's stored base URL, not the raw
+    # caller-supplied string (the reviewer's remaining compare blocker).
+    assert "build_chat_url(normalize_base(ep.base_url))" in start_body
     assert "owner_filter(q, ModelEndpoint, owner)" in helper_body
 
 
