@@ -62,6 +62,7 @@ function _initGroupTab() {
   }
 
   function _render() {
+    const pendingPickers = [...participantsEl.querySelectorAll('.group-picker-row')];
     participantsEl.innerHTML = '';
     _groupParticipants.forEach((p, idx) => {
       const row = document.createElement('div');
@@ -73,11 +74,12 @@ function _initGroupTab() {
           <span style="font-size:12px;font-weight:500;">${uiModule.esc(label)}</span>
           ${sublabel && sublabel !== label ? '<span style="font-size:10px;opacity:0.35;margin-left:4px;">' + uiModule.esc(sublabel) + '</span>' : ''}
         </span>
-        <button style="background:none;border:none;color:var(--fg);opacity:0.5;cursor:pointer;font-size:16px;padding:0 4px;line-height:1;position:relative;top:-4px;" data-idx="${idx}" title="Remove">&times;</button>
+        <button style="background:none;border:none;color:var(--fg);opacity:0.5;cursor:pointer;font-size:16px;padding:0 4px;line-height:1;" data-idx="${idx}" title="Remove">&times;</button>
       `;
       row.querySelector('button').addEventListener('click', () => { _groupParticipants.splice(idx, 1); _render(); });
       participantsEl.appendChild(row);
     });
+    pendingPickers.forEach(p => participantsEl.appendChild(p));
     // startBtn is shared — don't disable it
   }
 
@@ -85,21 +87,28 @@ function _initGroupTab() {
     const [models, characters] = await Promise.all([_getModels(), _getCharacterList()]);
 
     const picker = document.createElement('div');
+    picker.className = 'group-picker-row';
     picker.style.cssText = 'display:flex;gap:4px;align-items:center;';
 
     const charSel = document.createElement('select');
     charSel.className = 'preset-input';
-    charSel.style.cssText = 'font-size:11px;flex:1;height:26px;';
-    charSel.innerHTML = '<option value="">Empty...</option>' +
+    charSel.style.cssText = 'font-size:12px;flex:1;min-height:28px;';
+    charSel.innerHTML = '<option value="">Persona...</option>' +
       characters.map(c => '<option value="' + c.id + '">' + uiModule.esc(c.name) + '</option>').join('');
 
     const modelSel = document.createElement('select');
     modelSel.className = 'preset-input';
-    modelSel.style.cssText = 'font-size:11px;flex:1;height:26px;';
-    modelSel.innerHTML = '<option value="">Model…</option>' +
+    modelSel.style.cssText = 'font-size:12px;flex:1;min-height:28px;';
+    modelSel.innerHTML = '<option value="">Model...</option>' +
       models.map(m => '<option value="' + m.mid + '">' + uiModule.esc(m.display) + '</option>').join('');
 
-    // Auto-add when model is selected
+    const cancelBtn = document.createElement('button');
+    cancelBtn.innerHTML = '&times;';
+    cancelBtn.style.cssText = 'background:none;border:none;color:var(--fg);opacity:0.5;cursor:pointer;font-size:16px;padding:0 4px;line-height:1;flex-shrink:0;';
+    cancelBtn.title = 'Cancel';
+    cancelBtn.addEventListener('click', () => picker.remove());
+
+    // Commit entry when model is selected
     modelSel.addEventListener('change', () => {
       if (!modelSel.value) return;
       if (_groupParticipants.length >= 8) { uiModule.showToast('Max 8'); return; }
@@ -113,6 +122,7 @@ function _initGroupTab() {
 
     picker.appendChild(charSel);
     picker.appendChild(modelSel);
+    picker.appendChild(cancelBtn);
     participantsEl.appendChild(picker);
   });
 
@@ -200,9 +210,7 @@ function _initGroupTab() {
     _modelsCache = null;
     if (startBtn) startBtn.textContent = 'Start Group';
     _loadGroupPresets();
-    if (_groupParticipants.length === 0) {
-      setTimeout(() => addBtn.click(), 100);
-    }
+    _render();
   });
 
   // Load and render saved group presets

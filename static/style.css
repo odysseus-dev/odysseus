@@ -9470,6 +9470,21 @@ details a:hover {
   overflow-x: hidden;
 }
 
+/* Anchor the Prompt modal to the top of the viewport so switching tabs
+   (which changes modal height) doesn't move the top edge up and down. */
+#custom-preset-modal {
+  align-items: flex-start;
+  padding-top: 8vh;
+}
+
+/* Suppress the modal-body scrollbar for the Prompt modal. The footer
+   (Start/Cancel) is a sibling of modal-body — outside it — so it's
+   always reachable. The outer preset-modal-content (overflow:hidden)
+   handles any clipping if content somehow exceeds the container. */
+#custom-preset-modal .modal-body {
+  overflow: hidden;
+}
+
 /* Footer Start/Cancel buttons get a leading icon. Done via ::before + a masked
    SVG (not an inline <svg> child) because the labels are set with .textContent,
    which would wipe a child element on every tab switch. background:currentColor
@@ -9641,6 +9656,7 @@ details a:hover {
   appearance: none;
   width: 18px;
   height: 18px;
+  margin-top: -6px; /* center 18px thumb on 6px track: (6-18)/2 */
   border-radius: 50%;
   background: var(--red, var(--fg));
   cursor: pointer;
@@ -9771,6 +9787,19 @@ details a:hover {
 .preset-save-template-btn:hover {
   border-color: var(--accent, var(--red));
   color: var(--accent, var(--red));
+}
+
+#group-add-btn {
+  cursor: pointer;
+  padding: 8px 4px !important;
+  margin-top: 8px !important;
+  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
+}
+#group-add-btn:hover,
+#group-add-btn:focus-visible {
+  opacity: 1 !important;
+  border-color: var(--accent, var(--red)) !important;
+  color: var(--accent, var(--red)) !important;
 }
 
 .char-prompt-wrap {
