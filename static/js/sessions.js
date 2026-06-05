@@ -1610,6 +1610,8 @@ export async function loadSessions() {
       fetched = await res.json();
     }
     sessions = _normalizeSessionsList(fetched);
+    // Reset project filter on full reload so stale filter doesn't persist across logins
+    _activeProjectId = null;
     // Load projects in parallel (non-blocking — renders session list immediately)
     loadProjects().catch(() => {});
     renderSessionList();

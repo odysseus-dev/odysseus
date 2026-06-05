@@ -1480,8 +1480,8 @@ class ProjectDocument(Base):
     """Pinned documents attached to a project."""
     __tablename__ = "project_documents"
 
-    project_id  = Column(String, ForeignKey("projects.id"), primary_key=True)
-    document_id = Column(String, ForeignKey("documents.id"), primary_key=True)
+    project_id  = Column(String, ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True)
+    document_id = Column(String, ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True)
     pinned_at   = Column(DateTime, default=utcnow_naive)
 
 
@@ -1490,7 +1490,7 @@ class ProjectMemory(Base):
     __tablename__ = "project_memories"
 
     id             = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    project_id     = Column(String, ForeignKey("projects.id"), nullable=False)
+    project_id     = Column(String, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
     content        = Column(Text, nullable=False)
     synthesized_at = Column(DateTime, default=utcnow_naive)
     session_count  = Column(Integer, default=0)

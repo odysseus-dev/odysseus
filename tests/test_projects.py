@@ -203,3 +203,96 @@ def test_app_includes_project_router():
     assert "project_routes" in src, "app.py must import from project_routes"
     assert "setup_project_routes" in src, "app.py must call setup_project_routes"
     assert "include_router" in src, "app.py must call include_router"
+
+
+# ---------------------------------------------------------------------------
+# Test 10: GET /api/projects excludes archived projects
+# ---------------------------------------------------------------------------
+
+def test_list_projects_source_excludes_archived():
+    _, src = _parse("routes/project_routes.py")
+    assert "archived == False" in src, \
+        "list_projects must filter out archived projects"
+
+
+# ---------------------------------------------------------------------------
+# Test 11: DELETE /api/projects/{id} soft-archives, does not hard-delete
+# ---------------------------------------------------------------------------
+
+def test_delete_sets_archived_not_hard_delete():
+    tree, src = _parse("routes/project_routes.py")
+    assert "archived = True" in src, "DELETE must set archived=True"
+    delete_fn_src = ""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "delete_project":
+            delete_fn_src = ast.unparse(node)
+    assert "db.delete" not in delete_fn_src, \
+        "delete_project must not hard-delete — use archived=True"
+
+
+# ---------------------------------------------------------------------------
+# Test 12: _get_project_or_404 enforces owner scoping
+# ---------------------------------------------------------------------------
+
+def test_get_project_or_404_filters_by_owner():
+    _, src = _parse("routes/project_routes.py")
+    assert "_get_project_or_404" in src, "_get_project_or_404 helper must exist"
+    assert "ProjectModel.owner == owner" in src, \
+        "_get_project_or_404 must filter by owner"
+    assert "HTTPException(404" in src, \
+        "_get_project_or_404 must raise 404 when project not found"
+
+
+# ---------------------------------------------------------------------------
+# Test 13: pin_document verifies document ownership before pinning
+# ---------------------------------------------------------------------------
+
+def test_pin_document_verifies_doc_owner():
+    _, src = _parse("routes/project_routes.py")
+    assert "DocModel.owner == owner" in src or "filter(DocModel.owner" in src, \
+        "pin_document must filter documents by owner to prevent cross-user pinning"
+
+
+# ---------------------------------------------------------------------------
+# Test 14: CASCADE declared on all three project FKs
+# ---------------------------------------------------------------------------
+
+def test_cascade_on_project_fks():
+    _, src = _parse("core/database.py")
+    assert 'ForeignKey("projects.id", ondelete="CASCADE")' in src or \
+           "ForeignKey('projects.id', ondelete='CASCADE')" in src, \
+        "ProjectDocument/ProjectMemory project_id FK must have ondelete=CASCADE"
+    cascade_count = src.count('ondelete="CASCADE"') + src.count("ondelete='CASCADE'")
+    assert cascade_count >= 3, \
+        "Need CASCADE on ProjectDocument.project_id, ProjectDocument.document_id, ProjectMemory.project_id"
+
+
+# ---------------------------------------------------------------------------
+# Test 15: projectModal.js is loaded in index.html
+# ---------------------------------------------------------------------------
+
+def test_project_modal_script_in_index_html():
+    src = Path("static/index.html").read_text(encoding="utf-8")
+    assert "projectModal.js" in src, \
+        "static/index.html must include a <script> tag for projectModal.js"
+
+
+# ---------------------------------------------------------------------------
+# Test 16: synthesize endpoint handles zero sessions gracefully
+# ---------------------------------------------------------------------------
+
+def test_synthesize_handles_zero_sessions():
+    _, src = _parse("routes/project_routes.py")
+    assert "No sessions" in src or "no sessions" in src or \
+           "not session_list" in src or "session_count" in src, \
+        "synthesize must handle projects with no sessions"
+
+
+# ---------------------------------------------------------------------------
+# Test 17: sessions.js resets _activeProjectId on loadSessions
+# ---------------------------------------------------------------------------
+
+def test_sessions_js_resets_active_project_on_load():
+    src = Path("static/js/sessions.js").read_text(encoding="utf-8")
+    assert "_activeProjectId = null" in src, \
+        "loadSessions must reset _activeProjectId to avoid stale filter across reloads"
