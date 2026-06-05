@@ -1873,7 +1873,8 @@ function _retryCachedModel(repo, m) {
   if (_envState.hfToken) payload.hf_token = _envState.hfToken;
   if (_envState.remoteHost) { payload.remote_host = _envState.remoteHost; const _sp2 = _getPort(_envState.remoteHost); if (_sp2) payload.ssh_port = _sp2; }
   if (_envState.platform) payload.platform = _envState.platform;
-  if (_isWindows()) {
+  const _host = _envState.remoteHost || '';
+  if (_isWindows(_host) && _host) {
     if (_envState.env === 'venv' && _envState.envPath) {
       payload.env_prefix = '& ' + _psQuote(_envState.envPath.endsWith('\\Scripts\\Activate.ps1') ? _envState.envPath : _envState.envPath + '\\Scripts\\Activate.ps1');
     } else if (_envState.env === 'conda' && _envState.envPath) {
@@ -1882,7 +1883,9 @@ function _retryCachedModel(repo, m) {
   } else {
     if (_envState.env === 'venv' && _envState.envPath) {
       const p = _envState.envPath;
-      payload.env_prefix = 'source ' + _shellQuote(p.endsWith('/bin/activate') ? p : p + '/bin/activate');
+      const isLocalWin = !_host && _isWindows('');
+      const activateScript = isLocalWin ? '/Scripts/activate' : '/bin/activate';
+      payload.env_prefix = 'source ' + _shellQuote(p.endsWith(activateScript) ? p : p + activateScript);
     } else if (_envState.env === 'conda' && _envState.envPath) {
       payload.env_prefix = 'eval "$(conda shell.bash hook)" && conda activate ' + _shellQuote(_envState.envPath);
     }

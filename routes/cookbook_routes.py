@@ -1222,10 +1222,10 @@ def setup_cookbook_routes() -> APIRouter:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            await proc.wait()
+            stdout_bytes, stderr_bytes = await proc.communicate()
 
             if proc.returncode != 0:
-                stderr = (await proc.stderr.read()).decode(errors="replace")
+                stderr = stderr_bytes.decode(errors="replace")
                 return {"ok": False, "error": stderr, "session_id": session_id}
 
         # Auto-register a model endpoint so the served model shows up in the model
