@@ -82,6 +82,10 @@ services:
         condition: service_started
     restart: unless-stopped
     # NVIDIA overlay (from docker/gpu.nvidia.yml).
+    devices:
+      - nvidia.com/gpu=all
+    security_opt:
+      - label=disable
     deploy:
       resources:
         reservations:

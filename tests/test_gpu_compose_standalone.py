@@ -117,15 +117,19 @@ def test_nvidia_odysseus_adds_only_overlay(base):
         "NVIDIA_DRIVER_CAPABILITIES=compute,utility",
     }
 
+    # CDI device passthrough for Podman / WSL (ignored by Docker when unused).
+    assert "devices" not in base_svc
+    assert svc["devices"] == ["nvidia.com/gpu=all"]
+    assert svc["security_opt"] == ["label=disable"]
+
     # deploy block is new and matches the overlay's GPU reservation exactly.
     assert "deploy" not in base_svc
-    devices = svc["deploy"]["resources"]["reservations"]["devices"]
-    assert devices == [
+    deploy_devices = svc["deploy"]["resources"]["reservations"]["devices"]
+    assert deploy_devices == [
         {"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}
     ]
 
     # No AMD-only keys leaked in.
-    assert "devices" not in svc
     assert "group_add" not in svc
 
 
