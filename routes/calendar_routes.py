@@ -1,6 +1,7 @@
 """Calendar routes — local SQLite-backed calendar CRUD."""
 
 import logging
+import re
 import uuid
 from datetime import datetime, date, timedelta
 from typing import Optional, List
@@ -98,6 +99,15 @@ def _ics_escape(text: str) -> str:
         .replace("\n", "\\n")
         .replace("\r", "\\n")
     )
+
+
+def _safe_ics_filename(name: str) -> str:
+    """Return a conservative .ics filename safe for Content-Disposition."""
+    stem = name if isinstance(name, str) else ""
+    stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem).strip("._-")
+    if not stem:
+        stem = "calendar"
+    return f"{stem[:128]}.ics"
 
 
 def _resolve_base_uid(uid: str) -> str:
@@ -1178,11 +1188,14 @@ def setup_calendar_routes() -> APIRouter:
             lines.append("END:VCALENDAR")
 
             ics_data = "\r\n".join(lines)
-            safe_name = cal.name.replace(" ", "_").replace("/", "_")
+            download_name = _safe_ics_filename(cal.name)
             return Response(
                 content=ics_data,
                 media_type="text/calendar",
-                headers={"Content-Disposition": f'attachment; filename="{safe_name}.ics"'},
+                headers={
+                    "Content-Disposition": f'attachment; filename="{download_name}"',
+                    "X-Content-Type-Options": "nosniff",
+                },
             )
         except HTTPException:
             raise
