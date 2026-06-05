@@ -53,7 +53,7 @@ function initDrag() {
     content,
     header,
     skipSelector: 'button, input, select, .theme-opacity-wrap',
-    enableDock: false,
+    enableDock: true,
   });
 }
 
