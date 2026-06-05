@@ -429,6 +429,20 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         except Exception:
             return False
 
+    def _validate_then_task_id(db, then_task_id: Optional[str], user: Optional[str], current_task_id: Optional[str] = None) -> Optional[str]:
+        target_id = (then_task_id or "").strip()
+        if not target_id:
+            return None
+        if current_task_id and target_id == current_task_id:
+            raise HTTPException(400, "Task cannot chain to itself")
+        q = db.query(ScheduledTask).filter(ScheduledTask.id == target_id)
+        if user:
+            q = q.filter(ScheduledTask.owner == user)
+        target = q.first()
+        if not target:
+            raise HTTPException(404, "Chained task not found")
+        return target.id
+
     @router.post("")
     async def create_task(request: Request, req: TaskCreate):
         user = _owner(request)
@@ -492,6 +506,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         task_id = str(uuid.uuid4())
         db = SessionLocal()
         try:
+            then_task_id = _validate_then_task_id(db, req.then_task_id, user)
             notifications_enabled = (
                 False if req.task_type == "action" and req.notifications_enabled is None
                 else bool(req.notifications_enabled) if req.notifications_enabled is not None
@@ -518,7 +533,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 output_target=req.output_target,
                 model=req.model or None,
                 endpoint_url=req.endpoint_url or None,
-                then_task_id=req.then_task_id or None,
+                then_task_id=then_task_id,
                 webhook_token=webhook_token,
                 notifications_enabled=notifications_enabled,
             )
@@ -671,7 +686,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             if req.trigger_count is not None:
                 task.trigger_count = req.trigger_count
             if req.then_task_id is not None:
-                task.then_task_id = req.then_task_id or None
+                task.then_task_id = _validate_then_task_id(db, req.then_task_id, user, current_task_id=task.id)
             if req.notifications_enabled is not None:
                 task.notifications_enabled = bool(req.notifications_enabled)
             if req.cron_expression is not None:

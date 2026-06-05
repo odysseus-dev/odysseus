@@ -844,7 +844,13 @@ class TaskScheduler:
             # Task chaining — trigger the next task on success
             if run.status == "success" and task.then_task_id:
                 chain_id = task.then_task_id
-                if not self._has_chain_cycle(db, chain_id):
+                chain_task = db.query(ScheduledTask).filter(ScheduledTask.id == chain_id).first()
+                if not chain_task or chain_task.owner != task.owner:
+                    logger.warning(
+                        "Skipping chain from %r: target task %s is missing or not owned by %r",
+                        task.name, chain_id, task.owner,
+                    )
+                elif not self._has_chain_cycle(db, chain_id, owner=task.owner):
                     logger.info(f"Chaining: '{task.name}' → task {chain_id}")
                     asyncio.create_task(self._run_chained(chain_id))
                 else:
@@ -1791,7 +1797,7 @@ class TaskScheduler:
             self._executing.add(task_id)
         await self._execute_task(task_id)
 
-    def _has_chain_cycle(self, db, start_id: str, max_depth: int = 10) -> bool:
+    def _has_chain_cycle(self, db, start_id: str, max_depth: int = 10, owner: str | None = None) -> bool:
         """Detect cycles in task chains."""
         from core.database import ScheduledTask
         visited = set()
@@ -1801,6 +1807,8 @@ class TaskScheduler:
                 return True
             visited.add(current)
             task = db.query(ScheduledTask).filter(ScheduledTask.id == current).first()
+            if owner is not None and task and task.owner != owner:
+                return True
             if not task or not task.then_task_id:
                 return False
             current = task.then_task_id
