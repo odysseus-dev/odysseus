@@ -38,6 +38,8 @@ Open `http://localhost:7000` when the containers are healthy. The first admin pa
 
 Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration live in the [setup guide](docs/setup.md).
 
+Cookbook dependency installs use pip's normal cache and temporary directories. If a small home partition fills while building wheels, set `PIP_CACHE_DIR` and `TMPDIR` to a larger path before starting Odysseus, or use the matching `.env` entries for Docker.
+
 ## Features
 
 - **Chat + Agents** — local/API models, tools, MCP, files, shell, skills, and memory.
