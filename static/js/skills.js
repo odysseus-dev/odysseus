@@ -1818,6 +1818,38 @@ async function _showSkillSource(name) {
   });
 }
 
+function _pickSkillBundleZip() {
+  const fileInput = document.getElementById('skill-import-bundle-file');
+  if (!fileInput) return;
+  fileInput.click();
+}
+
+async function _handleSkillBundleZip(file) {
+  if (!file) return;
+  const btn = document.getElementById('skill-import-bundle-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`${API}/api/skills/import-bundle`, {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+    await loadSkills();
+    const name = data.skill?.name || 'skill';
+    uiModule.showToast(`Imported ${name} (${data.files || 1} file(s))`);
+    if (name) openSkill(name);
+  } catch (err) {
+    uiModule.showError('Import failed: ' + err.message);
+  } finally {
+    if (btn) btn.disabled = false;
+    const fileInput = document.getElementById('skill-import-bundle-file');
+    if (fileInput) fileInput.value = '';
+  }
+}
+
 async function importSkillFromUrl() {
   const input = document.getElementById('skill-import-url');
   const url = (input?.value || '').trim();
@@ -1898,6 +1930,11 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('skill-import-url-btn')?.addEventListener('click', importSkillFromUrl);
   document.getElementById('skill-import-url')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') importSkillFromUrl();
+  });
+  document.getElementById('skill-import-bundle-btn')?.addEventListener('click', _pickSkillBundleZip);
+  document.getElementById('skill-import-bundle-file')?.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (file) _handleSkillBundleZip(file);
   });
   document.getElementById('add-skill-btn')?.addEventListener('click', addSkill);
   document.getElementById('skills-search')?.addEventListener('input', renderSkillsList);

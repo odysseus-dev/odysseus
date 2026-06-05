@@ -13,12 +13,13 @@ from typing import List, Optional
 
 import httpx
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from services.memory.skills import SkillsManager
 from src.auth_helpers import get_current_user
 from core.middleware import require_admin
+from src.upload_limits import read_upload_limited
 
 logger = logging.getLogger(__name__)
 
@@ -1234,6 +1235,40 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             raise HTTPException(502, detail) from e
         except Exception as e:
             logger.error("skill import failed: %s", e)
+            raise HTTPException(500, "Skill import failed") from e
+
+        _fire_skill_added(user)
+        return {"ok": True, "skill": entry, "files": len(files)}
+
+    @router.post("/import-bundle")
+    async def import_skill_bundle(request: Request, file: UploadFile = File(...)):
+        """Install a SKILL.md bundle from an uploaded ZIP (e.g. book-to-skill output)."""
+        require_admin(request)
+        user = _owner(request)
+        from services.memory.skill_importer import (
+            BUNDLE_ZIP_MAX_BYTES,
+            SkillImportError,
+            parse_skill_bundle_zip,
+        )
+
+        filename = (file.filename or "bundle.zip").strip()
+        if not filename.lower().endswith(".zip"):
+            raise HTTPException(400, "Upload a .zip file containing SKILL.md and text assets")
+
+        try:
+            data = await read_upload_limited(file, BUNDLE_ZIP_MAX_BYTES, "Skill bundle")
+            files = parse_skill_bundle_zip(data)
+            entry = skills_manager.import_bundle_from_files(
+                files,
+                owner=user,
+                source_url=f"upload:{filename}",
+            )
+        except SkillImportError as e:
+            raise HTTPException(400, str(e)) from e
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("skill bundle import failed: %s", e)
             raise HTTPException(500, "Skill import failed") from e
 
         _fire_skill_added(user)

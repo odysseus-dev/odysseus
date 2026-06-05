@@ -1,4 +1,7 @@
-"""Skill URL importer — GitHub path parsing."""
+"""Skill importer — GitHub URLs and ZIP bundles."""
+import io
+import zipfile
+
 import pytest
 
 from services.memory.skill_importer import (
@@ -7,8 +10,27 @@ from services.memory.skill_importer import (
     _assert_github_url,
     _fetch_bytes,
     _list_github_dir,
+    parse_skill_bundle_zip,
     parse_skill_source,
 )
+
+
+def _skill_md(name: str = "demo-skill") -> str:
+    return (
+        "---\n"
+        f"name: {name}\n"
+        "description: Demo skill\n"
+        "---\n\n"
+        "## When to use\n\nDemo.\n"
+    )
+
+
+def _make_zip(files: dict) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path, content in files.items():
+            zf.writestr(path, content)
+    return buf.getvalue()
 
 
 def test_parse_github_blob_skill_md():
@@ -176,3 +198,40 @@ def test_fetch_bytes_surfaces_github_error_detail(monkeypatch):
     _mock_httpx_client(monkeypatch, _Resp())
     with pytest.raises(SkillImportError, match="GitHub request failed \\(403\\): Forbidden"):
         _fetch_bytes("https://raw.githubusercontent.com/o/r/main/SKILL.md")
+
+
+def test_parse_skill_bundle_zip_flat_layout():
+    data = _make_zip({
+        "SKILL.md": _skill_md(),
+        "glossary.md": "# Glossary\n",
+    })
+    files = parse_skill_bundle_zip(data)
+    assert "SKILL.md" in files
+    assert "glossary.md" in files
+    assert "demo-skill" in files["SKILL.md"]
+
+
+def test_parse_skill_bundle_zip_strips_root_folder():
+    data = _make_zip({
+        "thinking-fast/SKILL.md": _skill_md("thinking-fast"),
+        "thinking-fast/chapters/ch01.md": "# Chapter 1\n",
+        "thinking-fast/patterns.md": "# Patterns\n",
+    })
+    files = parse_skill_bundle_zip(data)
+    assert set(files) == {"SKILL.md", "chapters/ch01.md", "patterns.md"}
+
+
+def test_parse_skill_bundle_zip_rejects_missing_skill_md():
+    data = _make_zip({"readme.md": "# Hi\n"})
+    with pytest.raises(SkillImportError, match="no SKILL.md"):
+        parse_skill_bundle_zip(data)
+
+
+def test_parse_skill_bundle_zip_ignores_zip_slip_paths():
+    data = _make_zip({
+        "SKILL.md": _skill_md(),
+        "../evil.md": "nope\n",
+        "chapters/../evil.md": "nope\n",
+    })
+    files = parse_skill_bundle_zip(data)
+    assert set(files) == {"SKILL.md"}
