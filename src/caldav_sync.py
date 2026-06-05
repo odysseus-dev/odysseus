@@ -127,24 +127,33 @@ def _find_existing_event(db, pending, uid_val, calendar_id):
 def _google_caldav_events_url(url: str) -> str | None:
     """Map a Google CalDAV *principal* URL to its event-collection URL.
 
-    Google serves the principal at ``.../caldav/v2/<id>/user`` but events live
-    under ``.../caldav/v2/<id>/events`` — the ``/user`` resource holds no
-    VEVENTs. The `caldav` library's principal→home-set discovery does not
-    reliably enumerate calendars from Google's ``/user`` endpoint, so the sync
-    falls into the "treat the URL as a single calendar" fallback below. Pointed
-    at ``/user`` that fallback issues every calendar-query REPORT against the
-    principal, which returns a clean but empty 200 for all date ranges — the
-    calendar shows no events even though auth succeeded (issue #2507).
+    Google serves the principal at ``…/user`` but events live under ``…/events``
+    — the ``/user`` resource holds no VEVENTs. The `caldav` library's
+    principal→home-set discovery does not reliably enumerate calendars from
+    Google's ``/user`` endpoint, so the sync falls into the "treat the URL as a
+    single calendar" fallback below. Pointed at ``/user`` that fallback issues
+    every calendar-query REPORT against the principal, which returns a clean but
+    empty 200 for all date ranges — the calendar shows no events even though
+    auth succeeded (issue #2507).
+
+    Both Google CalDAV endpoint forms are handled, since some accounts only
+    authenticate against one of them:
+      - newer:  ``https://apidata.googleusercontent.com/caldav/v2/<id>/user``
+      - legacy: ``https://www.google.com/calendar/dav/<id>/user``
 
     Returns the events URL for a recognised Google principal URL, else None so
     the caller keeps the original URL unchanged.
     """
     parts = urlparse(url)
     host = (parts.hostname or "").lower()
-    if not host.endswith("googleusercontent.com"):
-        return None
     path = parts.path.rstrip("/")
     if not path.endswith("/user"):
+        return None
+    is_google = (
+        host.endswith("googleusercontent.com")                       # newer /caldav/v2 form
+        or (host in ("www.google.com", "google.com") and "/calendar/dav/" in path)  # legacy form
+    )
+    if not is_google:
         return None
     new_path = path[: -len("/user")] + "/events"
     return urlunparse(parts._replace(path=new_path))

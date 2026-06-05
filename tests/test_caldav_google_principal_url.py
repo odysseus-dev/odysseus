@@ -133,6 +133,16 @@ def test_maps_google_principal_url_to_events_collection():
     assert caldav_sync._google_caldav_events_url(_GOOGLE_EVENTS) is None
 
 
+def test_maps_legacy_google_calendar_dav_url():
+    # Google's older endpoint (some accounts authenticate only against this one).
+    legacy_user = "https://www.google.com/calendar/dav/me@gmail.com/user"
+    legacy_events = "https://www.google.com/calendar/dav/me@gmail.com/events"
+    assert caldav_sync._google_caldav_events_url(legacy_user) == legacy_events
+    assert caldav_sync._google_caldav_events_url(legacy_user + "/") == legacy_events
+    # A non-CalDAV www.google.com /user path must NOT be rewritten.
+    assert caldav_sync._google_caldav_events_url("https://www.google.com/accounts/user") is None
+
+
 def test_google_sync_pulls_events_instead_of_empty(monkeypatch):
     _install_fake_caldav(monkeypatch)
     _clear_db()
