@@ -141,14 +141,17 @@ class VectorRAG:
             return {"success": False, "message": "No valid documents"}
 
         try:
+            # Generate all IDs upfront, then fetch in one batch query
+            all_ids = [_generate_doc_id(t, m.get("owner") or "") for t, m in valid]
+            existing_result = self._collection.get(ids=all_ids)
+            existing_ids = set(existing_result["ids"])
+            
             # Get existing IDs to avoid duplicates
             new_texts = []
             new_metas = []
             new_ids = []
-            for t, m in valid:
-                doc_id = _generate_doc_id(t, m.get("owner") or "")
-                existing = self._collection.get(ids=[doc_id])
-                if not existing["ids"]:
+            for doc_id, (t, m) in zip(all_ids, valid):
+                if doc_id not in existing_ids:
                     new_texts.append(t)
                     new_metas.append(m)
                     new_ids.append(doc_id)
