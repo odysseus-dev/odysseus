@@ -546,6 +546,13 @@ def _append_serve_preflight_exit_lines(runner_lines: list[str], *, keep_shell_op
     runner_lines.append('if [ -n "$ODYSSEUS_PREFLIGHT_EXIT" ]; then')
     runner_lines.append('  echo ""; echo "=== Process exited with code $ODYSSEUS_PREFLIGHT_EXIT ==="')
     if keep_shell_open:
+        # Decouple the post-crash interactive shell from the persistent log
+        # file. fds 3/4 were saved BEFORE the tee redirect at the top of
+        # the runner; restoring them here means the neofetch banner the
+        # user's .zshrc prints lands on the tmux pane only, not in the
+        # log file the agent's tail_serve_output reads.
+        runner_lines.append('  exec 1>&3 2>&4 3>&- 4>&- 2>/dev/null || true')
+        runner_lines.append('  sleep 0.2  # let tee child flush + exit')
         runner_lines.append('  exec "${SHELL:-/bin/bash}"')
     else:
         runner_lines.append('  exit "$ODYSSEUS_PREFLIGHT_EXIT"')
@@ -563,7 +570,11 @@ def _append_serve_exit_code_lines(
     if is_pip_install:
         runner_lines.append('if [ $ODYSSEUS_CMD_EXIT -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; fi')
     if keep_shell_open:
-        runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="; exec "${SHELL:-/bin/bash}"')
+        runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="')
+        # See preflight branch above for the rationale on restoring fds 3/4.
+        runner_lines.append('exec 1>&3 2>&4 3>&- 4>&- 2>/dev/null || true')
+        runner_lines.append('sleep 0.2  # let tee child flush + exit')
+        runner_lines.append('exec "${SHELL:-/bin/bash}"')
     else:
         runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="')
         runner_lines.append('exit "$ODYSSEUS_CMD_EXIT"')
@@ -793,3 +804,125 @@ def _ssh_ps(host, script_path, port=None):
 
 # Windows session dir — stored in user's temp on the remote
 WIN_SESSION_DIR = "$env:TEMP\\\\odysseus-sessions"
+
+
+def _diagnose_serve_output(text: str) -> dict | None:
+    """Server-side mirror of the Cookbook UI's common serve diagnoses.
+
+    The browser uses cookbook-diagnosis.js for clickable fixes. This gives
+    the agent/tool path the same structured signal so it can retry with an
+    adjusted command instead of guessing from raw tmux output.
+    """
+    if not text:
+        return None
+    tail = text[-6000:]
+    patterns = [
+        (
+            r"No available memory for the cache blocks|Available KV cache memory:.*-",
+            "No GPU memory left for KV cache after loading model.",
+            [
+                {"label": "retry with GPU memory utilization 0.95", "op": "replace", "flag": "--gpu-memory-utilization", "value": "0.95"},
+                {"label": "retry with context 2048", "op": "replace", "flag": "--max-model-len", "value": "2048"},
+            ],
+        ),
+        (
+            r"CUDA out of memory|torch\.cuda\.OutOfMemoryError|CUDA error: out of memory|warming up sampler|max_num_seqs.*gpu_memory_utilization",
+            "GPU ran out of memory during startup or warmup.",
+            [
+                {"label": "retry with context 4096", "op": "replace", "flag": "--max-model-len", "value": "4096"},
+                {"label": "retry with GPU memory utilization 0.80", "op": "replace", "flag": "--gpu-memory-utilization", "value": "0.80"},
+                {"label": "retry with --enforce-eager", "op": "append", "arg": "--enforce-eager"},
+            ],
+        ),
+        (
+            r"not divisib|must be divisible|attention heads.*divisible",
+            "Tensor parallel size is incompatible with the model.",
+            [
+                {"label": "retry with tensor parallel size 1", "op": "replace", "flag": "--tensor-parallel-size", "value": "1"},
+                {"label": "retry with tensor parallel size 2", "op": "replace", "flag": "--tensor-parallel-size", "value": "2"},
+            ],
+        ),
+        (
+            r"KV cache.*too (small|large)|max_model_len.*exceeds|maximum.*context",
+            "Context length is too large for available GPU memory.",
+            [
+                {"label": "retry with context 8192", "op": "replace", "flag": "--max-model-len", "value": "8192"},
+                {"label": "retry with context 4096", "op": "replace", "flag": "--max-model-len", "value": "4096"},
+            ],
+        ),
+        (
+            r"enable-auto-tool-choice requires --tool-call-parser",
+            "Auto tool choice requires an explicit tool call parser.",
+            [{"label": "retry with Hermes tool parser", "op": "append", "arg": "--tool-call-parser hermes"}],
+        ),
+        (
+            r"Please pass.*trust.remote.code=True|contains custom code which must be executed to correctly load|does not recognize this architecture|model type.*but Transformers does not",
+            "Model requires custom code or newer model support.",
+            [{"label": "retry with --trust-remote-code", "op": "append", "arg": "--trust-remote-code"}],
+        ),
+        (
+            r"Either a revision or a version must be specified|transformers\.integrations\.hub_kernels|kernels/layer",
+            "vLLM/Transformers kernel package mismatch.",
+            [{"label": "update vLLM, Transformers, and kernels on this server", "op": "dependency", "package": "vllm transformers kernels"}],
+        ),
+        (
+            r"Address already in use|bind.*address.*in use",
+            "Port is already in use.",
+            [{"label": "retry on port 8001", "op": "replace", "flag": "--port", "value": "8001"}],
+        ),
+        (
+            r"No CUDA GPUs are available|no GPU.*found|CUDA_VISIBLE_DEVICES.*invalid",
+            "No GPUs are visible to the serve process.",
+            [{"label": "clear Cookbook GPU selection or choose available GPUs", "op": "settings", "field": "gpus", "value": ""}],
+        ),
+        (
+            r"Failed to infer device type|NVML Shared Library Not Found|No module named 'amdsmi'|platform is not available",
+            "vLLM could not find a supported GPU (CUDA or ROCm). "
+            "This machine may have integrated or unsupported graphics only.",
+            [
+                {"label": "switch to llama.cpp (CPU/Metal, works without a discrete GPU)", "op": "manual"},
+                {"label": "switch to Ollama (CPU/Metal, works without a discrete GPU)", "op": "manual"},
+            ],
+        ),
+        (
+            r"vllm.*command not found|No module named vllm|ERROR: vLLM is not installed",
+            "vLLM is not installed or not in PATH on this server.",
+            [{"label": "install vLLM in Cookbook Dependencies", "op": "dependency", "package": "vllm"}],
+        ),
+        (
+            r"sglang.*command not found|No module named sglang|SGLang is not installed",
+            "SGLang is not installed or not in PATH on this server.",
+            [{"label": "install SGLang in Cookbook Dependencies", "op": "dependency", "package": "sglang[all]"}],
+        ),
+        (
+            r"llama-server.*command not found|llama\.cpp.*not found|No module named.*llama_cpp|No module named 'starlette_context'|git: command not found|cmake: command not found",
+            "llama.cpp / llama-cpp-python dependencies are missing.",
+            [{"label": "install llama.cpp dependencies or llama-cpp-python[server]", "op": "dependency", "package": "llama-cpp-python[server]"}],
+        ),
+        (
+            r"No GGUF found on this host|no \.gguf file|No GGUF file found",
+            "No GGUF file found for this model on this host. The llama.cpp backend needs a .gguf file.",
+            [{"label": "download a GGUF build of this model (repo name usually ends in -GGUF, file like Q4_K_M.gguf)", "op": "manual"}],
+        ),
+        (
+            r"No module named 'torch'|No module named torch|No module named 'diffusers'|No module named diffusers",
+            "Diffusion serving requires PyTorch and diffusers.",
+            [{"label": "install diffusers[torch] in Cookbook Dependencies", "op": "dependency", "package": "diffusers[torch]"}],
+        ),
+        (
+            r"403 Forbidden|401 Unauthorized|Access to model.*is restricted|gated repo|not in the authorized list|awaiting a review",
+            "Model access is gated or unauthorized.",
+            [{"label": "set HF token and request model access on HuggingFace", "op": "manual"}],
+        ),
+    ]
+    for pattern, message, suggestions in patterns:
+        if re.search(pattern, tail, re.I):
+            return {"message": message, "suggestions": suggestions}
+    if re.search(r"Traceback \(most recent call last\)", tail, re.I) and not re.search(
+        r"Application startup complete|GET /v1/|Uvicorn running on", tail, re.I
+    ):
+        return {
+            "message": "Python traceback detected during serve startup.",
+            "suggestions": [{"label": "inspect traceback and retry with adjusted backend/settings", "op": "manual"}],
+        }
+    return None

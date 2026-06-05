@@ -1087,14 +1087,15 @@ def setup_model_routes(model_discovery):
         for ep in endpoints:
             base = _normalize_base(ep.base_url)
             provider = _detect_provider(base)
-            # Use cached models — background refresh keeps them updated
-            model_ids = _cached_model_ids(ep)
-            if provider == "nobodywho" and not _nobodywho.is_available():
-                model_ids = []  # engine missing — nothing here is chat-able
+            # Merge cached + pinned models, then filter out hidden ones
             ep_model_type = getattr(ep, "model_type", None) or "llm"
-            # Filter out hidden (probe-failed) models
-            hidden = _hidden_model_ids(ep)
-            model_ids = [m for m in model_ids if m not in hidden]
+            model_ids = _visible_models(
+                _cached_model_ids(ep),
+                ep.hidden_models,
+                getattr(ep, "pinned_models", None),
+            )
+            if provider == "nobodywho" and not _nobodywho.is_available():
+                model_ids = []  # engine missing — nothing here is chat-able (pinned refs included)
             # Build correct URL based on provider
             chat_url = build_chat_url(base)
             kind = _effective_endpoint_kind(ep, base)
@@ -1103,6 +1104,13 @@ def setup_model_routes(model_discovery):
             if model_ids:
                 curated_key = _match_provider_curated(base, None)
                 curated, extra = _curate_models(model_ids, curated_key)
+                # Pinned models are admin-selected — they always belong in the
+                # primary curated list, not buried in extras.
+                pinned = _normalize_model_ids(getattr(ep, "pinned_models", None))
+                for m in pinned:
+                    if m not in curated:
+                        curated.append(m)
+                extra = [m for m in extra if m not in pinned]
                 items.append({
                     "host": "custom",
                     "port": 0,
@@ -1986,9 +1994,10 @@ def setup_model_routes(model_discovery):
             if body:
                 if "supports_tools" in body:
                     v = body["supports_tools"]
-                    ep.supports_tools = bool(v) if v in (True, False, "true", "false", 1, 0) else None
+                    ep.supports_tools = {True: True, False: False, 'true': True, 'false': False, 1: True, 0: False}.get(v)
                 if "is_enabled" in body:
-                    ep.is_enabled = bool(body["is_enabled"])
+                    v_ie = body['is_enabled']
+                    ep.is_enabled = v_ie.lower() in ('true', '1', 'yes') if isinstance(v_ie, str) else bool(v_ie)
                 if "name" in body and isinstance(body["name"], str):
                     ep.name = body["name"].strip() or ep.name
                 if "model_type" in body and isinstance(body["model_type"], str):

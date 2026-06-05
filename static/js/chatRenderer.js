@@ -26,6 +26,29 @@ function _safeHref(url) {
   return '#';
 }
 
+export function safeToolScreenshotSrc(raw) {
+  const src = String(raw || '').trim();
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(src)) {
+    return src;
+  }
+  return '';
+}
+
+export function safeDisplayImageSrc(raw) {
+  const src = String(raw || '').trim();
+  if (!src) return '';
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(src)) {
+    return src;
+  }
+  try {
+    const parsed = new URL(src, window.location.origin);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.href;
+    }
+  } catch (_) {}
+  return '';
+}
+
 function _makeActionBtn(className, title, text, handler) {
   const btn = document.createElement('button');
   btn.className = className;
@@ -1058,12 +1081,19 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   const body = document.createElement('div');
   body.className = 'body';
 
+  const safeImageUrl = safeDisplayImageSrc(imageUrl);
+  if (!safeImageUrl) {
+    body.textContent = '[Image unavailable]';
+    wrap.appendChild(body);
+    return wrap;
+  }
+
   const img = document.createElement('img');
   img.className = 'generated-image';
   img.alt = prompt || 'Generated image';
   img.title = prompt || 'Generated image';
-  img.src = imageUrl;
-  img.addEventListener('click', () => { window.open(img.src, '_blank'); });
+  img.src = safeImageUrl;
+  img.addEventListener('click', () => { window.open(safeImageUrl, '_blank', 'noopener,noreferrer'); });
   body.appendChild(img);
 
   if (prompt) {
@@ -1953,13 +1983,37 @@ export function addMessage(role, content, modelName, metadata) {
             if (ev.output && ev.output.trim()) {
               outHtml = `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(ev.output)}</pre></details>`;
             }
-            if (ev.screenshot) {
-              outHtml += `<details class="agent-tool-output"><summary>Screenshot</summary><img src="${esc(ev.screenshot)}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" /></details>`;
+            const screenshotSrc = safeToolScreenshotSrc(ev.screenshot);
+            if (screenshotSrc) {
+              outHtml += `<details class="agent-tool-output"><summary>Screenshot</summary><img src="${esc(screenshotSrc)}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" /></details>`;
+            }
+            // File-write/edit diff (persisted in the tool event) \u2014 re-render it
+            // so it survives reload, matching the live stream.
+            let evDiffHtml = '';
+            if (ev.diff && ev.diff.text) {
+              const d = ev.diff;
+              const stat = [
+                d.new_file ? '<span class="diff-stat-new">new</span>' : '',
+                d.added ? `<span class="diff-stat-add">+${d.added}</span>` : '',
+                d.removed ? `<span class="diff-stat-del">\u2212${d.removed}</span>` : '',
+              ].filter(Boolean).join(' ');
+              const rows = d.text.split('\n').map(line => {
+                let cls = 'diff-ctx', text = line;
+                if (line.startsWith('+++') || line.startsWith('---')) cls = 'diff-meta';
+                else if (line.startsWith('@@')) cls = 'diff-hunk';
+                // Drop the leading diff marker (+/-/space) — colour encodes add/del.
+                else if (line.startsWith('+')) { cls = 'diff-add'; text = line.slice(1); }
+                else if (line.startsWith('-')) { cls = 'diff-del'; text = line.slice(1); }
+                else if (line.startsWith(' ')) { text = line.slice(1); }
+                return `<span class="${cls}">${esc(text) || '&nbsp;'}</span>`;
+              }).join('');  // spans are display:block \u2014 a literal \n would double-space
+              evDiffHtml = `<details class="agent-tool-output agent-tool-diff"><summary><span class="diff-file">${esc(d.file || 'diff')}</span> <span class="diff-summary-stats">${stat}</span></summary><pre class="diff-pre">${rows}</pre></details>`;
             }
             const node = document.createElement('div');
             node.className = 'agent-thread-node' + (ok ? '' : ' error');
-            const evCmdHtml = ev.command ? `<pre class="agent-thread-cmd">${esc(ev.command)}</pre>` : '';
-            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(ev.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}</div>`;
+            // Hide the raw JSON command when a diff says it better (same as live).
+            const evCmdHtml = (ev.command && !(ev.diff && ev.diff.text)) ? `<pre class="agent-thread-cmd">${esc(ev.command)}</pre>` : '';
+            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(ev.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}${evDiffHtml}</div>`;
             // Click handling is delegated globally \u2014 see chat.js init.
             threadWrap.appendChild(node);
           }
@@ -2285,6 +2339,8 @@ const chatRenderer = {
   updateSessionCostUI,
   roleTimestamp,
   stripToolBlocks,
+  safeToolScreenshotSrc,
+  safeDisplayImageSrc,
   buildSourcesBox,
   buildFindingsBox,
   appendReportButton,

@@ -1,7 +1,7 @@
 // compare/stream.js — SSE streaming to panes
 import state from './state.js';
 import { addFinishBadge } from './vote.js';
-import { getModelCost } from '../chatRenderer.js';
+import { getModelCost, safeDisplayImageSrc } from '../chatRenderer.js';
 import markdownModule from '../markdown.js';
 import spinnerModule from '../spinner.js';
 import uiModule from '../ui.js';
@@ -10,6 +10,16 @@ import presetsModule from '../presets.js';
 var escapeHtml = uiModule.esc;
 
 const WAVE_FRAMES = ['▁▂▃', '▂▃▄', '▃▄▅', '▄▅▆', '▅▆▇', '▆▅▄', '▅▄▃', '▄▃▂'];
+
+function _safeHttpHref(raw) {
+  try {
+    const parsed = new URL(String(raw || '').trim(), window.location.origin);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.href;
+    }
+  } catch (_) {}
+  return '';
+}
 
 // ── Lazy-registered functions from compare.js (avoids circular deps) ──
 let _rerollPane = null;
@@ -36,9 +46,12 @@ function _renderSearchResults(data) {
     const card = document.createElement('div');
     card.className = 'compare-search-result';
     const titleLink = document.createElement('a');
-    titleLink.href = r.url || '#';
-    titleLink.target = '_blank';
-    titleLink.rel = 'noopener';
+    const safeUrl = _safeHttpHref(r.url);
+    if (safeUrl) {
+      titleLink.href = safeUrl;
+      titleLink.target = '_blank';
+      titleLink.rel = 'noopener noreferrer';
+    }
     titleLink.className = 'search-result-title';
     titleLink.textContent = r.title || 'Untitled';
     card.appendChild(titleLink);
@@ -344,7 +357,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
               const cmdHtml = cmd ? `<pre class="agent-thread-cmd">${escapeHtml(cmd)}</pre>` : '';
               const node = document.createElement('div');
               node.className = 'agent-thread-node running';
-              node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">\u25B6</span><span class="agent-thread-tool">${toolLabel}</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
+              node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">\u25B6</span><span class="agent-thread-tool">${escapeHtml(toolLabel)}</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
               node.querySelector('.agent-thread-header').addEventListener('click', () => node.classList.toggle('open'));
               // Animate wave
               const waveEl = node.querySelector('.agent-thread-wave');
@@ -363,28 +376,33 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
             if (json.image_url) {
               // Stop image spinner and render generated image in pane
               if (aiMsgEl._imgSpinner) { aiMsgEl._imgSpinner.destroy(); aiMsgEl._imgSpinner = null; }
+              const safeImageUrl = safeDisplayImageSrc(json.image_url);
               aiBody.innerHTML = '';
-              const img = document.createElement('img');
-              img.className = 'compare-gen-image';
-              img.src = json.image_url;
-              img.alt = json.image_prompt || '';
-              img.title = json.image_prompt || '';
-              img.addEventListener('click', () => window.open(img.src, '_blank'));
-              aiBody.appendChild(img);
-              if (json.image_prompt) {
-                const caption = document.createElement('div');
-                caption.style.cssText = 'font-size:0.82em;color:color-mix(in srgb, var(--fg) 55%, transparent);margin-top:6px;line-height:1.4;';
-                caption.textContent = json.image_prompt;
-                aiBody.appendChild(caption);
+              if (!safeImageUrl) {
+                aiBody.textContent = '[Image unavailable]';
+              } else {
+                const img = document.createElement('img');
+                img.className = 'compare-gen-image';
+                img.src = safeImageUrl;
+                img.alt = json.image_prompt || '';
+                img.title = json.image_prompt || '';
+                img.addEventListener('click', () => window.open(safeImageUrl, '_blank', 'noopener,noreferrer'));
+                aiBody.appendChild(img);
+                if (json.image_prompt) {
+                  const caption = document.createElement('div');
+                  caption.style.cssText = 'font-size:0.82em;color:color-mix(in srgb, var(--fg) 55%, transparent);margin-top:6px;line-height:1.4;';
+                  caption.textContent = json.image_prompt;
+                  aiBody.appendChild(caption);
+                }
+                // Show model name below image (hidden in blind mode until vote)
+                if (json.image_model && !state._blindMode) {
+                  const modelLabel = document.createElement('div');
+                  modelLabel.style.cssText = 'font-size:0.75em;color:color-mix(in srgb, var(--fg) 40%, transparent);margin-top:4px;';
+                  modelLabel.textContent = json.image_model;
+                  aiBody.appendChild(modelLabel);
+                }
+                aiMsgEl._imageData = { url: safeImageUrl, prompt: json.image_prompt, model: json.image_model, size: json.image_size, quality: json.image_quality };
               }
-              // Show model name below image (hidden in blind mode until vote)
-              if (json.image_model && !state._blindMode) {
-                const modelLabel = document.createElement('div');
-                modelLabel.style.cssText = 'font-size:0.75em;color:color-mix(in srgb, var(--fg) 40%, transparent);margin-top:4px;';
-                modelLabel.textContent = json.image_model;
-                aiBody.appendChild(modelLabel);
-              }
-              aiMsgEl._imageData = { url: json.image_url, prompt: json.image_prompt, model: json.image_model, size: json.image_size, quality: json.image_quality };
             } else if (currentToolBlock) {
               // Stop wave animation
               if (currentToolBlock._waveInterval) { clearInterval(currentToolBlock._waveInterval); currentToolBlock._waveInterval = null; }
