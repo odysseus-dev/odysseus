@@ -87,6 +87,10 @@ function buildCategoryChips() {
   if (!memories.length) { container.innerHTML = ''; return; }
 
   const cats = new Set(memories.map(m => m.category || 'fact'));
+  // If the active filter's category no longer exists (its last memory was
+  // deleted or recategorized), fall back to 'all' — otherwise the filter
+  // strands the panel on "No matches." Mirrors the tasks.js _taskFilter guard.
+  if (activeCategory !== 'all' && !cats.has(activeCategory)) activeCategory = 'all';
   const sorted = ['all', ...Array.from(cats).sort()];
 
   container.innerHTML = '';
