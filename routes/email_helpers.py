@@ -266,6 +266,48 @@ COMPOSE_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 SCHEDULED_DB = DATA_DIR / "scheduled_emails.db"
 
 
+OWNER_SCOPED_EMAIL_CACHE_TABLES = {
+    "email_summaries",
+    "email_ai_replies",
+    "email_calendar_extractions",
+    "email_urgency_alerts",
+}
+
+
+def _email_cache_owner_clause(owner: str = "") -> tuple[str, tuple[str, ...]]:
+    owner = (owner or "").strip()
+    if owner:
+        return "owner = ?", (owner,)
+    return "(owner = '' OR owner IS NULL)", ()
+
+
+def _ensure_owner_scoped_email_cache_table(conn, table: str, create_sql: str, columns: list[str]):
+    """Rebuild legacy Message-ID-only cache tables with owner in the PK."""
+    conn.execute(create_sql)
+    try:
+        info = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        cols = [r[1] for r in info]
+        pk_cols = [r[1] for r in sorted((r for r in info if r[5]), key=lambda r: r[5])]
+        if "owner" in cols and pk_cols == ["message_id", "owner"]:
+            return
+
+        conn.execute(f"ALTER TABLE {table} RENAME TO {table}__old")
+        conn.execute(create_sql)
+        old_cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table}__old)").fetchall()]
+        copy_cols = [c for c in columns if c != "owner" and c in old_cols]
+        source_owner = "COALESCE(owner, '')" if "owner" in old_cols else "''"
+        target_cols = ["owner", *copy_cols]
+        select_exprs = [source_owner, *copy_cols]
+        conn.execute(
+            f"INSERT OR IGNORE INTO {table} ({', '.join(target_cols)}) "
+            f"SELECT {', '.join(select_exprs)} FROM {table}__old"
+        )
+        conn.execute(f"DROP TABLE {table}__old")
+    except Exception as _mig_e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"{table} owner-migration skipped: {_mig_e}")
+
+
 def attachment_extract_dir(folder: str, uid: str) -> Path:
     """Containment-safe extraction directory for an attachment.
 
@@ -301,30 +343,35 @@ def _init_scheduled_db():
             owner TEXT DEFAULT ''
         )
     """)
-    # Email summary cache (keyed by Message-ID)
-    conn.execute("""
+    # Email summary cache. SECURITY: Message-IDs are global, so AI-derived
+    # cache rows must be owner-scoped just like email_tags.
+    _ensure_owner_scoped_email_cache_table(conn, "email_summaries", """
         CREATE TABLE IF NOT EXISTS email_summaries (
-            message_id TEXT PRIMARY KEY,
+            message_id TEXT,
+            owner TEXT DEFAULT '',
             uid TEXT,
             folder TEXT,
             subject TEXT,
             sender TEXT,
             summary TEXT NOT NULL,
             model_used TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (message_id, owner)
         )
-    """)
+    """, ["message_id", "owner", "uid", "folder", "subject", "sender", "summary", "model_used", "created_at"])
     # Email AI reply cache (pre-generated draft replies)
-    conn.execute("""
+    _ensure_owner_scoped_email_cache_table(conn, "email_ai_replies", """
         CREATE TABLE IF NOT EXISTS email_ai_replies (
-            message_id TEXT PRIMARY KEY,
+            message_id TEXT,
+            owner TEXT DEFAULT '',
             uid TEXT,
             folder TEXT,
             reply TEXT NOT NULL,
             model_used TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (message_id, owner)
         )
-    """)
+    """, ["message_id", "owner", "uid", "folder", "reply", "model_used", "created_at"])
     # Email tags / spam classification cache. SECURITY: keyed by
     # (message_id, owner) because Message-IDs are GLOBAL (a newsletter goes
     # to many users with the same Message-ID). Without owner-scoping, a
@@ -384,17 +431,20 @@ def _init_scheduled_db():
         # Best-effort — log via the module logger if available
         import logging as _lg
         _lg.getLogger(__name__).warning(f"email_tags owner-migration skipped: {_mig_e}")
-    conn.execute("""
+    _ensure_owner_scoped_email_cache_table(conn, "email_calendar_extractions", """
         CREATE TABLE IF NOT EXISTS email_calendar_extractions (
-            message_id TEXT PRIMARY KEY,
+            message_id TEXT,
+            owner TEXT DEFAULT '',
             uid TEXT,
             events_created INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (message_id, owner)
         )
-    """)
-    conn.execute("""
+    """, ["message_id", "owner", "uid", "events_created", "created_at"])
+    _ensure_owner_scoped_email_cache_table(conn, "email_urgency_alerts", """
         CREATE TABLE IF NOT EXISTS email_urgency_alerts (
-            message_id TEXT PRIMARY KEY,
+            message_id TEXT,
+            owner TEXT DEFAULT '',
             uid TEXT,
             folder TEXT,
             subject TEXT,
@@ -402,9 +452,10 @@ def _init_scheduled_db():
             urgency TEXT,
             reason TEXT,
             alerted INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (message_id, owner)
         )
-    """)
+    """, ["message_id", "owner", "uid", "folder", "subject", "sender", "urgency", "reason", "alerted", "created_at"])
     conn.execute("""
         CREATE TABLE IF NOT EXISTS email_event_seen (
             owner TEXT NOT NULL,

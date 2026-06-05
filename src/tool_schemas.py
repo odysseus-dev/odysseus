@@ -1176,6 +1176,12 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             content = str(queries)
         else:
             content = args.get("query", "")
+        # Preserve the model-requested freshness filter — the web_search schema
+        # advertises time_filter and the executor parses {"query","time_filter"},
+        # but a bare query string dropped it. Mirrors the read_file JSON idiom.
+        tf = args.get("time_filter")
+        if content and isinstance(tf, str) and tf in ("day", "week", "month", "year"):
+            content = json.dumps({"query": content, "time_filter": tf})
     elif tool_type == "read_file":
         # Plain path (back-compat) unless a line range is requested → JSON.
         if args.get("offset") or args.get("limit"):

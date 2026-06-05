@@ -40,6 +40,10 @@ ALWAYS_AVAILABLE = frozenset({
     "list_served_models", "stop_served_model",
     # Generic API loopback — the catch-all when no named tool fits.
     "app_api",
+    # Memory is ambient — "remember this" can follow any message regardless
+    # of topic. Without this, RAG drops it and the agent falls back to
+    # app_api /api/memory/add which fails with 422 on first attempt.
+    "manage_memory",
 })
 
 # Tools that the Personal Assistant always has access to during scheduled

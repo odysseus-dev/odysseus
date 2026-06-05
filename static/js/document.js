@@ -2246,7 +2246,9 @@ import * as Modals from './modalManager.js';
     // WYSIWYG body — use it verbatim. (Checking a leading '<' isn't enough: a
     // rich body often starts with plain text, e.g. "Hi <b>there</b>".)
     if (/<\/?(b|i|u|s|strong|em|del|strike|a|p|div|br|ul|ol|li|h[1-3]|blockquote|span|code|pre)\b[^>]*>/i.test(t)) return t;
-    try { return markdownModule.mdToHtml(text); }
+    // Email body: keep author-typed `:shortcode:` text literal. Issue #345
+    // (shortcode → emoji) is scoped to chat; do not rewrite colons in mail.
+    try { return markdownModule.mdToHtml(text, { shortcodes: false }); }
     catch (_) {
       const d = document.createElement('div'); d.textContent = text;
       return d.innerHTML.replace(/\n/g, '<br>');
@@ -8386,7 +8388,7 @@ import * as Modals from './modalManager.js';
     const text = textarea.value || '';
     let body;
     if (lang === 'markdown' && markdownModule?.mdToHtml) {
-      body = markdownModule.mdToHtml(text);
+      body = markdownModule.mdToHtml(text, { shortcodes: false }); // export: keep :shortcodes: literal
     } else {
       body = '<pre style="white-space:pre-wrap;font-size:12px;font-family:monospace;">' +
         text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
@@ -8417,7 +8419,7 @@ import * as Modals from './modalManager.js';
     // Render content as HTML for PDF
     let html;
     if (lang === 'markdown' && markdownModule?.mdToHtml) {
-      html = markdownModule.mdToHtml(text);
+      html = markdownModule.mdToHtml(text, { shortcodes: false }); // export: keep :shortcodes: literal
     } else {
       html = '<pre style="white-space:pre-wrap;font-size:11px;font-family:monospace;color:#000;background:#fff;">' +
         text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
@@ -8547,7 +8549,7 @@ import * as Modals from './modalManager.js';
     if (active) {
       const md = textarea.value || '';
       if (markdownModule && markdownModule.mdToHtml) {
-        preview.innerHTML = markdownModule.mdToHtml(md);
+        preview.innerHTML = markdownModule.mdToHtml(md, { shortcodes: false }); // doc preview: keep :shortcodes: literal
       } else {
         preview.innerHTML = md.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g, '<br>');
       }
