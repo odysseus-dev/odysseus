@@ -107,7 +107,7 @@ def _verify_session_owner(request: Request, session_id: str, session_manager=Non
     """
     user = effective_user(request)
     if not user and not _auth_disabled():
-        raise HTTPException(403, "Authentication required")
+        raise HTTPException(401, "Authentication required")
     db = SessionLocal()
     try:
         row = db.query(DbSession.owner).filter(DbSession.id == session_id).first()
