@@ -414,7 +414,12 @@ def setup_cookbook_routes() -> APIRouter:
         _dl_short = req.repo_id.split("/")[-1] if "/" in req.repo_id else req.repo_id
         _dl_base = (req.local_dir.rstrip("/") + "/" + _dl_short) if req.local_dir else None
         _dl_shell = _shell_path(_dl_base) if _dl_base else None      # for hf CLI / bash
-        _dl_pyarg = (", local_dir=os.path.expanduser(" + repr(_dl_base) + ")") if _dl_base else ""
+        _dl_pyarg = ""
+        if req.include:
+            _dl_pyarg += f", allow_patterns={repr(req.include)}"
+        if _dl_base:
+            _dl_py_safe = _dl_base.replace('\\', '/')
+            _dl_pyarg += f", local_dir=os.path.expanduser({repr(_dl_py_safe)})"
 
         # Build the hf download command. Redirection to suppress the interactive
         # "update available? [Y/n]" prompt is added per-platform further down
