@@ -264,6 +264,21 @@ _PROVIDER_CURATED = {
     "xai": [
         "grok-4.3", "grok-4", "grok-4-fast", "grok-3", "grok-3-fast",
     ],
+    "github": [
+        # OpenAI models served via GitHub Models
+        "gpt-4o", "gpt-4o-mini", "o1", "o1-mini", "o3-mini",
+        # Meta Llama
+        "Meta-Llama-3.1-70B-Instruct", "Meta-Llama-3.1-8B-Instruct",
+        "Llama-3.2-11B-Vision-Instruct", "Llama-3.2-90B-Vision-Instruct",
+        # Microsoft Phi
+        "Phi-3.5-mini-instruct", "Phi-3.5-MoE-instruct", "Phi-4",
+        # Mistral
+        "Mistral-large-2407", "Mistral-Nemo",
+        # DeepSeek
+        "DeepSeek-R1", "DeepSeek-V3",
+        # Cohere
+        "cohere-command-r", "cohere-command-r-plus",
+    ],
 }
 
 # Map hostnames → curated-list keys for providers whose _detect_provider()
@@ -284,6 +299,7 @@ _HOST_TO_CURATED = (
     ("x.ai", "xai"),
     ("openrouter.ai", "openrouter"),
     ("ollama.com", "ollama"),
+    ("models.github.ai", "github"),
 )
 
 
@@ -643,6 +659,21 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
                 return []
             logger.warning(f"Anthropic /v1/models failed, using hardcoded list: {e}")
         return list(ANTHROPIC_MODELS)
+    # GitHub Models: /models returns 404 — always fall back to curated list.
+    if _detect_provider(base) == "github":
+        url = build_models_url(base)
+        headers = build_headers(api_key, base)
+        try:
+            r = httpx.get(url, headers=headers, timeout=timeout, verify=llm_verify())
+            r.raise_for_status()
+            data = r.json()
+            models = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+            if models:
+                return models
+        except Exception as e:
+            logger.info(f"GitHub Models /models probe failed, using curated list: {e}")
+        return list(_PROVIDER_CURATED.get("github", []))
+
     url = build_models_url(base)
     headers = build_headers(api_key, base)
     try:

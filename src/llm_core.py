@@ -418,6 +418,8 @@ def _detect_provider(url: str) -> str:
     from src.copilot import is_copilot_base
     if is_copilot_base(url):
         return "copilot"
+    if _host_match(url, "models.github.ai"):
+        return "github"
     return "openai"
 
 
@@ -451,6 +453,7 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "groq.com"): return "Groq"
     from src.copilot import is_copilot_base
     if is_copilot_base(url): return "GitHub Copilot"
+    if _host_match(url, "models.github.ai"): return "GitHub Models"
     if _host_match(url, "mistral.ai"): return "Mistral"
     if _host_match(url, "deepseek.com"): return "DeepSeek"
     if _host_match(url, "googleapis.com"): return "Google"
