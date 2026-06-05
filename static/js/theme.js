@@ -9,26 +9,31 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 
 export const THEMES = {
-  dark:       { bg:'#282c34', fg:'#9cdef2', panel:'#111111', border:'#355a66', red:'#e06c75' },
-  light:      { bg:'#f0ebe3', fg:'#5a5248', panel:'#faf6f0', border:'#d4cdc2', red:'#c47d5a' },
-  midnight:   { bg:'#0d1117', fg:'#c9d1d9', panel:'#161b22', border:'#30363d', red:'#f85149' },
-  paper:      { bg:'#faf8f5', fg:'#3b3836', panel:'#ffffff', border:'#d5d0c8', red:'#c5ac4a' },
+  dark: { bg: '#282c34', fg: '#9cdef2', panel: '#111111', border: '#355a66', red: '#e06c75' },
+  light: { bg: '#f0ebe3', fg: '#5a5248', panel: '#faf6f0', border: '#d4cdc2', red: '#c47d5a' },
+  midnight: { bg: '#0d1117', fg: '#c9d1d9', panel: '#161b22', border: '#30363d', red: '#f85149' },
+  paper: { bg: '#faf8f5', fg: '#3b3836', panel: '#ffffff', border: '#d5d0c8', red: '#c5ac4a' },
   // Spicy / fun themes
-  cyberpunk:  { bg:'#0a0a0f', fg:'#0ff0fc', panel:'#12101a', border:'#9b30ff', red:'#e040fb' },
-  retrowave:  { bg:'#1a1a2e', fg:'#e94560', panel:'#16213e', border:'#533483', red:'#e94560' },
-  forest:     { bg:'#1b2a1b', fg:'#a8d5a2', panel:'#142414', border:'#3d6b3d', red:'#7cb871' },
-  ocean:      { bg:'#0b1a2c', fg:'#64d2ff', panel:'#091422', border:'#1e5074', red:'#4facfe' },
-  ume:        { bg:'#2b1b2e', fg:'#f5c2e7', panel:'#1e1420', border:'#6c4675', red:'#f5a0c0' },
-  copper:     { bg:'#1c1410', fg:'#e8c39e', panel:'#140f0a', border:'#7a5533', red:'#d4764e' },
-  terminal:   { bg:'#000000', fg:'#00ff41', panel:'#0a0a0a', border:'#003b00', red:'#00ff41' },
-  organs:     { bg:'#0a0406', fg:'#efe1c8', panel:'#15080a', border:'#3a1519', red:'#c83240' },
-  lavender:   { bg:'#f3eef8', fg:'#3d3551', panel:'#faf7ff', border:'#cec3de', red:'#9b6dcc' },
-  gpt:        { bg:'#212121', fg:'#ececec', panel:'#171717', border:'#424242', red:'#949494',
-                advanced: { sendBtnBg: '#949494', sendBtnHover: '#7f7f7f',
-                            userBubbleBg: '#2f2f2f', aiBubbleBg: '#171717',
-                            inputBg: '#2f2f2f' } },
-  claude:     { bg:'#262624', fg:'#f5f4f0', panel:'#30302e', border:'#4a4a47', red:'#c6613f' },
-  cute:       { bg:'#fff0f5', fg:'#d4608a', panel:'#fff8fa', border:'#f0c0d0', red:'#ff6b9d' },
+  cyberpunk: { bg: '#0a0a0f', fg: '#0ff0fc', panel: '#12101a', border: '#9b30ff', red: '#e040fb' },
+  retrowave: { bg: '#1a1a2e', fg: '#e94560', panel: '#16213e', border: '#533483', red: '#e94560' },
+  forest: { bg: '#1b2a1b', fg: '#a8d5a2', panel: '#142414', border: '#3d6b3d', red: '#7cb871' },
+  ocean: { bg: '#0b1a2c', fg: '#64d2ff', panel: '#091422', border: '#1e5074', red: '#4facfe' },
+  ume: { bg: '#2b1b2e', fg: '#f5c2e7', panel: '#1e1420', border: '#6c4675', red: '#f5a0c0' },
+  copper: { bg: '#1c1410', fg: '#e8c39e', panel: '#140f0a', border: '#7a5533', red: '#d4764e' },
+  terminal: { bg: '#000000', fg: '#00ff41', panel: '#0a0a0a', border: '#003b00', red: '#00ff41' },
+  organs: { bg: '#0a0406', fg: '#efe1c8', panel: '#15080a', border: '#3a1519', red: '#c83240' },
+  lavender: { bg: '#f3eef8', fg: '#3d3551', panel: '#faf7ff', border: '#cec3de', red: '#9b6dcc' },
+  gpt: {
+    bg: '#212121', fg: '#ececec', panel: '#171717', border: '#424242', red: '#949494',
+    advanced: {
+      sendBtnBg: '#949494', sendBtnHover: '#7f7f7f',
+      userBubbleBg: '#2f2f2f', aiBubbleBg: '#171717',
+      inputBg: '#2f2f2f'
+    }
+  },
+  claude: { bg: '#262624', fg: '#f5f4f0', panel: '#30302e', border: '#4a4a47', red: '#c6613f' },
+  cute: { bg: '#fff0f5', fg: '#d4608a', panel: '#fff8fa', border: '#f0c0d0', red: '#ff6b9d' },
+  catppuccin_mocha: { bg: '#1e1e2e', fg: '#cdd6f4', panel: '#181825', border: '#313244', red: '#cba6f7' },
 };
 
 const DEFAULT_THEME = 'dark';
@@ -46,38 +51,38 @@ const MAX_CUSTOM_THEMES = 8;
 
 // Default background patterns for built-in themes
 const THEME_DEFAULT_PATTERN = {
-  dark:       'none',
-  light:      'dots',
-  midnight:   'rain',
-  paper:      'dots',
-  cyberpunk:  'synapse',
-  retrowave:  'embers',
-  forest:     'petals',
-  ocean:      'constellations',
-  terminal:   'perlin-flow',
-  organs:     'rain',
-  ume:        'petals',
-  cute:       'sparkles',
+  dark: 'none',
+  light: 'dots',
+  midnight: 'rain',
+  paper: 'dots',
+  cyberpunk: 'synapse',
+  retrowave: 'embers',
+  forest: 'petals',
+  ocean: 'constellations',
+  terminal: 'perlin-flow',
+  organs: 'rain',
+  ume: 'petals',
+  cute: 'sparkles',
 };
 
 // Default effect colors for specific themes (overrides --fg)
 const THEME_DEFAULT_EFFECT_COLOR = {
-  midnight:   '#ffffff',
-  organs:     '#451616',
-  cute:       '#ff8cb8',
-  ume:        '#f5a0c0',
+  midnight: '#ffffff',
+  organs: '#451616',
+  cute: '#ff8cb8',
+  ume: '#f5a0c0',
 };
 
 // Default effect intensity (0..1) per theme. Any theme not listed defaults to 1.
 const THEME_DEFAULT_INTENSITY = {
-  midnight:   0.5,
-  terminal:   0.8,
-  organs:     0.65,
+  midnight: 0.5,
+  terminal: 0.8,
+  organs: 0.65,
 };
 
 // Default frosted-glass state per theme. Themes not listed default to false.
 const THEME_DEFAULT_FROSTED = {
-  lavender:   true,
+  lavender: true,
 };
 
 // ── Custom theme persistence ──
@@ -179,19 +184,19 @@ function deriveSyntaxColors(colors) {
 
 // Advanced picker key → CSS variable mapping
 const ADV_KEYS = [
-  { key: 'userBubbleBg',       css: '--user-bubble-bg',    label: 'User Chat Bubble', group: 'Chat Bubbles' },
-  { key: 'aiBubbleBg',         css: '--ai-bubble-bg',      label: 'AI Chat Bubble',   group: 'Chat Bubbles' },
-  { key: 'bubbleBorder',       css: '--bubble-border',     label: 'Border Chat Bubble', group: 'Chat Bubbles' },
-  { key: 'sidebarBg',          css: '--sidebar-bg',        label: 'Sidebar Bg',       group: 'Sidebar' },
-  { key: 'brandColor',         css: '--brand-color',       label: 'Odysseus Logo',    group: 'Sidebar' },
-  { key: 'hamburgerColor',     css: '--hamburger-color',   label: 'Hamburger Menu',   group: 'Sidebar' },
-  { key: 'inputBg',            css: '--input-bg',          label: 'Input Bg',         group: 'Chat Input / Prompt Area' },
-  { key: 'inputBorder',        css: '--input-border',      label: 'Input Border',     group: 'Chat Input / Prompt Area' },
-  { key: 'sendBtnBg',          css: '--send-btn-bg',       label: 'Send Btn',         group: 'Chat Input / Prompt Area' },
-  { key: 'sendBtnHover',       css: '--send-btn-hover',    label: 'Send Hover',       group: 'Chat Input / Prompt Area' },
-  { key: 'codeBg',             css: '--code-bg',           label: 'Code Bg',          group: 'Code Blocks' },
-  { key: 'codeFg',             css: '--code-fg',           label: 'Code Text',        group: 'Code Blocks' },
-  { key: 'toggleActive',       css: '--toggle-active',     label: 'Toggle On',        group: 'Controls' },
+  { key: 'userBubbleBg', css: '--user-bubble-bg', label: 'User Chat Bubble', group: 'Chat Bubbles' },
+  { key: 'aiBubbleBg', css: '--ai-bubble-bg', label: 'AI Chat Bubble', group: 'Chat Bubbles' },
+  { key: 'bubbleBorder', css: '--bubble-border', label: 'Border Chat Bubble', group: 'Chat Bubbles' },
+  { key: 'sidebarBg', css: '--sidebar-bg', label: 'Sidebar Bg', group: 'Sidebar' },
+  { key: 'brandColor', css: '--brand-color', label: 'Odysseus Logo', group: 'Sidebar' },
+  { key: 'hamburgerColor', css: '--hamburger-color', label: 'Hamburger Menu', group: 'Sidebar' },
+  { key: 'inputBg', css: '--input-bg', label: 'Input Bg', group: 'Chat Input / Prompt Area' },
+  { key: 'inputBorder', css: '--input-border', label: 'Input Border', group: 'Chat Input / Prompt Area' },
+  { key: 'sendBtnBg', css: '--send-btn-bg', label: 'Send Btn', group: 'Chat Input / Prompt Area' },
+  { key: 'sendBtnHover', css: '--send-btn-hover', label: 'Send Hover', group: 'Chat Input / Prompt Area' },
+  { key: 'codeBg', css: '--code-bg', label: 'Code Bg', group: 'Code Blocks' },
+  { key: 'codeFg', css: '--code-fg', label: 'Code Text', group: 'Code Blocks' },
+  { key: 'toggleActive', css: '--toggle-active', label: 'Toggle On', group: 'Controls' },
 ];
 
 function computeAdvancedDefaults(colors) {
@@ -389,9 +394,11 @@ const _BG_CLASSES = ['bg-pattern-dots',
   'bg-pattern-synapse', 'bg-pattern-rain', 'bg-pattern-constellations',
   'bg-pattern-perlin-flow',
   'bg-pattern-petals', 'bg-pattern-sparkles', 'bg-pattern-embers'];
-const _CANVAS_PATTERNS = { synapse: _initSynapse, rain: _initRain, constellations: _initConstellations,
+const _CANVAS_PATTERNS = {
+  synapse: _initSynapse, rain: _initRain, constellations: _initConstellations,
   'perlin-flow': _initPerlinFlow,
-  petals: _initPetals, sparkles: _initSparkles, embers: _initEmbers };
+  petals: _initPetals, sparkles: _initSparkles, embers: _initEmbers
+};
 
 export function applyBgEffectColor(color) {
   document.documentElement.style.setProperty('--bg-effect-color', color || '');
@@ -581,7 +588,7 @@ export function initThemeUI() {
       if (on) {
         // Fade the modal + each inner card via color-mix — never element
         // opacity, so text, controls and swatches stay sharp.
-        const bgMix    = `color-mix(in srgb, var(--bg)    ${PEEK}%, transparent)`;
+        const bgMix = `color-mix(in srgb, var(--bg)    ${PEEK}%, transparent)`;
         const panelMix = `color-mix(in srgb, var(--panel) ${PEEK}%, transparent)`;
         popup.style.setProperty('background', bgMix, 'important');
         popup.style.setProperty('backdrop-filter', 'none', 'important');
@@ -630,7 +637,7 @@ export function initThemeUI() {
         <span style="background:${c.fg}"></span>
         <span style="background:${c.red}"></span>
       </div>
-      ${name === 'dark' ? 'original' : (name === 'gpt' ? 'GPT' : name)}
+      ${name === 'dark' ? 'original' : name === 'gpt' ? 'GPT' : name === 'catppuccin_mocha' ? 'catppuccin mocha' : name}
     </div>
   `).join('');
 
@@ -788,11 +795,11 @@ export function initThemeUI() {
         // the CSS variables for the OLD defaults.
       });
       const _rs = getComputedStyle(document.documentElement);
-      _oldColors.bg     = (_rs.getPropertyValue('--bg')    || '').trim();
-      _oldColors.fg     = (_rs.getPropertyValue('--fg')    || '').trim();
-      _oldColors.panel  = (_rs.getPropertyValue('--panel') || '').trim();
-      _oldColors.border = (_rs.getPropertyValue('--border')|| '').trim();
-      _oldColors.red    = (_rs.getPropertyValue('--red')   || '').trim();
+      _oldColors.bg = (_rs.getPropertyValue('--bg') || '').trim();
+      _oldColors.fg = (_rs.getPropertyValue('--fg') || '').trim();
+      _oldColors.panel = (_rs.getPropertyValue('--panel') || '').trim();
+      _oldColors.border = (_rs.getPropertyValue('--border') || '').trim();
+      _oldColors.red = (_rs.getPropertyValue('--red') || '').trim();
       const _oldDefaults = computeAdvancedDefaults(_oldColors);
 
       const colors = {};
@@ -1185,7 +1192,7 @@ export function initThemeUI() {
   // call attachColorPicker idempotently so the popover, suggestions, recents
   // and hex syncing all match every other color row.
   if (harmonyAccentEl) {
-    try { attachColorPicker(harmonyAccentEl); } catch (_) {}
+    try { attachColorPicker(harmonyAccentEl); } catch (_) { }
   }
   // Keep the hex display chip in sync with whatever the picker reports.
   const _harmonyHex = document.getElementById('harmony-accent-hex');
@@ -1219,7 +1226,7 @@ export function initThemeUI() {
     // have to clear the flag first or attachColorPicker bails as a no-op.
     delete newAcc.dataset.cpAttached;
     newAcc.type = 'color'; // clone may have been type=text from prior attach
-    try { attachColorPicker(newAcc); } catch (_) {}
+    try { attachColorPicker(newAcc); } catch (_) { }
     newAcc.addEventListener('input', () => {
       const type = document.getElementById('harmony-type').value;
       const mode = document.getElementById('harmony-mode').value;
@@ -1333,28 +1340,28 @@ export function initThemeUI() {
 // When the user hovers the color row, we overlay a translucent box on the
 // matching elements so it's obvious what's being edited.
 const _THEME_ZONE_MAP = {
-  'clr-bg':            'body',
-  'clr-fg':            '.msg .body, .chat-input-bar',
-  'clr-panel':         '.sidebar',
-  'clr-border':        '.chat-input-bar, .sidebar, .msg .body',
-  'clr-red':           '.send-btn, .icon-rail-btn.active',
+  'clr-bg': 'body',
+  'clr-fg': '.msg .body, .chat-input-bar',
+  'clr-panel': '.sidebar',
+  'clr-border': '.chat-input-bar, .sidebar, .msg .body',
+  'clr-red': '.send-btn, .icon-rail-btn.active',
   'theme-bg-effect-color': 'body',
-  'adv-userBubbleBg':  '.msg.msg-user .body',
-  'adv-aiBubbleBg':    '.msg.msg-ai .body',
-  'adv-bubbleBorder':  '.msg .body',
-  'adv-sidebarBg':     '.sidebar',
+  'adv-userBubbleBg': '.msg.msg-user .body',
+  'adv-aiBubbleBg': '.msg.msg-ai .body',
+  'adv-bubbleBorder': '.msg .body',
+  'adv-sidebarBg': '.sidebar',
   'adv-sectionAccent': '.sidebar h4',
-  'adv-brandColor':    '#sidebar-brand-btn',
-  'adv-inputBg':       '#message',
-  'adv-inputBorder':   '.chat-input-bar',
-  'adv-sendBtnBg':     '.send-btn',
-  'adv-sendBtnHover':  '.send-btn',
-  'adv-codeBg':        'pre, code',
-  'adv-codeFg':        'pre code, p code',
-  'adv-toggleBg':      '.mode-toggle, .admin-switch',
-  'adv-toggleActive':  '.mode-toggle-btn.active, .admin-switch input:checked + .admin-slider',
+  'adv-brandColor': '#sidebar-brand-btn',
+  'adv-inputBg': '#message',
+  'adv-inputBorder': '.chat-input-bar',
+  'adv-sendBtnBg': '.send-btn',
+  'adv-sendBtnHover': '.send-btn',
+  'adv-codeBg': 'pre, code',
+  'adv-codeFg': 'pre code, p code',
+  'adv-toggleBg': '.mode-toggle, .admin-switch',
+  'adv-toggleActive': '.mode-toggle-btn.active, .admin-switch input:checked + .admin-slider',
   'adv-accentPrimary': '.send-btn, .icon-rail-btn.active',
-  'adv-accentError':   '.toast.error',
+  'adv-accentError': '.toast.error',
 };
 
 function _showThemeZoneHighlight(selector) {
@@ -1370,9 +1377,9 @@ function _showThemeZoneHighlight(selector) {
     if (r.width < 2 || r.height < 2) return;
     const overlay = document.createElement('div');
     overlay.className = 'theme-zone-highlight';
-    overlay.style.top    = (r.top - 2) + 'px';
-    overlay.style.left   = (r.left - 2) + 'px';
-    overlay.style.width  = (r.width + 4) + 'px';
+    overlay.style.top = (r.top - 2) + 'px';
+    overlay.style.left = (r.left - 2) + 'px';
+    overlay.style.width = (r.width + 4) + 'px';
     overlay.style.height = (r.height + 4) + 'px';
     document.body.appendChild(overlay);
   });
@@ -2042,12 +2049,14 @@ function _initEmbers() {
   draw();
 }
 
-const themeModule = { initThemeUI, togglePopup, closePopup, makeDraggable,
-                       THEMES, applyColors, applyFontDensity, applyBgPattern,
-                       applyBgEffectColor, applyBgEffectIntensity, applyBgEffectSize,
-                       applyFrostedGlass,
-                       save, getSaved, saveCustomTheme, deleteCustomTheme,
-                       getCustomThemes };
+const themeModule = {
+  initThemeUI, togglePopup, closePopup, makeDraggable,
+  THEMES, applyColors, applyFontDensity, applyBgPattern,
+  applyBgEffectColor, applyBgEffectIntensity, applyBgEffectSize,
+  applyFrostedGlass,
+  save, getSaved, saveCustomTheme, deleteCustomTheme,
+  getCustomThemes
+};
 
 export default themeModule;
 
