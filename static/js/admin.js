@@ -912,6 +912,78 @@ function initEndpointForm() {
     btn.disabled = false; btn.textContent = 'Add';
   });
 
+  // GitHub Copilot — device-flow login. Starts the flow, shows the user a
+  // code + verification link, and polls until they authorise (or it expires).
+  const copilotBtn = el('adm-copilotConnectBtn');
+  if (copilotBtn) {
+    let copilotPolling = false;
+    copilotBtn.addEventListener('click', async () => {
+      if (copilotPolling) return;
+      const status = el('adm-copilotStatus');
+      const reset = () => { copilotBtn.disabled = false; copilotBtn.textContent = 'Connect GitHub Copilot'; copilotPolling = false; };
+      status.textContent = ''; status.className = 'adm-ep-inline-msg';
+      copilotBtn.disabled = true; copilotBtn.textContent = 'Starting...';
+      copilotPolling = true;
+      let start;
+      try {
+        const res = await fetch('/api/copilot/device/start', { method: 'POST', body: new FormData(), credentials: 'same-origin' });
+        start = await res.json();
+        if (!res.ok) { status.textContent = start.detail || 'Failed to start login'; status.className = 'admin-error'; reset(); return; }
+      } catch (e) { status.textContent = 'Request failed'; status.className = 'admin-error'; reset(); return; }
+
+      const { poll_id, user_code, verification_uri, verification_uri_complete, interval, expires_in } = start;
+      // Prefer the "complete" URL — it embeds the code so the user only has to
+      // click "Authorize" (no manual code entry).
+      const authUrl = verification_uri_complete || verification_uri || '';
+      const esc = (s) => String(s || '').replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      copilotBtn.textContent = 'Waiting…';
+
+      // Cohesive waiting panel: spinner + status line, the device code as a
+      // copyable chip, and a primary "Authorize on GitHub" action.
+      status.className = '';
+      status.innerHTML =
+        '<div class="adm-copilot-panel">' +
+          '<div class="adm-copilot-wait"><span class="admin-spinner"></span>' +
+            '<span>Waiting for GitHub authorization…</span></div>' +
+          '<div class="adm-copilot-coderow">' +
+            '<span class="adm-copilot-code-label">Code</span>' +
+            '<code class="adm-copilot-code">' + esc(user_code) + '</code>' +
+            '<button type="button" class="admin-btn-sm adm-copilot-copy">Copy</button>' +
+          '</div>' +
+          '<a class="admin-btn-add adm-copilot-auth" href="' + encodeURI(authUrl) + '" target="_blank" rel="noopener">Authorize on GitHub ↗</a>' +
+          '<div class="adm-copilot-hint">A new tab opened on GitHub — approve there to finish. Didn\'t open? Use the button above.</div>' +
+        '</div>';
+      const copyBtn = status.querySelector('.adm-copilot-copy');
+      if (copyBtn) copyBtn.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(user_code || ''); copyBtn.textContent = 'Copied'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500); } catch (e) {}
+      });
+      try { if (authUrl) window.open(authUrl, '_blank', 'noopener'); } catch (e) {}
+
+      const deadline = Date.now() + (expires_in || 900) * 1000;
+      const stepMs = Math.max((interval || 5), 2) * 1000;
+      const done = (cls, text) => { status.className = cls; status.textContent = text; reset(); };
+      const poll = async () => {
+        if (Date.now() > deadline) { done('admin-error', 'Authorization expired — try again.'); return; }
+        try {
+          const fd = new FormData(); fd.append('poll_id', poll_id);
+          const r = await fetch('/api/copilot/device/poll', { method: 'POST', body: fd, credentials: 'same-origin' });
+          const d = await r.json();
+          if (d.status === 'authorized') {
+            const n = ((d.endpoint && d.endpoint.models) || []).length;
+            done('admin-success', '✓ Connected — ' + n + ' Copilot model' + (n !== 1 ? 's' : '') + ' available.');
+            if (d.endpoint && d.endpoint.id) _recentlyAddedEpId = String(d.endpoint.id);
+            await loadEndpoints();
+            await _selectAddedModelInChat(d.endpoint || {});
+            return;
+          }
+          if (d.status === 'failed') { done('admin-error', 'Authorization failed (' + (d.error || 'denied') + ').'); return; }
+        } catch (e) { /* transient — keep polling */ }
+        setTimeout(poll, stepMs);
+      };
+      setTimeout(poll, stepMs);
+    });
+  }
+
   // Local "Add" button — sibling form for self-hosted base URLs.
   const localAddBtn = el('adm-epLocalAddBtn');
   const localTestBtn = el('adm-epLocalTestBtn');
@@ -1133,11 +1205,11 @@ const _GOOGLE_OAUTH_HELP = `To get Google OAuth credentials:
 
 const MCP_PRESETS = [
   { name: "Gmail",           command: "npx", args: ["-y", "@gongrzhe/server-gmail-autoauth-mcp"],      env: { GOOGLE_CLIENT_ID: "", GOOGLE_CLIENT_SECRET: "" },
-    oauthFile: { dir: "~/.gmail-mcp", filename: "gcp-oauth.keys.json" },
+    oauthFile: { dir: "gmail", filename: "gcp-oauth.keys.json" },
     oauth: {
       provider: "google",
-      keys_file: "~/.gmail-mcp/gcp-oauth.keys.json",
-      token_file: "~/.gmail-mcp/credentials.json",
+      keys_file: "gmail/gcp-oauth.keys.json",
+      token_file: "gmail/credentials.json",
       scopes: ["https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/gmail.settings.basic"],
     },
     help: `Setup:

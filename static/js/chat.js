@@ -781,6 +781,10 @@ import createResearchSynapse from './researchSynapse.js';
       if (incognitoChk && incognitoChk.checked) {
         fd.append('incognito', 'true');
       }
+      const _ws = (Storage.KEYS && Storage.get(Storage.KEYS.WORKSPACE, '')) || '';
+      if (_ws) {
+        fd.append('workspace', _ws);
+      }
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
       }
@@ -844,7 +848,7 @@ import createResearchSynapse from './researchSynapse.js';
       var _charNameInit = presetsModule.getCharacterName ? presetsModule.getCharacterName() : '';
       if (_charNameInit) roleLabel = _charNameInit;
       const roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-      holder.innerHTML = `<div class="role">${roleLabel} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
+      holder.innerHTML = `<div class="role">${uiModule.esc(roleLabel)} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
       _applyModelColor(holder.querySelector('.role'), modelName);
       holder.style.position = 'relative';
       
@@ -1120,7 +1124,7 @@ import createResearchSynapse from './researchSynapse.js';
       let _measureDiv = null;
 
       function _replyAfterClosedThinking(text) {
-        const closeRe = /<\/think(?:ing)?>/gi;
+        const closeRe = /<\/(?:think(?:ing)?|thought)>|<channel\|>/gi;
         let match = null;
         let last = null;
         while ((match = closeRe.exec(text || '')) !== null) last = match;
@@ -1147,7 +1151,7 @@ import createResearchSynapse from './researchSynapse.js';
             replyTrimmed = (replyText || '').trim();
           } else {
             // Non-tag: check for garbled <think> (reasoning\n<think>reply)
-            const _gm = dt.match(/^[\s\S]+?<think(?:ing)?>\s*([\s\S]*?)(?:<\/think(?:ing)?>)?\s*$/i);
+            const _gm = dt.match(/^[\s\S]+?<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*([\s\S]*?)(?:<\/(?:think(?:ing)?|thought)>)?\s*$/i);
             if (_gm && _gm[1].trim()) {
               replyTrimmed = _gm[1].trim();
             } else {
@@ -1188,8 +1192,11 @@ import createResearchSynapse from './researchSynapse.js';
         const prevLen = contentEl._prevTextLen || 0;
         // If thinking is still streaming (unclosed <think>), show indicator instead of raw text
         if (markdownModule.hasUnclosedThinkTag && markdownModule.hasUnclosedThinkTag(dt)) {
-          const thinkStart = dt.search(/<think(?:ing)?>/i);
-          const thinkContent = dt.substring(thinkStart).replace(/<think(?:ing)?>/i, '').trim();
+          const thinkStart = dt.search(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought/i);
+          const thinkContent = dt.substring(Math.max(thinkStart, 0))
+            .replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought\s*\n?/i, '')
+            .replace(/<channel\|>/gi, '')
+            .trim();
           const lines = thinkContent.split('\n').length;
           // Don't show beforeThink text during streaming — it'll appear in the final render
           // This prevents the "split into two" duplication
@@ -1449,7 +1456,7 @@ import createResearchSynapse from './researchSynapse.js';
                 // Detect non-tag thinking patterns: "Thinking:", "Thinking Process:", Gemma-style reasoning
                 // These patterns don't use <think> tags, so we simulate unclosed thinking during streaming
                 const _replyPrefixes = ['Hey', 'Hi ', 'Hi!', 'Hello', 'Sure', 'Yes', 'No ', 'No,', 'Yo', 'OK', 'Here', 'Absolutely', 'Of course', 'Great', 'Alright', 'Thanks', 'Welcome', 'Good ', "I'm happy", "I'd be"];
-                if (!hasUnclosedThink && !roundText.includes('<think')) {
+                if (!hasUnclosedThink && !/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought/i.test(roundText)) {
                   const _trimmedRT = roundText.trimStart();
                   const _isReasoning = markdownModule.startsWithReasoningPrefix(_trimmedRT);
                   if (_isReasoning) {
@@ -1475,10 +1482,10 @@ import createResearchSynapse from './researchSynapse.js';
                     }
                   }
                 }
-                if (!hasUnclosedThink && /^<think(?:ing)?>\s*<\/think(?:ing)?>/i.test(roundText)) {
+                if (!hasUnclosedThink && /^<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*<\/(?:think(?:ing)?|thought)>/i.test(roundText)) {
                   // Empty <think></think> — the model likely put thinking outside the tags
-                  const afterEmpty = roundText.replace(/^<think(?:ing)?>\s*<\/think(?:ing)?>/i, '').trim();
-                  const closeTags = (afterEmpty.match(/<\/think(?:ing)?>/gi) || []).length;
+                  const afterEmpty = roundText.replace(/^<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*<\/(?:think(?:ing)?|thought)>/i, '').trim();
+                  const closeTags = (afterEmpty.match(/<\/(?:think(?:ing)?|thought)>/gi) || []).length;
                   if (closeTags === 0 && afterEmpty.length > 0) {
                     hasUnclosedThink = true; // still waiting for real closing tag
                   }
@@ -1487,13 +1494,13 @@ import createResearchSynapse from './researchSynapse.js';
                 // Only applies when there's a second </think> later (model leaked thinking outside tags)
                 // Do NOT trigger if the text after </think> contains tool calls (that's real content)
                 if (!hasUnclosedThink && isThinking) {
-                  const _thinkMatch = roundText.match(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/i);
+                  const _thinkMatch = roundText.match(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i);
                   const _thinkLen = _thinkMatch ? _thinkMatch[1].trim().length : 0;
                   if (_thinkLen < 20) {
-                    const _afterClose = roundText.replace(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/i, '').trim();
+                    const _afterClose = roundText.replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i, '').trim();
                     // Only keep waiting if there's trailing text that looks like thinking (not tool calls)
                     const _hasToolCall = /```(?:bash|python|web_search|read_file|write_file|create_document|edit_document|manage_|generate_image)/i.test(_afterClose);
-                    const _hasOrphanClose = /<\/think(?:ing)?>/i.test(_afterClose);
+                    const _hasOrphanClose = /<\/(?:think(?:ing)?|thought)>/i.test(_afterClose);
                     if (!_hasToolCall && (_hasOrphanClose || (Date.now() - thinkingStartTime) < 500)) {
                       hasUnclosedThink = true; // keep waiting for real </think>
                     }
@@ -1550,8 +1557,12 @@ import createResearchSynapse from './researchSynapse.js';
                   }
                 } else if (hasUnclosedThink && isThinking) {
                   if (_liveThinkInner) {
-                    // Extract raw thinking text (strip all <think>/<thinking> open/close tags and prefixes)
-                    var thinkText = roundText.replace(/<\/?think(?:ing)?>/gi, '');
+                    // Extract raw thinking text (strip known thinking wrappers and prefixes)
+                    var thinkText = roundText
+                      .replace(/<\/?(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi, '')
+                      .replace(/<\|channel>thought\s*\n?/gi, '')
+                      .replace(/<\|channel>response\s*\n?/gi, '')
+                      .replace(/<channel\|>/gi, '');
                     thinkText = thinkText.replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
                     _liveThinkInner.innerHTML = markdownModule.mdToHtml(thinkText);
                     // Keep thinking box scrolled to bottom
@@ -1829,6 +1840,44 @@ import createResearchSynapse from './researchSynapse.js';
                     }
                   }
                 }
+              } else if (json.type === 'rounds_exhausted') {
+                // The agent hit the per-turn step limit while still working.
+                // Offer a Continue button instead of stalling silently.
+                // NOTE: append to the chat-history container (bottom), NOT the
+                // message body — the body innerHTML is re-rendered at stream
+                // finalize, which would wipe a note placed inside it.
+                const _chatBox = document.getElementById('chat-history');
+                if (!_isBg && _chatBox) {
+                  // Drop any prior box so repeated cap-hits each get a fresh
+                  // Continue at the bottom (multiple continues in a row).
+                  const _old = _chatBox.querySelector('.rounds-exhausted');
+                  if (_old) _old.remove();
+                  const note = document.createElement('div');
+                  note.className = 'stopped-indicator rounds-exhausted';
+                  const label = document.createElement('span');
+                  label.className = 'rounds-exhausted-label';
+                  label.textContent = `Reached the ${json.rounds || ''}-step limit — not finished.`;
+                  note.appendChild(label);
+                  const contBtn = document.createElement('button');
+                  contBtn.className = 'continue-btn';
+                  contBtn.title = 'Continue the task';
+                  contBtn.textContent = 'Continue ▸';
+                  const _holder = currentHolder;
+                  contBtn.addEventListener('click', () => {
+                    note.remove();
+                    _hideUserBubble = true;
+                    _pendingContinue = _holder;
+                    const msgInput = uiModule.el('message');
+                    if (msgInput) {
+                      msgInput.value = 'You hit the step limit before finishing — the task is not complete. Continue from exactly where you left off and keep going until it is done. Do NOT repeat work already done.';
+                      const sb = document.querySelector('.send-btn');
+                      if (sb) sb.click();
+                    }
+                  });
+                  note.appendChild(contBtn);
+                  _chatBox.appendChild(note);
+                  try { note.scrollIntoView({ block: 'end', behavior: 'smooth' }); } catch (_) { uiModule.scrollHistory && uiModule.scrollHistory(); }
+                }
               } else if (json.type === 'attachments') {
                 if (_isBg) continue;
                 // Update user bubble — replace file chips with image previews
@@ -1995,7 +2044,7 @@ import createResearchSynapse from './researchSynapse.js';
                 const node = document.createElement('div')
                 node.className = 'agent-thread-node running';
                 const cmdHtml = cmd ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : '';
-                node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">\u25B6</span><span class="agent-thread-tool">${toolLabel}</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
+                node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">\u25B6</span><span class="agent-thread-tool">${esc(toolLabel)}</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
                 // Expand/collapse via delegated click handler (init at module bottom).
                 threadWrap.appendChild(node);
                 currentToolBubble = node;
@@ -2125,10 +2174,19 @@ import createResearchSynapse from './researchSynapse.js';
                 if (json.screenshot && currentToolBubble) {
                   const contentEl = currentToolBubble.querySelector('.agent-thread-content');
                   if (contentEl) {
-                    const details = document.createElement('details');
-                    details.className = 'agent-tool-output';
-                    details.innerHTML = `<summary>Screenshot</summary><img src="${json.screenshot}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" />`;
-                    contentEl.appendChild(details);
+                    const screenshotSrc = chatRenderer.safeToolScreenshotSrc(json.screenshot);
+                    if (screenshotSrc) {
+                      const details = document.createElement('details');
+                      details.className = 'agent-tool-output';
+                      const summary = document.createElement('summary');
+                      summary.textContent = 'Screenshot';
+                      const img = document.createElement('img');
+                      img.src = screenshotSrc;
+                      img.style.cssText = 'max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)';
+                      details.appendChild(summary);
+                      details.appendChild(img);
+                      contentEl.appendChild(details);
+                    }
                   }
                 }
                 // --- Reload sessions after manage_session tool (delete, rename, etc.) ---
@@ -2402,8 +2460,8 @@ import createResearchSynapse from './researchSynapse.js';
               _finalReply = (_extracted.content || '').trim();
             } else {
               // Non-tag thinking: extract reply from raw text
-              // Handle garbled <think> tag: "Thinking: reasoning\n<think>reply"
-              const _garbledMatch = finalDisplay.match(/^[\s\S]+?<think(?:ing)?>\s*([\s\S]*?)(?:<\/think(?:ing)?>)?\s*$/i);
+              // Handle garbled thinking tag: "Thinking: reasoning\n<think>reply"
+              const _garbledMatch = finalDisplay.match(/^[\s\S]+?<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*([\s\S]*?)(?:<\/(?:think(?:ing)?|thought)>)?\s*$/i);
               if (_garbledMatch && _garbledMatch[1].trim()) {
                 _finalReply = _garbledMatch[1].trim();
               } else {
@@ -2452,8 +2510,8 @@ import createResearchSynapse from './researchSynapse.js';
           _body4b.innerHTML = _sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded2) : _sourcesHtml;
         } else if (roundHolder !== holder) {
           // Check if there's thinking content worth showing
-          const _thinkMatch = roundText.match(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/i);
-          if (_thinkMatch && _thinkMatch[1].trim()) {
+          const _thinkingOnly = markdownModule.extractThinkingBlocks(roundText);
+          if (_thinkingOnly.thinkingBlocks?.length && !_thinkingOnly.content) {
             // Show thinking in a collapsed section even if no visible reply text
             const _body4c = roundHolder.querySelector('.body');
             if (_body4c) _body4c.innerHTML = markdownModule.processWithThinking(roundText);
@@ -3264,7 +3322,7 @@ import createResearchSynapse from './researchSynapse.js';
       var meta = sessionModule.getSessions().find(function(s) { return s.id === sessionId; });
       var roleLabel = _shortModel(meta && meta.model);
       var roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-      holder.innerHTML = '<div class="role">' + roleLabel + ' <span class="role-timestamp">' + roleTs + '</span></div><div class="body"></div>';
+      holder.innerHTML = '<div class="role">' + uiModule.esc(roleLabel) + ' <span class="role-timestamp">' + roleTs + '</span></div><div class="body"></div>';
       _applyModelColor(holder.querySelector('.role'), meta && meta.model);
 
       var bodyDiv = holder.querySelector('.body');
@@ -4066,7 +4124,7 @@ import createResearchSynapse from './researchSynapse.js';
       const roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
       const agentMeta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
       const agentModelLabel = _shortModel(agentMeta?.model);
-      holder.innerHTML = `<div class="role">${agentModelLabel} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
+      holder.innerHTML = `<div class="role">${uiModule.esc(agentModelLabel)} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
       _applyModelColor(holder.querySelector('.role'), agentMeta?.model);
       box.appendChild(holder);
 
@@ -4534,9 +4592,10 @@ import createResearchSynapse from './researchSynapse.js';
       // never closes (so it would otherwise hide the whole answer). Peel all of
       // those off so what's left is just the rewritten text.
       const _stripThink = (t) => {
-        t = t.replace(/<think>[\s\S]*?<\/think>/gi, '');   // complete blocks
-        if (/<\/think>/i.test(t)) t = t.replace(/^[\s\S]*?<\/think>/i, '');  // reasoning w/o opener
-        return t.replace(/<\/?think>/gi, '').trim();        // any orphan tag
+        t = markdownModule.normalizeThinkingMarkup(t || '');
+        t = t.replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>[\s\S]*?<\/(?:think(?:ing)?|thought)>/gi, '');   // complete blocks
+        if (/<\/(?:think(?:ing)?|thought)>/i.test(t)) t = t.replace(/^[\s\S]*?<\/(?:think(?:ing)?|thought)>/i, '');  // reasoning w/o opener
+        return t.replace(/<\/?(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi, '').trim();        // any orphan tag
       };
       newText = _stripThink(newText);
 

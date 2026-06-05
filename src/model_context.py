@@ -7,7 +7,7 @@ Provides token estimation for context usage tracking.
 
 import logging
 import sys
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from urllib.parse import urlparse
 
@@ -208,27 +208,32 @@ KNOWN_CONTEXT_WINDOWS = {
 # ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
-_context_cache: Dict[str, int] = {}
+_context_cache: Dict[Tuple[str, str], int] = {}
 
 
 def get_context_length(endpoint_url: str, model: str) -> int:
     """Get the context window size for a model.
 
     Queries /v1/models on the endpoint and looks for context_length
-    or context_window fields. Caches result per model ID.
+    or context_window fields. Caches result per (endpoint, model).
     Falls back to DEFAULT_CONTEXT if unavailable.
     """
     configured_kind = _configured_endpoint_kind(endpoint_url)
     is_local = _is_local_endpoint(endpoint_url)
-    if not is_local and model in _context_cache:
-        return _context_cache[model]
+    # Key on (endpoint_url, model): the same model id can be served by two
+    # different remote endpoints with different real context windows (e.g. a
+    # capped proxy vs. the full provider), so caching by model id alone would
+    # serve one endpoint's window for the other (issue #2603).
+    cache_key = (endpoint_url, model)
+    if not is_local and cache_key in _context_cache:
+        return _context_cache[cache_key]
 
     ctx = _query_context_length(endpoint_url, model)
     # Only cache non-default values to allow retry on next request.
     # Local endpoints can restart with a different --max-model-len while keeping
     # the same model id, so always re-query them instead of serving stale cache.
     if not is_local and (ctx != DEFAULT_CONTEXT or configured_kind in ("api", "proxy")):
-        _context_cache[model] = ctx
+        _context_cache[cache_key] = ctx
     logger.info(f"Context length for {model}: {ctx}")
     return ctx
 
@@ -281,6 +286,16 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
                         return n_ctx
         except Exception:
             pass
+
+    # GitHub Copilot's /models requires auth + X-GitHub-Api-Version headers that
+    # aren't available here; an unauthenticated probe just 400s. All Copilot
+    # picker models are major API models covered by the known-context table, so
+    # rely on that instead of a doomed network call.
+    from src.copilot import is_copilot_base
+    if is_copilot_base(endpoint_url):
+        if known:
+            logger.info(f"Using known context window for {model}: {known}")
+        return known or DEFAULT_CONTEXT
 
     models_url = endpoint_url.replace("/chat/completions", "/models")
     try:

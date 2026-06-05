@@ -22,7 +22,12 @@ logger = logging.getLogger(__name__)
 # Tools that are ALWAYS included regardless of retrieval results.
 # These are the most commonly needed and should never be missing.
 ALWAYS_AVAILABLE = frozenset({
-    "bash", "python", "web_search", "web_fetch", "read_file",
+    "bash", "python", "web_search", "web_fetch",
+    # File tools: read AND write/edit. An agent with disk access should always
+    # be able to change files, not just read them — otherwise a bare "edit X"
+    # request can miss write_file/edit_file (RAG-only) and the model wrongly
+    # falls back to edit_document (editor panel). All admin-gated by tool_security.
+    "read_file", "write_file", "edit_file",
     "grep", "glob", "ls",  # code-navigation tools (admin-gated by tool_security)
     "api_call",  # For configured integrations (Miniflux, Gitea, Linkding, etc.)
     # The two genuinely AMBIENT cookbook tools — "what's running" and

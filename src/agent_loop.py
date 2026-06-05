@@ -468,13 +468,14 @@ _API_HOSTS = frozenset([
     "api.together.xyz", "api.fireworks.ai",
     "api.perplexity.ai", "api.x.ai",
     "ollama.com", "api.venice.ai",
+    "api.githubcopilot.com",
     # Local OpenAI-compatible endpoints (llama.cpp, vLLM, LM Studio, etc.).
     # Without these, `_is_api_model` falls back to keyword sniffing on the
     # model name, so well-behaved local servers don't get native tool
     # schemas and the agent silently degrades to fenced-block parsing.
     "localhost", "127.0.0.1", "host.docker.internal",
 ])
-_MCP_KEYWORDS = frozenset(["browse", "browser", "website", "calendar", "event", "email",
+_MCP_KEYWORDS = frozenset(["mcp", "browse", "browser", "website", "calendar", "event", "email",
                            "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed"])
 _ADMIN_SCHEMA_NAMES = frozenset([
     "manage_session", "manage_skills", "manage_tasks",
@@ -1386,6 +1387,7 @@ async def stream_agent_loop(
     owner: Optional[str] = None,
     relevant_tools: Optional[Set[str]] = None,
     fallbacks: Optional[List[tuple]] = None,
+    workspace: Optional[str] = None,
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -1552,6 +1554,27 @@ async def stream_agent_loop(
         compact=_is_api_model,
         owner=owner,
     )
+    if workspace:
+        # PREPEND (not append) so it dominates the large base prompt — appended
+        # at the end, small models ignored it and asked the user for code. The
+        # folder IS the project; the agent must explore it, not ask.
+        _ws_note = (
+            f"## ACTIVE WORKSPACE — READ FIRST\n"
+            f"The user is working in this folder: {workspace}\n"
+            f"It IS the project. bash/python run with cwd set here and "
+            f"read_file/write_file are confined to it (paths outside are rejected).\n"
+            f"When the user says \"the code\" / \"this project\" / \"the workspace\" "
+            f"or asks to review/find/edit something WITHOUT a path, they mean THIS "
+            f"folder. Do NOT ask the user for code or a path, and do NOT read a file "
+            f"literally named \"workspace\". ALWAYS start by exploring it yourself: "
+            f"run `bash` → `git ls-files` (or `ls -R`) to see the files, then "
+            f"read_file the relevant ones by path RELATIVE to the workspace."
+        )
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = _ws_note + "\n\n" + (messages[0].get("content") or "")
+        else:
+            messages.insert(0, {"role": "system", "content": _ws_note})
+        logger.info("[workspace] active for this turn: %s", workspace)
     prep_timings["prompt_build"] = time.time() - _t2
 
     _t3 = time.time()
@@ -1641,6 +1664,11 @@ async def stream_agent_loop(
     _doc_acc = ""          # accumulated tool-call JSON arguments
     _doc_opened = False    # whether doc_stream_open was sent
     _doc_last_len = 0      # last content length sent
+
+    # Set when the loop runs out of rounds while the agent was still actively
+    # using tools — i.e. it was cut off, not finished. Drives a "Continue" event
+    # so the user can resume instead of the turn silently stalling.
+    _exhausted_rounds = False
 
     for round_num in range(1, max_rounds + 1):
         round_response = ""
@@ -2111,6 +2139,7 @@ async def stream_agent_loop(
                         disabled_tools=disabled_tools,
                         owner=owner,
                         progress_cb=_push_progress,
+                        workspace=workspace,
                     )
                 finally:
                     # Sentinel so the drainer knows to stop.
@@ -2299,6 +2328,20 @@ async def stream_agent_loop(
 
         # Separator in accumulated response
         full_response += "\n\n"
+    else:
+        # The for-loop completed every allowed round WITHOUT an early `break`
+        # (a `break` fires on "done", budget, or error). Reaching this `else`
+        # means the agent kept working until it ran out of rounds — so offer
+        # Continue instead of stopping silently. This catches ALL exhaustion
+        # paths, including a verifier `continue` on the final round (the old
+        # bottom-of-loop flag missed those).
+        _exhausted_rounds = True
+
+    # If the loop hit the round cap while still working, tell the client so it
+    # can show a "Continue" affordance instead of the turn just stopping.
+    if _exhausted_rounds:
+        logger.info("[agent] round cap (%d) reached mid-task — emitting rounds_exhausted", max_rounds)
+        yield f'data: {json.dumps({"type": "rounds_exhausted", "rounds": max_rounds})}\n\n'
 
     # If the response is completely empty and no tools were executed,
     # yield a fallback message so the user is not left hanging.

@@ -6,6 +6,7 @@
 
 import uiModule from './ui.js';
 import { splitTableRow } from './markdown/tableRow.js';
+import { replaceEmojiShortcodes, hasEmojiShortcode } from './emojiShortcodes.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -60,8 +61,20 @@ const _ALLOWED_HTML_BAD_TAGS = new Set([
   'SVG', 'MATH',
 ]);
 const _ALLOWED_HTML_URL_ATTRS = new Set([
-  'href', 'src', 'xlink:href', 'action', 'formaction', 'background', 'poster',
+  'href', 'src', 'srcset', 'xlink:href', 'action', 'formaction', 'background', 'poster',
 ]);
+
+function _compactUrlSchemeValue(value) {
+  return String(value || '').replace(/[\u0000-\u0020\u007f-\u009f]+/g, '').toLowerCase();
+}
+
+function _isDangerousUrl(value) {
+  return /^(javascript|vbscript|data):/.test(_compactUrlSchemeValue(value));
+}
+
+function _isDangerousSrcset(value) {
+  return String(value || '').split(',').some(candidate => _isDangerousUrl(candidate));
+}
 
 function _cleanAllowedHtmlOnce(htmlString) {
   const tpl = document.createElement('template');
@@ -82,11 +95,17 @@ function _cleanAllowedHtmlOnce(htmlString) {
         el.removeAttribute(attr.name);
         continue;
       }
+      if (name === 'style') {
+        const value = _compactUrlSchemeValue(attr.value);
+        if (/javascript:|vbscript:|data:|expression\(/.test(value)) {
+          el.removeAttribute(attr.name);
+        }
+        continue;
+      }
       // Neutralize javascript:/vbscript:/data: in URL-bearing attributes.
       // Strip control/space chars first so e.g. "java\tscript:" can't slip by.
       if (_ALLOWED_HTML_URL_ATTRS.has(name)) {
-        const value = (attr.value || '').replace(/[\x00-\x20]+/g, '').toLowerCase();
-        if (/^(javascript|vbscript|data):/.test(value)) {
+        if (name === 'srcset' ? _isDangerousSrcset(attr.value) : _isDangerousUrl(attr.value)) {
           el.removeAttribute(attr.name);
         }
       }
@@ -116,8 +135,13 @@ function sanitizeAllowedHtml(html) {
  * Check if text has unclosed think tag
  */
 export function hasUnclosedThinkTag(text) {
-  const openCount = (text.match(/<think(?:ing)?>/gi) || []).length;
-  const closeCount = (text.match(/<\/think(?:ing)?>/gi) || []).length;
+  text = text || '';
+  const openCount =
+    (text.match(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi) || []).length
+    + (text.match(/<\|channel>thought/gi) || []).length;
+  const closeCount =
+    (text.match(/<\/(?:think(?:ing)?|thought)>/gi) || []).length
+    + (text.match(/<channel\|>/gi) || []).length;
   return openCount > closeCount;
 }
 
@@ -125,8 +149,25 @@ export function startsWithReasoningPrefix(text) {
   return /^\s*(?:thinking(?:\s+process)?\s*:|the user |i need |i should |i will |they are |the question |i can )/i.test(text || '');
 }
 
+export function normalizeThinkingMarkup(text) {
+  if (!text) return text;
+  let normalized = text;
+  normalized = normalized.replace(/<thought(\s+[^>]*)?>/gi, (_m, attrs = '') => `<think${attrs || ''}>`);
+  normalized = normalized.replace(/<\/thought>/gi, '</think>');
+  normalized = normalized.replace(/<\|channel>thought\s*\n?([\s\S]*?)<channel\|>\s*/gi, (_m, content = '') => {
+    const thought = String(content || '').trim();
+    return thought ? `<think>${thought}</think>\n` : '';
+  });
+  normalized = normalized.replace(/<\|channel>response\s*\n?([\s\S]*?)<channel\|>/gi, (_m, content = '') => content || '');
+  normalized = normalized.replace(/<\|channel>response\s*\n?/gi, '');
+  normalized = normalized.replace(/<channel\|>/gi, '');
+  return normalized;
+}
+
 function normalizePlainThinking(text) {
-  if (!text || /<think/i.test(text)) return text;
+  if (!text) return text;
+  text = normalizeThinkingMarkup(text);
+  if (/<think/i.test(text)) return text;
 
   const trimmed = text.trimStart();
   if (!startsWithReasoningPrefix(trimmed)) return text;
@@ -220,11 +261,21 @@ export function extractThinkingBlocks(text) {
   // (b) Cut-off mid-generation — there's already real reply text before the
   //     opener. Drop from the tag onward as before (it's truncated thinking).
   if (hasUnclosedThinkTag(normalized)) {
-    const strayOpener = cleanContent.match(/^\s*<think(?:ing)?(?:\s+[^>]*)?>([\s\S]*)$/i);
-    if (strayOpener) {
-      cleanContent = strayOpener[1];
+    const gemmaThoughtStart = cleanContent.search(/<\|channel>thought/i);
+    if (gemmaThoughtStart >= 0) {
+      const leakedThought = cleanContent
+        .slice(gemmaThoughtStart)
+        .replace(/^<\|channel>thought\s*\n?/i, '')
+        .trim();
+      if (gemmaThoughtStart === 0 && leakedThought) thinkingBlocks.push(leakedThought);
+      cleanContent = cleanContent.slice(0, gemmaThoughtStart);
     } else {
-      cleanContent = cleanContent.replace(/<think(?:ing)?(?:\s+[^>]*)?>[\s\S]*$/gi, '');
+      const strayOpener = cleanContent.match(/^\s*<think(?:ing)?(?:\s+[^>]*)?>([\s\S]*)$/i);
+      if (strayOpener) {
+        cleanContent = strayOpener[1];
+      } else {
+        cleanContent = cleanContent.replace(/<think(?:ing)?(?:\s+[^>]*)?>[\s\S]*$/gi, '');
+      }
     }
   }
 
@@ -316,8 +367,19 @@ function _useSvgEmoji() {
   return typeof document === 'undefined' || !document.body?.classList.contains('text-emojis');
 }
 
-export function svgifyEmoji(html) {
-  if (!_useSvgEmoji() || !html || !_EMOJI_RE.test(html)) return html;
+// `opts.shortcodes` (default true) controls the issue-#345 `:name:` → emoji
+// expansion. Chat passes it through as true; document/email body renderers pass
+// false so author-typed `:shortcode:` text stays literal (see mdToHtml callers).
+// The Unicode-emoji → monochrome-SVG pass always runs regardless, so a real 😀
+// in a document still renders as the themed line icon as it always has.
+export function svgifyEmoji(html, opts) {
+  if (!_useSvgEmoji() || !html) return html;
+  const allowShortcodes = !opts || opts.shortcodes !== false;
+  // Two reasons to walk the HTML: real Unicode emoji to turn into SVG icons,
+  // or `:shortcode:` text the model emitted instead of an emoji (issue #345).
+  const hasUnicode = _EMOJI_RE.test(html);
+  const hasShortcode = allowShortcodes && hasEmojiShortcode(html);
+  if (!hasUnicode && !hasShortcode) return html;
   const parts = html.split(/(<[^>]*>)/);   // odd indices = tags
   let codeDepth = 0;
   for (let i = 0; i < parts.length; i++) {
@@ -327,7 +389,13 @@ export function svgifyEmoji(html) {
       else if (/^<\/(pre|code)\s*>/.test(t)) codeDepth = Math.max(0, codeDepth - 1);
       continue;
     }
-    if (codeDepth === 0 && _EMOJI_RE.test(parts[i])) parts[i] = _svgifyText(parts[i]);
+    if (codeDepth !== 0) continue;
+    let seg = parts[i];
+    // Expand shortcodes to Unicode first, then both they and any pre-existing
+    // Unicode emoji get rendered as the same monochrome line icons below.
+    if (hasShortcode) seg = replaceEmojiShortcodes(seg);
+    if (_EMOJI_RE.test(seg)) seg = _svgifyText(seg);
+    parts[i] = seg;
   }
   return parts.join('');
 }
@@ -371,7 +439,7 @@ export function processWithThinking(text) {
 /**
  * Convert markdown to HTML
  */
-export function mdToHtml(src) {
+export function mdToHtml(src, opts) {
   const allowedHtmlBlocks = [];
   const codeBlocks = [];
   const mermaidBlocks = [];
@@ -456,9 +524,11 @@ export function mdToHtml(src) {
   // allowlist keeps it from matching file names / versions ("package.json",
   // "node.js", "v1.2.3"); the required start/[\s(<] prefix means domains
   // already inside an http link (preceded by "//") or an email ("@") are
-  // skipped. Trailing sentence punctuation is kept outside the link.
+  // skipped. Require the TLD to end at a real domain boundary so dotted code
+  // identifiers like `sklearn.metrics` do not link `sklearn.me` and leave
+  // placeholder fragments in the remaining text.
   s = s.replace(
-    /(^|[\s(<])((?:www\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|ai|co|dev|app|gov|edu|news|info|tech|xyz|me)(?:\/[^\s<>"'`\])]*)?)/gi,
+    /(^|[\s(<])((?:www\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|ai|co|dev|app|gov|edu|news|info|tech|xyz|me)(?=$|[\/\s<>"'`\]).,;:!?])(?:\/[^\s<>"'`\])]*)?)/gi,
     (match, prefix, domain) => {
       const trail = (domain.match(/[.,;:!?)]+$/) || [''])[0];
       const core = trail ? domain.slice(0, -trail.length) : domain;
@@ -628,7 +698,7 @@ export function mdToHtml(src) {
     s = s.replace(`___CODE_BLOCK_${index}___`, block);
   });
 
-  return _useSvgEmoji() ? svgifyEmoji(s) : s;
+  return _useSvgEmoji() ? svgifyEmoji(s, opts) : s;
 }
 
 /**
@@ -686,6 +756,7 @@ const markdownModule = {
   createCollapsible,
   hasUnclosedThinkTag,
   extractThinkingBlocks,
+  normalizeThinkingMarkup,
   startsWithReasoningPrefix,
   renderMermaid
 };
