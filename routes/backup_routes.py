@@ -12,6 +12,25 @@ from src.settings import load_settings, save_settings, load_features, save_featu
 logger = logging.getLogger(__name__)
 
 
+def _as_list(value):
+    if isinstance(value, list):
+        return [str(item) for item in value if item not in (None, "")]
+    if value in (None, ""):
+        return []
+    return [str(value)]
+
+
+def _as_float(value, default=0.8):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_text(value):
+    return str(value).strip() if value not in (None, "") else ""
+
+
 def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRouter:
     router = APIRouter(tags=["backup"])
 
@@ -101,24 +120,40 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
         # ── Skills ──
         if "skills" in body and isinstance(body["skills"], list):
             existing = skills_manager.load_all()
+            # Note: Deduplication against all users (load_all) is a known bug
+            # being addressed in PR #2057. We maintain compatibility here but
+            # switch to add_skill() to fix the crash.
             existing_ids = {s.get("id") for s in existing}
             existing_titles = {s.get("title", "").strip().lower() for s in existing}
             added = 0
             for skill in body["skills"]:
-                if not isinstance(skill, dict) or not skill.get("title"):
+                if not isinstance(skill, dict):
                     continue
+                title = _as_text(skill.get("title") or skill.get("description") or skill.get("name"))
+                if not title:
+                    continue
+
                 # Skip if same id or same title already exists
                 if skill.get("id") in existing_ids:
                     continue
-                if skill["title"].strip().lower() in existing_titles:
+                if title.lower() in existing_titles:
                     continue
-                if user and not skill.get("owner"):
-                    skill["owner"] = user
-                existing.append(skill)
+
+                # Add via manager (handles disk-backing)
+                skills_manager.add_skill(
+                    title=title,
+                    problem=_as_text(skill.get("problem") or skill.get("when_to_use")),
+                    solution=_as_text(skill.get("solution") or skill.get("body_extra")),
+                    steps=_as_list(skill.get("steps") or skill.get("procedure")),
+                    tags=_as_list(skill.get("tags")),
+                    source=_as_text(skill.get("source")) or "imported",
+                    teacher_model=skill.get("teacher_model"),
+                    confidence=_as_float(skill.get("confidence")),
+                    owner=user or skill.get("owner"),
+                )
                 existing_ids.add(skill.get("id"))
-                existing_titles.add(skill["title"].strip().lower())
+                existing_titles.add(title.lower())
                 added += 1
-            skills_manager.save(existing)
             imported.append(f"{added} skills")
 
         # ── Presets ──
