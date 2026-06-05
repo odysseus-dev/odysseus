@@ -53,6 +53,46 @@ def _gallery_image_path(filename: str) -> Path:
         raise HTTPException(400, "Unsafe gallery filename")
     return path
 
+
+def _normalize_image_endpoint_base(url: str) -> str:
+    base = (url or "").strip().rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3].rstrip("/")
+    return base
+
+
+def _visible_image_endpoint_query(db, owner: str | None):
+    from src.auth_helpers import owner_filter
+    q = db.query(ModelEndpoint).filter(
+        ModelEndpoint.model_type == "image",
+        ModelEndpoint.is_enabled == True,  # noqa: E712
+    )
+    return owner_filter(q, ModelEndpoint, owner)
+
+
+def _first_visible_image_endpoint(db, owner: str | None):
+    endpoints = _visible_image_endpoint_query(db, owner).all()
+    if owner:
+        for ep in endpoints:
+            if getattr(ep, "owner", None) == owner:
+                return ep
+    return endpoints[0] if endpoints else None
+
+
+def _visible_image_endpoint_for_base(db, base: str, owner: str | None):
+    target = _normalize_image_endpoint_base(base)
+    if not target:
+        return None
+    fallback = None
+    for ep in _visible_image_endpoint_query(db, owner).all():
+        if _normalize_image_endpoint_base(getattr(ep, "base_url", "")) == target:
+            if owner and getattr(ep, "owner", None) == owner:
+                return ep
+            if fallback is None:
+                fallback = ep
+    return fallback
+
+
 def setup_gallery_routes() -> APIRouter:
     router = APIRouter(tags=["gallery"])
 
@@ -269,7 +309,7 @@ def setup_gallery_routes() -> APIRouter:
         """AI upscale using img2img with the diffusion server."""
         import base64, httpx
 
-        require_privilege(request, "can_generate_images")
+        user = require_privilege(request, "can_generate_images")
         form = await request.form()
         file = form.get("image")
         if not file: raise HTTPException(400, "No image")
@@ -281,7 +321,7 @@ def setup_gallery_routes() -> APIRouter:
         # Find image endpoint
         db = SessionLocal()
         try:
-            ep = db.query(ModelEndpoint).filter(ModelEndpoint.model_type == "image", ModelEndpoint.is_enabled == True).first()
+            ep = _first_visible_image_endpoint(db, user)
         finally:
             db.close()
 
@@ -312,7 +352,7 @@ def setup_gallery_routes() -> APIRouter:
         """Style transfer using img2img with the diffusion server."""
         import base64, httpx
 
-        require_privilege(request, "can_generate_images")
+        user = require_privilege(request, "can_generate_images")
         form = await request.form()
         file = form.get("image")
         prompt = form.get("prompt", "")
@@ -324,7 +364,7 @@ def setup_gallery_routes() -> APIRouter:
 
         db = SessionLocal()
         try:
-            ep = db.query(ModelEndpoint).filter(ModelEndpoint.model_type == "image", ModelEndpoint.is_enabled == True).first()
+            ep = _first_visible_image_endpoint(db, user)
         finally:
             db.close()
 
@@ -957,7 +997,7 @@ def setup_gallery_routes() -> APIRouter:
         the request for /v1/images/edits (multipart, inverted mask). Otherwise
         proxy through to a self-hosted diffusion server's /v1/images/inpaint."""
         import httpx
-        require_privilege(request, "can_generate_images")
+        user = require_privilege(request, "can_generate_images")
         body = await request.json()
         # Use endpoint from request body (editor dropdown) or fall back to DB lookup
         base = (body.pop("_endpoint", "") or "").rstrip("/")
@@ -976,14 +1016,11 @@ def setup_gallery_routes() -> APIRouter:
         if not base:
             db = SessionLocal()
             try:
-                eps = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.is_enabled == True,
-                    ModelEndpoint.model_type == "image",
-                ).all()
-                if not eps:
+                ep = _first_visible_image_endpoint(db, user)
+                if not ep:
                     raise HTTPException(400, "No image generation endpoint configured. Serve a diffusion model via Cookbook first.")
-                base = eps[0].base_url.rstrip("/")
-                api_key = eps[0].api_key
+                base = ep.base_url.rstrip("/")
+                api_key = ep.api_key
             finally:
                 db.close()
         else:
@@ -1000,10 +1037,9 @@ def setup_gallery_routes() -> APIRouter:
             _target = _norm_url(base)
             db = SessionLocal()
             try:
-                for ep in db.query(ModelEndpoint).all():
-                    if _norm_url(ep.base_url) == _target:
-                        api_key = ep.api_key
-                        break
+                ep = _visible_image_endpoint_for_base(db, _target, user)
+                if ep:
+                    api_key = ep.api_key
             finally:
                 db.close()
 
@@ -1155,7 +1191,7 @@ def setup_gallery_routes() -> APIRouter:
         you get edge blending + lighting unification while keeping the
         composition recognisable."""
         import httpx, base64 as _b64
-        require_privilege(request, "can_generate_images")
+        user = require_privilege(request, "can_generate_images")
         body = await request.json()
 
         image_b64 = body.get("image")
@@ -1182,23 +1218,19 @@ def setup_gallery_routes() -> APIRouter:
         if not base:
             db = SessionLocal()
             try:
-                eps = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.is_enabled == True,
-                    ModelEndpoint.model_type == "image",
-                ).all()
-                if not eps:
+                ep = _first_visible_image_endpoint(db, user)
+                if not ep:
                     raise HTTPException(400, "No image generation endpoint configured.")
-                base = eps[0].base_url.rstrip("/")
-                api_key = eps[0].api_key
+                base = ep.base_url.rstrip("/")
+                api_key = ep.api_key
             finally:
                 db.close()
         else:
             db = SessionLocal()
             try:
-                for ep in db.query(ModelEndpoint).all():
-                    if ep.base_url.rstrip("/").removesuffix("/v1").rstrip("/") == base.rstrip("/").removesuffix("/v1").rstrip("/"):
-                        api_key = ep.api_key
-                        break
+                ep = _visible_image_endpoint_for_base(db, base, user)
+                if ep:
+                    api_key = ep.api_key
             finally:
                 db.close()
 
