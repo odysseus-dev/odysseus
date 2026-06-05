@@ -10,6 +10,7 @@ from routes.cookbook_helpers import (
     _append_llama_cpp_linux_accel_build_lines,
     _append_serve_exit_code_lines,
     _append_serve_preflight_exit_lines,
+    _diagnose_serve_output,
     _llama_cpp_rebuild_cmd,
     _local_tooling_path_export,
     _pip_install_attempt,
@@ -478,6 +479,38 @@ def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "bin").is_dir()
     assert "Cleared the cached llama.cpp build" in result.stdout
+
+
+def test_diagnose_serve_output_flags_large_llama_cpu_kv_cache():
+    output = """
+    llama_model_load: offloading 49 repeating layers to GPU
+    llama_kv_cache_unified: CPU KV buffer size = 40960.00 MiB
+    llama_context: n_ctx = 131072
+    """
+
+    diagnosis = _diagnose_serve_output(output)
+
+    assert diagnosis is not None
+    assert diagnosis["message"] == "llama.cpp allocated a large KV cache in system RAM."
+    labels = [item["label"] for item in diagnosis["suggestions"]]
+    assert "edit serve: choose q8_0/q4_0 KV cache or lower context" in labels
+    assert "retry with context 8192" in labels
+
+
+def test_diagnose_serve_output_ignores_small_llama_cpu_kv_cache():
+    output = "llama_kv_cache_unified: CPU KV buffer size = 256.00 MiB"
+
+    assert _diagnose_serve_output(output) is None
+
+
+def test_diagnose_serve_output_keeps_existing_vllm_kv_cache_match():
+    diagnosis = _diagnose_serve_output(
+        "ValueError: No available memory for the cache blocks. "
+        "Available KV cache memory: -0.32 GiB"
+    )
+
+    assert diagnosis is not None
+    assert diagnosis["message"] == "No GPU memory left for KV cache after loading model."
 
 
 def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):

@@ -289,6 +289,25 @@ export const ERROR_PATTERNS = [
     ],
   },
   {
+    match: (text) => {
+      const matches = [...String(text || '').matchAll(/CPU\s+KV\s+buffer\s+size\s*=\s*([\d.]+)\s*(MiB|GiB)/gi)];
+      if (!matches.length) return false;
+      return matches.some((m) => {
+        const value = parseFloat(m[1]);
+        const unit = String(m[2] || '').toLowerCase();
+        const mib = value * (unit === 'gib' ? 1024 : 1);
+        return Number.isFinite(mib) && mib >= 8192;
+      });
+    },
+    message: 'llama.cpp allocated a large KV cache in system RAM.',
+    suggestion: 'Suggested action: edit the llama.cpp serve settings, choose a quantized KV cache such as q8_0 or q4_0, or lower context. Large f16 KV at long context can use tens of GB of RAM even when model layers are on GPU.',
+    fixes: [
+      { label: 'Edit with q8_0 KV', action: (panel) => _openServeEditFromDiagnosis(panel, { backend: 'llamacpp', cache_type: 'q8_0', flash_attn: true, ctx: '8192', _forceBackend: true }) },
+      { label: 'Edit with q4_0 KV', action: (panel) => _openServeEditFromDiagnosis(panel, { backend: 'llamacpp', cache_type: 'q4_0', flash_attn: true, ctx: '8192', _forceBackend: true }) },
+      { label: 'Lower to 4096', action: (panel) => _setPanelField(panel, 'ctx', '4096') },
+    ],
+  },
+  {
     pattern: /KV cache.*too (small|large)|max_model_len.*exceeds|maximum.*context/i,
     message: 'Context length too large for available GPU memory.',
     fixes: [
