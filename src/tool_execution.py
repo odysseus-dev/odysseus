@@ -600,17 +600,20 @@ async def _call_mcp_tool(
     # buildImageBubble on result["image_url"]). Lift it out of the tool's stdout so
     # the image renders deterministically — no dependence on the model echoing the
     # URL into its prose (which it mangles/hallucinates).
-    if tool == "generate_image" and isinstance(result, dict) and result.get("exit_code") == 0:
+    if tool == "generate_image":
         _promote_image_fields(result)
 
     return result
 
 
 def _promote_image_fields(result: Dict) -> None:
-    """Lift the image URL (+ prompt/model/size) from a generate_image MCP text
-    result into structured fields the agent loop already forwards to buildImageBubble.
-    Matches the generated-image URL by pattern (absolute or relative) so it's robust
-    to the result's wording."""
+    """Lift the image URL (+ prompt/model/size) from a successful generate_image MCP
+    text result into structured fields the agent loop already forwards to
+    buildImageBubble. Only acts on a dict result with exit_code 0; matches the
+    generated-image URL by pattern (absolute or relative) so it's robust to the
+    result's wording."""
+    if not isinstance(result, dict) or result.get("exit_code") != 0:
+        return
     out = result.get("stdout") or ""
     m = re.search(r'(?:https?://[^\s)\]]+)?/api/generated-image/[A-Za-z0-9._-]+', out)
     if not m:
