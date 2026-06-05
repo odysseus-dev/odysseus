@@ -154,7 +154,7 @@ def cmd_verify(args):
     try:
         with tarfile.open(path, "r:gz") as tar:
             members = tar.getmembers()
-            _validate_restore_members(members)
+            _validate_restore_members(members, _REPO_ROOT)
     except (tarfile.TarError, OSError) as e:
         fail(f"tarball is corrupt: {e}")
     emit({
@@ -166,8 +166,9 @@ def cmd_verify(args):
     }, args)
 
 
-def _validate_restore_members(members):
+def _validate_restore_members(members, root: Path):
     """Reject archive entries that can escape data/ during restore."""
+    resolved_root = root.resolve()
     for m in members:
         rel = PurePosixPath(m.name)
         if rel.is_absolute() or ".." in rel.parts:
@@ -178,6 +179,13 @@ def _validate_restore_members(members):
             fail(f"refusing tarball with link entry: {m.name!r}")
         if not (m.isdir() or m.isfile()):
             fail(f"refusing tarball with special file entry: {m.name!r}")
+        # Final defense: even if every textual check above were wrong, refuse
+        # to extract any entry whose resolved destination escapes `root`.
+        # Catches symlinked parent directories on disk and any other
+        # normalization surprise.
+        target = (root / rel).resolve()
+        if not (target == resolved_root or resolved_root in target.parents):
+            fail(f"refusing tarball entry that escapes root: {m.name!r}")
 
 
 def _extract_restore_members(tar, members, root: Path) -> None:
@@ -208,7 +216,7 @@ def cmd_restore(args):
     stash = None
     with tarfile.open(path, "r:gz") as tar:
         members = tar.getmembers()
-        _validate_restore_members(members)
+        _validate_restore_members(members, _REPO_ROOT)
         # Save a safety copy of current data/ before extracting.
         if _DATA_DIR.exists() or _DATA_DIR.is_symlink():
             stash = _REPO_ROOT / f"data.before-restore-{datetime.now().strftime('%Y%m%d-%H%M%S')}"

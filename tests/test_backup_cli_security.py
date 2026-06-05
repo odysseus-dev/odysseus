@@ -124,3 +124,31 @@ def test_restore_extracts_regular_files_without_extractall(tmp_path, monkeypatch
     assert (repo / "data" / "nested" / "new.txt").read_text(encoding="utf-8") == "new"
     assert not (repo / "data" / "old.txt").exists()
     assert list(repo.glob("data.before-restore-*"))
+
+
+def test_restore_rejects_path_traversal_under_data(tmp_path, monkeypatch):
+    """A crafted entry like `data/../../escape.txt` must be refused.
+
+    The textual `parts[0] == "data"` check accepts the prefix, but the
+    resolved path escapes the repo root. The resolved-path check inside
+    `_validate_restore_members` is the final defense.
+    """
+    backup = _load_backup_cli()
+    repo = tmp_path / "repo"
+    data = repo / "data"
+    data.mkdir(parents=True)
+    _patch_repo(backup, monkeypatch, repo)
+
+    tar_path = tmp_path / "traversal.tar.gz"
+    with tarfile.open(tar_path, "w:gz") as tar:
+        payload = b"pwned"
+        item = tarfile.TarInfo("data/../../escape.txt")
+        item.size = len(payload)
+        tar.addfile(item, io.BytesIO(payload))
+
+    with pytest.raises(SystemExit):
+        backup.cmd_restore(_restore_args(tar_path))
+
+    # Nothing must have been written outside the repo, and data/ must be intact.
+    assert not (tmp_path / "escape.txt").exists()
+    assert data.exists()
