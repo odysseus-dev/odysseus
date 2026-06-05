@@ -351,6 +351,85 @@ button {
   color: var(--muted);
 }
 
+/* --- Conversation bubbles --- */
+.header-actions {
+  display: flex;
+  gap: 2px;
+}
+.msg {
+  margin-bottom: 16px;
+}
+.msg-role {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+.msg-assistant .msg-role {
+  color: var(--accent);
+}
+.msg-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.msg-user .msg-text {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+/* --- Compose (new chat) --- */
+.compose-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+}
+.compose .field {
+  margin-top: 0;
+}
+.field.grow {
+  flex: 1;
+  min-height: 0;
+}
+.field select,
+.field textarea {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  color: var(--fg);
+  font-size: 16px;
+  font-family: inherit;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.field textarea {
+  flex: 1;
+  min-height: 120px;
+  resize: none;
+  line-height: 1.5;
+}
+.field select:focus,
+.field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.stop.send {
+  background: var(--accent);
+  color: var(--panel);
+}
+.stop.send:disabled {
+  opacity: 0.45;
+}
+
 /* --- Bottom nav --- */
 .bottom-nav {
   display: flex;

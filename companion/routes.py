@@ -223,6 +223,111 @@ def setup_companion_routes(session_manager=None) -> APIRouter:
         out.sort(key=lambda s: not s["active"])
         return {"sessions": out}
 
+    @router.post("/sessions")
+    async def start_session(request: Request):
+        """Start a NEW chat from the phone and return its session id.
+
+        Creates an owner-scoped session, then kicks off the SAME detached run the
+        desktop uses by making an internal loopback POST to /api/chat_stream. That
+        handler calls agent_runs.start BEFORE it streams, so by the time we get
+        response headers the run is registered and self-draining -- we close the
+        loopback immediately (closing an SSE never stops a detached run) and the
+        phone watches via /sessions/{id}/stream. We reuse the real chat pipeline
+        (models, tools, reasoning, message saving) rather than duplicate it; no
+        new LLM logic lives here.
+
+        Body (JSON): {message, endpoint_id, model}. endpoint_id/model come from
+        /api/companion/models. Owner-scoped: the session is owned by the token's
+        real owner, so it shows in the caller's list and passes ownership checks.
+        """
+        import uuid as _uuid
+
+        import httpx
+
+        owner = token_owner(request)
+        if not owner:
+            raise HTTPException(401, "Could not resolve an owner for this token")
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        message = (body.get("message") or "").strip()
+        model = (body.get("model") or "").strip()
+        endpoint_id = (body.get("endpoint_id") or "").strip()
+        if not message:
+            raise HTTPException(400, "message is required")
+        if not endpoint_id or not model:
+            raise HTTPException(400, "endpoint_id and model are required")
+
+        # Resolve the endpoint to a chat URL, owner-scoped (own or shared rows).
+        from core.database import SessionLocal, ModelEndpoint
+        from src.endpoint_resolver import build_chat_url, normalize_base
+        db = SessionLocal()
+        try:
+            ep = db.query(ModelEndpoint).filter(
+                ModelEndpoint.id == endpoint_id,
+                ModelEndpoint.is_enabled == True,  # noqa: E712
+            ).first()
+            if ep is None or not owner_can_see(ep.owner, owner):
+                raise HTTPException(404, "Model endpoint not found")
+            endpoint_url = build_chat_url(normalize_base(ep.base_url))
+        finally:
+            db.close()
+
+        # Create the (empty) session first; chat_stream adds the user message.
+        sm = _resolve_session_manager(session_manager)
+        sid = str(_uuid.uuid4())
+        name = (message[:40] or "New chat").strip()
+        sm.create_session(sid, name, endpoint_url, model, owner=owner)
+
+        # Internal-tool loopback: trusted because it originates from 127.0.0.1
+        # with no proxy headers; X-Odysseus-Owner attributes the run to the owner.
+        from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
+        port = request.url.port or _pairing.default_port()
+        url = f"http://127.0.0.1:{port}/api/chat_stream"
+        headers = {INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN, "X-Odysseus-Owner": owner}
+        data = {"message": message, "session": sid}
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+                # Opening the stream sends the request and waits for headers; that
+                # is enough to guarantee the run started. We never read the body.
+                async with client.stream("POST", url, data=data, headers=headers) as resp:
+                    if resp.status_code >= 400:
+                        raise HTTPException(502, f"chat_stream returned {resp.status_code}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(502, f"could not start the run: {e}")
+
+        return {"session_id": sid, "name": name}
+
+    @router.get("/sessions/{session_id}/messages")
+    def session_messages(request: Request, session_id: str):
+        """Saved conversation for one session, so the phone can open ANY session
+        -- not only one with a live run. Owner-checked. Returns user/assistant
+        turns; reasoning is already stripped from saved messages (same as the
+        desktop), so this is the finished answer text."""
+        from routes.session_routes import _verify_session_owner, _content_to_text
+
+        sm = _resolve_session_manager(session_manager)
+        _verify_session_owner(request, session_id, sm)
+        try:
+            sess = sm.get_session(session_id)
+        except KeyError:
+            raise HTTPException(404, "Session not found")
+
+        out = []
+        for m in getattr(sess, "history", []) or []:
+            role = getattr(m, "role", None)
+            if role not in ("user", "assistant"):
+                continue
+            content = getattr(m, "content", "")
+            if not isinstance(content, str):
+                content = _content_to_text(content)
+            out.append({"role": role, "content": content})
+        return {"messages": out}
+
     @router.get("/sessions/{session_id}/stream")
     async def stream_session(request: Request, session_id: str):
         """Live SSE for one session -- the phone's "watch what it's doing" view.

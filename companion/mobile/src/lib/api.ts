@@ -51,6 +51,58 @@ export async function listSessions(conn: Connection): Promise<SessionRow[]> {
   return sessions;
 }
 
+export interface ModelOption {
+  endpointId: string;
+  endpointName: string;
+  model: string;
+}
+
+/** Flatten the caller's endpoints into pickable (endpoint, model) options. */
+export async function listModels(conn: Connection): Promise<ModelOption[]> {
+  const { endpoints } = await getJSON<{
+    endpoints: { endpoint_id: string; name: string; models: string[] }[];
+  }>(conn, '/api/companion/models');
+  const out: ModelOption[] = [];
+  for (const ep of endpoints) {
+    for (const model of ep.models) {
+      out.push({ endpointId: ep.endpoint_id, endpointName: ep.name, model });
+    }
+  }
+  return out;
+}
+
+/** Start a new chat. Returns the new session id to open + watch. */
+export async function startSession(
+  conn: Connection,
+  opts: { message: string; endpointId: string; model: string },
+): Promise<{ session_id: string; name: string }> {
+  const resp = await fetch(`${conn.baseUrl}/api/companion/sessions`, {
+    method: 'POST',
+    headers: { ...authHeaders(conn), 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message: opts.message,
+      endpoint_id: opts.endpointId,
+      model: opts.model,
+    }),
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} starting session`);
+  return (await resp.json()) as { session_id: string; name: string };
+}
+
+export interface ChatMsg {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/** Saved conversation for a session (works for finished sessions too). */
+export async function getMessages(conn: Connection, id: string): Promise<ChatMsg[]> {
+  const { messages } = await getJSON<{ messages: ChatMsg[] }>(
+    conn,
+    `/api/companion/sessions/${encodeURIComponent(id)}/messages`,
+  );
+  return messages;
+}
+
 export async function stopSession(conn: Connection, id: string): Promise<boolean> {
   const resp = await fetch(
     `${conn.baseUrl}/api/companion/sessions/${encodeURIComponent(id)}/stop`,

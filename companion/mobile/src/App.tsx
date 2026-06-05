@@ -4,6 +4,7 @@ import { loadConnection } from './lib/connection';
 import PairScreen from './screens/PairScreen';
 import SessionsScreen from './screens/SessionsScreen';
 import SessionScreen from './screens/SessionScreen';
+import NewSessionScreen from './screens/NewSessionScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import BottomNav, { type Tab } from './components/BottomNav';
 
@@ -16,6 +17,7 @@ export default function App() {
   const [booted, setBooted] = useState(false);
   const [tab, setTab] = useState<Tab>('sessions');
   const [openSessionId, setOpenSessionId] = useState<string | null>(null);
+  const [composing, setComposing] = useState(false);
 
   useEffect(() => {
     loadConnection().then((c) => {
@@ -32,6 +34,19 @@ export default function App() {
     return <PairScreen onPaired={setConn} />;
   }
 
+  if (composing) {
+    return (
+      <NewSessionScreen
+        conn={conn}
+        onBack={() => setComposing(false)}
+        onCreated={(sid) => {
+          setComposing(false);
+          setOpenSessionId(sid);
+        }}
+      />
+    );
+  }
+
   if (openSessionId) {
     return (
       <SessionScreen
@@ -46,7 +61,7 @@ export default function App() {
     <div className="app">
       <main className="app-body">
         {tab === 'sessions' ? (
-          <SessionsScreen conn={conn} onOpen={setOpenSessionId} />
+          <SessionsScreen conn={conn} onOpen={setOpenSessionId} onNew={() => setComposing(true)} />
         ) : (
           <SettingsScreen
             conn={conn}

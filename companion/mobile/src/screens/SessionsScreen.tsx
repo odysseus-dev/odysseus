@@ -2,16 +2,18 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Connection } from '../lib/connection';
 import type { SessionRow } from '../lib/api';
 import { listSessions } from '../lib/api';
-import { RefreshIcon, ChevronRightIcon } from '../components/icons';
+import { RefreshIcon, ChevronRightIcon, PlusIcon } from '../components/icons';
 
 // The home tab: the owner's sessions, live ones first. Polls lightly so a run
 // that starts on the desktop shows up here without a manual refresh.
 export default function SessionsScreen({
   conn,
   onOpen,
+  onNew,
 }: {
   conn: Connection;
   onOpen: (id: string) => void;
+  onNew: () => void;
 }) {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -39,9 +41,14 @@ export default function SessionsScreen({
     <div className="screen list">
       <header className="list-header">
         <h1>Sessions</h1>
-        <button className="ghost" onClick={refresh} type="button" aria-label="Refresh">
-          <RefreshIcon size={20} />
-        </button>
+        <div className="header-actions">
+          <button className="ghost" onClick={refresh} type="button" aria-label="Refresh">
+            <RefreshIcon size={20} />
+          </button>
+          <button className="ghost" onClick={onNew} type="button" aria-label="New chat">
+            <PlusIcon size={22} />
+          </button>
+        </div>
       </header>
 
       {error && <div className="error">{error}</div>}
