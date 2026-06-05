@@ -33,6 +33,7 @@ class DocumentPatch(BaseModel):
     title: Optional[str] = None
     language: Optional[str] = None
     session_id: Optional[str] = None  # link/unlink document to a session
+    tags: Optional[str] = None        # comma-separated user tags
 
 
 # ---- Helpers ----
@@ -55,6 +56,7 @@ def _doc_to_dict(doc: Document) -> Dict[str, Any]:
         "source_email_folder":     getattr(doc, "source_email_folder", None),
         "source_email_account_id": getattr(doc, "source_email_account_id", None),
         "source_email_message_id": getattr(doc, "source_email_message_id", None),
+        "tags": getattr(doc, "tags", "") or "",
     }
 
 def _version_to_dict(v: DocumentVersion) -> Dict[str, Any]:

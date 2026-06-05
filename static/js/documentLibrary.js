@@ -54,8 +54,10 @@ let _libraryTotal = 0;
 let _libraryOffset = 0;
 let _docsVisibleLimit = 20;  // chunked reveal (matches the Chats tab's 20)
 let _libraryLanguages = {};
+let _libraryTagFacets = {};
 let _librarySessionCount = 0;
 let _libraryActiveLanguage = null;
+let _libraryActiveTag = '';
 let _librarySort = 'recent';
 let _librarySearch = '';
 let _librarySearchDebounce = null;
@@ -323,6 +325,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     });
     if (_librarySearch) params.set('search', _librarySearch);
     if (_libraryActiveLanguage) params.set('language', _libraryActiveLanguage);
+    if (_libraryActiveTag) params.set('tag', _libraryActiveTag);
     if (_libraryArchivedView) params.set('archived', 'true');
 
     try {
@@ -338,10 +341,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }
       _libraryTotal = data.total;
       _libraryLanguages = data.languages;
+      _libraryTagFacets = data.tags || {};
       _librarySessionCount = data.session_count;
 
       libraryRenderStats();
       libraryRenderLangChips();
+      libraryRenderTagChips();
       libraryRenderGrid();
       libraryRenderLoadMore();
     } catch (e) {
@@ -394,6 +399,36 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       chip.textContent = `${lang} (${count})`;
       chip.addEventListener('click', () => {
         _libraryActiveLanguage = lang;
+        libraryFetch(false);
+      });
+      wrap.appendChild(chip);
+    }
+  }
+
+  function libraryRenderTagChips() {
+    const wrap = document.getElementById('doclib-tag-chips');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    const entries = Object.entries(_libraryTagFacets).sort((a, b) => b[1] - a[1]);
+    if (entries.length === 0) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+
+    const label = document.createElement('span');
+    label.style.cssText = 'font-size:10px;opacity:0.5;margin-right:4px;white-space:nowrap;';
+    label.textContent = 'Tags:';
+    wrap.appendChild(label);
+
+    for (const [tag, count] of entries) {
+      const chip = document.createElement('button');
+      chip.className = 'memory-cat-chip' + (_libraryActiveTag === tag ? ' active' : '');
+      chip.textContent = `${tag} (${count})`;
+      chip.addEventListener('click', () => {
+        if (_libraryActiveTag === tag) {
+          _libraryActiveTag = '';
+        } else {
+          _libraryActiveTag = tag;
+        }
+        _libraryOffset = 0;
         libraryFetch(false);
       });
       wrap.appendChild(chip);
@@ -586,6 +621,28 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     // Strip the per-language icon from the meta line \u2014 it now sits next to the
     // title above, so duplicating it here was redundant.
     content.appendChild(meta);
+
+    // Tag chips (optional, shown when tags exist)
+    const docTags = (doc.tags || '').split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
+    if (docTags.length > 0) {
+      const tagRow = document.createElement('div');
+      tagRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:3px;margin-top:3px;';
+      const displayTags = docTags.slice(0, 3);
+      for (const t of displayTags) {
+        const chip = document.createElement('span');
+        chip.style.cssText = 'font-size:9px;padding:1px 5px;border-radius:4px;background:color-mix(in srgb,var(--accent,var(--red)) 12%,transparent);border:1px solid color-mix(in srgb,var(--accent,var(--red)) 30%,transparent);color:var(--accent,var(--red));cursor:pointer;';
+        chip.textContent = t;
+        chip.addEventListener('click', (e) => {
+          e.stopPropagation();
+          _libraryActiveTag = _libraryActiveTag === t ? '' : t;
+          _libraryOffset = 0;
+          libraryFetch(false);
+        });
+        tagRow.appendChild(chip);
+      }
+      content.appendChild(tagRow);
+    }
+
     card.appendChild(content);
 
     // Header element (kept for expand/preview compatibility)
@@ -745,6 +802,38 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       } catch { if (uiModule) uiModule.showError('Failed to ' + (toArchived ? 'archive' : 'restore')); }
     });
     dropdown.appendChild(archiveItem);
+
+    // Edit Tags
+    const _tagIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>';
+    const tagsItem = document.createElement('button');
+    tagsItem.className = 'dropdown-item-compact';
+    tagsItem.style.cssText = 'background:none;border:none;width:100%;';
+    tagsItem.innerHTML = _di(_tagIco) + '<span>Edit tags</span>';
+    tagsItem.addEventListener('click', (e) => {
+      e.stopPropagation();
+      hideCardDropdown();
+      // Inline prompt to edit tags
+      const currentTags = doc.tags || '';
+      const newTags = window.prompt('Tags (comma-separated):', currentTags);
+      if (newTags === null) return;  // cancelled
+      fetch(`${API_BASE}/api/document/${doc.id}`, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags: newTags }),
+      }).then(r => {
+        if (!r.ok) throw new Error('failed');
+        return r.json();
+      }).then(updated => {
+        doc.tags = updated.tags || '';
+        // Refresh the in-memory doc tags and re-render
+        const idx = _libraryDocs.findIndex(d => d.id === doc.id);
+        if (idx >= 0) _libraryDocs[idx].tags = doc.tags;
+        libraryFetch(false);
+        if (uiModule) uiModule.showToast('Tags saved');
+      }).catch(() => { if (uiModule) uiModule.showError('Failed to save tags'); });
+    });
+    dropdown.appendChild(tagsItem);
 
     // Delete
     const _deleteIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
@@ -1587,6 +1676,8 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     _librarySelectedIds.clear();
     _librarySearch = '';
     _libraryActiveLanguage = null;
+    _libraryActiveTag = '';
+    _libraryTagFacets = {};
     _librarySort = 'recent';
     _libraryOffset = 0;
     _libraryDocs = [];
@@ -1714,6 +1805,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
               </div>
               <input type="text" id="doclib-search" placeholder="Search titles &amp; content\u2026" class="memory-search-input" />
               <div id="doclib-chips" class="doclib-lang-chips"></div>
+              <div id="doclib-tag-chips" class="doclib-lang-chips" style="display:none;margin-top:2px;align-items:center;flex-wrap:wrap;gap:4px;"></div>
             </div>
             <input type="file" id="doclib-file-input" multiple style="display:none" />
             <div id="doclib-bulk-bar" class="memory-bulk-bar hidden" style="margin-bottom:5px;">

@@ -54,6 +54,17 @@ def _library_language_for_document(doc: Document) -> str:
     return doc.language or "text"
 
 
+def _aggregate_tag_facets(docs) -> dict:
+    """Count occurrences of each tag across the given document list."""
+    counts = {}
+    for doc in docs:
+        for t in (getattr(doc, "tags", "") or "").split(","):
+            t = t.strip().lower()
+            if t:
+                counts[t] = counts.get(t, 0) + 1
+    return counts
+
+
 from routes.document_helpers import (
     DocumentCreate, DocumentUpdate, DocumentPatch,
     _doc_to_dict, _version_to_dict,
@@ -265,6 +276,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         request: Request,
         search: Optional[str] = Query(None),
         language: Optional[str] = Query(None),
+        tag: str = Query(default=""),
         sort: str = Query("recent"),
         offset: int = Query(0, ge=0),
         limit: int = Query(20, ge=1, le=50),
@@ -355,8 +367,29 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
             rows = q.offset(offset).limit(limit).all()
 
+            # Tag filter — applied in Python after fetching because SQLite
+            # comma-separated search is awkward with the ORM; the server page
+            # is small (≤50 rows) so this is fine.
+            docs_raw = [doc for doc, _ in rows]
+            if tag:
+                tag_clean = tag.strip().lower()
+                filtered_pairs = [
+                    (doc, sn) for doc, sn in rows
+                    if any(
+                        t.strip().lower() == tag_clean
+                        for t in (getattr(doc, "tags", "") or "").split(",")
+                        if t.strip()
+                    )
+                ]
+            else:
+                filtered_pairs = list(rows)
+
+            # Tag facets computed from the full (pre-tag-filter) page so the
+            # sidebar always shows all tags, not just the active one.
+            tag_facets = _aggregate_tag_facets(docs_raw)
+
             documents = []
-            for doc, session_name in rows:
+            for doc, session_name in filtered_pairs:
                 documents.append({
                     "id": doc.id,
                     "session_id": doc.session_id,
@@ -367,12 +400,14 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     "version_count": doc.version_count,
                     "created_at": (doc.created_at.isoformat() + "Z") if doc.created_at else None,
                     "updated_at": (doc.updated_at.isoformat() + "Z") if doc.updated_at else None,
+                    "tags": getattr(doc, "tags", "") or "",
                 })
 
             return {
                 "documents": documents,
-                "total": total,
+                "total": total if not tag else len(documents),
                 "languages": languages,
+                "tags": tag_facets,
                 "session_count": session_count,
             }
         except Exception as e:
@@ -647,6 +682,15 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                         clear_active_document(doc_id)
                     except Exception:
                         pass
+            if req.tags is not None:
+                # Normalize: strip whitespace around each comma-separated value,
+                # lowercase, deduplicate, rejoin.
+                raw_tags = [t.strip().lower() for t in req.tags.split(",") if t.strip()]
+                seen = []
+                for t in raw_tags:
+                    if t not in seen:
+                        seen.append(t)
+                doc.tags = ",".join(seen)
             db.commit()
             db.refresh(doc)
             return _doc_to_dict(doc)

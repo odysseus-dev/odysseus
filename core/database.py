@@ -215,10 +215,16 @@ class Document(TimestampMixin, Base):
     source_email_folder      = Column(String, nullable=True)
     source_email_account_id  = Column(String, nullable=True)
     source_email_message_id  = Column(String, nullable=True, index=True)
+    tags    = Column(String, nullable=True, default="")  # comma-separated user tags
+    ai_tags = Column(Text,   nullable=True)               # reserved for future auto-tagging
 
     session  = relationship("Session", backref=backref("documents", cascade="save-update, merge"))
     versions = relationship("DocumentVersion", back_populates="document",
                            cascade="all, delete-orphan", order_by="DocumentVersion.version_number")
+
+    __table_args__ = (
+        Index("ix_documents_tags", "tags"),
+    )
 
 
 class DocumentVersion(Base):
@@ -1456,6 +1462,19 @@ def _migrate_add_assistant_columns():
         logging.getLogger(__name__).warning(f"assistant columns migration: {e}")
 
 
+def _migrate_add_document_tags():
+    """Add tags and ai_tags columns to documents. Idempotent."""
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(documents)"))]
+            if "tags" not in cols:
+                conn.execute(text("ALTER TABLE documents ADD COLUMN tags VARCHAR DEFAULT ''"))
+            if "ai_tags" not in cols:
+                conn.execute(text("ALTER TABLE documents ADD COLUMN ai_tags TEXT"))
+            conn.commit()
+    except Exception as e:
+        logger.warning("document tags migration: %s", e)
+
 
 
 
@@ -1661,6 +1680,7 @@ def init_db():
     _migrate_drop_ping_notes_tasks()
     _migrate_add_crew_member_id()
     _migrate_add_assistant_columns()
+    _migrate_add_document_tags()
     _migrate_add_email_smtp_security()
     _migrate_seed_email_account()
     _migrate_add_calendar_metadata()
