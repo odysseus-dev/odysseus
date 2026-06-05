@@ -14754,7 +14754,10 @@ body.right-dock-active {
   padding-right: var(--right-dock-w, 0px);
 }
 body.left-dock-active {
-  padding-left: var(--left-dock-w, 0px);
+  padding-left: 0;
+}
+body.left-dock-active:not(.email-doc-split-active) .chat-container {
+  margin-left: var(--left-dock-w, 0px);
 }
 .modal.modal-right-docked {
   align-items: stretch;
