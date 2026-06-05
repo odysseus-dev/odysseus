@@ -171,6 +171,8 @@ KNOWN_CONTEXT_WINDOWS = {
     # --- Perplexity ---
     'sonar-pro': 200000,
     'sonar': 128000,
+    'sonar-reasoning-pro': 128000,
+    'sonar-reasoning': 128000,
 
     # --- MiniMax ---
     'minimax': 1000000,

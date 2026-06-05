@@ -415,6 +415,8 @@ def _detect_provider(url: str) -> str:
         return "openrouter"
     if _host_match(url, "groq.com"):
         return "groq"
+    if _host_match(url, "perplexity.ai"):
+        return "perplexity"
     from src.copilot import is_copilot_base
     if is_copilot_base(url):
         return "copilot"
@@ -428,6 +430,12 @@ def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str
     if provider == "openrouter":
         h.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
         h.setdefault("X-OpenRouter-Title", "Odysseus")
+    if provider == "perplexity":
+        # Perplexity's integration-attribution header (same convention every
+        # official Perplexity wrapper uses). Lets them see traffic comes from
+        # Odysseus. Their API is otherwise plain OpenAI-compatible.
+        from src.constants import APP_VERSION
+        h.setdefault("X-Pplx-Integration", f"odysseus/{APP_VERSION}")
     if provider == "copilot":
         # Ensure the Copilot-required headers are present even when the caller
         # didn't pass pre-built headers (e.g. model listing). build_headers()
@@ -449,6 +457,7 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "openai.com"): return "OpenAI"
     if _host_match(url, "openrouter.ai"): return "OpenRouter"
     if _host_match(url, "groq.com"): return "Groq"
+    if _host_match(url, "perplexity.ai"): return "Perplexity"
     from src.copilot import is_copilot_base
     if is_copilot_base(url): return "GitHub Copilot"
     if _host_match(url, "mistral.ai"): return "Mistral"
