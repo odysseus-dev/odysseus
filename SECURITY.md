@@ -20,6 +20,7 @@ Security fixes are handled on the default branch until formal releases are cut.
 - Give admin accounts strong passwords and enable 2FA where possible.
 - Leave high-risk agent tools restricted to admins: shell, Python, file read/write, email send/read, MCP, app API, task/skill/memory management, settings, tokens, and model serving.
 - Rotate API keys, webhook secrets, and Odysseus API tokens if they appear in logs, screenshots, demos, or shared chats.
+- Create separate API tokens and webhook secrets per integration, and delete unused ones.
 - Treat shell, model-serving, MCP, email, calendar, and vault features as privileged admin functionality.
 - Common internal-only ports are Odysseus `7000`, SearXNG `8080`, ntfy `8091`, ChromaDB `8100`, Ollama `11434`, and local model/provider APIs such as `8000-8020`.
 
