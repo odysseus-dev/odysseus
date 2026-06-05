@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import time
 import logging
 from datetime import datetime
@@ -37,7 +38,7 @@ from routes.chat_helpers import (
     clean_thinking_for_save,
     _enforce_chat_privileges,
 )
-from src.action_intents import message_needs_tools as _message_needs_tools
+from src.action_intents import classify_tool_intent as _classify_tool_intent
 
 logger = logging.getLogger(__name__)
 
@@ -72,13 +73,17 @@ def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
     return sess in variants or sess.startswith(base + "/")
 
 
-def _clear_orphaned_session_endpoint(sess) -> bool:
+def _clear_orphaned_session_endpoint(sess, owner: str | None = None) -> bool:
     """Clear a session model if its endpoint was deleted from ModelEndpoint."""
     if not getattr(sess, "endpoint_url", ""):
         return False
     db = SessionLocal()
     try:
-        endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        if owner:
+            from src.auth_helpers import owner_filter
+            q = owner_filter(q, ModelEndpoint, owner)
+        endpoints = q.all()
         for ep in endpoints:
             if _session_url_matches_endpoint(sess.endpoint_url or "", ep.base_url or ""):
                 return False
@@ -118,7 +123,7 @@ def _endpoint_cache_contains_model(endpoint, model: str) -> bool:
     return wanted in {str(item).strip() for item in models}
 
 
-def _is_image_generation_session(sess) -> bool:
+def _is_image_generation_session(sess, owner: str | None = None) -> bool:
     """Whether this chat session should bypass text chat and generate images.
 
     Model-name prefixes are explicit image models. Endpoint type is only used
@@ -137,7 +142,11 @@ def _is_image_generation_session(sess) -> bool:
 
     db = SessionLocal()
     try:
-        endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        if owner:
+            from src.auth_helpers import owner_filter
+            q = owner_filter(q, ModelEndpoint, owner)
+        endpoints = q.all()
         for endpoint in endpoints:
             if (getattr(endpoint, "model_type", None) or "llm") != "image":
                 continue
@@ -152,7 +161,7 @@ def _is_image_generation_session(sess) -> bool:
     return False
 
 
-def _recover_empty_session_model(sess, session_id: str) -> bool:
+def _recover_empty_session_model(sess, session_id: str, owner: str | None = None) -> bool:
     """Re-populate sess.model from the matching endpoint's cached models.
 
     Covers the window between endpoint setup and the first chat send: the
@@ -172,7 +181,11 @@ def _recover_empty_session_model(sess, session_id: str) -> bool:
         # cached model is the most defensible default.
         ep = None
         if getattr(sess, "endpoint_url", ""):
-            endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+            q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+            if owner:
+                from src.auth_helpers import owner_filter
+                q = owner_filter(q, ModelEndpoint, owner)
+            endpoints = q.all()
             for cand in endpoints:
                 if _session_url_matches_endpoint(sess.endpoint_url or "", cand.base_url or ""):
                     ep = cand
@@ -217,6 +230,26 @@ def _recover_empty_session_model(sess, session_id: str) -> bool:
         db.close()
 
 
+def _set_user_time_from_request(request: Request) -> None:
+    """Copy browser timezone headers into the per-request context.
+
+    This is intentionally ephemeral: it is used only while building prompts
+    and running tools for this request. It is not persisted or logged.
+    """
+    try:
+        tz_offset = request.headers.get("x-tz-offset")
+        tz_name = request.headers.get("x-tz-name")
+        from src.user_time import clear_user_time_context, set_user_tz_name, set_user_tz_offset
+
+        clear_user_time_context()
+        if tz_offset is not None:
+            set_user_tz_offset(tz_offset)
+        if tz_name:
+            set_user_tz_name(tz_name)
+    except Exception:
+        pass
+
+
 def setup_chat_routes(
     session_manager,
     chat_handler,
@@ -235,6 +268,8 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     @router.post("/api/chat", response_model=Dict[str, str])
     async def chat_endpoint(request: Request, chat_request: ChatRequest) -> Dict[str, str]:
+        _set_user_time_from_request(request)
+
         message = chat_request.message
         session = chat_request.session
         att_ids = chat_request.attachments or []
@@ -251,13 +286,14 @@ def setup_chat_routes(
             sess = session_manager.get_session(session)
         except KeyError:
             raise HTTPException(404, f"Session '{session}' not found")
-        if _clear_orphaned_session_endpoint(sess):
+        owner = get_current_user(request)
+        if _clear_orphaned_session_endpoint(sess, owner=owner):
             raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
 
         # Empty model + live endpoint = setup race (Issue #587). Repair from
         # the endpoint's cached model list before privilege checks, which
         # otherwise see "" and behave inconsistently with the allowlist.
-        _recover_empty_session_model(sess, session)
+        _recover_empty_session_model(sess, session, owner=owner)
         if not getattr(sess, "model", "").strip():
             raise HTTPException(
                 400,
@@ -342,16 +378,7 @@ def setup_chat_routes(
         except Exception as e:
             raise HTTPException(400, f"Request parsing error: {e}")
 
-        # Stash the user's UTC offset (in minutes east of UTC) from the
-        # frontend so tools like manage_notes interpret natural-language
-        # times in the USER's tz, not the server's. See calendar_routes.
-        try:
-            _tz_hdr = request.headers.get("x-tz-offset")
-            if _tz_hdr is not None:
-                from routes.calendar_routes import set_user_tz_offset
-                set_user_tz_offset(_tz_hdr)
-        except Exception:
-            pass
+        _set_user_time_from_request(request)
 
         form_data = await request.form()
         message = form_data.get("message")
@@ -368,6 +395,12 @@ def setup_chat_routes(
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
         incognito = str(form_data.get("incognito", "")).lower() == "true"
         chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
+        # Workspace: confine the agent's file/shell tools to this folder. Validate
+        # it's a real directory; ignore (no confinement) otherwise.
+        workspace = (form_data.get("workspace") or "").strip()
+        if workspace:
+            _ws_real = os.path.realpath(os.path.expanduser(workspace))
+            workspace = _ws_real if os.path.isdir(_ws_real) else ""
         # Did the USER explicitly pick agent mode? (vs. us auto-escalating
         # below). Skill extraction should only learn from real agent sessions,
         # not chats we quietly promoted for a notes/calendar intent.
@@ -380,10 +413,15 @@ def setup_chat_routes(
         # its way through a plain chat request (and fail, especially with the
         # shell disabled).
         auto_escalated = False
-        if chat_mode == "chat" and isinstance(message, str) and _message_needs_tools(message):
+        _tool_intent = _classify_tool_intent(message) if isinstance(message, str) else None
+        if chat_mode == "chat" and _tool_intent and _tool_intent.needs_tools:
             chat_mode = "agent"
             auto_escalated = True
-            logger.info("chat→agent auto-escalation: message matched tool-intent pattern")
+            logger.info(
+                "chat→agent auto-escalation: category=%s reason=%s",
+                _tool_intent.category,
+                _tool_intent.reason,
+            )
         active_doc_id = form_data.get("active_doc_id", "").strip()
         logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
 
@@ -401,7 +439,8 @@ def setup_chat_routes(
             # but BEFORE loading. Prevents cross-user session hijack.
             _verify_session_owner(request, session)
             sess = session_manager.get_session(session)
-            if _clear_orphaned_session_endpoint(sess):
+            owner = get_current_user(request)
+            if _clear_orphaned_session_endpoint(sess, owner=owner):
                 raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
             # Issue #587: picker shows a model from the endpoint cache but
             # s.model never made it onto the DB row (first-send race after
@@ -409,7 +448,7 @@ def setup_chat_routes(
             # the first cached model off the matching endpoint so the
             # upstream isn't called with model="" (which surfaces as a
             # generic 401/503).
-            _recover_empty_session_model(sess, session)
+            _recover_empty_session_model(sess, session, owner=owner)
             if not getattr(sess, "model", "").strip():
                 raise HTTPException(
                     400,
@@ -431,7 +470,7 @@ def setup_chat_routes(
         _enforce_chat_privileges(request, sess)
 
         # Ensure session has auth headers
-        resolve_session_auth(sess, session)
+        resolve_session_auth(sess, session, owner=get_current_user(request))
 
         # Check for research_pending BEFORE mode persist overwrites it
         do_research = str(use_research).lower() == "true"
@@ -493,7 +532,24 @@ def setup_chat_routes(
                 _doc_q = _doc_db.query(DBDocument).filter(DBDocument.id == active_doc_id)
                 active_doc = _owner_session_filter(_doc_q, ctx.user).first()
                 if active_doc:
-                    logger.info(f"[doc-inject] found by ID: title={active_doc.title!r}, lang={active_doc.language!r}, is_active={active_doc.is_active}, content_len={len(active_doc.current_content or '')}")
+                    doc_session = active_doc.session_id
+                    doc_owner = getattr(active_doc, "owner", None)
+                    if doc_owner and ctx.user and doc_owner != ctx.user:
+                        logger.warning(
+                            "[doc-inject] ignoring active_doc_id %s owned by another user",
+                            active_doc_id,
+                        )
+                        active_doc = None
+                    elif doc_session and doc_session != session:
+                        logger.warning(
+                            "[doc-inject] ignoring stale active_doc_id %s from session %s while in session %s",
+                            active_doc_id,
+                            doc_session,
+                            session,
+                        )
+                        active_doc = None
+                    else:
+                        logger.info(f"[doc-inject] found by ID: title={active_doc.title!r}, lang={active_doc.language!r}, is_active={active_doc.is_active}, content_len={len(active_doc.current_content or '')}")
                 else:
                     logger.warning(f"[doc-inject] NOT FOUND by ID {active_doc_id}")
             if not active_doc:
@@ -711,6 +767,7 @@ def setup_chat_routes(
                         prior_findings=_prior_findings,
                         prior_urls=_prior_urls,
                         on_complete=_on_research_done,
+                        owner=_user,
                     )
 
                     _heartbeat_counter = 0
@@ -767,7 +824,7 @@ def setup_chat_routes(
             # output. Resolved once per request.
             try:
                 from src.endpoint_resolver import resolve_chat_fallback_candidates
-                _fallback_candidates = resolve_chat_fallback_candidates()
+                _fallback_candidates = resolve_chat_fallback_candidates(owner=_user)
             except Exception:
                 _fallback_candidates = []
 
@@ -780,7 +837,7 @@ def setup_chat_routes(
                 _model_info["character_name"] = ctx.preset.character_name
             yield f'data: {json.dumps(_model_info)}\n\n'
 
-            if _is_image_generation_session(sess):
+            if _is_image_generation_session(sess, owner=_user):
                 from src.settings import get_setting
                 if not get_setting("image_gen_enabled", True):
                     yield f'data: {json.dumps({"delta": "Image generation is disabled by the administrator."})}\n\n'
@@ -791,7 +848,7 @@ def setup_chat_routes(
                 _user_msg = message or ""
                 yield f'data: {json.dumps({"type": "tool_start", "tool": "generate_image", "command": _user_msg[:100]})}\n\n'
                 yield ": heartbeat\n\n"
-                _img_result = await do_generate_image(f"{_user_msg}\n{sess.model}", session)
+                _img_result = await do_generate_image(f"{_user_msg}\n{sess.model}", session, owner=_user)
                 _img_output = _img_result.get("results", _img_result.get("error", ""))
                 _img_tool_data = {"type": "tool_output", "tool": "generate_image", "command": _user_msg[:100], "output": _img_output, "exit_code": 0 if "error" not in _img_result else 1}
                 for _k in ("image_url", "image_id", "image_prompt", "image_model", "image_size", "image_quality"):
@@ -931,7 +988,15 @@ def setup_chat_routes(
                 _answered_by = None  # set if the selected model failed and a fallback answered
                 try:
                     from src.settings import get_setting
+                    from src.agent_tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
                     _tool_budget = int(get_setting("agent_max_tool_calls", 0))
+                    # Per-message round cap from settings; clamp defensively in
+                    # case settings.json was hand-edited to a bad value.
+                    try:
+                        _max_rounds = int(get_setting("agent_max_rounds", _DEFAULT_ROUNDS) or _DEFAULT_ROUNDS)
+                    except (TypeError, ValueError):
+                        _max_rounds = _DEFAULT_ROUNDS
+                    _max_rounds = max(1, min(_max_rounds, 200))
 
                     async for chunk in stream_agent_loop(
                         sess.endpoint_url,
@@ -942,12 +1007,14 @@ def setup_chat_routes(
                         max_tokens=ctx.preset.max_tokens,
                         prompt_type=preset_id,
                         max_tool_calls=_tool_budget,
+                        max_rounds=_max_rounds,
                         context_length=ctx.context_length,
                         active_document=active_doc,
                         session_id=session,
                         disabled_tools=disabled_tools if disabled_tools else None,
                         owner=_user,
                         fallbacks=_fallback_candidates,
+                        workspace=workspace or None,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -967,6 +1034,7 @@ def setup_chat_routes(
                                     "tool_start", "tool_output", "agent_step",
                                     "doc_stream_open", "doc_stream_delta",
                                     "doc_update", "doc_suggestions", "ui_control",
+                                    "rounds_exhausted",
                                 ):
                                     if data.get("type") == "agent_step":
                                         _agent_rounds = max(_agent_rounds, data.get("round", 1))
@@ -1251,7 +1319,7 @@ def setup_chat_routes(
                                 db_msg = (
                                     db.query(DBChatMessage)
                                     .filter(DBChatMessage.session_id == session_id, DBChatMessage.role == 'assistant')
-                                    .order_by(DBChatMessage.created_at.desc())
+                                    .order_by(DBChatMessage.timestamp.desc())
                                     .first()
                                 )
                                 if db_msg:

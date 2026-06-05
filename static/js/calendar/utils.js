@@ -118,13 +118,17 @@ export function _ds(d) {
 }
 
 export function _addDays(dateStr, n) {
+  if (typeof dateStr !== 'string' || !dateStr) return '';
   const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d)) return '';
   d.setDate(d.getDate() + n);
   return _ds(d);
 }
 
 export function _shiftDT(iso, days) {
+  if (typeof iso !== 'string' || !iso) return '';
   const d = new Date(iso);
+  if (isNaN(d)) return '';
   d.setDate(d.getDate() + days);
   return _ds(d) + (iso.length > 10 ? 'T' + iso.slice(11) : '');
 }
@@ -147,7 +151,7 @@ export function _tzOffset() {
 // bucket by the USER's local date. Without this an event at
 // "2026-05-13T22:00:00Z" (07:00 May 14 JST) would render on May 13.
 export function _localDateOf(isoStr) {
-  if (!isoStr) return '';
+  if (typeof isoStr !== 'string' || !isoStr) return '';
   if (isoStr.length === 10) return isoStr;
   if (/[Zz]$|[+\-]\d{2}:?\d{2}$/.test(isoStr)) {
     const d = new Date(isoStr);

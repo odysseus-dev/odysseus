@@ -8,6 +8,24 @@ let API_BASE = '';
 let selectedPreset = null;
 let presets = {};
 
+export function loadStoredArray(key) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(value) ? value : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+export function loadStoredObject(key) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch (e) {
+    return {};
+  }
+}
+
 // Built-in prompt templates (moved from cot_prompts.py)
 export const PROMPT_TEMPLATES = [
   {
@@ -228,7 +246,7 @@ function initNameDropdown() {
         }
         // Hide built-in preset
         if (isBuiltin) {
-          const hidden = JSON.parse(localStorage.getItem('odysseus-hidden-presets') || '[]');
+          const hidden = loadStoredArray('odysseus-hidden-presets');
           if (!hidden.includes(charName)) hidden.push(charName);
           localStorage.setItem('odysseus-hidden-presets', JSON.stringify(hidden));
         }
@@ -311,7 +329,7 @@ function _populateCharSelect() {
     select.appendChild(group);
   }
 
-  const hiddenPresets = JSON.parse(localStorage.getItem('odysseus-hidden-presets') || '[]');
+  const hiddenPresets = loadStoredArray('odysseus-hidden-presets');
   const builtins = PROMPT_TEMPLATES.filter(t => !savedNames.has(t.name) && !hiddenPresets.includes(t.name));
   if (builtins.length) {
     const group = document.createElement('optgroup');
@@ -405,7 +423,7 @@ function initPersistentChat() {
       await fetch(`${API_BASE}/api/session/${sessionId}/important`, { method: 'POST', body: favFd });
 
       // Save session → character mapping so it restores on switch
-      const charSessions = JSON.parse(localStorage.getItem('odysseus-char-sessions') || '{}');
+      const charSessions = loadStoredObject('odysseus-char-sessions');
       charSessions[sessionId] = charName;
       localStorage.setItem('odysseus-char-sessions', JSON.stringify(charSessions));
 
@@ -1011,7 +1029,7 @@ function _syncCharIndicator() {
 let _prevSessionId = null;
 
 export function onSessionSwitch(sessionId) {
-  const charSessions = JSON.parse(localStorage.getItem('odysseus-char-sessions') || '{}');
+  const charSessions = loadStoredObject('odysseus-char-sessions');
 
   // Leaving a persistent chat — deactivate for this switch only
   if (window._persistentChatSession) {
@@ -1059,7 +1077,7 @@ export function isPersistentChat() {
  * Remove a session from persistent chat mappings (call when session is deleted).
  */
 export function removePersistentChat(sessionId) {
-  const charSessions = JSON.parse(localStorage.getItem('odysseus-char-sessions') || '{}');
+  const charSessions = loadStoredObject('odysseus-char-sessions');
   if (charSessions[sessionId]) {
     delete charSessions[sessionId];
     localStorage.setItem('odysseus-char-sessions', JSON.stringify(charSessions));

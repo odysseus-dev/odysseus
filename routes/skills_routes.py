@@ -79,6 +79,8 @@ def _skill_test_task(skill: dict) -> str:
     an email); if we just hand over the 'when to use' text the agent has nothing
     to work on and stalls asking for input. So we tell it to create its own
     realistic fixture first, then apply the skill end-to-end."""
+    if not isinstance(skill, dict):
+        skill = {}
     ctx = (skill.get("when_to_use") or skill.get("description") or skill.get("name") or "").strip()
     return (
         "Test this skill end-to-end. FIRST, set up a small realistic scenario it "
@@ -310,6 +312,8 @@ def _should_check_retrieval_precision(skill: dict) -> bool:
         "installation", "install", "system", "ssh", "document", "documents",
         "search", "email", "calendar", "gpu", "server", "python",
     }
+    if not isinstance(skill, dict):
+        return False
     tags = {str(t or "").strip().lower() for t in (skill.get("tags") or [])}
     if tags & broad:
         return True
@@ -463,7 +467,7 @@ async def _run_skill_test_job(key, name, md, task, url, model, headers, owner, s
     if skills_manager is not None:
         v = (job["verdict"] or {}).get("verdict") or "unknown"
         try:
-            skills_manager.set_audit(name, v, by_teacher=False, worker_model=model)
+            skills_manager.set_audit(name, v, by_teacher=False, worker_model=model, owner=owner)
         except Exception:
             pass
         conf = {"pass": 0.95, "needs_work": 0.6, "fail": 0.4}.get(v)
@@ -563,6 +567,7 @@ def _skill_duplicate_blocker(skills_manager, name: str, owner) -> Optional[str]:
                 False,
                 [keeper_name],
                 f"Lower-priority duplicate of {keeper_name}",
+                owner=owner,
             )
         except Exception:
             pass
@@ -629,7 +634,7 @@ def _audit_finalize_status(skills_manager, name: str, owner, verdict: str,
     if generic_reason:
         necessary = False
         try:
-            skills_manager.set_necessity(name, False, [], generic_reason)
+            skills_manager.set_necessity(name, False, [], generic_reason, owner=owner)
         except Exception:
             pass
     duplicate_of = _skill_duplicate_blocker(skills_manager, name, owner) if verdict == "pass" else None
@@ -788,7 +793,8 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
         nec = await _eval_skill_necessity(md, others, url, model, headers)
         if nec is not None:
             skills_manager.set_necessity(name, nec.get("necessary", True),
-                                         nec.get("redundant_with"), nec.get("reason"))
+                                         nec.get("redundant_with"), nec.get("reason"),
+                                         owner=owner)
             if not nec.get("necessary", True):
                 log(f"{name}: possibly unnecessary — {nec.get('reason', '')[:80]}")
     except Exception as e:
@@ -800,11 +806,11 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
         reason = generic_reason or (f"Lower-priority duplicate of {duplicate_of}" if duplicate_of else str((nec or {}).get("reason") or "Unnecessary skill"))
         try:
             skills_manager.update_skill(name, {"status": "draft", "confidence": 0.35}, owner=owner)
-            skills_manager.set_audit(name, "skipped", by_teacher=False, worker_model=model)
+            skills_manager.set_audit(name, "skipped", by_teacher=False, worker_model=model, owner=owner)
             if duplicate_of:
-                skills_manager.set_necessity(name, False, [duplicate_of], reason)
+                skills_manager.set_necessity(name, False, [duplicate_of], reason, owner=owner)
             else:
-                skills_manager.set_necessity(name, False, [], reason)
+                skills_manager.set_necessity(name, False, [], reason, owner=owner)
         except Exception:
             pass
         log(f"{name}: draft — skipped functional test ({reason[:100]})")
@@ -848,13 +854,13 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
             if fixed and fixed.strip() != md.strip():
                 _apply_skill_md(skills_manager, name, fixed, owner)
         _set_conf(0.95)
-        skills_manager.set_audit(name, "pass", by_teacher=False, worker_model=model)
+        skills_manager.set_audit(name, "pass", by_teacher=False, worker_model=model, owner=owner)
         refreshed = next((s for s in skills_manager.load(owner=owner) if s.get("name") == name), None)
         status = _audit_finalize_status(skills_manager, name, owner, "pass", 0.95, (refreshed or {}).get("necessity"), verdict)
         log(f"{name}: {status} — confidence 95%")
         return {"skill": name, "result": "pass", "verdict": verdict, "confidence": 0.95, "status": status}
     if v in ("unknown", "inconclusive"):
-        skills_manager.set_audit(name, "inconclusive", by_teacher=False, worker_model=model)
+        skills_manager.set_audit(name, "inconclusive", by_teacher=False, worker_model=model, owner=owner)
         status = _audit_finalize_status(skills_manager, name, owner, "inconclusive", skill.get("confidence") or 0.0, skill.get("necessity"))
         log(f"{name}: {status} — inconclusive")
         return {"skill": name, "result": "inconclusive", "verdict": verdict, "status": status}
@@ -869,7 +875,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
         log(f"{name}: retry (self) = {v}")
         if v == "pass":
             _set_conf(0.85)
-            skills_manager.set_audit(name, "pass", by_teacher=False, worker_model=model)
+            skills_manager.set_audit(name, "pass", by_teacher=False, worker_model=model, owner=owner)
             refreshed = next((s for s in skills_manager.load(owner=owner) if s.get("name") == name), None)
             status = _audit_finalize_status(skills_manager, name, owner, "pass", 0.85, (refreshed or {}).get("necessity"), verdict)
             log(f"{name}: {status} — confidence 85% after self-edit")
@@ -893,7 +899,9 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
         log(f"{name}: retry on student after teacher rewrite = {v}")
         if v == "pass":
             _set_conf(0.8)
-            skills_manager.set_audit(name, "pass", by_teacher=True, worker_model=model, teacher_model=t_model)
+            skills_manager.set_audit(
+                name, "pass", by_teacher=True, worker_model=model, teacher_model=t_model, owner=owner
+            )
             refreshed = next((s for s in skills_manager.load(owner=owner) if s.get("name") == name), None)
             status = _audit_finalize_status(skills_manager, name, owner, "pass", 0.8, (refreshed or {}).get("necessity"), verdict)
             log(f"{name}: {status} — confidence 80% after teacher rewrite")
@@ -908,6 +916,7 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
         name, v or "fail", by_teacher=teacher_ran,
         worker_model=model,
         teacher_model=(teacher[1] if teacher_ran and teacher else ""),
+        owner=owner,
     )
     log(f"{name}: flagged — confidence lowered, kept as draft for manual review")
     return {"skill": name, "result": "flagged", "verdict": verdict, "confidence": 0.35}
@@ -976,7 +985,7 @@ async def _run_audit_all_job(key, skills_manager, names, url, model, headers, te
         job.pop("task", None)
 
 
-def _resolve_audit_models():
+def _resolve_audit_models(owner=None):
     """Resolve (url, model, headers, teacher) for an audit run from Settings.
 
     Worker = Utility model (falling back to Default, normalized to a served
@@ -985,7 +994,7 @@ def _resolve_audit_models():
     ValueError if no worker model.
     """
     from src.endpoint_resolver import resolve_endpoint
-    url, model, headers = resolve_endpoint("utility")
+    url, model, headers = resolve_endpoint("utility", owner=owner)
     if not url or not model:
         raise ValueError("No model configured — set a Default or Utility model in Settings.")
     try:
@@ -1029,7 +1038,7 @@ async def run_scheduled_skill_audit(skills_manager: SkillsManager,
         return {"status": "running", "skipped": True}
 
     try:
-        url, model, headers, teacher = _resolve_audit_models()
+        url, model, headers, teacher = _resolve_audit_models(owner=owner)
     except ValueError as e:
         logger.info(f"Scheduled skill audit skipped — {e}")
         return {"status": "skipped", "reason": str(e)}
@@ -1280,7 +1289,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
 
         # Prefer the configured DEFAULT (→ Utility) model — not the current chat
         # session's model. Fall back to the caller's session model only if unset.
-        url, model, headers = resolve_endpoint("default")
+        url, model, headers = resolve_endpoint("default", owner=user)
         if not url or not model:
             url = url or ((body.get("endpoint_url") or "").strip() or None)
             model = model or ((body.get("model") or "").strip() or None)
@@ -1360,7 +1369,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
 
         # Worker model (Default, normalized) + optional teacher — shared resolver.
         try:
-            url, model, headers, teacher = _resolve_audit_models()
+            url, model, headers, teacher = _resolve_audit_models(owner=user)
         except ValueError as e:
             raise HTTPException(400, str(e))
 
@@ -1437,7 +1446,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
     @router.post("/{skill_id}/markdown")
     async def save_skill_markdown(request: Request, skill_id: str):
         """Replace SKILL.md with new raw content. Parses + validates first."""
-        from services.memory.skill_format import Skill, slugify
+        from services.memory.skill_format import Skill
         user = _owner(request)
         body = await request.json()
         new_content = body.get("markdown")
@@ -1452,7 +1461,10 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             sk = Skill.from_markdown(new_content)
         except Exception as e:
             raise HTTPException(400, f"Could not parse SKILL.md: {e}")
-        sk.name = slugify(sk.name or match.get("name"))
+        # Never rename on save: a changed `name` in the markdown would move
+        # the skill dir (update_skill) and orphan the original id, so a later
+        # delete 404s (#1333). Pin to the stored name, like _apply_skill_md.
+        sk.name = match.get("name")
         if not sk.owner:
             sk.owner = match.get("owner") or user
         ok = skills_manager.update_skill(match.get("name"), {

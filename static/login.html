@@ -150,6 +150,14 @@
     color: var(--fg); font-size: 0.95rem; font-family: 'Fira Code', monospace;
   }
   input:focus { outline: none; border-color: var(--red); }
+  /* On touch devices keep inputs at >=16px so iOS Safari doesn't zoom the whole
+     page when a field is focused (it auto-zooms any focused input under 16px).
+     This page has its own inline styles, so it doesn't inherit the main app's
+     equivalent rule in static/style.css; mirror it here. !important also lifts
+     the dynamically-inserted 2FA input, which pins font-size:14px inline. */
+  @media (hover: none) and (pointer: coarse) {
+    input:not(.remember-check) { font-size: 16px !important; }
+  }
   /* Clear, visible focus ring for keyboard users on every focusable control. */
   input:focus-visible, a:focus-visible, button:focus-visible {
     outline: 2px solid var(--red);

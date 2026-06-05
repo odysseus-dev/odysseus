@@ -13,12 +13,16 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from core.database import SessionLocal, GalleryImage, GalleryAlbum, ModelEndpoint
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user, require_privilege
+from src.upload_limits import read_upload_limited
 
 from routes.gallery_helpers import (
     GalleryPatch, _extract_exif, _image_to_dict, _owner_filter, _human_size,
 )
 
 logger = logging.getLogger(__name__)
+
+GALLERY_UPLOAD_MAX_BYTES = int(os.getenv("ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES", str(100 * 1024 * 1024)))
+GALLERY_TRANSFORM_UPLOAD_MAX_BYTES = int(os.getenv("ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES", str(25 * 1024 * 1024)))
 
 
 def _sanitize_gallery_filename(filename: str) -> str:
@@ -45,7 +49,7 @@ def setup_gallery_routes() -> APIRouter:
 
         user = get_current_user(request)
         album_id = form.get("album_id") or None
-        content = await file.read()
+        content = await read_upload_limited(file, GALLERY_UPLOAD_MAX_BYTES, "Gallery upload")
 
         # Duplicate detection via SHA-256
         file_hash = hashlib.sha256(content).hexdigest()
@@ -130,7 +134,7 @@ def setup_gallery_routes() -> APIRouter:
             if not file or not hasattr(file, 'read'):
                 raise HTTPException(400, "No image provided")
 
-            content = await file.read()
+            content = await read_upload_limited(file, GALLERY_UPLOAD_MAX_BYTES, "Gallery replacement")
             img_dir = Path("data/generated_images")
             img_dir.mkdir(parents=True, exist_ok=True)
             img_path = img_dir / _sanitize_gallery_filename(img.filename)
@@ -250,7 +254,7 @@ def setup_gallery_routes() -> APIRouter:
         if not file: raise HTTPException(400, "No image")
         scale = int(form.get("scale", "2"))
 
-        image_bytes = await file.read()
+        image_bytes = await read_upload_limited(file, GALLERY_TRANSFORM_UPLOAD_MAX_BYTES, "Image upload")
         b64 = base64.b64encode(image_bytes).decode()
 
         # Find image endpoint
@@ -294,7 +298,7 @@ def setup_gallery_routes() -> APIRouter:
         strength = float(form.get("strength", "0.55"))
         if not file: raise HTTPException(400, "No image")
 
-        image_bytes = await file.read()
+        image_bytes = await read_upload_limited(file, GALLERY_TRANSFORM_UPLOAD_MAX_BYTES, "Image upload")
         b64 = base64.b64encode(image_bytes).decode()
 
         db = SessionLocal()
@@ -923,6 +927,16 @@ def setup_gallery_routes() -> APIRouter:
         body = await request.json()
         # Use endpoint from request body (editor dropdown) or fall back to DB lookup
         base = (body.pop("_endpoint", "") or "").rstrip("/")
+        # SSRF hardening: validate a client-supplied endpoint before any
+        # outbound request (mirrors routes/embedding_routes.py).
+        if base:
+            from src.url_safety import check_outbound_url
+            ok, reason = check_outbound_url(
+                base,
+                block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+            )
+            if not ok:
+                raise HTTPException(400, f"Rejected endpoint URL: {reason}")
         chosen_model = (body.pop("_model", "") or "").strip()
         api_key = None
         if not base:
@@ -1115,6 +1129,18 @@ def setup_gallery_routes() -> APIRouter:
             raise HTTPException(400, "No image provided")
 
         endpoint = (body.get("_endpoint") or "").rstrip("/")
+        # SSRF hardening: a client-supplied endpoint is fetched server-side
+        # below, so validate it first (mirrors routes/embedding_routes.py).
+        # Local-first means loopback/LAN is allowed by default; the cloud
+        # metadata range and non-HTTP(S) schemes are always rejected.
+        if endpoint:
+            from src.url_safety import check_outbound_url
+            ok, reason = check_outbound_url(
+                endpoint,
+                block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+            )
+            if not ok:
+                raise HTTPException(400, f"Rejected endpoint URL: {reason}")
         model = (body.get("_model") or "").strip()
 
         base = endpoint
@@ -1781,5 +1807,4 @@ def setup_gallery_routes() -> APIRouter:
             db.close()
 
     return router
-
 

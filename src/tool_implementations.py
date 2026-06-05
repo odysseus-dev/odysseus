@@ -88,6 +88,24 @@ def get_active_document():
     return _active_document_id
 
 
+def clear_active_document(doc_id: Optional[str] = None) -> bool:
+    """Clear the in-memory active-document pointer.
+
+    With ``doc_id`` given, only clears when it matches the current pointer, so a
+    different active document is left untouched. Returns True if it was cleared.
+
+    Called when a document is detached from its session or deleted (its tab is
+    closed): without this, the stale pointer makes the last-resort doc-injection
+    path re-surface a closed document in a later, unrelated chat — even one whose
+    session no longer matches — because an unlinked doc has session_id NULL (#1160).
+    """
+    global _active_document_id
+    if doc_id is None or _active_document_id == doc_id:
+        _active_document_id = None
+        return True
+    return False
+
+
 def _owned_document_query(query, Document, owner: Optional[str]):
     if owner is None:
         # A bare Python `False` is not a valid SQL expression — SQLAlchemy 1.4
@@ -892,7 +910,9 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
                 )
 
             task_id = str(_uuid.uuid4())
-            name = args.get("name") or args.get("prompt", args.get("action_name", "Task"))[:50]
+            # Guard each fallback with `or`: args.get("prompt", default) returns
+            # None when the key is present but null, and None[:50] raises.
+            name = args.get("name") or (args.get("prompt") or args.get("action_name") or "Task")[:50]
 
             task = ScheduledTask(
                 id=task_id,
@@ -1195,7 +1215,17 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
             try:
                 srv = db2.query(McpServer).filter(McpServer.id == sid).first()
                 if srv:
-                    await mcp.connect_server(sid)
+                    _args = json.loads(srv.args) if srv.args else []
+                    _env = json.loads(srv.env) if srv.env else {}
+                    await mcp.connect_server(
+                        server_id=sid,
+                        name=srv.name,
+                        transport=srv.transport,
+                        command=srv.command,
+                        args=_args,
+                        env=_env,
+                        url=srv.url,
+                    )
                     st = mcp.get_server_status(sid)
                     return {"response": f"Reconnected '{srv.name}' ({st.get('tool_count', 0)} tools)", "exit_code": 0}
                 return {"error": f"Server {sid} not found", "exit_code": 1}
@@ -1507,7 +1537,14 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             "tavily_api_key", "serper_api_key", "app_public_url",
         }
         def _is_secret(k):
-            return k in _SECRET_KEYS or any(t in k for t in ("api_key", "_key", "token", "secret", "password"))
+            # `token` must be a suffix, not a substring: otherwise the int
+            # setting `agent_input_token_budget` (which even has a "token budget"
+            # alias to set it from chat) is wrongly classified as a credential.
+            return (
+                k in _SECRET_KEYS
+                or k.endswith("token")
+                or any(t in k for t in ("api_key", "_key", "secret", "password"))
+            )
 
         # Friendly aliases → real keys, so natural phrasing resolves.
         _ALIASES_SET = {
@@ -1530,7 +1567,10 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             "ntfy topic": "reminder_ntfy_topic",
             "agent tool calls": "agent_max_tool_calls", "max tool calls": "agent_max_tool_calls",
             "agent timeout": "agent_stream_timeout_seconds", "stream timeout": "agent_stream_timeout_seconds",
-            "token budget": "agent_input_token_budget",
+            "token budget": "agent_input_token_budget", "input budget": "agent_input_token_budget",
+            "hard max": "agent_input_token_hard_max",
+            "token budget cap": "agent_input_token_hard_max",
+            "input budget cap": "agent_input_token_hard_max",
         }
         def _resolve(k):
             k2 = (k or "").strip().lower()
@@ -2382,9 +2422,17 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             if args.get("location") is not None:
                 ev.location = args["location"]
             if args.get("dtstart") is not None:
-                ev.dtstart = _parse_dt(args["dtstart"])
+                # Anchor naive/natural-language input to the USER's timezone and
+                # refresh is_utc, exactly like create_event. Parsing with the
+                # raw server-local _parse_dt here (and never touching is_utc)
+                # silently shifted an updated event by the user's UTC offset.
+                _eff_all_day = (
+                    args["all_day"] if args.get("all_day") is not None else ev.all_day
+                )
+                ev.dtstart, _su = _parse_event_dt(args["dtstart"])
+                ev.is_utc = bool(_su and not _eff_all_day)
             if args.get("dtend") is not None:
-                ev.dtend = _parse_dt(args["dtend"])
+                ev.dtend, _eu = _parse_event_dt(args["dtend"])
             if args.get("all_day") is not None:
                 ev.all_day = args["all_day"]
             # Tag/category + importance updates (any of these aliases).
@@ -2631,10 +2679,10 @@ async def _cookbook_register_task(session_id: str, model: str, host: str,
 # when the agent is admin-context — accidental "delete account"
 # style mistakes have permanent blast radius.
 _APP_API_BLOCKLIST_PREFIXES = (
-    "/api/auth/",          # login/logout/password
-    "/api/users/",         # user CRUD
-    "/api/tokens/",        # api token mgmt
-    "/api/admin/",         # admin one-shots (wipe etc.)
+    "/api/auth",           # login/logout/password
+    "/api/users",          # user CRUD (bare /api/users list+create+delete must also block)
+    "/api/tokens",         # api token mgmt (bare /api/tokens list+create must also block)
+    "/api/admin",          # admin one-shots (wipe etc.)
     "/api/backup/restore", # destructive restore
 )
 
@@ -4064,7 +4112,9 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
     if not master_password:
         return {"error": "master_password is required", "exit_code": 1}
 
-    stdout, stderr, rc = await _run_bw(["unlock", master_password, "--raw"])
+    # Do not pass the master password as an argv element. Local process lists
+    # can expose argv to other users; stdin keeps the secret out of `ps`.
+    stdout, stderr, rc = await _run_bw(["unlock", "--raw"], input_text=master_password + "\n")
     if rc != 0:
         return {"error": f"Unlock failed: {stderr[:300]}", "exit_code": 1}
 

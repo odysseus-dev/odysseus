@@ -446,7 +446,6 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             "summarize_emails": ("email_summaries",),
             "draft_email_replies": ("email_ai_replies",),
             "extract_email_events": ("email_calendar_extractions",),
-            "mark_email_boundaries": ("email_boundaries",),
             "learn_sender_signatures": ("sender_signatures",),
             "check_email_urgency": ("email_tags", "email_urgency_alerts"),
         }
@@ -456,7 +455,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
         import sqlite3
         from pathlib import Path
-        from routes.email_helpers import SCHEDULED_DB
+        from routes.email_helpers import SCHEDULED_DB, OWNER_SCOPED_EMAIL_CACHE_TABLES, _email_cache_owner_clause
 
         cleared = {}
         conn = sqlite3.connect(SCHEDULED_DB)
@@ -469,6 +468,13 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                             (user,),
                         ).fetchone()[0]
                         conn.execute("DELETE FROM email_tags WHERE owner = ? OR owner = ''", (user,))
+                    elif table in OWNER_SCOPED_EMAIL_CACHE_TABLES and user:
+                        owner_clause, owner_params = _email_cache_owner_clause(user)
+                        before = conn.execute(
+                            f"SELECT COUNT(*) FROM {table} WHERE {owner_clause}",
+                            owner_params,
+                        ).fetchone()[0]
+                        conn.execute(f"DELETE FROM {table} WHERE {owner_clause}", owner_params)
                     else:
                         before = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                         conn.execute(f"DELETE FROM {table}")

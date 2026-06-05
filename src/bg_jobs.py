@@ -55,7 +55,10 @@ _RETENTION_S = 3600  # 1 hour after follow-up
 def _load() -> Dict[str, Dict[str, Any]]:
     try:
         if _STORE.exists():
-            return json.loads(_STORE.read_text(encoding="utf-8")) or {}
+            data = json.loads(_STORE.read_text(encoding="utf-8")) or {}
+            if not isinstance(data, dict):
+                return {}
+            return {str(job_id): rec for job_id, rec in data.items() if isinstance(rec, dict)}
     except Exception:
         pass
     return {}

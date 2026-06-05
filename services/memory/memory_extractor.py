@@ -34,12 +34,18 @@ def _fingerprint_entries(entries) -> str:
     only on id+text+category. Any add/edit/delete invalidates it."""
     items = sorted(
         (str(e.get("id", "")), e.get("text", ""), e.get("category", ""))
-        for e in entries
+        for e in _memory_dicts(entries)
     )
     h = hashlib.sha256()
     for triple in items:
         h.update(("\x1f".join(triple) + "\x1e").encode("utf-8"))
     return h.hexdigest()
+
+
+def _memory_dicts(entries):
+    for entry in entries or []:
+        if isinstance(entry, dict):
+            yield entry
 
 
 def _load_tidy_state(memory_manager) -> dict:
@@ -211,7 +217,7 @@ def _is_text_duplicate(new_text: str, existing: list, threshold: float = 0.6) ->
     new_tokens = set(new_text.lower().split())
     if not new_tokens:
         return False
-    for entry in existing:
+    for entry in _memory_dicts(existing):
         old_tokens = set(entry.get("text", "").lower().split())
         if not old_tokens:
             continue
@@ -339,8 +345,17 @@ async def extract_and_store(
                     logger.warning(f"Memory dedup (vector) unavailable, using text fallback: {e}")
                     existing_id = None
                 if existing_id:
-                    logger.debug(f"Memory dedup (vector): '{fact_text[:50]}' matches {existing_id}")
-                    continue
+                    # The vector store is a single shared collection with no
+                    # owner metadata, so find_similar can return ANOTHER
+                    # tenant's memory. Only treat it as a duplicate when the
+                    # match is this user's own (or a legacy unowned) memory —
+                    # otherwise the user's freshly-extracted fact would be
+                    # silently dropped. Mirror the owner predicate used by the
+                    # text dedup below; cross-tenant/stale matches fall through.
+                    _match = next((e for e in existing if e.get("id") == existing_id), None)
+                    if _match is not None and (_match.get("owner") == _owner or _match.get("owner") is None):
+                        logger.debug(f"Memory dedup (vector): '{fact_text[:50]}' matches {existing_id}")
+                        continue
 
             # Text dedup fallback: exact match + fuzzy similarity
             user_existing = [e for e in existing if e.get("owner") == _owner or e.get("owner") is None] if _owner else existing
@@ -547,17 +562,20 @@ async def audit_memories(
             for e in all_entries:
                 if e.get("owner") is None and e["id"] not in audited_ids and e["id"] not in {o["id"] for o in other_entries}:
                     other_entries.append(e)
-            memory_manager.save(final_entries + other_entries)
+            saved_entries = final_entries + other_entries
         else:
-            memory_manager.save(final_entries)
+            saved_entries = final_entries
+        memory_manager.save(saved_entries)
         logger.info(
             f"Memory audit complete: {before_count} -> {after_count} entries "
             f"({before_count - after_count} removed/merged)"
         )
 
-        # Rebuild vector index
+        # Rebuild vector index from the full saved set, not just this owner's
+        # slice — otherwise the shared collection is wiped of every other
+        # owner's entries until they happen to run their own audit.
         if memory_vector and memory_vector.healthy:
-            memory_vector.rebuild(final_entries)
+            memory_vector.rebuild(saved_entries)
 
         # Persist the post-tidy fingerprint so the next call short-circuits
         # if nothing has changed in the meantime.

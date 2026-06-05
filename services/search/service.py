@@ -62,17 +62,24 @@ class SearchService:
             SearchResponse with results
         """
         depth = depth or self.default_depth
-        fetch_content = fetch_content if fetch_content is not None else self.fetch_content
 
-        # Use existing search implementation
-        raw_results = await comprehensive_web_search(
+        # comprehensive_web_search is synchronous and, with return_sources=True,
+        # returns (context_str, [{"url", "title"}, ...]). Run it off the event
+        # loop so we don't block it, and use the source list as the result rows.
+        # `fetch_content` is accepted for API compatibility; the comprehensive
+        # search always fetches page content.
+        import asyncio
+        _context, raw_results = await asyncio.to_thread(
+            comprehensive_web_search,
             query,
-            max_results=10 * depth,
-            fetch_content=fetch_content,
+            max_pages=10 * depth,
+            return_sources=True,
         )
 
         results = []
         for r in raw_results:
+            if not isinstance(r, dict):
+                continue
             results.append(SearchResult(
                 url=r.get("url", ""),
                 title=r.get("title", ""),
