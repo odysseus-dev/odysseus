@@ -22,6 +22,19 @@ ALLOWED_SUFFIXES = (
     ".js", ".ts", ".css", ".html", ".xml", ".csv",
 )
 TEXT_NAMES = {"skill.md", "license", "license.md", "readme.md"}
+_GITHUB_HOSTS = frozenset({"github.com", "www.github.com", "raw.githubusercontent.com"})
+
+
+def _github_host(url: str) -> str:
+    return (urlparse(str(url)).hostname or "").lower()
+
+
+def _assert_github_url(url: str, *, context: str = "URL") -> None:
+    host = _github_host(url)
+    if host not in _GITHUB_HOSTS:
+        raise SkillImportError(
+            f"{context} must stay on GitHub (got {host or 'unknown host'})"
+        )
 
 
 @dataclass
@@ -68,6 +81,7 @@ def parse_skill_source(url: str) -> ResolvedSource:
             r = client.get(raw)
             r.raise_for_status()
             final = str(r.url)
+            _assert_github_url(final, context="redirect target")
             # Page may embed a github link; prefer final URL if redirected.
             if "github.com" in final:
                 raw = final
@@ -77,8 +91,8 @@ def parse_skill_source(url: str) -> ResolvedSource:
                     raw = m.group(0).rstrip(".,)")
 
     parsed = urlparse(raw)
-    host = (parsed.hostname or "").lower()
-    if host not in ("github.com", "www.github.com", "raw.githubusercontent.com"):
+    host = _github_host(raw)
+    if host not in _GITHUB_HOSTS:
         raise SkillImportError(
             "Only GitHub URLs are supported (https://github.com/... or raw.githubusercontent.com/...)"
         )
@@ -130,6 +144,7 @@ def _fetch_bytes(url: str) -> bytes:
     with httpx.Client(follow_redirects=True, timeout=30.0) as client:
         r = client.get(url, headers={"Accept": "application/vnd.github+json"})
         r.raise_for_status()
+        _assert_github_url(str(r.url), context="redirect target")
         if len(r.content) > MAX_FILE_BYTES:
             raise SkillImportError(f"file too large: {url}")
         return r.content
@@ -155,6 +170,7 @@ def _list_github_dir(src: ResolvedSource, rel_dir: str, out: Dict[str, str], *, 
         if r.status_code == 404:
             raise SkillImportError("path not found on GitHub")
         r.raise_for_status()
+        _assert_github_url(str(r.url), context="redirect target")
         entries = r.json()
     if not isinstance(entries, list):
         raise SkillImportError("expected a directory on GitHub")
@@ -176,6 +192,7 @@ def _list_github_dir(src: ResolvedSource, rel_dir: str, out: Dict[str, str], *, 
         dl = ent.get("download_url")
         if not dl:
             continue
+        _assert_github_url(dl, context="download URL")
         text = _fetch_text(dl)
         total += len(text.encode("utf-8"))
         if total > MAX_TOTAL_BYTES:

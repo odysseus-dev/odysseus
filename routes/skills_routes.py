@@ -1212,6 +1212,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
     @router.post("/import-from-url")
     async def import_skill_from_url(request: Request, body: SkillImportUrlRequest):
         """Install a SKILL.md bundle from a public GitHub URL (skills.sh links supported)."""
+        require_admin(request)
         user = _owner(request)
         from services.memory.skill_importer import (
             SkillImportError,
