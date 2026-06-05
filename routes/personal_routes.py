@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, 
 from src.request_models import DirectoryRequest
 from core.constants import BASE_DIR, PERSONAL_DIR
 from src.rag_singleton import get_rag_manager
-from src.auth_helpers import get_current_user, require_user
+from src.auth_helpers import require_privilege, require_user
 from core.middleware import require_admin
 from src.upload_handler import secure_filename
 
@@ -194,7 +194,7 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
     @router.post("/upload")
     async def upload_files_to_rag(request: Request, files: List[UploadFile] = File(...)):
         """Upload files directly into RAG. Supports text and PDF."""
-        user = get_current_user(request)
+        user = require_privilege(request, "can_use_documents")
         rag = _rag()
         if not rag:
             raise HTTPException(503, "RAG system is not available — is the embedding service running?")
