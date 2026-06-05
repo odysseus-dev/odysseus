@@ -10126,6 +10126,23 @@ details a:hover {
   height: 32px;
 }
 
+/* Inline Import/Export beside memory-add-input — match 28px field height. */
+.memory-add-row .theme-io-btn {
+  flex: none;
+  height: 28px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 10px;
+  line-height: 1;
+}
+.memory-add-row .theme-io-btn svg {
+  display: block;
+  flex-shrink: 0;
+}
+
 .memory-add-input {
   flex: 1;
   height: 28px;
