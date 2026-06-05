@@ -178,6 +178,7 @@ TOOL_SECTIONS = {
 ```
 Run any shell command. Output is returned to you. Use for: installing packages, checking files, git, curl, system info, etc.
 NEVER call `pwsh` or `powershell.exe` from inside bash — use the dedicated `powershell` tool instead.
+If bash is blocked, disabled, or returns a permission error, immediately fall back to the `powershell` tool — do NOT give up or tell the user you cannot run commands.
 NEVER use bash to create or change files — no `>`/`>>` redirects, no heredocs (`cat > f << 'EOF'`), no `tee`, `sed -i`, `awk -i`, no `python -c` that writes. To CREATE or fully rewrite a file use `write_file`; to change part of an existing file use `edit_file`. Those show a diff and are the ONLY allowed way to write files. (bash is for read-only inspection: `ls`, `cat` to READ, `grep`, `git status`/`git diff`, builds, installs.)
 For LONG-running commands (package installs, pip/npm, ffmpeg, model downloads, training, builds — anything that may take more than ~20s), make the FIRST line `#!bg` to run it in the BACKGROUND. You get a job id back immediately and are automatically re-invoked with the full output when it finishes — so you never block the chat waiting. Example:
 ```bash
@@ -191,7 +192,7 @@ NEVER pipe multi-line Python through `python -c "..."` — shell quoting eats re
 ```powershell
 <PowerShell script>
 ```
-Run a PowerShell (pwsh / powershell.exe) script natively. Use on Windows for system tasks, registry, environment variables, WMI, .NET APIs, and whenever bash is unavailable or PowerShell syntax is required. NOT bash — use PowerShell syntax (`$env:VAR`, `-ErrorAction`, `Get-*` cmdlets, etc.).""",
+Run a PowerShell (pwsh / powershell.exe) script natively. On Windows this is the PRIMARY shell — prefer it over bash for system tasks, registry, environment variables, WMI, and .NET APIs. It is ALSO the fallback when bash is blocked or unavailable: if a bash call fails due to permissions or being disabled, switch to this tool immediately without asking the user. NOT bash — use PowerShell syntax (`$env:VAR`, `-ErrorAction`, `Get-*` cmdlets, etc.).""",
 
     "python": """\
 ```python
