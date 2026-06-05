@@ -1708,11 +1708,13 @@ class TaskScheduler:
         extraction_timeout = int(get_setting("research_extraction_timeout_seconds", 90) or 90)
         extraction_concurrency = int(get_setting("research_extraction_concurrency", 3) or 3)
 
+        effective_rounds = 8
         researcher = DeepResearcher(
             llm_endpoint=endpoint_url,
             llm_model=model,
             llm_headers=headers,
-            max_rounds=8,
+            max_rounds=effective_rounds,
+            min_rounds=min(3, effective_rounds),
             max_time=600,  # 10 min for scheduled research
             max_report_tokens=max_tokens,
             extraction_timeout=extraction_timeout,
