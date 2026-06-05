@@ -1,3 +1,4 @@
+import json
 import os
 import platform
 import re
@@ -565,6 +566,57 @@ def _detect_windows():
 
 _cache_by_host = {}  # host -> (timestamp, result)
 
+# Disk mirror of _cache_by_host so app restarts reuse the last probe instead
+# of re-running it — the local probe is ~5s of PowerShell + CIM + nvidia-smi
+# on Windows, and remote probes are SSH round-trips. The same CACHE_TTL
+# governs both layers, and fresh=True (the Rescan button) still forces a live
+# probe and overwrites the entry. Only clean probes are persisted: error /
+# gpu_error results (unreachable host, driver mismatch) must retry on the
+# next start, since a restart is exactly when those tend to get fixed.
+
+
+def _disk_cache_path() -> str:
+    override = os.getenv("HWFIT_CACHE_PATH", "").strip()
+    if override:
+        return override
+    try:
+        from core.constants import DATA_DIR
+        return os.path.join(DATA_DIR, "hwfit_cache.json")
+    except Exception:
+        return os.path.join("data", "hwfit_cache.json")
+
+
+def _load_disk_cache(cache_key):
+    """Return (timestamp, result) for cache_key from disk, or None."""
+    try:
+        with open(_disk_cache_path(), "r", encoding="utf-8") as f:
+            entry = (json.load(f) or {}).get(cache_key)
+        if entry and isinstance(entry.get("result"), dict):
+            return float(entry["ts"]), entry["result"]
+    except Exception:
+        pass
+    return None
+
+
+def _save_disk_cache():
+    """Persist the clean entries of _cache_by_host (atomic write, best effort)."""
+    try:
+        payload = {
+            key: {"ts": ts, "result": result}
+            for key, (ts, result) in _cache_by_host.items()
+            if isinstance(result, dict)
+            and not result.get("error")
+            and not result.get("gpu_error")
+        }
+        path = _disk_cache_path()
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
 
 def detect_system(host="", ssh_port="", platform="", fresh=False):
     """Detect system hardware: RAM, CPU, GPU. Cached per host (hardware rarely
@@ -581,6 +633,11 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
         ts, cached = _cache_by_host[cache_key]
         if (now - ts) < CACHE_TTL:
             return cached
+    if not fresh:
+        disk = _load_disk_cache(cache_key)
+        if disk and (now - disk[0]) < CACHE_TTL:
+            _cache_by_host[cache_key] = disk
+            return disk[1]
 
     _remote_host = host or None
     _remote_port = ssh_port or None
@@ -593,6 +650,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             _remote_host = None
             _remote_platform = None
             _cache_by_host[cache_key] = (now, result)
+            _save_disk_cache()
             return result
         # If Windows detection failed, return error
         result = {"error": f"Cannot connect to {host}", "host": host}
@@ -609,6 +667,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
         result = _detect_windows()
         if result:
             _cache_by_host[cache_key] = (now, result)
+            _save_disk_cache()
             return result
         # PowerShell probe failed entirely — fall through to the generic path
         # below so we at least return a well-shaped dict rather than crashing.
@@ -672,4 +731,5 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
     _remote_host = None
     _remote_platform = None
     _cache_by_host[cache_key] = (now, result)
+    _save_disk_cache()
     return result

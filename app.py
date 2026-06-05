@@ -907,6 +907,27 @@ async def _startup_event():
             logger.warning(f"Tool index warmup failed (non-critical): {type(e).__name__}: {e}")
 
     _startup_tasks.append(asyncio.create_task(_warmup_tool_index()))
+
+    # Pre-warm the hardware probe (services/hwfit detect_system). On Windows
+    # the local probe is a cold PowerShell + CIM + nvidia-smi run (~5s) that
+    # NobodyWho's context sizing (resolve_n_ctx → memory budget) otherwise
+    # pays synchronously on the user's FIRST message — a multi-second stall
+    # before model loading even starts. detect_system caches per host for
+    # 24h and persists the result under data/, so this is a disk read on most
+    # restarts and a real probe only when the cache has expired (or after a
+    # failed probe). Cookbook's fit estimates share the same cache.
+    async def _warmup_hardware_probe():
+        try:
+            from services.hwfit.hardware import detect_system
+            info = await asyncio.to_thread(detect_system)
+            gpus = ", ".join(
+                g.get("name", "?") for g in (info.get("gpus") or [])
+            ) or "no GPU"
+            logger.info(f"[startup] Hardware probe pre-warmed ({gpus})")
+        except Exception as e:
+            logger.warning(f"Hardware probe warmup failed (non-critical): {type(e).__name__}: {e}")
+
+    _startup_tasks.append(asyncio.create_task(_warmup_hardware_probe()))
     # Warmup: ping all known LLM endpoints to prime connections
     async def _warmup_endpoints():
         try:

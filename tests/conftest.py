@@ -17,6 +17,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # file-backed DB across processes — tests needing that must set DATABASE_URL.
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
+# services/hwfit persists hardware probes to data/hwfit_cache.json so app
+# restarts skip the ~5s probe. Tests that exercise detect_system(fresh=True)
+# with mocked probes would otherwise write fake hardware into the developer's
+# real cache file (and the next server start would believe it for 24h).
+# Point the cache at a per-session temp dir instead. An explicit
+# HWFIT_CACHE_PATH (e.g. set by a test asserting persistence) is preserved.
+import tempfile as _tempfile
+os.environ.setdefault(
+    "HWFIT_CACHE_PATH",
+    os.path.join(_tempfile.mkdtemp(prefix="hwfit-test-"), "hwfit_cache.json"),
+)
+
 # Pre-import real heavy modules BEFORE any test file's module-level stubs can
 # replace them with MagicMock. Some test files (e.g. test_llm_core_sanitize_*)
 # stub sqlalchemy/core.database at module scope with `if mod not in sys.modules`,
