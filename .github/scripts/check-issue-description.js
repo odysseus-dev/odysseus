@@ -91,6 +91,37 @@ module.exports = async ({ github, context, core }) => {
     // 'untyped' → only the common body-length check applies.
   }
 
+  // ── Unfilled dropdowns ────────────────────────────────────────────────────
+  // #2068 added a "-- Please Select --" default to every template dropdown, so
+  // a contributor who never opens the dropdown submits with that literal string
+  // as the section value. The per-section checks above only verify presence, so
+  // a placeholder value passes. Scan every section and flag the ones still
+  // showing the placeholder, as a single comma-separated line item.
+  const PLACEHOLDER = '-- Please Select --';
+  const headingRe = /^#+\s+(.+?)\s*$/gm;
+  const headings = [];
+  let headingMatch;
+  while ((headingMatch = headingRe.exec(body)) !== null) {
+    headings.push({
+      name: headingMatch[1].trim(),
+      headStart: headingMatch.index,
+      contentStart: headingMatch.index + headingMatch[0].length,
+    });
+  }
+  const unfilled = [];
+  for (let i = 0; i < headings.length; i++) {
+    const end = i + 1 < headings.length ? headings[i + 1].headStart : body.length;
+    if (body.slice(headings[i].contentStart, end).includes(PLACEHOLDER)) {
+      unfilled.push(headings[i].name);
+    }
+  }
+  if (unfilled.length > 0) {
+    failures.push(
+      `**Unfilled dropdowns** — please choose a value; these sections still show ` +
+      `the \`${PLACEHOLDER}\` placeholder: ${unfilled.join(', ')}.`,
+    );
+  }
+
   // ── Labels ────────────────────────────────────────────────────────────────
   // These labels are expected to already exist in the repo — managing the
   // repo's label set is the maintainer's job, not this workflow's. We check a

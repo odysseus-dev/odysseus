@@ -353,6 +353,15 @@ function _buildEnvPrefixWindows() {
 }
 
 export function _buildServeCmd(f, modelName, backend) {
+  // When a venv is configured on the chosen server, use the venv's binaries
+  // by absolute path. Bare `vllm` / `python3` relies on PATH, and SSH non-
+  // interactive sessions often leave a user-site install (~/.local/bin/vllm)
+  // ahead of the venv's bin, so the WRONG vllm gets launched even with the
+  // venv activated. Absolute path sidesteps the whole PATH question.
+  const _isVenv = _envState.env === 'venv' && _envState.envPath;
+  const _venvBin = _isVenv ? (_envState.envPath.replace(/\/+$/, '') + '/bin/') : '';
+  const _vllmBin = _venvBin ? `${_venvBin}vllm` : 'vllm';
+  const _py3Bin = _venvBin ? `${_venvBin}python3` : 'python3';
   let cmd = '';
   if (backend === 'vllm') {
     const gpuId = f.gpu_id?.trim() || '';
@@ -361,7 +370,15 @@ export function _buildServeCmd(f, modelName, backend) {
       const _opts = _detectModelOptimizations(modelName);
       if (_opts.envVars.length) cmd += _opts.envVars.join(' ') + ' ';
     }
-    cmd += `vllm serve ${modelName} --host 0.0.0.0 --port ${f.port || '8000'}`;
+    // Pinned attention backend (Attention field). Empty = let vLLM pick.
+    const _attn = (f.vllm_attn_backend ?? '').toString().trim();
+    if (_attn) cmd += `VLLM_ATTENTION_BACKEND=${_attn} `;
+    // Free-text "Env" field — verbatim KEY=VAL pairs (space-separated).
+    // Collapse any pasted newlines/tabs so the backend allowlist (which
+    // rejects \n / \r) doesn't trip on a multi-line paste from a model card.
+    const _extraEnv = (f.extra_env ?? '').toString().replace(/\s+/g, ' ').trim();
+    if (_extraEnv) cmd += _extraEnv + ' ';
+    cmd += `${_vllmBin} serve ${modelName} --host 0.0.0.0 --port ${f.port || '8000'}`;
     cmd += ` --tensor-parallel-size ${f.tp || '1'}`;
     cmd += ` --max-model-len ${f.ctx || '8192'}`;
     cmd += ` --gpu-memory-utilization ${f.gpu_mem || '0.90'}`;
@@ -389,7 +406,9 @@ export function _buildServeCmd(f, modelName, backend) {
   } else if (backend === 'sglang') {
     const gpuId = f.gpu_id?.trim() || '';
     if (gpuId) cmd += `CUDA_VISIBLE_DEVICES=${gpuId} `;
-    cmd += `python3 -m sglang.launch_server --model-path ${modelName} --host 0.0.0.0 --port ${f.port || '30000'}`;
+    const _extraEnv = (f.extra_env ?? '').toString().replace(/\s+/g, ' ').trim();
+    if (_extraEnv) cmd += _extraEnv + ' ';
+    cmd += `${_py3Bin} -m sglang.launch_server --model-path ${modelName} --host 0.0.0.0 --port ${f.port || '30000'}`;
     if (f.tp && f.tp !== '1') cmd += ` --tp ${f.tp}`;
     if (f.ctx) cmd += ` --context-length ${f.ctx}`;
     if (f.gpu_mem && f.gpu_mem !== '0.90') cmd += ` --mem-fraction-static ${f.gpu_mem}`;
@@ -642,13 +661,20 @@ async function _fetchDependencies() {
       const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
       const note = pkg.status_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.65;margin-top:3px;">${esc(pkg.status_note)}</div>` : '';
       const updateNote = pkg.installed && pkg.pip_update_available === false && pkg.update_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.55;margin-top:3px;">${esc(pkg.update_note)}</div>` : '';
-      // Inline "Rebuild" tag for the llama_cpp row only. Styled as a
-      // .cookbook-dep-tag so it matches the LLM category tag's pill look,
-      // and lives to the LEFT of the category tag (clear affordance before
-      // the row "value").
-      const _rebuildBtn = (pkg.name === 'llama_cpp')
-        ? `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild" id="cookbook-rebuild-engine" title="Clear the cached llama.cpp build so the next serve recompiles from source (use after installing a CUDA/ROCm toolkit to turn a CPU-only build into a GPU build).">Rebuild</button>`
-        : '';
+      // Inline rebuild/reinstall tag. Styled as a .cookbook-dep-tag so it
+      // matches the LLM category tag's pill look, and lives to the LEFT of the
+      // category tag. llama_cpp uses the /api/cookbook/rebuild-engine flow
+      // (clear cached binary so next serve recompiles); vllm/sglang use the
+      // diagnosis-style `_launchServeTask` with `pip install --force-reinstall`
+      // so the user can watch the pip install in the Running tab.
+      let _rebuildBtn = '';
+      if (pkg.name === 'llama_cpp') {
+        _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild" id="cookbook-rebuild-engine" title="Clear the cached llama.cpp build so the next serve recompiles from source (use after installing a CUDA/ROCm toolkit to turn a CPU-only build into a GPU build).">Rebuild</button>`;
+      } else if (pkg.name === 'vllm' && pkg.installed) {
+        _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-reinstall" data-reinstall-pkg="vllm" title="Force-reinstall vLLM (pulls a matching torch). Runs as a tmux task in the Running tab.">Reinstall</button>`;
+      } else if (pkg.name === 'sglang' && pkg.installed) {
+        _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-reinstall" data-reinstall-pkg="sglang" title="Force-reinstall SGLang (pulls a matching torch). Runs as a tmux task in the Running tab.">Reinstall</button>`;
+      }
       return `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`
         + `<div class="cookbook-dep-info">`
         + `<div class="memory-item-title">${esc(pkg.name)}</div>`
@@ -696,7 +722,18 @@ async function _fetchDependencies() {
       // for PEP-668-locked system pythons (Arch, newer Debian).
       const _inEnv = _envState.env === 'venv' || _envState.env === 'conda';
       const _pipFlags = (!_isWindows() && !_inEnv) ? ' --user --break-system-packages' : '';
-      const _py = _isWindows() ? 'python' : 'python3';
+      // Use the venv's python3 by absolute path when configured. Even with the
+      // env_prefix sourcing activate, SSH non-interactive sessions sometimes
+      // pick a `python3` ahead of the venv's bin on PATH, so the install
+      // silently lands in the wrong site-packages.
+      let _py;
+      if (_isWindows()) {
+        _py = 'python';
+      } else if (_envState.env === 'venv' && _envState.envPath) {
+        _py = `${_envState.envPath.replace(/\/+$/, '')}/bin/python3`;
+      } else {
+        _py = 'python3';
+      }
       const cmd = `${_py} -m pip install${upgrade ? ' -U' : ''}${_pipFlags} "${pipName}"`;
       let envPrefix = '';
       if (_isWindows()) {
@@ -1070,6 +1107,32 @@ function _wireTabEvents(body) {
         rebuildBtn.textContent = _label;
       }
     });
+  }
+
+  // "Reinstall" buttons for pip-based serving stacks (vllm, sglang). The
+  // deps list renders ASYNCHRONOUSLY after _fetchDependencies resolves, so
+  // attaching listeners directly here would miss buttons that don't exist
+  // yet. Use document-level delegation instead — the click always finds the
+  // right .cookbook-dep-reinstall button no matter when it was painted.
+  if (!document._cookbookReinstallWired) {
+    document._cookbookReinstallWired = true;
+    document.addEventListener('click', async (ev) => {
+      const btn = ev.target.closest?.('.cookbook-dep-reinstall');
+      if (!btn) return;
+      const pkg = btn.dataset.reinstallPkg || '';
+      if (!pkg) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const sel = document.getElementById('hwfit-deps-server');
+      if (sel) _applyServerSelection(sel.value);
+      const host = _envState.remoteHost || '';
+      const where = host || 'this server';
+      if (!confirm(`Reinstall ${pkg} on ${where}?\n\nRuns "pip install --force-reinstall --no-deps ${pkg}" as a tmux task. Watch progress in the Running tab.`)) return;
+      const _venvPy = (_envState.env === 'venv' && _envState.envPath)
+        ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3`
+        : 'python3';
+      _launchServeTask(`reinstall-${pkg}`, 'pip-reinstall', `${_venvPy} -m pip install --force-reinstall --no-deps ${pkg}`);
+    }, true);
   }
 
   // Serve sort

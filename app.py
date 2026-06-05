@@ -34,7 +34,6 @@ from dotenv import load_dotenv
 # is silently ignored and the user is unexpectedly forced to log in (issue #142).
 # utf-8-sig reads plain UTF-8 (no BOM) identically, so this is safe everywhere.
 load_dotenv(encoding="utf-8-sig")
-import uuid
 
 import asyncio
 import logging
@@ -526,6 +525,9 @@ upload_cleanup_task = None
 from routes.emoji_routes import setup_emoji_routes
 app.include_router(setup_emoji_routes())
 
+from routes.workspace_routes import setup_workspace_routes
+app.include_router(setup_workspace_routes())
+
 # Sessions
 from routes.session_routes import setup_session_routes
 session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
@@ -587,6 +589,10 @@ app.include_router(setup_embedding_routes())
 # Models
 from routes.model_routes import setup_model_routes
 app.include_router(setup_model_routes(model_discovery))
+
+# GitHub Copilot device-flow login
+from routes.copilot_routes import setup_copilot_routes
+app.include_router(setup_copilot_routes())
 
 # TTS
 from routes.tts_routes import setup_tts_routes
@@ -1061,6 +1067,16 @@ async def _startup_event():
                 logger.warning(f"Nightly skill audit failed: {e}")
 
     _startup_tasks.append(asyncio.create_task(_skill_audit_nightly_loop()))
+
+    # Cookbook serve lifecycle — kills scheduler-launched serves whose
+    # window-end has passed. Paired with the cookbook_serve builtin
+    # action; both are no-ops unless a scheduled task actually launches
+    # something with end_after_min set. Removing this line + the
+    # cookbook_serve entry in BUILTIN_ACTIONS + src/cookbook_serve_lifecycle.py
+    # removes the feature.
+    from src.cookbook_serve_lifecycle import cookbook_serve_lifecycle_loop
+    _startup_tasks.append(asyncio.create_task(cookbook_serve_lifecycle_loop()))
+
     logger.info("Application startup complete")
 
 async def _shutdown_event():

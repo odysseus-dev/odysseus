@@ -722,6 +722,18 @@ class ResearchHandler:
                 minimum=1,
                 maximum=12,
             )
+            _planning_timeout = _bounded_int(
+                get_setting("research_planning_timeout_seconds", _extraction_timeout),
+                default=_extraction_timeout,
+                minimum=15,
+                maximum=3600,
+            )
+            _query_timeout = _bounded_int(
+                get_setting("research_query_timeout_seconds", _extraction_timeout),
+                default=_extraction_timeout,
+                minimum=15,
+                maximum=3600,
+            )
 
             researcher = DeepResearcher(
                 llm_endpoint=llm_endpoint,
@@ -732,6 +744,8 @@ class ResearchHandler:
                 max_time=max_time,
                 max_report_tokens=_max_report_tokens,
                 extraction_timeout=_extraction_timeout,
+                planning_timeout=_planning_timeout,
+                query_timeout=_query_timeout,
                 extraction_concurrency=_extraction_concurrency,
                 progress_callback=progress_callback,
                 search_provider=search_provider,

@@ -3,10 +3,9 @@ import ipaddress
 import pytest
 
 from services.search import content as service_content
-from src.search import content as src_content
 
 
-@pytest.mark.parametrize("module", [src_content, service_content])
+@pytest.mark.parametrize("module", [service_content])
 @pytest.mark.parametrize("url", [
     "http://printer.local/",
     "http://nas.lan/",
@@ -21,7 +20,7 @@ def test_search_content_url_guard_blocks_internal_names_and_address_classes(modu
     assert module._public_http_url(url) is False
 
 
-@pytest.mark.parametrize("module", [src_content, service_content])
+@pytest.mark.parametrize("module", [service_content])
 def test_search_content_url_guard_blocks_dns_to_multicast(monkeypatch, module):
     monkeypatch.setattr(
         module,
@@ -32,6 +31,6 @@ def test_search_content_url_guard_blocks_dns_to_multicast(monkeypatch, module):
     assert module._public_http_url("https://example.test/page") is False
 
 
-@pytest.mark.parametrize("module", [src_content, service_content])
+@pytest.mark.parametrize("module", [service_content])
 def test_search_content_url_guard_still_allows_public_ip(module):
     assert module._public_http_url("https://93.184.216.34/") is True

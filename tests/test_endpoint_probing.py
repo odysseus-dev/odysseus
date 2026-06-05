@@ -78,7 +78,7 @@ class TestProbeEndpointParsing:
         _patch_resolve(monkeypatch)
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(
+            lambda url, headers=None, timeout=None, verify=None, **kwargs: _resp(
                 200, json={"data": [{"id": "gpt-4o"}, {"id": "gpt-4o-mini"}]}),
         )
         assert _probe_endpoint("https://api.example.com/v1", "key") == ["gpt-4o", "gpt-4o-mini"]
@@ -89,7 +89,7 @@ class TestProbeEndpointParsing:
         # honoring both the "name" and "model" keys.
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(
+            lambda url, headers=None, timeout=None, verify=None, **kwargs: _resp(
                 200, json={"models": [{"name": "llama3:8b"}, {"model": "qwen3:4b"}]}),
         )
         assert _probe_endpoint("https://api.example.com/v1") == ["llama3:8b", "qwen3:4b"]
@@ -98,7 +98,7 @@ class TestProbeEndpointParsing:
         _patch_resolve(monkeypatch)
         seen = []
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
             seen.append(url)
             if url.endswith("/api/tags"):
                 return _resp(200, json={"models": [{"name": "llama3:8b"}]})
@@ -114,7 +114,7 @@ class TestProbeEndpointParsing:
         _patch_resolve(monkeypatch)
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(200, json={"data": []}),
+            lambda url, headers=None, timeout=None, verify=None, **kwargs: _resp(200, json={"data": []}),
         )
         assert _probe_endpoint("https://api.example.com/v1") == []
 
@@ -126,7 +126,7 @@ class TestPingEndpoint:
         _patch_resolve(monkeypatch)
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(200),
+            lambda url, headers=None, timeout=None, verify=None, **kwargs: _resp(200),
         )
         assert _ping_endpoint("https://api.example.com/v1", "key") == {
             "reachable": True, "status_code": 200, "error": None,
@@ -137,7 +137,7 @@ class TestPingEndpoint:
         # A 401 means the server answered — surface the status, not "offline".
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(401),
+            lambda url, headers=None, timeout=None, verify=None, **kwargs: _resp(401),
         )
         assert _ping_endpoint("https://api.example.com/v1", "bad") == {
             "reachable": False, "status_code": 401, "error": "HTTP 401",
@@ -146,7 +146,7 @@ class TestPingEndpoint:
     def test_detects_odysseus_login_redirect(self, monkeypatch):
         _patch_resolve(monkeypatch)
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
             return _resp(302, headers={"location": "/login?next=/"})
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
@@ -158,7 +158,7 @@ class TestPingEndpoint:
     def test_generic_redirect_reported(self, monkeypatch):
         _patch_resolve(monkeypatch)
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
             return _resp(301, headers={"location": "https://elsewhere.example/"})
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
@@ -169,7 +169,7 @@ class TestPingEndpoint:
     def test_transport_error_is_unreachable(self, monkeypatch):
         _patch_resolve(monkeypatch)
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
             raise httpx.ConnectError("Connection refused")
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
@@ -181,7 +181,7 @@ class TestPingEndpoint:
     def test_ollama_native_version_fallback(self, monkeypatch):
         _patch_resolve(monkeypatch)
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
             if url.endswith("/api/version"):
                 return _resp(200)
             # The OpenAI-compatible /v1/models surface is down on this build.

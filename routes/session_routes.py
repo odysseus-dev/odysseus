@@ -21,6 +21,76 @@ def _sanitize_export_filename(name: str) -> str:
     return name[:128]
 
 
+# Blind-compare helper sessions are created with this name prefix. Their real
+# model must never surface in the session list / sidebar — otherwise a blind
+# comparison can be de-anonymized before the user votes (issue #1285).
+COMPARE_SESSION_PREFIX = "[CMP] "
+
+
+def _public_model(name: str, model: str) -> str:
+    """Blank out the real model of blind-compare helper sessions so the
+    session list can't be used to map a neutral pane label ("Model A") back
+    to its model. The Compare UI tracks models client-side, so hiding it here
+    costs the sidebar nothing. See issue #1285."""
+    if (name or "").startswith(COMPARE_SESSION_PREFIX):
+        return ""
+    return model
+
+
+def _content_to_text(content) -> str:
+    """Flatten a message's content to plain text for text-based exports.
+
+    History entries carry three shapes: a plain string, a multimodal list of
+    content blocks (vision/image attachments), or None (assistant turns that
+    persisted only native tool_calls). The txt/html/md exporters join and
+    string-munge this value, so a list crashed the export (TypeError on join,
+    AttributeError on .replace) and None rendered as the literal "None".
+    Coerce to the text blocks, returning "" for anything without text.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            b.get("text", "") for b in content
+            if isinstance(b, dict) and b.get("text")
+        )
+    return ""
+
+
+def _message_role(message) -> str:
+    if isinstance(message, ChatMessage):
+        return message.role or ""
+    if isinstance(message, dict):
+        return message.get("role", "") or ""
+    return getattr(message, "role", "") or ""
+
+
+def _message_text(message) -> str:
+    if isinstance(message, ChatMessage):
+        content = message.content
+    elif isinstance(message, dict):
+        content = message.get("content")
+    else:
+        content = getattr(message, "content", None)
+    return _content_to_text(content)
+
+
+def _message_metadata(message) -> dict:
+    if isinstance(message, ChatMessage):
+        metadata = message.metadata
+    elif isinstance(message, dict):
+        metadata = message.get("metadata")
+    else:
+        metadata = getattr(message, "metadata", None)
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _reject_compact_during_active_run(session_id: str) -> None:
+    from src import agent_runs
+    if agent_runs.is_active(session_id):
+        raise HTTPException(409, "Session has an active run; try compacting after it finishes")
+
+
 def _verify_session_owner(request: Request, session_id: str, session_manager=None):
     """Verify the current user owns the session. Raises 404 if not.
 
@@ -57,7 +127,6 @@ def _verify_session_owner(request: Request, session_id: str, session_manager=Non
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["sessions"])
-
 
 def _current_user_is_admin(request: Request, user: str | None) -> bool:
     if not user:
@@ -104,6 +173,17 @@ def _persist_session_headers(session_id: str, headers: dict | None) -> None:
         raise
     finally:
         db.close()
+
+
+_HIDDEN_SYSTEM_SESSION_NAMES = {
+    "[Task] Chat Sessions Tidy",
+    "[Task] Documents Tidy",
+    "[Task] Memory Tidy",
+    "[Task] Research Tidy",
+    "[Task] Email Mark Boundaries",
+    "[Task] Email Tags",
+    "[Task] Skills Audit",
+}
 
 
 def _pick_endpoint_for_sort(owner=None):
@@ -215,7 +295,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         finally:
             db.close()
 
-        sessions = [{"id": s.id, "name": s.name, "model": s.model,
+        sessions = [{"id": s.id, "name": s.name, "model": _public_model(s.name, s.model),
                      "endpoint_url": s.endpoint_url, "rag": s.rag,
                      "archived": s.archived, "folder": folder_map.get(s.id),
                      "total_tokens": token_map.get(s.id, 0),
@@ -229,7 +309,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                      "message_count": msg_count_map.get(s.id, 0)}
                     for s in user_sessions.values()
                     if not s.archived
-                    and (s.name or "").strip() not in ("Nobody", "Incognito")]
+                    and (s.name or "").strip() not in ("Nobody", "Incognito")
+                    and (s.name or "").strip() not in _HIDDEN_SYSTEM_SESSION_NAMES]
 
         return sessions
     
@@ -692,7 +773,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             lines = []
             for m in session.history:
                 lines.append(f"[{m.role.upper()}]")
-                lines.append(m.content)
+                lines.append(_content_to_text(m.content))
                 lines.append("")
             out_name = filename or f"conversation_{safe_name}_{timestamp}.txt"
             return Response(
@@ -715,7 +796,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             ]
             for m in session.history:
                 cls = "user" if m.role == "user" else "ai"
-                content = m.content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                content = _content_to_text(m.content).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 content = content.replace("\n", "<br>")
                 html_parts.append(f'<div class="msg {cls}"><div class="role">{m.role}</div>{content}</div>')
             html_parts.append("</body></html>")
@@ -734,7 +815,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         markdown_lines.append("\n---\n")
         for message in session.history:
             role = message.role.upper()
-            content = message.content
+            content = _content_to_text(message.content)
             markdown_lines.append(f"### {role}")
             markdown_lines.append(f"{content}\n")
             markdown_lines.append("---\n")
@@ -825,6 +906,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             session = session_manager.get_session(session_id)
         except KeyError:
             raise HTTPException(404, f"Session {session_id} not found")
+        _reject_compact_during_active_run(session_id)
 
         history = list(session.history or [])
         if len(history) < 6:
@@ -850,7 +932,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
 
         prior_compactions = sum(
             1 for m in history
-            if (m.metadata or {}).get("compacted") or "[Conversation summary" in (m.content or "")
+            if _message_metadata(m).get("compacted") or "[Conversation summary" in _message_text(m)
         )
         prompt = SELF_SUMMARY_SYSTEM_PROMPT.replace(
             "{count}", str(len(older))
@@ -858,7 +940,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             "{n}", str(prior_compactions + 1)
         )
         convo_text = "\n".join(
-            f"{m.role.upper()}: {(m.content or '')[:2000]}"
+            f"{_message_role(m).upper()}: {_message_text(m)[:2000]}"
             for m in older
         )
         try:

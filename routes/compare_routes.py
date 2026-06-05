@@ -66,13 +66,33 @@ def setup_compare_routes(session_manager: SessionManager):
         comp_id = str(uuid.uuid4())
         sid_a = str(uuid.uuid4())
         sid_b = str(uuid.uuid4())
+        user = getattr(request.state, 'current_user', None)
+
+        # Blind mapping: randomly assign left/right
+        blind = str(is_blind).lower() == "true"
+        if blind:
+            mapping = {"left": "a", "right": "b"}
+            if random.random() > 0.5:
+                mapping = {"left": "b", "right": "a"}
+        else:
+            mapping = {"left": "a", "right": "b"}
+
+        # Map session IDs to left/right based on blind mapping
+        session_left = sid_a if mapping["left"] == "a" else sid_b
+        session_right = sid_a if mapping["right"] == "a" else sid_b
+
+        # In blind mode, name the helper sessions by their neutral slot
+        # ("Model A" / "Model B") instead of the real model. Otherwise the
+        # session name leaks the model in the sidebar and GET /api/sessions,
+        # de-anonymizing the comparison before the user votes (issue #1285).
+        slot_name = {session_left: "Model A", session_right: "Model B"}
 
         # Create ephemeral sessions (prefixed [CMP])
         for sid, model, endpoint in [(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]:
-            user = getattr(request.state, 'current_user', None)
+            name = f"[CMP] {slot_name[sid]}" if blind else f"[CMP] {model.split('/')[-1]}"
             session_manager.create_session(
                 session_id=sid,
-                name=f"[CMP] {model.split('/')[-1]}",
+                name=name,
                 endpoint_url=endpoint,
                 model=model,
                 rag=False,
@@ -93,15 +113,6 @@ def setup_compare_routes(session_manager: SessionManager):
             finally:
                 db.close()
 
-        # Blind mapping: randomly assign left/right
-        blind = str(is_blind).lower() == "true"
-        if blind:
-            mapping = {"left": "a", "right": "b"}
-            if random.random() > 0.5:
-                mapping = {"left": "b", "right": "a"}
-        else:
-            mapping = {"left": "a", "right": "b"}
-
         # Store comparison record
         db = SessionLocal()
         try:
@@ -121,18 +132,18 @@ def setup_compare_routes(session_manager: SessionManager):
         finally:
             db.close()
 
-        # Map session IDs to left/right based on blind mapping
-        session_left = sid_a if mapping["left"] == "a" else sid_b
-        session_right = sid_a if mapping["right"] == "a" else sid_b
-
+        # In blind mode, withhold the model identities AND the left/right
+        # mapping from the response. The client already knows model_a/model_b
+        # (it sent them), so returning either would defeat blind mode. They are
+        # revealed by POST /api/compare/{id}/vote once the user has voted (#1285).
         return {
             "id": comp_id,
             "session_left": session_left,
             "session_right": session_right,
-            "model_left": model_a if mapping["left"] == "a" else model_b,
-            "model_right": model_a if mapping["right"] == "a" else model_b,
+            "model_left": None if blind else (model_a if mapping["left"] == "a" else model_b),
+            "model_right": None if blind else (model_a if mapping["right"] == "a" else model_b),
             "is_blind": blind,
-            "mapping": mapping,
+            "mapping": None if blind else mapping,
         }
 
     @router.post("/{comp_id}/vote")

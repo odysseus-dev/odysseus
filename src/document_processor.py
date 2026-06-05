@@ -20,7 +20,7 @@ def _is_text_file(path: str) -> bool:
     """Check if file has text extension."""
     return any(
         path.lower().endswith(ext)
-        for ext in (".txt", ".py", ".html", ".htm", ".md", ".json", ".csv", ".log", ".js")
+        for ext in (".txt", ".py", ".html", ".htm", ".md", ".json", ".csv", ".log", ".js", ".nix")
     )
 
 
@@ -29,7 +29,8 @@ def _process_text_file(path: str) -> str:
     language_map = {
         ".py": "python", ".js": "javascript", ".html": "html", ".css": "css",
         ".json": "json", ".md": "markdown", ".txt": "text", ".csv": "csv",
-        ".log": "log", ".sh": "bash", ".yml": "yaml", ".yaml": "yaml",
+        ".log": "log", ".sh": "bash", ".bash": "bash", ".nix": "nix",
+        ".yml": "yaml", ".yaml": "yaml",
         ".xml": "xml", ".sql": "sql", ".cpp": "cpp", ".c": "c",
         ".java": "java", ".go": "go", ".rs": "rust", ".php": "php",
         ".rb": "ruby", ".ts": "typescript", ".jsx": "javascript", ".tsx": "typescript",
@@ -91,8 +92,8 @@ def _process_text_file(path: str) -> str:
     header += f"[Type: {language}, Lines: {line_count}, Size: {size_str} bytes]"
 
     code_extensions = {
-        ".py", ".js", ".html", ".css", ".json", ".md", ".sh", ".yml", ".yaml",
-        ".xml", ".sql", ".cpp", ".c", ".java", ".go", ".rs", ".php", ".rb",
+        ".py", ".js", ".html", ".css", ".json", ".md", ".sh", ".bash", ".nix",
+        ".yml", ".yaml", ".xml", ".sql", ".cpp", ".c", ".java", ".go", ".rs", ".php", ".rb",
         ".ts", ".jsx", ".tsx",
     }
     if ext in code_extensions:
