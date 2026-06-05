@@ -42,7 +42,7 @@ report() {
   echo "$prs" | jq -r '.[] | "- #\(.number) [\(.state)] \(.title) (review: \(.reviewDecision // "none"))\n  \(.url) updated \(.updatedAt)"'
   echo
 
-  issues="$(gh search issues --repo "$REPO" --author "$AUTHOR" --limit 10 \
+  issues="$(gh issue list --repo "$REPO" --author "$AUTHOR" --state all --limit 10 \
     --json number,title,state,updatedAt,url 2>/dev/null || echo '[]')"
   echo "## Your issues"
   if [[ "$(echo "$issues" | jq 'length')" -eq 0 ]]; then
