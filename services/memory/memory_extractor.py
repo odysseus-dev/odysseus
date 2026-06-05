@@ -34,12 +34,18 @@ def _fingerprint_entries(entries) -> str:
     only on id+text+category. Any add/edit/delete invalidates it."""
     items = sorted(
         (str(e.get("id", "")), e.get("text", ""), e.get("category", ""))
-        for e in entries
+        for e in _memory_dicts(entries)
     )
     h = hashlib.sha256()
     for triple in items:
         h.update(("\x1f".join(triple) + "\x1e").encode("utf-8"))
     return h.hexdigest()
+
+
+def _memory_dicts(entries):
+    for entry in entries or []:
+        if isinstance(entry, dict):
+            yield entry
 
 
 def _load_tidy_state(memory_manager) -> dict:
@@ -211,7 +217,7 @@ def _is_text_duplicate(new_text: str, existing: list, threshold: float = 0.6) ->
     new_tokens = set(new_text.lower().split())
     if not new_tokens:
         return False
-    for entry in existing:
+    for entry in _memory_dicts(existing):
         old_tokens = set(entry.get("text", "").lower().split())
         if not old_tokens:
             continue
@@ -235,6 +241,10 @@ async def extract_and_store(
     Designed to run as a background task (asyncio.create_task).
     Errors are logged, never raised.
     """
+    if not endpoint_url or not model:
+        logger.debug("[memory-extract] No model or URL provided, skipping")
+        return
+
     try:
         from src.llm_core import llm_call_async
 
@@ -245,11 +255,30 @@ async def extract_and_store(
         if len(recent) < 2:
             return  # Need at least a user message and assistant response
 
-        fallback_facts = _fallback_memory_candidates(recent)
+        # Strip media (images/audio) from messages — background memory extraction
+        # only needs the text. The VL-generated descriptions are already in the
+        # text content of the messages. This avoids sending image tokens to
+        # non-vision models and prevents accidental "vision grounding" triggers.
+        stripped_recent = []
+        for msg in recent:
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                # Filter out multimodal blocks that aren't text
+                text_only = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                if not text_only and content:
+                    continue
+                content = text_only
+            stripped_recent.append({"role": role, "content": content})
+
+        if not stripped_recent:
+            return
+
+        fallback_facts = _fallback_memory_candidates(stripped_recent)
 
         extraction_messages = [
             {"role": "system", "content": EXTRACT_SYSTEM_PROMPT},
-        ] + recent
+        ] + stripped_recent
 
         facts = []
         try:
@@ -303,9 +332,18 @@ async def extract_and_store(
             if not fact_text or len(fact_text) < 5:
                 continue
 
-            # Dedup: check vector similarity first (fast), then exact text match
+            # Dedup: check vector similarity first (fast), then exact text match.
+            # A runtime embedding/ChromaDB failure (backend OOM, model evicted,
+            # remote endpoint down) must not abort the whole batch — fall through
+            # to the text/fuzzy dedup below instead of losing every validated
+            # fact extracted this session. (`.healthy` is only set at init, so
+            # it does not catch failures that develop later.)
             if memory_vector and memory_vector.healthy:
-                existing_id = memory_vector.find_similar(fact_text, threshold=0.72)
+                try:
+                    existing_id = memory_vector.find_similar(fact_text, threshold=0.72)
+                except Exception as e:
+                    logger.warning(f"Memory dedup (vector) unavailable, using text fallback: {e}")
+                    existing_id = None
                 if existing_id:
                     logger.debug(f"Memory dedup (vector): '{fact_text[:50]}' matches {existing_id}")
                     continue
@@ -330,9 +368,14 @@ async def extract_and_store(
 
             existing.append(entry)
 
-            # Add to vector index
+            # Add to vector index. The JSON store (saved below) is the source of
+            # truth and the keyword path can still retrieve this entry, so a vector
+            # write failure must not drop the fact or abort the remaining batch.
             if memory_vector and memory_vector.healthy:
-                memory_vector.add(entry["id"], fact_text)
+                try:
+                    memory_vector.add(entry["id"], fact_text)
+                except Exception as e:
+                    logger.warning(f"Memory vector add failed for {entry['id']}: {e}")
 
             added += 1
 
@@ -510,17 +553,20 @@ async def audit_memories(
             for e in all_entries:
                 if e.get("owner") is None and e["id"] not in audited_ids and e["id"] not in {o["id"] for o in other_entries}:
                     other_entries.append(e)
-            memory_manager.save(final_entries + other_entries)
+            saved_entries = final_entries + other_entries
         else:
-            memory_manager.save(final_entries)
+            saved_entries = final_entries
+        memory_manager.save(saved_entries)
         logger.info(
             f"Memory audit complete: {before_count} -> {after_count} entries "
             f"({before_count - after_count} removed/merged)"
         )
 
-        # Rebuild vector index
+        # Rebuild vector index from the full saved set, not just this owner's
+        # slice — otherwise the shared collection is wiped of every other
+        # owner's entries until they happen to run their own audit.
         if memory_vector and memory_vector.healthy:
-            memory_vector.rebuild(final_entries)
+            memory_vector.rebuild(saved_entries)
 
         # Persist the post-tidy fingerprint so the next call short-circuits
         # if nothing has changed in the meantime.

@@ -29,6 +29,21 @@ def _message_timestamp_iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat().replace("+00:00", "Z")
 
 
+def _parse_msg_content(raw):
+    """Parse message content from DB — deserialises JSON arrays back to lists
+    (multimodal content with image/audio attachments)."""
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str) and raw.startswith('[{') and '"type"' in raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list) and all(isinstance(p, dict) for p in parsed):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return raw
+
+
 class SessionManager:
     """
     Manages chat sessions with database persistence.
@@ -119,7 +134,7 @@ class SessionManager:
                 meta.setdefault('timestamp', _message_timestamp_iso(db_msg.timestamp))
                 history.append(ChatMessage(
                     role=db_msg.role,
-                    content=db_msg.content,
+                    content=_parse_msg_content(db_msg.content),
                     metadata=meta,
                 ))
         else:
@@ -134,7 +149,7 @@ class SessionManager:
                 meta.setdefault('timestamp', _message_timestamp_iso(db_msg.timestamp))
                 history.append(ChatMessage(
                     role=db_msg.role,
-                    content=db_msg.content,
+                    content=_parse_msg_content(db_msg.content),
                     metadata=meta,
                 ))
 
@@ -187,30 +202,43 @@ class SessionManager:
         """Persist a single message to the database."""
         db = SessionLocal()
         try:
+            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+            if db_session is None:
+                # A stream/tool callback can outlive a session delete. Do not
+                # create a chat_messages row with no parent session; also drop
+                # any stale cached session so later writes fail closed too.
+                self.sessions.pop(session_id, None)
+                logger.warning("Dropping message for deleted session %s", session_id)
+                return
+
             msg_id = str(uuid.uuid4())
             msg_time = datetime.utcnow()
             if message.metadata is None:
                 message.metadata = {}
             message.metadata.setdefault('timestamp', _message_timestamp_iso(msg_time))
+            # Multimodal content (image/audio attachments) is a list — serialize
+            # to JSON so the Text column can store it.  On reload, _db_to_session
+            # detects the JSON-array prefix and parses it back.
+            _content = message.content
+            if isinstance(_content, list):
+                _content = json.dumps(_content)
             db_message = DbChatMessage(
                 id=msg_id,
                 session_id=session_id,
                 role=message.role,
-                content=message.content,
+                content=_content,
                 meta_data=json.dumps(message.metadata) if message.metadata else None,
                 timestamp=msg_time,
             )
             db.add(db_message)
 
-            db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
-            if db_session:
-                db_session.message_count = len(self.sessions.get(session_id, {}).history) if session_id in self.sessions else 0
-                _now = datetime.now(timezone.utc)
-                db_session.last_accessed = _now
-                # Clean "last conversation" timestamp — only bumped here on a
-                # real message persist, so it powers an accurate "Last active"
-                # sort that ignores renames / model swaps / mere opens.
-                db_session.last_message_at = _now
+            db_session.message_count = len(self.sessions.get(session_id, {}).history) if session_id in self.sessions else 0
+            _now = datetime.now(timezone.utc)
+            db_session.last_accessed = _now
+            # Clean "last conversation" timestamp — only bumped here on a
+            # real message persist, so it powers an accurate "Last active"
+            # sort that ignores renames / model swaps / mere opens.
+            db_session.last_message_at = _now
 
             db.commit()
 
@@ -245,7 +273,10 @@ class SessionManager:
 
             db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
             if db_session:
-                db_session.message_count = keep_count
+                # keep_count can exceed the real message total (e.g. the AI tool
+                # defaults to keep_count=10 on a short session); message_count must
+                # track the rows that actually remain, not the requested cap.
+                db_session.message_count = min(keep_count, len(db_messages))
                 db_session.updated_at = datetime.now(timezone.utc)
 
             db.commit()
@@ -276,7 +307,15 @@ class SessionManager:
                     id=msg_id,
                     session_id=session_id,
                     role=message.role,
-                    content=message.content,
+                    # Multimodal content (image/audio attachments) is a list;
+                    # serialize to JSON so the Text column round-trips via
+                    # _parse_msg_content. Storing the raw list let SQLAlchemy
+                    # bind its single-quoted repr, which _parse_msg_content
+                    # cannot parse (it looks for double-quoted "type"), so the
+                    # attachment was destroyed on reload. Mirrors _persist_message.
+                    content=(json.dumps(message.content)
+                             if isinstance(message.content, list)
+                             else message.content),
                     meta_data=json.dumps(message.metadata) if message.metadata else None,
                     timestamp=now + timedelta(microseconds=i),
                 )
@@ -466,11 +505,17 @@ class SessionManager:
             db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
             if db_session:
                 db.delete(db_session)
+
+            # Drop the in-memory copy even when there is no DB row. A "ghost"
+            # session lives only here (never persisted, or its row was removed
+            # out-of-band); without this it can never be cleared and keeps
+            # 404ing on every operation (issue #1044).
+            removed_in_memory = self.sessions.pop(session_id, None) is not None
+
+            if db_session or removed_in_memory:
+                # Commit the document-detach / message-delete above (a no-op when
+                # the ghost had no rows) together with the session delete.
                 db.commit()
-
-                if session_id in self.sessions:
-                    del self.sessions[session_id]
-
                 logger.info(f"Deleted session {session_id}")
                 return True
             return False

@@ -10,6 +10,7 @@ import { _clearProbeWaves } from './probe.js';
 import Storage from '../storage.js';
 import uiModule from '../ui.js';
 import spinnerModule from '../spinner.js';
+import { bindMenuDismiss } from '../escMenuStack.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -282,10 +283,11 @@ async function _addPane(anchorBtn) {
 
   // Toggle existing dropdown
   const existing = document.querySelector('.add-pane-dropdown');
-  if (existing) { existing.remove(); return; }
+  if (existing) { if (typeof existing._dismiss === 'function') existing._dismiss(); else existing.remove(); return; }
 
   const dropdown = document.createElement('div');
   dropdown.className = 'add-pane-dropdown';
+  let closeMenu = () => dropdown.remove();
 
   // Search input for large model lists
   if (filtered.length >= 5) {
@@ -326,7 +328,7 @@ async function _addPane(anchorBtn) {
 
     item.addEventListener('click', async (e) => {
       e.stopPropagation();
-      dropdown.remove();
+      closeMenu();
       await _createAndAppendPane(m);
     });
     dropdown.appendChild(item);
@@ -371,15 +373,8 @@ async function _addPane(anchorBtn) {
   dropdown.style.bottom = 'auto';
   dropdown.style.maxHeight = Math.min(ddH, vh - margin * 2) + 'px';
 
-  // Close on outside click
-  const close = (e) => {
-    if (!dropdown.contains(e.target) && e.target !== anchorBtn) {
-      dropdown.remove();
-      document.removeEventListener('click', close);
-    }
-  };
-  setTimeout(() => document.addEventListener('click', close), 0);
-}
+  // Close on outside click or Escape (the latter via the registry).
+  closeMenu = bindMenuDismiss(dropdown, () => dropdown.remove(), (e) => !dropdown.contains(e.target) && e.target !== anchorBtn);}
 
 /** Create a new pane for the given model and append it to the compare grid. */
 async function _createAndAppendPane(m) {
@@ -387,7 +382,8 @@ async function _createAndAppendPane(m) {
 
   // Create session
   const fd = new FormData();
-  fd.append('name', '[CMP] ' + m.name);
+  // Blind mode: neutral slot name only — never leak the model (issue #1285).
+  fd.append('name', '[CMP] ' + (state._blindMode ? 'Model ' + _slotChar(i) : m.name));
   fd.append('endpoint_url', m.url || '');
   fd.append('model', m.id || '');
   if (m.endpointId) {
@@ -551,7 +547,7 @@ function _showModelSwapDropdown(paneIdx, titleBtn) {
 
   // Remove any existing dropdown
   const existing = document.querySelector('.pane-model-dropdown');
-  if (existing) { existing.remove(); return; }
+  if (existing) { if (typeof existing._dismiss === 'function') existing._dismiss(); else existing.remove(); return; }
 
   const _effectiveType = (state._compareMode === 'agent' || state._compareMode === 'research') ? 'chat' : state._compareMode;
   const filtered = state._cachedModels.filter(m => m.type === _effectiveType);
@@ -559,6 +555,7 @@ function _showModelSwapDropdown(paneIdx, titleBtn) {
 
   const dropdown = document.createElement('div');
   dropdown.className = 'pane-model-dropdown';
+  let closeMenu = () => dropdown.remove();
 
   filtered.forEach(m => {
     const item = document.createElement('button');
@@ -573,7 +570,7 @@ function _showModelSwapDropdown(paneIdx, titleBtn) {
     }
     item.addEventListener('click', async (e) => {
       e.stopPropagation();
-      dropdown.remove();
+      closeMenu();
 
       // Update the model for this pane and persist
       state._selectedModels[paneIdx] = {
@@ -588,7 +585,8 @@ function _showModelSwapDropdown(paneIdx, titleBtn) {
         fetch(`${state.API_BASE}/api/session/${oldSid}`, { method: 'DELETE' }).catch(() => {});
       }
       const fd = new FormData();
-      fd.append('name', '[CMP] ' + m.name);
+      // Blind mode: neutral slot name only — never leak the model (issue #1285).
+      fd.append('name', '[CMP] ' + (state._blindMode ? 'Model ' + _slotChar(paneIdx) : m.name));
       fd.append('endpoint_url', m.url || '');
       fd.append('model', m.id || '');
       if (m.endpointId) {
@@ -653,15 +651,8 @@ function _showModelSwapDropdown(paneIdx, titleBtn) {
   dropdown.style.top = top + 'px';
   dropdown.style.maxHeight = Math.min(ddH, vh - margin * 2) + 'px';
 
-  // Close on outside click
-  const close = (e) => {
-    if (!dropdown.contains(e.target) && e.target !== titleBtn) {
-      dropdown.remove();
-      document.removeEventListener('click', close);
-    }
-  };
-  setTimeout(() => document.addEventListener('click', close), 0);
-}
+  // Close on outside click or Escape (the latter via the registry).
+  closeMenu = bindMenuDismiss(dropdown, () => dropdown.remove(), (e) => !dropdown.contains(e.target) && e.target !== titleBtn);}
 
 // ── Shuffle / reset ──
 

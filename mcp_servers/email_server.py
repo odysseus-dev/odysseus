@@ -70,10 +70,12 @@ def _list_accounts_raw() -> list:
     try:
         conn = sqlite3.connect(str(path))
         conn.row_factory = sqlite3.Row
-        rows = conn.execute("""
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(email_accounts)").fetchall()}
+        smtp_security_select = "smtp_security" if "smtp_security" in columns else "'' AS smtp_security"
+        rows = conn.execute(f"""
             SELECT id, name, is_default, enabled,
                    imap_host, imap_port, imap_user, imap_password, imap_starttls,
-                   smtp_host, smtp_port, smtp_user, smtp_password, from_address
+                   smtp_host, smtp_port, {smtp_security_select}, smtp_user, smtp_password, from_address
             FROM email_accounts WHERE enabled = 1
             ORDER BY is_default DESC, created_at ASC
         """).fetchall()
@@ -145,6 +147,7 @@ def _load_config(account: str | None = None) -> dict:
         "imap_starttls": os.environ.get("IMAP_STARTTLS", "true").lower() == "true",
         "smtp_host": os.environ.get("SMTP_HOST", ""),
         "smtp_port": int(os.environ.get("SMTP_PORT", "465")),
+        "smtp_security": os.environ.get("SMTP_SECURITY", ""),
         "smtp_user": os.environ.get("SMTP_USER", ""),
         "smtp_password": os.environ.get("SMTP_PASSWORD", ""),
         "smtp_starttls": os.environ.get("SMTP_STARTTLS", "false").lower() == "true",
@@ -189,6 +192,7 @@ def _load_config(account: str | None = None) -> dict:
         cfg["imap_ssl"] = int(cfg["imap_port"]) == 993 and not cfg["imap_starttls"]
         cfg["smtp_host"] = row["smtp_host"] or cfg["smtp_host"]
         cfg["smtp_port"] = int(row["smtp_port"] or cfg["smtp_port"])
+        cfg["smtp_security"] = row["smtp_security"] or cfg["smtp_security"] or ("starttls" if int(cfg["smtp_port"]) == 587 else "ssl")
         cfg["smtp_user"] = row["smtp_user"] or cfg["smtp_user"]
         cfg["smtp_password"] = _decrypt(row["smtp_password"]) if row["smtp_password"] else cfg["smtp_password"]
         cfg["from_address"] = row["from_address"] or row["imap_user"] or cfg["from_address"]
@@ -333,14 +337,25 @@ def _decode_header(raw):
     """Decode MIME encoded header."""
     if not raw:
         return ""
-    parts = email.header.decode_header(raw)
-    decoded = []
-    for data, charset in parts:
-        if isinstance(data, bytes):
-            decoded.append(data.decode(charset or "utf-8", errors="replace"))
-        else:
-            decoded.append(data)
-    return " ".join(decoded)
+    try:
+        # make_header concatenates per RFC 2047: no spurious space between an
+        # encoded-word and adjacent plain text (plain runs keep their own
+        # whitespace), and whitespace between two adjacent encoded-words is
+        # dropped. The old " ".join produced "Re:  Jose" style double spaces
+        # on every non-ASCII subject or sender.
+        return str(email.header.make_header(email.header.decode_header(raw)))
+    except Exception:
+        # Malformed header or unknown charset: lossy per-part decode
+        decoded = []
+        for data, charset in email.header.decode_header(raw):
+            if isinstance(data, bytes):
+                try:
+                    decoded.append(data.decode(charset or "utf-8", errors="replace"))
+                except LookupError:
+                    decoded.append(data.decode("utf-8", errors="replace"))
+            else:
+                decoded.append(data)
+        return "".join(decoded)
 
 
 def _extract_text(msg):
@@ -413,6 +428,11 @@ def _list_emails(folder="INBOX", max_results=20, unresponded_only=False,
         status, data = conn.uid("SEARCH", None, "(UNSEEN UNANSWERED)")
     elif unread_only:
         status, data = conn.uid("SEARCH", None, "(UNSEEN)")
+    elif unresponded_only:
+        # Was missing — unresponded_only=True (without unread_only) fell through
+        # to "ALL" and returned answered mail too, despite the documented
+        # "emails without replies" behaviour.
+        status, data = conn.uid("SEARCH", None, "(UNANSWERED)")
     else:
         # Include read too — IMAP search "ALL" returns the entire folder
         status, data = conn.uid("SEARCH", None, "ALL")
@@ -646,7 +666,7 @@ def _read_email(uid=None, message_id=None, folder="INBOX", account=None):
         conn.logout()
         return {"error": "No UID or Message-ID provided"}
 
-    status, msg_data = conn.uid("FETCH", _b(uid), "(RFC822)")
+    status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
     if status != "OK":
         conn.logout()
         return {"error": f"Failed to fetch email UID {uid}"}
@@ -739,17 +759,17 @@ def _smtp_connect(account=None, cfg=None):
     if not _smtp_ready(cfg):
         raise ValueError(f"Email account {cfg.get('account_name') or account or 'default'} has no SMTP configured")
     port = int(cfg.get("smtp_port") or 465)
-    # Account rows only store host/port, not the legacy env-level smtp_ssl
-    # toggle. Infer the conventional TLS mode from the port so MCP tools match
-    # the web send path: 465 = implicit SSL, 587 = STARTTLS.
-    if port == 587:
+    security = str(cfg.get("smtp_security") or "").strip().lower()
+    if security not in {"ssl", "starttls", "none"}:
+        security = "starttls" if port == 587 else "ssl"
+    if security == "starttls":
         conn = smtplib.SMTP(
             cfg["smtp_host"],
             port,
             timeout=EMAIL_SOCKET_TIMEOUT,
         )
         conn.starttls()
-    elif cfg.get("smtp_ssl", True):
+    elif security == "ssl":
         conn = smtplib.SMTP_SSL(
             cfg["smtp_host"],
             port,
@@ -761,8 +781,6 @@ def _smtp_connect(account=None, cfg=None):
             port,
             timeout=EMAIL_SOCKET_TIMEOUT,
         )
-        if cfg["smtp_starttls"]:
-            conn.starttls()
     if cfg["smtp_user"] and cfg["smtp_password"]:
         conn.login(cfg["smtp_user"], cfg["smtp_password"])
     return conn
@@ -837,7 +855,7 @@ def _reply_to_email(uid, body, folder="INBOX", reply_all=False, account=None):
     """Reply to an existing email by UID. Threads via In-Reply-To/References."""
     conn = _imap_connect(account)
     conn.select(folder, readonly=True)
-    status, msg_data = conn.uid("FETCH", _b(uid), "(RFC822)")
+    status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
     conn.logout()
     if status != "OK" or not msg_data or not msg_data[0]:
         return {"error": f"Failed to fetch email UID {uid}"}
@@ -1015,7 +1033,7 @@ def _download_attachment(uid, index, folder="INBOX", account=None):
     """Extract a specific attachment to disk and return its local path."""
     conn = _imap_connect(account)
     conn.select(folder, readonly=True)
-    status, msg_data = conn.uid("FETCH", _b(uid), "(RFC822)")
+    status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
     conn.logout()
     if status != "OK":
         return {"error": f"Failed to fetch email UID {uid}"}

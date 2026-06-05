@@ -33,16 +33,26 @@ except ModuleNotFoundError as e:
     sys.exit(2)
 
 
+def _json_list(raw) -> list:
+    try:
+        value = json.loads(raw) if raw else []
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return value if isinstance(value, list) else []
+
+
+def _json_dict(raw) -> dict:
+    try:
+        value = json.loads(raw) if raw else {}
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def _serialize(s: "McpServer", redact_env: bool = True) -> dict:
-    try:
-        args_arr = json.loads(s.args) if s.args else []
-    except json.JSONDecodeError:
-        args_arr = []
-    try:
-        env_obj = json.loads(s.env) if s.env else {}
-    except json.JSONDecodeError:
-        env_obj = {}
-    if redact_env and env_obj:
+    args_arr = _json_list(s.args)
+    env_obj = _json_dict(s.env)
+    if redact_env and isinstance(env_obj, dict):
         env_obj = {k: ("***" if v else "") for k, v in env_obj.items()}
     return {
         "id": s.id,

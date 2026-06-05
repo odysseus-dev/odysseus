@@ -1,5 +1,6 @@
 # routes/session_routes.py
 import re
+import html
 import json
 import uuid
 from datetime import datetime
@@ -10,45 +11,198 @@ from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, effective_user
 
 
-def _verify_session_owner(request: Request, session_id: str):
-    """Verify the current user owns the session. Raises 404 if not."""
-    user = get_current_user(request)
+def _sanitize_export_filename(name: str) -> str:
+    """Return a conservative filename safe for Content-Disposition."""
+    name = name if isinstance(name, str) else ""
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
+    return name[:128]
+
+
+# Blind-compare helper sessions are created with this name prefix. Their real
+# model must never surface in the session list / sidebar — otherwise a blind
+# comparison can be de-anonymized before the user votes (issue #1285).
+COMPARE_SESSION_PREFIX = "[CMP] "
+
+
+def _public_model(name: str, model: str) -> str:
+    """Blank out the real model of blind-compare helper sessions so the
+    session list can't be used to map a neutral pane label ("Model A") back
+    to its model. The Compare UI tracks models client-side, so hiding it here
+    costs the sidebar nothing. See issue #1285."""
+    if (name or "").startswith(COMPARE_SESSION_PREFIX):
+        return ""
+    return model
+
+
+def _content_to_text(content) -> str:
+    """Flatten a message's content to plain text for text-based exports.
+
+    History entries carry three shapes: a plain string, a multimodal list of
+    content blocks (vision/image attachments), or None (assistant turns that
+    persisted only native tool_calls). The txt/html/md exporters join and
+    string-munge this value, so a list crashed the export (TypeError on join,
+    AttributeError on .replace) and None rendered as the literal "None".
+    Coerce to the text blocks, returning "" for anything without text.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            b.get("text", "") for b in content
+            if isinstance(b, dict) and b.get("text")
+        )
+    return ""
+
+
+def _message_role(message) -> str:
+    if isinstance(message, ChatMessage):
+        return message.role or ""
+    if isinstance(message, dict):
+        return message.get("role", "") or ""
+    return getattr(message, "role", "") or ""
+
+
+def _message_text(message) -> str:
+    if isinstance(message, ChatMessage):
+        content = message.content
+    elif isinstance(message, dict):
+        content = message.get("content")
+    else:
+        content = getattr(message, "content", None)
+    return _content_to_text(content)
+
+
+def _message_metadata(message) -> dict:
+    if isinstance(message, ChatMessage):
+        metadata = message.metadata
+    elif isinstance(message, dict):
+        metadata = message.get("metadata")
+    else:
+        metadata = getattr(message, "metadata", None)
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _reject_compact_during_active_run(session_id: str) -> None:
+    from src import agent_runs
+    if agent_runs.is_active(session_id):
+        raise HTTPException(409, "Session has an active run; try compacting after it finishes")
+
+
+def _verify_session_owner(request: Request, session_id: str, session_manager=None):
+    """Verify the current user owns the session. Raises 404 if not.
+
+    Ownership is checked against the DB row when one exists (unchanged). If
+    there is no DB row but the caller owns an in-memory "ghost" session — one
+    that lives only in ``session_manager`` because it was never persisted, or
+    its DB row was removed out-of-band — fall back to the in-memory owner so the
+    user can still manage and delete it. Without this fallback such sessions are
+    listed by ``/api/sessions`` (they come from the in-memory manager) yet every
+    per-session operation 404s, making them impossible to delete (issue #1044).
+
+    ``session_manager`` is optional and defaults to ``None`` so existing callers
+    that only care about persisted sessions keep their exact prior behavior.
+    """
+    user = effective_user(request)
     if not user:
         raise HTTPException(403, "Authentication required")
     db = SessionLocal()
     try:
         row = db.query(DbSession.owner).filter(DbSession.id == session_id).first()
-        if not row:
-            raise HTTPException(404, f"Session {session_id} not found")
-        if row.owner != user:
-            raise HTTPException(404, f"Session {session_id} not found")
     finally:
         db.close()
+    if row is not None:
+        if row.owner != user:
+            raise HTTPException(404, f"Session {session_id} not found")
+        return
+    # No DB row — allow the caller to act on an in-memory ghost they own.
+    if session_manager is not None:
+        ghost = getattr(session_manager, "sessions", {}).get(session_id)
+        if ghost is not None and getattr(ghost, "owner", None) == user:
+            return
+    raise HTTPException(404, f"Session {session_id} not found")
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["sessions"])
 
-def _pick_endpoint_for_sort():
+def _current_user_is_admin(request: Request, user: str | None) -> bool:
+    if not user:
+        return False
+    auth_mgr = getattr(request.app.state, "auth_manager", None)
+    is_admin = getattr(auth_mgr, "is_admin", None)
+    if not callable(is_admin):
+        return False
+    try:
+        return bool(is_admin(user))
+    except Exception:
+        return False
+
+
+def _reject_raw_endpoint_url_for_non_admin(
+    request: Request,
+    user: str | None,
+    endpoint_id: str | None,
+    endpoint_url: str | None,
+) -> None:
+    """Require registered endpoints for signed-in non-admin session changes."""
+    if endpoint_id and endpoint_id.strip():
+        return
+    if not endpoint_url:
+        return
+    # Raw URLs make the server dial whatever host the request supplies. For
+    # non-admin users, require a saved endpoint row so normal owner scoping and
+    # endpoint validation have already happened.
+    if user and not _current_user_is_admin(request, user):
+        raise HTTPException(403, "Choose a registered model endpoint")
+
+
+def _persist_session_headers(session_id: str, headers: dict | None) -> None:
+    """Persist endpoint auth headers for DB-backed session metadata."""
+    db = SessionLocal()
+    try:
+        db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
+        if db_session:
+            db_session.headers = headers or {}
+            db_session.updated_at = datetime.utcnow()
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+_HIDDEN_SYSTEM_SESSION_NAMES = {
+    "[Task] Chat Sessions Tidy",
+    "[Task] Documents Tidy",
+    "[Task] Memory Tidy",
+    "[Task] Research Tidy",
+    "[Task] Email Mark Boundaries",
+    "[Task] Email Tags",
+    "[Task] Skills Audit",
+}
+
+
+def _pick_endpoint_for_sort(owner=None):
     """Pick model endpoint for auto-sort LLM call — uses utility endpoint setting, falls back to default."""
     from src.endpoint_resolver import resolve_endpoint
     # Try utility endpoint first (what the user configured for background tasks)
-    url, model, headers = resolve_endpoint("utility")
+    url, model, headers = resolve_endpoint("utility", owner=owner)
     if url and model:
         return url, model, headers
     # Fall back to task endpoint
     try:
         from src.task_endpoint import resolve_task_endpoint
-        url, model, headers = resolve_task_endpoint()
+        url, model, headers = resolve_task_endpoint(owner=owner)
         if url and model:
             return url, model, headers
     except Exception:
         pass
     # Fall back to default
-    url, model, headers = resolve_endpoint("default")
+    url, model, headers = resolve_endpoint("default", owner=owner)
     if url and model:
         return url, model, headers
     return None, None, None
@@ -62,7 +216,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     
     @router.get("/sessions")
     def list_sessions(request: Request):
-        user = get_current_user(request)
+        user = effective_user(request)
         # Lazy purge: incognito sessions are ephemeral by design — wipe leftovers
         # from the DB and session_manager so they vanish on the next page refresh.
         # BUT: skip sessions that were created within the last 10 minutes.
@@ -141,7 +295,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         finally:
             db.close()
 
-        sessions = [{"id": s.id, "name": s.name, "model": s.model,
+        sessions = [{"id": s.id, "name": s.name, "model": _public_model(s.name, s.model),
                      "endpoint_url": s.endpoint_url, "rag": s.rag,
                      "archived": s.archived, "folder": folder_map.get(s.id),
                      "total_tokens": token_map.get(s.id, 0),
@@ -155,7 +309,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                      "message_count": msg_count_map.get(s.id, 0)}
                     for s in user_sessions.values()
                     if not s.archived
-                    and (s.name or "").strip() not in ("Nobody", "Incognito")]
+                    and (s.name or "").strip() not in ("Nobody", "Incognito")
+                    and (s.name or "").strip() not in _HIDDEN_SYSTEM_SESSION_NAMES]
 
         return sessions
     
@@ -171,11 +326,41 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         endpoint_id: str = Form(""),
     ):
         skip_val = str(skip_validation).lower() == "true"
+        user = get_current_user(request)
+        endpoint_api_key = ""
+        endpoint_base_url = ""
+        _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
+        if endpoint_id and endpoint_id.strip():
+            from core.database import ModelEndpoint
+            from src.auth_helpers import owner_filter
+            from src.endpoint_resolver import build_chat_url, normalize_base
+            _db = SessionLocal()
+            try:
+                q = _db.query(ModelEndpoint).filter(
+                    ModelEndpoint.id == endpoint_id.strip(),
+                    ModelEndpoint.is_enabled == True,
+                )
+                if user:
+                    q = owner_filter(q, ModelEndpoint, user)
+                endpoint_row = q.first()
+                if not endpoint_row:
+                    raise HTTPException(400, "Model endpoint no longer exists")
+                endpoint_base_url = endpoint_row.base_url or ""
+                endpoint_api_key = endpoint_row.api_key or ""
+                endpoint_url = build_chat_url(normalize_base(endpoint_base_url))
+            finally:
+                _db.close()
 
         if not endpoint_url and not skip_val:
             raise HTTPException(400, "endpoint_url is required (choose from /api/models)")
 
         model_to_use = model
+        request_api_key = api_key.strip() if api_key else ""
+        effective_api_key = request_api_key or endpoint_api_key
+        validation_headers = None
+        if effective_api_key:
+            from src.endpoint_resolver import build_headers
+            validation_headers = build_headers(effective_api_key, endpoint_base_url or endpoint_url)
 
         if skip_val:
             # skip_validation = trust the caller and do NOT probe /v1/models.
@@ -186,7 +371,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         elif not model_to_use:
             from src.llm_core import list_model_ids
             ids = list_model_ids(endpoint_url, timeout=REQUEST_TIMEOUT,
-                                 headers={"Authorization": f"Bearer {api_key}"} if api_key.strip() else None)
+                                 headers=validation_headers)
             if not ids:
                 raise HTTPException(400, "Cannot reach /v1/models")
             # Default to the first CHAT model — endpoints often list embedding/
@@ -201,7 +386,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             import os as _os
             req_base = _os.path.basename(model_to_use.rstrip("/"))
             avail = list_model_ids(endpoint_url, timeout=REQUEST_TIMEOUT,
-                                   headers={"Authorization": f"Bearer {api_key}"} if api_key.strip() else None)
+                                   headers=validation_headers)
             if not avail:
                 raise HTTPException(400, "Cannot reach /v1/models")
             if model_to_use not in avail:
@@ -216,7 +401,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 model_to_use = found
         
         sid = str(uuid.uuid4())
-        user = get_current_user(request)
+        user = effective_user(request)
         session = session_manager.create_session(
             session_id=sid,
             name=name or "",
@@ -226,22 +411,15 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             owner=user,
         )
         # Set auth headers for custom API-key endpoints
-        resolved_key = api_key.strip() if api_key else ""
+        resolved_key = request_api_key
         resolved_base = endpoint_url
-        if not resolved_key and endpoint_id and endpoint_id.strip():
-            from core.database import ModelEndpoint
-            _db = SessionLocal()
-            try:
-                ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id.strip()).first()
-                if ep and ep.api_key:
-                    resolved_key = ep.api_key
-                    resolved_base = ep.base_url
-            finally:
-                _db.close()
+        if not resolved_key and endpoint_api_key:
+            resolved_key = endpoint_api_key
+            resolved_base = endpoint_base_url
         if resolved_key:
             from src.endpoint_resolver import build_headers
             session.headers = build_headers(resolved_key, resolved_base)
-            session_manager.save_sessions()
+            _persist_session_headers(sid, session.headers)
         # Fire webhook (sync-safe)
         if webhook_manager:
             webhook_manager.fire_and_forget("session.created", {
@@ -287,27 +465,38 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db.close()
         # Switch model/endpoint mid-session
         if model is not None and endpoint_url is not None:
+            user = get_current_user(request)
+            _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
+            endpoint_api_key = ""
+            endpoint_base_url = ""
             if endpoint_id:
                 from core.database import ModelEndpoint
+                from src.auth_helpers import owner_filter
+                from src.endpoint_resolver import build_chat_url, normalize_base
                 _db = SessionLocal()
                 try:
-                    ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
+                    q = _db.query(ModelEndpoint).filter(
+                        ModelEndpoint.id == endpoint_id,
+                        ModelEndpoint.is_enabled == True,
+                    )
+                    if user:
+                        q = owner_filter(q, ModelEndpoint, user)
+                    ep = q.first()
                     if not ep:
                         raise HTTPException(400, "Model endpoint no longer exists")
+                    endpoint_base_url = ep.base_url or ""
+                    endpoint_api_key = ep.api_key or ""
+                    endpoint_url = build_chat_url(normalize_base(endpoint_base_url))
                 finally:
                     _db.close()
             session.model = model
             session.endpoint_url = endpoint_url
             # Update auth headers from the endpoint's stored API key
-            if endpoint_id:
-                _db = SessionLocal()
-                try:
-                    ep = _db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
-                    if ep and ep.api_key:
-                        from src.endpoint_resolver import build_headers
-                        session.headers = build_headers(ep.api_key, ep.base_url)
-                finally:
-                    _db.close()
+            if endpoint_api_key:
+                from src.endpoint_resolver import build_headers
+                session.headers = build_headers(endpoint_api_key, endpoint_base_url)
+            else:
+                session.headers = {}
             # Persist to DB
             db = SessionLocal()
             try:
@@ -315,6 +504,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 if db_session:
                     db_session.model = model
                     db_session.endpoint_url = endpoint_url
+                    db_session.headers = session.headers or {}
                     db_session.updated_at = datetime.utcnow()
                     db.commit()
             finally:
@@ -355,7 +545,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             ids = []
         for sid in ids:
             try:
-                _verify_session_owner(request, sid)
+                _verify_session_owner(request, sid, session_manager)
                 session_manager.delete_session(sid)
                 db = SessionLocal()
                 try:
@@ -373,7 +563,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     @router.delete("/session/{sid}")
     def delete_session(request: Request, sid: str):
         """Permanently delete a session and all its messages."""
-        _verify_session_owner(request, sid)
+        _verify_session_owner(request, sid, session_manager)
         try:
             # Block deletion of starred/favorited sessions
             db = SessionLocal()
@@ -498,7 +688,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     @router.get("/sessions/archived")
     def list_archived_sessions(request: Request, search: str = "", offset: int = 0, limit: int = 20, sort: str = "recent", model: str = ""):
         """List archived sessions for the archive browser."""
-        user = get_current_user(request)
+        user = effective_user(request)
         db = SessionLocal()
         try:
             q = db.query(DbSession).filter(DbSession.archived == True)
@@ -509,7 +699,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 safe_search = search.replace('%', r'\%').replace('_', r'\_')
                 q = q.filter(DbSession.name.ilike(f"%{safe_search}%", escape='\\'))
             if model:
-                q = q.filter(DbSession.model.ilike(f"%{model}"))
+                # Contains match (mirrors the name filter above). The old
+                # f"%{model}" was a SUFFIX-only match, so filtering by "gpt-4"
+                # dropped "gpt-4o" and over-matched on shared suffixes; it also
+                # left LIKE wildcards in the user value unescaped.
+                safe_model = model.replace('%', r'\%').replace('_', r'\_')
+                q = q.filter(DbSession.model.ilike(f"%{safe_model}%", escape='\\'))
             total = q.count()
             sort_map = {
                 "recent": DbSession.updated_at.desc(),
@@ -557,6 +752,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
 
         safe_name = re.sub(r'[^\w\-_]', '_', session.name)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = _sanitize_export_filename(filename)
 
         if fmt == "json":
             import json as _json
@@ -577,7 +773,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             lines = []
             for m in session.history:
                 lines.append(f"[{m.role.upper()}]")
-                lines.append(m.content)
+                lines.append(_content_to_text(m.content))
                 lines.append("")
             out_name = filename or f"conversation_{safe_name}_{timestamp}.txt"
             return Response(
@@ -587,19 +783,20 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             )
 
         if fmt == "html":
+            safe_title = html.escape(session.name or "")
             html_parts = [
                 "<!DOCTYPE html><html><head>",
-                f"<meta charset='utf-8'><title>{session.name}</title>",
+                f"<meta charset='utf-8'><title>{safe_title}</title>",
                 "<style>body{font-family:monospace;max-width:800px;margin:2rem auto;padding:0 1rem;background:#111;color:#ddd}",
                 ".msg{margin:1rem 0;padding:0.8rem;border-radius:6px;border:1px solid #333}",
                 ".user{background:#1a1a2e}.ai{background:#1a2e1a}",
                 ".role{font-weight:bold;margin-bottom:0.4rem;opacity:0.7;text-transform:uppercase;font-size:0.85em}",
                 "pre{background:#000;padding:0.5rem;border-radius:4px;overflow-x:auto}</style></head><body>",
-                f"<h1>{session.name}</h1>",
+                f"<h1>{safe_title}</h1>",
             ]
             for m in session.history:
                 cls = "user" if m.role == "user" else "ai"
-                content = m.content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                content = _content_to_text(m.content).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 content = content.replace("\n", "<br>")
                 html_parts.append(f'<div class="msg {cls}"><div class="role">{m.role}</div>{content}</div>')
             html_parts.append("</body></html>")
@@ -618,7 +815,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         markdown_lines.append("\n---\n")
         for message in session.history:
             role = message.role.upper()
-            content = message.content
+            content = _content_to_text(message.content)
             markdown_lines.append(f"### {role}")
             markdown_lines.append(f"{content}\n")
             markdown_lines.append("---\n")
@@ -633,7 +830,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     
     @router.post("/sessions/save")
     def sessions_save_now(request: Request):
-        user = get_current_user(request)
+        user = effective_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
         session_manager.save_sessions()
@@ -649,7 +846,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         if not OPENAI_API_KEY:
             raise HTTPException(400, "Server missing OPENAI_API_KEY")
         sid = str(uuid.uuid4())
-        user = get_current_user(request)
+        user = effective_user(request)
         session = session_manager.create_session(
             session_id=sid,
             name="",
@@ -709,6 +906,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             session = session_manager.get_session(session_id)
         except KeyError:
             raise HTTPException(404, f"Session {session_id} not found")
+        _reject_compact_during_active_run(session_id)
 
         history = list(session.history or [])
         if len(history) < 6:
@@ -726,7 +924,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
 
-        url, model, headers = resolve_endpoint("utility")
+        url, model, headers = resolve_endpoint("utility", owner=get_current_user(request))
         if not url or not model:
             url, model, headers = session.endpoint_url, session.model, session.headers
         if not url or not model:
@@ -734,7 +932,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
 
         prior_compactions = sum(
             1 for m in history
-            if (m.metadata or {}).get("compacted") or "[Conversation summary" in (m.content or "")
+            if _message_metadata(m).get("compacted") or "[Conversation summary" in _message_text(m)
         )
         prompt = SELF_SUMMARY_SYSTEM_PROMPT.replace(
             "{count}", str(len(older))
@@ -742,7 +940,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             "{n}", str(prior_compactions + 1)
         )
         convo_text = "\n".join(
-            f"{m.role.upper()}: {(m.content or '')[:2000]}"
+            f"{_message_role(m).upper()}: {_message_text(m)[:2000]}"
             for m in older
         )
         try:
@@ -789,7 +987,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         users can clean junk without spending tokens.
         """
         from src.llm_core import llm_call
-        user = get_current_user(request)
+        user = effective_user(request)
         user_sessions = session_manager.get_sessions_for_user(user)
 
         # Delete empty and throwaway sessions before sorting
@@ -926,9 +1124,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
 
         # Pick an endpoint — prefer admin-configured task endpoint
         from src.task_endpoint import resolve_task_endpoint
-        url, model, headers = resolve_task_endpoint()
+        url, model, headers = resolve_task_endpoint(owner=user)
         if not url:
-            url, model, headers = _pick_endpoint_for_sort()
+            url, model, headers = _pick_endpoint_for_sort(owner=user)
         if not url:
             raise HTTPException(503, "No available model endpoint for auto-sort")
 

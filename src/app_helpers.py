@@ -22,6 +22,8 @@ def abs_join(base_dir: str, rel: str) -> str:
 
 def inside_base_dir(base_dir: str, path: str) -> bool:
     """Check if path is inside base directory."""
+    if not isinstance(base_dir, str) or not isinstance(path, str):
+        return False
     base = os.path.realpath(base_dir)
     p = os.path.realpath(path)
     try:

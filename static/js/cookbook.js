@@ -18,6 +18,7 @@ import {
   _launchServeTask, _serveAutoFix, _serveAutoRetry, _serveAutoRetryReplace, _serveAutoRetryRemove,
   _startBackgroundMonitor, _syncFromServer,
   _retryDownload, _nextAvailablePort, _processQueue,
+  _selfHealStaleTasks,
 } from './cookbookRunning.js';
 
 import {
@@ -223,11 +224,20 @@ function _detectModelOptimizations(modelName) {
   return opts;
 }
 
-/** Detect the right vLLM tool-call-parser based on model name */
+/** Detect the right vLLM tool-call-parser based on model name.
+ *  Qwen tool-call formats split by generation:
+ *   - Qwen3-Coder           → qwen3_coder  (XML <tool_call> with named params)
+ *   - Qwen3 (non-coder)     → qwen3_xml    (reasoning/instruct, XML wrapper)
+ *   - Qwen2.5 / Qwen2 / 1.5 → hermes       (Qwen2.5 was trained on Hermes format)
+ *  Catching "qwen" first and labelling everything qwen3_xml breaks tool
+ *  calls on the Qwen2.5 line (the model emits hermes-style which the
+ *  qwen3_xml parser doesn't recognise, so the call leaks through as text).
+ */
 export function _detectToolParser(modelName) {
   const n = (modelName || '').toLowerCase();
   if (n.includes('qwen3') && n.includes('coder')) return 'qwen3_coder';
-  if (n.includes('qwen')) return 'qwen3_xml';
+  if (n.includes('qwen3')) return 'qwen3_xml';
+  if (n.includes('qwen')) return 'hermes';   // Qwen2.5 / Qwen2 / Qwen1.5
   if (n.includes('llama-4') || n.includes('llama4')) return 'llama4_json';
   if (n.includes('llama') || n.includes('nemotron')) return 'llama3_json';
   if (n.includes('mistral') || n.includes('mixtral')) return 'mistral';
@@ -245,13 +255,35 @@ export function _detectToolParser(modelName) {
 // ── Backend detection ──
 
 export function _detectBackend(model) {
+  if (model?.backend === 'ollama' || model?.is_ollama) {
+    return { backend: 'ollama', label: 'Ollama' };
+  }
   const q = (model.quant || '').toUpperCase();
   const sysBackend = String(_hwfitCache?.system?.backend || '').toLowerCase();
   const isRocm = sysBackend === 'rocm';
+  const isAppleSilicon = ['metal', 'mps', 'apple'].includes(sysBackend);
+  const _nm = `${model.repo_id || ''} ${model.path || ''} ${model.name || ''}`.toLowerCase();
+  if (/\bmlx\b|mlx-|_mlx/i.test(_nm) || q.startsWith('MLX')) {
+    return { backend: 'unsupported', label: 'Unsupported' };
+  }
+  const isAwqLike = /^AWQ|^GPTQ|^NVFP4/.test(q) || ['FP8', 'FP4', 'MXFP4', 'NF4', 'INT4', 'INT8', 'W4A16', 'W8A8', 'W8A16'].includes(q) || /\b(awq|gptq|fp8|fp4|nvfp4|mxfp4|nf4|int4|int8|w4a16|w8a8|w8a16)\b/i.test(_nm);
+  const isGgufLike = model.is_gguf || /^Q[2-8]/.test(q) || /^IQ/.test(q) || q === 'GGUF' || _nm.includes('gguf');
 
   // Image gen models → diffusers
   if (model.is_image_gen || model.is_diffusion || model._tag === 'image') {
     return { backend: 'diffusers', label: 'Diffusers' };
+  }
+
+  // AWQ / GPTQ / FP8 are safetensors GPU-serving formats. Never route them
+  // through llama.cpp/Ollama just because the host is Mac/Windows; those engines
+  // need GGUF. The UI will warn/block on Metal where vLLM/SGLang aren't viable.
+  if (isAwqLike) {
+    return { backend: 'vllm', label: 'vLLM' };
+  }
+
+  // GGUF → llama.cpp/Ollama-compatible.
+  if (isGgufLike) {
+    return { backend: 'llamacpp', label: 'llama.cpp' };
   }
 
   // Windows → default to llama.cpp (no vLLM support on Windows)
@@ -260,22 +292,9 @@ export function _detectBackend(model) {
   }
 
   // Apple Silicon (Metal) → llama.cpp (GGUF). vLLM/SGLang are CUDA/ROCm-only and
-  // don't run on macOS; AWQ/GPTQ/FP8 (vLLM-only) models are already filtered out
+  // don't run on macOS; vLLM-native quantized models are already filtered out
   // of metal Cookbook results, so llama.cpp is always the right engine here.
   if (['metal', 'mps', 'apple'].includes(sysBackend)) {
-    return { backend: 'llamacpp', label: 'llama.cpp' };
-  }
-
-  // AWQ / GPTQ / FP8 → vLLM
-  if (/^AWQ|^GPTQ/.test(q) || q === 'FP8') {
-    return { backend: 'vllm', label: 'vLLM' };
-  }
-
-  // GGUF → llama.cpp. Match the quant tag OR a gguf hint in the repo/path/name:
-  // a raw .gguf file often has no quant field, which made it fall through to the
-  // vLLM default below.
-  const _nm = `${model.repo_id || ''} ${model.path || ''} ${model.name || ''}`.toLowerCase();
-  if (model.is_gguf || /^Q[2-8]/.test(q) || /^IQ/.test(q) || q === 'GGUF' || _nm.includes('gguf')) {
     return { backend: 'llamacpp', label: 'llama.cpp' };
   }
 
@@ -348,6 +367,8 @@ export function _buildServeCmd(f, modelName, backend) {
     cmd += ` --gpu-memory-utilization ${f.gpu_mem || '0.90'}`;
     if (f.swap && f.swap !== '0') cmd += ` --swap-space ${f.swap}`;
     cmd += ` --dtype ${f.dtype || 'auto'}`;
+    const _kv = (f.vllm_kv_cache_dtype ?? '').toString().trim();
+    if (_kv === 'fp8') cmd += ' --kv-cache-dtype fp8';
     if (f.max_seqs && f.max_seqs.toString().trim()) cmd += ` --max-num-seqs ${f.max_seqs.toString().trim()}`;
     if (f.enforce_eager) cmd += ' --enforce-eager';
     if (f.trust_remote) cmd += ' --trust-remote-code';
@@ -381,13 +402,17 @@ export function _buildServeCmd(f, modelName, backend) {
     const ggufPath = f._gguf_path || 'model.gguf';
     const gpuId = f.gpu_id?.trim() || '';
     const py = _isWindows() ? 'python' : 'python3';
+    // CPU-only serve (-ngl 0): drop the GPU-only flags, otherwise the command
+    // mixes "zero GPU layers" with CUDA unified-memory + flash-attn and fails to
+    // start (issue #1291). Only affects the ngl=0 path; GPU serving is unchanged.
+    const _cpuOnly = String(f.ngl).trim() === '0';
     const lcPrefix = (() => {
       let p = '';
-      if (f.unified_mem && !_isWindows()) p += `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 `;
+      if (f.unified_mem && !_cpuOnly && !_isWindows()) p += `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 `;
       if (gpuId && !_isWindows()) p += `CUDA_VISIBLE_DEVICES=${gpuId} `;
       return p;
     })();
-    if (f.unified_mem && _isWindows()) cmd += `$env:GGML_CUDA_ENABLE_UNIFIED_MEMORY="1"; `;
+    if (f.unified_mem && !_cpuOnly && _isWindows()) cmd += `$env:GGML_CUDA_ENABLE_UNIFIED_MEMORY="1"; `;
     if (gpuId && _isWindows()) cmd += `$env:CUDA_VISIBLE_DEVICES="${gpuId}"; `;
     if (!_isWindows()) {
       // Resolve GGUF path once, fail loudly if nothing matched (prevents
@@ -399,19 +424,76 @@ export function _buildServeCmd(f, modelName, backend) {
     // renders modern GGUF chat templates that the Python bindings' Jinja2
     // rejects (do_tojson ensure_ascii). Fall back to llama_cpp.server.
     // Don't suppress stderr — surface real errors (missing file, lib, OOM).
-    const _lcpServer = `${lcPrefix}${py} -m llama_cpp.server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} --n_gpu_layers ${f.ngl || '99'} --n_ctx ${f.ctx || '8192'}`;
+    // Optional perf/fit flags from a hardware profile (see services/hwfit/
+    // profiles.py). n_cpu_moe offloads MoE expert layers to CPU when the model
+    // is bigger than VRAM; flash-attn + a quantized KV cache cut KV memory and
+    // speed things up. Only emitted when set, so manual/older flows are unchanged.
+    const _ncm = (f.n_cpu_moe ?? '').toString().trim();
+    const _kv = (f.cache_type ?? '').toString().trim();
+    const _llamaNum = (v) => {
+      const s = String(v || '').trim();
+      return /^\d+$/.test(s) ? s : '';
+    };
+    const _llamaCsv = (v) => {
+      const s = String(v || '').replace(/\s+/g, '');
+      return /^\d+(?:\.\d+)?(?:,\d+(?:\.\d+)?)*$/.test(s) ? s : '';
+    };
+    let _lcExtra = '';
+    let _lcpExtra = '';
+    if (_ncm !== '' && Number(_ncm) > 0) {
+      _lcExtra += ` --n-cpu-moe ${_ncm}`;
+      _lcpExtra += ` --n_cpu_moe ${_ncm}`;   // llama-cpp-python uses underscores
+    }
+    if (f.flash_attn && !_cpuOnly) {
+      _lcExtra += ' --flash-attn on';
+      _lcpExtra += ' --flash_attn true';
+    }
+    if (_kv) {
+      _lcExtra += ` --cache-type-k ${_kv} --cache-type-v ${_kv}`;
+      // llama-cpp-python exposes these as type_k/type_v; pass through best-effort.
+      _lcpExtra += ` --type_k ${_kv} --type_v ${_kv}`;
+    }
+    const _llamaFit = String(f.llama_fit || '').trim();
+    if (['on', 'off'].includes(_llamaFit)) _lcExtra += ` --fit ${_llamaFit}`;
+    if (f.llama_no_mmap) _lcExtra += ' --no-mmap';
+    if (f.llama_no_warmup) _lcExtra += ' --no-warmup';
+    const _llamaSplitMode = String(f.llama_split_mode || '').trim();
+    if (['none', 'layer', 'row', 'tensor'].includes(_llamaSplitMode)) _lcExtra += ` --split-mode ${_llamaSplitMode}`;
+    const _llamaTensorSplit = _llamaCsv(f.llama_tensor_split);
+    if (_llamaTensorSplit) _lcExtra += ` --tensor-split ${_llamaTensorSplit}`;
+    const _llamaMainGpu = _llamaNum(f.llama_main_gpu);
+    if (_llamaMainGpu) _lcExtra += ` --main-gpu ${_llamaMainGpu}`;
+    const _llamaParallel = _llamaNum(f.llama_parallel);
+    if (_llamaParallel) _lcExtra += ` --parallel ${_llamaParallel}`;
+    const _llamaBatch = _llamaNum(f.llama_batch_size);
+    if (_llamaBatch) _lcExtra += ` --batch-size ${_llamaBatch}`;
+    const _llamaUBatch = _llamaNum(f.llama_ubatch_size);
+    if (_llamaUBatch) _lcExtra += ` --ubatch-size ${_llamaUBatch}`;
+    if (f.llama_speculative_mtp) {
+      const specTokens = parseInt(f.llama_spec_tokens, 10);
+      const specN = Number.isFinite(specTokens) && specTokens > 0 ? specTokens : 3;
+      _lcExtra += ` --spec-type draft-mtp --spec-draft-n-max ${specN}`;
+    }
+    // Vision: serve the multimodal projector so the model can read images. The
+    // mmproj path is resolved at runtime (find mmproj-*.gguf next to the model);
+    // only emitted when the Vision toggle is on AND a projector was found.
+    if (f.vision && f._mmproj_path) {
+      _lcExtra += ` --mmproj "${f._mmproj_path}" --image-max-tokens 1024`;
+      // llama-cpp-python takes the projector via --clip_model_path.
+      _lcpExtra += ` --clip_model_path "${f._mmproj_path}"`;
+    }
+    const _lcpServer = `${lcPrefix}${py} -m llama_cpp.server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} --n_gpu_layers ${f.ngl || '99'} --n_ctx ${f.ctx || '8192'}${_lcpExtra}`;
     if (_isWindows()) {
       cmd += _lcpServer;
     } else {
-      cmd += `${lcPrefix}llama-server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} -ngl ${f.ngl || '99'} -c ${f.ctx || '8192'}`;
+      cmd += `${lcPrefix}llama-server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} -ngl ${f.ngl || '99'} -c ${f.ctx || '8192'}${_lcExtra}`;
       cmd += ` || ${_lcpServer}`;
     }
   } else if (backend === 'ollama') {
-    const ollamaName = modelName.split('/').pop().toLowerCase().replace(/[-_]gguf$/i, '');
     const ollamaPort = f.port || '11434';
-    const hostEnv = ollamaPort !== '11434' ? `OLLAMA_HOST=0.0.0.0:${ollamaPort} ` : '';
-    // Start serve in background if not running, then pull model
-    cmd = `${hostEnv}ollama serve &>/dev/null & sleep 2 && ${hostEnv}ollama pull ${ollamaName} && wait`;
+    const bindHost = _envState.remoteHost ? '0.0.0.0' : '127.0.0.1';
+    const hostEnv = ollamaPort !== '11434' ? `OLLAMA_HOST=${bindHost}:${ollamaPort} ` : '';
+    cmd = `${hostEnv}ollama serve`;
   } else if (backend === 'diffusers') {
     const gpuStr = f.gpus?.trim();
     if (gpuStr) cmd += `CUDA_VISIBLE_DEVICES=${gpuStr} `;
@@ -541,6 +623,10 @@ async function _fetchDependencies() {
     const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
       if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
+      if (pkg.installed && pkg.pip_update_available === false) {
+        const tip = esc(pkg.update_note || pkg.status_note || 'Found externally; update outside Odysseus.');
+        return `<span class="cookbook-dep-tag cookbook-dep-installed" title="${tip}">Installed</span>`;
+      }
       if (pkg.installed) return `<button class="cookbook-dep-tag cookbook-dep-installed cookbook-dep-installed-btn" title="Installed — click for actions"><span class="cookbook-dep-installed-label">Installed</span><span class="cookbook-dep-caret">&#9662;</span></button>`;
       if (isSystemDep) {
         const depTip = esc(pkg.install_hint || 'Install this OS package on the selected server.');
@@ -554,11 +640,23 @@ async function _fetchDependencies() {
       const isLocal = pkg.target === 'local';
       const isSystemDep = pkg.kind === 'system';
       const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
+      const note = pkg.status_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.65;margin-top:3px;">${esc(pkg.status_note)}</div>` : '';
+      const updateNote = pkg.installed && pkg.pip_update_available === false && pkg.update_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.55;margin-top:3px;">${esc(pkg.update_note)}</div>` : '';
+      // Inline "Rebuild" tag for the llama_cpp row only. Styled as a
+      // .cookbook-dep-tag so it matches the LLM category tag's pill look,
+      // and lives to the LEFT of the category tag (clear affordance before
+      // the row "value").
+      const _rebuildBtn = (pkg.name === 'llama_cpp')
+        ? `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild" id="cookbook-rebuild-engine" title="Clear the cached llama.cpp build so the next serve recompiles from source (use after installing a CUDA/ROCm toolkit to turn a CPU-only build into a GPU build).">Rebuild</button>`
+        : '';
       return `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`
         + `<div class="cookbook-dep-info">`
         + `<div class="memory-item-title">${esc(pkg.name)}</div>`
         + `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${esc(pkg.desc)}</div>`
+        + note
+        + updateNote
         + `</div>`
+        + _rebuildBtn
         + `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`
         + _statusTag(pkg, isLocal, isSystemDep, winBlocked)
         + `</div>`;
@@ -639,7 +737,7 @@ async function _fetchDependencies() {
         }
         // _dep flags this as a pip dependency/driver install (not a servable
         // model) so the running-task card doesn't offer a "Serve →" button.
-        const payload = { repo_id: pipName, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true };
+        const payload = { repo_id: pipName, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true, env_path: _envState.envPath || '' };
         _addTask(data.session_id, 'pip ' + pkgName, 'download', payload);
         if (statusEl) { statusEl.textContent = upgrade ? 'Updating...' : 'Installing...'; statusEl.disabled = true; }
         uiModule.showToast(`${upgrade ? 'Updating' : 'Installing'} ${pkgName} on ${targetHost}...`);
@@ -929,6 +1027,51 @@ function _wireTabEvents(body) {
     });
   }
 
+  // "Rebuild llama.cpp" clears the cached build so the next serve recompiles.
+  // The serve bootstrap only builds llama-server when it is missing from PATH,
+  // so a host that first built CPU-only (no nvcc at build time) keeps reusing
+  // that binary forever; this is the lever to force a fresh GPU build after a
+  // CUDA/ROCm toolkit is installed.
+  const rebuildBtn = document.getElementById('cookbook-rebuild-engine');
+  if (rebuildBtn && !rebuildBtn._wired) {
+    rebuildBtn._wired = true;
+    rebuildBtn.addEventListener('click', async () => {
+      // Match _installDep: honor the Dependencies server selector so the clear
+      // runs on the same host the build runs on.
+      const sel = document.getElementById('hwfit-deps-server');
+      if (sel) _applyServerSelection(sel.value);
+      const host = _envState.remoteHost || '';
+      const where = host || 'this server';
+      if (!confirm(`Rebuild the llama.cpp engine on ${where}?\n\nThis clears the cached llama-server build so the next serve recompiles from source (with CUDA/HIP if a toolchain is present). It does not download or install anything.`)) return;
+      const _label = rebuildBtn.textContent;
+      rebuildBtn.disabled = true;
+      rebuildBtn.textContent = 'Clearing...';
+      try {
+        const res = await fetch('/api/cookbook/rebuild-engine', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            engine: 'llamacpp',
+            remote_host: host || undefined,
+            ssh_port: _getPort(host) || undefined,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          const reason = data.detail || data.error || `HTTP ${res.status}`;
+          uiModule.showToast('Rebuild failed: ' + String(reason).slice(0, 200));
+        } else {
+          uiModule.showToast(`Cleared llama.cpp build on ${where}. Re-launch the serve task to rebuild with GPU support.`);
+        }
+      } catch (err) {
+        uiModule.showToast('Rebuild failed: ' + err.message);
+      } finally {
+        rebuildBtn.disabled = false;
+        rebuildBtn.textContent = _label;
+      }
+    });
+  }
+
   // Serve sort
   const serveSort = document.getElementById('serve-sort');
   if (serveSort) {
@@ -982,6 +1125,7 @@ function _wireTabEvents(body) {
 
     document.getElementById('serve-bulk-cancel')?.addEventListener('click', () => {
       selectBtn.classList.remove('active');
+      selectBtn.textContent = 'Select';  // reset label so the button doesn't stay reading "Cancel" after exit
       bulkBar.classList.add('hidden');
       document.querySelectorAll('.serve-select-cb').forEach(dot => { dot.style.display = 'none'; dot.classList.remove('selected'); });
     });
@@ -1000,6 +1144,7 @@ function _wireTabEvents(body) {
         if (item) await _deleteCachedModel(repo, item, true);
       }
       selectBtn.classList.remove('active');
+      selectBtn.textContent = 'Select';  // same reset as bulk-cancel
       bulkBar.classList.add('hidden');
       document.querySelectorAll('.serve-select-cb').forEach(dot => { dot.style.display = 'none'; dot.classList.remove('selected'); });
     });
@@ -1008,6 +1153,16 @@ function _wireTabEvents(body) {
   // Download input
   const dlBtn = document.getElementById('cookbook-dl-btn');
   const dlInput = document.getElementById('cookbook-dl-repo');
+  const dlCardToggle = document.getElementById('cookbook-download-card-toggle');
+  const dlCardBody = document.getElementById('cookbook-download-card-body');
+  const dlCardArrow = document.getElementById('cookbook-download-card-arrow');
+  if (dlCardToggle && dlCardBody) {
+    dlCardToggle.addEventListener('click', () => {
+      const isOpen = dlCardBody.style.display !== 'none';
+      dlCardBody.style.display = isOpen ? 'none' : 'block';
+      if (dlCardArrow) dlCardArrow.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(90deg)';
+    });
+  }
   if (dlBtn && dlInput) {
     function _stripHfUrl(input) {
       let repo = input.trim();
@@ -1080,6 +1235,24 @@ function _wireTabEvents(body) {
   }
 
   // Latest HF models that fit — collapsible card list
+  // Foldable Download admin-card — h2 "Download" doubles as the chevron
+  // toggle; collapses the entire card body (description + input + HF list).
+  // State persisted to localStorage so the fold sticks across reloads.
+  const dlFold = document.getElementById('cookbook-dl-tab-fold');
+  const dlFoldBody = document.getElementById('cookbook-dl-tab-fold-body');
+  const dlFoldChevron = document.getElementById('cookbook-dl-tab-chevron');
+  if (dlFold && dlFoldBody && dlFoldChevron) {
+    dlFold.addEventListener('click', () => {
+      const folded = dlFoldBody.style.display === 'none';
+      dlFoldBody.style.display = folded ? '' : 'none';
+      dlFoldChevron.textContent = folded ? '▾' : '▸';
+      // Toggle is-folded class on the h2 so the line under it only shows when
+      // the section is collapsed (the body's content normally provides
+      // separation; with no body visible, the line gives the h2 definition).
+      dlFold.classList.toggle('is-folded', !folded);
+      try { localStorage.setItem('cookbook_dl_tab_folded_v1', folded ? '0' : '1'); } catch {}
+    });
+  }
   const hfToggle = document.getElementById('cookbook-hf-latest-toggle');
   const hfArrow = document.getElementById('cookbook-hf-latest-arrow');
   const hfList = document.getElementById('cookbook-hf-latest-list');
@@ -1087,8 +1260,12 @@ function _wireTabEvents(body) {
   if (hfToggle && hfList) {
     let _loaded = false;
     // Per-server VRAM cache so we don't re-probe on every expand
-    const _vramCache = {};
-    async function _getSelectedServerVram() {
+    const _hwCache = {};
+    function _hfModelLooksAwqLike(m) {
+      const text = `${m?.repo_id || ''} ${(m?.tags || []).join(' ')}`.toLowerCase();
+      return /\b(awq|gptq|fp8|4bit|int4)\b/.test(text);
+    }
+    async function _getSelectedServerHw() {
       // Prefer the "What Fits" dropdown (the main control that shows hardware);
       // fall back to the download dropdown. This is the server the list ranks for.
       const dlSrv = document.getElementById('hwfit-server-select') || document.getElementById('hwfit-dl-server');
@@ -1105,7 +1282,7 @@ function _wireTabEvents(body) {
         }
       }
       const cacheKey = host || 'local';
-      if (_vramCache[cacheKey] !== undefined) return _vramCache[cacheKey];
+      if (_hwCache[cacheKey]) return _hwCache[cacheKey];
       // Fetch system info for this server from hwfit
       try {
         const qp = new URLSearchParams();
@@ -1115,13 +1292,13 @@ function _wireTabEvents(body) {
         const r = await fetch(`/api/hwfit/system?${qp}`);
         if (r.ok) {
           const sys = await r.json();
-          const v = sys?.gpu_vram_gb || 0;
-          _vramCache[cacheKey] = v;
-          return v;
+          const hw = { vram: sys?.gpu_vram_gb || 0, backend: String(sys?.backend || '').toLowerCase() };
+          _hwCache[cacheKey] = hw;
+          return hw;
         }
       } catch {}
-      _vramCache[cacheKey] = 0;
-      return 0;
+      _hwCache[cacheKey] = { vram: 0, backend: '' };
+      return _hwCache[cacheKey];
     }
     async function _loadLatest() {
       // Match the Dependencies loader: whirlpool spinner + text label so the
@@ -1140,7 +1317,8 @@ function _wireTabEvents(body) {
       } catch {
         hfList.innerHTML = '<div class="hwfit-loading">Scanning models…</div>';
       }
-      const vram = await _getSelectedServerVram();
+      const hwInfo = await _getSelectedServerHw();
+      const vram = hwInfo.vram || 0;
       try {
         let lastErr = '';
         const _fetchLatest = async (v) => {
@@ -1155,6 +1333,9 @@ function _wireTabEvents(body) {
         // fewer), fall back to the unfiltered trending list so something shows.
         if (!models.length && vram > 0) {
           models = await _fetchLatest(0);
+        }
+        if (['rocm', 'metal', 'mps', 'apple', 'generic', 'cpu'].includes(hwInfo.backend)) {
+          models = models.filter(m => !_hfModelLooksAwqLike(m));
         }
         if (!models.length) {
           // Distinguish "the HF API failed" from "nothing matched" so an outage
@@ -1237,9 +1418,32 @@ function _wireTabEvents(body) {
   // HF token — save on change
   const hfInput = document.getElementById('hwfit-hftoken');
   if (hfInput) {
-    hfInput.addEventListener('change', () => {
-      _envState.hfToken = hfInput.value.trim();
-      _persistEnvState();
+    hfInput.addEventListener('change', async () => {
+      const val = hfInput.value.trim();
+      _envState.hfToken = val;
+      try { await _persistEnvState(); } catch {}
+      if (val) {
+        _envState.hfTokenConfigured = true;
+        const masked = val.length > 6 ? val.slice(0, 3) + '…' + val.slice(-3) : '••••';
+        _envState.hfTokenMasked = masked;
+        hfInput.placeholder = `Stored (${masked}) - enter a new token to replace`;
+        hfInput.value = '';
+        let check = hfInput.parentNode.querySelector('.hwfit-hf-check');
+        if (!check) {
+          check = document.createElement('span');
+          check.className = 'hwfit-hf-check';
+          check.title = 'Token stored';
+          check.textContent = '✓';
+          check.style.cssText = 'font-weight:800;color:var(--green,#50fa7b);font-size:15px;line-height:1;flex-shrink:0;position:relative;top:2px;';
+          hfInput.parentNode.insertBefore(check, hfInput);
+        }
+        const flash = document.createElement('span');
+        flash.textContent = 'Saved';
+        flash.style.cssText = 'margin-left:8px;font-size:11px;color:var(--green,#50fa7b);opacity:0;transition:opacity 0.18s;flex-shrink:0;position:relative;top:1px;';
+        hfInput.parentNode.appendChild(flash);
+        requestAnimationFrame(() => { flash.style.opacity = '1'; });
+        setTimeout(() => { flash.style.opacity = '0'; setTimeout(() => flash.remove(), 220); }, 1400);
+      }
     });
   }
 }
@@ -1265,7 +1469,7 @@ export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
   html += `<span class="cookbook-server-title" style="display:flex;align-items:center;gap:6px;width:100%;font-size:13px;font-weight:600;margin-bottom:4px;">`;
   html += `${esc(_srvTitle)}`;
   html += _pIco ? `<span class="cookbook-srv-platform" title="${esc(s.platform || '')}" style="display:inline-flex;align-items:center;opacity:0.55;">${_pIco}</span>` : '';
-  html += `<span class="cookbook-srv-test-msg" style="font-size:10px;font-weight:400;opacity:0.55;max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative;top:2px;"></span>`;
+  html += `<span class="cookbook-srv-test-msg" style="font-size:10px;font-weight:400;opacity:0.55;max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative;top:1px;"></span>`;
   if (isNew) {
     // New server: Cancel (discard) sits top-right; the default toggle only makes
     // sense once the server is saved.
@@ -1339,9 +1543,14 @@ function _renderRecipes() {
   // Search group
   html += '<div class="cookbook-group" data-backend-group="Search" style="flex:0 0 auto;">';
   html += '<div class="admin-card" style="display:flex;flex-direction:column;overflow:hidden;">';
-  html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">';
-  html += '<h2 style="margin:0;padding:0;line-height:1;">Download</h2>';
+  // Foldable Download admin-card: clicking the h2 header collapses the
+  // entire card body (description + download input + HF latest section).
+  // State persisted to localStorage so the fold survives reloads.
+  const _dlTabFolded = (() => { try { return localStorage.getItem('cookbook_dl_tab_folded_v1') === '1'; } catch { return false; } })();
+  html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">';
+  html += `<h2 id="cookbook-dl-tab-fold" class="${_dlTabFolded ? 'is-folded' : ''}" style="margin:0;padding:0;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none;flex:1;">Download<span id="cookbook-dl-tab-chevron" style="display:inline-block;transition:transform 0.15s;font-size:1.1em;margin-left:8px;opacity:0.85;">${_dlTabFolded ? '▸' : '▾'}</span></h2>`;
   html += '</div>';
+  html += `<div id="cookbook-dl-tab-fold-body" style="${_dlTabFolded ? 'display:none;' : ''}">`;
   html += '<p class="memory-desc doclib-desc" style="margin-top:6px;">Download from <a href="https://huggingface.co/models" target="_blank" rel="noopener" style="color:var(--accent,var(--red));text-decoration:none;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:1px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>HuggingFace</a> by pasting model link, or download directly in the Scan section below.</p>';
   html += '<div class="hwfit-container" id="hwfit-container">';
 
@@ -1371,7 +1580,7 @@ function _renderRecipes() {
   // silently sending downloads to the wrong server. An empty selection means Local; the user
   // chooses a remote server explicitly via the dropdown.
 
-  // Download input
+  // Manual download input
   html += `<div style="margin-top:7px;margin-bottom:2px;display:flex;gap:4px;align-items:center;">`;
   if (_es.servers.length > 1) {
     html += `<select class="cookbook-field-input hwfit-dl-server" id="hwfit-dl-server" style="height:28px;position:relative;top:0px;">`;
@@ -1387,7 +1596,7 @@ function _renderRecipes() {
   html += `<button class="cookbook-btn cookbook-dl-btn" id="cookbook-dl-btn">Download</button>`;
   html += `</div>`;
   // Latest HF models that fit — collapsible card list
-  html += `<div style="margin-top:2px;position:relative;top:-8px;">`;
+  html += `<div style="margin-top:5px;position:relative;top:-3px;">`;
   html += `<div style="display:flex;gap:4px;align-items:center;">`;
   html += `<button type="button" class="memory-toolbar-btn" id="cookbook-hf-latest-toggle" style="flex:1;text-align:left;height:26px;display:flex;align-items:center;gap:6px;border-radius:4px;">`;
   html += `<span id="cookbook-hf-latest-arrow" style="display:inline-block;transition:transform 0.15s;pointer-events:none;">\u25B8</span>`;
@@ -1397,9 +1606,10 @@ function _renderRecipes() {
   html += `</div>`;
   html += `<div id="cookbook-hf-latest-list" style="display:none;margin-top:4px;max-height:320px;overflow-y:auto;flex-direction:column;gap:4px;"></div>`;
   html += `</div>`;
+  html += `</div>`;  // /#cookbook-dl-tab-fold-body (whole Download card body)
 
   // Search section
-  html += '</div></div></div>';
+  html += '</div></div></div></div>';
   html += '<div class="cookbook-group" data-backend-group="Search">';
   html += '<div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">';
   html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">';
@@ -1408,19 +1618,43 @@ function _renderRecipes() {
   html += '<p class="memory-desc doclib-desc" style="margin-top:6px;">Scans your hardware for what models you can run. Hardware is cached; hit the scan button to re-probe after changing GPUs.</p>';
   html += '<div class="hwfit-toolbar" style="margin-top:9px;">';
   html += '<select class="cookbook-field-input hwfit-usecase" id="hwfit-usecase" style="height:28px;">';
-  html += '<option value="">Type</option><option value="general">General</option><option value="coding">Coding</option>';
+  html += '<option value="general" selected>Standard</option><option value="coding">Coding</option>';
   html += '<option value="reasoning">Reasoning</option><option value="chat">Chat</option>';
   // Image tab removed — text→image gen is gone from this build (only inpaint
    // remains, which uses its own settings panel). Vision (multimodal) stays.
   html += '<option value="multimodal">Vision</option></select>';
-  html += '<input type="text" class="cookbook-field-input hwfit-search" id="hwfit-search" placeholder="Search models..." style="flex:1;" />';
-  // Quant (Q4/Q8/…) lives next to the search now.
+  // Engine sits next to the type filter so the "what category / which serving
+  // path" filters live together; Quant + Context are storage-format and budget
+  // levers, grouped to the right.
+  html += '<span class="hwfit-engine-wrap">';
+  html += '<select class="cookbook-field-input hwfit-engine" id="hwfit-engine" style="height:28px;" title="Filter by serving engine">';
+  html += '<option value="">Engine</option>';
+  html += '<option value="llamacpp">llama.cpp</option>';
+  html += '<option value="vllm">vLLM</option>';
+  html += '<option value="sglang">SGLang</option>';
+  html += '</select>';
+  html += '<span class="hwfit-help-chip hwfit-help-chip-inline hwfit-engine-help" title="Rule of thumb: GGUF on single GPU / CPU+RAM → llama.cpp (or Ollama). Safetensors on multi-GPU NVIDIA → vLLM. SGLang is a vLLM-class alternative, sometimes faster on big-MoE / long-context.">?</span>';
+  html += '</span>';
+  // Quant (Q4/Q8/…). Default is "All" so the list shows the best-scoring
+  // quant for every model instead of silently filtering to Q4.
+  html += '<span class="hwfit-quant-wrap">';
   html += '<select class="cookbook-field-input hwfit-quant" id="hwfit-quant" style="height:28px;">';
+  html += '<option value="" selected>Quant: All</option>';
   html += '<option value="Q4_K_M">Q4</option><option value="Q8_0">Q8</option>';
   html += '<option value="Q6_K">Q6</option><option value="Q5_K_M">Q5</option>';
   html += '<option value="Q3_K_M">Q3</option><option value="Q2_K">Q2</option>';
-  html += '<option value="AWQ-4bit">AWQ</option><option value="FP8">FP8</option>';
-  html += '<option value="">Native</option></select>';
+  html += '<option value="AWQ-4bit">AWQ</option><option value="FP8">FP8</option><option value="FP4">FP4</option><option value="NVFP4">NVFP4</option></select>';
+  html += '<span class="hwfit-help-chip hwfit-help-chip-inline hwfit-quant-help" title="Lower quant tiers (Q2/Q3/Q4 / AWQ-4bit) are smaller, faster, and cheaper to run, at some quality loss. Higher tiers (Q8 / FP8 / FP16 / BF16) preserve more quality but need more VRAM. “All” shows the best-scoring quant per model — pick a specific one to filter.">?</span>';
+  html += '</span>';
+  // Ctx slider — lets you target a context length for fit estimates; the
+  // hwfit ranking uses _ctxValue() to factor that into VRAM math, so
+  // dragging this re-sorts the list toward models that fit your chosen ctx.
+  html += '<label class="hwfit-ctx-control" title="Context length for fit estimates. Lower it to find more models that could fit your hardware.">';
+  html += '<span>Context</span><span class="hwfit-help-chip hwfit-help-chip-inline" title="Context length. Lower it to find more models that could fit your hardware; raise it when you need longer chats or documents.">?</span><input type="range" id="hwfit-context" min="0" max="5" step="1" value="3" />';
+  html += '<output id="hwfit-context-label">50k</output></label>';
+  // Search lives at the far right of the toolbar so the controls (Type/Quant/
+  // Engine/Context) read as a row of compact filters followed by free-text.
+  html += '<input type="text" class="cookbook-field-input hwfit-search" id="hwfit-search" placeholder="Search models..." style="flex:1;" />';
   html += '</div>';
   html += '<div class="hwfit-toolbar" style="margin-top:7px;">';
   html += '<select class="cookbook-field-input hwfit-server-select" id="hwfit-server-select" style="height:28px;min-width:88px;position:relative;top:0px;">';
@@ -1429,9 +1663,11 @@ function _renderRecipes() {
   html += '<div class="hwfit-gpu-toggles" id="hwfit-gpu-toggles"></div>';
   // Scan/refresh button (icon-only) where the quant dropdown used to sit.
   html += '<button type="button" class="hwfit-gpu-btn" id="hwfit-rescan" title="Re-scan hardware" style="flex-shrink:0;position:relative;top:-3px;left:-1px;">↻ RESCAN</button>';
-  html += '<button type="button" class="hwfit-gpu-btn hwfit-hw-manual-btn" id="hwfit-hw-manual-btn" title="Set hardware manually" style="flex-shrink:0;position:relative;top:-3px;left:-1px;">EDIT</button>';
+  html += '<button type="button" class="hwfit-gpu-btn hwfit-hw-manual-btn" id="hwfit-hw-manual-btn" title="Set hardware manually" style="flex-shrink:0;position:relative;top:-3px;left:-1px;display:inline-flex;align-items:center;gap:3px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>EDIT</button>';
+  // Sort state — the clickable column headers read/write this (pewds' original
+  // sort paradigm). Newest is reachable by clicking the Model column header.
   html += '<select class="cookbook-field-input hwfit-sort" id="hwfit-sort" style="display:none">';
-  html += '<option value="score">Score</option><option value="vram">VRAM</option>';
+  html += '<option value="fit">Fit</option><option value="score">Score</option><option value="vram">VRAM</option>';
   html += '<option value="speed">Speed</option><option value="params">Params</option>';
   html += '<option value="context">Context</option></select>';
   html += '</div>';
@@ -1447,6 +1683,16 @@ function _renderRecipes() {
   html += '</div>';
   html += '<div id="hwfit-hw-row" style="display:none;align-items:center;gap:4px;margin-top:3px;padding-top:2px;"><span style="font-size:10px;padding:2px 8px;border-radius:10px;background:color-mix(in srgb, var(--fg) 8%, transparent);color:var(--fg);opacity:0.7;white-space:nowrap;flex-shrink:0;position:relative;top:-1px;">Detected hardware</span><div class="hwfit-hw" id="hwfit-hw" style="flex:1;"></div></div>';
   html += '<div class="hwfit-list" id="hwfit-list"></div>';
+  // Footer: link to the public discussion where users can request additions
+  // to the curated model list. Sits below the list so it reads as a callout
+  // after browsing, not a header.
+  html += '<div class="hwfit-list-footer" style="margin-top:8px;padding-top:6px;border-top:1px solid color-mix(in srgb, var(--border) 50%, transparent);font-size:9.5px;opacity:0.65;text-align:right;">'
+       + 'Don\'t see a model? '
+       + '<a href="https://github.com/pewdiepie-archdaemon/odysseus/discussions/1962" target="_blank" rel="noopener" style="color:var(--accent,var(--red));text-decoration:none;display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">'
+       + 'Request it →'
+       + '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="flex-shrink:0;"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>'
+       + '</a>'
+       + '</div>';
 
   html += '</div></div>';
 
@@ -1491,6 +1737,8 @@ function _renderRecipes() {
   html += '<div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">';
   html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">';
   html += '<h2 style="margin:0;padding:0;line-height:1;">Dependencies</h2>';
+  // Rebuild llama.cpp button moved into the llama_cpp dep row (see _depRow);
+  // having it in the title polluted the section header.
   html += '<span style="font-size:10px;opacity:0.5;margin-left:auto;">Server</span>';
   html += '<select class="cookbook-field-input" id="hwfit-deps-server" style="height:28px;min-width:70px;">';
   html += _buildServerOpts(false);
@@ -1529,7 +1777,7 @@ function _renderRecipes() {
 
   // ── Servers block ───────────────────────────────────────────────────
   html += '<div class="admin-card" style="flex:0 0 auto;display:flex;flex-direction:column;">';
-  html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;margin-top:-8px;">';
+  html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;margin-top:-4px;">';
   html += '<h2 style="margin:0;padding:0;line-height:1;">Servers</h2>';
   // Reuse the calendar +New pill: spinning plus, label fades in idea uses
    // the same `.cal-add-btn-text` rules, so styling stays consistent.
@@ -1676,6 +1924,11 @@ export async function open(opts) {
   _rendered = true;
   _clearCookbookNotif();
   _renderRunningTab();
+  // Self-heal: revive any download tasks whose tmux session is still alive
+  // but were persisted as done/error (covers the "restarted server while a
+  // big multi-shard download was in flight" case — the task survived in
+  // tmux, the cookbook just lost track of it).
+  try { _selfHealStaleTasks({ oneShot: true }); } catch {}
   if (_content) {
     // Put the panel in its entering state before it becomes visible. On
     // mobile, showing first and adding the class a frame later can paint the
@@ -1794,6 +2047,7 @@ const shared = {
   _savePresets,
   _copyText,
   _persistEnvState,
+  _refreshDependencies: _fetchDependencies,
   _getGpuToggleTotal: () => _gpuToggleTotal,
   modelLogo,
   esc,

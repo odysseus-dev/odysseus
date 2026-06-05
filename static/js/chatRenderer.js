@@ -4,9 +4,11 @@
 import uiModule from './ui.js';
 import markdownModule from './markdown.js';
 import { addAITTSButton } from './tts-ai.js';
-import { providerLogo } from './providers.js';
+import { providerLogo, providerLabel } from './providers.js';
 import settingsModule from './settings.js';
 import spinnerModule from './spinner.js';
+import { bindMenuDismiss } from './escMenuStack.js';
+import { matchModelKey } from './model/matchKey.js';
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
@@ -22,6 +24,29 @@ function _safeHref(url) {
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return uiModule.esc(url);
   } catch(e) { /* invalid URL */ }
   return '#';
+}
+
+export function safeToolScreenshotSrc(raw) {
+  const src = String(raw || '').trim();
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(src)) {
+    return src;
+  }
+  return '';
+}
+
+export function safeDisplayImageSrc(raw) {
+  const src = String(raw || '').trim();
+  if (!src) return '';
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(src)) {
+    return src;
+  }
+  try {
+    const parsed = new URL(src, window.location.origin);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.href;
+    }
+  } catch (_) {}
+  return '';
 }
 
 function _makeActionBtn(className, title, text, handler) {
@@ -531,11 +556,8 @@ export function modelColor(name) {
 /** Look up model info (pricing + context) by substring match */
 export function getModelInfo(modelName) {
   if (!modelName) return null;
-  const name = modelName.toLowerCase();
-  for (const [key, info] of Object.entries(MODEL_INFO)) {
-    if (name.includes(key)) return { key, ...info };
-  }
-  return null;
+  const key = matchModelKey(modelName, Object.keys(MODEL_INFO));
+  return key ? { key, ...MODEL_INFO[key] } : null;
 }
 
 function _fmtCtx(n) {
@@ -568,7 +590,7 @@ export function applyModelColor(roleEl, modelName) {
     roleEl.style.cursor = 'pointer';
     roleEl.addEventListener('click', (e) => {
       e.stopPropagation();
-      document.querySelectorAll('.ctx-popup').forEach(p => p.remove());
+      document.querySelectorAll('.ctx-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
       const info = getModelInfo(modelName);
       const short = shortModel(modelName);
       const logoHtml = providerLogo(modelName);
@@ -578,6 +600,12 @@ export function applyModelColor(roleEl, modelName) {
       if (logoHtml) html += '<span class="role-provider-logo" style="opacity:0.7">' + logoHtml + '</span>';
       html += short + '</div>';
       html += '<div><span class="ctx-label">Model</span> ' + modelName.split('/').pop() + '</div>';
+      // Provider = the serving endpoint, distinct from the model vendor/logo
+      // (e.g. the same model via OpenRouter vs Copilot vs Anthropic direct).
+      const _epUrl = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
+        ? window.sessionModule.getCurrentEndpointUrl() : null;
+      const _provLabel = providerLabel(_epUrl);
+      if (_provLabel) html += '<div><span class="ctx-label">Provider</span> ' + uiModule.esc(_provLabel) + '</div>';
       // Show static context initially, then fetch real from server
       const _realCtx = window._realContextLengths && window._realContextLengths[modelName];
       if (_realCtx) {
@@ -626,23 +654,17 @@ export function applyModelColor(roleEl, modelName) {
       const pr = popup.getBoundingClientRect();
       if (pr.bottom > window.innerHeight - 8) popup.style.top = (rect.top - pr.height - 4) + 'px';
       if (pr.right > window.innerWidth - 8) popup.style.left = (window.innerWidth - pr.width - 8) + 'px';
-      const closePopup = (ev) => {
-        if (!popup.contains(ev.target)) { popup.remove(); document.removeEventListener('click', closePopup, true); }
-      };
-      setTimeout(() => document.addEventListener('click', closePopup, true), 0);
+      bindMenuDismiss(popup, () => popup.remove());
     });
   }
 }
 
 export function getModelCost(modelName, inputTokens, outputTokens) {
   if (!modelName) return null;
-  const name = modelName.toLowerCase();
-  for (const [key, price] of Object.entries(MODEL_PRICING)) {
-    if (name.includes(key)) {
-      return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
-    }
-  }
-  return null;
+  const key = matchModelKey(modelName, Object.keys(MODEL_PRICING));
+  if (!key) return null;
+  const price = MODEL_PRICING[key];
+  return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
 }
 
 /**
@@ -661,6 +683,12 @@ export function isLocalEndpoint(url) {
   if (!host) return true;
   if (host === 'localhost' || host === '0.0.0.0' || host === 'host.docker.internal' || host.endsWith('.local')) return true;
   if (typeof window !== 'undefined' && window.location && host === window.location.hostname) return true;
+  // A single-label hostname (no dot) is an internal/Docker service name
+  // (e.g. "nim-nano", "llamaswap", "nemotron-super-49b") or a LAN shortname —
+  // never a public API, which always needs an FQDN. Treat as local → free.
+  // (Without this, container-name endpoints get billed at cloud rates because
+  // the pricing table matches on a name substring, e.g. "nemotron".)
+  if (!host.includes('.')) return true;
   if (/^127\./.test(host)) return true;
   if (/^10\./.test(host)) return true;
   if (/^192\.168\./.test(host)) return true;
@@ -1053,12 +1081,19 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   const body = document.createElement('div');
   body.className = 'body';
 
+  const safeImageUrl = safeDisplayImageSrc(imageUrl);
+  if (!safeImageUrl) {
+    body.textContent = '[Image unavailable]';
+    wrap.appendChild(body);
+    return wrap;
+  }
+
   const img = document.createElement('img');
   img.className = 'generated-image';
   img.alt = prompt || 'Generated image';
   img.title = prompt || 'Generated image';
-  img.src = imageUrl;
-  img.addEventListener('click', () => { window.open(img.src, '_blank'); });
+  img.src = safeImageUrl;
+  img.addEventListener('click', () => { window.open(safeImageUrl, '_blank', 'noopener,noreferrer'); });
   body.appendChild(img);
 
   if (prompt) {
@@ -1213,6 +1248,17 @@ export function showWelcomeScreen() {
   const cc = document.getElementById('chat-container');
   if (ws) ws.classList.remove('hidden');
   if (cc) cc.classList.add('welcome-active');
+  // Entering the New Chat / welcome state: discard any stale draft left in the
+  // composer from the previous session so the input starts empty (issue #1343).
+  // Switching between existing sessions loads them directly and does NOT call
+  // this, so genuine drafts are not erased. Reset the autosized height and fire
+  // an `input` event so the send button + autosize listeners update.
+  const _msg = document.getElementById('message');
+  if (_msg) {
+    _msg.value = '';
+    _msg.style.height = '';
+    _msg.dispatchEvent(new Event('input', { bubbles: true }));
+  }
   // Re-trigger the L→R clip-wipe reveal on the welcome name each time the
   // welcome screen is shown (new session, deleted last session, etc.) — without
   // this, the CSS animation only fires on initial DOM insertion.
@@ -1332,12 +1378,17 @@ export function createMsgFooter(msgElement) {
     moreBtn.textContent = '\u00B7\u00B7\u00B7';
     moreBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      // Toggle overflow menu — close any existing one first
+      // Toggle overflow menu — close any existing one first (through its own
+      // dismiss so the Escape registry entry goes with it).
       const existing = document.querySelector('.msg-overflow-menu');
-      if (existing) { existing.remove(); if (existing._trigger === moreBtn) return; }
+      if (existing) {
+        if (typeof existing._dismiss === 'function') existing._dismiss(); else existing.remove();
+        if (existing._trigger === moreBtn) return;
+      }
 
       const menu = document.createElement('div');
       menu.className = 'msg-overflow-menu';
+      let closeMenu = () => menu.remove();
       overflow.forEach(a => {
         const item = document.createElement('button');
         item.className = 'msg-overflow-item';
@@ -1347,7 +1398,7 @@ export function createMsgFooter(msgElement) {
         item.addEventListener('click', (ev) => {
           ev.stopPropagation();
           _trackAction(a.id);
-          menu.remove();
+          closeMenu();
           a.handler(ev);
         });
         menu.appendChild(item);
@@ -1363,15 +1414,9 @@ export function createMsgFooter(msgElement) {
       // Keep within right edge
       const mr = menu.getBoundingClientRect();
       if (mr.right > window.innerWidth - 8) menu.style.left = (window.innerWidth - mr.width - 8) + 'px';
-      // Close on outside click
-      const close = (ev) => {
-        if (!menu.contains(ev.target) && ev.target !== moreBtn) {
-          menu.remove();
-          document.removeEventListener('click', close, true);
-        }
-      };
-      setTimeout(() => document.addEventListener('click', close, true), 0);
-    });
+      // Close on outside click or Escape. The trigger button is treated as
+      // "inside" so its own click toggles rather than double-fires.
+      closeMenu = bindMenuDismiss(menu, () => menu.remove(), (ev) => !menu.contains(ev.target) && ev.target !== moreBtn);    });
     actions.appendChild(moreBtn);
   }
 
@@ -1392,9 +1437,14 @@ export function createMsgFooter(msgElement) {
     pill.addEventListener('click', (e) => {
       e.stopPropagation();
       let detail = pill._openDetail || document.querySelector('.memory-used-detail');
-      if (detail) { detail.remove(); pill._openDetail = null; return; }
+      if (detail) {
+        if (typeof detail._dismiss === 'function') detail._dismiss();
+        else { detail.remove(); pill._openDetail = null; }
+        return;
+      }
       detail = document.createElement('div');
       detail.className = 'memory-used-detail';
+      let closeDetail = () => { detail.remove(); pill._openDetail = null; };
       mems.forEach(m => {
         const row = document.createElement('div');
         row.className = 'memory-used-row';
@@ -1410,8 +1460,7 @@ export function createMsgFooter(msgElement) {
         row.appendChild(text);
         row.addEventListener('click', (ev) => {
           ev.stopPropagation();
-          detail.remove();
-          pill._openDetail = null;
+          closeDetail();
           const memModal = document.getElementById('memory-modal');
           if (memModal) memModal.classList.remove('hidden');
         });
@@ -1435,15 +1484,8 @@ export function createMsgFooter(msgElement) {
       if (parseFloat(detail.style.left) < 8) detail.style.left = '8px';
       detail.style.visibility = '';
       pill._openDetail = detail;
-      const close = (ev) => {
-        if (!detail.contains(ev.target) && ev.target !== pill) {
-          detail.remove();
-          pill._openDetail = null;
-          document.removeEventListener('click', close, true);
-        }
-      };
-      setTimeout(() => document.addEventListener('click', close, true), 0);
-    });
+      // Close on outside click or Escape (pill click toggles, so it's inside).
+      closeDetail = bindMenuDismiss(detail, () => { detail.remove(); pill._openDetail = null; }, (ev) => !detail.contains(ev.target) && ev.target !== pill);    });
 
     footer.appendChild(pill);
   }
@@ -1528,10 +1570,14 @@ export function createUserMsgFooter(msgElement) {
     moreBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const existing = document.querySelector('.msg-overflow-menu');
-      if (existing) { existing.remove(); if (existing._trigger === moreBtn) return; }
+      if (existing) {
+        if (typeof existing._dismiss === 'function') existing._dismiss(); else existing.remove();
+        if (existing._trigger === moreBtn) return;
+      }
 
       const menu = document.createElement('div');
       menu.className = 'msg-overflow-menu';
+      let closeMenu = () => menu.remove();
       overflow.forEach(a => {
         const item = document.createElement('button');
         item.className = 'msg-overflow-item';
@@ -1541,7 +1587,7 @@ export function createUserMsgFooter(msgElement) {
         item.addEventListener('click', (ev) => {
           ev.stopPropagation();
           _trackUserAction(a.id);
-          menu.remove();
+          closeMenu();
           a.handler(ev);
         });
         menu.appendChild(item);
@@ -1554,14 +1600,7 @@ export function createUserMsgFooter(msgElement) {
       if (parseFloat(menu.style.top) < 8) menu.style.top = (btnRect.bottom + 4) + 'px';
       const mr = menu.getBoundingClientRect();
       if (mr.right > window.innerWidth - 8) menu.style.left = (window.innerWidth - mr.width - 8) + 'px';
-      const close = (ev) => {
-        if (!menu.contains(ev.target) && ev.target !== moreBtn) {
-          menu.remove();
-          document.removeEventListener('click', close, true);
-        }
-      };
-      setTimeout(() => document.addEventListener('click', close, true), 0);
-    });
+      closeMenu = bindMenuDismiss(menu, () => menu.remove(), (ev) => !menu.contains(ev.target) && ev.target !== moreBtn);    });
     actions.appendChild(moreBtn);
   }
 
@@ -1625,7 +1664,7 @@ export function displayMetrics(messageElement, metrics) {
   metricsDivider.style.pointerEvents = 'none';
   metricsContainer.addEventListener('click', (e) => {
     e.stopPropagation();
-    document.querySelectorAll('.ctx-popup').forEach(p => p.remove());
+    document.querySelectorAll('.ctx-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
 
     const costStr = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : 'n/a';
     const speedStr = tps != null && tps !== 'undefined' ? `${tps} tok/s` : 'n/a';
@@ -1685,13 +1724,7 @@ export function displayMetrics(messageElement, metrics) {
     if (parseFloat(popup.style.left) < 8) popup.style.left = '8px';
     popup.style.visibility = '';
 
-    const closePopup = (ev) => {
-      if (!popup.contains(ev.target)) {
-        popup.remove();
-        document.removeEventListener('click', closePopup, true);
-      }
-    };
-    setTimeout(() => document.addEventListener('click', closePopup, true), 0);
+    bindMenuDismiss(popup, () => popup.remove());
   });
 
   // Store real context length for model info popup
@@ -1722,7 +1755,7 @@ export function displayMetrics(messageElement, metrics) {
 
     ctxRing.addEventListener('click', (e) => {
       e.stopPropagation();
-      document.querySelectorAll('.ctx-detail-popup').forEach(p => p.remove());
+      document.querySelectorAll('.ctx-detail-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
 
       const usedTokens = inputTokens || 0;
       const totalCtx = ctxLen || 0;
@@ -1826,13 +1859,7 @@ export function displayMetrics(messageElement, metrics) {
       }
       popup.style.visibility = '';
 
-      const closePopup = (ev) => {
-        if (!popup.contains(ev.target) && ev.target !== ctxRing && !ctxRing.contains(ev.target)) {
-          popup.remove();
-          document.removeEventListener('click', closePopup, true);
-        }
-      };
-      setTimeout(() => document.addEventListener('click', closePopup, true), 0);
+      bindMenuDismiss(popup, () => popup.remove(), (ev) => !popup.contains(ev.target) && ev.target !== ctxRing && !ctxRing.contains(ev.target));
     });
   }
 
@@ -1956,13 +1983,37 @@ export function addMessage(role, content, modelName, metadata) {
             if (ev.output && ev.output.trim()) {
               outHtml = `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(ev.output)}</pre></details>`;
             }
-            if (ev.screenshot) {
-              outHtml += `<details class="agent-tool-output"><summary>Screenshot</summary><img src="${esc(ev.screenshot)}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" /></details>`;
+            const screenshotSrc = safeToolScreenshotSrc(ev.screenshot);
+            if (screenshotSrc) {
+              outHtml += `<details class="agent-tool-output"><summary>Screenshot</summary><img src="${esc(screenshotSrc)}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" /></details>`;
+            }
+            // File-write/edit diff (persisted in the tool event) \u2014 re-render it
+            // so it survives reload, matching the live stream.
+            let evDiffHtml = '';
+            if (ev.diff && ev.diff.text) {
+              const d = ev.diff;
+              const stat = [
+                d.new_file ? '<span class="diff-stat-new">new</span>' : '',
+                d.added ? `<span class="diff-stat-add">+${d.added}</span>` : '',
+                d.removed ? `<span class="diff-stat-del">\u2212${d.removed}</span>` : '',
+              ].filter(Boolean).join(' ');
+              const rows = d.text.split('\n').map(line => {
+                let cls = 'diff-ctx', text = line;
+                if (line.startsWith('+++') || line.startsWith('---')) cls = 'diff-meta';
+                else if (line.startsWith('@@')) cls = 'diff-hunk';
+                // Drop the leading diff marker (+/-/space) — colour encodes add/del.
+                else if (line.startsWith('+')) { cls = 'diff-add'; text = line.slice(1); }
+                else if (line.startsWith('-')) { cls = 'diff-del'; text = line.slice(1); }
+                else if (line.startsWith(' ')) { text = line.slice(1); }
+                return `<span class="${cls}">${esc(text) || '&nbsp;'}</span>`;
+              }).join('');  // spans are display:block \u2014 a literal \n would double-space
+              evDiffHtml = `<details class="agent-tool-output agent-tool-diff"><summary><span class="diff-file">${esc(d.file || 'diff')}</span> <span class="diff-summary-stats">${stat}</span></summary><pre class="diff-pre">${rows}</pre></details>`;
             }
             const node = document.createElement('div');
             node.className = 'agent-thread-node' + (ok ? '' : ' error');
-            const evCmdHtml = ev.command ? `<pre class="agent-thread-cmd">${esc(ev.command)}</pre>` : '';
-            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(ev.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}</div>`;
+            // Hide the raw JSON command when a diff says it better (same as live).
+            const evCmdHtml = (ev.command && !(ev.diff && ev.diff.text)) ? `<pre class="agent-thread-cmd">${esc(ev.command)}</pre>` : '';
+            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(ev.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}${evDiffHtml}</div>`;
             // Click handling is delegated globally \u2014 see chat.js init.
             threadWrap.appendChild(node);
           }
@@ -2288,6 +2339,8 @@ const chatRenderer = {
   updateSessionCostUI,
   roleTimestamp,
   stripToolBlocks,
+  safeToolScreenshotSrc,
+  safeDisplayImageSrc,
   buildSourcesBox,
   buildFindingsBox,
   appendReportButton,

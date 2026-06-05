@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -12,7 +13,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from src.endpoint_resolver import resolve_endpoint
-from src.auth_helpers import get_current_user
+from src.auth_helpers import _auth_disabled, get_current_user
+
+_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +48,30 @@ def _resolve_research_endpoint(sess) -> tuple:
     return url, model, headers
 
 
+def _owned_enabled_endpoint(db, owner, endpoint_id=None):
+    """An enabled ModelEndpoint VISIBLE to `owner` (their own rows + legacy
+    null-owner "shared" rows), optionally narrowed to a specific endpoint_id;
+    None if nothing visible matches.
+
+    Owner-scoped on purpose. ModelEndpoint is per-user (core/database.py: non-null
+    owner = private, "the model picker only shows the endpoint to that user") and
+    holds a decrypted `api_key`. /api/research/start feeds the resolved row's
+    api_key + base_url into research_handler.start_research(llm_endpoint=,
+    llm_headers=), so an UNSCOPED lookup — by the caller-supplied endpoint_id, or
+    via the bare first-enabled fallback — would let a research-privileged user
+    spend ANOTHER user's API key/quota and reach whatever internal base_url they
+    configured. Mirrors webhook_routes._first_enabled_endpoint and
+    session_routes._owned_endpoint. A null/empty owner is a no-op (single-user /
+    legacy mode).
+    """
+    from src.database import ModelEndpoint
+    from src.auth_helpers import owner_filter
+    q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
+    if endpoint_id:
+        q = q.filter(ModelEndpoint.id == endpoint_id)
+    return owner_filter(q, ModelEndpoint, owner).first()
+
+
 def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     router = APIRouter(tags=["research"])
 
@@ -55,8 +82,14 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         verify the session belongs to this user."""
         user = get_current_user(request)
         if not user:
+            if _auth_disabled():
+                return ""
             raise HTTPException(401, "Not authenticated")
         return user
+
+    def _validate_session_id(session_id: str) -> None:
+        if not _SESSION_ID_RE.fullmatch(session_id):
+            raise HTTPException(400, "Invalid session ID format")
 
     def _owns_in_memory(session_id: str, user: str) -> bool:
         """Ownership check for an in-flight (in-memory) research task.
@@ -95,6 +128,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     @router.get("/api/research/status/{session_id}")
     async def research_status(session_id: str, request: Request):
         user = _require_user(request)
+        _validate_session_id(session_id)
         if not _owns_in_memory(session_id, user):
             raise HTTPException(404, "No research found for this session")
         status = research_handler.get_status(session_id)
@@ -105,6 +139,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     @router.post("/api/research/cancel/{session_id}")
     async def research_cancel(session_id: str, request: Request):
         user = _require_user(request)
+        _validate_session_id(session_id)
         if not _owns_in_memory(session_id, user):
             raise HTTPException(404, "No research found for this session")
         cancelled = research_handler.cancel_research(session_id)
@@ -113,6 +148,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     @router.post("/api/research/result/{session_id}")
     async def research_result(session_id: str, request: Request):
         user = _require_user(request)
+        _validate_session_id(session_id)
         if not _owns_in_memory(session_id, user):
             raise HTTPException(404, "No research result available")
         result = research_handler.get_result(session_id)
@@ -140,6 +176,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     async def research_report(session_id: str, request: Request):
         """Serve the visual HTML report for a completed research session."""
         user = _require_user(request)
+        _validate_session_id(session_id)
         _assert_owns_research(session_id, user)
         logger.info(f"Visual report requested for session {session_id}")
         try:
@@ -160,6 +197,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         """Mark an image URL as hidden for this research's visual report.
         Persisted to the research JSON so subsequent /report renders skip it."""
         user = _require_user(request)
+        _validate_session_id(session_id)
         _assert_owns_research(session_id, user)
         ok = research_handler.hide_image(session_id, body.url)
         if not ok:
@@ -170,6 +208,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     async def research_unhide_images(session_id: str, request: Request):
         """Clear the hidden-images list for a research session."""
         user = _require_user(request)
+        _validate_session_id(session_id)
         _assert_owns_research(session_id, user)
         ok = research_handler.unhide_all_images(session_id)
         if not ok:
@@ -235,6 +274,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         """Return the full JSON for a single research result — sources,
         summary, stats — used by the Library preview panel."""
         user = _require_user(request)
+        _validate_session_id(session_id)
         path = Path("data/deep_research") / f"{session_id}.json"
         if not path.exists():
             raise HTTPException(404, "Research not found")
@@ -251,6 +291,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     async def research_archive(session_id: str, request: Request, archived: bool = Query(True)):
         """Soft-archive / restore a research report (sets `archived` in its JSON)."""
         user = _require_user(request)
+        _validate_session_id(session_id)
         path = Path("data/deep_research") / f"{session_id}.json"
         if not path.exists():
             raise HTTPException(404, "Research not found")
@@ -270,6 +311,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     async def research_delete(session_id: str, request: Request):
         """Delete a research result from disk."""
         user = _require_user(request)
+        _validate_session_id(session_id)
         data_dir = Path("data/deep_research")
         json_path = data_dir / f"{session_id}.json"
         deleted = False
@@ -299,7 +341,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         endpoint_id: Optional[str] = None
         model: Optional[str] = None
         max_time: int = Field(default=300, ge=60, le=1800)
-        extraction_timeout: Optional[int] = Field(default=None, ge=15, le=600)
+        extraction_timeout: Optional[int] = Field(default=None, ge=15, le=3600)
         extraction_concurrency: Optional[int] = Field(default=None, ge=1, le=12)
         category: Optional[str] = None
 
@@ -326,14 +368,13 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
 
         if body.endpoint_id:
             from src.database import SessionLocal
-            from src.database import ModelEndpoint
             from src.endpoint_resolver import normalize_base, build_chat_url, build_headers
             db = SessionLocal()
             try:
-                ep = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.id == body.endpoint_id,
-                    ModelEndpoint.is_enabled == True,
-                ).first()
+                # Owner-scoped: never resolve another user's private endpoint
+                # (and its decrypted api_key / internal base_url). A scoped miss
+                # reads as 404 so the endpoint's existence isn't revealed.
+                ep = _owned_enabled_endpoint(db, user, body.endpoint_id)
                 if not ep:
                     raise HTTPException(404, "Endpoint not found or disabled")
                 base = normalize_base(ep.base_url)
@@ -364,13 +405,14 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                 ep_url, ep_model, ep_headers = resolve_endpoint("chat")
             if not ep_url:
                 from src.database import SessionLocal
-                from src.database import ModelEndpoint
                 from src.endpoint_resolver import normalize_base, build_chat_url, build_headers
                 db = SessionLocal()
                 try:
-                    ep = db.query(ModelEndpoint).filter(
-                        ModelEndpoint.is_enabled == True,
-                    ).first()
+                    # Owner-scoped first-enabled fallback: the caller's own rows
+                    # + legacy null-owner shared rows only — never borrow another
+                    # user's private endpoint/api_key. Same fix as the
+                    # /api/v1/chat fallback (webhook_routes._first_enabled_endpoint).
+                    ep = _owned_enabled_endpoint(db, user)
                     if ep:
                         base = normalize_base(ep.base_url)
                         ep_url = build_chat_url(base)
@@ -413,6 +455,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     async def research_stream(session_id: str, request: Request):
         """SSE stream of research progress events."""
         user = _require_user(request)
+        _validate_session_id(session_id)
         if not _owns_in_memory(session_id, user):
             raise HTTPException(404, "No research found for this session")
         async def _generate():
@@ -446,6 +489,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     async def research_result_peek(session_id: str, request: Request):
         """Get research result without clearing it (for panel use)."""
         user = _require_user(request)
+        _validate_session_id(session_id)
         if not _owns_in_memory(session_id, user):
             raise HTTPException(404, "No research found for this session")
         result = research_handler.get_result(session_id)
@@ -474,7 +518,14 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         injects a single system message containing the report and sources so
         the user can ask follow-up questions in a clean conversation.
         """
-        _require_user(request)
+        user = _require_user(request)
+        _validate_session_id(session_id)
+        # SECURITY: gate on ownership before reading the persisted research —
+        # otherwise any authenticated user could spin off (and thereby read)
+        # another user's report by guessing its session ID. Mirrors every other
+        # endpoint in this file (see result_peek above).
+        if not _owns_in_memory(session_id, user):
+            raise HTTPException(404, "No research found for this session")
         if session_manager is None:
             raise HTTPException(500, "session_manager not configured")
 
@@ -555,7 +606,6 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
 
         # Create new session
         new_sid = str(uuid.uuid4())
-        user = get_current_user(request)
 
         title_query = (query or "research").strip()
         if len(title_query) > 60:

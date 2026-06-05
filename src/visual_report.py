@@ -19,12 +19,32 @@ import re
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
+from bs4 import BeautifulSoup
+
 from src.research_utils import strip_thinking
 from urllib.parse import urlparse
 
 import markdown
+import nh3
 
 logger = logging.getLogger(__name__)
+
+# Tags/attributes permitted in rendered research-report HTML. Starts from nh3's
+# safe defaults (which drop <script>, inline event handlers, and javascript:
+# URLs) and adds back only the formatting the report itself emits: the
+# collapsible raw-findings block (<details>/<summary>), heading anchors for the
+# table of contents (id), codehilite classes, table alignment, and the
+# target/rel that _md_to_html puts on external links.
+_REPORT_ALLOWED_TAGS = set(nh3.ALLOWED_TAGS) | {"details", "summary"}
+_REPORT_ALLOWED_ATTRS = {k: set(v) for k, v in nh3.ALLOWED_ATTRIBUTES.items()}
+for _h in ("h1", "h2", "h3", "h4", "h5", "h6"):
+    _REPORT_ALLOWED_ATTRS.setdefault(_h, set()).add("id")
+for _t in ("span", "code", "pre", "div", "table", "td", "th"):
+    _REPORT_ALLOWED_ATTRS.setdefault(_t, set()).add("class")
+for _t in ("td", "th"):
+    _REPORT_ALLOWED_ATTRS.setdefault(_t, set()).add("align")
+_REPORT_ALLOWED_ATTRS.setdefault("a", set()).update({"href", "title", "target", "rel"})
+_REPORT_ALLOWED_ATTRS.setdefault("img", set()).update({"src", "alt", "title"})
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -35,6 +55,8 @@ def _autolink_urls(md_text: str) -> str:
 
     Skips URLs already inside markdown link syntax [text](url).
     """
+    if not isinstance(md_text, str):
+        return md_text
     # Match bare URLs not already inside ](...)
     return re.sub(
         r'(?<!\]\()(?<!\()(https?://[^\s\)<>]+)',
@@ -44,7 +66,14 @@ def _autolink_urls(md_text: str) -> str:
 
 
 def _md_to_html(md_text: str) -> str:
-    """Convert markdown to HTML with common extensions."""
+    """Convert markdown to HTML with common extensions.
+
+    Research-report markdown is assembled from LLM output over crawled web
+    pages (untrusted content), and report pages are served under a relaxed
+    `script-src 'unsafe-inline'` CSP. python-markdown passes raw HTML through
+    verbatim, so the rendered output is allowlist-sanitized to strip any
+    <script>/inline-event-handler/javascript: markup before it reaches the page.
+    """
     md_text = _autolink_urls(md_text)
     result = markdown.markdown(
         md_text,
@@ -60,16 +89,38 @@ def _md_to_html(md_text: str) -> str:
         r'<a target="_blank" rel="noopener noreferrer" href="\1',
         result,
     )
+    # Sanitize: report content is untrusted and the report CSP allows inline
+    # scripts, so strip active content while keeping the formatting above.
+    result = nh3.clean(
+        result,
+        tags=_REPORT_ALLOWED_TAGS,
+        attributes=_REPORT_ALLOWED_ATTRS,
+        link_rel=None,
+    )
     return result
 
 
 def _extract_headings(md_text: str) -> List[Dict[str, str]]:
     """Pull h2/h3 headings from markdown for table of contents."""
+    if not isinstance(md_text, str):
+        return []
     headings = []
     seen_slugs: Dict[str, int] = {}
 
+    def _plain_heading_text(text: str) -> str:
+        text = text.strip().rstrip("#").strip()
+        text = re.sub(r'!\[([^\]]*)\]\([^)]+\)', r'\1', text)
+        text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+        text = re.sub(r'\[([^\]]+)\]\[[^\]]+\]', r'\1', text)
+        text = re.sub(r'<[^>]+>', '', text)
+        text = re.sub(r'[`*_~]+', '', text)
+        text = html.unescape(text)
+        return re.sub(r'\s+', ' ', text).strip()
+
     def _make_slug(text: str) -> str:
         slug = re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')
+        if not slug:
+            slug = "section"
         if slug in seen_slugs:
             seen_slugs[slug] += 1
             slug = f"{slug}-{seen_slugs[slug]}"
@@ -79,14 +130,41 @@ def _extract_headings(md_text: str) -> List[Dict[str, str]]:
 
     for m in re.finditer(r'^(#{2,3})\s+(.+)$', md_text, re.MULTILINE):
         level = len(m.group(1))
-        text = m.group(2).strip()
+        text = _plain_heading_text(m.group(2))
+        if not text:
+            continue
         headings.append({"level": level, "text": text, "slug": _make_slug(text)})
     if not headings:
         for m in re.finditer(r'^\*\*([^*]+)\*\*\s*$', md_text, re.MULTILINE):
-            text = m.group(1).strip().rstrip(':')
+            text = _plain_heading_text(m.group(1)).rstrip(':')
             if 3 < len(text) < 80:
                 headings.append({"level": 2, "text": text, "slug": _make_slug(text)})
     return headings
+
+
+def _apply_heading_ids(report_html: str, headings: List[Dict[str, str]]) -> str:
+    """Force rendered h2/h3 IDs to match the generated sidebar links."""
+    if not headings:
+        return report_html
+
+    soup = BeautifulSoup(report_html, "html.parser")
+    rendered_headings = soup.find_all(["h2", "h3"])
+    for element, heading in zip(rendered_headings, headings):
+        expected_name = f"h{heading['level']}"
+        if element.name != expected_name:
+            logger.debug(
+                "Visual report heading level mismatch: rendered %s for TOC %s",
+                element.name,
+                expected_name,
+            )
+        element["id"] = heading["slug"]
+    if len(rendered_headings) != len(headings):
+        logger.debug(
+            "Visual report heading count mismatch: rendered=%s toc=%s",
+            len(rendered_headings),
+            len(headings),
+        )
+    return str(soup)
 
 
 # Overlay buttons shown on each image: reroll (swap for the next unused
@@ -1618,6 +1696,20 @@ def _extract_report_title(markdown_text: str, fallback: str):
     return fallback, markdown_text
 
 
+_ICON_LOGO_RE = re.compile(r'/(icon|logo|favicon)([._/-]|$)', re.IGNORECASE)
+
+
+def _is_icon_or_logo_url(url: str) -> bool:
+    """True if a URL path points at an icon/logo/favicon asset.
+
+    Matches the icon/logo/favicon token only at a path-segment or basename
+    boundary, so a real photo whose slug merely CONTAINS the word (e.g.
+    /iconic-moment.jpg, /logos-history.png) is no longer dropped, while
+    /icon.png, /logo.svg and /favicon.ico still are.
+    """
+    return bool(_ICON_LOGO_RE.search(url or ""))
+
+
 def generate_visual_report(
     question: str,
     report_markdown: str,
@@ -1650,13 +1742,8 @@ def generate_visual_report(
 
     report_html = _md_to_html(report_markdown)
 
-    # Add id anchors to h2/h3 for TOC linking
     headings = _extract_headings(report_markdown)
-    for h in headings:
-        tag = f"h{h['level']}"
-        pattern = rf'(<{tag}>)(.*?{re.escape(html.escape(h["text"]))}.*?</{tag}>)'
-        replacement = rf'<{tag} id="{h["slug"]}">\2'
-        report_html = re.sub(pattern, replacement, report_html, count=1)
+    report_html = _apply_heading_ids(report_html, headings)
 
     # Collect all OG images from sources (skip icons, tiny images, known junk)
     _IMAGE_BLOCKLIST = {
@@ -1671,9 +1758,7 @@ def generate_visual_report(
             and img not in hidden_images_set
             and not img.endswith((".svg", ".ico", ".gif"))
             and not any(b in img for b in _IMAGE_BLOCKLIST)
-            and "/icon" not in img.lower()
-            and "/logo" not in img.lower()
-            and "/favicon" not in img.lower()):
+            and not _is_icon_or_logo_url(img)):
             _seen_images.add(img)
             all_images.append(img)
 
@@ -1812,7 +1897,7 @@ def generate_visual_report(
         restore_btn_html=restore_btn_html,
         timestamp=timestamp,
         category_css=_category_css(category),
-        body_class=f"category-{category}" if category else "",
+        body_class=f"category-{html.escape(str(category))}" if category else "",
         session_id_js=json_dumps_str(session_id or ""),
         spare_images_js=_json_for_script(spare_images),
     )

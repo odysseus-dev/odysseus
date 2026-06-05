@@ -69,11 +69,17 @@ def _parse_dt(s: str) -> datetime:
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 
+def _calendar_name(ev: "CalendarEvent") -> str:
+    cal = getattr(ev, "calendar", None)
+    name = getattr(cal, "name", "") if cal else ""
+    return name if isinstance(name, str) else ""
+
+
 def _serialize_event(ev: "CalendarEvent") -> dict:
     return {
         "uid": ev.uid,
         "calendar_id": ev.calendar_id,
-        "calendar_name": ev.calendar.name if ev.calendar else "",
+        "calendar_name": _calendar_name(ev),
         "summary": ev.summary,
         "description": ev.description or "",
         "location": ev.location or "",

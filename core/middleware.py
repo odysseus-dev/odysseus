@@ -27,7 +27,8 @@ def require_admin(request: Request):
     # (b) the auth middleware already validated the token and stamped
     #     request.state.current_user = "internal-tool".
     try:
-        if request.headers.get(INTERNAL_TOOL_HEADER) == INTERNAL_TOOL_TOKEN:
+        hdr = request.headers.get(INTERNAL_TOOL_HEADER)
+        if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
             return
         if getattr(request.state, "current_user", None) == "internal-tool":
             return

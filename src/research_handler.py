@@ -30,6 +30,24 @@ def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, n))
 
 
+def _format_probe_failure(model: str, exc: Exception) -> str:
+    """Turn a failed research model probe into a user-facing message."""
+    detail = getattr(exc, "detail", None)
+    status = getattr(exc, "status_code", None)
+    err = str(detail if detail is not None else exc).strip()
+
+    if status in {401, 403} or "401" in err or "API key" in err or "Unauthorized" in err:
+        return f"Model '{model}' requires an API key. Check your endpoint configuration."
+
+    if status and err:
+        return f"Model '{model}' probe failed: {err}"
+
+    if err:
+        return f"Cannot reach model '{model}' — {err}"
+
+    return f"Cannot reach model '{model}' — check that the endpoint is running and accessible."
+
+
 class ResearchHandler:
     """Handles research service operations with iterative deep research."""
 
@@ -69,8 +87,40 @@ class ResearchHandler:
         """
         # Build conversation context from history
         history = getattr(sess, 'history', [])
+
+        # A bare affirmation ("yes", "ok", "go ahead") is the user accepting the
+        # clarifying-question round, NOT a research topic — researching the word
+        # "yes" is the classic failure here. When synthesis can't run or fails,
+        # fall back to the earliest substantive user message (the original ask)
+        # rather than the literal follow-up.
+        #
+        # Match on an explicit affirmation/continuation phrase only (plus the
+        # empty/punctuation-only case). We deliberately do NOT use a length
+        # heuristic: a short answer like "UK", "C++", or "Rust" is a real topic
+        # in a clarification flow and must be left untouched.
+        _AFFIRMATIONS = {
+            "yes", "y", "yeah", "yep", "yup", "sure", "sure thing", "ok", "okay",
+            "k", "kk", "go", "go ahead", "go for it", "do it", "please",
+            "yes please", "sounds good", "continue", "proceed", "lets go",
+            "let's go", "yes go ahead",
+        }
+
+        def _normalize(text: str) -> str:
+            return (text or "").strip().lower().strip("!.? ")
+
+        def _fallback() -> str:
+            normalized = _normalize(latest_message)
+            if normalized and normalized not in _AFFIRMATIONS:
+                return latest_message  # short or long, it's a real topic
+            # Affirmation, or empty/punctuation-only: use the original ask.
+            for m in history:
+                c = (m.content or "").strip()
+                if m.role == "user" and c and _normalize(c) not in _AFFIRMATIONS:
+                    return c
+            return latest_message
+
         if len(history) <= 1:
-            return latest_message  # No conversation to synthesize
+            return _fallback()  # No conversation to synthesize
 
         # Take last 6 messages max for context
         recent = history[-6:]
@@ -104,17 +154,17 @@ class ResearchHandler:
         except Exception as e:
             logger.warning(f"Query synthesis failed: {e}")
 
-        return latest_message  # Fallback
+        return _fallback()
 
     async def generate_plan(
         self, query: str, llm_endpoint: str, llm_model: str, llm_headers: dict = None,
     ) -> Optional[dict]:
         """Generate a research plan for user review before starting research."""
         try:
-            from src.deep_research import RESEARCH_PLAN_PROMPT
+            from src.deep_research import RESEARCH_PLAN_PROMPT, current_date_context
             from src.llm_core import llm_call_async
 
-            prompt = RESEARCH_PLAN_PROMPT.format(question=query)
+            prompt = current_date_context() + RESEARCH_PLAN_PROMPT.format(question=query)
             response = await llm_call_async(
                 url=llm_endpoint,
                 model=llm_model,
@@ -164,7 +214,7 @@ class ResearchHandler:
         llm_endpoint: str,
         llm_model: str,
         max_time: int = 300,
-        hard_timeout: int = 600,
+        hard_timeout: int = None,
         llm_headers: dict = None,
         on_complete: callable = None,
         prior_report: str = "",
@@ -182,6 +232,28 @@ class ResearchHandler:
         max_rounds is the safety cap; the AI's _should_stop decision (after
         min_rounds) terminates the loop earlier in normal operation.
         """
+        # Resolve the hard wall-clock timeout from settings when the caller
+        # didn't pin one. Local / edge models routinely need more than the
+        # old 600s default to finish a deep-research synthesis. A setting of
+        # 0 disables the cap entirely (unlimited run); any other value is
+        # bounded to [60, 86400] so a misconfigured settings.json can't
+        # explode into a multi-day hang.
+        if hard_timeout is None:
+            from src.settings import get_setting
+            try:
+                raw_timeout = int(get_setting("research_run_timeout_seconds", 1800))
+            except (TypeError, ValueError):
+                raw_timeout = 1800
+            if raw_timeout <= 0:
+                hard_timeout = None  # 0 = no wall-clock cap (asyncio.wait_for timeout=None)
+            else:
+                hard_timeout = _bounded_int(
+                    raw_timeout,
+                    default=1800,
+                    minimum=60,
+                    maximum=86400,
+                )
+
         # Cancel any existing research for this session
         if session_id in self._active_tasks:
             existing = self._active_tasks[session_id]
@@ -389,6 +461,8 @@ class ResearchHandler:
         seen = set()
         sources = []
         for f in findings:
+            if not isinstance(f, dict):
+                continue
             url = f.get("url", "")
             title = f.get("title", "") or url
             summary = f.get("summary", "") or f.get("evidence", "")
@@ -407,6 +481,8 @@ class ResearchHandler:
         try:
             items = []
             for f in findings:
+                if not isinstance(f, dict):
+                    continue
                 url = f.get("url", "")
                 title = f.get("title", "") or "Untitled"
                 summary = f.get("summary", "")
@@ -580,14 +656,7 @@ class ResearchHandler:
             logger.info(f"Endpoint probe OK: {model}")
         except Exception as e:
             logger.error(f"Probe failed for {model}: {e}")
-            err = str(e)
-            if "401" in err or "API key" in err or "Unauthorized" in err:
-                raise RuntimeError(
-                    f"Model '{model}' requires an API key. Check your endpoint configuration."
-                ) from e
-            raise RuntimeError(
-                f"Cannot reach model '{model}' — check that the endpoint is running and accessible."
-            ) from e
+            raise RuntimeError(_format_probe_failure(model, e)) from e
 
     async def call_research_service(
         self,
@@ -645,13 +714,25 @@ class ResearchHandler:
                 extraction_timeout if extraction_timeout is not None else get_setting("research_extraction_timeout_seconds", 90),
                 default=90,
                 minimum=15,
-                maximum=600,
+                maximum=3600,
             )
             _extraction_concurrency = _bounded_int(
                 extraction_concurrency if extraction_concurrency is not None else get_setting("research_extraction_concurrency", 3),
                 default=3,
                 minimum=1,
                 maximum=12,
+            )
+            _planning_timeout = _bounded_int(
+                get_setting("research_planning_timeout_seconds", _extraction_timeout),
+                default=_extraction_timeout,
+                minimum=15,
+                maximum=3600,
+            )
+            _query_timeout = _bounded_int(
+                get_setting("research_query_timeout_seconds", _extraction_timeout),
+                default=_extraction_timeout,
+                minimum=15,
+                maximum=3600,
             )
 
             researcher = DeepResearcher(
@@ -663,6 +744,8 @@ class ResearchHandler:
                 max_time=max_time,
                 max_report_tokens=_max_report_tokens,
                 extraction_timeout=_extraction_timeout,
+                planning_timeout=_planning_timeout,
+                query_timeout=_query_timeout,
                 extraction_concurrency=_extraction_concurrency,
                 progress_callback=progress_callback,
                 search_provider=search_provider,
@@ -706,7 +789,7 @@ class ResearchHandler:
             try:
                 import asyncio
                 logger.info("Falling back to legacy ResearchOrchestrator...")
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 result = await loop.run_in_executor(
                     None, self._legacy_engine.start_research, query, max_time
                 )

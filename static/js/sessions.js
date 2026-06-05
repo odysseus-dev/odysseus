@@ -78,6 +78,42 @@ function _deselectCurrentSession(sid) {
   if (window._updateSendBtnIcon) window._updateSendBtnIcon();
 }
 
+function _removeSessionFromLocalState(sid) {
+  if (!sid) return;
+  const id = String(sid);
+  sessions = sessions.filter(s => String(s.id) !== id);
+  _selectedIds.delete(id);
+  try {
+    const savedOrder = Storage.get('session-order');
+    if (savedOrder) {
+      const orderIds = JSON.parse(savedOrder);
+      if (Array.isArray(orderIds) && orderIds.some(x => String(x) === id)) {
+        Storage.set('session-order', JSON.stringify(orderIds.filter(x => String(x) !== id)));
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to prune deleted session order:', e);
+  }
+  document.querySelectorAll('.list-item[data-session-id]').forEach(el => {
+    if (String(el.dataset.sessionId) === id) el.remove();
+  });
+  _deselectCurrentSession(id);
+}
+
+function _normalizeSessionsList(fetched) {
+  if (!Array.isArray(fetched)) return [];
+  const seen = new Set();
+  const unique = [];
+  for (const session of fetched) {
+    if (!session || session.id == null) continue;
+    const id = String(session.id);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    unique.push(session);
+  }
+  return unique;
+}
+
 // Initialize dependencies from app.js (no-op: dependencies now imported directly)
 export function initDependencies() {}
 
@@ -616,15 +652,17 @@ function createSessionItem(s) {
       return;
     }
     dropdown.style.display = 'none';
-    // Optimistic: remove from UI immediately
-    const sessionEl = document.querySelector(`.list-item[data-session-id="${s.id}"]`);
-    if (sessionEl) sessionEl.remove();
+    if (!await uiModule.styledConfirm('Delete this session?', { confirmText: 'Delete', danger: true })) {
+      _forceSidebarOpen();
+      return;
+    }
     const wasCurrentSession = currentSessionId === s.id;
     // If streaming, abort it before deleting
     if (wasCurrentSession && window.chatModule && window.chatModule.abortCurrentRequest) {
       window.chatModule.abortCurrentRequest();
     }
     _deselectCurrentSession(s.id);
+    _removeSessionFromLocalState(s.id);
     _skipAutoSelect = true;
     // Clean up persistent chat mapping
     try {
@@ -640,10 +678,11 @@ function createSessionItem(s) {
     } else {
       _forceSidebarOpen();
     }
-    // Fire API and reload in background
-    fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' })
-      .then(() => loadSessions())
-      .catch(() => loadSessions());
+    // Await API deletion, then reload the authoritative list from the server
+    try {
+      await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
+    } catch (e) { /* network error — session may still exist server-side */ }
+    await loadSessions();
   });
 
   archiveItem.addEventListener('click', async () => {
@@ -1317,7 +1356,7 @@ export async function loadSessions() {
       const res = await fetch(`${API_BASE}/api/sessions`);
       fetched = await res.json();
     }
-    sessions = fetched;
+    sessions = _normalizeSessionsList(fetched);
     renderSessionList();
 
     const sessionsSection = uiModule.el('sessions-section');
@@ -1606,7 +1645,15 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     } else if (msgHistory.length) {
       for (const msg of msgHistory) {
         const meta = msg.metadata ? { ...msg.metadata, _fromHistory: true } : null;
-        let displayContent = typeof msg.content === 'string' ? msg.content : (msg.content ? String(msg.content) : '');
+        let displayContent;
+        if (typeof msg.content === 'string') {
+          displayContent = msg.content;
+        } else if (Array.isArray(msg.content)) {
+          // Multimodal (image/audio attachments): extract text parts, skip binary
+          displayContent = msg.content.filter(p => p.type === 'text').map(p => p.text).join('\n').trim();
+        } else {
+          displayContent = '';
+        }
         // Clean up doc selection context for display
         if (msg.role === 'user') {
           // Hide "Continue where you left off" bubbles
@@ -1871,7 +1918,7 @@ export function setCurrentSessionId(id) {
 }
 
 // Session list keyboard navigation: arrows to move, Delete to delete
-function _onSessionListKeydown(e) {
+async function _onSessionListKeydown(e) {
   const item = e.target.closest('.list-item[data-session-id]');
   if (!item) return;
 
@@ -1899,6 +1946,8 @@ function _onSessionListKeydown(e) {
       uiModule.showToast('Unfavorite before deleting');
       return;
     }
+    const ok = await uiModule.styledConfirm('Delete this session?', { confirmText: 'Delete', danger: true });
+    if (!ok) return;
     _sessionListFocused = true;
     (async () => {
       await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
@@ -2108,7 +2157,14 @@ async function _checkServerStream(sessionId) {
     // Skip if this is a research stream — research has its own progress UI
     if (info.mode === 'research' || info.is_research) return;
 
-    // Server is still streaming — show spinner and poll
+    // Live-resume the detached run: replay its buffer then stream live tokens
+    // (#2539). Falls back to the spinner+poll path below if unavailable.
+    if (window.chatModule && window.chatModule.resumeStream) {
+      const attached = await window.chatModule.resumeStream(sessionId);
+      if (attached) return;
+    }
+
+    // Fallback: server is still streaming, show spinner and poll.
     const box = document.getElementById('chat-history');
     if (!box) return;
 

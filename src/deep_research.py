@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import time
+from datetime import datetime
 from typing import Callable, Dict, List, Optional, Set
 
 from src.research_utils import strip_thinking, is_low_quality
@@ -18,6 +19,20 @@ from src.research_utils import strip_thinking, is_low_quality
 from src.goal_based_extractor import EXTRACTOR_PROMPT
 
 logger = logging.getLogger(__name__)
+
+
+def current_date_context() -> str:
+    """Preamble that grounds query-generation/planning LLMs in the real current
+    date. Without it the model falls back to its training-cutoff year and emits
+    queries like "best Python tutorials 2025" when the year is actually 2026.
+    System TZ-local so it matches what the user sees. Portable strftime only."""
+    now = datetime.now().astimezone()
+    return (
+        f"Today's date is {now.strftime('%B %d, %Y')} ({now.strftime('%Y-%m-%d')}). "
+        f"When a search query needs a year or refers to 'latest'/'current'/"
+        f"'this year', use {now.strftime('%Y')} or relative wording — never a "
+        f"year inferred from training data.\n\n"
+    )
 
 # ---------------------------------------------------------------------------
 # Prompts
@@ -181,6 +196,8 @@ class DeepResearcher:
         max_content_chars: int = 15000,
         max_report_tokens: int = 8192,
         extraction_timeout: int = 90,
+        planning_timeout: int = 90,
+        query_timeout: int = 120,
         extraction_concurrency: int = 3,
         min_rounds: int = 2,
         max_empty_rounds: int = 2,
@@ -199,7 +216,9 @@ class DeepResearcher:
         self.max_urls_per_round = max_urls_per_round
         self.max_content_chars = max_content_chars
         self.max_report_tokens = max_report_tokens
-        self.extraction_timeout = min(600, max(15, int(extraction_timeout or 90)))
+        self.extraction_timeout = min(3600, max(15, int(extraction_timeout or 90)))
+        self.planning_timeout = min(3600, max(15, int(planning_timeout or 90)))
+        self.query_timeout = min(3600, max(15, int(query_timeout or 120)))
         self.extraction_concurrency = min(12, max(1, int(extraction_concurrency or 3)))
         self.min_rounds = min_rounds
         self.max_empty_rounds = max_empty_rounds
@@ -329,6 +348,16 @@ class DeepResearcher:
         self._emit(phase="writing", total_sources=len(self.urls_fetched),
                    total_findings=len(findings))
         if not report:
+            # Synthesis can fail (e.g. the LLM timed out) even though the search
+            # rounds did gather findings. Don't throw that work away — return the
+            # gathered findings as a basic compiled report instead of claiming
+            # nothing was found (#1551).
+            if findings:
+                logger.warning(
+                    "Synthesis produced no report; returning %d gathered "
+                    "finding(s) as a fallback", len(findings)
+                )
+                return self._fallback_report(question, findings)
             return "No information could be gathered for this question."
 
         self.evolving_report = report  # preserve pre-synthesis report
@@ -364,13 +393,13 @@ class DeepResearcher:
     # ------------------------------------------------------------------
     async def _create_plan(self, question: str) -> str:
         """LLM analyzes the question and creates a research plan."""
-        prompt = RESEARCH_PLAN_PROMPT.format(question=question)
+        prompt = current_date_context() + RESEARCH_PLAN_PROMPT.format(question=question)
         try:
             response = await self._llm(
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=1024,
-                timeout=30,
+                timeout=getattr(self, "planning_timeout", 90),
             )
             # Try to parse as JSON for structured plan
             parsed = self._parse_json_object(response)
@@ -439,7 +468,7 @@ class DeepResearcher:
                 "that the report doesn't yet cover well."
             )
 
-        prompt = QUERY_GEN_PROMPT.format(
+        prompt = current_date_context() + QUERY_GEN_PROMPT.format(
             question=question,
             research_plan=self.research_plan or "(No plan — search broadly.)",
             report=report or "(No findings yet.)",
@@ -453,6 +482,7 @@ class DeepResearcher:
                 [{"role": "user", "content": prompt}],
                 temperature=0.5,
                 max_tokens=4096,
+                timeout=getattr(self, "query_timeout", 120),
             )
             queries = self._parse_json_array(response)
             # Deduplicate
@@ -535,7 +565,9 @@ class DeepResearcher:
                 return []
 
             # Try primary provider, then fallbacks
-            for prov in _build_provider_chain(provider):
+            chain = _build_provider_chain(provider)
+            raised = False
+            for prov in chain:
                 try:
                     results = await asyncio.to_thread(_call_provider, prov, query, 10)
                     if results:
@@ -544,8 +576,20 @@ class DeepResearcher:
                             self.providers_used.append(prov)
                         return results
                 except Exception as e:
+                    raised = True
                     logger.warning(f"Research search: {prov} failed: {e}")
                     self._last_search_error = f"{prov}: {e}"
+            # Every provider ran but none returned results. If none of them
+            # raised, record an actionable reason here — otherwise this empty
+            # path leaves `_last_search_error` unset and the caller surfaces a
+            # bare "unknown error" (issue #344). This is exactly the SearXNG
+            # case where the service is reachable but all its engines fail, so
+            # each provider returns [] without throwing.
+            if not raised:
+                self._last_search_error = (
+                    f"no results from search provider(s): "
+                    f"{', '.join(chain) if chain else provider}"
+                )
             return []
         except Exception as e:
             logger.error(f"Search failed for '{query}': {e}")
@@ -633,7 +677,11 @@ class DeepResearcher:
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=self.max_report_tokens,
-                timeout=60,
+                # Synthesis is a heavy generation call like the final report
+                # (which gets 180s); a slow local model (e.g. a 20B served from
+                # LM Studio) routinely needs >60s for it. The old 60s cap timed
+                # out mid-stream and discarded the round's findings (#1551).
+                timeout=180,
             )
         except Exception as e:
             logger.error(f"Synthesis failed: {e}")
@@ -757,6 +805,17 @@ class DeepResearcher:
         except json.JSONDecodeError:
             pass
 
+        # Handle truncated arrays — e.g. '["query one", "query two", "query thr'
+        # Repair from the LAST array start so an echoed example array earlier
+        # in the reply is not harvested into the real query set.
+        last_start = text.rfind('[')
+        truncated = last_start != -1 and ']' not in text[last_start:]
+        if truncated:
+            complete_items = re.findall(r'"([^"]*)"', text[last_start:])
+            if complete_items:
+                logger.info(f"Repaired truncated JSON array: recovered {len(complete_items)} items")
+                return complete_items
+
         # Greedy match to capture the full outermost array
         match = re.search(r'\[[\s\S]*\]', text)
         if match:
@@ -767,8 +826,22 @@ class DeepResearcher:
             except json.JSONDecodeError:
                 pass
 
-        # Handle truncated arrays — e.g. '["query one", "query two", "query thr'
-        # Try to find the start of an array and repair it
+        # Multiple complete arrays in one reply (e.g. the model echoes the
+        # prompt's Example: [...] before the real array). The greedy match
+        # above spans them all and fails to parse, so scan non-greedily and
+        # keep the LAST parseable array, which is the model's actual answer.
+        last_parsed = None
+        for m in re.finditer(r'\[[\s\S]*?\]', text):
+            try:
+                parsed = json.loads(m.group())
+                if isinstance(parsed, list):
+                    last_parsed = parsed
+            except json.JSONDecodeError:
+                continue
+        if last_parsed is not None:
+            return [str(item) for item in last_parsed]
+
+        # Last resort: harvest quoted strings from the first array start
         arr_start = text.find('[')
         if arr_start != -1:
             fragment = text[arr_start:]
@@ -811,6 +884,21 @@ class DeepResearcher:
             content = summary if summary else (evidence[:1000] if evidence else "(no content)")
             parts.append(f"**Finding {i}** — [{title}]({url})\n{content}")
         return "\n\n".join(parts)
+
+    def _fallback_report(self, question: str, findings: List[Dict]) -> str:
+        """Compile gathered findings into a basic report.
+
+        Used when the LLM synthesis step produced no report (e.g. it timed out)
+        but the search rounds did collect findings — so the user still gets the
+        material that was gathered instead of "No information could be gathered"
+        (#1551).
+        """
+        return (
+            f"# {question}\n\n"
+            "_Automatic synthesis did not complete, so this report lists the "
+            f"{len(findings)} finding(s) gathered during research._\n\n"
+            f"{self._format_findings(findings)}"
+        )
 
     def get_stats(self) -> Dict:
         """Return research statistics."""

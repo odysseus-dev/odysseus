@@ -10,13 +10,6 @@
 entrypoint.sh text eol=lf
 docker/entrypoint.sh text eol=lf
 
-<<<<<<< feat/vendor-cdn-assets-offline
-# Vendored, minified third-party bundles — kept byte-for-byte as published
-# upstream. Skip whitespace checks (minified output legitimately carries
-# trailing whitespace inside string literals, e.g. SVG path data in mermaid)
-# and exclude from GitHub language stats so they don't read as project source.
-static/lib/** -whitespace linguist-vendored
-=======
 # Windows-native scripts stay CRLF.
 *.ps1 text eol=crlf
 *.cmd text eol=crlf
@@ -32,4 +25,9 @@ static/lib/** -whitespace linguist-vendored
 *.ico  binary
 *.woff binary
 *.woff2 binary
->>>>>>> main
+
+# Vendored, minified third-party bundles — kept byte-for-byte as published
+# upstream. Skip whitespace checks (minified output legitimately carries
+# trailing whitespace inside string literals, e.g. SVG path data in mermaid)
+# and exclude from GitHub language stats so they don't read as project source.
+static/lib/** -whitespace linguist-vendored

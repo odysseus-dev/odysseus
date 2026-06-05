@@ -15,32 +15,47 @@ from src.auth_helpers import get_current_user
 logger = logging.getLogger(__name__)
 
 
+def _aggregate_language_facets(lang_rows):
+    """Sum document counts per display language for the library facet.
+
+    NULL-language and explicit "text" rows share the "text" bucket (the
+    language filter treats them as one), so they must be ADDED. The old dict
+    comprehension keyed both to "text", silently overwriting one group and
+    undercounting the facet versus what the filter actually returns.
+    """
+    out = {}
+    for lang, cnt in lang_rows:
+        key = lang or "text"
+        out[key] = out.get(key, 0) + cnt
+    return out
+
+
 
 from routes.document_helpers import (
     DocumentCreate, DocumentUpdate, DocumentPatch,
     _doc_to_dict, _version_to_dict,
     _verify_doc_owner, _owner_session_filter,
-    _slug, _locate_upload, _derive_title,
+    _slug, _resolve_user_upload_path, _assert_pdf_marker_upload_owned, _derive_title,
     _PDF_RENDER_SCALE,
 )
 
 
-def _locate_current_user_upload(request: Request, upload_dir: str, upload_id: str, user: Optional[str]):
-    auth_manager = getattr(getattr(request.app, "state", None), "auth_manager", None)
-    return _locate_upload(upload_dir, upload_id, owner=user, auth_manager=auth_manager)
-
-
-def _load_pdf_viewer_fitz():
-    from src.pdf_runtime import load_pymupdf_for_pdf_viewer
-
-    try:
-        return load_pymupdf_for_pdf_viewer()
-    except RuntimeError as exc:
-        raise HTTPException(503, str(exc)) from exc
-
-
 def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     router = APIRouter(tags=["documents"])
+
+    def _locate_current_user_upload(request: Request, upload_id: str, user: Optional[str]):
+        if upload_handler is None:
+            return None
+        auth_manager = getattr(getattr(request.app, "state", None), "auth_manager", None)
+        return _resolve_user_upload_path(upload_handler, upload_id, user, auth_manager)
+
+    def _load_pdf_viewer_fitz():
+        from src.pdf_runtime import load_pymupdf_for_pdf_viewer
+
+        try:
+            return load_pymupdf_for_pdf_viewer()
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc)) from exc
 
     # ---- POST /api/document ----
     @router.post("/api/document")
@@ -81,6 +96,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 from src.tool_implementations import _looks_like_email_document
             if _looks_like_email_document(req.content, req.title):
                 language = "email"
+
+            _assert_pdf_marker_upload_owned(request, req.content, user, upload_handler)
 
             doc = Document(
                 id=doc_id,
@@ -136,14 +153,13 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         with a `pdf_source` marker so the viewer renders the pages without
         overlays.
         """
-        from src.constants import UPLOAD_DIR
         from src.pdf_forms import has_form_fields, extract_fields
         from src.pdf_form_doc import (
             save_field_sidecar,
             create_form_markdown_document,
             create_plain_pdf_document,
         )
-        from src.document_processor import _process_pdf
+        from src.document_processor import _process_pdf, strip_pdf_content_marker
         import os
 
         from src.auth_helpers import require_privilege
@@ -176,13 +192,13 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             raise HTTPException(500, f"Upload failed: {e}")
 
         upload_id = meta["id"]
-        pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
+        pdf_path = _locate_current_user_upload(request, upload_id, user)
         if not pdf_path:
             raise HTTPException(500, "Saved PDF could not be located")
 
         title = os.path.splitext(meta.get("original_name") or meta.get("name") or upload_id)[0]
         try:
-            body_text = _process_pdf(pdf_path).lstrip("\n[PDF content]:").strip()
+            body_text = strip_pdf_content_marker(_process_pdf(pdf_path))
         except Exception:
             body_text = None
 
@@ -256,7 +272,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             )
             lang_q = _owner_session_filter(lang_q, user)
             lang_rows = lang_q.group_by(Document.language).all()
-            languages = {lang or "text": cnt for lang, cnt in lang_rows}
+            languages = _aggregate_language_facets(lang_rows)
 
             # Session count (owner-filtered)
             sc_q = (
@@ -400,8 +416,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         text extraction was wired, plus for scanned/image-only PDFs where the
         VL model picks up text the basic pypdf path missed."""
         import re
-        from src.constants import UPLOAD_DIR
-        from src.document_processor import _process_pdf
+        from src.document_processor import _process_pdf, strip_pdf_content_marker
+        from src.pdf_form_doc import find_source_upload_id
 
         user = get_current_user(request)
         db = SessionLocal()
@@ -412,17 +428,16 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             _verify_doc_owner(db, doc, user)
 
             content = doc.current_content or ""
-            m = re.search(r'<!--\s*(?:pdf_source|pdf_form_source)\s+upload_id="([^"]+)"', content)
-            if not m:
+            upload_id = find_source_upload_id(content)
+            if not upload_id:
                 raise HTTPException(400, "Document is not a PDF — no pdf_source marker found")
-            upload_id = m.group(1)
 
-            pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
+            pdf_path = _locate_current_user_upload(request, upload_id, user)
             if not pdf_path:
                 raise HTTPException(404, "Source PDF could not be located")
 
             try:
-                body_text = _process_pdf(pdf_path).lstrip("\n[PDF content]:").strip()
+                body_text = strip_pdf_content_marker(_process_pdf(pdf_path))
             except Exception as e:
                 logger.error(f"extract_pdf_text failed for {pdf_path}: {e}")
                 raise HTTPException(500, f"Extraction failed: {e}")
@@ -528,6 +543,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if doc.current_content == req.content:
                 return _doc_to_dict(doc)
 
+            _assert_pdf_marker_upload_owned(request, req.content, user, upload_handler)
+
             # Check if we can coalesce with the latest version
             latest_ver = db.query(DocumentVersion).filter(
                 DocumentVersion.document_id == doc_id,
@@ -590,6 +607,15 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if req.session_id is not None:
                 # Empty string = unlink from session
                 doc.session_id = req.session_id if req.session_id else None
+                if not req.session_id:
+                    # Tab closed / doc detached from its session — drop the
+                    # in-memory active-doc pointer so the last-resort injection
+                    # path doesn't re-surface this doc in a later chat (#1160).
+                    try:
+                        from src.tool_implementations import clear_active_document
+                        clear_active_document(doc_id)
+                    except Exception:
+                        pass
             db.commit()
             db.refresh(doc)
             return _doc_to_dict(doc)
@@ -612,6 +638,13 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 raise HTTPException(404, "Document not found")
             _verify_doc_owner(db, doc, user)
             doc.is_active = False
+            # Closed/deleted — drop the in-memory active-doc pointer so it isn't
+            # re-injected into a later, unrelated chat (#1160).
+            try:
+                from src.tool_implementations import clear_active_document
+                clear_active_document(doc_id)
+            except Exception:
+                pass
             db.commit()
             return {"status": "deleted", "id": doc_id}
         except HTTPException:
@@ -882,7 +915,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             for i, doc in enumerate(batch):
                 if i >= len(verdicts):
                     break
-                verdict = verdicts[i].lower().strip()
+                verdict = str(verdicts[i] or "").lower().strip()
                 if verdict == "junk":
                     doc.tidy_verdict = "junk"
                     db.delete(doc)
@@ -916,7 +949,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         any wrong values before triggering the actual download.
         """
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, load_field_sidecar
-        from src.constants import UPLOAD_DIR
 
         user = get_current_user(request)
         db = SessionLocal()
@@ -930,7 +962,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if not upload_id:
                 raise HTTPException(400, "Document is not linked to a source PDF")
 
-            pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
+            pdf_path = _locate_current_user_upload(request, upload_id, user)
             if not pdf_path:
                 raise HTTPException(404, f"Source PDF {upload_id} not found in uploads")
 
@@ -981,7 +1013,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         Frontend overlays HTML form controls at those positions.
         """
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, load_field_sidecar
-        from src.constants import UPLOAD_DIR
 
         user = get_current_user(request)
         db = SessionLocal()
@@ -993,7 +1024,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             upload_id = find_source_upload_id(doc.current_content or "")
             if not upload_id:
                 raise HTTPException(400, "Document is not linked to a source PDF")
-            pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
+            pdf_path = _locate_current_user_upload(request, upload_id, user)
             if not pdf_path:
                 raise HTTPException(404, f"Source PDF {upload_id} not found")
 
@@ -1049,7 +1080,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         frontend overlays HTML form inputs on top)."""
         from fastapi.responses import Response
         from src.pdf_form_doc import find_source_upload_id
-        from src.constants import UPLOAD_DIR
 
         user = get_current_user(request)
         db = SessionLocal()
@@ -1061,7 +1091,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             upload_id = find_source_upload_id(doc.current_content or "")
             if not upload_id:
                 raise HTTPException(400, "Document is not linked to a source PDF")
-            pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
+            pdf_path = _locate_current_user_upload(request, upload_id, user)
             if not pdf_path:
                 raise HTTPException(404, "Source PDF not found")
         finally:
@@ -1098,7 +1128,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         import json
         import fitz
         from src.pdf_form_doc import find_source_upload_id
-        from src.constants import UPLOAD_DIR
         from src.document_processor import _resolve_vl_model, _load_vl_settings
         from src.llm_core import llm_call_async
 
@@ -1117,7 +1146,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             upload_id = find_source_upload_id(doc.current_content or "")
             if not upload_id:
                 raise HTTPException(400, "Document is not linked to a source PDF")
-            pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
+            pdf_path = _locate_current_user_upload(request, upload_id, user)
             if not pdf_path:
                 raise HTTPException(404, "Source PDF not found")
         finally:
@@ -1241,7 +1270,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from starlette.background import BackgroundTask
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, parse_markdown_annotations
         from src.pdf_forms import fill_fields, stamp_annotations
-        from src.constants import UPLOAD_DIR
         from core.database import Signature
 
         # Track temp files for this request so they get unlinked AFTER
@@ -1266,7 +1294,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             upload_id = find_source_upload_id(doc.current_content or "")
             if not upload_id:
                 raise HTTPException(400, "Document is not linked to a source PDF")
-            pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
+            pdf_path = _locate_current_user_upload(request, upload_id, user)
             if not pdf_path:
                 raise HTTPException(404, f"Source PDF {upload_id} not found")
 
@@ -1336,7 +1364,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from starlette.background import BackgroundTask
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, load_field_sidecar, parse_markdown_annotations
         from src.pdf_forms import fill_fields, stamp_signatures, stamp_annotations
-        from src.constants import UPLOAD_DIR
         from core.database import Signature
 
         _to_unlink: list[str] = []
@@ -1361,7 +1388,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if not upload_id:
                 raise HTTPException(400, "Document is not linked to a source PDF")
 
-            pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
+            pdf_path = _locate_current_user_upload(request, upload_id, user)
             if not pdf_path:
                 raise HTTPException(404, f"Source PDF {upload_id} not found in uploads")
 
@@ -1478,7 +1505,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             load_field_sidecar, parse_markdown_annotations,
         )
         from src.pdf_forms import fill_fields, stamp_signatures, stamp_annotations
-        from src.constants import UPLOAD_DIR
         from core.database import Signature
         # COMPOSE_UPLOADS_DIR lives in email_routes — re-derive here so we
         # don't import from a routes file (cycle-prone). Same env override
@@ -1505,7 +1531,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             upload_id = find_source_upload_id(doc.current_content or "")
             if not upload_id:
                 raise HTTPException(400, "Document is not linked to a source PDF")
-            pdf_path = _locate_current_user_upload(request, UPLOAD_DIR, upload_id, user)
+            pdf_path = _locate_current_user_upload(request, upload_id, user)
             if not pdf_path:
                 raise HTTPException(404, f"Source PDF {upload_id} not found")
 

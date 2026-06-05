@@ -29,6 +29,7 @@ import * as Modals from './modalManager.js';
   let _htmlPreviewActive = false;   // true when inline HTML preview iframe is showing
   let _emailAccountsCache = null;
   let _emailAccountsCacheAt = 0;
+  let _emailHeaderManualExpandUntil = 0;
 
   // Diff mode state
   let _diffModeActive = false;
@@ -152,6 +153,8 @@ import * as Modals from './modalManager.js';
       addDocToTabs,
       syncDocIndicator: _syncDocIndicator,
     });
+    _maybeOpenDocFromHash();
+    window.addEventListener('hashchange', _maybeOpenDocFromHash);
   }
 
   /** Update overflow-doc-btn accent indicator, toolbar indicator, and session list icon */
@@ -2306,6 +2309,95 @@ import * as Modals from './modalManager.js';
     return r && r.style.display !== 'none' ? r : null;
   }
 
+  function _captureEmailBodyFocusState() {
+    const rich = _emailRichbodyActive();
+    const ta = document.getElementById('doc-editor-textarea');
+    const active = document.activeElement;
+    if (rich && (active === rich || rich.contains(active))) {
+      const sel = window.getSelection();
+      const range = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+      return {
+        type: 'rich',
+        range: range && rich.contains(range.commonAncestorContainer) ? range.cloneRange() : null,
+      };
+    }
+    if (ta && active === ta) {
+      return {
+        type: 'textarea',
+        start: ta.selectionStart,
+        end: ta.selectionEnd,
+      };
+    }
+    return null;
+  }
+
+  function _restoreEmailBodyFocusState(state) {
+    if (!state) return;
+    requestAnimationFrame(() => {
+      if (state.type === 'rich') {
+        const rich = _emailRichbodyActive();
+        if (!rich) return;
+        rich.focus({ preventScroll: true });
+        if (state.range) {
+          const sel = window.getSelection();
+          if (sel) {
+            sel.removeAllRanges();
+            sel.addRange(state.range);
+          }
+        }
+      } else if (state.type === 'textarea') {
+        const ta = document.getElementById('doc-editor-textarea');
+        if (!ta) return;
+        ta.focus({ preventScroll: true });
+        if (Number.isFinite(state.start) && Number.isFinite(state.end)) {
+          try { ta.setSelectionRange(state.start, state.end); } catch (_) {}
+        }
+      }
+    });
+  }
+
+  function _stripEmailReplyQuoteText(text) {
+    const original = String(text || '');
+    if (!original) return { body: '', stripped: false };
+    const lines = original.split('\n');
+    const quoteIdx = lines.findIndex(line =>
+      /^-{5,}\s*Previous message\s*-{5,}$/i.test(line.trim())
+      || /^On .+ wrote:\s*$/i.test(line.trim())
+    );
+    if (quoteIdx <= 0) return { body: original.trim(), stripped: false };
+    const body = lines.slice(0, quoteIdx).join('\n').trim();
+    return { body, stripped: !!body };
+  }
+
+  function _emailReplyOwnText(text) {
+    return _stripEmailReplyQuoteText(text).body;
+  }
+
+  function _setEmailBodyText(textarea, value) {
+    if (!textarea) return;
+    textarea.value = value || '';
+    syncHighlighting();
+    const rich = _emailRichbodyActive();
+    if (rich) rich.innerHTML = _emailBodyToHtml(textarea.value);
+  }
+
+  async function _streamEmailBodyText(textarea, value) {
+    if (!textarea) return;
+    const finalText = String(value || '');
+    const maxFrames = 90;
+    const chunk = Math.max(8, Math.ceil(finalText.length / maxFrames));
+    textarea.value = '';
+    const rich = _emailRichbodyActive();
+    if (rich) rich.innerHTML = '';
+    for (let i = 0; i < finalText.length; i += chunk) {
+      const next = finalText.slice(0, i + chunk);
+      textarea.value = next;
+      if (rich) rich.innerHTML = _emailBodyToHtml(next);
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+    _setEmailBodyText(textarea, finalText);
+  }
+
   function _focusEmailBodyEnd() {
     const target = _emailRichbodyActive() || document.getElementById('doc-editor-textarea');
     if (!target) return;
@@ -2323,6 +2415,48 @@ import * as Modals from './modalManager.js';
       const len = target.value.length;
       target.setSelectionRange(len, len);
     }
+  }
+
+  function _syncEmailHeaderSummary() {
+    const to = document.getElementById('doc-email-to')?.value?.trim() || 'No recipient';
+    const subject = document.getElementById('doc-email-subject')?.value?.trim() || 'No subject';
+    const cc = document.getElementById('doc-email-cc')?.value?.trim() || '';
+    const bcc = document.getElementById('doc-email-bcc')?.value?.trim() || '';
+    const summary = document.getElementById('doc-email-collapse-summary');
+    if (!summary) return;
+    const extras = [];
+    if (cc) extras.push('Cc');
+    if (bcc) extras.push('Bcc');
+    summary.textContent = `${to} · ${subject}${extras.length ? ` · ${extras.join('/')}` : ''}`;
+    summary.title = summary.textContent;
+  }
+
+  function _setEmailHeaderCollapsed(collapsed, { manual = true } = {}) {
+    const header = document.getElementById('doc-email-header');
+    const btn = document.getElementById('doc-email-collapse-btn');
+    if (!header) return;
+    if (window.innerWidth > 768) collapsed = false;
+    header.classList.toggle('doc-email-header-collapsed', !!collapsed);
+    if (btn) {
+      btn.setAttribute('aria-expanded', String(!collapsed));
+      btn.title = collapsed ? 'Show email fields' : 'Hide email fields';
+    }
+    const doc = activeDocId && docs.get(activeDocId);
+    if (doc && manual) doc._emailHeaderCollapsed = !!collapsed;
+    if (manual && !collapsed) _emailHeaderManualExpandUntil = Date.now() + 1400;
+    _syncEmailHeaderSummary();
+  }
+
+  function _shouldAutoCollapseEmailHeader() {
+    return window.innerWidth <= 768;
+  }
+
+  function _maybeAutoCollapseEmailHeader() {
+    const doc = activeDocId && docs.get(activeDocId);
+    if (!doc || doc.language !== 'email') return;
+    if (Date.now() < _emailHeaderManualExpandUntil) return;
+    if (document.activeElement?.closest?.('#doc-email-fields')) return;
+    if (_shouldAutoCollapseEmailHeader()) _setEmailHeaderCollapsed(true, { manual: false });
   }
 
   function _showEmailFields(doc) {
@@ -2363,6 +2497,7 @@ import * as Modals from './modalManager.js';
     const textarea = document.getElementById('doc-editor-textarea');
     if (toInput) toInput.value = fields.to;
     if (subjectInput) subjectInput.value = fields.subject;
+    _setEmailHeaderCollapsed(!!(doc && doc._emailHeaderCollapsed), { manual: false });
     if (subjectInput && !subjectInput._emailTabBodyBound) {
       subjectInput._emailTabBodyBound = true;
       subjectInput.addEventListener('keydown', (e) => {
@@ -2504,6 +2639,7 @@ import * as Modals from './modalManager.js';
     if (ccRow) ccRow.style.display = hasCcBcc ? '' : 'none';
     if (bccRow) bccRow.style.display = hasCcBcc ? '' : 'none';
     if (ccToggle) ccToggle.style.display = hasCcBcc ? 'none' : '';
+    _syncEmailHeaderSummary();
   }
 
   async function _uploadComposeFiles(files) {
@@ -2795,15 +2931,21 @@ import * as Modals from './modalManager.js';
     const references = document.getElementById('doc-email-references')?.value?.trim();
     const sourceUid = document.getElementById('doc-email-source-uid')?.value?.trim();
     const sourceFolder = document.getElementById('doc-email-source-folder')?.value?.trim() || 'INBOX';
-    const body = document.getElementById('doc-editor-textarea')?.value?.trim();
     // WYSIWYG: the rich body's HTML becomes the email's HTML part (server
     // sanitizes it). `body` (plain text mirror) stays the text/plain fallback.
     const _rich = _emailRichbodyActive();
+    if (_rich) _syncEmailRichbody(_rich);
+    const textarea = document.getElementById('doc-editor-textarea');
+    const body = (_rich ? (_rich.innerText || _rich.textContent || '') : (textarea?.value || '')).trim();
     const bodyHtml = _rich ? _rich.innerHTML : null;
     const doc = docs.get(activeDocId);
     const attachments = (doc?._composeAtts || []).map(a => a.token);
     if (!to || !body) {
       if (uiModule) uiModule.showError('To and body are required');
+      return;
+    }
+    if (inReplyTo && !_emailReplyOwnText(body)) {
+      if (uiModule) uiModule.showError('Reply body is empty');
       return;
     }
     // Warn if body mentions attachments but none are actually attached
@@ -2829,12 +2971,13 @@ import * as Modals from './modalManager.js';
       let canceled = false;
       if (uiModule) {
         uiModule.showToast('Sending', {
-          duration: 1200,
+          duration: 3200,
+          leadingIcon: 'spinner',
           action: 'Cancel',
           onAction: () => { canceled = true; },
         });
       }
-      await _sleep(1000);
+      await _sleep(3000);
       if (!canceled) detachedEmailDoc = _detachActiveEmailForBackground(sendDocId);
       await _sleep(200);
       if (canceled) {
@@ -2844,28 +2987,10 @@ import * as Modals from './modalManager.js';
         return;
       }
 
-      let undone = false;
-      if (uiModule) {
-        uiModule.showToast('Message sent', {
-          duration: 2200,
-          leadingIcon: 'check',
-          action: 'Undo',
-          actionHint: 'undo send',
-          onAction: () => { undone = true; },
-        });
-      }
-      await _sleep(2200);
-      if (undone) {
-        _restoreDetachedEmailDoc(detachedEmailDoc);
-        detachedEmailDoc = null;
-        if (uiModule) uiModule.showToast('Send undone');
-        return;
-      }
-      if (uiModule) uiModule.showToast('Sending...', 2000);
-
       const activeAccountId = await _resolveComposeSendAccountId();
       const res = await fetch(`${API_BASE}/api/email/send`, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to, cc: cc || null, bcc: bcc || null, subject, body, body_html: bodyHtml,
@@ -2875,7 +3000,13 @@ import * as Modals from './modalManager.js';
           wait_for_delivery: true,
         }),
       });
-      const data = await res.json();
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (_) {
+        data = { success: false, error: `Send failed (${res.status})` };
+      }
+      if (!res.ok && data && !data.error) data.error = `Send failed (${res.status})`;
       if (data.success) {
         if (uiModule) {
           uiModule.showToast('Message sent', {
@@ -2961,8 +3092,10 @@ import * as Modals from './modalManager.js';
     const subject = document.getElementById('doc-email-subject')?.value?.trim();
     const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim();
     const references = document.getElementById('doc-email-references')?.value?.trim();
-    const body = document.getElementById('doc-editor-textarea')?.value?.trim();
     const _rich = _emailRichbodyActive();
+    if (_rich) _syncEmailRichbody(_rich);
+    const textarea = document.getElementById('doc-editor-textarea');
+    const body = (_rich ? (_rich.innerText || _rich.textContent || '') : (textarea?.value || '')).trim();
     const bodyHtml = _rich ? _rich.innerHTML : null;
     const btn = document.getElementById('doc-email-draft-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
@@ -3021,19 +3154,22 @@ import * as Modals from './modalManager.js';
     saveCurrentToMap();
     const doc = docs.get(docId);
     const snapshot = { id: docId, doc: { ...doc } };
-    saveDocument({ silent: true }).catch(() => {});
+    const wasActive = activeDocId === docId;
+    if (wasActive) saveDocument({ silent: true }).catch(() => {});
 
     const visibleBefore = _visibleDocIdsForCurrentSession();
     const idx = visibleBefore.indexOf(docId);
     docs.delete(docId);
-    if (activeDocId === docId) activeDocId = null;
+    if (wasActive) activeDocId = null;
 
-    const remaining = visibleBefore.filter(id => id !== docId && docs.has(id));
-    const nextId = remaining[idx] || remaining[idx - 1] || remaining[0] || null;
-    if (nextId) {
-      switchToDoc(nextId);
-    } else {
-      closePanel();
+    if (wasActive) {
+      const remaining = visibleBefore.filter(id => id !== docId && docs.has(id));
+      const nextId = remaining[idx] || remaining[idx - 1] || remaining[0] || null;
+      if (nextId) {
+        switchToDoc(nextId);
+      } else {
+        closePanel();
+      }
     }
     renderTabs();
     _syncDocIndicator();
@@ -3074,6 +3210,32 @@ import * as Modals from './modalManager.js';
     const textarea = document.getElementById('doc-editor-textarea');
     if (!textarea) return;
     const currentBody = textarea.value || '';
+    const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim() || '';
+    const sourceUid = document.getElementById('doc-email-source-uid')?.value?.trim() || '';
+    const sourceFolder = document.getElementById('doc-email-source-folder')?.value?.trim() || 'INBOX';
+    const cleanAiReplyText = (text) => {
+      if (!text) return '';
+      let t = String(text);
+      const open = /<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+/i;
+      const close = /<<<\s*END\s*>>+/i;
+      const m = open.exec(t);
+      if (m) {
+        const rest = t.slice(m.index + m[0].length);
+        const c = close.exec(rest);
+        t = c ? rest.slice(0, c.index) : rest;
+      }
+      return t
+        .replace(/<<<\s*(?:REPLY|SUMMARY|OUTPUT)\s*>>+/gi, '')
+        .replace(/<<<\s*END\s*>>+/gi, '')
+        .trim();
+    };
+    const shouldUseFastAiReply = () => {
+      const text = `${subject}\n${currentBody}`.toLowerCase();
+      if (/\b(attach(?:ed|ment)?|pdf|document|contract|invoice|receipt|quote|estimate|proposal|question|questions|details|schedule|booking|reservation|meeting|calendar|availability|confirm|confirmation|review|sign|signature)\b/.test(text)) {
+        return false;
+      }
+      return currentBody.length < 2500;
+    };
 
     // Use the current chat model
     let currentModel = '';
@@ -3096,22 +3258,24 @@ import * as Modals from './modalManager.js';
           original_body: currentBody,
           model: currentModel,
           session_id: currentSessionId,
+          message_id: inReplyTo,
+          uid: sourceUid,
+          folder: sourceFolder,
+          fast: shouldUseFastAiReply(),
         }),
       });
       const data = await res.json();
       if (data.success && data.reply) {
+        const cleanReply = cleanAiReplyText(data.reply);
         const lines = currentBody.split('\n');
         const quoteIdx = lines.findIndex(l => l.startsWith('On ') && l.includes(' wrote:'));
+        let newBody = '';
         if (quoteIdx > 0) {
-          const newBody = data.reply + '\n\n' + lines.slice(quoteIdx).join('\n');
-          textarea.value = newBody;
+          newBody = cleanReply + '\n\n' + lines.slice(quoteIdx).join('\n');
         } else {
-          textarea.value = data.reply + (currentBody ? '\n\n' + currentBody : '');
+          newBody = cleanReply + (currentBody ? '\n\n' + currentBody : '');
         }
-        syncHighlighting();
-        // Mirror into the WYSIWYG rich body if it's the active editor.
-        const _rb = _emailRichbodyActive();
-        if (_rb) _rb.innerHTML = _emailBodyToHtml(textarea.value);
+        await _streamEmailBodyText(textarea, newBody);
         if (uiModule) uiModule.showToast(`AI draft inserted (${data.model_used || 'AI'})`);
       } else {
         if (uiModule) uiModule.showError(data.error || 'Failed to generate reply');
@@ -3130,12 +3294,21 @@ import * as Modals from './modalManager.js';
     const subject = document.getElementById('doc-email-subject')?.value?.trim();
     const inReplyTo = document.getElementById('doc-email-in-reply-to')?.value?.trim();
     const references = document.getElementById('doc-email-references')?.value?.trim();
-    const body = document.getElementById('doc-editor-textarea')?.value?.trim();
+    const _rich = _emailRichbodyActive();
+    if (_rich) _syncEmailRichbody(_rich);
+    const body = (_rich
+      ? (_rich.innerText || _rich.textContent || '')
+      : (document.getElementById('doc-editor-textarea')?.value || '')
+    ).trim();
     const doc = docs.get(activeDocId);
     const attachments = (doc?._composeAtts || []).map(a => a.token);
 
     if (!to || !body) {
       if (uiModule) uiModule.showError('To and body are required');
+      return;
+    }
+    if (inReplyTo && !_emailReplyOwnText(body)) {
+      if (uiModule) uiModule.showError('Reply body is empty');
       return;
     }
     if (attachments.length === 0 && _bodyMentionsAttachment(body)) {
@@ -3670,25 +3843,31 @@ import * as Modals from './modalManager.js';
       </div>
       <div class="doc-tab-bar" id="doc-tab-bar"></div>
       <div id="doc-email-header" class="doc-email-header" style="display:none">
-        <div class="email-field" style="position:relative">
-          <label>To</label>
-          <input type="text" id="doc-email-to" placeholder="recipient@example.com" autocomplete="off" />
-          <div id="doc-email-to-suggestions" class="email-autocomplete" style="display:none"></div>
-          <button type="button" id="doc-email-show-cc" class="email-cc-toggle" title="Show Cc/Bcc">Cc</button>
+        <button type="button" id="doc-email-collapse-btn" class="doc-email-collapse-btn" title="Hide email fields" aria-expanded="true">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg>
+          <span id="doc-email-collapse-summary" class="doc-email-collapse-summary">No recipient · No subject</span>
+        </button>
+        <div id="doc-email-fields" class="doc-email-fields">
+          <div class="email-field" style="position:relative">
+            <label>To</label>
+            <input type="text" id="doc-email-to" placeholder="recipient@example.com" autocomplete="off" />
+            <div id="doc-email-to-suggestions" class="email-autocomplete" style="display:none"></div>
+            <button type="button" id="doc-email-show-cc" class="email-cc-toggle" title="Show Cc/Bcc">Cc</button>
+          </div>
+          <div class="email-field" id="doc-email-cc-row" style="display:none;position:relative">
+            <label>Cc</label>
+            <input type="text" id="doc-email-cc" placeholder="cc@example.com" autocomplete="off" />
+            <div id="doc-email-cc-suggestions" class="email-autocomplete" style="display:none"></div>
+          </div>
+          <div class="email-field" id="doc-email-bcc-row" style="display:none;position:relative">
+            <label>Bcc</label>
+            <input type="text" id="doc-email-bcc" placeholder="bcc@example.com" autocomplete="off" />
+            <div id="doc-email-bcc-suggestions" class="email-autocomplete" style="display:none"></div>
+          </div>
+          <div class="email-field"><label>Subject</label><input type="text" id="doc-email-subject" placeholder="Subject" /></div>
+          <div id="doc-email-attachments" class="email-attachments" style="display:none"></div>
+          <div id="doc-email-compose-atts" class="email-compose-atts" style="display:none"></div>
         </div>
-        <div class="email-field" id="doc-email-cc-row" style="display:none;position:relative">
-          <label>Cc</label>
-          <input type="text" id="doc-email-cc" placeholder="cc@example.com" autocomplete="off" />
-          <div id="doc-email-cc-suggestions" class="email-autocomplete" style="display:none"></div>
-        </div>
-        <div class="email-field" id="doc-email-bcc-row" style="display:none;position:relative">
-          <label>Bcc</label>
-          <input type="text" id="doc-email-bcc" placeholder="bcc@example.com" autocomplete="off" />
-          <div id="doc-email-bcc-suggestions" class="email-autocomplete" style="display:none"></div>
-        </div>
-        <div class="email-field"><label>Subject</label><input type="text" id="doc-email-subject" placeholder="Subject" /></div>
-        <div id="doc-email-attachments" class="email-attachments" style="display:none"></div>
-        <div id="doc-email-compose-atts" class="email-compose-atts" style="display:none"></div>
         <input type="hidden" id="doc-email-in-reply-to" />
         <input type="hidden" id="doc-email-references" />
         <input type="hidden" id="doc-email-source-uid" />
@@ -4230,6 +4409,33 @@ import * as Modals from './modalManager.js';
     });
     document.getElementById('doc-email-ai-reply-btn')?.addEventListener('click', _aiReply);
 
+    const collapseBtn = document.getElementById('doc-email-collapse-btn');
+    if (collapseBtn && !collapseBtn._emailCollapseWired) {
+      collapseBtn._emailCollapseWired = true;
+      collapseBtn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const focusState = _captureEmailBodyFocusState();
+        const header = document.getElementById('doc-email-header');
+        const nextCollapsed = !header?.classList.contains('doc-email-header-collapsed');
+        _setEmailHeaderCollapsed(nextCollapsed);
+        if (!nextCollapsed) _restoreEmailBodyFocusState(focusState);
+      });
+      collapseBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+    }
+    ['doc-email-to', 'doc-email-cc', 'doc-email-bcc', 'doc-email-subject'].forEach(id => {
+      document.getElementById(id)?.addEventListener('input', _syncEmailHeaderSummary);
+      document.getElementById(id)?.addEventListener('focus', () => _setEmailHeaderCollapsed(false, { manual: false }));
+    });
+    document.getElementById('doc-email-richbody')?.addEventListener('focus', _maybeAutoCollapseEmailHeader);
+    if (window.visualViewport && !window._docEmailViewportCollapseBound) {
+      window._docEmailViewportCollapseBound = true;
+      window.visualViewport.addEventListener('resize', _maybeAutoCollapseEmailHeader);
+    }
+
     // Split-button caret toggles the send-options menu (drops up).
     document.getElementById('doc-email-send-caret')?.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -4272,11 +4478,13 @@ import * as Modals from './modalManager.js';
 
     // Cc/Bcc toggle
     document.getElementById('doc-email-show-cc')?.addEventListener('click', () => {
+      _setEmailHeaderCollapsed(false, { manual: false });
       const ccRow = document.getElementById('doc-email-cc-row');
       const bccRow = document.getElementById('doc-email-bcc-row');
       if (ccRow) ccRow.style.display = '';
       if (bccRow) bccRow.style.display = '';
       document.getElementById('doc-email-show-cc').style.display = 'none';
+      _syncEmailHeaderSummary();
     });
 
     // Autocomplete for To / Cc / Bcc — typed fragment after the last
@@ -5680,6 +5888,41 @@ import * as Modals from './modalManager.js';
     }));
   }
 
+  export async function replaceEmailReplyBody(docId, replyText) {
+    const doc = docs.get(docId);
+    if (!doc) return;
+    const fields = _parseEmailHeader(doc.content || '');
+    const lines = String(fields.body || '').split('\n');
+    const quoteIdx = lines.findIndex(line =>
+      /^-{5,}\s*Previous message\s*-{5,}$/i.test(line.trim())
+      || /^On .+ wrote:\s*$/i.test(line.trim())
+    );
+    const quote = quoteIdx >= 0 ? lines.slice(quoteIdx).join('\n') : '';
+    const ownText = _emailReplyOwnText(fields.body || '');
+    if (ownText && !/^(\[AI reply draft will appear here\]|Drafting AI reply)/i.test(ownText)) {
+      if (uiModule) uiModule.showToast('AI reply ready, but draft was edited');
+      return;
+    }
+    const body = String(replyText || '').trim() + (quote ? `\n\n${quote}` : '');
+    doc.content = _buildEmailContent(
+      fields.to,
+      fields.subject,
+      fields.inReplyTo,
+      fields.references,
+      body,
+      fields.sourceUid,
+      fields.sourceFolder,
+      fields.cc,
+      fields.bcc,
+    );
+    if (activeDocId === docId) {
+      const textarea = document.getElementById('doc-editor-textarea');
+      if (textarea) await _streamEmailBodyText(textarea, body);
+    }
+    clearTimeout(_autoSaveDebounce);
+    _autoSaveDebounce = setTimeout(() => { saveDocument({ silent: true }); }, 800);
+  }
+
   // Force the panel into a genuinely-open state. `isOpen` can be true while the
   // pane was torn down by another full-screen view (e.g. opening a doc from the
   // email modal): in that case openPanel() early-returns and nothing mounts, so
@@ -5700,14 +5943,29 @@ import * as Modals from './modalManager.js';
     }
     try {
       const res = await fetch(`${API_BASE}/api/document/${docId}`);
-      if (!res.ok) throw new Error('Not found');
+      if (!res.ok) throw new Error(res.status === 404 ? 'Not found' : `HTTP ${res.status}`);
       const doc = await res.json();
       addDocToTabs(doc, doc.session_id);
       _ensureDocPaneMounted();
       switchToDoc(doc.id);
     } catch (e) {
       console.error('Failed to load document:', e);
+      if (uiModule) {
+        const msg = e.message === 'Not found'
+          ? 'Document not found — try opening it from the Library.'
+          : 'Could not open document.';
+        uiModule.showError(msg);
+      }
     }
+  }
+
+  // Deep-link: #document-<id> opens that document on load / URL-bar nav.
+  // Clicks on in-chat document anchors are handled separately (they call
+  // preventDefault, so they don't change the hash); this covers refresh
+  // and pasted/typed document URLs, which previously did nothing.
+  function _maybeOpenDocFromHash() {
+    const m = (window.location.hash || '').match(/^#document-(.+)$/);
+    if (m) loadDocument(m[1]);
   }
 
   /** Open panel and ensure a document exists, creating a session if needed */
@@ -6064,13 +6322,170 @@ import * as Modals from './modalManager.js';
   }
 
   /** Update the line number gutter */
-  function updateLineNumbers(text) {
+  let _lineNumberResizeObserver = null;
+  let _lineNumberObservedTextarea = null;
+  let _lineNumberResizeRaf = null;
+
+  function _lineNumberContentEl(gutter) {
+    let inner = gutter.querySelector('.doc-line-number-content');
+    if (!inner) {
+      inner = document.createElement('div');
+      inner.className = 'doc-line-number-content';
+      gutter.textContent = '';
+      gutter.appendChild(inner);
+    }
+    return inner;
+  }
+
+  function _lineNumberStyleSignature(style) {
+    return [
+      style.fontFamily,
+      style.fontSize,
+      style.fontWeight,
+      style.fontStyle,
+      style.lineHeight,
+      style.letterSpacing,
+      style.tabSize,
+      style.fontFeatureSettings,
+      style.fontVariantLigatures,
+      style.fontKerning,
+    ].join('|');
+  }
+
+  function _textareaTextWidth(textarea, style) {
+    const paddingLeft = parseFloat(style.paddingLeft) || 0;
+    const paddingRight = parseFloat(style.paddingRight) || 0;
+    return Math.max(0, textarea.clientWidth - paddingLeft - paddingRight);
+  }
+
+  function _lineHeightPx(style) {
+    const parsed = parseFloat(style.lineHeight);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    const fontSize = parseFloat(style.fontSize) || 11;
+    return fontSize * 1.45;
+  }
+
+  function _lineNumberMeasureEl(textarea) {
+    const wrap = document.getElementById('doc-editor-wrap') || textarea.parentElement || document.body;
+    let probe = wrap.querySelector('.doc-line-number-measure');
+    if (!probe) {
+      probe = document.createElement('textarea');
+      probe.className = 'doc-line-number-measure';
+      probe.setAttribute('aria-hidden', 'true');
+      probe.tabIndex = -1;
+      probe.readOnly = true;
+      probe.wrap = 'soft';
+      wrap.appendChild(probe);
+    }
+    return probe;
+  }
+
+  function _syncLineNumberMeasureStyle(probe, style, textWidth) {
+    probe.style.width = textWidth + 'px';
+    probe.style.fontFamily = style.fontFamily;
+    probe.style.fontSize = style.fontSize;
+    probe.style.fontWeight = style.fontWeight;
+    probe.style.fontStyle = style.fontStyle;
+    probe.style.lineHeight = style.lineHeight;
+    probe.style.letterSpacing = style.letterSpacing;
+    probe.style.tabSize = style.tabSize;
+    probe.style.fontFeatureSettings = style.fontFeatureSettings;
+    probe.style.fontVariantLigatures = style.fontVariantLigatures;
+    probe.style.fontKerning = style.fontKerning;
+    probe.style.textRendering = style.textRendering;
+    probe.style.whiteSpace = style.whiteSpace;
+    probe.style.wordWrap = style.wordWrap;
+    probe.style.overflowWrap = style.overflowWrap;
+  }
+
+  function _measureLineNumberHeights(textarea, lines, textWidth, style) {
+    const probe = _lineNumberMeasureEl(textarea);
+    _syncLineNumberMeasureStyle(probe, style, textWidth);
+    const lineHeight = _lineHeightPx(style);
+    return lines.map(line => {
+      probe.value = line || ' ';
+      const visualRows = Math.max(1, Math.round(probe.scrollHeight / lineHeight));
+      return visualRows * lineHeight;
+    });
+  }
+
+  function _renderLineNumberRows(inner, heights) {
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < heights.length; i++) {
+      const row = document.createElement('div');
+      row.className = 'doc-line-number-row';
+      row.style.height = `${heights[i]}px`;
+
+      const label = document.createElement('span');
+      label.className = 'doc-line-number-label';
+      label.textContent = String(i + 1);
+      row.appendChild(label);
+      frag.appendChild(row);
+    }
+    inner.textContent = '';
+    inner.appendChild(frag);
+  }
+
+  function _scheduleLineNumberRerender() {
+    if (_lineNumberResizeRaf) return;
+    const run = () => {
+      _lineNumberResizeRaf = null;
+      const textarea = document.getElementById('doc-editor-textarea');
+      if (textarea) updateLineNumbers(textarea.value, true);
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      _lineNumberResizeRaf = requestAnimationFrame(run);
+    } else {
+      run();
+    }
+  }
+
+  function _ensureLineNumberResizeObserver(textarea) {
+    if (typeof ResizeObserver === 'undefined') return;
+    if (!_lineNumberResizeObserver) {
+      _lineNumberResizeObserver = new ResizeObserver(_scheduleLineNumberRerender);
+    }
+    if (_lineNumberObservedTextarea === textarea) return;
+    if (_lineNumberObservedTextarea) {
+      _lineNumberResizeObserver.unobserve(_lineNumberObservedTextarea);
+    }
+    _lineNumberObservedTextarea = textarea;
+    _lineNumberResizeObserver.observe(textarea);
+  }
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', _scheduleLineNumberRerender);
+  }
+
+  function updateLineNumbers(text, force = false) {
+    const textarea = document.getElementById('doc-editor-textarea');
     const gutter = document.getElementById('doc-line-numbers');
-    if (!gutter) return;
-    const count = (text || '').split('\n').length;
-    let html = '';
-    for (let i = 1; i <= count; i++) html += i + '\n';
-    gutter.textContent = html;
+    if (!textarea || !gutter) return;
+
+    const value = text || '';
+    const lines = value.split('\n');
+    const inner = _lineNumberContentEl(gutter);
+    const style = getComputedStyle(textarea);
+    const textWidth = _textareaTextWidth(textarea, style);
+    const styleSig = _lineNumberStyleSignature(style);
+
+    _ensureLineNumberResizeObserver(textarea);
+    if (
+      !force &&
+      inner._lineNumberText === value &&
+      inner._lineNumberWidth === textWidth &&
+      inner._lineNumberStyleSig === styleSig
+    ) {
+      syncGutterScroll();
+      return;
+    }
+
+    const heights = _measureLineNumberHeights(textarea, lines, textWidth, style);
+    _renderLineNumberRows(inner, heights);
+    inner._lineNumberText = value;
+    inner._lineNumberWidth = textWidth;
+    inner._lineNumberStyleSig = styleSig;
+    syncGutterScroll();
   }
 
   /** Sync line number gutter scroll with textarea */
@@ -6078,7 +6493,7 @@ import * as Modals from './modalManager.js';
     const textarea = document.getElementById('doc-editor-textarea');
     const gutter = document.getElementById('doc-line-numbers');
     if (textarea && gutter) {
-      gutter.scrollTop = textarea.scrollTop;
+      _lineNumberContentEl(gutter).style.transform = `translateY(${-textarea.scrollTop}px)`;
     }
   }
 
@@ -8138,6 +8553,9 @@ import * as Modals from './modalManager.js';
       }
       if (window.hljs) {
         preview.querySelectorAll('pre code').forEach(b => window.hljs.highlightElement(b));
+      }
+      if (markdownModule && markdownModule.renderMermaid) {
+        markdownModule.renderMermaid(preview);
       }
       preview.style.display = '';
       wrap.style.display = 'none';

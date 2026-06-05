@@ -3,19 +3,34 @@
 import os
 import hashlib
 import logging
+import re
+import uuid
+from pathlib import Path
 from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from core.database import SessionLocal, GalleryImage, GalleryAlbum, ModelEndpoint
 from core.database import Session as DbSession
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, require_privilege
+from src.upload_limits import read_upload_limited
 
 from routes.gallery_helpers import (
     GalleryPatch, _extract_exif, _image_to_dict, _owner_filter, _human_size,
 )
 
 logger = logging.getLogger(__name__)
+
+GALLERY_UPLOAD_MAX_BYTES = int(os.getenv("ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES", str(100 * 1024 * 1024)))
+GALLERY_TRANSFORM_UPLOAD_MAX_BYTES = int(os.getenv("ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES", str(25 * 1024 * 1024)))
+
+
+def _sanitize_gallery_filename(filename: str) -> str:
+    """Return a local filename safe to join under generated_images."""
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(filename or "").name)[:128]
+    if not safe_name or safe_name in {".", ".."}:
+        safe_name = uuid.uuid4().hex[:12]
+    return safe_name
 
 def setup_gallery_routes() -> APIRouter:
     router = APIRouter(tags=["gallery"])
@@ -34,7 +49,7 @@ def setup_gallery_routes() -> APIRouter:
 
         user = get_current_user(request)
         album_id = form.get("album_id") or None
-        content = await file.read()
+        content = await read_upload_limited(file, GALLERY_UPLOAD_MAX_BYTES, "Gallery upload")
 
         # Duplicate detection via SHA-256
         file_hash = hashlib.sha256(content).hexdigest()
@@ -119,10 +134,10 @@ def setup_gallery_routes() -> APIRouter:
             if not file or not hasattr(file, 'read'):
                 raise HTTPException(400, "No image provided")
 
-            content = await file.read()
+            content = await read_upload_limited(file, GALLERY_UPLOAD_MAX_BYTES, "Gallery replacement")
             img_dir = Path("data/generated_images")
             img_dir.mkdir(parents=True, exist_ok=True)
-            img_path = img_dir / img.filename
+            img_path = img_dir / _sanitize_gallery_filename(img.filename)
             img_path.write_bytes(content)
 
             # Refresh dimensions in case the editor resized the canvas.
@@ -233,12 +248,13 @@ def setup_gallery_routes() -> APIRouter:
         """AI upscale using img2img with the diffusion server."""
         import base64, httpx
 
+        require_privilege(request, "can_generate_images")
         form = await request.form()
         file = form.get("image")
         if not file: raise HTTPException(400, "No image")
         scale = int(form.get("scale", "2"))
 
-        image_bytes = await file.read()
+        image_bytes = await read_upload_limited(file, GALLERY_TRANSFORM_UPLOAD_MAX_BYTES, "Image upload")
         b64 = base64.b64encode(image_bytes).decode()
 
         # Find image endpoint
@@ -275,13 +291,14 @@ def setup_gallery_routes() -> APIRouter:
         """Style transfer using img2img with the diffusion server."""
         import base64, httpx
 
+        require_privilege(request, "can_generate_images")
         form = await request.form()
         file = form.get("image")
         prompt = form.get("prompt", "")
         strength = float(form.get("strength", "0.55"))
         if not file: raise HTTPException(400, "No image")
 
-        image_bytes = await file.read()
+        image_bytes = await read_upload_limited(file, GALLERY_TRANSFORM_UPLOAD_MAX_BYTES, "Image upload")
         b64 = base64.b64encode(image_bytes).decode()
 
         db = SessionLocal()
@@ -906,9 +923,20 @@ def setup_gallery_routes() -> APIRouter:
         the request for /v1/images/edits (multipart, inverted mask). Otherwise
         proxy through to a self-hosted diffusion server's /v1/images/inpaint."""
         import httpx
+        require_privilege(request, "can_generate_images")
         body = await request.json()
         # Use endpoint from request body (editor dropdown) or fall back to DB lookup
         base = (body.pop("_endpoint", "") or "").rstrip("/")
+        # SSRF hardening: validate a client-supplied endpoint before any
+        # outbound request (mirrors routes/embedding_routes.py).
+        if base:
+            from src.url_safety import check_outbound_url
+            ok, reason = check_outbound_url(
+                base,
+                block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+            )
+            if not ok:
+                raise HTTPException(400, f"Rejected endpoint URL: {reason}")
         chosen_model = (body.pop("_model", "") or "").strip()
         api_key = None
         if not base:
@@ -1093,6 +1121,7 @@ def setup_gallery_routes() -> APIRouter:
         you get edge blending + lighting unification while keeping the
         composition recognisable."""
         import httpx, base64 as _b64
+        require_privilege(request, "can_generate_images")
         body = await request.json()
 
         image_b64 = body.get("image")
@@ -1100,6 +1129,18 @@ def setup_gallery_routes() -> APIRouter:
             raise HTTPException(400, "No image provided")
 
         endpoint = (body.get("_endpoint") or "").rstrip("/")
+        # SSRF hardening: a client-supplied endpoint is fetched server-side
+        # below, so validate it first (mirrors routes/embedding_routes.py).
+        # Local-first means loopback/LAN is allowed by default; the cloud
+        # metadata range and non-HTTP(S) schemes are always rejected.
+        if endpoint:
+            from src.url_safety import check_outbound_url
+            ok, reason = check_outbound_url(
+                endpoint,
+                block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+            )
+            if not ok:
+                raise HTTPException(400, f"Rejected endpoint URL: {reason}")
         model = (body.get("_model") or "").strip()
 
         base = endpoint
@@ -1121,7 +1162,7 @@ def setup_gallery_routes() -> APIRouter:
             db = SessionLocal()
             try:
                 for ep in db.query(ModelEndpoint).all():
-                    if ep.base_url.rstrip("/").rstrip("/v1") == base.rstrip("/v1"):
+                    if ep.base_url.rstrip("/").removesuffix("/v1").rstrip("/") == base.rstrip("/").removesuffix("/v1").rstrip("/"):
                         api_key = ep.api_key
                         break
             finally:
@@ -1298,6 +1339,7 @@ def setup_gallery_routes() -> APIRouter:
     # error so the client can prompt the user to install via Cookbook.
     @router.post("/api/image/denoise")
     async def denoise_image(request: Request):
+        require_privilege(request, "can_generate_images")
         body = await request.json()
         image_b64 = body.get("image")
         if not image_b64:
@@ -1347,6 +1389,7 @@ def setup_gallery_routes() -> APIRouter:
     # server required. Used by the editor's AI Upscale button.
     @router.post("/api/image/upscale-local")
     async def upscale_image_local(request: Request):
+        require_privilege(request, "can_generate_images")
         body = await request.json()
         image_b64 = body.get("image")
         if not image_b64:
@@ -1403,6 +1446,7 @@ def setup_gallery_routes() -> APIRouter:
              outside the hint becomes transparent regardless of what the
              model thought was foreground.
         """
+        require_privilege(request, "can_generate_images")
         body = await request.json()
         image_b64 = body.get("image")
         hint_b64 = body.get("hint_mask")
@@ -1484,6 +1528,7 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/image/enhance-face")
     async def enhance_face(request: Request):
         """Face/portrait enhancement. Uses GFPGAN if available, falls back to PIL."""
+        require_privilege(request, "can_generate_images")
         body = await request.json()
         image_b64 = body.get("image")
         if not image_b64:
@@ -1688,7 +1733,7 @@ def setup_gallery_routes() -> APIRouter:
                 return {"error": "No vision-capable endpoint configured"}
 
             # Call vision model — format differs between Anthropic and OpenAI
-            from src.llm_core import _detect_provider
+            from src.llm_core import _detect_provider, _restricts_temperature, _uses_max_completion_tokens
             provider = _detect_provider(chat_url)
             tag_prompt = (
                 "Analyze this photo. Return ONLY a comma-separated list of tags. "
@@ -1713,6 +1758,7 @@ def setup_gallery_routes() -> APIRouter:
                     }],
                 }
             else:
+                _tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model_name) else "max_tokens"
                 payload = {
                     "model": model_name,
                     "messages": [{
@@ -1722,9 +1768,12 @@ def setup_gallery_routes() -> APIRouter:
                             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
                         ],
                     }],
-                    "max_tokens": 200,
+                    _tok_key: 200,
                     "temperature": 0.3,
                 }
+                # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.
+                if _restricts_temperature(model_name):
+                    payload.pop("temperature", None)
 
             h = {"Content-Type": "application/json"}
             if headers:
@@ -1758,6 +1807,4 @@ def setup_gallery_routes() -> APIRouter:
             db.close()
 
     return router
-
-
 

@@ -38,13 +38,16 @@ class TaskDeferred(BaseException):
 
 
 async def action_tidy_sessions(owner: str, **kwargs) -> Tuple[str, bool]:
-    """Delete empty/throwaway sessions for the owner. Pure heuristic —
+    """Delete empty sessions for the owner. Pure heuristic —
     the LLM folder-sort phase is skipped (user opted to keep this task
     LLM-free; sorting can be triggered manually via the Chats UI)."""
     try:
         import asyncio
         from src.session_actions import run_auto_sort
-        result = await asyncio.wait_for(run_auto_sort(owner, skip_llm=True), timeout=60)
+        result = await asyncio.wait_for(
+            run_auto_sort(owner, skip_llm=True, delete_throwaway=False),
+            timeout=60,
+        )
         return result, True
     except asyncio.TimeoutError:
         logger.error("tidy_sessions action timed out")
@@ -78,41 +81,59 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
         manager = MemoryManager(DATA_DIR)
         all_memories = manager.load_all()
 
-        # When the scheduled task was created without an explicit owner
-        # (the common case for built-in housekeeping rows), task.owner
-        # arrives as "" or None. The old filter then required memories
-        # with a matching empty owner — which excluded every real memory
-        # and the action no-op'd with "nothing to consolidate" even
-        # though hundreds of memories were sitting there. Treat empty
-        # owner as "no filter" so the housekeeping action actually runs.
         _owner_clean = (owner or "").strip()
-        if _owner_clean:
-            def _belongs_to_owner(mem: dict) -> bool:
-                mem_owner = (mem.get("owner") or "").strip()
-                return mem_owner == _owner_clean or not mem_owner
-        else:
-            def _belongs_to_owner(mem: dict) -> bool:
-                return True
+        text_limit = 2000
 
-        owner_memories = [m for m in all_memories if _belongs_to_owner(m)]
-        if not owner_memories:
+        def _memory_owner(mem: dict) -> str:
+            return (mem.get("owner") or "").strip()
+
+        # Built-in housekeeping can run without an owner. In that case scan all
+        # memories, but keep every AI prompt/apply step owner-local.
+        if _owner_clean:
+            memory_groups = {
+                _owner_clean: [m for m in all_memories if _memory_owner(m) == _owner_clean]
+            }
+        else:
+            memory_groups = {}
+            for mem in all_memories:
+                memory_groups.setdefault(_memory_owner(mem), []).append(mem)
+
+        memory_groups = {group_owner: group for group_owner, group in memory_groups.items() if group}
+        if not memory_groups:
             raise TaskNoop("no memories to consolidate")
 
-        url, model, headers = resolve_endpoint("utility", owner=owner)
-        if not url or not model:
-            url, model, headers = resolve_endpoint("default", owner=owner)
+        total_removed = 0
+        total_cleaned = 0
+        total_scanned = 0
+        removed_examples = []
+        ai_reasons = []
+        ai_used = False
 
-        if url and model and len(owner_memories) >= 2:
+        async def _try_ai_tidy_group(group_owner: str, group_memories: list) -> bool:
+            nonlocal all_memories, total_removed, total_cleaned, total_scanned, ai_used
+            if len(group_memories) < 2:
+                return False
+
+            url, model, headers = resolve_endpoint("utility", owner=group_owner or None)
+            if not url or not model:
+                url, model, headers = resolve_endpoint("default", owner=group_owner or None)
+            if not url or not model:
+                return False
+
             try:
                 items = [
                     {
                         "id": m.get("id"),
                         "category": m.get("category", "fact"),
-                        "text": (m.get("text") or "").strip()[:600],
+                        "text": (m.get("text") or "").strip()[:text_limit],
+                        "truncated": len((m.get("text") or "").strip()) > text_limit,
                     }
-                    for m in owner_memories
+                    for m in group_memories
                     if m.get("id") and (m.get("text") or "").strip()
                 ]
+                if len(items) < 2:
+                    return False
+                truncated_ids = {item["id"] for item in items if item.get("truncated")}
                 prompt = (
                     "You are tidying a user's saved personal memories. Return ONLY raw JSON, no markdown.\n"
                     "Remove memories that are empty, broken, trivial conversation filler, duplicates, or obsolete "
@@ -144,7 +165,7 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                     keep_items = decision.get("keep") if isinstance(decision, dict) else None
                     drop_items = decision.get("drop") if isinstance(decision, dict) else None
                     if isinstance(keep_items, list) and isinstance(drop_items, list):
-                        by_id = {m.get("id"): m for m in owner_memories}
+                        by_id = {m.get("id"): m for m in group_memories if m.get("id")}
                         keep_ids = set()
                         cleaned_by_id = {}
                         for item in keep_items:
@@ -157,84 +178,103 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                             if not text:
                                 continue
                             keep_ids.add(mid)
-                            cleaned_by_id[mid] = {
-                                "text": text,
+                            cleaned = {
                                 "category": (item.get("category") or by_id[mid].get("category") or "fact").strip(),
                             }
+                            original_text = (by_id[mid].get("text") or "").strip()
+                            if len(original_text) <= text_limit:
+                                cleaned["text"] = text
+                            cleaned_by_id[mid] = cleaned
+
+                        # If the model only saw a truncated memory, do not let
+                        # that partial view delete or rewrite the full memory.
+                        keep_ids.update(mid for mid in truncated_ids if mid in by_id)
 
                         if keep_ids:
                             changed_text = 0
+                            group_ref_ids = {id(m) for m in group_memories}
                             kept_all = []
                             for mem in all_memories:
-                                if not _belongs_to_owner(mem):
+                                if id(mem) not in group_ref_ids:
                                     kept_all.append(mem)
                                     continue
                                 mid = mem.get("id")
                                 if mid not in keep_ids:
                                     continue
                                 cleaned = cleaned_by_id.get(mid) or {}
+                                if mid in truncated_ids:
+                                    cleaned.pop("text", None)
                                 if cleaned.get("text") and cleaned["text"] != mem.get("text"):
                                     mem["text"] = cleaned["text"]
                                     changed_text += 1
                                 if cleaned.get("category"):
                                     mem["category"] = cleaned["category"]
-                                if owner and not mem.get("owner"):
-                                    mem["owner"] = owner
                                 kept_all.append(mem)
 
-                            removed = len(owner_memories) - len(keep_ids)
+                            removed = len(group_memories) - len(keep_ids)
+                            total_scanned += len(group_memories)
                             if removed or changed_text:
-                                manager.save(kept_all)
-                                reasons = [
+                                all_memories = kept_all
+                                total_removed += removed
+                                total_cleaned += changed_text
+                                ai_used = True
+                                ai_reasons.extend([
                                     (d.get("reason") or "").strip()
                                     for d in drop_items
                                     if isinstance(d, dict) and (d.get("reason") or "").strip()
-                                ][:3]
-                                reason_text = f": {'; '.join(reasons)}" if reasons else ""
-                                return (
-                                    f"AI tidied {len(owner_memories)} memories: "
-                                    f"removed {removed}, cleaned {changed_text}{reason_text}",
-                                    True,
-                                )
-
-                            raise TaskNoop(f"AI scanned {len(owner_memories)} memories, no changes")
-            except TaskNoop:
-                raise
+                                ])
+                            return True
             except Exception as ai_err:
                 logger.warning("AI memory tidy failed; falling back to duplicate cleanup: %s", ai_err)
+            return False
 
-        seen = {}
-        keep_ids = set()
-        removed_examples = []
-        for mem in owner_memories:
-            text = (mem.get("text") or "").strip()
-            key = " ".join(text.lower().split())
-            if not key:
-                removed_examples.append("(empty)")
+        for group_owner, group_memories in memory_groups.items():
+            if await _try_ai_tidy_group(group_owner, group_memories):
                 continue
-            if key in seen:
-                if len(removed_examples) < 3:
-                    removed_examples.append(text[:60] + ("..." if len(text) > 60 else ""))
+
+            seen = {}
+            keep_refs = set()
+            total_scanned += len(group_memories)
+            for mem in group_memories:
+                text = (mem.get("text") or "").strip()
+                key = " ".join(text.lower().split())
+                if not key:
+                    if len(removed_examples) < 3:
+                        removed_examples.append("(empty)")
+                    continue
+                if key in seen:
+                    if len(removed_examples) < 3:
+                        removed_examples.append(text[:60] + ("..." if len(text) > 60 else ""))
+                    continue
+                seen[key] = mem
+                keep_refs.add(id(mem))
+
+            group_removed = len(group_memories) - len(keep_refs)
+            if group_removed == 0:
                 continue
-            seen[key] = mem
-            keep_ids.add(mem.get("id"))
 
-        removed = len(owner_memories) - len(keep_ids)
-        if removed == 0:
-            raise TaskNoop(f"scanned {len(owner_memories)} memories, no duplicates")
+            group_ref_ids = {id(m) for m in group_memories}
+            all_memories = [
+                m for m in all_memories
+                if id(m) not in group_ref_ids or id(m) in keep_refs
+            ]
+            total_removed += group_removed
 
-        kept_all = [
-            m for m in all_memories
-            if not _belongs_to_owner(m) or m.get("id") in keep_ids
-        ]
-        if owner:
-            for mem in kept_all:
-                if mem.get("id") in keep_ids and not mem.get("owner"):
-                    mem["owner"] = owner
-        manager.save(kept_all)
-        preview = "; ".join(removed_examples)
-        extra = f" (+{removed - len(removed_examples)} more)" if removed > len(removed_examples) else ""
-        return f"Removed {removed} duplicate(s) of {len(owner_memories)}: {preview}{extra}", True
+        if total_removed or total_cleaned:
+            manager.save(all_memories)
+            if ai_used:
+                reasons = ai_reasons[:3]
+                reason_text = f": {'; '.join(reasons)}" if reasons else ""
+                return (
+                    f"AI tidied {total_scanned} memories: "
+                    f"removed {total_removed}, cleaned {total_cleaned}{reason_text}",
+                    True,
+                )
+            preview = "; ".join(removed_examples)
+            extra = f" (+{total_removed - len(removed_examples)} more)" if total_removed > len(removed_examples) else ""
+            return f"Removed {total_removed} duplicate(s) of {total_scanned}: {preview}{extra}", True
+
+        raise TaskNoop(f"scanned {total_scanned} memories, no duplicates")
     except Exception as e:
         logger.error(f"consolidate_memory action failed: {e}")
         return str(e), False
@@ -350,7 +390,7 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
         last_watermark = None
         try:
             if STATE_FILE.exists():
-                saved = json.loads(STATE_FILE.read_text())
+                saved = json.loads(STATE_FILE.read_text(encoding="utf-8"))
                 if saved.get("last_created_at"):
                     last_watermark = datetime.fromisoformat(saved["last_created_at"])
         except Exception:
@@ -411,7 +451,7 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
                         "last_run_at": datetime.utcnow().isoformat(),
                         "scanned": len(events),
                         "removed": len(removed),
-                    }, indent=2))
+                    }, indent=2), encoding="utf-8")
             except Exception as se:
                 logger.warning(f"tidy_calendar watermark save failed: {se}")
 
@@ -441,7 +481,7 @@ def _result_has_work(result: str | None) -> bool:
     'No new emails to summarize', 'Tagged 0 / Moved 0', etc. when nothing
     was done. Used to decide whether to record the run or noop it.
     """
-    if not result:
+    if not isinstance(result, str) or not result:
         return False
     low = result.lower()
     if "processed 0" in low or "no new" in low or "nothing to" in low:
@@ -469,7 +509,12 @@ async def action_draft_email_replies(owner: str, **kwargs) -> Tuple[str, bool]:
     """Run one pass of AI reply drafting."""
     try:
         from routes.email_pollers import _run_auto_summarize_once
-        result = await _run_auto_summarize_once(do_summary=False, do_reply=True)
+        result = await _run_auto_summarize_once(
+            do_summary=False,
+            do_reply=True,
+            days_back=7,
+            progress_cb=kwargs.get("progress_cb"),
+        )
         if not _result_has_work(result):
             raise TaskNoop(f"draft replies: {result or 'no new emails'}")
         return result, True
@@ -512,7 +557,7 @@ _HEURISTIC_CRITICAL = ["surgery", "court", "wedding day", "funeral", "delivery d
 
 def _classify_event_heuristic(summary: str) -> tuple:
     """Quick heuristic classification — returns (event_type, importance) or (None, None) if unclear."""
-    s = (summary or "").lower()
+    s = (summary if isinstance(summary, str) else "").lower()
     etype = None
     for t, kws in _HEURISTIC_TYPES.items():
         if any(k in s for k in kws):
@@ -718,200 +763,16 @@ async def action_extract_email_events(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
-async def action_mark_email_boundaries(owner: str, **kwargs) -> Tuple[str, bool]:
-    """LLM-based signature / quoted-reply boundary detection. For each new
-    inbox email that we haven't analyzed yet, ask the model to return char
-    offsets where the signature and quoted-reply start. Cache the offsets
-    keyed by Message-ID — once cached, the renderer uses them directly with
-    no further LLM calls. Caps at 30 emails per pass to keep cost bounded.
-    """
-    try:
-        import sqlite3 as _sql3
-        import json as _json
-        import re as _re
-        import email as _email_mod
-        import asyncio as _aio
-        from datetime import datetime as _dt
-        from routes.email_helpers import _imap_connect, _decode_header, SCHEDULED_DB
-        from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
 
-        # Pull recent inbox UIDs + Message-IDs directly via IMAP (the
-        # nested helpers in email_routes aren't importable, and this keeps
-        # the action self-contained).
-        def _pull_recent():
-            results = []
-            conn = _imap_connect(None)
-            try:
-                conn.select("INBOX", readonly=True)
-                status, data = conn.search(None, "ALL")
-                if status != "OK" or not data or not data[0]:
-                    return results
-                uids = data[0].split()[-50:][::-1]  # newest 50
-                for uid in uids:
-                    try:
-                        st, msg_data = conn.fetch(uid, "(RFC822.HEADER)")
-                        if st != "OK" or not msg_data or not msg_data[0]:
-                            continue
-                        raw = msg_data[0][1] if isinstance(msg_data[0], tuple) else None
-                        if not raw:
-                            continue
-                        msg = _email_mod.message_from_bytes(raw)
-                        results.append({
-                            "uid": uid.decode() if isinstance(uid, bytes) else str(uid),
-                            "message_id": (msg.get("Message-ID") or "").strip(),
-                            "subject": _decode_header(msg.get("Subject", "")),
-                        })
-                    except Exception:
-                        continue
-            finally:
-                try: conn.logout()
-                except Exception: pass
-            return results
-
-        mails = await _aio.to_thread(_pull_recent)
-        if not mails:
-            raise TaskNoop("no emails to analyze")
-
-        url, model, headers = resolve_endpoint("utility")
-        if not url or not model:
-            url, model, headers = resolve_endpoint("default")
-        if not url or not model:
-            return "No LLM endpoint available", False
-
-        c = _sql3.connect(SCHEDULED_DB)
-        already = {r[0] for r in c.execute(
-            "SELECT message_id FROM email_boundaries"
-        ).fetchall()}
-        c.close()
-
-        analyzed = 0
-        skipped = 0
-        for em in mails[:30]:
-            mid = (em.get("message_id") or "").strip()
-            if not mid or mid in already:
-                skipped += 1
-                continue
-            uid = em.get("uid")
-            if not uid:
-                continue
-            def _fetch_body(_uid):
-                conn = _imap_connect(None)
-                try:
-                    conn.select("INBOX", readonly=True)
-                    st, data = conn.fetch(_uid, "(BODY.PEEK[TEXT])")
-                    if st != "OK" or not data or not data[0]:
-                        return ""
-                    raw = data[0][1] if isinstance(data[0], tuple) else None
-                    if not raw:
-                        return ""
-                    try:
-                        return raw.decode("utf-8", errors="replace")
-                    except Exception:
-                        return str(raw)
-                finally:
-                    try: conn.logout()
-                    except Exception: pass
-            try:
-                body = (await _aio.to_thread(_fetch_body, str(uid))).strip()
-            except Exception as e:
-                logger.warning(f"boundary detection: IMAP fetch failed for uid={uid} mid={mid}: {e}")
-                continue
-            if not body or len(body) < 100:
-                continue
-            # Truncate very long bodies — boundaries usually live in the
-            # first few KB of plain text.
-            truncated = body[:8000]
-
-            prompt = (
-                "Identify where the signature and the quoted-reply start in "
-                "this email body. Return ONLY raw JSON, no prose. Schema:\n"
-                '{"sig_start": <int>, "quote_start": <int>}\n\n'
-                "Rules:\n"
-                "- sig_start = char offset where the sender's signature block "
-                "begins (closing phrase like 'Best regards' / 'Mit freundlichen' / "
-                "'Med vänliga' / contact details / disclaimer / job title block). "
-                "Use -1 if none.\n"
-                "- quote_start = char offset where any quoted-reply / forwarded "
-                "thread begins (lines like 'On <date>, <name> wrote:', "
-                "'From: ... Sent: ... Subject:' in any language — German 'Von:', "
-                "French 'De :', Spanish 'De:', etc.). Use -1 if none.\n"
-                "- Both offsets are byte/char positions in the input string starting "
-                "from 0. The signature/quote should INCLUDE the marker line itself.\n"
-                "- If both exist, sig_start is normally before quote_start (sig of "
-                "the current message, then quoted thread underneath).\n\n"
-                f"BODY (length={len(truncated)}):\n{truncated}"
-            )
-            try:
-                raw = await llm_call_async(
-                    url=url, model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.0, max_tokens=200,
-                    headers=headers, timeout=60,
-                )
-                from src.text_helpers import strip_think as _st
-                raw = _st(raw or "", prose=False, prompt_echo=False)
-                raw = _re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=_re.MULTILINE).strip()
-                # Balanced-brace match: handles {"sig_start": 10, "info": {}}
-                # which the previous [^{}] class would have broken on.
-                start = raw.find("{")
-                m_text = None
-                if start != -1:
-                    depth = 0
-                    for i in range(start, len(raw)):
-                        if raw[i] == "{":
-                            depth += 1
-                        elif raw[i] == "}":
-                            depth -= 1
-                            if depth == 0:
-                                m_text = raw[start:i + 1]
-                                break
-                if not m_text:
-                    logger.warning(f"boundary detection: no JSON object in LLM response for mid={mid}: {raw[:200]!r}")
-                    continue
-                parsed = _json.loads(m_text)
-                sig = int(parsed.get("sig_start", -1))
-                quote = int(parsed.get("quote_start", -1))
-            except Exception as e:
-                logger.warning(f"boundary detection failed for mid={mid}: {e}")
-                continue
-
-            # Also pre-parse the thread tree so the client never has to.
-            try:
-                from src.email_thread_parser import parse_thread, THREAD_PARSER_VERSION
-                # The boundary loop only has the plaintext body; parse_thread
-                # also accepts None for HTML so this is safe.
-                turns = parse_thread(None, body)
-                turns_json = (
-                    _json.dumps({"v": THREAD_PARSER_VERSION, "turns": turns})
-                    if turns else None
-                )
-            except Exception as _pe:
-                logger.debug(f"thread parse failed for {mid}: {_pe}")
-                turns_json = None
-
-            try:
-                c = _sql3.connect(SCHEDULED_DB)
-                c.execute(
-                    "INSERT OR REPLACE INTO email_boundaries "
-                    "(message_id, uid, folder, sig_start, quote_start, model_used, created_at, turns_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (mid, str(uid), "INBOX", sig, quote, model, _dt.utcnow().isoformat(), turns_json),
-                )
-                c.commit()
-                c.close()
-                analyzed += 1
-            except Exception as e:
-                logger.warning(f"could not cache boundaries for {mid}: {e}")
-
-        if analyzed == 0:
-            # All recent emails already had boundaries cached — nothing new
-            # to do, don't pollute Activity.
-            raise TaskNoop(f"boundaries already cached for {skipped} email(s)")
-        return f"Marked boundaries: {analyzed} new, {skipped} cached", True
-    except Exception as e:
-        logger.error(f"mark_email_boundaries failed: {e}")
-        return str(e), False
+# Sender local-parts (matched exactly or by prefix) whose mail never carries a
+# personal signature worth learning. These compare against the local-part
+# (before "@"), so role names must NOT include a trailing "@" — "support@" etc.
+# could never match a local-part of "support" and were silently dead.
+_SIG_SKIP_PREFIXES = (
+    "noreply", "no-reply", "donotreply", "do-not-reply",
+    "mailer-daemon", "notifications", "notification", "bounce",
+    "newsletter", "support", "info", "admin",
+)
 
 
 async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, bool]:
@@ -971,16 +832,11 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
             return "No emails to scan", True
 
         # 2. Group by sender; drop addresses that don't carry useful sigs.
-        SKIP_PREFIXES = (
-            "noreply", "no-reply", "donotreply", "do-not-reply",
-            "mailer-daemon", "notifications", "notification", "bounce",
-            "newsletter", "support@", "info@", "admin@",
-        )
         by_sender: dict[str, list[dict]] = {}
         for m in mails:
             addr = m["from_address"]
             local = addr.split("@", 1)[0]
-            if any(local == p or local.startswith(p) for p in SKIP_PREFIXES):
+            if any(local == p or local.startswith(p) for p in _SIG_SKIP_PREFIXES):
                 continue
             # Skip plus-aliases / list-style addresses too.
             if "+" in local or "-noreply" in addr or "-bounces" in addr:
@@ -1271,7 +1127,7 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
         if not names:
             raise TaskNoop("no skills to test")
 
-        url, model, headers = resolve_endpoint("default")
+        url, model, headers = resolve_endpoint("default", owner=owner)
         if not url or not model:
             return "No Default/Utility model configured — set one in Settings.", False
 
@@ -1304,7 +1160,7 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
             name = skill.get("name")
             if not name:
                 continue
-            md = sm.read_skill_md(name) or ""
+            md = sm.read_skill_md(name, owner=owner) or ""
             if not md:
                 tally["skipped"] += 1
                 per_skill_log.append(f"{name}: skipped (no SKILL.md)")
@@ -1332,7 +1188,7 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
                 # user-set value (e.g. 1.0 → 0.95) is destructive.
                 if v in ("pass", "needs_work", "fail", "inconclusive"):
                     try:
-                        sm.set_audit(name, v, by_teacher=False, worker_model=model)
+                        sm.set_audit(name, v, by_teacher=False, worker_model=model, owner=owner)
                     except Exception as _e:
                         logger.warning(f"test_skills set_audit({name}) failed: {_e}")
                 if v == "unknown":
@@ -1455,7 +1311,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
         _legacy = _P("data/note_pings.json")
         if _legacy.exists() and not STATE.exists():
             try:
-                STATE.write_text(_legacy.read_text())
+                STATE.write_text(_legacy.read_text(encoding="utf-8"), encoding="utf-8")
             except Exception:
                 pass
         # Scanner ticks every 60s in _note_pings_loop. 90s window guarantees
@@ -1480,7 +1336,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                 return None
 
         try:
-            cache = _json.loads(STATE.read_text()) if STATE.exists() else {}
+            cache = _json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else {}
         except Exception:
             cache = {}
 
@@ -1557,7 +1413,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                 cache.pop(stale, None)
 
             try:
-                STATE.write_text(_json.dumps(cache))
+                STATE.write_text(_json.dumps(cache), encoding="utf-8")
             except Exception as e:
                 logger.warning(f"ping_notes: cache write failed: {e}")
 
@@ -1662,7 +1518,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         for acc in accounts:
             cache_file = CACHE_DIR / f"{acc.id}.json"
             try:
-                cache = _json.loads(cache_file.read_text()) if cache_file.exists() else {"uids": {}}
+                cache = _json.loads(cache_file.read_text(encoding="utf-8")) if cache_file.exists() else {"uids": {}}
             except Exception:
                 cache = {"uids": {}}
 
@@ -1904,7 +1760,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 cache_uids.pop(stale, None)
 
             try:
-                cache_file.write_text(_json.dumps(cache))
+                cache_file.write_text(_json.dumps(cache), encoding="utf-8")
             except Exception as e:
                 logger.warning(f"urgency: cache write failed for {acc.id}: {e}")
 
@@ -1989,7 +1845,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
 
         # Load prior state to know which urgent UIDs we've already notified.
         try:
-            prior = _json.loads(STATE_PATH.read_text()) if STATE_PATH.exists() else {}
+            prior = _json.loads(STATE_PATH.read_text(encoding="utf-8")) if STATE_PATH.exists() else {}
         except Exception:
             prior = {}
         notified_uids = set(prior.get("notified_uids", []))
@@ -2073,7 +1929,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             "notified_uids": sorted(notified_uids),
         }
         try:
-            STATE_PATH.write_text(_json.dumps(state))
+            STATE_PATH.write_text(_json.dumps(state), encoding="utf-8")
         except Exception as e:
             logger.warning(f"urgency: state write failed: {e}")
 
@@ -2157,7 +2013,6 @@ BUILTIN_ACTIONS = {
     # ping_events removed from the user-facing registry. Calendar reminders
     # are represented as Notes, so note pings are the single dispatch path.
     "daily_brief": action_daily_brief,
-    "mark_email_boundaries": action_mark_email_boundaries,
     "learn_sender_signatures": action_learn_sender_signatures,
     "ssh_command": action_ssh_command,
     "run_script": action_run_script,
@@ -2179,7 +2034,6 @@ BUILTIN_ACTION_INFO = {
     "extract_email_events": "Scan emails for booking/meeting confirmations and auto-add to calendar",
     "classify_events": "Tag upcoming events with importance (low/normal/high/critical) and type (work/health/travel/etc.); colors them too",
     "daily_brief": "Build a morning digest: today's calendar, unread email count + top senders, active todos",
-    "mark_email_boundaries": "LLM-detect signature & quoted-reply offsets in new emails; cached so future renders fold without further LLM calls",
     "learn_sender_signatures": "LLM learns each sender's signature from 3+ of their recent emails; cached per address so future renders fold sigs reliably without heuristics",
     "ssh_command": "Run a shell command on a local or remote host",
     "run_script": "Run a script locally or on ODYSSEUS_SCRIPT_HOST",

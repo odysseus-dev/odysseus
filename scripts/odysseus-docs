@@ -33,6 +33,10 @@ except ModuleNotFoundError as e:
     sys.exit(2)
 
 
+def _text_len(value) -> int:
+    return len(value) if isinstance(value, str) else 0
+
+
 def _serialize(d: "Document", include_content: bool = False) -> dict:
     out = {
         "id": d.id,
@@ -42,7 +46,7 @@ def _serialize(d: "Document", include_content: bool = False) -> dict:
         "version_count": d.version_count or 1,
         "is_active": bool(d.is_active),
         "tidy_verdict": d.tidy_verdict or "",
-        "content_length": len(d.current_content or ""),
+        "content_length": _text_len(d.current_content),
         "created_at": d.created_at.isoformat() if d.created_at else "",
         "updated_at": d.updated_at.isoformat() if d.updated_at else "",
     }
@@ -90,7 +94,7 @@ def cmd_versions(args):
                 "version_number": v.version_number,
                 "summary": v.summary or "",
                 "source": v.source or "ai",
-                "content_length": len(v.content or ""),
+                "content_length": _text_len(v.content),
             } for v in rows
         ], args)
     finally:

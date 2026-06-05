@@ -10,9 +10,34 @@ from fastapi import APIRouter, Request, HTTPException
 from core.models import ChatMessage
 from core.database import SessionLocal, ChatMessage as DbChatMessage, Session as DbSession
 from src.topic_analyzer import analyze_topics
-from routes.session_routes import _verify_session_owner
+from routes.session_routes import (
+    _message_role,
+    _message_text,
+    _reject_compact_during_active_run,
+    _verify_session_owner,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _merge_continue_rows_to_delete(db_messages, db1, db2):
+    """DB rows to delete when merging the last two assistant messages.
+
+    Always the second assistant message (db2), plus ONLY the single
+    intervening "continue" user message (the one carrying "previous response
+    was interrupted") — matching the in-memory merge. The previous code
+    deleted the whole index range between the two assistant rows, destroying
+    any tool/system/user messages in between and desyncing the DB from the
+    in-memory history.
+    """
+    to_delete = [db2]
+    i1 = next((i for i, m in enumerate(db_messages) if m is db1), None)
+    i2 = next((i for i, m in enumerate(db_messages) if m is db2), None)
+    if i1 is not None and i2 is not None and i2 - 1 > i1:
+        between = db_messages[i2 - 1]
+        if getattr(between, "role", "") == "user" and            "previous response was interrupted" in (getattr(between, "content", "") or ""):
+            to_delete.append(between)
+    return to_delete
 
 
 def setup_history_routes(session_manager) -> APIRouter:
@@ -58,7 +83,7 @@ def setup_history_routes(session_manager) -> APIRouter:
                     .all()
                 )
                 import json as _json
-                history_dict = []
+                db_history = []
                 for m in db_messages:
                     entry = {"role": m.role, "content": m.content}
                     meta = {}
@@ -71,12 +96,19 @@ def setup_history_routes(session_manager) -> APIRouter:
                         meta["timestamp"] = m.timestamp.isoformat() + "Z"
                     if meta:
                         entry["metadata"] = meta
-                    history_dict.append(entry)
-                if history_dict:
+                    db_history.append(entry)
+                if db_history:
+                    # Rebuild in-memory history from the full set so hidden
+                    # messages (e.g. compaction summaries) are kept for AI context.
                     session.history = [
                         ChatMessage(role=m["role"], content=m["content"], metadata=m.get("metadata"))
-                        for m in history_dict
+                        for m in db_history
                     ]
+                # Response excludes hidden messages, matching the in-memory path.
+                history_dict = [
+                    m for m in db_history
+                    if not (m.get("metadata") or {}).get("hidden")
+                ]
             except Exception as e:
                 logger.error(f"DB fallback failed for {session_id}: {e}")
             finally:
@@ -265,7 +297,7 @@ def setup_history_routes(session_manager) -> APIRouter:
                 db_messages = (
                     db.query(DbChatMessage)
                     .filter(DbChatMessage.session_id == session_id, DbChatMessage.role == 'assistant')
-                    .order_by(DbChatMessage.created_at.desc())
+                    .order_by(DbChatMessage.timestamp.desc())
                     .first()
                 )
                 if db_messages:
@@ -320,7 +352,7 @@ def setup_history_routes(session_manager) -> APIRouter:
                 db_msg = (
                     db.query(DbChatMessage)
                     .filter(DbChatMessage.session_id == session_id, DbChatMessage.role == 'assistant')
-                    .order_by(DbChatMessage.created_at.desc())
+                    .order_by(DbChatMessage.timestamp.desc())
                     .first()
                 )
                 if db_msg:
@@ -401,7 +433,7 @@ def setup_history_routes(session_manager) -> APIRouter:
                 db_messages = (
                     db.query(DbChatMessage)
                     .filter(DbChatMessage.session_id == session_id)
-                    .order_by(DbChatMessage.created_at)
+                    .order_by(DbChatMessage.timestamp)
                     .all()
                 )
                 # Find last two assistant messages in DB
@@ -411,11 +443,13 @@ def setup_history_routes(session_manager) -> APIRouter:
                     db1.content = merged_content
                     db1.meta_data = _json.dumps(merged_meta)
 
-                    # Remove the continue user message if between them
-                    db_idx2 = db_messages.index(db2)
-                    db_idx1 = db_messages.index(db1)
-                    for di in range(db_idx2, db_idx1, -1):
-                        db.delete(db_messages[di])
+                    # Mirror the in-memory deletion: remove the second assistant
+                    # message and ONLY the "continue" user message between them
+                    # (not arbitrary tool/system/user rows). The old
+                    # range-delete destroyed every row between the two assistant
+                    # messages, desyncing the DB from the in-memory history.
+                    for _row in _merge_continue_rows_to_delete(db_messages, db1, db2):
+                        db.delete(_row)
 
                     db.commit()
             finally:
@@ -477,10 +511,10 @@ def setup_history_routes(session_manager) -> APIRouter:
 
     @router.get("/api/conversations/topics")
     async def get_conversation_topics(request: Request) -> Dict[str, Any]:
-        from src.auth_helpers import get_current_user
-        user = get_current_user(request)
+        from src.auth_helpers import require_user
+        user = require_user(request)
         try:
-            return analyze_topics(session_manager, owner=user)
+            return analyze_topics(session_manager, owner=user or None)
         except Exception as e:
             raise HTTPException(500, f"Topic analysis failed: {e}")
 
@@ -492,6 +526,7 @@ def setup_history_routes(session_manager) -> APIRouter:
             session = session_manager.get_session(session_id)
         except KeyError:
             raise HTTPException(404, "Session not found")
+        _reject_compact_during_active_run(session_id)
 
         try:
             from src.model_context import estimate_tokens, get_context_length
@@ -514,8 +549,8 @@ def setup_history_routes(session_manager) -> APIRouter:
 
             # Build text to summarize
             convo_text = "\n".join(
-                f"{(m.role if isinstance(m, ChatMessage) else m.get('role', '')).upper()}: "
-                f"{(m.content if isinstance(m, ChatMessage) else m.get('content', ''))[:2000]}"
+                f"{_message_role(m).upper()}: "
+                f"{_message_text(m)[:2000]}"
                 for m in older
             )
 

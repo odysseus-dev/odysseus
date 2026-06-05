@@ -12,12 +12,15 @@ from src.llm_core import llm_call
 
 logger = logging.getLogger(__name__)
 
+MAX_INLINE_ATTACHMENT_CHARS = 24000
+MIN_INLINE_ATTACHMENT_SLICE = 500
+
 
 def _is_text_file(path: str) -> bool:
     """Check if file has text extension."""
     return any(
         path.lower().endswith(ext)
-        for ext in (".txt", ".py", ".html", ".htm", ".md", ".json", ".csv", ".log", ".js")
+        for ext in (".txt", ".py", ".html", ".htm", ".md", ".json", ".csv", ".log", ".js", ".nix")
     )
 
 
@@ -26,7 +29,8 @@ def _process_text_file(path: str) -> str:
     language_map = {
         ".py": "python", ".js": "javascript", ".html": "html", ".css": "css",
         ".json": "json", ".md": "markdown", ".txt": "text", ".csv": "csv",
-        ".log": "log", ".sh": "bash", ".yml": "yaml", ".yaml": "yaml",
+        ".log": "log", ".sh": "bash", ".bash": "bash", ".nix": "nix",
+        ".yml": "yaml", ".yaml": "yaml",
         ".xml": "xml", ".sql": "sql", ".cpp": "cpp", ".c": "c",
         ".java": "java", ".go": "go", ".rs": "rust", ".php": "php",
         ".rb": "ruby", ".ts": "typescript", ".jsx": "javascript", ".tsx": "typescript",
@@ -88,8 +92,8 @@ def _process_text_file(path: str) -> str:
     header += f"[Type: {language}, Lines: {line_count}, Size: {size_str} bytes]"
 
     code_extensions = {
-        ".py", ".js", ".html", ".css", ".json", ".md", ".sh", ".yml", ".yaml",
-        ".xml", ".sql", ".cpp", ".c", ".java", ".go", ".rs", ".php", ".rb",
+        ".py", ".js", ".html", ".css", ".json", ".md", ".sh", ".bash", ".nix",
+        ".yml", ".yaml", ".xml", ".sql", ".cpp", ".c", ".java", ".go", ".rs", ".php", ".rb",
         ".ts", ".jsx", ".tsx",
     }
     if ext in code_extensions:
@@ -150,6 +154,95 @@ def _process_pdf(path: str) -> str:
 
     except Exception as e:
         return f"\n\n[PDF processing failed: {str(e)}]"
+
+
+def _truncate_inline(text: str, limit: int = 15000) -> tuple[str, str]:
+    """Cap inline document text so a huge file can't blow the model's context."""
+    text = (text or "").strip()
+    if len(text) > limit:
+        return text[:limit], "\n[…truncated for inline context.]"
+    return text, ""
+
+
+def _fit_inline_attachment_text(
+    text: str,
+    remaining: int,
+    display_name: str,
+) -> tuple[str, int]:
+    """Fit extracted attachment text into the shared inline attachment budget.
+
+    Individual processors already cap single files, but multi-file batches can
+    still add N capped bodies to one user turn. Keep the first files readable,
+    keep later files visible by name, and mark exactly where inline content was
+    reduced so the model does not silently miss attachments.
+    """
+    text = text or ""
+    if len(text) <= remaining:
+        return text, remaining - len(text)
+
+    name = os.path.basename(display_name or "attachment")
+    if remaining < MIN_INLINE_ATTACHMENT_SLICE:
+        return (
+            f"\n\n[Attachment omitted from inline context: {name}. "
+            f"The {MAX_INLINE_ATTACHMENT_CHARS:,}-character shared inline "
+            "attachment budget was already used by earlier attachments. Ask "
+            "to inspect this file specifically if more detail is needed.]",
+            0,
+        )
+    marker = (
+        f"\n\n[Attachment content truncated: {name}. "
+        f"Only {remaining:,} characters of this attachment fit within "
+        f"the {MAX_INLINE_ATTACHMENT_CHARS:,}-character shared inline "
+        "attachment budget. Ask to inspect this file specifically if more "
+        "detail is needed.]"
+    )
+    return text[:remaining] + marker, 0
+
+
+def _process_office_document(path: str, display_name: str) -> str:
+    """Extract an Office/EPUB document to Markdown via the optional markitdown dep.
+
+    Falls back to a friendly banner when markitdown is unavailable or finds no
+    text, so a missing optional dependency never breaks the chat path.
+    """
+    from src.markitdown_runtime import (
+        is_markitdown_format,
+        convert_to_markdown,
+        load_markitdown,
+    )
+
+    if not is_markitdown_format(path):
+        return "\n\n[Attached document file]"
+
+    markdown = convert_to_markdown(path)
+    if markdown and markdown.strip():
+        title = os.path.splitext(os.path.basename(path))[0]
+        body, marker = _truncate_inline(markdown)
+        return f"\n\n[Document content — {title}]:\n{body}{marker}"
+
+    # No content: tell the user whether to install the optional dep or whether
+    # the document simply had no extractable text.
+    try:
+        load_markitdown()
+        return f"\n\n[Attached document: {display_name} — no extractable text found.]"
+    except RuntimeError as exc:
+        return f"\n\n[Attached document: {display_name} — {exc}]"
+
+
+# Marker that _process_pdf prepends to extracted text.
+_PDF_CONTENT_MARKER = "\n\n[PDF content]:"
+
+
+def strip_pdf_content_marker(text: str) -> str:
+    """Remove the leading ``[PDF content]:`` wrapper that ``_process_pdf`` adds.
+
+    Uses ``str.removeprefix`` rather than ``str.lstrip(chars)``: ``lstrip``
+    treats its argument as a *set of characters*, so ``lstrip("\\n[PDF content]:")``
+    keeps chewing into the page text that follows the marker. For example
+    ``"\\n\\n[PDF content]:\\n\\n[Page 1 text]:\\nto the board"`` would lose the
+    leading "to" because 't' and 'o' are in the marker's character set.
+    """
+    return (text or "").removeprefix(_PDF_CONTENT_MARKER).strip()
 
 
 def _load_vl_settings() -> dict:
@@ -269,6 +362,7 @@ def build_user_content(
     frontend can switch to the new doc immediately.
     """
     content = [{"type": "text", "text": text}]
+    inline_attachment_remaining = MAX_INLINE_ATTACHMENT_CHARS
 
     for fid in attachment_ids or []:
         upload_info = (resolved_uploads or {}).get(fid)
@@ -340,9 +434,7 @@ def build_user_content(
                         # Pull the PDF prose once — used as either intro_text
                         # (form path) or the doc body (plain path).
                         try:
-                            pdf_body_text = _process_pdf(path).lstrip(
-                                "\n[PDF content]:"
-                            ).strip()
+                            pdf_body_text = strip_pdf_content_marker(_process_pdf(path))
                         except Exception:
                             pdf_body_text = None
 
@@ -429,8 +521,13 @@ def build_user_content(
             elif mime.startswith("text/") or _is_text_file(path):
                 extracted_text = _process_text_file(path)
             else:
-                extracted_text = "\n\n[Attached document file]"
+                extracted_text = _process_office_document(path, display_name)
 
+            extracted_text, inline_attachment_remaining = _fit_inline_attachment_text(
+                extracted_text,
+                inline_attachment_remaining,
+                display_name,
+            )
             if content and content[0]["type"] == "text":
                 content[0]["text"] += extracted_text
             else:
