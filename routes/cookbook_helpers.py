@@ -127,7 +127,7 @@ def _shell_path(p: str) -> str:
         return '"$HOME"'
     if p.startswith("~/"):
         return '"$HOME/' + p[2:] + '"'
-    return '"' + p + '"'
+    return '"' + p.replace("\\", "\\\\") + '"'
 
 
 def _local_tooling_path_export(executable: str) -> str:
