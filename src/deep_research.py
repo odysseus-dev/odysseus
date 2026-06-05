@@ -196,6 +196,8 @@ class DeepResearcher:
         max_content_chars: int = 15000,
         max_report_tokens: int = 8192,
         extraction_timeout: int = 90,
+        planning_timeout: int = 90,
+        query_timeout: int = 120,
         extraction_concurrency: int = 3,
         min_rounds: int = 2,
         max_empty_rounds: int = 2,
@@ -215,6 +217,8 @@ class DeepResearcher:
         self.max_content_chars = max_content_chars
         self.max_report_tokens = max_report_tokens
         self.extraction_timeout = min(3600, max(15, int(extraction_timeout or 90)))
+        self.planning_timeout = min(3600, max(15, int(planning_timeout or 90)))
+        self.query_timeout = min(3600, max(15, int(query_timeout or 120)))
         self.extraction_concurrency = min(12, max(1, int(extraction_concurrency or 3)))
         self.min_rounds = min_rounds
         self.max_empty_rounds = max_empty_rounds
@@ -395,7 +399,7 @@ class DeepResearcher:
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=1024,
-                timeout=30,
+                timeout=getattr(self, "planning_timeout", 90),
             )
             # Try to parse as JSON for structured plan
             parsed = self._parse_json_object(response)
@@ -478,6 +482,7 @@ class DeepResearcher:
                 [{"role": "user", "content": prompt}],
                 temperature=0.5,
                 max_tokens=4096,
+                timeout=getattr(self, "query_timeout", 120),
             )
             queries = self._parse_json_array(response)
             # Deduplicate

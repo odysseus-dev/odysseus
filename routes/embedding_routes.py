@@ -49,19 +49,35 @@ def _model_cache_name(hf_source: str) -> str:
     return "models--" + hf_source.replace("/", "--")
 
 
+def _model_cache_path(hf_source: str) -> Path:
+    """Return a confined cache path for a fastembed HF source."""
+    root = Path(_cache_dir()).expanduser().resolve()
+    raw_path = root / _model_cache_name(hf_source)
+    if raw_path.is_symlink():
+        raise ValueError("Model cache path must not be a symlink")
+    path = raw_path.resolve(strict=False)
+    try:
+        path.relative_to(root)
+    except ValueError:
+        raise ValueError("Model cache path escapes cache root")
+    return path
+
+
 def _is_downloaded(hf_source: str) -> bool:
     """Check if a model is already cached."""
-    cache = _cache_dir()
-    model_dir = os.path.join(cache, _model_cache_name(hf_source))
-    if not os.path.isdir(model_dir):
+    try:
+        model_dir = _model_cache_path(hf_source)
+    except ValueError:
+        return False
+    if not model_dir.is_dir():
         return False
     # Check for actual model files (not just empty dir)
-    snapshots = os.path.join(model_dir, "snapshots")
-    if os.path.isdir(snapshots):
-        return any(os.listdir(snapshots))
+    snapshots = model_dir / "snapshots"
+    if snapshots.is_dir():
+        return any(snapshots.iterdir())
     # Also check for blobs (older cache format)
-    blobs = os.path.join(model_dir, "blobs")
-    return os.path.isdir(blobs) and any(os.listdir(blobs))
+    blobs = model_dir / "blobs"
+    return blobs.is_dir() and any(blobs.iterdir())
 
 
 def _active_model() -> str:
@@ -119,8 +135,10 @@ def setup_embedding_routes():
 
             cached_size = None
             if downloaded and hf_src:
-                model_path = os.path.join(_cache_dir(), _model_cache_name(hf_src))
-                cached_size = _dir_size_mb(model_path)
+                try:
+                    cached_size = _dir_size_mb(str(_model_cache_path(hf_src)))
+                except ValueError:
+                    cached_size = None
 
             result.append({
                 "model": m["model"],
@@ -217,8 +235,11 @@ def setup_embedding_routes():
         if not hf_src:
             raise HTTPException(400, "No cache source for this model")
 
-        model_path = os.path.join(_cache_dir(), _model_cache_name(hf_src))
-        if not os.path.isdir(model_path):
+        try:
+            model_path = _model_cache_path(hf_src)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        if not model_path.is_dir():
             return {"deleted": False, "message": "Model not cached"}
 
         shutil.rmtree(model_path)

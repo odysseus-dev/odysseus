@@ -265,6 +265,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                             existing.all_day = all_day
                             existing.is_utc = row_is_utc
                             existing.rrule = rrule
+                            existing.origin = "caldav"
                         else:
                             new_ev = CalendarEvent(
                                 uid=uid_val,
@@ -277,6 +278,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                                 all_day=all_day,
                                 is_utc=row_is_utc,
                                 rrule=rrule,
+                                origin="caldav",
                             )
                             db.add(new_ev)
                             pending[uid_val] = new_ev
@@ -286,8 +288,13 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                 # Prune locally-cached CalDAV events that vanished
                 # upstream (only within our sync window — events outside
                 # the window aren't in `objs`, so we'd false-delete them).
+                # Only rows we previously pulled from the server (origin=="caldav")
+                # are prunable; locally-created events (agent / email triage / a
+                # UI event whose write-back failed) carry origin NULL and must
+                # never be deleted just because the server didn't return them.
                 stale = db.query(CalendarEvent).filter(
                     CalendarEvent.calendar_id == local_cal.id,
+                    CalendarEvent.origin == "caldav",
                     CalendarEvent.dtstart >= start,
                     CalendarEvent.dtstart <= end,
                     ~CalendarEvent.uid.in_(seen_uids) if seen_uids else CalendarEvent.uid.isnot(None),

@@ -134,10 +134,17 @@ if [ ! -d venv ]; then
   "$PY" -m venv venv
 fi
 VENV_PY="./venv/bin/python3"
-echo "▶ Installing Python packages (first run downloads a few — can take a few minutes)…"
-"$VENV_PY" -m pip install --quiet --upgrade pip
-# Not --quiet: this is the slow step, so show progress (and any real errors).
-"$VENV_PY" -m pip install -r requirements.txt
+REQ_HASH="$(md5 -q requirements.txt 2>/dev/null || md5sum requirements.txt | cut -d' ' -f1)"
+REQ_HASH_FILE="venv/.requirements_hash"
+if [ ! -f "$REQ_HASH_FILE" ] || [ "$REQ_HASH" != "$(cat "$REQ_HASH_FILE" 2>/dev/null)" ]; then
+  echo "▶ Installing Python packages (first run downloads a few — can take a few minutes)…"
+  "$VENV_PY" -m pip install --quiet --upgrade pip
+  # Not --quiet: this is the slow step, so show progress (and any real errors).
+  "$VENV_PY" -m pip install -r requirements.txt
+  echo "$REQ_HASH" > "$REQ_HASH_FILE"
+else
+  echo "▶ Python packages up to date — skipping install"
+fi
 
 # chromadb-client (HTTP-only) conflicts with the full chromadb package. If
 # it got installed (e.g., from an older requirements-optional.txt), remove

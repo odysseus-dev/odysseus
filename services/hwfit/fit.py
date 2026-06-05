@@ -377,7 +377,7 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
     # Multi-GPU filter: skip the row if the resolved quant is a GGUF tier
     # (Q*/IQ-prefixed) — vLLM/SGLang can't serve those, so showing them on
     # a 2+ GPU rig just clutters the list with unservable candidates.
-    if gpu_count >= 2 and quant_to_try and quant_to_try.upper().startswith(("Q2", "Q3", "Q4", "Q5", "Q6", "Q8", "IQ")):
+    if gpu_count >= 2 and quant_to_try and not target_quant and quant_to_try.upper().startswith(("Q2", "Q3", "Q4", "Q5", "Q6", "Q8", "IQ")):
         return None
 
     result = _try_quant_at(model, quant_to_try, ctx, effective_vram, 0 if native_gpu_only else eff_ram)
@@ -576,6 +576,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
     system_backend = (system.get("backend") or "").lower()
     apple_silicon = system_backend in ("mps", "metal", "apple")
     rocm = system_backend == "rocm"
+    is_windows = system.get("platform") == "windows"
 
     # Consumer AMD Radeon (RDNA, gfx10/11/12): the practical local serving path
     # is GGUF via llama.cpp. vLLM/SGLang on ROCm are validated for datacenter
@@ -615,7 +616,11 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
         # servable path, so a model needs a real GGUF to be recommended.
         # Otherwise the Cookbook rates vLLM-only AWQ/GPTQ builds "GOOD" on a
         # Radeon that can't actually serve them.
-        if (apple_silicon or consumer_amd) and not (m.get("is_gguf") or m.get("gguf_sources")):
+        #
+        # Windows is the same: Odysseus only supports llama.cpp on Windows,
+        # which requires GGUF. vLLM/SGLang are explicitly blocked, so AWQ/GPTQ
+        # models without a GGUF source are unservable there.
+        if (apple_silicon or consumer_amd or is_windows) and not (m.get("is_gguf") or m.get("gguf_sources")):
             continue
 
         # Format filter: AWQ tab -> only AWQ models, FP4 tab -> FP4-family models, etc.

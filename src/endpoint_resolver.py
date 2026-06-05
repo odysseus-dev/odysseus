@@ -194,6 +194,9 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
             headers["x-api-key"] = api_key
         headers["anthropic-version"] = "2023-06-01"
         return headers
+    if provider == "copilot":
+        from src.copilot import copilot_headers
+        return copilot_headers(api_key)
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     if provider == "openrouter":

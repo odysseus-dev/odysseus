@@ -10,27 +10,10 @@ Mirrors the session `_owned_endpoint` and research `_owned_enabled_endpoint`
 fixes.
 """
 
-import sys
-import types
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
-# Stub core.database so importing routes.compare_routes (which drags in
-# core.session_manager) is cheap under the sqlalchemy MagicMock stubs. The
-# helper resolves ModelEndpoint at call time; we swap in a fake declarative
-# class below. owner_filter stays REAL.
-if "core.database" not in sys.modules:
-    sys.modules["core.database"] = types.ModuleType("core.database")
-_cd = sys.modules["core.database"]
-_cd.Base = MagicMock()
-for _name in (
-    "Session", "ChatMessage", "Document", "DocumentVersion", "GalleryImage",
-    "GalleryAlbum", "SessionLocal", "Comparison", "ModelEndpoint",
-):
-    if not hasattr(_cd, _name):
-        setattr(_cd, _name, MagicMock())
-
-from routes.compare_routes import _owned_endpoint_by_url  # noqa: E402
+import core.database
+from routes.compare_routes import _owned_endpoint_by_url
 
 
 class _Predicate:
@@ -82,40 +65,40 @@ def _ep(base_url, owner):
     return SimpleNamespace(base_url=base_url, owner=owner, api_key="sk-secret")
 
 
-def _resolve(rows, base_url, owner):
-    sys.modules["core.database"].ModelEndpoint = _ModelEndpoint
+def _resolve(monkeypatch, rows, base_url, owner):
+    monkeypatch.setattr(core.database, "ModelEndpoint", _ModelEndpoint)
     return _owned_endpoint_by_url(_DB(rows), base_url, owner)
 
 
 URL = "https://api.example.com/v1"
 
 
-def test_rejects_another_owners_private_endpoint():
+def test_rejects_another_owners_private_endpoint(monkeypatch):
     # bob owns the only endpoint at URL; alice supplying that URL gets None
     # → no headers, no key copied into her comparison session.
     rows = [_ep(URL, "bob")]
-    assert _resolve(rows, URL, "alice") is None
+    assert _resolve(monkeypatch, rows, URL, "alice") is None
 
 
-def test_returns_callers_own_endpoint():
+def test_returns_callers_own_endpoint(monkeypatch):
     rows = [_ep(URL, "bob"), _ep(URL, "alice")]
-    ep = _resolve(rows, URL, "alice")
+    ep = _resolve(monkeypatch, rows, URL, "alice")
     assert ep is not None and ep.owner == "alice"
 
 
-def test_allows_legacy_null_owner_shared_row():
+def test_allows_legacy_null_owner_shared_row(monkeypatch):
     rows = [_ep(URL, None)]
-    ep = _resolve(rows, URL, "alice")
+    ep = _resolve(monkeypatch, rows, URL, "alice")
     assert ep is not None and ep.owner is None
 
 
-def test_no_match_returns_none():
+def test_no_match_returns_none(monkeypatch):
     rows = [_ep("https://other.example/v1", "alice")]
-    assert _resolve(rows, URL, "alice") is None
+    assert _resolve(monkeypatch, rows, URL, "alice") is None
 
 
-def test_null_owner_is_legacy_single_user_noop():
+def test_null_owner_is_legacy_single_user_noop(monkeypatch):
     # Single-user / unresolved owner: owner_filter no-op, exact URL match wins.
     rows = [_ep(URL, "bob")]
-    ep = _resolve(rows, URL, None)
+    ep = _resolve(monkeypatch, rows, URL, None)
     assert ep is not None and ep.owner == "bob"
