@@ -226,7 +226,7 @@ def _package_pip_update_status(
     native llama-server can come from a package manager/source build, and a CLI
     may be on PATH without matching Python package metadata.
     """
-    if pkg.get("kind") == "system" or not pkg.get("pip"):
+    if not pkg.get("update_cmd"):
         return PackageUpdateStatus(
             False, "Update this system dependency outside Odysseus."
         )
@@ -1028,7 +1028,9 @@ def setup_shell_routes() -> APIRouter:
                 "category": "LLM",
                 "target": "local",
                 "kind": "system",
-                "install_hint": "Requires a native Apple Silicon Mac with Apple Foundational Models support. Not installable via pip.",
+                "install_cmd": "brew install apfel",
+                "update_cmd": "brew upgrade apfel",
+                "install_hint": "Requires a native Apple Silicon Mac with Apple Foundational Models support. Installable via Homebrew on supported Macs.",
             },
             # ── Image ── editor + diffusion model serving
             {
@@ -1061,6 +1063,12 @@ def setup_shell_routes() -> APIRouter:
                 "target": "local",
             },
         ]
+
+        # Most packages should not be installed through external means. Hence, set the default of the
+        # install_cmd and update_cmd to None, which indicates that the recommended way to install/update is through the Cookbook # server setup or pip. Only system packages, should have explicit install/update commands provided.
+        for pkg in packages:
+            pkg.setdefault("install_cmd", None)
+            pkg.setdefault("update_cmd", None)
         # Remote check: for remote-target packages, probe the selected server's
         # venv over SSH so a remote `pip install` actually reflects here.
         remote_status: dict = {}
