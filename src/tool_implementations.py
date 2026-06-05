@@ -11,8 +11,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-MAX_OUTPUT_CHARS = 10_000
-MAX_READ_CHARS = 20_000
+from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS
 
 
 def get_mcp_manager():
