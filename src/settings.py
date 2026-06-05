@@ -80,6 +80,7 @@ DEFAULT_SETTINGS = {
     "google_pse_cx": "",
     "tavily_api_key": "",
     "serper_api_key": "",
+    "kagi_api_key": "",
     "research_endpoint_id": "",
     "research_model": "",
     "research_search_provider": "",
