@@ -10126,21 +10126,13 @@ details a:hover {
   height: 32px;
 }
 
-/* Inline Import/Export beside memory-add-input — match 28px field height. */
+/* Skill Import beside URL field — match input height; cancel modal-body button margin. */
 .memory-add-row .theme-io-btn {
   flex: none;
   height: 28px;
   box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 0 10px;
-  line-height: 1;
-}
-.memory-add-row .theme-io-btn svg {
-  display: block;
-  flex-shrink: 0;
+  margin-top: 0;
+  padding: 5px 10px;
 }
 
 .memory-add-input {
