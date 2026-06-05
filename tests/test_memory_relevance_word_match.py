@@ -62,6 +62,16 @@ def test_strong_identity_phrase_still_returns_name(mgr):
         assert any("Sam Carter" in m["text"] for m in out), q
 
 
+def test_identity_query_does_not_force_identity_above_a_better_match(mgr):
+    # query_type now boosts scoring, it no longer force-injects identity at a
+    # fixed top score. On an identity query, a memory that actually contains
+    # the query phrase must still rank above the name memory.
+    better = {"text": "who am i in this app guide", "category": "fact", "id": "2"}
+    out = mgr.get_relevant_memories("who am i", [_NAME, better], threshold=0.05, max_items=20)
+    assert out and out[0]["id"] == "2", \
+        "identity memory was force-injected above a more relevant match"
+
+
 def test_no_memories_or_blank_query(mgr):
     assert mgr.get_relevant_memories("hello", []) == []
     assert mgr.get_relevant_memories("   ", [_NAME]) == []

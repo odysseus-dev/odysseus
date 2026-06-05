@@ -329,43 +329,49 @@ class MemoryManager:
             query_type = "fact"
         
         relevant = []
-        identity_memories = []
-        other_memories = []
-        
-        # Separate identity memories from others
+
+        # Score every memory uniformly. query_type informs SCORING (a boost),
+        # it no longer force-injects a whole category at a fixed top score. The
+        # old code appended every identity memory at 0.9 whenever the query was
+        # classified "identity", so a single misclassification slammed unrelated
+        # identity memories to the top regardless of relevance. Now a guessed
+        # type only nudges the ranking, so a genuinely more relevant memory can
+        # still outrank it.
         for memory in memories:
             memory_text = memory["text"].lower()
-            # Check if this is an identity memory (contains name patterns or identity indicators)
+            # Identity memory = carries a name pattern or identity phrasing.
             is_identity = any([
                 re.search(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', memory["text"]),
                 any(word in memory_text for word in ["name is", "i'm", "i am", "called", "my name", "named", "call me"])
             ])
-            if is_identity:
-                identity_memories.append(memory)
-            else:
-                other_memories.append(memory)
-        
-        # For identity queries, include all identity memories regardless of similarity
-        if query_type == "identity" and identity_memories:
-            # Give them high scores to ensure they're included first
-            for memory in identity_memories:
-                relevant.append((0.9, memory))  # High score for identity memories in identity queries
-        
-        # Process other memories with similarity scoring
-        for memory in other_memories:
-            memory_text = memory["text"].lower()
+            # Identity memories only surface on identity queries. Scoring them
+            # on other query types lets a stopword overlap ("is", "the") drag a
+            # name memory into an unrelated result, which is exactly the
+            # over-injection we are trying to avoid.
+            if is_identity and query_type != "identity":
+                continue
+
             memory_tokens = set(tokenize(memory_text))
             query_tokens = set(tokenize(query_lower))
-            
-            # Calculate base Jaccard similarity
+
+            # Base Jaccard similarity. An identity query should still surface
+            # the user's identity memory even with no token overlap (e.g.
+            # "who am I" vs "User's name is Sam Carter"), so fall through to the
+            # identity floor below instead of skipping outright.
             if not query_tokens or not memory_tokens:
-                continue
-                
-            base_similarity = len(query_tokens & memory_tokens) / len(query_tokens | memory_tokens)
+                base_similarity = 0.0
+            else:
+                base_similarity = len(query_tokens & memory_tokens) / len(query_tokens | memory_tokens)
             final_score = base_similarity
-            
+
             # Apply boosts based on semantic matching
-            if query_type == "contact":
+            if query_type == "identity" and is_identity:
+                # Boost identity memories for identity queries, with a moderate
+                # floor so they surface, but well below the old 0.9 force-inject
+                # so a memory with stronger genuine relevance still ranks above.
+                final_score = max(final_score * 1.5, 0.6)
+
+            elif query_type == "contact":
                 # Boost memories with contact information
                 has_contact_info = any(word in memory_text for word in ["@gmail.com", "@", ".com", 
                                                                      "phone", "number", "address", 
