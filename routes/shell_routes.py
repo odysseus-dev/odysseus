@@ -227,7 +227,13 @@ def _package_pip_update_status(
     native llama-server can come from a package manager/source build, and a CLI
     may be on PATH without matching Python package metadata.
     """
-    if not pkg.get("update_cmd"):
+    if pkg.get("name") == "APFEL":
+        return PackageUpdateStatus(
+            False,
+            "",  # Note is empty because IT DOES allow for updates outside of PIP.
+        )
+
+    if pkg.get("kind") == "system" or not pkg.get("pip"):
         return PackageUpdateStatus(
             False, "Update this system dependency outside Odysseus."
         )
@@ -809,7 +815,9 @@ def setup_shell_routes() -> APIRouter:
             return {"stdout": "", "stderr": "No command provided", "exit_code": 1}
 
         logger.info("User shell exec requested: length=%d", len(cmd))
-        result = await _exec_shell(cmd, timeout=req.timeout if req.timeout is not None else EXEC_TIMEOUT)
+        result = await _exec_shell(
+            cmd, timeout=req.timeout if req.timeout is not None else EXEC_TIMEOUT
+        )
         return result
 
     @router.post("/api/shell/stream")
