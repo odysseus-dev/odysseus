@@ -26,7 +26,6 @@ _STUBS = {
                       "Document": MagicMock(), "GalleryImage": MagicMock()},
     "core.session_manager": {"SessionManager": MagicMock()},
     "core.models": {"ChatMessage": MagicMock()},
-    "src.request_models": {"SessionResponse": MagicMock()},
 }
 for _name, _attrs in _STUBS.items():
     if _name not in sys.modules:
@@ -36,9 +35,24 @@ for _name, _attrs in _STUBS.items():
         sys.modules[_name] = _m
 
 from fastapi import HTTPException  # noqa: E402
+import importlib
 
-from src.auth_helpers import effective_user  # noqa: E402
-import routes.session_routes as SR  # noqa: E402
+# Ensure an actual request_models module is used when importing routes.session_routes.
+# Some test files temporarily stub src.request_models into sys.modules, and that
+# stub must not persist into the FastAPI route registration path.
+_orig_src_request_models = sys.modules.get("src.request_models")
+if isinstance(_orig_src_request_models, MagicMock):
+    del sys.modules["src.request_models"]
+
+try:
+    from src.auth_helpers import effective_user  # noqa: E402
+    SR = importlib.import_module("routes.session_routes")  # noqa: E402
+finally:
+    if isinstance(_orig_src_request_models, MagicMock):
+        sys.modules["src.request_models"] = _orig_src_request_models
+    elif _orig_src_request_models is None:
+        sys.modules.pop("src.request_models", None)
+    sys.modules.pop("routes.session_routes", None)
 
 
 def _req(**state):

@@ -127,13 +127,13 @@ def test_pip_install_fallback_chain_propagates_failure_in_venv():
     """
     import shlex
     py = shlex.quote(sys.executable)
-    # Use the venv python so venv_check detects we're in a venv.
+    # Simulate the in-venv fallback branch deterministically, without relying
+    # on the current interpreter's virtualenv state.
     # Base install fails, venv_check exits 0, negated to 1,
     # && skips user, group exits 1.
     script = (
         f"{py} -c 'import sys; sys.exit(1)' || "
-        f"{{ ! {py} -c \"import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)\" "
-        f"&& echo user_attempt; }}"
+        f"{{ ! {py} -c 'import sys; sys.exit(0)' && echo user_attempt; }}"
     )
     result = subprocess.run(
         ["bash", "-c", script],
