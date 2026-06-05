@@ -3197,7 +3197,7 @@ async function initUnifiedIntegrations() {
   }
 
   async function fetchAll() {
-    const [apiRes, calRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes, tokenRes] = await Promise.all([
+    const [apiRes, calRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes, tokenRes, calendarsRes] = await Promise.all([
       fetch('/api/auth/integrations', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { integrations: [] }).catch(() => ({ integrations: [] })),
       fetch('/api/calendar/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
       fetch('/api/contacts/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
@@ -3206,14 +3206,21 @@ async function initUnifiedIntegrations() {
       fetch('/api/mcp/servers', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : []).catch(() => []),
       fetch('/api/vault/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
       fetch('/api/tokens', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : []).catch(() => []),
+      fetch('/api/calendar/calendars', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { calendars: [] }).catch(() => ({ calendars: [] })),
     ]);
     const items = [];
     // API integrations
     for (const intg of (apiRes.integrations || [])) {
       items.push({ type: 'api', id: intg.id, name: intg.name || 'Unnamed', detail: intg.base_url || '', enabled: intg.enabled !== false, data: intg });
     }
-    // CalDAV
-    if (calRes.url) {
+    // CalDAV — one card per synced calendar collection; fall back to the
+    // server-level entry if calendars haven't been synced yet.
+    const caldavCals = (calendarsRes.calendars || []).filter(c => c.source === 'caldav');
+    if (caldavCals.length > 0) {
+      for (const cal of caldavCals) {
+        items.push({ type: 'caldav', id: cal.href, name: cal.name, detail: calRes.url || 'CalDAV', enabled: true, data: { ...cal, serverData: calRes } });
+      }
+    } else if (calRes.url) {
       items.push({ type: 'caldav', id: '__caldav__', name: 'Calendar (CalDAV)', detail: calRes.url, enabled: true, data: calRes });
     }
     // Contacts import first, then the optional CardDAV sync account.
@@ -3283,7 +3290,7 @@ async function initUnifiedIntegrations() {
         <div style="font-size:11px;opacity:0.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.detail || ''}</div>
       </div>
       ${statusDot}
-      <button class="admin-btn-sm intg-del-btn" data-intg-id="${item.id}" data-intg-type="${item.type}" title="Remove" style="background:none;border:none;padding:4px;cursor:pointer;color:var(--red);opacity:0.55;display:inline-flex;align-items:center;justify-content:center;">
+      <button class="admin-btn-sm intg-del-btn" data-intg-id="${item.id}" data-intg-type="${item.type}" data-intg-name="${(item.name || '').replace(/"/g, '&quot;')}" title="Remove" style="background:none;border:none;padding:4px;cursor:pointer;color:var(--red);opacity:0.55;display:inline-flex;align-items:center;justify-content:center;">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
       </button>
     </div>`;
@@ -3321,12 +3328,20 @@ async function initUnifiedIntegrations() {
     listEl.querySelectorAll('.intg-del-btn').forEach(btn => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        if (!await window.styledConfirm('Remove this integration?', { confirmText: 'Remove', danger: true })) return;
+        const intgName = btn.dataset.intgName || 'this integration';
+        if (!await window.styledConfirm(`Remove "${intgName}"?`, { confirmText: 'Remove', danger: true })) return;
         const type = btn.dataset.intgType;
         const id = btn.dataset.intgId;
         try {
           if (type === 'api') await fetch(`/api/auth/integrations/${id}`, { method: 'DELETE', credentials: 'same-origin' });
-          else if (type === 'caldav') await fetch('/api/calendar/config', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: '', username: '', password: '' }) });
+          else if (type === 'caldav') {
+            if (id === '__caldav__') {
+              // Fallback card: server configured but never synced — clear credentials
+              await fetch('/api/calendar/config', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: '', username: '', password: '' }) });
+            } else {
+              await fetch(`/api/calendar/calendars/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+            }
+          }
           else if (type === 'contacts') {
             await fetch('/api/contacts/clear', { method: 'DELETE', credentials: 'same-origin' });
           }

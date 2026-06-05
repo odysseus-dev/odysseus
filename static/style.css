@@ -36141,3 +36141,78 @@ body.theme-frosted .modal {
   0%   { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
   100% { box-shadow: 0 0 0 2px transparent; }
 }
+/* ── ask_user: multiple-choice question card ─────────────────────────────
+   The agent posed a question and ended its turn. The user clicks an option,
+   types a free-text "Other" answer, or dismisses (×) to just type in the
+   composer. Reuses theme vars (and .modal-close for the ×) so it reads as
+   part of the conversation, not a modal. */
+.ask-user-card {
+  /* Left-align like an assistant message (.msg-ai), not centered. */
+  align-self: flex-start;
+  margin: 10px auto 10px 8px;
+  width: 85%;
+  max-width: 680px;
+  padding: 12px 16px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--fg) 4%, var(--panel));
+}
+/* Focused only programmatically (tabIndex -1) to move SR/keyboard position; no
+   visible outline on the whole card box. */
+.ask-user-card:focus { outline: none; }
+.ask-user-head {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+.ask-user-close { font-size: 15px; }
+.ask-user-question {
+  margin: -2px 0 10px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--fg);
+}
+.ask-user-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ask-user-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  /* Match the height of the free-text input below (.styled-prompt-input). */
+  min-height: 39px;
+  text-align: left;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.ask-user-option:hover:not(:disabled) {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, var(--panel));
+}
+.ask-user-option:disabled { cursor: default; }
+.ask-user-option-label { font-weight: 500; }
+.ask-user-option-desc { opacity: 0.65; font-size: 12px; }
+/* Free-text "Other" row: input + send, on one line. */
+.ask-user-other {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+/* Reuses .styled-prompt-input; override its full-width + top margin so it
+   sits inline in the flex row next to the send button. */
+.ask-user-other-input { flex: 1; min-width: 0; width: auto; margin-top: 0; }
+/* Reuses .confirm-btn .confirm-btn-primary; flex-row deltas + height match to
+   the input beside it (.confirm-btn won't stretch on its own). */
+.ask-user-other-send { flex-shrink: 0; white-space: nowrap; min-height: 39px; }
+.ask-user-other-send:disabled { opacity: 0.5; cursor: default; }

@@ -6,18 +6,17 @@ with missing users or assertion errors.
 """
 
 import json
-import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
 
+from tests.helpers.import_state import clear_module
+
 
 def _fresh_auth_manager(tmp_path):
-    sys.modules.pop("core.auth", None)
-    if "core" in sys.modules and hasattr(sys.modules["core"], "auth"):
-        delattr(sys.modules["core"], "auth")
+    clear_module("core.auth")
     from core.auth import AuthManager
 
     return AuthManager(str(tmp_path / "auth.json"))

@@ -3728,15 +3728,15 @@ import * as Modals from './modalManager.js';
       _minimizedDocId = null;
       Modals.unregister('doc-panel');
     }
+    const container = document.getElementById('chat-container');
+    if (!container) return;
+
     isOpen = true;
     // Doc was opened last → it goes in front of the email windows (clears the
     // email-front flag; the doc/email z-index alternation lives in CSS).
     document.body.classList.remove('email-front');
     _ensureAgentMode();
     _markDocVisibleState(_lastSessionId, 'open');
-
-    const container = document.getElementById('chat-container');
-    if (!container) return;
 
     document.body.classList.add('doc-view');
 

@@ -11,6 +11,7 @@ from routes.cookbook_helpers import (
     _append_serve_exit_code_lines,
     _append_serve_preflight_exit_lines,
     _llama_cpp_rebuild_cmd,
+    _append_vllm_linux_preflight_lines,
     _local_tooling_path_export,
     _pip_install_attempt,
     _pip_install_fallback_chain,
@@ -192,6 +193,19 @@ def test_serve_runner_installs_llama_cpp_server_extra():
     assert "_pip_install_fallback_chain('llama-cpp-python[server]'" in src
 
 
+def test_vllm_preflight_reports_cli_and_version():
+    lines = []
+
+    _append_vllm_linux_preflight_lines(lines)
+    script = "\n".join(lines)
+
+    assert 'export PATH="$HOME/.local/bin:$PATH"' in script
+    assert 'ODYSSEUS_VLLM_BIN="$(command -v vllm 2>/dev/null || true)"' in script
+    assert 'echo "[odysseus] vLLM CLI: $ODYSSEUS_VLLM_BIN"' in script
+    assert '"$ODYSSEUS_VLLM_BIN" --version' in script
+    assert 'ODYSSEUS_PREFLIGHT_EXIT=127' in script
+
+
 def test_venv_safe_local_pip_install_strips_user_flags_only_for_local_venv():
     cmd = 'python3 -m pip install -U --user --break-system-packages "vllm"'
 
@@ -224,6 +238,8 @@ def test_pip_install_attempt_failure_propagates_real_exit_code():
     """Run the generated snippet against a deliberately broken pip install
     to confirm the subshell exits with pip's non-zero status."""
     snippet = _pip_install_attempt("python3 -m pip install __nonexistent_package_12345__")
+    if sys.platform == "win32":
+        snippet = snippet.replace("$", "\\$")
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
@@ -236,6 +252,8 @@ def test_pip_install_attempt_failure_propagates_real_exit_code():
 def test_pip_install_attempt_success_exits_zero():
     """When pip succeeds, the subshell should exit 0."""
     snippet = _pip_install_attempt("python3 -c 'pass'")
+    if sys.platform == "win32":
+        snippet = snippet.replace("$", "\\$")
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
@@ -248,6 +266,8 @@ def test_pip_install_attempt_success_exits_zero():
 def test_pip_install_attempt_surfaces_stderr_on_failure():
     """On failure, the last 5 lines of pip output should appear in stdout."""
     snippet = _pip_install_attempt("python3 -m pip install __nonexistent_package_12345__")
+    if sys.platform == "win32":
+        snippet = snippet.replace("$", "\\$")
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
@@ -337,6 +357,15 @@ def test_validate_serve_cmd_accepts_llama_advanced_controls():
         '|| python3 -m llama_cpp.server --model "$MODEL_FILE" --host 0.0.0.0 --port 8000'
     )
 
+    assert _validate_serve_cmd(cmd) == cmd
+
+
+def test_validate_serve_cmd_accepts_windows_printf_format():
+    cmd = (
+        "python -m llama_cpp.server --model "
+        "\"$(printf %s ${HOME}'/.cache/huggingface/hub/models--unsloth--Qwen3.5-2B-GGUF/snapshots/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-Q4_K_M.gguf')\" "
+        "--host 0.0.0.0 --port 8000 --n_gpu_layers 99 --n_ctx 32768 --flash_attn true --type_k q4_0 --type_v q4_0"
+    )
     assert _validate_serve_cmd(cmd) == cmd
 
 
@@ -467,11 +496,13 @@ def test_llama_cpp_rebuild_cmd_clears_cached_build_paths():
 def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):
     """The command should succeed even when neither path exists yet."""
     import os
+    from core.platform_compat import find_bash, git_bash_path
 
+    bash = find_bash() or "bash"
     env = dict(os.environ)
-    env["HOME"] = str(tmp_path)
+    env["HOME"] = git_bash_path(tmp_path)
     result = subprocess.run(
-        ["bash", "-c", _llama_cpp_rebuild_cmd()],
+        [bash, "-c", _llama_cpp_rebuild_cmd()],
         capture_output=True, text=True, env=env, timeout=10,
     )
 

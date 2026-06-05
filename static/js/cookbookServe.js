@@ -242,6 +242,21 @@ function _shellPathExpr(path) {
 function _selectedGgufExpr(model, repo, relPath) {
   const rel = String(relPath || '').replace(/^\/+/, '');
   if (!rel) return '';
+  if (_isWindows()) {
+    // PowerShell: plain path — no bash $() syntax (backend validator rejects
+    // $( ) in non-prelude commands, and PowerShell doesn't have printf).
+    const relW = rel.replace(/\//g, '\\');
+    if (model.is_local_dir && model.path) {
+      const base = String(model.path || '').replace(/\/+$/, '').replace(/\//g, '\\');
+      return `${base}\\${repo.replace(/\//g, '\\')}\\${relW}`;
+    }
+    if (model.path) {
+      const base = String(model.path || '').replace(/\/+$/, '').replace(/\//g, '\\');
+      return `${base}\\models--${repo.replace(/\//g, '--')}\\snapshots\\${relW}`;
+    }
+    const cacheRepo = repo.replace(/\//g, '--');
+    return `$env:USERPROFILE\\.cache\\huggingface\\hub\\models--${cacheRepo}\\snapshots\\${relW}`;
+  }
   if (model.is_local_dir && model.path) {
     const base = String(model.path || '').replace(/\/+$/, '');
     return `$(printf %s ${_shellPathExpr(`${base}/${repo}/${rel}`)})`;
@@ -255,6 +270,15 @@ function _selectedGgufExpr(model, repo, relPath) {
 }
 
 function _ggufSearchDirExpr(model, repo) {
+  if (_isWindows()) {
+    if (model.is_local_dir && model.path) {
+      return `${String(model.path || '').replace(/\/+$/, '').replace(/\//g, '\\')}\\${repo.replace(/\//g, '\\')}`;
+    }
+    if (model.path) {
+      return `${String(model.path || '').replace(/\/+$/, '').replace(/\//g, '\\')}\\models--${repo.replace(/\//g, '--')}\\snapshots`;
+    }
+    return `$env:USERPROFILE\\.cache\\huggingface\\hub\\models--${repo.replace(/\//g, '--')}\\snapshots`;
+  }
   if (model.is_local_dir && model.path) return _shellQuote(`${String(model.path || '').replace(/\/+$/, '')}/${repo}`);
   if (model.path) return _shellQuote(`${String(model.path || '').replace(/\/+$/, '')}/models--${repo.replace(/\//g, '--')}/snapshots`);
   return `"$HOME/.cache/huggingface/hub/models--${repo.replace(/\//g, '--')}/snapshots"`;
@@ -800,17 +824,27 @@ function _rerenderCachedModels() {
           // model the file lives under "<path>/<repo>" — search there just like we
           // search the HF snapshots dir, so serving a GGUF from a custom dir works
           // instead of handing llama.cpp a directory (which fails).
-          const _ldir = m.path ? _shellQuote(`${m.path}/${repo}`) : '""';
-          f._gguf_path = selectedGguf
-            ? _selectedGgufExpr(m, repo, selectedGguf.rel_path)
-            : m.is_local_dir && m.path
-            ? `$({ find ${_ldir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${_ldir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`
-            : `$({ find ${dir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${dir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`;
+          const _ldir = m.path
+            ? (_isWindows() ? `${m.path.replace(/\//g, '\\')}\\${repo.replace(/\//g, '\\')}` : _shellQuote(`${m.path}/${repo}`))
+            : (_isWindows() ? '' : '""');
+          if (selectedGguf) {
+            f._gguf_path = _selectedGgufExpr(m, repo, selectedGguf.rel_path);
+          } else if (_isWindows()) {
+            // Windows fallback: no bash $() available; validator rejects it.
+            // Return empty so the serve fails with a clear message.
+            f._gguf_path = '';
+          } else if (m.is_local_dir && m.path) {
+            f._gguf_path = `$({ find ${_ldir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${_ldir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`;
+          } else {
+            f._gguf_path = `$({ find ${dir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${dir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`;
+          }
           // Vision: auto-find the mmproj (CLIP/projector) file in the same dir.
           // Resolved at runtime so the toggle just works if an mmproj-*.gguf is
           // present (downloaded alongside the model). Empty if none → cmd omits it.
           const _vsearchdir = (m.is_local_dir && m.path) ? _ldir : dir;
-          f._mmproj_path = `$(find ${_vsearchdir} -iname 'mmproj*.gguf' 2>/dev/null | sort | head -1)`;
+          f._mmproj_path = _isWindows()
+            ? (_vsearchdir ? `${_vsearchdir}\\mmproj*.gguf` : '')
+            : `$(find ${_vsearchdir} -iname 'mmproj*.gguf' 2>/dev/null | sort | head -1)`;
         }
         if (f.reasoning_parser) {
           const _rpEl2 = panel.querySelector('[data-field="reasoning_parser"]');

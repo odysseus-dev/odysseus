@@ -593,9 +593,9 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
             if not events:
                 return "No upcoming events to classify", True
 
-            llm_url, llm_model, llm_headers = resolve_endpoint("utility")
+            llm_url, llm_model, llm_headers = resolve_endpoint("utility", owner=owner)
             if not llm_url:
-                llm_url, llm_model, llm_headers = resolve_endpoint("default")
+                llm_url, llm_model, llm_headers = resolve_endpoint("default", owner=owner)
             llm_available = bool(llm_url and llm_model)
 
             # Pull user memories so the LLM has personal context (relationships,
@@ -867,9 +867,9 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         if not eligible:
             return "All sender sigs already cached (or no eligible senders)", True
 
-        url, model, headers = resolve_endpoint("utility")
+        url, model, headers = resolve_endpoint("utility", owner=owner)
         if not url or not model:
-            url, model, headers = resolve_endpoint("default")
+            url, model, headers = resolve_endpoint("default", owner=owner)
         if not url or not model:
             return "No LLM endpoint available", False
 
@@ -1480,12 +1480,12 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
 
         # ── 1. Resolve LLM candidates (utility primary + utility fallbacks; fall
         # through to default chat as a last resort).
-        url, model, headers = resolve_endpoint("utility")
+        url, model, headers = resolve_endpoint("utility", owner=owner)
         if not url or not model:
-            url, model, headers = resolve_endpoint("default")
+            url, model, headers = resolve_endpoint("default", owner=owner)
         if not url or not model:
             return "No LLM endpoint available", False
-        candidates = [(url, model, headers)] + resolve_utility_fallback_candidates()
+        candidates = [(url, model, headers)] + resolve_utility_fallback_candidates(owner=owner)
 
         # ── 2. Enumerate enabled accounts. Match this task's owner AND fall
         # back to the legacy "unowned account whose imap_user / from_address

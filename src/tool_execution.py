@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import sys
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
@@ -594,7 +595,38 @@ async def _call_mcp_tool(
         if fallback:
             return fallback
 
+    # generate_image runs as a text-only MCP tool, so the saved image URL never
+    # reaches the agent loop's structured forwarding (which renders the image via
+    # buildImageBubble on result["image_url"]). Lift it out of the tool's stdout so
+    # the image renders deterministically — no dependence on the model echoing the
+    # URL into its prose (which it mangles/hallucinates).
+    if tool == "generate_image":
+        _promote_image_fields(result)
+
     return result
+
+
+def _promote_image_fields(result: Dict) -> None:
+    """Lift the image URL (+ prompt/model/size) from a successful generate_image MCP
+    text result into structured fields the agent loop already forwards to
+    buildImageBubble. Only acts on a dict result with exit_code 0; matches the
+    generated-image URL by pattern (absolute or relative) so it's robust to the
+    result's wording."""
+    if not isinstance(result, dict) or result.get("exit_code") != 0:
+        return
+    out = result.get("stdout") or ""
+    m = re.search(r'(?:https?://[^\s)\]]+)?/api/generated-image/[A-Za-z0-9._-]+', out)
+    if not m:
+        return
+    result["image_url"] = m.group(0).strip()
+    for field, pat in (
+        ("image_prompt", r'^Generated image for:\s*(.+)$'),
+        ("image_model", r'^model:\s*(.+)$'),
+        ("image_size", r'^size:\s*(.+)$'),
+    ):
+        fm = re.search(pat, out, re.M)
+        if fm:
+            result[field] = fm.group(1).strip()
 
 
 _BG_MARKERS = {"#!bg", "#bg", "# bg", "#background", "# background", "@background", "# @background"}
@@ -1182,6 +1214,53 @@ async def execute_tool_block(
             "exit_code": 1,
         }
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
+        return desc, result
+
+    # ask_user: the agent poses a multiple-choice question to the user to get a
+    # decision/clarification. This is a pure UI-control marker — no subprocess,
+    # no filesystem. It returns an `ask_user` payload that the agent loop turns
+    # into an `ask_user` SSE event and then ENDS the turn, so the chat waits for
+    # the user's selection (their choice arrives as the next message).
+    if tool == "ask_user":
+        import json as _json
+        question, options, multi = "", [], False
+        raw = (content or "").strip()
+        try:
+            parsed = _json.loads(raw) if raw else {}
+        except (ValueError, TypeError):
+            parsed = {}
+        if isinstance(parsed, dict):
+            question = str(parsed.get("question", "")).strip()
+            multi = bool(parsed.get("multi") or parsed.get("multiSelect"))
+            for opt in (parsed.get("options") or []):
+                if isinstance(opt, dict):
+                    label = str(opt.get("label", "")).strip()
+                    descr = str(opt.get("description", "")).strip()
+                elif isinstance(opt, str):
+                    label, descr = opt.strip(), ""
+                else:
+                    continue
+                if label:
+                    options.append({"label": label, "description": descr})
+        else:
+            question = raw
+        if not question or len(options) < 2:
+            return "ask_user: invalid", {
+                "error": (
+                    "ask_user needs a non-empty `question` and at least 2 `options` "
+                    "(each an object with a `label`, optional `description`)."
+                ),
+                "exit_code": 1,
+            }
+        options = options[:6]  # keep the choice list sane
+        desc = f"ask_user: {question[:80]}"
+        labels = ", ".join(o["label"] for o in options)
+        result = {
+            "ask_user": {"question": question, "options": options, "multi": multi},
+            "output": f"Asked the user: {question}\nOptions: {labels}\nAwaiting their selection.",
+            "exit_code": 0,
+        }
+        logger.info("Tool executed: %s (%d options, multi=%s)", desc, len(options), multi)
         return desc, result
 
     # Background execution: a `bash` block whose first line is the `#!bg`

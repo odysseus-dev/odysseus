@@ -450,6 +450,33 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "ask_user",
+            "description": "Ask the user a multiple-choice question to get a decision or clarification when the task is genuinely ambiguous and the answer changes what you do next (e.g. pick between approaches, confirm an assumption, choose a target). The user sees clickable option buttons; calling this ENDS your turn and their selection arrives as your next message. Prefer sensible defaults over asking — only ask when you truly cannot proceed well without the user's input. Do NOT use it to confirm irreversible/destructive actions that have a dedicated confirmation flow.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "The question to ask. Be specific and self-contained."},
+                    "options": {
+                        "type": "array",
+                        "description": "2-6 mutually exclusive choices. Each is an object with a short `label` and an optional `description` explaining the trade-off.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string", "description": "Concise choice text the user clicks (1-5 words)."},
+                                "description": {"type": "string", "description": "Optional one-line explanation of this choice."}
+                            },
+                            "required": ["label"]
+                        }
+                    },
+                    "multi": {"type": "boolean", "description": "Set true to let the user select multiple options instead of one. Default false."}
+                },
+                "required": ["question", "options"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "manage_tasks",
             "description": "Manage scheduled/automated tasks: list, create, edit, delete, pause, resume, or run tasks. Use this for ANY recurring/scheduled request ('every morning…', 'each day at 7:30', 'daily summarize…') — create a task rather than doing it once. Task types: llm (AI runs a prompt), research (runs the deep-research pipeline on a question), or action (built-in automation). Triggers can be time-based or event-based.",
             "parameters": {

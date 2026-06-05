@@ -335,6 +335,7 @@ If the user asks for a reminder/alarm before the event, pass `reminder_minutes` 
     "search_chats": "- ```search_chats``` — Search across all chat history. Use when user asks 'did we discuss X?' or 'find the conversation about Y'.",
     "pipeline": "- ```pipeline``` — Run a multi-step AI pipeline. Args (JSON) with ordered steps, each specifying a model and prompt. Use for complex workflows.",
     "ui_control": "- ```ui_control``` — Control the UI: toggle tools on/off, OPEN PANELS, open email reply drafts, switch models, change themes. Commands: `toggle <name> on/off` (names: bash/shell, web/search, research, incognito, document_editor/documents), `open_panel <name>` (panels: documents, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook), `open_email_reply <uid> <folder> <reply|reply-all|ai-reply>` (opens an email compose document, does NOT send), `set_mode agent/chat`, `switch_model <name>`, `set_theme <preset>`, `create_theme <name> <bg> <fg> <panel> <border> <accent>` (optional key=val for advanced colors AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false). \"open documents\" / \"open library\" / \"show gallery\" / \"open inbox\" / \"open notes\" / \"open cookbook\" all map to `open_panel <name>`. Theme presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute.",
+    "ask_user": "- ```ask_user``` — Ask the user a multiple-choice question when the task is genuinely ambiguous and the answer changes what you do next (pick an approach, confirm an assumption, choose a target). Args (JSON): {\"question\": \"...\", \"options\": [{\"label\": \"...\", \"description\": \"...\"?}, ...], \"multi\": false?}. 2-6 options. The user gets clickable buttons; calling this ENDS your turn and their choice comes back as your next message. Prefer sensible defaults — only ask when you truly can't proceed well without their input.",
     "list_served_models": "- ```list_served_models``` — Show what the Cookbook (LLM-serving subsystem) is currently running. NO args. Use this for ANY 'what's running' / 'what's serving' / 'show my cookbook' / 'is anything up' query. DO NOT shell out (`ps aux`, `docker ps`, etc.) — this tool is the source of truth. Failed serve tasks include recent logs plus diagnosis/retry suggestions; use those suggestions to call `serve_model` again with an adjusted command when appropriate.",
     "stop_served_model": "- ```stop_served_model``` — Stop a running model server. Args (JSON): {\"session_id\": \"<from list_served_models>\"}. Use for 'kill my cookbook' / 'stop the model' / 'shut down vLLM'.",
     "tail_serve_output": "- ```tail_serve_output``` — Read the actual tmux stderr/traceback of a CURRENTLY failing cookbook task. Args (JSON): {\"session_id\": \"<from list_served_models>\", \"tail\": 150?}. **Use ONLY after** you just launched something via `serve_model` AND `list_served_models` reports YOUR new task as `crashed`/`error`. DO NOT use it on old stopped/completed download tasks (they're historical noise — won't predict whether a new launch succeeds). DO NOT call it before launching a fresh attempt. When you do call it, bump `tail` to 400+ only if the visible error references 'see root cause above'.",
@@ -1682,6 +1683,7 @@ async def stream_agent_loop(
         r"\b[^.\n]{0,140}",
         re.IGNORECASE,
     )
+    _awaiting_user = False  # set by ask_user → end the turn and wait for a choice
 
     # Document streaming state (persists across rounds)
     _doc_acc = ""          # accumulated tool-call JSON arguments
@@ -2263,6 +2265,28 @@ async def stream_agent_loop(
                     f'data: {json.dumps({"type": "ui_control", "data": result})}\n\n'
                 )
 
+            # ask_user: the agent posed a multiple-choice question. Emit it so the
+            # frontend renders clickable options, then end the turn (below) and
+            # wait — the user's pick becomes the next message.
+            if "ask_user" in result:
+                # The question lives in the tool args. ChatMessage.to_dict()
+                # replays only role+content to the model next turn — tool_event
+                # metadata is dropped — so if the question is never in the saved
+                # assistant text, the model can't see it already asked and will
+                # loop and re-ask after the user answers. Stream it as assistant
+                # text (once) so it persists and is replayed. The card shows the
+                # options only, so this is the single visible copy of the question.
+                _auq = result["ask_user"]
+                _auq_q = (_auq.get("question") or "").strip()
+                if _auq_q and _auq_q not in full_response:
+                    _auq_delta = ("\n\n" if full_response.strip() else "") + _auq_q
+                    full_response += _auq_delta
+                    yield 'data: ' + json.dumps({"delta": _auq_delta}) + '\n\n'
+                yield (
+                    f'data: {json.dumps({"type": "ask_user", "data": result["ask_user"]})}\n\n'
+                )
+                _awaiting_user = True
+
             # Build output for frontend tool bubble.
             # Document tools get a short summary — content goes to the editor panel.
             output_text = ""
@@ -2390,6 +2414,13 @@ async def stream_agent_loop(
 
         # If budget was hit, stop the loop
         if budget_hit:
+            break
+
+        # ask_user posed a question — stop here and wait for the user's choice.
+        # Don't feed tool results back or advance a round; the user's selection
+        # arrives as the next message and the agent resumes from there. The
+        # question text is already in the streamed response, so it persists.
+        if _awaiting_user:
             break
 
         # Feed results back to LLM for next round

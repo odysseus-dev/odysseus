@@ -1,12 +1,15 @@
-import json
 import sys
+for mod_name in ["src.endpoint_resolver", "src.database", "core.database"]:
+    _mod = sys.modules.get(mod_name)
+    if _mod is not None and not getattr(_mod, "__file__", None):
+        sys.modules.pop(mod_name, None)
+
+import json
 from types import SimpleNamespace
 
-_endpoint_resolver = sys.modules.get("src.endpoint_resolver")
-if _endpoint_resolver is not None and not getattr(_endpoint_resolver, "__file__", None):
-    sys.modules.pop("src.endpoint_resolver", None)
-    sys.modules.pop("routes.model_routes", None)
-    sys.modules.pop("routes.chat_routes", None)
+from tests.helpers.import_state import clear_fake_endpoint_resolver_modules
+
+clear_fake_endpoint_resolver_modules("routes.chat_routes")
 
 from routes import chat_routes
 

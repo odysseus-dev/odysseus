@@ -206,12 +206,16 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     exit code is preserved (no ``| tail`` masking) and the last 5 lines of
     pip output appear in the Cookbook log on failure.
     """
+    from core.platform_compat import IS_WINDOWS
     upgrade_flag = " -U" if upgrade else ""
     # Shell-quote the package spec: an extras spec like ``llama-cpp-python[server]``
     # contains brackets that bash would treat as a glob, so it must be quoted
     # before being embedded in the install command. Plain names (e.g.
     # ``huggingface_hub``) are returned unchanged by ``shlex.quote``.
     pkg = shlex.quote(package)
+    if IS_WINDOWS and "llama-cpp-python" in package:
+        pkg += " --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
+
     base = _pip_install_attempt(f"{python_cmd} install -q{upgrade_flag} {pkg}")
     user = _pip_install_attempt(f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {pkg}")
     # Derive the python executable for the venv detection check.
@@ -338,6 +342,15 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
         "                if f.is_file(): nf += 1; sz += f.stat().st_size",
         "                if f.name.endswith('.incomplete'): ic = True",
         "        snap = os.path.join(cache, d, 'snapshots')",
+        "        # Windows HF cache stores files directly in snapshots/; blobs/ may be empty.",
+        "        # Fallback: scan snapshots for real files when blobs yielded nothing.",
+        "        if sz == 0 and os.path.isdir(snap):",
+        "            for sd in os.listdir(snap):",
+        "                sf = os.path.join(snap, sd)",
+        "                if not os.path.isdir(sf): continue",
+        "                for f in os.scandir(sf):",
+        "                    if f.is_file(): nf += 1; sz += f.stat().st_size",
+        "                    if f.name.endswith('.incomplete'): ic = True",
         "        is_diffusion = False; gguf_files = []",
         "        if os.path.isdir(snap):",
         "            for sd in os.listdir(snap):",
@@ -525,6 +538,7 @@ def _validate_serve_cmd(v: str | None) -> str | None:
     # Backticks and raw newlines are never legitimate here.
     if any(c in v for c in ("`", "\n", "\r")):
         raise HTTPException(400, "Invalid characters in cmd")
+
     # Known GGUF launcher prelude → validate the serve invocation(s) it guards.
     m = _GGUF_PRELUDE_RE.match(v)
     if m:
@@ -533,9 +547,19 @@ def _validate_serve_cmd(v: str | None) -> str | None:
         for part in rest.split("||"):
             _check_serve_binary(part.strip())
         return v
+
     # Otherwise: a single invocation — no shell metacharacters allowed.
+    # Temporarily replace safe $(printf %s ...) expressions with a placeholder
+    # to avoid triggering the metacharacter/command-injection checks.
+    cleaned_v = v
+    printf_matches = list(re.finditer(r"\$\(\s*printf\s+%s\s+([^\n()]*?)\)", v))
+    for match in printf_matches:
+        inner = match.group(1)
+        if not any(c in inner for c in (";", "&&", "||", "$(", "`")):
+            cleaned_v = cleaned_v.replace(match.group(0), "/placeholder/safe/path.gguf")
+
     # (`$(` was the original intent; bare `$` is fine for shell-safe paths.)
-    if any(c in v for c in (";", "&&", "||", "$(")):
+    if any(c in cleaned_v for c in (";", "&&", "||", "$(")):
         raise HTTPException(400, "Invalid characters in cmd")
     _check_serve_binary(v)
     return v
@@ -558,6 +582,21 @@ def _append_serve_preflight_exit_lines(runner_lines: list[str], *, keep_shell_op
         runner_lines.append('  exit "$ODYSSEUS_PREFLIGHT_EXIT"')
     runner_lines.append('fi')
 
+
+def _append_vllm_linux_preflight_lines(runner_lines: list[str]) -> None:
+    """Append Linux vLLM readiness lines that identify the runtime being used."""
+    # Keep the user install bin visible for Odysseus-managed `pip install --user`
+    # installs, but then report the actual CLI path so external runtimes are clear.
+    runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
+    runner_lines.append('ODYSSEUS_VLLM_BIN="$(command -v vllm 2>/dev/null || true)"')
+    runner_lines.append('if [ -z "$ODYSSEUS_VLLM_BIN" ]; then')
+    runner_lines.append('  echo "ERROR: vLLM is not installed."')
+    runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
+    runner_lines.append('else')
+    runner_lines.append('  echo "[odysseus] vLLM CLI: $ODYSSEUS_VLLM_BIN"')
+    runner_lines.append('  ODYSSEUS_VLLM_VERSION="$("$ODYSSEUS_VLLM_BIN" --version 2>&1 | head -n 1 || true)"')
+    runner_lines.append('  if [ -n "$ODYSSEUS_VLLM_VERSION" ]; then echo "[odysseus] vLLM version: $ODYSSEUS_VLLM_VERSION"; fi')
+    runner_lines.append('fi')
 
 def _append_serve_exit_code_lines(
     runner_lines: list[str],
@@ -859,6 +898,16 @@ def _diagnose_serve_output(text: str) -> dict | None:
             r"Please pass.*trust.remote.code=True|contains custom code which must be executed to correctly load|does not recognize this architecture|model type.*but Transformers does not",
             "Model requires custom code or newer model support.",
             [{"label": "retry with --trust-remote-code", "op": "append", "arg": "--trust-remote-code"}],
+        ),
+        (
+            r"There is no module or parameter named ['\"]lm_head\.input_scale['\"]|lm_head\.input_scale|weight_scale_2",
+            "vLLM cannot load this ModelOpt LM-head quantized checkpoint with the current runtime.",
+            [
+                {
+                    "label": "upgrade vLLM through the environment that provides this CLI, or use a compatible checkpoint",
+                    "op": "manual",
+                }
+            ],
         ),
         (
             r"Either a revision or a version must be specified|transformers\.integrations\.hub_kernels|kernels/layer",
