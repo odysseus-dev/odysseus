@@ -20,6 +20,7 @@ single migration pass rewrites them.
 
 import os
 import logging
+import threading
 from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 _KEY_PATH = Path(__file__).resolve().parent.parent / "data" / ".app_key"
 _PREFIX = "enc:"
 _fernet: Fernet | None = None
+_fernet_lock = threading.Lock()
 
 
 def _load_or_create_key() -> bytes:
@@ -49,7 +51,9 @@ def _load_or_create_key() -> bytes:
 def _get_fernet() -> Fernet:
     global _fernet
     if _fernet is None:
-        _fernet = Fernet(_load_or_create_key())
+        with _fernet_lock:
+            if _fernet is None:
+                _fernet = Fernet(_load_or_create_key())
     return _fernet
 
 

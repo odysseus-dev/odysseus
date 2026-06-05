@@ -222,15 +222,18 @@ def _clear_host_dead(url: str) -> None:
 # 100-500ms TCP+TLS handshake. Lazy init so we bind to the running event loop.
 _http_client: Optional[httpx.AsyncClient] = None
 _http_limits = httpx.Limits(max_connections=100, max_keepalive_connections=30, keepalive_expiry=30.0)
+_http_client_lock = threading.Lock()
 
 def _get_http_client() -> httpx.AsyncClient:
     """Return process-wide AsyncClient. Per-request timeout is passed at call time."""
     global _http_client
     if _http_client is None or _http_client.is_closed:
-        from src.tls_overrides import llm_verify
-        _http_client = httpx.AsyncClient(
-            limits=_http_limits, http2=False, verify=llm_verify(),
-        )
+        with _http_client_lock:
+            if _http_client is None or _http_client.is_closed:
+                from src.tls_overrides import llm_verify
+                _http_client = httpx.AsyncClient(
+                    limits=_http_limits, http2=False, verify=llm_verify(),
+                )
     return _http_client
 
 def _get_cached_response(cache_key: str) -> Optional[str]:
