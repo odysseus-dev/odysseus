@@ -32,6 +32,8 @@ _INCLUDE_RE = re.compile(r"^[A-Za-z0-9._\-*?/\[\]]+$")
 _REMOTE_HOST_RE = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$")
 # HF tokens and API tokens are url-safe base64-like.
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9._~+/=-]+$")
+# HF cache folders look like "models--org--name"
+_HF_CACHE_DIR_RE = re.compile(r"^models--[A-Za-z0-9._-]+--[A-Za-z0-9._-]+$")
 # Session IDs we mint look like "cookbook-deadbeef" or "serve-deadbeef".
 # Anything beyond plain alphanumerics + dash + underscore could break out
 # of the shell/PowerShell contexts the value lands in.
@@ -54,9 +56,11 @@ def _git_bash_path(path: str) -> str:
 
 
 def _validate_repo_id(v: str | None) -> str:
-    if not v or not _REPO_ID_RE.match(v):
-        raise HTTPException(400, "Invalid repo_id — must be <org>/<name> using [A-Za-z0-9._-]")
-    return v
+    if not v:
+        raise HTTPException(400, "repo_id is required")
+    if _REPO_ID_RE.match(v) or _LOCAL_DIR_RE.match(v) or _HF_CACHE_DIR_RE.match(v):
+        return v
+    raise HTTPException(400, "Invalid repo_id — must be <org>/<name>, an absolute/home path, or a HF cache folder")
 
 
 def _validate_serve_model_id(v: str | None) -> str:

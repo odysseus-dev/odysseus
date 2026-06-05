@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 from routes.cookbook_helpers import (
     _SSH_PORT_RE, _REMOTE_HOST_RE, _SESSION_ID_RE,
     _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_remote_host, _validate_token,
+     _LOCAL_DIR_RE, _HF_CACHE_DIR_RE,
     _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
@@ -280,6 +281,9 @@ def setup_cookbook_routes() -> APIRouter:
         # Defence-in-depth: even though this endpoint is admin-gated, refuse
         # values that would land in shell contexts with metacharacters.
         _validate_repo_id(req.repo_id)
+        # Local paths and cache folders cannot be "downloaded"
+        if _LOCAL_DIR_RE.match(req.repo_id) or _HF_CACHE_DIR_RE.match(req.repo_id):
+            raise HTTPException(400, "Local paths or cache folders cannot be downloaded; only HuggingFace repo IDs are supported")
         _validate_include(req.include)
         _validate_remote_host(req.remote_host)
         req.ssh_port = _validate_ssh_port(req.ssh_port)

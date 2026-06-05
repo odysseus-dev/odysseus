@@ -277,11 +277,15 @@ function _ggufSearchDirExpr(model, repo) {
     if (model.path) {
       return `${String(model.path || '').replace(/\/+$/, '').replace(/\//g, '\\')}\\models--${repo.replace(/\//g, '--')}\\snapshots`;
     }
-    return `$env:USERPROFILE\\.cache\\huggingface\\hub\\models--${repo.replace(/\//g, '--')}\\snapshots`;
+    return repo.startsWith('models--')
+      ? `$env:USERPROFILE\\.cache\\huggingface\\hub\\${repo}\\snapshots`
+      : `$env:USERPROFILE\\.cache\\huggingface\\hub\\models--${repo.replace(/\//g, '--')}\\snapshots`;
   }
   if (model.is_local_dir && model.path) return _shellQuote(`${String(model.path || '').replace(/\/+$/, '')}/${repo}`);
   if (model.path) return _shellQuote(`${String(model.path || '').replace(/\/+$/, '')}/models--${repo.replace(/\//g, '--')}/snapshots`);
-  return `"$HOME/.cache/huggingface/hub/models--${repo.replace(/\//g, '--')}/snapshots"`;
+  return repo.startsWith('models--')
+     ? `"$HOME/.cache/huggingface/hub/${repo}/snapshots"`
+     : `"$HOME/.cache/huggingface/hub/models--${repo.replace(/\//g, '--')}/snapshots"`;
 }
 
 function _rerenderCachedModels() {
