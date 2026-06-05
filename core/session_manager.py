@@ -14,7 +14,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional
 
-from .database import Session as DbSession, ChatMessage as DbChatMessage, Document as DbDocument, SessionLocal
+from .database import Session as DbSession, ChatMessage as DbChatMessage, Document as DbDocument, SessionLocal, utcnow_naive
 from .models import Session, ChatMessage
 
 logger = logging.getLogger(__name__)
@@ -619,7 +619,7 @@ class SessionManager:
 
         try:
             all_sessions = db.query(DbSession).all()
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=auto_archive_days)
+            cutoff_date = utcnow_naive() - timedelta(days=auto_archive_days)
 
             for db_session in all_sessions:
                 stats['total_checked'] += 1

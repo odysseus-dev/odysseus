@@ -11,12 +11,11 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-_endpoint_resolver = sys.modules.get("src.endpoint_resolver")
-if _endpoint_resolver is not None and not getattr(_endpoint_resolver, "__file__", None):
-    # Other tests stub this module during collection. These helper tests need
-    # the real URL normalization helpers so Anthropic /v1 handling is covered.
-    sys.modules.pop("src.endpoint_resolver", None)
-    sys.modules.pop("routes.model_routes", None)
+from tests.helpers.import_state import clear_fake_endpoint_resolver_modules
+
+# Other tests stub this module during collection. These helper tests need
+# the real URL normalization helpers so Anthropic /v1 handling is covered.
+clear_fake_endpoint_resolver_modules()
 
 if "core.database" not in sys.modules:
     _core_db = types.ModuleType("core.database")

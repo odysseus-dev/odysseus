@@ -23,6 +23,14 @@ def test_calendar_imperative_variants_promote_to_agent():
     )
 
 
+def test_calendar_read_requests_promote_to_agent():
+    assert message_needs_tools("What upcoming events do I have?")
+    assert message_needs_tools("Can you show my next appointments?")
+    assert message_needs_tools("Do I have upcoming Taekwondo classes this week?")
+    assert message_needs_tools("What's on my calendar tomorrow?")
+    assert message_needs_tools("When is my next meeting?")
+
+
 def test_note_todo_and_reminder_actions_promote_to_agent():
     assert message_needs_tools("add milk to my todo list")
     assert message_needs_tools("take a note that the server needs checking")

@@ -19,6 +19,8 @@ from src.auth_helpers import require_user
 from src.tool_implementations import do_manage_notes
 
 
+COOKBOOK_READ_SCOPES = {"cookbook:read", "cookbook:launch"}
+COOKBOOK_LAUNCH_SCOPES = {"cookbook:launch"}
 TODO_READ_SCOPES = {"todos:read", "todos:write"}
 TODO_WRITE_SCOPES = {"todos:write"}
 EMAIL_READ_SCOPES = {"email:read", "email:draft", "email:send"}
@@ -129,6 +131,11 @@ def setup_codex_routes(
                     "write": scoped(DOCS_WRITE_SCOPES),
                     "actions": ["library", "read", "create", "delete"],
                     "available": documents_library_endpoint is not None,
+                },
+                "cookbook": {
+                    "read": scoped(COOKBOOK_READ_SCOPES),
+                    "launch": scoped(COOKBOOK_LAUNCH_SCOPES),
+                    "actions": ["tasks", "servers", "output", "serve", "stop"],
                 },
             },
             "safety": {
@@ -372,6 +379,374 @@ def setup_codex_routes(
         except Exception as exc:
             raise HTTPException(400, f"Invalid document payload: {exc}")
         return await _as_owner(request, owner, documents_create_endpoint, request, req)
+
+    # ── Cookbook surface ──
+    # Lets the agent run the same launch / monitor / kill loop the user
+    # would do by hand in the Cookbook UI: read the current task list +
+    # tmux output, launch a serve task, stop one.  Two scopes:
+    #   cookbook:read   — list tasks + tail output + list servers
+    #   cookbook:launch — also start/stop serves (host shell exec)
+    # `cookbook:launch` is genuinely powerful: /api/model/serve runs SSH'd
+    # commands on the user's hosts. The existing _validate_serve_cmd
+    # allowlist (vllm/python3/sglang/llama-server/etc., no shell metachars)
+    # keeps the agent inside the same sandbox the UI uses.
+
+    async def _run_shell(cmd: str, timeout: float = 15.0) -> dict:
+        """Run a shell command, return {exit_code, stdout, stderr}."""
+        import asyncio as _asyncio
+        try:
+            proc = await _asyncio.create_subprocess_shell(
+                cmd,
+                stdout=_asyncio.subprocess.PIPE,
+                stderr=_asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout_b, stderr_b = await _asyncio.wait_for(proc.communicate(), timeout=timeout)
+            except _asyncio.TimeoutError:
+                proc.kill()
+                return {"exit_code": -1, "stdout": "", "stderr": "timed out"}
+            return {
+                "exit_code": proc.returncode,
+                "stdout": stdout_b.decode(errors="replace"),
+                "stderr": stderr_b.decode(errors="replace"),
+            }
+        except Exception as exc:
+            return {"exit_code": -1, "stdout": "", "stderr": str(exc)}
+
+    def _read_cookbook_state() -> dict:
+        from pathlib import Path as _Path
+        import os as _os, json as _json
+        p = _Path(_os.environ.get("DATA_DIR", "data")) / "cookbook_state.json"
+        if not p.exists():
+            return {}
+        try:
+            return _json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _redact_task(t: dict) -> dict:
+        """Strip secrets before returning to the agent."""
+        clean = {k: v for k, v in t.items() if k not in ("hf_token", "_secrets")}
+        if isinstance(clean.get("payload"), dict):
+            pl = clean["payload"]
+            clean["payload"] = {k: v for k, v in pl.items()
+                                if k not in ("hf_token", "_secrets")}
+        return clean
+
+    @router.get("/cookbook/tasks")
+    async def codex_cookbook_tasks(request: Request):
+        _scope_owner(request, COOKBOOK_READ_SCOPES)
+        state = _read_cookbook_state()
+        tasks = state.get("tasks") or []
+        return {"tasks": [_redact_task(t) for t in tasks]}
+
+    @router.get("/cookbook/servers")
+    async def codex_cookbook_servers(request: Request):
+        _scope_owner(request, COOKBOOK_READ_SCOPES)
+        state = _read_cookbook_state()
+        servers = state.get("env", {}).get("servers") or []
+        # Strip ssh creds / passwords; keep only what's needed to pick a host.
+        cleaned = []
+        for s in servers:
+            cleaned.append({
+                "name": s.get("name"),
+                "host": s.get("host"),
+                "port": s.get("port"),
+                "env": s.get("env"),
+                "envPath": s.get("envPath"),
+                "platform": s.get("platform"),
+                "modelDirs": s.get("modelDirs"),
+            })
+        return {"servers": cleaned}
+
+    @router.get("/cookbook/output/{session_id}")
+    async def codex_cookbook_output(request: Request, session_id: str, tail: int = 400):
+        _scope_owner(request, COOKBOOK_READ_SCOPES)
+        # Defensive: session_id must be the tmux-style id we issue
+        # (`serve-XXXX` / `cookbook-XXXX` / `queue-XXXX`); anything else
+        # would let the agent run arbitrary `tmux capture-pane` targets.
+        import re as _re
+        if not _re.fullmatch(r"[a-zA-Z0-9_-]+", session_id):
+            raise HTTPException(400, "Invalid session id")
+        tail = max(20, min(int(tail or 400), 4000))
+        # Resolve the task's host (if any) from cookbook state so we can
+        # ssh to the right box, exactly as the UI does in _reconnectTask.
+        state = _read_cookbook_state()
+        tasks = state.get("tasks") or []
+        task = next((t for t in tasks if t.get("sessionId") == session_id), None)
+        if task is None:
+            raise HTTPException(404, "task not found")
+        host = (task.get("remoteHost") or "").strip()
+        ssh_port = (task.get("sshPort") or "").strip()
+        # Prefer the persisted log file over the tmux pane. The pane gets
+        # overwritten by the post-crash neofetch banner + bash prompt the
+        # moment vllm exits; the log file is the raw stdout/stderr and
+        # survives unchanged. Falls back to pane for older tasks predating
+        # the tee-to-log runner change.
+        log_path = f"/tmp/odysseus-tmux/{session_id}.log"
+        inner = (
+            f"if [ -s {log_path} ]; then tail -n {tail} {log_path}; "
+            f"else tmux capture-pane -t {session_id} -p -S -{tail}; fi"
+        )
+        if host:
+            port_flag = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
+            import shlex
+            cmd = f"ssh {port_flag}{host} {shlex.quote(inner)}"
+        else:
+            cmd = inner
+        result = await _run_shell(cmd, timeout=15)
+        return {
+            "session_id": session_id,
+            "host": host or "local",
+            "exit_code": result.get("exit_code"),
+            "output": result.get("stdout", ""),
+            "task": _redact_task(task),
+        }
+
+    @router.post("/cookbook/serve")
+    async def codex_cookbook_serve(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+        _scope_owner(request, COOKBOOK_LAUNCH_SCOPES)
+        # Wraps /api/model/serve with the SAME validation the UI uses.
+        # _validate_serve_cmd (called inside model_serve) rejects shell
+        # metachars and requires the leading binary to be in the
+        # cookbook allowlist (vllm / python3 / sglang / llama-server / ...).
+        from routes.cookbook_helpers import ServeRequest
+        # Accept friendly aliases agents naturally reach for. Without these,
+        # passing `host` silently maps to nothing and the serve runs LOCAL
+        # instead of on the intended remote — exactly the bug an agent
+        # would never debug on its own.
+        norm = dict(body or {})
+        if "host" in norm and "remote_host" not in norm:
+            norm["remote_host"] = norm.pop("host")
+        if "model" in norm and "repo_id" not in norm:
+            norm["repo_id"] = norm.pop("model")
+        if "ssh_port" not in norm and "port" in norm and (str(norm.get("port") or "").isdigit() and int(norm["port"]) >= 1000):
+            # Heuristic: if `port` looks like an SSH port (≥1000) and there's
+            # no explicit ssh_port, treat it as such. UI ports (8000, 8001,
+            # 30000) belong inside the cmd string, not here.
+            pass  # leave as-is — user's `port` here is ambiguous; skip remap.
+        try:
+            req = ServeRequest(**norm)
+        except Exception as exc:
+            raise HTTPException(400, f"Invalid serve payload: {exc}")
+        serve_endpoint = _find_endpoint(None, "POST", "/api/model/serve")
+        # Fall back to importing from the cookbook router registered on app.
+        if serve_endpoint is None:
+            from fastapi import FastAPI
+            app: FastAPI = request.app
+            for route in app.routes:
+                if getattr(route, "path", None) == "/api/model/serve" and "POST" in getattr(route, "methods", set()):
+                    serve_endpoint = route.endpoint
+                    break
+        if serve_endpoint is None:
+            raise HTTPException(503, "model serve endpoint unavailable")
+        return await serve_endpoint(request, req)
+
+    @router.post("/cookbook/stop/{session_id}")
+    async def codex_cookbook_stop(request: Request, session_id: str):
+        _scope_owner(request, COOKBOOK_LAUNCH_SCOPES)
+        import re as _re
+        if not _re.fullmatch(r"[a-zA-Z0-9_-]+", session_id):
+            raise HTTPException(400, "Invalid session id")
+        state = _read_cookbook_state()
+        tasks = state.get("tasks") or []
+        task = next((t for t in tasks if t.get("sessionId") == session_id), None)
+        host = ((task or {}).get("remoteHost") or "").strip()
+        ssh_port = ((task or {}).get("sshPort") or "").strip()
+        if host:
+            port_flag = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
+            cmd = f"ssh {port_flag}{host} \"tmux kill-session -t {session_id}\""
+        else:
+            cmd = f"tmux kill-session -t {session_id}"
+        result = await _run_shell(cmd, timeout=10)
+        return {"session_id": session_id, "exit_code": result.get("exit_code"), "host": host or "local"}
+
+    @router.get("/cookbook/cached")
+    async def codex_cookbook_cached(request: Request, host: str | None = None):
+        """List cached models on a configured server (or local if host is omitted).
+        Mirrors `list_cached_models` from the chat agent so external agents have
+        the same inventory view before deciding what to serve/download."""
+        _scope_owner(request, COOKBOOK_READ_SCOPES)
+        # Hit /api/model/cached internally, with the same modelDirs the chat
+        # agent's list_cached_models would resolve from cookbook state.
+        state = _read_cookbook_state()
+        env = state.get("env") if isinstance(state, dict) else {}
+        servers = (env.get("servers") if isinstance(env, dict) else None) or []
+        HF_DEFAULTS = {"~/.cache/huggingface/hub", "~/.cache/huggingface"}
+        def _dirs_for(srv: dict) -> str:
+            mds = srv.get("modelDirs") if isinstance(srv, dict) else None
+            if isinstance(mds, list):
+                extras = [d for d in mds if isinstance(d, str) and d.strip() and d.strip() not in HF_DEFAULTS]
+                return ",".join(extras)
+            if isinstance(mds, str) and mds.strip() not in HF_DEFAULTS:
+                return mds
+            return ""
+        # Resolve friendly host name → real host (matches list_cached_models flow).
+        resolved_host = host or ""
+        srv: dict[str, Any] = {}
+        if host:
+            srv = next(
+                (s for s in servers if isinstance(s, dict)
+                 and (s.get("name") == host or s.get("host") == host)),
+                {},
+            )
+            if srv and srv.get("host"):
+                resolved_host = srv["host"]
+        else:
+            srv = next((s for s in servers if isinstance(s, dict) and not (s.get("host") or "").strip()), {})
+        params: dict[str, str] = {}
+        if resolved_host:
+            params["host"] = resolved_host
+        md = _dirs_for(srv)
+        if md:
+            params["model_dir"] = md
+        if srv.get("port"):
+            params["ssh_port"] = str(srv["port"])
+        if srv.get("platform"):
+            params["platform"] = srv["platform"]
+        cached_endpoint = _find_endpoint(None, "GET", "/api/model/cached")
+        if cached_endpoint is None:
+            from fastapi import FastAPI
+            app: FastAPI = request.app
+            for route in app.routes:
+                if getattr(route, "path", None) == "/api/model/cached" and "GET" in getattr(route, "methods", set()):
+                    cached_endpoint = route.endpoint
+                    break
+        if cached_endpoint is None:
+            raise HTTPException(503, "model cached endpoint unavailable")
+        # The endpoint reads host/model_dir/ssh_port/platform as kwargs.
+        return await cached_endpoint(
+            request,
+            host=params.get("host") or None,
+            model_dir=params.get("model_dir") or None,
+            ssh_port=params.get("ssh_port") or None,
+            platform=params.get("platform") or None,
+        )
+
+    @router.get("/cookbook/presets")
+    async def codex_cookbook_presets(request: Request):
+        """List saved serve presets (model + host + port + launch cmd).
+        Counterpart to `list_serve_presets`. Use BEFORE composing a `serve`
+        body — the user's saved preset usually has the working cmd already."""
+        _scope_owner(request, COOKBOOK_READ_SCOPES)
+        state = _read_cookbook_state()
+        presets = state.get("presets") or []
+        out = []
+        for p in presets:
+            if not isinstance(p, dict):
+                continue
+            out.append({
+                "name": p.get("name"),
+                "model": p.get("model") or p.get("modelId"),
+                "host": p.get("host") or p.get("remoteHost"),
+                "port": p.get("port"),
+                "cmd": p.get("cmd"),
+            })
+        return {"presets": out, "default_host": (state.get("env") or {}).get("defaultServer", "")}
+
+    @router.post("/cookbook/preset/{name}")
+    async def codex_cookbook_serve_preset(request: Request, name: str):
+        """Launch a saved preset by name. Reuses the working cmd + host the
+        user already saved, avoiding the cmd-allowlist trial-and-error loop."""
+        _scope_owner(request, COOKBOOK_LAUNCH_SCOPES)
+        import re as _re
+        if not _re.fullmatch(r"[A-Za-z0-9 _.:@\-]+", name):
+            raise HTTPException(400, "Invalid preset name")
+        state = _read_cookbook_state()
+        presets = state.get("presets") or []
+        lname = name.lower().strip()
+        chosen = next(
+            (p for p in presets if isinstance(p, dict) and (p.get("name") or "").lower() == lname),
+            None,
+        )
+        if chosen is None:
+            chosen = next(
+                (p for p in presets if isinstance(p, dict) and lname in (p.get("name") or "").lower()),
+                None,
+            )
+        if chosen is None:
+            raise HTTPException(404, f"No preset matching {name!r}")
+        repo_id = chosen.get("model") or chosen.get("modelId") or ""
+        cmd = (chosen.get("cmd") or "").strip()
+        host = chosen.get("host") or chosen.get("remoteHost") or ""
+        if not repo_id or not cmd or cmd.startswith("(adopted"):
+            raise HTTPException(400, f"Preset {chosen.get('name')!r} has no launchable cmd "
+                                     "(adopted from external launch). Use POST /cookbook/serve "
+                                     "with the actual cmd instead.")
+        # Reuse the serve handler we already validated.
+        from routes.cookbook_helpers import ServeRequest
+        body = {"repo_id": repo_id, "cmd": cmd}
+        if host:
+            body["remote_host"] = host
+        try:
+            req = ServeRequest(**body)
+        except Exception as exc:
+            raise HTTPException(400, f"Preset payload invalid: {exc}")
+        serve_endpoint = _find_endpoint(None, "POST", "/api/model/serve")
+        if serve_endpoint is None:
+            from fastapi import FastAPI
+            app: FastAPI = request.app
+            for route in app.routes:
+                if getattr(route, "path", None) == "/api/model/serve" and "POST" in getattr(route, "methods", set()):
+                    serve_endpoint = route.endpoint
+                    break
+        if serve_endpoint is None:
+            raise HTTPException(503, "model serve endpoint unavailable")
+        return await serve_endpoint(request, req)
+
+    @router.post("/cookbook/adopt")
+    async def codex_cookbook_adopt(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+        """Adopt an existing tmux session (one started via raw ssh+tmux) into
+        cookbook tracking. Needed when serve_model rejects a cmd and the
+        agent falls back to direct ssh — without adoption the session is
+        invisible to the UI. Body: {tmux_session, model, host?, port?}."""
+        _scope_owner(request, COOKBOOK_LAUNCH_SCOPES)
+        norm = dict(body or {})
+        sess = (norm.get("tmux_session") or norm.get("session_id") or "").strip()
+        model = (norm.get("model") or norm.get("repo_id") or "").strip()
+        host = (norm.get("host") or norm.get("remote_host") or "").strip()
+        port = norm.get("port") or 8000
+        import re as _re
+        if not sess or not _re.fullmatch(r"[a-zA-Z0-9_-]+", sess):
+            raise HTTPException(400, "tmux_session required, [a-zA-Z0-9_-]+ only")
+        if not model:
+            raise HTTPException(400, "model required")
+        # Verify the tmux session exists on the target host before adopting.
+        import shlex
+        if host:
+            check = f"ssh {shlex.quote(host)} 'tmux has-session -t {shlex.quote(sess)}'"
+        else:
+            check = f"tmux has-session -t {shlex.quote(sess)}"
+        chk = await _run_shell(check, timeout=8)
+        if chk.get("exit_code") not in (0, None):
+            raise HTTPException(404, f"tmux session {sess!r} not found on {host or 'local'}")
+        # Write into cookbook_state.json.
+        import time as _t, json as _json
+        from core.atomic_io import atomic_write_json
+        from pathlib import Path as _Path
+        cookbook_state_path = _Path("/app/data/cookbook_state.json")
+        try:
+            state = _json.loads(cookbook_state_path.read_text(encoding="utf-8"))
+        except Exception:
+            state = {}
+        tasks = state.setdefault("tasks", [])
+        if any(isinstance(t, dict) and t.get("sessionId") == sess for t in tasks):
+            return {"ok": True, "already_tracked": True, "session_id": sess}
+        tasks.append({
+            "id": sess, "sessionId": sess,
+            "name": model.split("/")[-1] if "/" in model else model,
+            "type": "serve", "status": "running",
+            "output": f"Adopted externally-launched session {sess!r} on {host or 'local'}.",
+            "ts": int(_t.time() * 1000),
+            "payload": {"repo_id": model, "remote_host": host, "_cmd": "(adopted — launched outside cookbook)", "port": int(port)},
+            "remoteHost": host, "sshPort": "", "platform": "linux",
+            "_serveReady": False, "_endpointAdded": False, "_adoptedExternally": True,
+        })
+        try:
+            atomic_write_json(cookbook_state_path, state)
+        except Exception as exc:
+            raise HTTPException(500, f"state write failed: {exc}")
+        return {"ok": True, "session_id": sess, "host": host or "local"}
 
     return router
 

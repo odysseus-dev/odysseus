@@ -6,6 +6,7 @@
 
 import uiModule from './ui.js';
 import { splitTableRow } from './markdown/tableRow.js';
+import { replaceEmojiShortcodes, hasEmojiShortcode } from './emojiShortcodes.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -366,8 +367,19 @@ function _useSvgEmoji() {
   return typeof document === 'undefined' || !document.body?.classList.contains('text-emojis');
 }
 
-export function svgifyEmoji(html) {
-  if (!_useSvgEmoji() || !html || !_EMOJI_RE.test(html)) return html;
+// `opts.shortcodes` (default true) controls the issue-#345 `:name:` → emoji
+// expansion. Chat passes it through as true; document/email body renderers pass
+// false so author-typed `:shortcode:` text stays literal (see mdToHtml callers).
+// The Unicode-emoji → monochrome-SVG pass always runs regardless, so a real 😀
+// in a document still renders as the themed line icon as it always has.
+export function svgifyEmoji(html, opts) {
+  if (!_useSvgEmoji() || !html) return html;
+  const allowShortcodes = !opts || opts.shortcodes !== false;
+  // Two reasons to walk the HTML: real Unicode emoji to turn into SVG icons,
+  // or `:shortcode:` text the model emitted instead of an emoji (issue #345).
+  const hasUnicode = _EMOJI_RE.test(html);
+  const hasShortcode = allowShortcodes && hasEmojiShortcode(html);
+  if (!hasUnicode && !hasShortcode) return html;
   const parts = html.split(/(<[^>]*>)/);   // odd indices = tags
   let codeDepth = 0;
   for (let i = 0; i < parts.length; i++) {
@@ -377,7 +389,13 @@ export function svgifyEmoji(html) {
       else if (/^<\/(pre|code)\s*>/.test(t)) codeDepth = Math.max(0, codeDepth - 1);
       continue;
     }
-    if (codeDepth === 0 && _EMOJI_RE.test(parts[i])) parts[i] = _svgifyText(parts[i]);
+    if (codeDepth !== 0) continue;
+    let seg = parts[i];
+    // Expand shortcodes to Unicode first, then both they and any pre-existing
+    // Unicode emoji get rendered as the same monochrome line icons below.
+    if (hasShortcode) seg = replaceEmojiShortcodes(seg);
+    if (_EMOJI_RE.test(seg)) seg = _svgifyText(seg);
+    parts[i] = seg;
   }
   return parts.join('');
 }
@@ -421,7 +439,7 @@ export function processWithThinking(text) {
 /**
  * Convert markdown to HTML
  */
-export function mdToHtml(src) {
+export function mdToHtml(src, opts) {
   const allowedHtmlBlocks = [];
   const codeBlocks = [];
   const mermaidBlocks = [];
@@ -506,9 +524,11 @@ export function mdToHtml(src) {
   // allowlist keeps it from matching file names / versions ("package.json",
   // "node.js", "v1.2.3"); the required start/[\s(<] prefix means domains
   // already inside an http link (preceded by "//") or an email ("@") are
-  // skipped. Trailing sentence punctuation is kept outside the link.
+  // skipped. Require the TLD to end at a real domain boundary so dotted code
+  // identifiers like `sklearn.metrics` do not link `sklearn.me` and leave
+  // placeholder fragments in the remaining text.
   s = s.replace(
-    /(^|[\s(<])((?:www\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|ai|co|dev|app|gov|edu|news|info|tech|xyz|me)(?:\/[^\s<>"'`\])]*)?)/gi,
+    /(^|[\s(<])((?:www\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|ai|co|dev|app|gov|edu|news|info|tech|xyz|me)(?=$|[\/\s<>"'`\]).,;:!?])(?:\/[^\s<>"'`\])]*)?)/gi,
     (match, prefix, domain) => {
       const trail = (domain.match(/[.,;:!?)]+$/) || [''])[0];
       const core = trail ? domain.slice(0, -trail.length) : domain;
@@ -635,10 +655,20 @@ export function mdToHtml(src) {
   s = s.replace(/^(\d+)\. (.*)$/gm, '<oli>$2</oli>');
   s = s.replace(/(?:^|\n)(<oli>[\s\S]*?)(?=\n(?!<oli>)|$)/g, m => `<ol>${m.trim().replace(/<\/?oli>/g, (t) => t === '<oli>' ? '<li>' : '</li>')}</ol>`);
 
-  // Unordered lists
+  // GitHub-style task lists (- [ ] / - [x]) → checkbox items. Must run before
+  // the generic unordered-list rule so the "- " prefix isn't consumed first.
+  // Emits <uli> (with a class) so the unordered-list wrapper below treats it
+  // as a list item. Used by plan mode: plan + progress render as a checklist.
+  s = s.replace(/^(?:- |\* )\[([ xX])\] (.*)$/gm, (_m, mark, text) => {
+    const done = mark.toLowerCase() === 'x';
+    return `<uli class="task-item${done ? ' task-done' : ''}"><span class="task-check" aria-hidden="true"></span><span class="task-text">${text}</span></uli>`;
+  });
+
+  // Unordered lists. <uli> may carry attributes (task-item class), so the
+  // wrapper preserves them when converting <uli ...> → <li ...>.
   s = s.replace(/^(?:- |\* )(.*)$/gm, '<uli>$1</uli>');
-  s = s.replace(/(^|\n)((?:<uli>[^\n]*<\/uli>(?:\n|$))+)/g, (_, prefix, block) =>
-    `${prefix}<ul>${block.trim().replace(/<\/?uli>/g, (t) => t === '<uli>' ? '<li>' : '</li>')}</ul>`);
+  s = s.replace(/(^|\n)((?:<uli\b[^>]*>[^\n]*<\/uli>(?:\n|$))+)/g, (_, prefix, block) =>
+    `${prefix}<ul>${block.trim().replace(/<uli\b([^>]*)>/g, '<li$1>').replace(/<\/uli>/g, '</li>')}</ul>`);
 
   // Blockquotes
   s = s.replace(/^&gt; (.*)$/gm, '<bq>$1</bq>');
@@ -646,7 +676,7 @@ export function mdToHtml(src) {
     `<blockquote>${m.trim().replace(/<\/?bq>/g, (t) => t === '<bq>' ? '<p>' : '</p>')}</blockquote>`);
 
   // Paragraphs - but NOT for code block placeholders or allowed HTML
-  s = s.replace(/^(?!<h\d|<ul>|<ol>|<li>|<oli>|<pre>|<blockquote>|<bq>|<hr>|___CODE_BLOCK_|___ALLOWED_HTML_|___MATH_BLOCK_|___MERMAID_BLOCK_)([^\n]+)$/gm, '<p>$1</p>');
+  s = s.replace(/^(?!<h\d|<ul>|<ol>|<li|<oli>|<\/li>|<pre>|<blockquote>|<bq>|<hr>|___CODE_BLOCK_|___ALLOWED_HTML_|___MATH_BLOCK_|___MERMAID_BLOCK_)([^\n]+)$/gm, '<p>$1</p>');
 
   // Line breaks within paragraphs
   s = s.replace(/<p>([\s\S]*?)<\/p>/g, (match, content) => {
@@ -678,7 +708,7 @@ export function mdToHtml(src) {
     s = s.replace(`___CODE_BLOCK_${index}___`, block);
   });
 
-  return _useSvgEmoji() ? svgifyEmoji(s) : s;
+  return _useSvgEmoji() ? svgifyEmoji(s, opts) : s;
 }
 
 /**

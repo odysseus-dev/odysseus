@@ -443,6 +443,9 @@ export async function _hwfitFetch(fresh = false) {
   if (_cached) {
     _hwfitCache = _cached;
     _hwfitRenderHw(hw, _cached.system);
+    if (!remoteHost && _cached.system && _cached.system.platform) {
+      _envState.platform = _cached.system.platform;
+    }
     _hwfitRenderList(list, _applyEngineFilter(_cached.models));
   } else {
     // Show spinner while scanning — stack the spinner above a text label
@@ -578,6 +581,11 @@ export async function _hwfitFetch(fresh = false) {
     }
     _hwfitCache = data;
     _hwfitRenderHw(hw, data.system);
+    // Propagate local platform from hardware probe so _isWindows(task) works
+    // for local tasks (menu items, shell commands, etc.).
+    if (!remoteHost && data.system && data.system.platform) {
+      _envState.platform = data.system.platform;
+    }
     // Sort client-side by the active column so the highest↔lowest toggle is
     // deterministic (the previous array .reverse() didn't reliably flip).
     // 1st click on a column = highest first; clicking it again = lowest first.

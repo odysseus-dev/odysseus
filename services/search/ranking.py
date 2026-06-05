@@ -76,6 +76,19 @@ def _domain(url: str) -> str:
         return ""
 
 
+def _has_word(text: str, term: str) -> bool:
+    """True if ``term`` appears in ``text`` as a whole word.
+
+    Query terms are matched on word boundaries so a short term doesn't match
+    inside an unrelated word: "us" must not match "business"/"music", "port"
+    must not match "transport"/"support". This mirrors the tokenization used to
+    build ``query_terms`` (``\\b\\w+\\b``). #1473 converted the title and sports
+    checks to word boundaries; the snippet and subject-term checks below use
+    the same helper so the whole file stays consistent.
+    """
+    return re.search(rf"\b{re.escape(term)}\b", text) is not None
+
+
 def rank_search_results(query: str, results: List[dict]) -> List[dict]:
     """Rank search results by title relevance, snippet quality, domain authority, and recency."""
     query_terms = [t.lower() for t in re.findall(r"\b\w+\b", query)]
@@ -87,14 +100,14 @@ def rank_search_results(query: str, results: List[dict]) -> List[dict]:
         if not title:
             return 0.0
         title_lc = title.lower()
-        matches = sum(1 for term in query_terms if re.search(rf"\b{re.escape(term)}\b", title_lc))
+        matches = sum(1 for term in query_terms if _has_word(title_lc, term))
         return matches / len(query_terms) if query_terms else 0.0
 
     def snippet_score(snippet: str) -> float:
         if not snippet:
             return 0.0
         length_factor = min(len(snippet), 200) / 200
-        term_hits = sum(1 for term in query_terms if term in snippet.lower())
+        term_hits = sum(1 for term in query_terms if _has_word(snippet.lower(), term))
         term_factor = term_hits / len(query_terms) if query_terms else 0.0
         return (length_factor + term_factor) / 2
 
@@ -127,7 +140,7 @@ def rank_search_results(query: str, results: List[dict]) -> List[dict]:
         # A country/news query should not rank a page whose title/snippet barely
         # mentions the country above actual news pages for that country.
         subject_terms = [t for t in query_terms if t not in _NEWS_HINTS]
-        if subject_terms and not any(t in text or t in netloc for t in subject_terms):
+        if subject_terms and not any(_has_word(text, t) or _has_word(netloc, t) for t in subject_terms):
             adjustment -= 1.0
         return adjustment
 

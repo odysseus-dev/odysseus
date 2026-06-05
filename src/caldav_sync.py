@@ -27,6 +27,7 @@ import hashlib
 import ipaddress
 import logging
 import os
+import socket
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlparse, urlunparse
@@ -50,15 +51,55 @@ def _private_caldav_allowed() -> bool:
     return os.environ.get("ODYSSEUS_ALLOW_PRIVATE_CALDAV", "0").lower() in {"1", "true", "yes"}
 
 
+def _validate_caldav_address(addr: ipaddress._BaseAddress) -> None:
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    if (
+        addr.is_loopback
+        or addr.is_link_local
+        or addr.is_multicast
+        or addr.is_unspecified
+        or addr.is_reserved
+    ):
+        raise ValueError("CalDAV URL host is not allowed")
+    if addr.is_private and not _private_caldav_allowed():
+        raise ValueError("Private CalDAV IPs require ODYSSEUS_ALLOW_PRIVATE_CALDAV=1")
+
+
 def _validate_caldav_ip(host: str) -> None:
     try:
         ip = ipaddress.ip_address(host.strip("[]"))
     except ValueError:
         return
-    if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
-        raise ValueError("CalDAV URL host is not allowed")
-    if ip.is_private and not _private_caldav_allowed():
-        raise ValueError("Private CalDAV IPs require ODYSSEUS_ALLOW_PRIVATE_CALDAV=1")
+    _validate_caldav_address(ip)
+
+
+def _resolve_caldav_host_ips(host: str) -> list[ipaddress._BaseAddress]:
+    addrs: list[ipaddress._BaseAddress] = []
+    for family, _, _, _, sockaddr in socket.getaddrinfo(host, None):
+        if family not in (socket.AF_INET, socket.AF_INET6):
+            continue
+        try:
+            addrs.append(ipaddress.ip_address(sockaddr[0].split("%", 1)[0]))
+        except ValueError:
+            continue
+    return addrs
+
+
+def _validate_caldav_hostname(host: str) -> None:
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+        return
+    except ValueError:
+        pass
+    try:
+        addrs = _resolve_caldav_host_ips(host)
+    except OSError:
+        raise ValueError("CalDAV URL host does not resolve")
+    if not addrs:
+        raise ValueError("CalDAV URL host does not resolve")
+    for addr in addrs:
+        _validate_caldav_address(addr)
 
 
 def validate_caldav_url(raw_url: str) -> str:
@@ -83,6 +124,7 @@ def validate_caldav_url(raw_url: str) -> str:
     if host in _BLOCKED_HOSTS or host.endswith(".localhost"):
         raise ValueError("CalDAV URL host is not allowed")
     _validate_caldav_ip(host)
+    _validate_caldav_hostname(host)
     return urlunparse(parsed._replace(fragment="")).rstrip("/")
 
 
@@ -124,6 +166,52 @@ def _find_existing_event(db, pending, uid_val, calendar_id):
     ).first()
 
 
+def _google_caldav_events_url(url: str) -> str | None:
+    """Map a Google CalDAV *principal* URL to its event-collection URL.
+
+    Google serves the principal at ``…/user`` but events live under ``…/events``
+    — the ``/user`` resource holds no VEVENTs. The `caldav` library's
+    principal→home-set discovery does not reliably enumerate calendars from
+    Google's ``/user`` endpoint, so the sync falls into the "treat the URL as a
+    single calendar" fallback below. Pointed at ``/user`` that fallback issues
+    every calendar-query REPORT against the principal, which returns a clean but
+    empty 200 for all date ranges — the calendar shows no events even though
+    auth succeeded (issue #2507).
+
+    Both Google CalDAV endpoint forms are handled, since some accounts only
+    authenticate against one of them:
+      - newer:  ``https://apidata.googleusercontent.com/caldav/v2/<id>/user``
+      - legacy: ``https://www.google.com/calendar/dav/<id>/user``
+
+    Returns the events URL for a recognised Google principal URL, else None so
+    the caller keeps the original URL unchanged.
+    """
+    parts = urlparse(url)
+    host = (parts.hostname or "").lower()
+    path = parts.path.rstrip("/")
+    if not path.endswith("/user"):
+        return None
+    is_google = (
+        host.endswith("googleusercontent.com")                       # newer /caldav/v2 form
+        or (host in ("www.google.com", "google.com") and "/calendar/dav/" in path)  # legacy form
+    )
+    if not is_google:
+        return None
+    new_path = path[: -len("/user")] + "/events"
+    return urlunparse(parts._replace(path=new_path))
+
+
+def _open_url_as_calendar(client, url: str):
+    """Open ``url`` as a single calendar collection.
+
+    Used when principal discovery yields no calendars. Google's principal URL
+    is not an event collection, so map it to the events URL first
+    (see ``_google_caldav_events_url``); other servers' URLs are used as-is.
+    """
+    target = _google_caldav_events_url(url) or url
+    return client.calendar(url=target)
+
+
 def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
     """The actual sync — synchronous, intended to run in a threadpool.
     Returns counts: {calendars, events, deleted, errors}."""
@@ -150,14 +238,14 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
     except Exception as e:
         logger.info(f"CalDAV principal discovery failed, trying URL as calendar: {e}")
         try:
-            calendars = [client.calendar(url=url)]
+            calendars = [_open_url_as_calendar(client, url)]
         except Exception as e2:
             result["errors"].append(f"Could not open URL as calendar: {e2}")
             return result
 
     if not calendars:
         try:
-            calendars = [client.calendar(url=url)]
+            calendars = [_open_url_as_calendar(client, url)]
         except Exception as e:
             result["errors"].append(f"No calendars and URL fallback failed: {e}")
             return result
@@ -265,6 +353,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                             existing.all_day = all_day
                             existing.is_utc = row_is_utc
                             existing.rrule = rrule
+                            existing.origin = "caldav"
                         else:
                             new_ev = CalendarEvent(
                                 uid=uid_val,
@@ -277,6 +366,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                                 all_day=all_day,
                                 is_utc=row_is_utc,
                                 rrule=rrule,
+                                origin="caldav",
                             )
                             db.add(new_ev)
                             pending[uid_val] = new_ev
@@ -286,8 +376,13 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                 # Prune locally-cached CalDAV events that vanished
                 # upstream (only within our sync window — events outside
                 # the window aren't in `objs`, so we'd false-delete them).
+                # Only rows we previously pulled from the server (origin=="caldav")
+                # are prunable; locally-created events (agent / email triage / a
+                # UI event whose write-back failed) carry origin NULL and must
+                # never be deleted just because the server didn't return them.
                 stale = db.query(CalendarEvent).filter(
                     CalendarEvent.calendar_id == local_cal.id,
+                    CalendarEvent.origin == "caldav",
                     CalendarEvent.dtstart >= start,
                     CalendarEvent.dtstart <= end,
                     ~CalendarEvent.uid.in_(seen_uids) if seen_uids else CalendarEvent.uid.isnot(None),

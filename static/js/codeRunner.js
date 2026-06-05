@@ -310,11 +310,15 @@ try {
  */
 export async function runServer(code, panel, lang) {
   showLoading(panel, 'Running on server...');
+  // Base64-encode the script so newlines survive the shell quoting intact.
+  // JSON.stringify turns \n into literal \\n which python3 -c sees as backslash-n;
+  // base64 avoids every quoting/escaping pitfall.
+  const b64 = btoa(unescape(encodeURIComponent(code)));
   var command;
   if (lang === 'python' || lang === 'py') {
-    command = 'python3 -c ' + JSON.stringify(code);
+    command = `python3 -c "import base64; exec(base64.b64decode('${b64}').decode('utf-8'))"`;
   } else {
-    command = 'bash -c ' + JSON.stringify(code);
+    command = `python3 -c "import base64, subprocess, sys; sys.exit(subprocess.run(['bash','-c',base64.b64decode('${b64}').decode('utf-8')]).returncode)"`;
   }
   try {
     var res = await fetch('/api/shell/exec', {
