@@ -14,6 +14,7 @@ import logging
 import os
 import pathlib
 import re
+import shutil
 import sys
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
@@ -33,7 +34,6 @@ _AGENT_WORKDIR = str(pathlib.Path(__file__).parent.parent / "data")
 def find_powershell() -> "str | None":
     """Locate pwsh (PowerShell 7+) or powershell.exe (Windows built-in).
     Returns the executable path, or None if neither is on PATH."""
-    import shutil
     return shutil.which("pwsh") or shutil.which("powershell")
 
 def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
@@ -1163,6 +1163,9 @@ async def execute_tool(
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
 ) -> Dict:
     """Public thin wrapper around _direct_fallback for testing and direct callers."""
+    # session_id is accepted for API symmetry but not forwarded to _direct_fallback
+    # for the powershell tool: PowerShell does not support background jobs (#!bg)
+    # yet, so there is nothing session-specific to pass through.
     result = await _direct_fallback(tool, content, progress_cb=progress_cb, workspace=workspace)
     if result is None:
         return {"error": f"Unknown tool: {tool}", "exit_code": 1}

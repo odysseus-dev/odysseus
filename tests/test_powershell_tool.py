@@ -11,21 +11,21 @@ from unittest.mock import patch, AsyncMock, MagicMock
 def test_find_powershell_prefers_pwsh():
     """find_powershell returns pwsh path when available."""
     from src.tool_execution import find_powershell
-    with patch("shutil.which", side_effect=lambda x: "/usr/bin/pwsh" if x == "pwsh" else None):
+    with patch("src.tool_execution.shutil.which", side_effect=lambda x: "/usr/bin/pwsh" if x == "pwsh" else None):
         assert find_powershell() == "/usr/bin/pwsh"
 
 
 def test_find_powershell_falls_back_to_powershell_exe():
     """find_powershell falls back to powershell when pwsh is absent."""
     from src.tool_execution import find_powershell
-    with patch("shutil.which", side_effect=lambda x: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" if x == "powershell" else None):
+    with patch("src.tool_execution.shutil.which", side_effect=lambda x: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" if x == "powershell" else None):
         assert find_powershell() == "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
 
 
 def test_find_powershell_returns_none_when_absent():
     """find_powershell returns None when neither pwsh nor powershell is on PATH."""
     from src.tool_execution import find_powershell
-    with patch("shutil.which", return_value=None):
+    with patch("src.tool_execution.shutil.which", return_value=None):
         assert find_powershell() is None
 
 
