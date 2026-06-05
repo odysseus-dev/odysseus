@@ -786,6 +786,10 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
 
 (function _initEdgeDockResizeHandles() {
   if (typeof document === 'undefined') return;
+  if (!document.body) {
+    document.addEventListener('DOMContentLoaded', _initEdgeDockResizeHandles, { once: true });
+    return;
+  }
 
   const handles = {
     left: document.createElement('div'),
@@ -975,12 +979,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
       _positionEdgeDockResizeHandles();
     });
   };
-  new MutationObserver(schedulePosition).observe(document.body, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ['class', 'style'],
-  });
+  new MutationObserver(schedulePosition).observe(document.body, { childList: true });
   window.addEventListener('resize', _positionEdgeDockResizeHandles);
   window.addEventListener('odysseus:modal-opened', _positionEdgeDockResizeHandles);
   _positionEdgeDockResizeHandles();
