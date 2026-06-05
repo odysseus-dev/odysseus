@@ -69,6 +69,47 @@ def test_validate_repo_id_stays_strict_for_hf_downloads():
         _validate_repo_id("DeepSeek-R1-UD-IQ4_XS")
 
 
+def test_validate_repo_id_accepts_hf_cache_folder_keys():
+    assert _validate_repo_id("models--Qwen--Qwen3-8B") == "models--Qwen--Qwen3-8B"
+    assert _validate_repo_id("models--unsloth--Llama-3.2-1B-GGUF") == "models--unsloth--Llama-3.2-1B-GGUF"
+    assert _validate_repo_id("models--meta-llama--Llama-3.1-8B") == "models--meta-llama--Llama-3.1-8B"
+
+
+def test_validate_repo_id_rejects_malformed_cache_folder_keys():
+    with pytest.raises(HTTPException):
+        _validate_repo_id("models--Qwen")
+    with pytest.raises(HTTPException):
+        _validate_repo_id("models-Qwen--Qwen3-8B")
+    with pytest.raises(HTTPException):
+        _validate_repo_id("--Qwen--Qwen3-8B")
+
+
+def test_validate_repo_id_accepts_absolute_home_paths():
+    assert _validate_repo_id("/home/user/models/my-model.gguf") == "/home/user/models/my-model.gguf"
+    assert _validate_repo_id("/opt/models/qwen3.gguf") == "/opt/models/qwen3.gguf"
+    assert _validate_repo_id("/") == "/"
+
+
+def test_validate_repo_id_accepts_tilde_paths():
+    assert _validate_repo_id("~/models/my-model.gguf") == "~/models/my-model.gguf"
+    assert _validate_repo_id("~") == "~"
+    assert _validate_repo_id("~/.cache/huggingface") == "~/.cache/huggingface"
+
+
+def test_validate_repo_id_rejects_relative_and_tilde_dot_paths():
+    with pytest.raises(HTTPException):
+        _validate_repo_id("./models/my-model.gguf")
+    with pytest.raises(HTTPException):
+        _validate_repo_id("../models/my-model.gguf")
+
+
+def test_validate_repo_id_rejects_empty_and_none():
+    with pytest.raises(HTTPException):
+        _validate_repo_id("")
+    with pytest.raises(HTTPException):
+        _validate_repo_id(None)
+
+
 def test_validate_serve_model_id_accepts_cached_local_model_names():
     assert _validate_serve_model_id("Qwen/Qwen3-8B") == "Qwen/Qwen3-8B"
     assert _validate_serve_model_id("DeepSeek-R1-UD-IQ4_XS") == "DeepSeek-R1-UD-IQ4_XS"
