@@ -111,6 +111,12 @@ DEFAULT_SETTINGS = {
     # `compute_input_token_budget` in src/context_budget.py.
     "agent_input_token_hard_max": 200_000,
     "agent_stream_timeout_seconds": 300,
+    # Client-side hard backstop (seconds) for a normal chat request before the
+    # browser aborts it. Raise it for slow local backends where a cold image-gen
+    # pipeline reload (~2 min) would otherwise be killed mid-warmup. Read by the
+    # frontend from /api/auth/settings; agent/research modes use their own longer
+    # timeout. Default matches the original hardcoded 120s.
+    "chat_request_timeout_seconds": 120,
     # Extra directory roots that read_file / write_file may access, in
     # addition to the built-in project data/ and system temp dirs. Each
     # entry is an absolute path. Sensitive subpaths (.ssh, .gnupg, shell

@@ -26,7 +26,12 @@ import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
-  const DEFAULT_TIMEOUT_MS = 120000;
+  // Client-side hard backstop for a normal chat request. Overridable at runtime
+  // via the `chat_request_timeout_seconds` setting (Settings panel / manage_settings),
+  // loaded from /api/auth/settings in init() below. Defaults to dev's 120s; raise it
+  // for slow local backends where a cold image-gen reload (~2 min) would otherwise be
+  // aborted mid-warmup. The processing probe still catches a genuinely-offline endpoint.
+  let DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 
   let API_BASE = '';
@@ -179,6 +184,14 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
    */
   export function init(apiBase) {
     API_BASE = apiBase;
+    // Load the configurable client request-timeout backstop (defaults to 120s).
+    fetch((apiBase || '') + '/api/auth/settings', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(s => {
+        const secs = s && Number(s.chat_request_timeout_seconds);
+        if (secs && secs > 0) DEFAULT_TIMEOUT_MS = secs * 1000;
+      })
+      .catch(() => {});
     initSlashCommands({ apiBase, isStreaming: () => isStreaming });
     // Initialize email inbox
     emailInbox.init(documentModule);

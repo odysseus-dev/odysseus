@@ -591,6 +591,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         _INT_RANGES = {
             "agent_max_rounds": (1, 200),
             "agent_max_tool_calls": (0, 1000),  # 0 = unlimited
+            "chat_request_timeout_seconds": (10, 1800),  # client request backstop
         }
         for key in DEFAULT_SETTINGS:
             if key not in body:
