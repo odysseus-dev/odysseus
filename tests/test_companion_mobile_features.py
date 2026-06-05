@@ -14,6 +14,9 @@ import types
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+from fastapi import HTTPException
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -131,3 +134,275 @@ def test_router_registers_only_read_endpoints():
     methods = {(r.path, m) for r in setup_mobile_companion_routes().routes for m in getattr(r, "methods", []) or []}
     assert ("/api/companion/events", "GET") in methods
     assert ("/api/companion/events", "POST") not in methods
+
+
+# ── Behavioural endpoint tests ──────────────────────────────────────────────
+# The tests above cover the pure predicates; these exercise what the handlers
+# actually do — scope gate (403), owner-scoping (cross-owner excluded / 404), the
+# gallery filename sanitization, and the new ?limit/?offset paging — by calling
+# the registered handlers with a fake, injected DB. The DB is monkeypatched onto
+# `sys.modules["core.database"]` with `monkeypatch.setitem` so it is restored
+# after each test and never leaks into sibling modules.
+
+
+def _handler(path_suffix, method="GET"):
+    """The endpoint callable registered at /api/companion<path_suffix>."""
+    for r in setup_mobile_companion_routes().routes:
+        if getattr(r, "path", "") == "/api/companion" + path_suffix and method in (r.methods or set()):
+            return r.endpoint
+    raise AssertionError(f"{method} {path_suffix} not registered")
+
+
+# --- fake SQLAlchemy query layer (predicate-based, supports the new chain) ---
+
+class _Pred:
+    def __init__(self, fn):
+        self._fn = fn
+
+    def __call__(self, row):
+        return self._fn(row)
+
+    def __or__(self, other):
+        return _Pred(lambda r: self(r) or other(r))
+
+
+class _Col:
+    __hash__ = None  # predicates are not hashable; columns aren't used as keys
+
+    def __init__(self, name):
+        self.name = name
+
+    def _v(self, row):
+        return getattr(row, self.name, None)
+
+    def __eq__(self, value):
+        return _Pred(lambda r: self._v(r) == value)
+
+    def __ne__(self, value):
+        return _Pred(lambda r: self._v(r) != value)
+
+    def __gt__(self, value):
+        return _Pred(lambda r: self._v(r) is not None and self._v(r) > value)
+
+    def __lt__(self, value):
+        return _Pred(lambda r: self._v(r) is not None and self._v(r) < value)
+
+    def in_(self, values):
+        allowed = set(values)
+        return _Pred(lambda r: self._v(r) in allowed)
+
+    def desc(self):
+        return self  # ordering is irrelevant to these assertions; offset/limit slice
+
+
+def _model(name, columns):
+    return type(name, (), {c: _Col(c) for c in columns})
+
+
+# Column sets the handlers reference (so `.filter(Model.col == ...)` resolves).
+_MODELS = {
+    "Document": _model("Document", ["id", "is_active", "archived", "owner"]),
+    "Comparison": _model("Comparison", ["id", "owner", "voted_at"]),
+    "CalendarCal": _model("CalendarCal", ["id", "owner"]),
+    "CalendarEvent": _model("CalendarEvent", ["calendar_id", "status", "dtstart", "dtend"]),
+    "EmailAccount": _model("EmailAccount", ["id", "owner"]),
+    "GalleryImage": _model("GalleryImage", ["id", "is_active", "owner", "taken_at"]),
+}
+
+
+class _Query:
+    def __init__(self, rows):
+        self._rows = list(rows)
+
+    def filter(self, *preds):
+        self._rows = [r for r in self._rows if all(p(r) for p in preds)]
+        return self
+
+    def order_by(self, *args):
+        return self
+
+    def offset(self, n):
+        self._rows = self._rows[n:]
+        return self
+
+    def limit(self, n):
+        self._rows = self._rows[:n]
+        return self
+
+    def all(self):
+        return list(self._rows)
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+
+class _DB:
+    def __init__(self, rows_by_model):
+        self._rows = rows_by_model
+
+    def query(self, model):
+        return _Query(self._rows.get(model.__name__, []))
+
+    def close(self):
+        pass
+
+
+def _install_db(monkeypatch, **rows_by_model):
+    """Install a fake core.database (SessionLocal + model classes) for one test."""
+    fake = types.ModuleType("core.database")
+    for name, cls in _MODELS.items():
+        setattr(fake, name, cls)
+    db = _DB(rows_by_model)
+    fake.SessionLocal = lambda: db
+    monkeypatch.setitem(sys.modules, "core.database", fake)
+    return db
+
+
+def _bearer(owner="alice", scopes=("companion",)):
+    return _request(api_token=True, api_token_owner=owner, api_token_scopes=list(scopes))
+
+
+# --- 403: every GET endpoint refuses a scope-less bearer token --------------
+
+# (path, method, extra kwargs) — the scope check runs before any param use.
+_GET_ENDPOINTS = [
+    ("/documents", {}),
+    ("/documents/{doc_id}", {"doc_id": "d1"}),
+    ("/compare/history", {}),
+    ("/calendars", {}),
+    ("/events", {}),
+    ("/email/accounts", {}),
+    ("/email/messages", {"account_id": "a1"}),
+    ("/email/message/{uid}", {"uid": "u1", "account_id": "a1"}),
+    ("/gallery", {}),
+    ("/gallery/image/{image_id}", {"image_id": "i1"}),
+    ("/assistant", {}),
+    ("/skills", {}),
+]
+
+
+@pytest.mark.parametrize("suffix,kwargs", _GET_ENDPOINTS)
+def test_every_read_endpoint_rejects_scopeless_token(suffix, kwargs):
+    fn = _handler(suffix)
+    req = _request(api_token=True, api_token_owner="alice", api_token_scopes=[])
+    with pytest.raises(HTTPException) as exc:
+        fn(req, **kwargs)
+    assert exc.value.status_code == 403
+
+
+# --- list endpoints: a cross-owner row is never returned --------------------
+
+def test_documents_list_excludes_other_owners(monkeypatch):
+    _install_db(monkeypatch, Document=[
+        SimpleNamespace(id="a", owner="alice", is_active=True, archived=False,
+                        current_content="mine", title="A", language="en"),
+        SimpleNamespace(id="b", owner="bob", is_active=True, archived=False,
+                        current_content="secret", title="B", language="en"),
+        SimpleNamespace(id="s", owner=None, is_active=True, archived=False,
+                        current_content="shared", title="S", language="en"),
+    ])
+    res = _handler("/documents")(_bearer("alice"))
+    ids = {r["id"] for r in res["items"]}
+    assert ids == {"a", "s"}  # own + shared null-owner; bob's never appears
+
+
+def test_gallery_list_excludes_other_owners(monkeypatch):
+    _install_db(monkeypatch, GalleryImage=[
+        SimpleNamespace(id="a", owner="alice", is_active=True, taken_at=None,
+                        prompt="", model="", favorite=False, width=1, height=1, filename="a.png"),
+        SimpleNamespace(id="b", owner="bob", is_active=True, taken_at=None,
+                        prompt="", model="", favorite=False, width=1, height=1, filename="b.png"),
+    ])
+    res = _handler("/gallery")(_bearer("alice"))
+    assert {r["id"] for r in res["items"]} == {"a"}
+
+
+def test_email_accounts_list_excludes_other_owners(monkeypatch):
+    _install_db(monkeypatch, EmailAccount=[
+        SimpleNamespace(id="a", owner="alice", name="A", from_address="a@x", enabled=True, is_default=True),
+        SimpleNamespace(id="b", owner="bob", name="B", from_address="b@x", enabled=True, is_default=False),
+    ])
+    res = _handler("/email/accounts")(_bearer("alice"))
+    assert {r["id"] for r in res["items"]} == {"a"}
+
+
+# --- detail endpoints: cross-owner is 404 (never confirm existence) ---------
+
+def test_document_detail_cross_owner_is_404(monkeypatch):
+    _install_db(monkeypatch, Document=[
+        SimpleNamespace(id="b", owner="bob", is_active=True, archived=False,
+                        current_content="secret", title="B", language="en"),
+    ])
+    with pytest.raises(HTTPException) as exc:
+        _handler("/documents/{doc_id}")(_bearer("alice"), doc_id="b")
+    assert exc.value.status_code == 404
+
+
+def test_gallery_image_cross_owner_is_404(monkeypatch):
+    _install_db(monkeypatch, GalleryImage=[
+        SimpleNamespace(id="b", owner="bob", is_active=True, taken_at=None, filename="b.png"),
+    ])
+    with pytest.raises(HTTPException) as exc:
+        _handler("/gallery/image/{image_id}")(_bearer("alice"), image_id="b")
+    assert exc.value.status_code == 404
+
+
+# --- gallery filename sanitization (path traversal / NUL byte) --------------
+
+@pytest.mark.parametrize("stored,expected_basename", [
+    ("../../etc/passwd", "passwd"),
+    ("/etc/passwd", "passwd"),
+    ("foo\x00.png", "foo_.png"),
+    ("a/b/../../../../secret.png", "secret.png"),
+])
+def test_gallery_image_filename_is_confined(monkeypatch, stored, expected_basename):
+    _install_db(monkeypatch, GalleryImage=[
+        SimpleNamespace(id="i1", owner="alice", is_active=True, taken_at=None, filename=stored),
+    ])
+    seen = {}
+
+    def _fake_isfile(path):
+        seen["path"] = path
+        return False  # force the 404 path; we only care that the path was confined
+
+    monkeypatch.setattr("os.path.isfile", _fake_isfile)
+    with pytest.raises(HTTPException) as exc:
+        _handler("/gallery/image/{image_id}")(_bearer("alice"), image_id="i1")
+    assert exc.value.status_code == 404
+    # The resolved path never escapes data/generated_images and has no traversal/NUL.
+    assert seen["path"] == os.path.join("data", "generated_images", expected_basename)
+    assert ".." not in seen["path"] and "\x00" not in seen["path"]
+
+
+# --- pagination: ?limit / ?offset bound and walk the result -----------------
+
+def _docs(n):
+    return [SimpleNamespace(id=f"d{i:02d}", owner="alice", is_active=True, archived=False,
+                            current_content="x", title=f"t{i}", language="en") for i in range(n)]
+
+
+def test_documents_limit_bounds_the_page(monkeypatch):
+    _install_db(monkeypatch, Document=_docs(5))
+    res = _handler("/documents")(_bearer("alice"), limit=2, offset=0)
+    assert len(res["items"]) == 2 and res["limit"] == 2 and res["offset"] == 0
+
+
+def test_documents_offset_walks_the_page(monkeypatch):
+    _install_db(monkeypatch, Document=_docs(5))
+    res = _handler("/documents")(_bearer("alice"), limit=2, offset=4)
+    assert len(res["items"]) == 1 and res["offset"] == 4
+
+
+def test_documents_limit_is_clamped_to_max(monkeypatch):
+    _install_db(monkeypatch, Document=_docs(3))
+    res = _handler("/documents")(_bearer("alice"), limit=10_000)
+    # clamped to MAX_PAGE_LIMIT (still returns all 3 here, but limit is bounded)
+    from companion.mobile_features import MAX_PAGE_LIMIT
+    assert res["limit"] == MAX_PAGE_LIMIT
+
+
+def test_documents_bad_pagination_falls_back_to_defaults(monkeypatch):
+    _install_db(monkeypatch, Document=_docs(1))
+    from companion.mobile_features import DEFAULT_PAGE_LIMIT
+    res = _handler("/documents")(_bearer("alice"), limit="abc", offset="-9")
+    assert res["limit"] == DEFAULT_PAGE_LIMIT and res["offset"] == 0
