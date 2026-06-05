@@ -477,7 +477,7 @@ def _detect_windows():
         $r.arch = $cpu.AddressWidth
         # GPU detection via nvidia-smi (fastest) or WMI fallback
         try { 
-            $nv = nvidia-smi --query-gpu=memory.total, name --format=csv, noheader, nounits 2>$null
+            $nv = nvidia-smi --query-gpu=memory.total,name --format=csv,noheader,nounits 2>$null
             if ($LASTEXITCODE -eq 0 -and $nv) { 
                 $gpus = @()
                 foreach ($line in $nv -split "`n") { 
