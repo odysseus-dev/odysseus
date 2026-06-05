@@ -176,16 +176,31 @@ export function removeJob(id) {
   _notify();
 }
 
-export function clearAll() {
-  // Mark all completed jobs as dismissed so they don't reappear on reload.
+/** Remove completed research from the panel (Library copies are kept on disk). */
+export function clearPast() {
   const doneIds = _jobs.filter(j => j.status === 'done').map(j => j.id);
   if (doneIds.length) _markDismissed(doneIds);
-  for (const job of _jobs) {
+  _jobs = _jobs.filter(j => j.status !== 'done');
+  _notify();
+}
+
+/** Remove queued / failed / cancelled items from Active. Running jobs are left alone. */
+export function clearActive() {
+  const removable = _jobs.filter(j =>
+    j.status === 'queued' || j.status === 'error' || j.status === 'cancelled',
+  );
+  for (const job of removable) {
     if (job._es) { job._es.close(); job._es = null; }
     if (job._timerInterval) { clearInterval(job._timerInterval); job._timerInterval = null; }
   }
-  _jobs = [];
+  _jobs = _jobs.filter(j => j.status === 'running' || j.status === 'done');
   _notify();
+}
+
+/** @deprecated Prefer clearPast() / clearActive() — clears both without touching running streams. */
+export function clearAll() {
+  clearPast();
+  clearActive();
 }
 
 export function formatElapsed(ms) {
