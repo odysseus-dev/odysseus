@@ -19,7 +19,7 @@ from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native
 from src.model_context import estimate_tokens
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
-from src.tool_security import blocked_tools_for_owner
+from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.agent_tools import (
     parse_tool_blocks,
     strip_tool_blocks,
@@ -335,8 +335,11 @@ If the user asks for a reminder/alarm before the event, pass `reminder_minutes` 
     "search_chats": "- ```search_chats``` — Search across all chat history. Use when user asks 'did we discuss X?' or 'find the conversation about Y'.",
     "pipeline": "- ```pipeline``` — Run a multi-step AI pipeline. Args (JSON) with ordered steps, each specifying a model and prompt. Use for complex workflows.",
     "ui_control": "- ```ui_control``` — Control the UI: toggle tools on/off, OPEN PANELS, open email reply drafts, switch models, change themes. Commands: `toggle <name> on/off` (names: bash/shell, web/search, research, incognito, document_editor/documents), `open_panel <name>` (panels: documents, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook), `open_email_reply <uid> <folder> <reply|reply-all|ai-reply>` (opens an email compose document, does NOT send), `set_mode agent/chat`, `switch_model <name>`, `set_theme <preset>`, `create_theme <name> <bg> <fg> <panel> <border> <accent>` (optional key=val for advanced colors AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false). \"open documents\" / \"open library\" / \"show gallery\" / \"open inbox\" / \"open notes\" / \"open cookbook\" all map to `open_panel <name>`. Theme presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute.",
+    "ask_user": "- ```ask_user``` — Ask the user a multiple-choice question when the task is genuinely ambiguous and the answer changes what you do next (pick an approach, confirm an assumption, choose a target). Args (JSON): {\"question\": \"...\", \"options\": [{\"label\": \"...\", \"description\": \"...\"?}, ...], \"multi\": false?}. 2-6 options. The user gets clickable buttons; calling this ENDS your turn and their choice comes back as your next message. Prefer sensible defaults — only ask when you truly can't proceed well without their input.",
+    "update_plan": "- ```update_plan``` — While executing an approved plan, write the plan back: tick steps done or revise them. Args (JSON): {\"plan\": \"- [x] done step\\n- [ ] next step\"}. Always pass the COMPLETE checklist, not a diff. Call it after finishing each step (mark it `- [x]`) and whenever the user asks to change the plan. The user's docked plan window updates live. Does nothing if there's no active plan.",
     "list_served_models": "- ```list_served_models``` — Show what the Cookbook (LLM-serving subsystem) is currently running. NO args. Use this for ANY 'what's running' / 'what's serving' / 'show my cookbook' / 'is anything up' query. DO NOT shell out (`ps aux`, `docker ps`, etc.) — this tool is the source of truth. Failed serve tasks include recent logs plus diagnosis/retry suggestions; use those suggestions to call `serve_model` again with an adjusted command when appropriate.",
     "stop_served_model": "- ```stop_served_model``` — Stop a running model server. Args (JSON): {\"session_id\": \"<from list_served_models>\"}. Use for 'kill my cookbook' / 'stop the model' / 'shut down vLLM'.",
+    "tail_serve_output": "- ```tail_serve_output``` — Read the actual tmux stderr/traceback of a CURRENTLY failing cookbook task. Args (JSON): {\"session_id\": \"<from list_served_models>\", \"tail\": 150?}. **Use ONLY after** you just launched something via `serve_model` AND `list_served_models` reports YOUR new task as `crashed`/`error`. DO NOT use it on old stopped/completed download tasks (they're historical noise — won't predict whether a new launch succeeds). DO NOT call it before launching a fresh attempt. When you do call it, bump `tail` to 400+ only if the visible error references 'see root cause above'.",
     "download_model": "- ```download_model``` — Download a HuggingFace model. Args (JSON): {\"repo_id\": \"Qwen/Qwen3-8B\", \"host\": \"user@gpu-box\"?, \"include\": \"*Q4_K_M*\"?}.",
     "serve_model": "- ```serve_model``` — Start serving a model with vLLM / SGLang / llama.cpp / Ollama / Diffusers. Args (JSON): {\"repo_id\": \"...\", \"cmd\": \"vllm serve ... --port 8000\" or \"python3 -m sglang.launch_server ... --port 30000\" or \"python3 scripts/diffusion_server.py --model diffusers/stable-diffusion-xl-1.0-inpainting-0.1 --port 8100\", \"host\": \"user@gpu-box\"?}. For image/inpaint/diffusion models, use the `scripts/diffusion_server.py` command exactly. After launch, call `list_served_models`; if it returns a diagnosis with an adjusted command, retry with that command.",
     "list_downloads": "- ```list_downloads``` — Show in-progress HuggingFace model downloads (filters Cookbook tasks/status to downloads only). NO args. Use for 'what's downloading' / 'show my downloads' / 'check download progress'.",
@@ -468,13 +471,14 @@ _API_HOSTS = frozenset([
     "api.together.xyz", "api.fireworks.ai",
     "api.perplexity.ai", "api.x.ai",
     "ollama.com", "api.venice.ai",
+    "api.githubcopilot.com",
     # Local OpenAI-compatible endpoints (llama.cpp, vLLM, LM Studio, etc.).
     # Without these, `_is_api_model` falls back to keyword sniffing on the
     # model name, so well-behaved local servers don't get native tool
     # schemas and the agent silently degrades to fenced-block parsing.
     "localhost", "127.0.0.1", "host.docker.internal",
 ])
-_MCP_KEYWORDS = frozenset(["browse", "browser", "website", "calendar", "event", "email",
+_MCP_KEYWORDS = frozenset(["mcp", "browse", "browser", "website", "calendar", "event", "email",
                            "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed"])
 _ADMIN_SCHEMA_NAMES = frozenset([
     "manage_session", "manage_skills", "manage_tasks",
@@ -1369,6 +1373,53 @@ def _empty_response_fallback(
     return _error_msg, f'data: {json.dumps({"delta": _error_msg})}\n\n'
 
 
+PLAN_MODE_DIRECTIVE = (
+    "## PLAN MODE — OVERRIDES EVERYTHING ELSE BELOW\n"
+    "You are in PLAN MODE. Your ONLY job this turn is to PROPOSE a plan. You have "
+    "NOT done anything yet. Do NOT claim you created, wrote, ran, sent, or changed "
+    "anything — that would be a lie.\n"
+    "\n"
+    "ABSOLUTE RULE — DO NOT MUTATE ANYTHING. Every write/state-changing tool, "
+    "including the shell (`bash`/`python`), is disabled this turn and will be "
+    "rejected — only read-only tools remain available. Use the read-only tools "
+    "listed below (read files, search code, browse the project, web lookups) to "
+    "ground the plan. If the task is 'write a file', your plan is to DESCRIBE "
+    "writing it — you do NOT write it now.\n"
+    "\n"
+    "OUTPUT: present the plan as a GitHub-style checklist, one concrete step per line:\n"
+    "- [ ] first action you will take once approved\n"
+    "- [ ] next action\n"
+    "Each item = one concrete action (file to create/edit, command to run, side "
+    "effect). Do not execute. Do not end with 'Done' or anything implying the work "
+    "is finished. End your turn with the checklist."
+)
+
+
+def build_active_plan_note(approved_plan: str) -> str:
+    """System note that pins an approved plan during execution.
+
+    Sent back by the frontend each turn so a long plan on a weak model survives
+    history truncation — the agent can always re-read it. Returns "" for empty
+    input.
+    """
+    if not approved_plan or not approved_plan.strip():
+        return ""
+    return (
+        "## ACTIVE PLAN (approved — execute this)\n"
+        "You are executing a plan the user already approved. THE FULL PLAN IS "
+        "BELOW — it is always provided here every turn. Do NOT say you lost it, "
+        "and do NOT look for it in tasks, notes, memory, files, or the API; just "
+        "read it below. Work through it IN ORDER. After finishing each step, call "
+        "the `update_plan` tool with the full checklist and that step marked "
+        "`- [x]` so progress stays visible in the user's plan window. If the user "
+        "asks to change the plan, call `update_plan` with the revised checklist. "
+        "Do the next unchecked item until all are done. Do not skip, reorder, or "
+        "invent steps; if a step is genuinely impossible, say so and stop.\n\n"
+        "Current plan:\n"
+        + approved_plan.strip()
+    )
+
+
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
@@ -1386,6 +1437,9 @@ async def stream_agent_loop(
     owner: Optional[str] = None,
     relevant_tools: Optional[Set[str]] = None,
     fallbacks: Optional[List[tuple]] = None,
+    workspace: Optional[str] = None,
+    plan_mode: bool = False,
+    approved_plan: Optional[str] = None,
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -1409,6 +1463,13 @@ async def stream_agent_loop(
         # public/non-admin users rather than trying to enumerate every tool.
         mcp_mgr = None
 
+    if plan_mode:
+        # Plan mode: investigate read-only, propose a plan, don't execute. The
+        # route also unions the read-only-disabled set, but enforce here too so
+        # the loop is safe regardless of caller. MCP stays available but is
+        # filtered to read-only tools below (after the disabled map is loaded).
+        disabled_tools.update(plan_mode_disabled_tools())
+
     _t0 = time.time()
     _needs_admin = _detect_admin_intent(messages)
     _last_user = _extract_last_user_message(messages)
@@ -1416,6 +1477,13 @@ async def stream_agent_loop(
     # not just the latest message, so short follow-ups don't drop just-used tools.
     _retrieval_query = _recent_context_for_retrieval(messages) or _last_user
     _mcp_disabled_map = _load_mcp_disabled_map() if mcp_mgr else {}
+    if plan_mode and mcp_mgr:
+        # Allow read-only MCP tools to investigate, block write/unknown ones:
+        # hide them from the schemas AND reject them at runtime by qualified name.
+        _mcp_block_map, _mcp_block_q = mcp_mgr.plan_mode_blocked_mcp()
+        for _sid, _names in _mcp_block_map.items():
+            _mcp_disabled_map.setdefault(_sid, set()).update(_names)
+        disabled_tools.update(_mcp_block_q)
     prep_timings["request_setup"] = time.time() - _t0
 
     # RAG-based tool selection: retrieve relevant tools for this query.
@@ -1552,6 +1620,48 @@ async def stream_agent_loop(
         compact=_is_api_model,
         owner=owner,
     )
+    if workspace:
+        # PREPEND (not append) so it dominates the large base prompt — appended
+        # at the end, small models ignored it and asked the user for code. The
+        # folder IS the project; the agent must explore it, not ask.
+        _ws_note = (
+            f"## ACTIVE WORKSPACE — READ FIRST\n"
+            f"The user is working in this folder: {workspace}\n"
+            f"It IS the project. bash/python run with cwd set here and "
+            f"read_file/write_file are confined to it (paths outside are rejected).\n"
+            f"When the user says \"the code\" / \"this project\" / \"the workspace\" "
+            f"or asks to review/find/edit something WITHOUT a path, they mean THIS "
+            f"folder. Do NOT ask the user for code or a path, and do NOT read a file "
+            f"literally named \"workspace\". ALWAYS start by exploring it yourself: "
+            f"run `bash` → `git ls-files` (or `ls -R`) to see the files, then "
+            f"read_file the relevant ones by path RELATIVE to the workspace."
+        )
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = _ws_note + "\n\n" + (messages[0].get("content") or "")
+        else:
+            messages.insert(0, {"role": "system", "content": _ws_note})
+        logger.info("[workspace] active for this turn: %s", workspace)
+    if plan_mode:
+        # Steer the model to investigate-then-propose. Hard tool gating handles
+        # every write path except shell; this directive is what keeps the
+        # intentionally-allowed bash/python read-only, so it must DOMINATE. Put
+        # it at the very TOP of the system prompt (the base prompt is large and
+        # action-oriented — appending buried it, and small models ignored it).
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = PLAN_MODE_DIRECTIVE + "\n\n" + (messages[0].get("content") or "")
+        else:
+            messages.insert(0, {"role": "system", "content": PLAN_MODE_DIRECTIVE})
+    elif approved_plan and approved_plan.strip():
+        # EXECUTING an approved plan. Pin the checklist as a top-of-context
+        # system note so a long plan on a weak model survives history
+        # truncation — the agent can always re-read the plan instead of losing
+        # the thread. (The first system message is kept by the context trimmer.)
+        _plan_note = build_active_plan_note(approved_plan)
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = _plan_note + "\n\n" + (messages[0].get("content") or "")
+        else:
+            messages.insert(0, {"role": "system", "content": _plan_note})
+        logger.info("[plan] pinned approved plan (%d chars) for execution turn", len(approved_plan))
     prep_timings["prompt_build"] = time.time() - _t2
 
     _t3 = time.time()
@@ -1636,11 +1746,39 @@ async def stream_agent_loop(
     _tool_type_counts: collections.Counter = collections.Counter()
     _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
     _force_answer = False  # set by loop-breaker → next round runs with NO tools
+    # Supervisor: how many times we've nudged the model after it announced
+    # an action without emitting the tool call. Capped to prevent a model
+    # that *can't* call the tool from looping forever.
+    _intent_nudge_count = 0
+    _MAX_INTENT_NUDGES = 2
+
+    # "I said I would, then didn't" detector. The pattern that breaks debug
+    # loops on weak models (deepseek-v4-flash mid-2026): the model writes
+    # "Let me tail the output to see the error" and then ends the turn with
+    # no tool_calls. The intent is sincere but the function call gets dropped.
+    # Match the common phrasings + an action verb that maps to an available
+    # tool, so we don't nudge on harmless transitional text like "let me
+    # know what you think".
+    _INTENT_RE = re.compile(
+        r"(?:^|\n)\s*(?:let me|i'?ll|i will|going to|let's)\s+"
+        r"(?:tail|check|investigate|look at|see|tail|read|fetch|inspect|"
+        r"verify|diagnose|examine|debug|capture|grab|pull|view|run|call|"
+        r"trigger|launch|start|kick off|stop|kill|restart|adopt|serve|"
+        r"register|adopt|list|search|find|query|hit|ping|test)"
+        r"\b[^.\n]{0,140}",
+        re.IGNORECASE,
+    )
+    _awaiting_user = False  # set by ask_user → end the turn and wait for a choice
 
     # Document streaming state (persists across rounds)
     _doc_acc = ""          # accumulated tool-call JSON arguments
     _doc_opened = False    # whether doc_stream_open was sent
     _doc_last_len = 0      # last content length sent
+
+    # Set when the loop runs out of rounds while the agent was still actively
+    # using tools — i.e. it was cut off, not finished. Drives a "Continue" event
+    # so the user can resume instead of the turn silently stalling.
+    _exhausted_rounds = False
 
     for round_num in range(1, max_rounds + 1):
         round_response = ""
@@ -1982,6 +2120,46 @@ async def stream_agent_loop(
                     # never re-verify an unchanged state in a loop.
                     _effectful_used = False
                     continue
+            # ── Intent-without-action supervisor ─────────────────────
+            # Catch "Let me tail the output" / "I'll check the logs" /
+            # "Let me investigate" patterns where the model announces an
+            # action but emits no tool_call. The bug shows up most on
+            # smaller models trained to verbalize plans before acting.
+            # We inject one sharp nudge ("you said you would X — call the
+            # actual tool now") and loop again. Capped at
+            # _MAX_INTENT_NUDGES so a model that genuinely cannot use the
+            # tool doesn't pin us in a forever loop.
+            _intent_text = _THINK_RE.sub("", cleaned_round).strip()
+            _intent_match = _INTENT_RE.search(_intent_text) if _intent_text else None
+            # Only nudge when the round REALLY looks like an unfinished
+            # promise: short response (<400 chars), no fenced code/answer,
+            # and an action-intent phrase was matched. Long answers that
+            # happen to contain "let me know" are not stalls.
+            _looks_like_promise = (
+                _intent_match is not None
+                and len(_intent_text) < 400
+                and "```" not in _intent_text
+                and _intent_nudge_count < _MAX_INTENT_NUDGES
+            )
+            if _looks_like_promise:
+                _intent_nudge_count += 1
+                _matched_phrase = _intent_match.group(0).strip()
+                logger.info(f"[agent] intent-without-action nudge #{_intent_nudge_count} on round {round_num}: {_matched_phrase!r}")
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        f"You just wrote: \"{_matched_phrase}\" — but ended the "
+                        "turn without making the actual tool call. The user can "
+                        "see you announced the action but didn't run it, which "
+                        "is the most frustrating thing you can do. "
+                        "DO IT NOW: emit the actual function call this turn. "
+                        "If you decided not to do it after all, say so plainly in "
+                        "one sentence instead of restating the plan."
+                    ),
+                })
+                # Visible signal in the stream so the user knows we caught it.
+                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                continue
             break  # no tools — done
 
         # ── Loop-breaker (Terminus-style stall detector) ──────────────
@@ -2111,6 +2289,7 @@ async def stream_agent_loop(
                         disabled_tools=disabled_tools,
                         owner=owner,
                         progress_cb=_push_progress,
+                        workspace=workspace,
                     )
                 finally:
                     # Sentinel so the drainer knows to stop.
@@ -2169,6 +2348,36 @@ async def stream_agent_loop(
             if "ui_event" in result:
                 yield (
                     f'data: {json.dumps({"type": "ui_control", "data": result})}\n\n'
+                )
+
+            # ask_user: the agent posed a multiple-choice question. Emit it so the
+            # frontend renders clickable options, then end the turn (below) and
+            # wait — the user's pick becomes the next message.
+            if "ask_user" in result:
+                # The question lives in the tool args. ChatMessage.to_dict()
+                # replays only role+content to the model next turn — tool_event
+                # metadata is dropped — so if the question is never in the saved
+                # assistant text, the model can't see it already asked and will
+                # loop and re-ask after the user answers. Stream it as assistant
+                # text (once) so it persists and is replayed. The card shows the
+                # options only, so this is the single visible copy of the question.
+                _auq = result["ask_user"]
+                _auq_q = (_auq.get("question") or "").strip()
+                if _auq_q and _auq_q not in full_response:
+                    _auq_delta = ("\n\n" if full_response.strip() else "") + _auq_q
+                    full_response += _auq_delta
+                    yield 'data: ' + json.dumps({"delta": _auq_delta}) + '\n\n'
+                yield (
+                    f'data: {json.dumps({"type": "ask_user", "data": result["ask_user"]})}\n\n'
+                )
+                _awaiting_user = True
+
+            # update_plan: agent wrote back to the plan (ticked a step / revised).
+            # Push it to the frontend so the stored plan + docked window update
+            # live. Does NOT end the turn — the agent keeps working.
+            if "plan_update" in result:
+                yield (
+                    f'data: {json.dumps({"type": "plan_update", "data": result["plan_update"]})}\n\n'
                 )
 
             # Build output for frontend tool bubble.
@@ -2256,6 +2465,19 @@ async def stream_agent_loop(
                 _anchor = f"\n\n[Open in Deep Research](#research-{_rsid})\n"
                 yield 'data: ' + json.dumps({"delta": _anchor}) + '\n\n'
 
+            # Same pattern for notes: when manage_notes creates a note
+            # and returns note_id, drop a `[View note](#note-<id>)` link
+            # into the stream so chatRenderer's click handler routes to
+            # the new openNote() in notes.js — opens the notes panel and
+            # scrolls/flashes the matching card. Without this, the agent
+            # would write "View note" as a phrase with no target.
+            _nid = result.get("note_id")
+            if _nid and block.tool_type == "manage_notes":
+                _title = (result.get("note_title") or "").strip()
+                _label = f"View note: {_title}" if _title else "View note"
+                _anchor = f"\n\n[{_label}](#note-{_nid})\n"
+                yield 'data: ' + json.dumps({"delta": _anchor}) + '\n\n'
+
             # Save for history persistence
             tool_event = {
                 "round": round_num,
@@ -2287,6 +2509,13 @@ async def stream_agent_loop(
         if budget_hit:
             break
 
+        # ask_user posed a question — stop here and wait for the user's choice.
+        # Don't feed tool results back or advance a round; the user's selection
+        # arrives as the next message and the agent resumes from there. The
+        # question text is already in the streamed response, so it persists.
+        if _awaiting_user:
+            break
+
         # Feed results back to LLM for next round
         _append_tool_results(messages, round_response, native_tool_calls,
                              tool_results, tool_result_texts, used_native, round_num,
@@ -2299,6 +2528,20 @@ async def stream_agent_loop(
 
         # Separator in accumulated response
         full_response += "\n\n"
+    else:
+        # The for-loop completed every allowed round WITHOUT an early `break`
+        # (a `break` fires on "done", budget, or error). Reaching this `else`
+        # means the agent kept working until it ran out of rounds — so offer
+        # Continue instead of stopping silently. This catches ALL exhaustion
+        # paths, including a verifier `continue` on the final round (the old
+        # bottom-of-loop flag missed those).
+        _exhausted_rounds = True
+
+    # If the loop hit the round cap while still working, tell the client so it
+    # can show a "Continue" affordance instead of the turn just stopping.
+    if _exhausted_rounds:
+        logger.info("[agent] round cap (%d) reached mid-task — emitting rounds_exhausted", max_rounds)
+        yield f'data: {json.dumps({"type": "rounds_exhausted", "rounds": max_rounds})}\n\n'
 
     # If the response is completely empty and no tools were executed,
     # yield a fallback message so the user is not left hanging.

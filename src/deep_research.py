@@ -107,13 +107,16 @@ You are deciding whether a research report is comprehensive enough.
 **Current report:**
 {report}
 
-**Rounds completed:** {round_num}
+**Rounds completed:** {round_num} of {max_rounds}
 
 Based on the report so far, do we have enough information to answer the question \
 comprehensively?  Consider:
 - Are the key aspects of the question addressed?
 - Are there obvious gaps or unanswered sub-questions?
 - Is the evidence sufficient and from multiple sources?
+
+If rounds completed is well below the target, prefer continuing unless the \
+report is already exhaustive.
 
 Reply with ONLY "YES" or "NO" followed by a brief one-sentence reason.
 Example: "YES — The report covers all major aspects with evidence from multiple sources."
@@ -698,6 +701,7 @@ class DeepResearcher:
             question=question,
             report=report,
             round_num=round_num,
+            max_rounds=self.max_rounds,
         )
 
         try:

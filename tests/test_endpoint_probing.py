@@ -25,12 +25,11 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
+from tests.helpers.import_state import clear_fake_endpoint_resolver_modules
+
 # Match test_model_routes.py: if another test stubbed src.endpoint_resolver
 # during collection, drop the stub so the real URL helpers load here.
-_endpoint_resolver = sys.modules.get("src.endpoint_resolver")
-if _endpoint_resolver is not None and not getattr(_endpoint_resolver, "__file__", None):
-    sys.modules.pop("src.endpoint_resolver", None)
-    sys.modules.pop("routes.model_routes", None)
+clear_fake_endpoint_resolver_modules()
 
 if "core.database" not in sys.modules:
     _core_db = types.ModuleType("core.database")

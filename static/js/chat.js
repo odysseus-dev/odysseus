@@ -12,6 +12,8 @@ import chatRenderer from './chatRenderer.js';
 import chatStream from './chatStream.js';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
+import { svgifyEmoji } from './markdown.js';
+import planWindowModule from './planWindow.js';
 import spinnerModule from './spinner.js';
 import presetsModule from './presets.js';
 import fileHandlerModule from './fileHandler.js';
@@ -86,6 +88,35 @@ import createResearchSynapse from './researchSynapse.js';
   let _streamSessionId = null; // Session ID for the currently active reader loop
   let _lastReaderActivity = 0; // Timestamp of last reader.read() success — used to detect frozen streams
   let _webLockRelease = null;  // Function to release the Web Lock held during streaming
+  let _forcePlanOff = false;   // One-shot: suppress plan_mode for the next send (Approve & Run)
+
+  // ── Plan store: the latest proposed/approved checklist for the CURRENT chat ──
+  // Kept so (a) it can be sent back each turn and pinned in context (a long plan
+  // on a weak model survives history truncation), and (b) the plan window can be
+  // re-opened/docked at any time via the plan-button menu. Stored per session in
+  // localStorage so it survives a reload mid-execution.
+  function _setStoredPlan(text) {
+    const sid = sessionModule.getCurrentSessionId();
+    if (!sid || !text || !text.trim()) return;
+    Storage.setJSON(Storage.KEYS.PLAN, { sid, text });
+    // Live-refresh the plan window if it's open (shows progress as the agent
+    // restates the checklist with [x]).
+    try {
+      if (planWindowModule.isPlanWindowOpen && planWindowModule.isPlanWindowOpen()) {
+        planWindowModule.openPlanWindow(text, null);
+      }
+    } catch (_) {}
+  }
+  function _getStoredPlan() {
+    const sid = sessionModule.getCurrentSessionId();
+    const rec = Storage.getJSON(Storage.KEYS.PLAN, null);
+    return (rec && rec.sid === sid && rec.text) ? rec.text : '';
+  }
+  // A line like "- [ ] step" / "- [x] step" marks a GitHub-style checklist.
+  const _CHECKLIST_RE = /^\s*[-*]\s+\[[ xX]\]\s+/m;
+  // Exposed for app.js (plan-button menu) — re-open the stored plan window.
+  window._getStoredPlan = _getStoredPlan;
+  window.planWindowModule = planWindowModule;
 
   /** Check if an SSE reader is still actively connected for a session. */
   function hasActiveStream(sessionId) {
@@ -773,6 +804,22 @@ import createResearchSynapse from './researchSynapse.js';
       if (el('bash-toggle').checked) {
         fd.append('allow_bash', 'true');
       }
+      // Plan mode: agent investigates read-only and proposes a plan to approve.
+      // Only meaningful in agent mode, and never alongside deep research.
+      // _forcePlanOff is a one-shot set by "Approve & Run" so the execution turn
+      // runs with full tools even though the Plan toggle is still on.
+      const _planToggle = el('plan-toggle');
+      const planTurn = !_forcePlanOff && isAgentMode && _planToggle && _planToggle.checked && !el('research-toggle').checked;
+      _forcePlanOff = false;
+      if (planTurn) {
+        fd.append('plan_mode', 'true');
+        fd.set('mode', 'agent');
+      } else if (isAgentMode) {
+        // Executing (not proposing): send the stored plan back so the backend
+        // pins it in context and the agent can always re-reference it.
+        const _sp = _getStoredPlan();
+        if (_sp) fd.append('approved_plan', _sp);
+      }
       const ragChk = el('rag-toggle');
       if (ragChk && !ragChk.checked) {
         fd.append('use_rag', 'false');
@@ -780,6 +827,10 @@ import createResearchSynapse from './researchSynapse.js';
       const incognitoChk = el('incognito-toggle');
       if (incognitoChk && incognitoChk.checked) {
         fd.append('incognito', 'true');
+      }
+      const _ws = (Storage.KEYS && Storage.get(Storage.KEYS.WORKSPACE, '')) || '';
+      if (_ws) {
+        fd.append('workspace', _ws);
       }
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
@@ -1836,6 +1887,44 @@ import createResearchSynapse from './researchSynapse.js';
                     }
                   }
                 }
+              } else if (json.type === 'rounds_exhausted') {
+                // The agent hit the per-turn step limit while still working.
+                // Offer a Continue button instead of stalling silently.
+                // NOTE: append to the chat-history container (bottom), NOT the
+                // message body — the body innerHTML is re-rendered at stream
+                // finalize, which would wipe a note placed inside it.
+                const _chatBox = document.getElementById('chat-history');
+                if (!_isBg && _chatBox) {
+                  // Drop any prior box so repeated cap-hits each get a fresh
+                  // Continue at the bottom (multiple continues in a row).
+                  const _old = _chatBox.querySelector('.rounds-exhausted');
+                  if (_old) _old.remove();
+                  const note = document.createElement('div');
+                  note.className = 'stopped-indicator rounds-exhausted';
+                  const label = document.createElement('span');
+                  label.className = 'rounds-exhausted-label';
+                  label.textContent = `Reached the ${json.rounds || ''}-step limit — not finished.`;
+                  note.appendChild(label);
+                  const contBtn = document.createElement('button');
+                  contBtn.className = 'continue-btn';
+                  contBtn.title = 'Continue the task';
+                  contBtn.textContent = 'Continue ▸';
+                  const _holder = currentHolder;
+                  contBtn.addEventListener('click', () => {
+                    note.remove();
+                    _hideUserBubble = true;
+                    _pendingContinue = _holder;
+                    const msgInput = uiModule.el('message');
+                    if (msgInput) {
+                      msgInput.value = 'You hit the step limit before finishing — the task is not complete. Continue from exactly where you left off and keep going until it is done. Do NOT repeat work already done.';
+                      const sb = document.querySelector('.send-btn');
+                      if (sb) sb.click();
+                    }
+                  });
+                  note.appendChild(contBtn);
+                  _chatBox.appendChild(note);
+                  try { note.scrollIntoView({ block: 'end', behavior: 'smooth' }); } catch (_) { uiModule.scrollHistory && uiModule.scrollHistory(); }
+                }
               } else if (json.type === 'attachments') {
                 if (_isBg) continue;
                 // Update user bubble — replace file chips with image previews
@@ -2219,6 +2308,159 @@ import createResearchSynapse from './researchSynapse.js';
                 if (_isBg) continue;
                 chatStream.handleUIControl(json.data || {});
 
+              } else if (json.type === 'ask_user') {
+                if (_isBg) continue;
+                // The agent posed a multiple-choice question; the turn has ended.
+                // Render clickable options at the bottom of the history. The
+                // user's pick is sent as the next message and the agent resumes.
+                _cancelThinkingTimer();
+                _removeThinkingSpinner();
+                const _aq = json.data || {};
+                const _opts = Array.isArray(_aq.options) ? _aq.options : [];
+                if (_aq.question && _opts.length) {
+                  const chatBox = document.getElementById('chat-history');
+                  // Drop any prior unanswered card so only the latest shows.
+                  chatBox.querySelectorAll('.ask-user-card').forEach(n => n.remove());
+                  const card = document.createElement('div');
+                  card.className = 'ask-user-card';
+                  const multi = !!_aq.multi;
+                  // Group the choices for assistive tech and label the group with
+                  // the question (set below); make the card focusable so it can be
+                  // moved to when it appears.
+                  card.setAttribute('role', 'group');
+                  card.tabIndex = -1;
+                  // Render any emoji in agent-supplied text through the app's
+                  // pipeline: escape, then svgify to monochrome theme-tinted
+                  // glyphs (project rule: never colorful emoji; respects the
+                  // "Text-only Emojis" setting like the rest of the chat).
+                  const _emo = (s) => svgifyEmoji(uiModule.esc(String(s)));
+
+                  // Header row holds the close (×) to dismiss the affordances and
+                  // just type a reply instead.
+                  const head = document.createElement('div');
+                  head.className = 'ask-user-head';
+                  const closeBtn = document.createElement('button');
+                  closeBtn.type = 'button';
+                  closeBtn.className = 'modal-close ask-user-close';
+                  closeBtn.setAttribute('aria-label', 'Dismiss question');
+                  closeBtn.textContent = '×';
+                  closeBtn.addEventListener('click', () => {
+                    card.remove();
+                    const mi = uiModule.el('message');
+                    if (mi) mi.focus();
+                  });
+                  head.appendChild(closeBtn);
+                  card.appendChild(head);
+
+                  // Render the question inside the card so it's self-contained:
+                  // some models call ask_user without first narrating the question
+                  // as assistant text, in which case the card would otherwise show
+                  // bare options with no prompt.
+                  if (_aq.question) {
+                    const q = document.createElement('div');
+                    q.className = 'ask-user-question';
+                    q.id = `ask-user-q-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+                    q.innerHTML = _emo(_aq.question);
+                    card.appendChild(q);
+                    // Label the choice group with the question for screen readers.
+                    card.setAttribute('aria-labelledby', q.id);
+                  } else {
+                    card.setAttribute('aria-label', 'Question from the assistant');
+                  }
+
+                  const list = document.createElement('div');
+                  list.className = 'ask-user-options';
+                  card.appendChild(list);
+
+                  const _send = (text) => {
+                    if (!text) return;
+                    // Remove the card once answered — the choice is sent as a
+                    // normal user message (and the question persists as the
+                    // assistant text above), so the affordances are spent.
+                    card.remove();
+                    const mi = uiModule.el('message');
+                    if (mi) mi.value = text;
+                    const sb = document.querySelector('.send-btn');
+                    if (sb) sb.click();
+                  };
+
+                  _opts.forEach((opt, i) => {
+                    const label = (opt && opt.label) ? String(opt.label) : String(opt || '');
+                    if (!label) return;
+                    const descr = (opt && opt.description) ? String(opt.description) : '';
+                    const row = document.createElement(multi ? 'label' : 'button');
+                    row.className = 'ask-user-option';
+                    if (multi) {
+                      const cb = document.createElement('input');
+                      cb.type = 'checkbox';
+                      cb.value = label;
+                      row.appendChild(cb);
+                    }
+                    const txt = document.createElement('span');
+                    txt.className = 'ask-user-option-label';
+                    txt.innerHTML = _emo(label);
+                    row.appendChild(txt);
+                    if (descr) {
+                      const d = document.createElement('span');
+                      d.className = 'ask-user-option-desc';
+                      d.innerHTML = _emo(descr);
+                      row.appendChild(d);
+                    }
+                    if (!multi) {
+                      row.type = 'button';
+                      row.addEventListener('click', () => _send(label));
+                    }
+                    list.appendChild(row);
+                  });
+
+                  // Free-text "Other" — type a custom answer + send (Enter or →).
+                  const other = document.createElement('div');
+                  other.className = 'ask-user-other';
+                  const otherInput = document.createElement('input');
+                  otherInput.type = 'text';
+                  otherInput.className = 'styled-prompt-input ask-user-other-input';
+                  otherInput.placeholder = multi ? 'Other (added to selection)…' : 'Other… (type your own answer)';
+                  otherInput.setAttribute('aria-label', multi ? 'Add a custom option' : 'Type a custom answer');
+                  const otherSend = document.createElement('button');
+                  otherSend.type = 'button';
+                  otherSend.className = 'confirm-btn confirm-btn-primary ask-user-other-send';
+                  otherSend.setAttribute('aria-label', 'Send answer');
+                  otherSend.textContent = multi ? 'Send selection' : 'Send';
+                  const _submit = () => {
+                    const free = otherInput.value.trim();
+                    if (multi) {
+                      const picked = Array.from(card.querySelectorAll('.ask-user-option input:checked')).map(c => c.value);
+                      if (free) picked.push(free);
+                      if (picked.length) _send(picked.join(', '));
+                    } else if (free) {
+                      _send(free);
+                    }
+                  };
+                  otherSend.addEventListener('click', _submit);
+                  otherInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+                      e.preventDefault();
+                      _submit();
+                    }
+                  });
+                  other.appendChild(otherInput);
+                  other.appendChild(otherSend);
+                  card.appendChild(other);
+
+                  chatBox.appendChild(card);
+                  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                  // Move focus to the card so keyboard/screen-reader users land on
+                  // the question + choices when it appears.
+                  try { card.focus(); } catch (_) {}
+                }
+
+              } else if (json.type === 'plan_update') {
+                if (_isBg) continue;
+                // Agent wrote back to the plan (ticked a step / revised). Update
+                // the stored plan + live-refresh the docked plan window.
+                const _pu = (json.data && json.data.plan) ? json.data.plan : '';
+                if (_pu) _setStoredPlan(_pu);
+
               } else if (json.type === 'agent_step') {
                 if (_isBg) continue;
                 _cancelThinkingTimer();
@@ -2519,6 +2761,61 @@ import createResearchSynapse from './researchSynapse.js';
         // Attach footer to the last visible bubble (roundHolder for multi-round agent, holder for single)
         const footerTarget = (roundHolder && roundHolder !== holder && roundHolder.style.display !== 'none') ? roundHolder : holder;
         footerTarget.appendChild(createMsgFooter(footerTarget));
+        // Capture any checklist this message produced as the current plan — both
+        // the initial proposal AND restated progress during execution. Keeps the
+        // stored plan (and the docked plan window) in sync with the latest state.
+        if (accumulated && _CHECKLIST_RE.test(accumulated)) {
+          _setStoredPlan(accumulated);
+        }
+        // Plan mode: the agent has proposed a plan — offer to approve & execute it.
+        // Approving re-sends with plan_mode suppressed (full tools) for one turn.
+        if (planTurn && accumulated.trim()) {
+          const _planText = accumulated;
+          const _runApproved = () => {
+            _approveWrap.remove();
+            _forcePlanOff = true;
+            // Persist the approved plan for THIS chat so it's (a) re-sent and
+            // pinned in context every execution turn, and (b) re-openable via the
+            // plan-button menu. Do this BEFORE flipping the toggle, since the menu
+            // intercept keys off a stored plan existing.
+            _setStoredPlan(_planText);
+            // Approving exits plan mode for good — turn it OFF directly (NOT via
+            // the button's click, which would now open the plan menu instead of
+            // toggling) so execution and every follow-up keep full write tools.
+            try { if (window._setPlanMode) window._setPlanMode(false); } catch (_) {}
+            const _inp = el('message');
+            if (_inp) {
+              _inp.value = 'Approved — execute the plan. The full approved checklist is pinned '
+                + 'for you under "## ACTIVE PLAN"; do NOT go looking for it in tasks, notes, or '
+                + 'memory. Work through it in order, and after each step call the update_plan tool '
+                + 'with the full checklist and that step marked `- [x]`. Do the next unchecked item '
+                + 'until all are done.';
+              _inp.dispatchEvent(new Event('input'));
+            }
+            // Show a clean bubble; the full instruction still goes to the model.
+            _displayOverride = 'Approved the plan.';
+            handleChatSubmit({ preventDefault() {} });
+          };
+          var _approveWrap = document.createElement('div');
+          _approveWrap.className = 'plan-approve-bar';
+          const _approveBtn = document.createElement('button');
+          _approveBtn.type = 'button';
+          _approveBtn.className = 'plan-approve-btn';
+          _approveBtn.textContent = 'Approve & Run';
+          _approveBtn.addEventListener('click', _runApproved);
+          // Open the plan in a draggable, side-dockable window (reuses the
+          // shared modal framework). Approving from the window runs it too.
+          const _openBtn = document.createElement('button');
+          _openBtn.type = 'button';
+          _openBtn.className = 'plan-open-btn';
+          _openBtn.textContent = 'Open in window';
+          _openBtn.addEventListener('click', () => {
+            planWindowModule.openPlanWindow(_planText, _runApproved);
+          });
+          _approveWrap.appendChild(_approveBtn);
+          _approveWrap.appendChild(_openBtn);
+          footerTarget.appendChild(_approveWrap);
+        }
         // Add "View Report" link for completed research
         if (_researchingStreamIds.has(streamSessionId)) {
           _appendViewReportLink(footerTarget, streamSessionId);

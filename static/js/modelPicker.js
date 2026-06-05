@@ -179,14 +179,23 @@ function _initModelPickerDropdown() {
     const result = [];
     const seen = new Set();
     items.forEach(item => {
-      if (item.offline) return;
+      // Previously: offline endpoints were skipped entirely, so a server
+      // that briefly went down disappeared from the picker — confusing
+      // when the user can still see it (offline-tagged) in Settings.
+      // Now: include offline-endpoint models too but flag them
+      // `stale: true` so the row renderer dims them + shows the offline
+      // pill. The user can still click and try anyway (matches the
+      // existing "local server appears offline" path on line 301).
+      const epOffline = !!item.offline;
       const allModels = (item.models || []).concat(item.models_extra || []);
       const allDisplay = (item.models_display || []).concat(item.models_extra_display || []);
       // Mark local endpoints whose live probe failed.
       const probeResult = item.endpoint_id ? _localProbe[item.endpoint_id] : null;
       const isLocalDead = !!(probeResult && probeResult.alive === false);
       allModels.forEach((mid, i) => {
-        // Deduplicate by model ID — prefer DB endpoints over env-discovered
+        // Deduplicate by model ID — prefer ONLINE endpoint entries over
+        // offline duplicates so the user gets a working endpoint first
+        // when the same model is exposed by both.
         if (seen.has(mid)) return;
         seen.add(mid);
         result.push({
@@ -201,8 +210,11 @@ function _initModelPickerDropdown() {
             item.host || '',
             item.url || '',
           ].filter(Boolean).join(' '),
-          stale: isLocalDead,
-          staleReason: isLocalDead ? (probeResult.error || 'not responding') : '',
+          stale: isLocalDead || epOffline,
+          staleReason: epOffline
+            ? (item.ping_error || 'endpoint offline')
+            : (isLocalDead ? (probeResult.error || 'not responding') : ''),
+          offline: epOffline,
         });
       });
     });
@@ -377,21 +389,34 @@ function _initModelPickerDropdown() {
       return;
     }
 
-    // ── Browse mode: Recent (auto) + Favorites (manual). No flat "All" dump. ──
+    // ── Browse mode: Favorites (manual) + Recent (auto), with dedupe. ──
+    // Rules:
+    //   1. Never list the same model twice in the dropdown. Favorites
+    //      win over Recent (if you favorited it, that's where it
+    //      belongs — Recent shouldn't show it again as duplicate).
+    //   2. Small catalogs (≤ BROWSE_ALL_LIMIT total) skip the Recent
+    //      section entirely — when there's only ~10 models, the whole
+    //      list fits below as "All models" and a separate Recent
+    //      section just duplicates rows.
     const shown = new Set();
-    const recentModels = _loadRecent()
-      .map(id => byId.get(id))
-      .filter(Boolean)
-      .slice(0, RECENT_MAX);
     const favModels = favs.map(id => byId.get(id)).filter(Boolean);
-
-    if (recentModels.length) {
-      _addSection('Recent');
-      recentModels.forEach(m => { shown.add(m.mid); _addRow(m); });
-    }
     if (favModels.length) {
       _addSection('Favorites');
       favModels.forEach(m => { shown.add(m.mid); _addRow(m); });
+    }
+    // Recent: only render when the catalog is big enough that surfacing
+    // a recency shortlist is actually useful, AND only models that
+    // aren't already in Favorites (dedupe).
+    if (all.length > BROWSE_ALL_LIMIT) {
+      const recentModels = _loadRecent()
+        .map(id => byId.get(id))
+        .filter(Boolean)
+        .filter(m => !shown.has(m.mid))
+        .slice(0, RECENT_MAX);
+      if (recentModels.length) {
+        _addSection('Recent');
+        recentModels.forEach(m => { shown.add(m.mid); _addRow(m); });
+      }
     }
 
     // Small catalogs: still list everything so users aren't forced to search.

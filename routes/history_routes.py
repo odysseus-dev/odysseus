@@ -10,7 +10,12 @@ from fastapi import APIRouter, Request, HTTPException
 from core.models import ChatMessage
 from core.database import SessionLocal, ChatMessage as DbChatMessage, Session as DbSession
 from src.topic_analyzer import analyze_topics
-from routes.session_routes import _verify_session_owner
+from routes.session_routes import (
+    _message_role,
+    _message_text,
+    _reject_compact_during_active_run,
+    _verify_session_owner,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -521,6 +526,7 @@ def setup_history_routes(session_manager) -> APIRouter:
             session = session_manager.get_session(session_id)
         except KeyError:
             raise HTTPException(404, "Session not found")
+        _reject_compact_during_active_run(session_id)
 
         try:
             from src.model_context import estimate_tokens, get_context_length
@@ -543,8 +549,8 @@ def setup_history_routes(session_manager) -> APIRouter:
 
             # Build text to summarize
             convo_text = "\n".join(
-                f"{(m.role if isinstance(m, ChatMessage) else m.get('role', '')).upper()}: "
-                f"{((m.content if isinstance(m, ChatMessage) else m.get('content')) or '')[:2000]}"
+                f"{_message_role(m).upper()}: "
+                f"{_message_text(m)[:2000]}"
                 for m in older
             )
 
