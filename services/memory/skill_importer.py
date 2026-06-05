@@ -22,7 +22,9 @@ ALLOWED_SUFFIXES = (
     ".js", ".ts", ".css", ".html", ".xml", ".csv",
 )
 TEXT_NAMES = {"skill.md", "license", "license.md", "readme.md"}
-_GITHUB_HOSTS = frozenset({"github.com", "www.github.com", "raw.githubusercontent.com"})
+_GITHUB_HOSTS = frozenset({
+    "github.com", "www.github.com", "api.github.com", "raw.githubusercontent.com",
+})
 
 
 def _github_host(url: str) -> str:
