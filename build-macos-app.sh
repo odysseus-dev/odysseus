@@ -65,12 +65,29 @@ PYTHON_VERSION="$("$BUILDER_PY" -c 'import sys; print(f"{sys.version_info.major}
 PYTHON_FRAMEWORK_VERSION="$PYTHON_VERSION"
 PYTHON_FRAMEWORK_DIR="$("$BUILDER_PY" -c 'import sys; print(sys.base_prefix)')"
 PYTHON_FRAMEWORK_NAME="$(basename "$(dirname "$(dirname "$PYTHON_FRAMEWORK_DIR")")")"
+case "$PYTHON_FRAMEWORK_NAME" in
+  *.framework) ;;
+  *)
+    echo "✗ Python interpreter is not a macOS framework build."
+    echo "  sys.base_prefix: $PYTHON_FRAMEWORK_DIR"
+    echo "  Derived framework name: '$PYTHON_FRAMEWORK_NAME' (expected *.framework)"
+    echo "  Use a framework Python: python.org installer or Homebrew Python."
+    echo "  conda, pyenv non-framework builds, and some system Pythons are not supported."
+    exit 1
+    ;;
+esac
 PYTHON_FRAMEWORK_STAGE="$RUNTIME_STAGE/python-framework/$PYTHON_FRAMEWORK_NAME/Versions/$PYTHON_FRAMEWORK_VERSION"
 PYTHON_BIN_SOURCE="$PYTHON_FRAMEWORK_DIR/bin/python$PYTHON_FRAMEWORK_VERSION"
-PYTHON_DYLIB_SOURCE="$(otool -L "$PYTHON_BIN_SOURCE" | awk 'NR==2 {print $1}')"
 
 if [ ! -x "$PYTHON_BIN_SOURCE" ]; then
   echo "✗ Missing base Python executable: $PYTHON_BIN_SOURCE"
+  exit 1
+fi
+
+PYTHON_DYLIB_SOURCE="$(otool -L "$PYTHON_BIN_SOURCE" | awk 'NR==2 {print $1}')"
+if [ -z "$PYTHON_DYLIB_SOURCE" ]; then
+  echo "✗ Could not extract Python dylib path from $PYTHON_BIN_SOURCE"
+  echo "  Run: otool -L \"$PYTHON_BIN_SOURCE\" to inspect dependencies."
   exit 1
 fi
 

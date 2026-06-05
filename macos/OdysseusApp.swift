@@ -209,8 +209,7 @@ final class RuntimeInstaller {
             throw NSError(domain: "Odysseus", code: 14, userInfo: [NSLocalizedDescriptionKey: "Missing setup script in packaged runtime."])
         }
 
-        let outPipe = Pipe()
-        let errPipe = Pipe()
+        let pipe = Pipe()
         let proc = Process()
         proc.executableURL = pythonURL
         proc.currentDirectoryURL = supportRuntimeURL
@@ -223,14 +222,24 @@ final class RuntimeInstaller {
         environment["PATH"] = supportRuntimeURL.appendingPathComponent("venv/bin").path + ":" + (environment["PATH"] ?? "")
         environment["PYTHONHOME"] = try bundledPythonHome().path
         proc.environment = environment
-        proc.standardOutput = outPipe
-        proc.standardError = errPipe
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+
+        // Drain the pipe continuously so the child never blocks on a full pipe buffer.
+        var outputData = Data()
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            outputData.append(chunk)
+        }
 
         try proc.run()
         proc.waitUntilExit()
+        // nil synchronously waits for any in-flight handler before returning.
+        pipe.fileHandleForReading.readabilityHandler = nil
+        outputData.append(pipe.fileHandleForReading.readDataToEndOfFile())
 
-        let output = (String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")
-            + (String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")
+        let output = String(data: outputData, encoding: .utf8) ?? ""
 
         if proc.terminationStatus != 0 {
             throw NSError(
@@ -254,6 +263,7 @@ final class BackendController {
     private var process: Process?
     private var outputPipe: Pipe?
     private var logHandle: FileHandle?
+    private let logQueue = DispatchQueue(label: "com.odysseus.log")
     private var launchedProcess = false
 
     init(runtimeURL: URL, port: Int, serverURL: URL) {
@@ -334,7 +344,7 @@ final class BackendController {
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
-            self?.logHandle?.write(data)
+            self?.logQueue.async { self?.logHandle?.write(data) }
         }
 
         let proc = Process()
@@ -351,8 +361,10 @@ final class BackendController {
         proc.standardOutput = pipe
         proc.standardError = pipe
         proc.terminationHandler = { [weak self] _ in
+            // nil is synchronous — waits for any in-flight handler before returning,
+            // so no new writes are queued after this line.
             self?.outputPipe?.fileHandleForReading.readabilityHandler = nil
-            try? self?.logHandle?.close()
+            self?.logQueue.async { try? self?.logHandle?.close() }
         }
 
         try proc.run()
@@ -597,10 +609,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        overlay.isHidden = false
         statusLabel.stringValue = error.localizedDescription
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        overlay.isHidden = false
         statusLabel.stringValue = error.localizedDescription
     }
 }
