@@ -920,38 +920,6 @@ def test_resolve_n_ctx_gates_host_tensor_scan_on_ple_marker(tmp_path, monkeypatc
     assert [os.path.basename(p) for p in scanned] == ["Ple.gguf"]
 
 
-def test_memory_budget_is_memoized_and_prewarmed(monkeypatch):
-    """Hardware probing can take seconds cold on some platforms; the budget
-    must be computed once per process, and the warm hook must run it off the
-    request path so the first model load never stalls on it."""
-    import time as _time
-
-    import src.nobodywho_provider as nbw
-    import services.hwfit.hardware as hw
-
-    calls = []
-    monkeypatch.setattr(hw, "detect_system", lambda *a, **k: calls.append(1) or {
-        "gpus": [{"vram_gb": 18.0}],
-    })
-    nbw._budget_memo.clear()
-    nbw._budget_warm_started.clear()
-
-    assert nbw._memory_budget_gb() == 18.0
-    assert nbw._memory_budget_gb() == 18.0
-    assert len(calls) == 1  # memoized — probing never runs twice
-
-    # The warm hook computes it in the background, exactly once.
-    nbw._budget_memo.clear()
-    nbw.warm_memory_budget()
-    nbw.warm_memory_budget()  # idempotent
-    for _ in range(100):
-        if "v" in nbw._budget_memo:
-            break
-        _time.sleep(0.01)
-    assert nbw._budget_memo.get("v") == 18.0
-    assert len(calls) == 2  # one original + one from the single warm thread
-
-
 def test_reset_import_cache_clears_failure_immediately(monkeypatch):
     """The Cookbook install endpoint resets the cache on success so the very
     next probe sees the package without waiting out the retry TTL."""

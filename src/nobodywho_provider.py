@@ -342,47 +342,21 @@ def _gguf_host_resident_bytes(path: str) -> int:
         return 0
 
 
-# Hardware probing (nvidia-smi / system_profiler / PowerShell) can take
-# seconds cold on some platforms; hardware doesn't change mid-process, so the
-# budget is computed once and memoized. warm_memory_budget() runs that compute
-# on a background thread well before the first model load needs it.
-_budget_memo: Dict[str, Any] = {}
-_budget_warm_started = threading.Event()
-
-
 def _memory_budget_gb() -> Optional[float]:
     """Usable model memory on this machine — the same number Cookbook's fit
-    estimates use (services/hwfit), so both surfaces agree by construction.
-    Memoized for the process lifetime."""
-    if "v" in _budget_memo:
-        return _budget_memo["v"]
-    value: Optional[float] = None
+    estimates use (services/hwfit), so both surfaces agree by construction."""
     try:
         from services.hwfit.hardware import detect_system
         system = detect_system()
         vram = max((g.get("vram_gb") or 0) for g in system.get("gpus") or [{}])
         if vram:
-            value = float(vram)
-        else:
-            ram = system.get("ram_gb")
-            if ram:
-                value = float(ram) * 0.6  # CPU-only: leave room for the OS
+            return float(vram)
+        ram = system.get("ram_gb")
+        if ram:
+            return float(ram) * 0.6  # CPU-only: leave room for the OS
     except Exception as e:
         logger.debug(f"hardware detection unavailable: {e}")
-    _budget_memo["v"] = value
-    return value
-
-
-def warm_memory_budget() -> None:
-    """Pre-compute the memory budget off the request path (idempotent).
-
-    Called from cheap early touchpoints (endpoint ping / model listing, which
-    the app hits at startup) so the first chat's model load doesn't stall on
-    hardware probing."""
-    if _budget_warm_started.is_set():
-        return
-    _budget_warm_started.set()
-    threading.Thread(target=_memory_budget_gb, name="nobodywho-budget-warm", daemon=True).start()
+    return None
 
 
 def _is_remote_ref(model_id: str) -> bool:
@@ -511,7 +485,6 @@ class NobodyWhoManager:
 
     def ping(self) -> Dict[str, object]:
         """Reachability shaped like model_routes._ping_endpoint results."""
-        warm_memory_budget()  # off-path: have the budget ready before any load
         if self.is_available():
             return {"reachable": True, "status_code": 200, "error": None}
         return {"reachable": False, "status_code": None, "error": self.availability_error()}
@@ -520,7 +493,6 @@ class NobodyWhoManager:
 
     def list_models(self, max_age: float = 10.0) -> List[str]:
         """Model IDs from local GGUF files (cached briefly — called per UI refresh)."""
-        warm_memory_budget()  # off-path: have the budget ready before any load
         now = time.time()
         cached_at, cached = self._scan_cache
         if cached and (now - cached_at) < max_age:
