@@ -128,10 +128,14 @@ def validate_caldav_url(raw_url: str) -> str:
     return urlunparse(parsed._replace(fragment="")).rstrip("/")
 
 
-def _stable_cal_id(remote_url: str) -> str:
-    """Deterministic local id for a remote CalDAV calendar — same URL
-    always maps to the same local row across restarts and re-syncs."""
-    h = hashlib.sha256(remote_url.encode("utf-8")).hexdigest()[:24]
+def _stable_cal_id(remote_url: str, owner: str = "", account_id: str = "") -> str:
+    """Deterministic local id for a remote CalDAV calendar, scoped to owner
+    and account so two users — or one user with two accounts — pointing at
+    the same server URL get distinct local rows (avoids PK collision, #2765).
+    The owner and account_id default to "" for the legacy/URL-only path so
+    existing callers without those arguments keep working."""
+    key = f"{owner}\n{account_id}\n{remote_url}"
+    h = hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
     return f"caldav-{h}"
 
 
@@ -258,7 +262,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
         for remote_cal in calendars:
             try:
                 remote_url = str(remote_cal.url)
-                cal_id = _stable_cal_id(remote_url)
+                cal_id = _stable_cal_id(remote_url, owner=owner, account_id=account_id)
                 display_name = (remote_cal.name or "").strip() or "CalDAV"
 
                 local_cal = db.query(CalendarCal).filter(
@@ -409,9 +413,14 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
 
 def _load_caldav_accounts(owner: str) -> list:
     """Return the list of CalDAV accounts for *owner*, auto-migrating the legacy
-    single-account ``caldav`` key to the new ``caldav_accounts`` list on first call."""
+    single-account ``caldav`` key to the new ``caldav_accounts`` list on first call.
+
+    The save step is best-effort: if ``_save_for_user`` is unavailable (e.g. in a
+    test with a minimal prefs mock) the migrated accounts are still returned; the
+    next real call will just re-run the cheap migration again.
+    """
     import uuid as _uuid
-    from routes.prefs_routes import _load_for_user, _save_for_user
+    from routes.prefs_routes import _load_for_user
 
     prefs = _load_for_user(owner) or {}
     if "caldav_accounts" in prefs:
@@ -428,7 +437,11 @@ def _load_caldav_accounts(owner: str) -> list:
         }]
         prefs["caldav_accounts"] = accounts
         prefs.pop("caldav", None)
-        _save_for_user(owner, prefs)
+        try:
+            from routes.prefs_routes import _save_for_user
+            _save_for_user(owner, prefs)
+        except (ImportError, AttributeError):
+            pass  # best-effort; next call re-migrates from the still-present legacy key
         return accounts
     return []
 

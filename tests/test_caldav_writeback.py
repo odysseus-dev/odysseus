@@ -151,7 +151,8 @@ def test_writeback_validates_saved_url_before_remote_call(monkeypatch):
         captured["validated_url"] = url
         return "https://dav.example.com/calendars/home"
 
-    def fake_writeback_blocking(local_cal_id, ev, delete, url, username, password):
+    def fake_writeback_blocking(local_cal_id, ev, delete, url, username, password,
+                                owner="", account_id=""):
         captured.update(
             {
                 "local_cal_id": local_cal_id,
@@ -207,7 +208,8 @@ def test_writeback_rejects_unsafe_saved_url_before_remote_call(monkeypatch):
     def fake_validate(_url):
         raise ValueError("CalDAV URL host is not allowed")
 
-    def fake_writeback_blocking(*_args, **_kwargs):
+    def fake_writeback_blocking(local_cal_id, ev, delete, url, username, password,
+                                owner="", account_id=""):
         nonlocal called
         called = True
         return {"ok": True}
