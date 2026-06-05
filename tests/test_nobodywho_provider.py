@@ -689,9 +689,12 @@ def _write_gguf(path, kvs, tensors=None):
         blob += _str(key)
         if isinstance(val, str):
             blob += _s.pack("<I", 8) + _str(val)
-        elif isinstance(val, list):  # array of bool (SWA layer pattern)
-            blob += _s.pack("<IIQ", 9, 7, len(val))
+        elif isinstance(val, list) and val and isinstance(val[0], bool):
+            blob += _s.pack("<IIQ", 9, 7, len(val))  # array of bool (SWA pattern)
             blob += b"".join(_s.pack("<?", bool(v)) for v in val)
+        elif isinstance(val, list):  # array of uint32 (per-layer head counts etc.)
+            blob += _s.pack("<IIQ", 9, 4, len(val))
+            blob += b"".join(_s.pack("<I", int(v)) for v in val)
         else:
             blob += _s.pack("<I", 4) + _s.pack("<I", int(val))  # uint32
     offset = 0
@@ -792,6 +795,36 @@ def test_kv_cost_sliding_window_and_shared_layers(tmp_path):
     # own layers = first 24: 4 global (every 6th) + 20 windowed
     assert per_token == 4 * 2 * (512 + 512) * 2
     assert fixed == 20 * 2 * (256 + 256) * 2 * 512
+
+
+def test_kv_cost_per_layer_array_fields(tmp_path):
+    """gemma-4-12b ships attention.head_count_kv (and friends) as per-layer
+    ARRAYS, not scalars — int() on a list crashed resolve_n_ctx and 503'd the
+    first chat. Per-layer values must be summed exactly, and any genuinely
+    unexpected shape must degrade to None, never raise."""
+    import src.nobodywho_provider as nbw
+
+    path = tmp_path / "ArrayHeads.gguf"
+    _write_gguf(path, {
+        "general.architecture": "gemma4",
+        "gemma4.context_length": 131072,
+        "gemma4.block_count": 4,
+        "gemma4.embedding_length": 1024,
+        "gemma4.attention.head_count": 8,                  # head_dim 128
+        "gemma4.attention.head_count_kv": [4, 4, 2, 2],    # per-layer array
+    })
+    per_token, fixed = nbw._kv_cache_cost(nbw._gguf_metadata(str(path)))
+    assert per_token == (4 + 4 + 2 + 2) * (128 + 128) * 2
+    assert fixed == 0
+
+    # Unexpected shape (string where a number belongs) -> None, not a crash
+    assert nbw._kv_cache_cost({
+        "general.architecture": "weird",
+        "weird.block_count": 2,
+        "weird.embedding_length": 64,
+        "weird.attention.head_count": 2,
+        "weird.attention.head_count_kv": "junk",
+    }) is None
 
 
 def test_kv_cost_periodic_pattern_int_form():

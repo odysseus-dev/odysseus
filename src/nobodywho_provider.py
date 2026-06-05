@@ -196,36 +196,63 @@ def _kv_cache_cost(meta: Dict[str, Any]) -> Optional[Tuple[int, int]]:
     emb = g("embedding_length")
     if not (n_head and emb):
         return None
-    n_kv_head = int(g("attention.head_count_kv") or n_head)
-    k_dim = int(g("attention.key_length") or (int(emb) // int(n_head)))
-    v_dim = int(g("attention.value_length") or k_dim)
 
-    pattern = g("attention.sliding_window_pattern")
-    window = g("attention.sliding_window")
-    if pattern is not None and window:
-        if isinstance(pattern, list):
-            # Authoritative per-layer flags: truthy = sliding-window. Pad a
-            # short array with global layers — overestimating is the safe way
-            # to be wrong here.
-            swa = [bool(x) for x in pattern[:n_layer]]
-            swa += [False] * (n_layer - len(swa))
-        else:
-            # Periodic form (HF convention): every Nth layer is global.
-            period = max(1, int(pattern))
-            swa = [(i + 1) % period != 0 for i in range(n_layer)]
-        # Trailing shared-KV layers ride on earlier caches — drop them before
-        # counting what actually gets allocated.
-        shared = min(max(int(g("attention.shared_kv_layers") or 0), 0), n_layer)
-        own = swa[: n_layer - shared]
-        n_swa_own = sum(own)
-        n_global_own = len(own) - n_swa_own
-        k_swa = int(g("attention.key_length_swa") or k_dim)
-        v_swa = int(g("attention.value_length_swa") or v_dim)
-        per_token = n_global_own * n_kv_head * (k_dim + v_dim) * 2
-        fixed = n_swa_own * n_kv_head * (k_swa + v_swa) * 2 * int(window)
-        return per_token, fixed
+    def per_layer(val, fallback) -> List[int]:
+        """Normalize a header field to one int per layer. Several attention
+        keys (head_count_kv, key/value_length) are stored as per-layer ARRAYS
+        in heterogeneous models — gemma-4-12b ships head_count_kv as a list,
+        which int() used to choke on. Short arrays pad with the fallback."""
+        if isinstance(val, list):
+            vals = [int(x) for x in val[:n_layer]]
+            if len(vals) < n_layer:
+                pad = fallback if isinstance(fallback, list) else [int(fallback)] * n_layer
+                vals += pad[len(vals):n_layer]
+            return vals
+        if val is None:
+            return list(fallback) if isinstance(fallback, list) else [int(fallback)] * n_layer
+        return [int(val)] * n_layer
 
-    return n_layer * n_kv_head * (k_dim + v_dim) * 2, 0
+    try:
+        emb = int(emb)
+        heads = per_layer(n_head, 0)
+        if not all(heads):
+            return None
+        kv_heads = per_layer(g("attention.head_count_kv"), heads)
+        k_dims = per_layer(g("attention.key_length"), [emb // h for h in heads])
+        v_dims = per_layer(g("attention.value_length"), k_dims)
+        per_token_layer = [kv_heads[i] * (k_dims[i] + v_dims[i]) * 2 for i in range(n_layer)]
+
+        pattern = g("attention.sliding_window_pattern")
+        window = g("attention.sliding_window")
+        if pattern is not None and window:
+            if isinstance(pattern, list):
+                # Authoritative per-layer flags: truthy = sliding-window. Pad a
+                # short array with global layers — overestimating is the safe
+                # way to be wrong here.
+                swa = [bool(x) for x in pattern[:n_layer]]
+                swa += [False] * (n_layer - len(swa))
+            else:
+                # Periodic form (HF convention): every Nth layer is global.
+                period = max(1, int(pattern))
+                swa = [(i + 1) % period != 0 for i in range(n_layer)]
+            # Trailing shared-KV layers ride on earlier caches — drop them
+            # before counting what actually gets allocated.
+            shared = min(max(int(g("attention.shared_kv_layers") or 0), 0), n_layer)
+            k_swa = per_layer(g("attention.key_length_swa"), k_dims)
+            v_swa = per_layer(g("attention.value_length_swa"), v_dims)
+            own = range(n_layer - shared)
+            per_token = sum(per_token_layer[i] for i in own if not swa[i])
+            fixed = sum(
+                kv_heads[i] * (k_swa[i] + v_swa[i]) * 2 for i in own if swa[i]
+            ) * int(window)
+            return per_token, fixed
+
+        return sum(per_token_layer), 0
+    except Exception as e:
+        # An unexpected header shape must degrade to "unknown" (caller falls
+        # back to safe defaults), never crash the model-load path.
+        logger.debug(f"KV cost estimate failed for arch {arch}: {e}")
+        return None
 
 
 # Tensors llama.cpp keeps in host memory rather than VRAM, by name prefix.
