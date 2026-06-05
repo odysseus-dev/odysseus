@@ -181,9 +181,9 @@ async def dispatch_reminder(
         try:
             from src.endpoint_resolver import resolve_endpoint
             from src.llm_core import llm_call_async
-            url, model, headers = resolve_endpoint("utility")
+            url, model, headers = resolve_endpoint("utility", owner=owner or None)
             if not url:
-                url, model, headers = resolve_endpoint("default")
+                url, model, headers = resolve_endpoint("default", owner=owner or None)
             if url and model:
                 raw = await llm_call_async(
                     url=url, model=model,

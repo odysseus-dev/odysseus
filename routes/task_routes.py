@@ -1047,6 +1047,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         desc = (body.get("description") or "").strip()
         if not desc:
             return {"success": False, "message": "Nothing to parse"}
+        user = _owner(request)
 
         now = _dt.now()
         # Give the model the current date/time + weekday so relative phrasing
@@ -1073,9 +1074,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             "use cron '0 H * * 1-5'. Keep the prompt actionable and self-contained."
         )
         try:
-            url, model, headers = resolve_endpoint("utility")
+            url, model, headers = resolve_endpoint("utility", owner=user or None)
             if not url:
-                url, model, headers = resolve_endpoint("default")
+                url, model, headers = resolve_endpoint("default", owner=user or None)
             if not (url and model):
                 return {"success": False, "message": "No model endpoint configured"}
             raw = await llm_call_async(
