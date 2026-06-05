@@ -55,6 +55,7 @@ function _saveSettingsToStorage() {
       search_provider: document.getElementById('research-search-provider')?.value || '',
       endpoint_id: document.getElementById('research-endpoint')?.value || '',
       model: document.getElementById('research-model')?.value || '',
+      reasoning_effort: document.getElementById('research-reasoning-effort')?.value || '',
       category: activeCat?.dataset.cat || '',
     }));
   } catch {}
@@ -382,6 +383,16 @@ function _buildPanelHTML() {
             <span class="research-setting-label">Model</span>
             <select id="research-model"><option value="">Default</option></select>
           </label>
+          <label class="research-setting" title="OpenAI Codex reasoning depth — applies only when the research model is a Codex model; ignored otherwise.">
+            <span class="research-setting-label">Reasoning</span>
+            <select id="research-reasoning-effort">
+              <option value="">Default</option>
+              <option value="minimal">Minimal</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
         </div>
         <div class="research-controls-row">
           <button id="research-add-btn" class="research-add-btn"><span class="research-add-plus">+</span> Queue</button>
@@ -472,6 +483,7 @@ function _readSettings() {
     search_provider: document.getElementById('research-search-provider')?.value || undefined,
     endpoint_id: document.getElementById('research-endpoint')?.value || undefined,
     model: document.getElementById('research-model')?.value || undefined,
+    reasoning_effort: document.getElementById('research-reasoning-effort')?.value || undefined,
     category: category || undefined,
   };
   const epSel = document.getElementById('research-endpoint');
@@ -518,6 +530,8 @@ function _editJob(job) {
   if (epEl && s.endpoint_id) epEl.value = s.endpoint_id;
   const mEl = document.getElementById('research-model');
   if (mEl && s.model) mEl.value = s.model;
+  const reffEl = document.getElementById('research-reasoning-effort');
+  if (reffEl && s.reasoning_effort) reffEl.value = s.reasoning_effort;
   // Remove the old job so clicking Start/Queue makes a fresh one
   jobs.removeJob(job.id);
   // Scroll the form into view
@@ -602,6 +616,8 @@ function _restoreSavedSettings() {
   // Users can pick a specific cap each time if needed.
   const search = document.getElementById('research-search-provider');
   if (search && saved.search_provider !== undefined) search.value = saved.search_provider;
+  const reff = document.getElementById('research-reasoning-effort');
+  if (reff && saved.reasoning_effort !== undefined) reff.value = saved.reasoning_effort;
   const ep = document.getElementById('research-endpoint');
   if (ep && saved.endpoint_id) {
     ep.value = saved.endpoint_id;

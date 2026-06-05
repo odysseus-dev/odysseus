@@ -300,7 +300,15 @@ metadata:
 spec:
   replicas: 1
   strategy:
-    type: Recreate
+    # Keep the old pod serving until the new one passes its readiness probe.
+    # maxUnavailable:0 = never drop below the desired replica count; maxSurge:1
+    # = bring up one extra pod first. Requires the pod NOT to use hostNetwork/
+    # hostPort (two pods can't share host port 7000), so traffic flows via the
+    # Service/Ingress instead and host-local LLM servers are reached by node IP.
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: odysseus
@@ -310,12 +318,6 @@ spec:
         app: odysseus
     spec:
       enableServiceLinks: false
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
-      dnsConfig:
-        options:
-          - name: ndots
-            value: "1"
       imagePullSecrets:
         - name: harbor-robot
       nodeSelector:
@@ -327,21 +329,32 @@ spec:
         - key: node.kubernetes.io/unreachable
           operator: Exists
           effect: NoSchedule
+      # Give the old pod time to finish in-flight requests after it's removed
+      # from the Service endpoints during a rollout, instead of being killed
+      # mid-request.
+      terminationGracePeriodSeconds: 30
       containers:
         - name: odysseus
           image: harbor.homelab/atomic/odysseus:homelab-20260603-1
           imagePullPolicy: Always
+          lifecycle:
+            preStop:
+              # Brief pause so kube-proxy/ingress stop routing new traffic to
+              # this pod (endpoint removal is async) before the app gets SIGTERM.
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
           ports:
             - containerPort: 7000
-              hostPort: 7000
               name: http
           env:
+            # Host-local LLM servers are reached via the node IP (not 127.0.0.1)
+            # now that the pod no longer shares the host network namespace.
             - name: LLM_HOST
-              value: 127.0.0.1
+              value: 10.0.1.252
             - name: LLM_HOSTS
-              value: 127.0.0.1
+              value: 10.0.1.252
             - name: OLLAMA_BASE_URL
-              value: http://127.0.0.1:8088/v1
+              value: http://10.0.1.252:8088/v1
             - name: SEARXNG_INSTANCE
               value: http://searxng:8080
             - name: CHROMADB_HOST
@@ -363,7 +376,7 @@ spec:
             - name: FASTEMBED_MODEL
               value: sentence-transformers/all-MiniLM-L6-v2
             - name: ODYSSEUS_SCRIPT_HOST
-              value: 127.0.0.1
+              value: 10.0.1.252
             - name: NTFY_BASE_URL
               value: http://ntfy:80
             - name: PUID
@@ -376,12 +389,18 @@ spec:
               port: 7000
             initialDelaySeconds: 30
             periodSeconds: 20
+            failureThreshold: 3
+          # Readiness gates the rollout: with maxUnavailable:0 the old pod keeps
+          # receiving traffic until this probe passes on the new pod. Check more
+          # frequently so a healthy new pod is promoted (and the old one retired)
+          # promptly rather than waiting a full 20s cycle.
           readinessProbe:
             httpGet:
               path: /api/health
               port: 7000
-            initialDelaySeconds: 30
-            periodSeconds: 20
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
           volumeMounts:
             - name: data
               mountPath: /app/data
