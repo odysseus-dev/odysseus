@@ -7,12 +7,21 @@ from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from core.database import SessionLocal, Document, DocumentVersion
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user
 
 logger = logging.getLogger(__name__)
+
+
+def _get_session_or_404(db, session_id: str, user: Optional[str]):
+    session = db.query(DbSession).filter(DbSession.id == session_id).first()
+    if not session:
+        raise HTTPException(404, "Session not found")
+    if user and session.owner != user:
+        raise HTTPException(404, "Session not found")
+    return session
 
 
 def _aggregate_language_facets(lang_rows):
@@ -69,17 +78,12 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # the doc is owner-stamped, so it lives in the library on its own.
             session = None
             if req.session_id:
-                session = db.query(DbSession).filter(DbSession.id == req.session_id).first()
-                if not session:
-                    raise HTTPException(404, "Session not found")
                 # Match the lenient ownership model the rest of the app uses
                 # (see _owner_filter): only block when an AUTHENTICATED user is
                 # writing into a DIFFERENT user's session. In single-user /
-                # unconfigured / localhost-bypass mode the middleware leaves
-                # current_user unset (None), and those sessions are already
-                # served freely everywhere else.
-                if user and session.owner and session.owner != user:
-                    raise HTTPException(403, "Cannot create document in another user's session")
+                # unconfigured / localhost-bypass mode, falsey users preserve
+                # the existing lenient path.
+                session = _get_session_or_404(db, req.session_id, user)
 
             doc_id = str(uuid.uuid4())
             ver_id = str(uuid.uuid4())
@@ -171,11 +175,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         if session_id:
             db = SessionLocal()
             try:
-                sess = db.query(DbSession).filter(DbSession.id == session_id).first()
-                if not sess:
-                    raise HTTPException(404, "Session not found")
-                if user and sess.owner and sess.owner != user:
-                    raise HTTPException(403, "Cannot import into another user's session")
+                _get_session_or_404(db, session_id, user)
             finally:
                 db.close()
 
@@ -359,18 +359,17 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         try:
             if not user:
                 raise HTTPException(403, "Authentication required")
-            session = db.query(DbSession).filter(DbSession.id == session_id).first()
             # v2 review HIGH-9: raise 403 explicitly when the caller
             # can't see this session, instead of returning [] which the
             # UI treats identically to "no docs" and silently masks
             # auth failures.
-            if not session:
-                raise HTTPException(404, "Session not found")
-            if user and session.owner and session.owner != user:
-                raise HTTPException(403, "Access denied")
-            docs = db.query(Document).filter(
+            _get_session_or_404(db, session_id, user)
+            q = db.query(Document).filter(
                 Document.session_id == session_id
-            ).order_by(Document.created_at.desc()).all()
+            )
+            if user:
+                q = q.filter(or_(Document.owner == user, Document.owner.is_(None)))
+            docs = q.order_by(Document.created_at.desc()).all()
             return [_doc_to_dict(d) for d in docs]
         finally:
             db.close()
@@ -606,6 +605,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 doc.language = req.language
             if req.session_id is not None:
                 # Empty string = unlink from session
+                if req.session_id:
+                    _get_session_or_404(db, req.session_id, user)
                 doc.session_id = req.session_id if req.session_id else None
                 if not req.session_id:
                     # Tab closed / doc detached from its session — drop the
