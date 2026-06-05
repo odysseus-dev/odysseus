@@ -35,6 +35,11 @@ function _pushRecent(mid) {
   next.unshift(mid);
   _saveList(RECENT_KEY, next.slice(0, RECENT_MAX));
 }
+function _removeRecent(mid) {
+  if (!mid) return;
+  const next = _loadRecent().filter(x => x !== mid);
+  _saveList(RECENT_KEY, next);
+}
 function _loadFavorites() { return _loadList(FAVORITES_KEY); }
 function _toggleFavorite(mid) {
   const favs = _loadFavorites();
@@ -304,7 +309,7 @@ function _initModelPickerDropdown() {
       empty.textContent = text;
       listEl.appendChild(empty);
     }
-    function _addRow(m) {
+    function _addRow(m, onRemove) {
       const row = document.createElement('div');
       row.className = 'model-switch-item';
       if (m.stale) {
@@ -373,6 +378,20 @@ function _initModelPickerDropdown() {
       });
       row.appendChild(favDot);
 
+      // Remove-from-recent button (shown only for Recent section items).
+      if (onRemove) {
+        const rmBtn = document.createElement('button');
+        rmBtn.type = 'button';
+        rmBtn.className = 'mp-remove-dot';
+        rmBtn.textContent = '×';
+        rmBtn.title = 'Remove from recent';
+        rmBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          onRemove();
+        });
+        row.appendChild(rmBtn);
+      }
+
       row.addEventListener('click', () => _pick(m));
       listEl.appendChild(row);
     }
@@ -389,34 +408,27 @@ function _initModelPickerDropdown() {
       return;
     }
 
-    // ── Browse mode: Favorites (manual) + Recent (auto), with dedupe. ──
-    // Rules:
-    //   1. Never list the same model twice in the dropdown. Favorites
-    //      win over Recent (if you favorited it, that's where it
-    //      belongs — Recent shouldn't show it again as duplicate).
-    //   2. Small catalogs (≤ BROWSE_ALL_LIMIT total) skip the Recent
-    //      section entirely — when there's only ~10 models, the whole
-    //      list fits below as "All models" and a separate Recent
-    //      section just duplicates rows.
+    // ── Browse mode: Recent (auto) + Favorites (manual). No flat "All" dump. ──
     const shown = new Set();
+    const recentModels = _loadRecent()
+      .map(id => byId.get(id))
+      .filter(Boolean)
+      .slice(0, RECENT_MAX);
     const favModels = favs.map(id => byId.get(id)).filter(Boolean);
+
+    if (recentModels.length) {
+      _addSection('Recent');
+      recentModels.forEach(m => {
+        shown.add(m.mid);
+        _addRow(m, () => {
+          _removeRecent(m.mid);
+          _populate('');
+        });
+      });
+    }
     if (favModels.length) {
       _addSection('Favorites');
       favModels.forEach(m => { shown.add(m.mid); _addRow(m); });
-    }
-    // Recent: only render when the catalog is big enough that surfacing
-    // a recency shortlist is actually useful, AND only models that
-    // aren't already in Favorites (dedupe).
-    if (all.length > BROWSE_ALL_LIMIT) {
-      const recentModels = _loadRecent()
-        .map(id => byId.get(id))
-        .filter(Boolean)
-        .filter(m => !shown.has(m.mid))
-        .slice(0, RECENT_MAX);
-      if (recentModels.length) {
-        _addSection('Recent');
-        recentModels.forEach(m => { shown.add(m.mid); _addRow(m); });
-      }
     }
 
     // Small catalogs: still list everything so users aren't forced to search.
