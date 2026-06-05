@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.import_state import clear_module
+
 
 def _real_core_package():
     root = Path(__file__).resolve().parent.parent
@@ -22,9 +24,7 @@ def _real_core_package():
         core = types.ModuleType("core")
         sys.modules["core"] = core
     core.__path__ = [core_path]
-    if hasattr(core, "auth"):
-        delattr(core, "auth")
-    sys.modules.pop("core.auth", None)
+    clear_module("core.auth")
     return core
 
 

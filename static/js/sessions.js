@@ -2157,7 +2157,14 @@ async function _checkServerStream(sessionId) {
     // Skip if this is a research stream — research has its own progress UI
     if (info.mode === 'research' || info.is_research) return;
 
-    // Server is still streaming — show spinner and poll
+    // Live-resume the detached run: replay its buffer then stream live tokens
+    // (#2539). Falls back to the spinner+poll path below if unavailable.
+    if (window.chatModule && window.chatModule.resumeStream) {
+      const attached = await window.chatModule.resumeStream(sessionId);
+      if (attached) return;
+    }
+
+    // Fallback: server is still streaming, show spinner and poll.
     const box = document.getElementById('chat-history');
     if (!box) return;
 

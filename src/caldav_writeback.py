@@ -167,6 +167,12 @@ async def writeback_event(owner: str, calendar_source: str, calendar_id: str,
         pw = decrypt(cfg.get("password") or "")
         if not (url and user and pw):
             return {"skipped": "caldav not configured"}
+        from src.caldav_sync import validate_caldav_url
+        try:
+            url = validate_caldav_url(url)
+        except ValueError as e:
+            logger.warning("CalDAV write-back URL rejected: %s", e)
+            return {"ok": False, "error": str(e)[:200]}
         result = await asyncio.to_thread(_writeback_blocking, calendar_id, ev, delete, url, user, pw)
         if not result.get("ok"):
             logger.warning("CalDAV write-back did not apply: %s", result.get("error") or result)

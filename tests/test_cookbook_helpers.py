@@ -11,6 +11,7 @@ from routes.cookbook_helpers import (
     _append_serve_exit_code_lines,
     _append_serve_preflight_exit_lines,
     _llama_cpp_rebuild_cmd,
+    _append_vllm_linux_preflight_lines,
     _local_tooling_path_export,
     _pip_install_attempt,
     _pip_install_fallback_chain,
@@ -125,33 +126,15 @@ def test_pip_install_fallback_chain_propagates_failure_in_venv():
     reported success even though nothing was installed.  The negated
     `{ ! venv_check && user }` shape propagates the failure correctly.
     """
-    import shlex
-    py_path = sys.executable
-    if sys.platform == "win32":
-        is_wsl = False
-        try:
-            res = subprocess.run(["bash", "-c", "uname -r"], capture_output=True, text=True)
-            if "microsoft" in res.stdout.lower() or "wsl" in res.stdout.lower():
-                is_wsl = True
-        except Exception:
-            pass
-        if is_wsl:
-            try:
-                res = subprocess.run(["bash", "-c", f"wslpath -u {shlex.quote(py_path)}"], capture_output=True, text=True)
-                if res.returncode == 0:
-                    py_path = res.stdout.strip()
-            except Exception:
-                pass
-        else:
-            py_path = py_path.replace("\\", "/")
-    py = shlex.quote(py_path)
-    # Use the venv python so venv_check detects we're in a venv.
+    # Simulate "inside a venv" deterministically: the venv check exits 0.
     # Base install fails, venv_check exits 0, negated to 1,
-    # && skips user, group exits 1.
+    # && skips user, group exits 1.  This avoids depending on whether the
+    # test runner's own interpreter happens to be inside a venv (which
+    # differs between local and CI environments).
     script = (
-        f"{py} -c 'import sys; sys.exit(1)' || "
-        f"{{ ! {py} -c \"import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)\" "
-        f"&& echo user_attempt; }}"
+        "false || "
+        "{ ! true "  # venv_check=0 (in venv) → negated to 1 → user skipped
+        "&& echo user_attempt; }"
     )
     result = subprocess.run(
         ["bash", "-c", script],
@@ -208,6 +191,19 @@ def test_serve_runner_installs_llama_cpp_server_extra():
     # The [server] extra is requested in the build/fallback paths.
     assert "'llama-cpp-python[server]'" in src
     assert "_pip_install_fallback_chain('llama-cpp-python[server]'" in src
+
+
+def test_vllm_preflight_reports_cli_and_version():
+    lines = []
+
+    _append_vllm_linux_preflight_lines(lines)
+    script = "\n".join(lines)
+
+    assert 'export PATH="$HOME/.local/bin:$PATH"' in script
+    assert 'ODYSSEUS_VLLM_BIN="$(command -v vllm 2>/dev/null || true)"' in script
+    assert 'echo "[odysseus] vLLM CLI: $ODYSSEUS_VLLM_BIN"' in script
+    assert '"$ODYSSEUS_VLLM_BIN" --version' in script
+    assert 'ODYSSEUS_PREFLIGHT_EXIT=127' in script
 
 
 def test_venv_safe_local_pip_install_strips_user_flags_only_for_local_venv():

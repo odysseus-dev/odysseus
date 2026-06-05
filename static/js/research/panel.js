@@ -1103,8 +1103,10 @@ function _renderResult(job) {
     html += '<div class="research-job-sources">';
     for (const s of job.sources.slice(0, 10)) {
       const title = _esc(s.title || s.url || '');
-      const url = _esc(s.url || '');
-      html += `<a href="${url}" target="_blank" rel="noopener" class="research-source-link">${title}</a>`;
+      const url = _safeSourceHref(s.url);
+      html += url
+        ? `<a href="${url}" target="_blank" rel="noopener" class="research-source-link">${title}</a>`
+        : `<span class="research-source-link">${title}</span>`;
     }
     if (job.sources.length > 10) html += `<span class="research-source-more">+${job.sources.length - 10} more</span>`;
     html += '</div>';
@@ -1230,4 +1232,12 @@ function _esc(s) {
   const d = document.createElement('div');
   d.textContent = s || '';
   return d.innerHTML;
+}
+
+function _safeSourceHref(raw) {
+  try {
+    const parsed = new URL(String(raw || '').trim(), window.location.origin);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return _esc(parsed.href);
+  } catch {}
+  return '';
 }
