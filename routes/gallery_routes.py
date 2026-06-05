@@ -1316,6 +1316,7 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/image/sharpen")
     async def sharpen_image(request: Request):
         """Apply unsharp-mask sharpening to an image."""
+        require_privilege(request, "can_generate_images")
         body = await request.json()
         image_b64 = body.get("image")
         amount = body.get("amount", 50) / 100.0

@@ -3478,6 +3478,38 @@ body.bg-pattern-sparkles {
     .continue-btn:hover {
       opacity:0.8;
     }
+
+    /* Round-cap "Continue" affordance — a cohesive centered pill at the chat
+       bottom (not the bare red in-message stopped style). */
+    .rounds-exhausted {
+      justify-content:center;
+      gap:12px;
+      width:fit-content;
+      max-width:90%;
+      margin:14px auto 4px;
+      padding:7px 8px 7px 16px;
+      border:1px solid var(--border);
+      border-radius:999px;
+      background:color-mix(in srgb, var(--fg) 4%, transparent);
+      opacity:1;
+    }
+    .rounds-exhausted .rounds-exhausted-label {
+      color:color-mix(in srgb, var(--fg) 60%, transparent);
+      font-size:0.95em;
+    }
+    .rounds-exhausted .continue-btn {
+      font-size:0.9em;
+      font-weight:600;
+      opacity:1;
+      color:var(--bg);
+      background:var(--accent, var(--red));
+      border-radius:999px;
+      padding:4px 14px;
+      line-height:1.3;
+    }
+    .rounds-exhausted .continue-btn:hover {
+      opacity:0.88;
+    }
     .ctx-indicator {
       display:inline-flex; align-items:center; gap:1px;
       font-size:0.75rem;
@@ -8835,6 +8867,57 @@ body.hide-thinking .thinking-section { display: none !important; }
   list-style: none;
 }
 .agent-tool-output summary::-webkit-details-marker { display: none; }
+/* File-write diff — neutral chrome (not the red error tint) + colored lines */
+.agent-tool-diff {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 18%, transparent);
+}
+.agent-tool-diff summary {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.agent-tool-diff .diff-stat {
+  font-weight: 600;
+  opacity: 0.7;
+  font-family: var(--mono, monospace);
+}
+/* Collapsed diff summary: filename + +adds/−dels (theme green/red). */
+.agent-tool-diff summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.agent-tool-diff .diff-file {
+  font-family: var(--mono, monospace);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-tool-diff .diff-summary-stats {
+  margin-left: auto;
+  font-family: var(--mono, monospace);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.agent-tool-diff .diff-summary-stats .diff-stat-add { color: var(--green, #2ecc71); }
+.agent-tool-diff .diff-summary-stats .diff-stat-del { color: var(--red, #e74c3c); }
+.agent-tool-diff .diff-summary-stats .diff-stat-new { color: var(--accent, var(--red)); opacity: 0.85; }
+.diff-pre {
+  margin: 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-family: var(--mono, monospace);
+  font-size: 0.82em;
+  line-height: 1.45;
+}
+.diff-pre span { display: block; white-space: pre; }
+.diff-pre .diff-add { background: color-mix(in srgb, #2ecc71 22%, transparent); }
+.diff-pre .diff-del { background: color-mix(in srgb, #e74c3c 22%, transparent); }
+.diff-pre .diff-hunk { color: var(--accent); opacity: 0.85; }
+.diff-pre .diff-meta { opacity: 0.55; }
+.diff-pre .diff-ctx { opacity: 0.8; }
 /* Suppress the global `summary::before { content: '▶' }` left arrow — this
    section uses a right-side chevron instead. */
 .agent-tool-output summary::before { content: none; }
@@ -13976,8 +14059,28 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 .admin-model-form-row {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;       /* let buttons drop to a new row on narrow widths
+                             instead of overflowing the modal */
+  align-items: center;
 }
-.admin-model-form-row input { flex: 1; }
+.admin-model-form-row input {
+  flex: 1 1 180px;       /* api-key input takes the long axis but allows
+                             dropping below the buttons at small widths */
+  min-width: 0;          /* don't refuse to shrink past content width */
+}
+.admin-model-form-row select {
+  flex: 0 0 auto;
+}
+.admin-model-form-row button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+/* On narrow screens, give buttons their own row + push the Add button
+   to the right so it remains the obvious primary action. */
+@media (max-width: 540px) {
+  .admin-model-form-row input { flex-basis: 100%; }
+  .admin-model-form-row .admin-btn-add { margin-left: auto; }
+}
 .adm-ep-inline-msg {
   min-height: 16px;
   margin-top: 5px;
@@ -18136,8 +18239,12 @@ body.gallery-selecting .gallery-dl-btn,
   color: var(--fg-muted);
   letter-spacing: 0.2px;
 }
-/* "running" pill on a Serve-tab card when the model has a live serve task. */
-.cookbook-serve-running-pill {
+/* Status pills shown inline in a Serve-tab card title (next to the model
+   name) when the model has a live serve / download task. Shared base
+   class so "running" and "downloading" sit on the same row with the
+   same chrome; only color varies. */
+.cookbook-serve-running-pill,
+.cookbook-serve-downloading-pill {
   display: inline-block;
   margin-left: 6px;
   padding: 1px 7px;
@@ -18148,10 +18255,49 @@ body.gallery-selecting .gallery-dl-btn,
   letter-spacing: 0.3px;
   vertical-align: 2px;
   position: relative;
-  top: -1px;
+  top: 1px;          /* nudged down 2px from the old -1px so it sits
+                        flush with the cap-height of the title text */
+}
+.cookbook-serve-running-pill {
   color: var(--accent, var(--red));
   background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
+}
+.cookbook-serve-downloading-pill {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
+  opacity: 0.85;
+}
+.cookbook-serve-downloading-pill.is-stalled {
+  /* Stalled downloads stay visible but read as warning, not progress. */
+  color: var(--fg-muted, #888);
+  background: color-mix(in srgb, var(--fg-muted, #888) 10%, transparent);
+  border-color: color-mix(in srgb, var(--fg-muted, #888) 30%, transparent);
+  opacity: 1;
+}
+.cookbook-serve-running-pill.is-clickable {
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.cookbook-serve-running-pill.is-clickable:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+}
+/* Brief highlight on the matched task card when jumping from the
+   running pill, so the user can spot it among a long list. */
+.cookbook-task-flash {
+  animation: cookbook-task-flash-anim 1.6s ease-out;
+}
+@keyframes cookbook-task-flash-anim {
+  0%   { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+
+/* Cookbook header "downloading" status label sits 2px too far left
+   against the rest of the cookbook chrome — nudge it right. */
+#cookbook-bg-status {
+  left: 2px;
 }
 .cookbook-serve-dir-edit {
   font-size: 9px;
@@ -19281,6 +19427,11 @@ body.gallery-selecting .gallery-dl-btn,
   background: color-mix(in srgb, var(--fg) 7%, transparent);
   font-size: 12px;
   border-bottom: 1px solid color-mix(in srgb, var(--fg) 6%, transparent);
+  /* Pin the row so flex parents + Firefox mobile can't squeeze its height to 0,
+     which hides the type pill + model name and leaves only the sub-line +
+     output visible. */
+  flex-shrink: 0;
+  min-height: 32px;
 }
 .cookbook-task-type {
   text-transform: uppercase;
@@ -33447,8 +33598,15 @@ button.cal-view-btn {
    of days it covers within the row, --slot stacks parallel bars. */
 .cal-multiday {
   position: absolute;
-  left: calc(var(--col, 0) * (100% / 7));
-  width: calc(var(--span, 1) * (100% / 7));
+  /* Fractional offsets let timed events that cross midnight render at
+     true proportional width. start-frac shifts the left edge into the
+     first day; end-frac trims the right edge inside the last day.
+     All-day events default to (0, 1) and still fill whole columns. */
+  left: calc((var(--col, 0) + var(--start-frac, 0)) * (100% / 7));
+  width: calc(
+    (var(--span, 1) - var(--start-frac, 0) - (1 - var(--end-frac, 1)))
+    * (100% / 7)
+  );
   top: calc(2px + var(--slot, 0) * 12px);
   height: 11px;
   font-size: 8px;
@@ -35730,4 +35888,256 @@ body.theme-frosted .modal {
   /* Email compose rich-body. Medium (15px) zooms, so bump it; large (17px)
      is already ≥16px and never zoomed — leave it so we don't shrink it. */
   .doc-email-richbody.doc-font-m { font-size: 16px !important; }
+}
+
+/* GitHub Copilot device-flow connect block (model endpoints → API) */
+.adm-copilot-connect {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.adm-copilot-connect #adm-copilotStatus { flex-basis: 100%; margin-top: 0; }
+.adm-copilot-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.adm-copilot-wait {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+.adm-copilot-coderow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.adm-copilot-code-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.adm-copilot-code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  padding: 4px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  user-select: all;
+}
+.adm-copilot-copy { margin-left: auto; }
+.adm-copilot-auth {
+  text-align: center;
+  text-decoration: none;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+.adm-copilot-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+/* ── Workspace picker ───────────────────────────────────────────── */
+/* Layout (width/flex column/max-height) inherited from base .modal-content. */
+/* Editable path/address bar: reuses .styled-prompt-input for border/bg/radius/
+   focus ring (set in the element's class list). Overrides only the deltas:
+   mono font, and full-bleed via flex stretch with no horizontal margin (the
+   modal-content's 10px padding is the gutter) instead of the base width:100%,
+   which overflowed against the overflow:auto scrollbar. */
+.workspace-cur {
+  align-self: stretch;
+  width: auto;
+  min-width: 0;
+  margin: 4px 0 8px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+}
+/* flex/overflow inherited from base .modal-body; only the padding differs. */
+.workspace-body { padding: 6px 0; }
+.workspace-row {
+  padding: 7px 18px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.workspace-row > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workspace-row-icon { flex-shrink: 0; opacity: 0.75; }
+.workspace-row:hover {
+  background: color-mix(in srgb, var(--border) 20%, transparent);
+}
+.workspace-up { opacity: 0.7; }
+.workspace-empty { padding: 14px 18px; opacity: 0.5; font-size: 13px; }
+.workspace-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+}
+/* Cookbook serve panel: Launch + ^ split button pair */
+.hwfit-serve-launch-group {
+  display: inline-flex;
+  align-items: stretch;
+  vertical-align: middle;
+}
+.hwfit-serve-launch-group .hwfit-serve-launch {
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  margin-right: 0 !important;
+}
+.hwfit-serve-launch-group .hwfit-serve-schedule-arrow {
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-left: 1px solid var(--border) !important;
+  padding: 0 8px !important;
+  min-width: 26px;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Schedule form — mounted inside the cookbook serve panel. Uses the
+   theme tokens (--bg, --panel, --border, --accent, --red) so it
+   matches the rest of the cookbook chrome instead of inline whites. */
+.hwfit-schedule-form {
+  margin: 10px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hwfit-schedule-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.95;
+  flex-wrap: wrap;
+}
+.hwfit-schedule-title svg { opacity: 0.7; flex-shrink: 0; }
+.hwfit-schedule-title-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hwfit-schedule-title-spacer { flex: 1; min-width: 8px; }
+.hwfit-schedule-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.hwfit-schedule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.hwfit-schedule-field input[type="time"] {
+  font: inherit;
+  min-width: 90px;
+}
+.hwfit-schedule-label {
+  font-size: 11px;
+  opacity: 0.75;
+}
+.hwfit-sched-days {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.hwfit-sched-day-chip {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.hwfit-sched-day-chip:hover { border-color: var(--accent, var(--red)); }
+.hwfit-sched-day-chip.is-on {
+  background: var(--accent, var(--red));
+  color: var(--panel, #fff);
+  border-color: var(--accent, var(--red));
+}
+.hwfit-schedule-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.hwfit-schedule-actions-spacer { flex: 1; }
+
+/* Days row hosts the day-chip strip on the left and the Cancel / Save
+   action buttons on the right. The spacer between them pushes the
+   actions to the right edge. */
+.hwfit-schedule-days-row {
+  align-items: center;
+}
+/* Cancel + Save sit on the right side of the days row with matching
+   icon-plus-label chrome. */
+.hwfit-sched-cancel,
+.hwfit-sched-save {
+  display: inline-flex !important;
+  align-items: center;
+}
+.hwfit-schedule-mirror-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  opacity: 0.9;
+  cursor: pointer;
+  user-select: none;
+}
+.hwfit-schedule-mirror-label { white-space: nowrap; }
+.hwfit-schedule-mirror-switch { transform: scale(0.85); transform-origin: left center; }
+.hwfit-sched-err {
+  font-size: 12px;
+  color: var(--red, #ff6b6b);
+  display: none;
+}
+.hwfit-sched-err.is-visible { display: block; }
+@media (max-width: 600px) {
+  .hwfit-schedule-row { gap: 8px; }
+  .hwfit-sched-day-chip { width: 36px; height: 36px; font-size: 11px; }
+}
+
+/* Brief outline flash on a note card when it's the target of a
+   #note-<id> link click from chat — same pattern as the cookbook
+   task flash, just scoped to .note-card. */
+.note-card-flash {
+  animation: note-card-flash-anim 1.6s ease-out;
+}
+@keyframes note-card-flash-anim {
+  0%   { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
+  100% { box-shadow: 0 0 0 2px transparent; }
 }

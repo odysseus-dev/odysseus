@@ -11,7 +11,7 @@ import subprocess
 from typing import Optional, Tuple, Dict
 from urllib.parse import urlparse, urlunparse
 
-from src.database import SessionLocal, ModelEndpoint
+from core.database import SessionLocal, ModelEndpoint
 from src.llm_core import _detect_provider, _host_match
 
 logger = logging.getLogger(__name__)
@@ -194,6 +194,9 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
             headers["x-api-key"] = api_key
         headers["anthropic-version"] = "2023-06-01"
         return headers
+    if provider == "copilot":
+        from src.copilot import copilot_headers
+        return copilot_headers(api_key)
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     if provider == "openrouter":
@@ -285,6 +288,8 @@ def resolve_endpoint(
         # If no (usable) model specified, pick the first enabled chat model.
         if not model:
             model = _first_chat_model(_endpoint_enabled_models(ep)) or ""
+        if not model and not fallback_model:
+            logger.warning('[resolve_endpoint] no usable model (all models hidden or list empty)')
 
         return chat_url, model or fallback_model, headers
     except Exception as e:

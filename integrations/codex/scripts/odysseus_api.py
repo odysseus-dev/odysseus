@@ -17,6 +17,15 @@ def _usage() -> int:
     print("  odysseus_api.py todos add TITLE", file=sys.stderr)
     print("  odysseus_api.py emails list [limit]", file=sys.stderr)
     print("  odysseus_api.py emails read UID", file=sys.stderr)
+    print("  odysseus_api.py cookbook tasks", file=sys.stderr)
+    print("  odysseus_api.py cookbook servers", file=sys.stderr)
+    print("  odysseus_api.py cookbook cached [HOST]", file=sys.stderr)
+    print("  odysseus_api.py cookbook presets", file=sys.stderr)
+    print("  odysseus_api.py cookbook output SESSION_ID [tail]", file=sys.stderr)
+    print("  odysseus_api.py cookbook serve REPO_ID 'CMD' [REMOTE_HOST]", file=sys.stderr)
+    print("  odysseus_api.py cookbook preset NAME", file=sys.stderr)
+    print("  odysseus_api.py cookbook adopt SESSION_ID MODEL [HOST] [PORT]", file=sys.stderr)
+    print("  odysseus_api.py cookbook stop SESSION_ID", file=sys.stderr)
     print("  odysseus_api.py METHOD /api/codex/path [json-body]", file=sys.stderr)
     return 2
 
@@ -69,6 +78,61 @@ def main() -> int:
         elif action == "read" and len(sys.argv) >= 4:
             method = "GET"
             path = f"/api/codex/emails/{sys.argv[3]}"
+            body = None
+        else:
+            return _usage()
+    elif command == "cookbook":
+        if len(sys.argv) < 3:
+            return _usage()
+        action = sys.argv[2].lower()
+        if action == "tasks":
+            method = "GET"
+            path = "/api/codex/cookbook/tasks"
+            body = None
+        elif action == "servers":
+            method = "GET"
+            path = "/api/codex/cookbook/servers"
+            body = None
+        elif action == "output" and len(sys.argv) >= 4:
+            method = "GET"
+            sid = sys.argv[3]
+            tail = sys.argv[4] if len(sys.argv) >= 5 else "400"
+            path = f"/api/codex/cookbook/output/{sid}?tail={tail}"
+            body = None
+        elif action == "cached":
+            method = "GET"
+            if len(sys.argv) >= 4:
+                from urllib.parse import quote
+                path = f"/api/codex/cookbook/cached?host={quote(sys.argv[3])}"
+            else:
+                path = "/api/codex/cookbook/cached"
+            body = None
+        elif action == "presets":
+            method = "GET"
+            path = "/api/codex/cookbook/presets"
+            body = None
+        elif action == "preset" and len(sys.argv) >= 4:
+            from urllib.parse import quote
+            method = "POST"
+            path = f"/api/codex/cookbook/preset/{quote(sys.argv[3])}"
+            body = None
+        elif action == "adopt" and len(sys.argv) >= 5:
+            method = "POST"
+            path = "/api/codex/cookbook/adopt"
+            payload = {"tmux_session": sys.argv[3], "model": sys.argv[4]}
+            if len(sys.argv) >= 6: payload["host"] = sys.argv[5]
+            if len(sys.argv) >= 7: payload["port"] = int(sys.argv[6])
+            body = json.dumps(payload)
+        elif action == "serve" and len(sys.argv) >= 5:
+            method = "POST"
+            path = "/api/codex/cookbook/serve"
+            payload = {"repo_id": sys.argv[3], "cmd": sys.argv[4]}
+            if len(sys.argv) >= 6:
+                payload["remote_host"] = sys.argv[5]
+            body = json.dumps(payload)
+        elif action == "stop" and len(sys.argv) >= 4:
+            method = "POST"
+            path = f"/api/codex/cookbook/stop/{sys.argv[3]}"
             body = None
         else:
             return _usage()

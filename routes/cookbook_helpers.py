@@ -546,6 +546,13 @@ def _append_serve_preflight_exit_lines(runner_lines: list[str], *, keep_shell_op
     runner_lines.append('if [ -n "$ODYSSEUS_PREFLIGHT_EXIT" ]; then')
     runner_lines.append('  echo ""; echo "=== Process exited with code $ODYSSEUS_PREFLIGHT_EXIT ==="')
     if keep_shell_open:
+        # Decouple the post-crash interactive shell from the persistent log
+        # file. fds 3/4 were saved BEFORE the tee redirect at the top of
+        # the runner; restoring them here means the neofetch banner the
+        # user's .zshrc prints lands on the tmux pane only, not in the
+        # log file the agent's tail_serve_output reads.
+        runner_lines.append('  exec 1>&3 2>&4 3>&- 4>&- 2>/dev/null || true')
+        runner_lines.append('  sleep 0.2  # let tee child flush + exit')
         runner_lines.append('  exec "${SHELL:-/bin/bash}"')
     else:
         runner_lines.append('  exit "$ODYSSEUS_PREFLIGHT_EXIT"')
@@ -563,7 +570,11 @@ def _append_serve_exit_code_lines(
     if is_pip_install:
         runner_lines.append('if [ $ODYSSEUS_CMD_EXIT -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; fi')
     if keep_shell_open:
-        runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="; exec "${SHELL:-/bin/bash}"')
+        runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="')
+        # See preflight branch above for the rationale on restoring fds 3/4.
+        runner_lines.append('exec 1>&3 2>&4 3>&- 4>&- 2>/dev/null || true')
+        runner_lines.append('sleep 0.2  # let tee child flush + exit')
+        runner_lines.append('exec "${SHELL:-/bin/bash}"')
     else:
         runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="')
         runner_lines.append('exit "$ODYSSEUS_CMD_EXIT"')

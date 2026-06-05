@@ -37,6 +37,42 @@ def test_local_windows_session_commands_use_local_powershell_log_dir():
     assert ": `powershell -Command \"${ps}\"`;" in source
 
 
+def test_dep_install_success_recognized_from_exit_sentinel():
+    """A pip dependency install reports success via the runner's exit-0
+    sentinel / pip's "Successfully installed" line, not the HuggingFace
+    download markers. The shared helper must key off those, so an install
+    whose tmux pane is gone isn't misread as crashed."""
+    source = _read("static/js/cookbookRunning.js")
+
+    assert "function _depInstallSucceeded(output) {" in source
+    assert "=== Process exited with code" in source
+    assert "Successfully installed" in source
+
+
+def test_session_gone_heuristic_honors_dep_install_success():
+    """The reconnect loop's session-gone branch (download tasks need an HF
+    marker to look successful) must also accept a finished dependency install,
+    otherwise a clean pip install with no HF markers is marked crashed."""
+    source = _read("static/js/cookbookRunning.js")
+
+    assert "const depInstallSucceeded = !!task.payload?._dep && _depInstallSucceeded(lastOutput);" in source
+    assert (
+        "const looksSuccessful = depInstallSucceeded "
+        "|| (task.type === 'download' ? downloadLooksSuccessful : serveLooksReady);"
+    ) in source
+
+
+def test_background_poll_recovers_done_for_stopped_dependency_install():
+    """When the backend reports a finished dependency install as "stopped"
+    (its pip package is never in the HF cache the dead-session check inspects),
+    the reconciler must recover "done" from the retained output instead of
+    downgrading the card to crashed."""
+    source = _read("static/js/cookbookRunning.js")
+
+    assert "const depDone = !!task.payload?._dep && _depInstallSucceeded(task.output);" in source
+    assert "depDone ? 'done' : (task.type === 'download' ? 'crashed' : 'stopped')" in source
+
+
 def test_dependency_install_payload_keeps_env_path_for_refresh():
     source = _read("static/js/cookbook.js")
 
