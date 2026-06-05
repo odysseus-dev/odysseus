@@ -1824,6 +1824,39 @@ function _pickSkillBundleZip() {
   fileInput.click();
 }
 
+function _pickSkillDocument() {
+  const fileInput = document.getElementById('skill-import-document-file');
+  if (!fileInput) return;
+  fileInput.click();
+}
+
+async function _handleSkillDocument(file) {
+  if (!file) return;
+  const btn = document.getElementById('skill-import-document-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    uiModule.showToast('Distilling document into skill…');
+    const res = await fetch(`${API}/api/skills/import-from-document`, {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+    await loadSkills();
+    const name = data.skill?.name || 'skill';
+    uiModule.showToast(`Imported ${name} (${data.files || 1} file(s))`);
+    if (name) openSkill(name);
+  } catch (err) {
+    uiModule.showError('Import failed: ' + err.message);
+  } finally {
+    if (btn) btn.disabled = false;
+    const fileInput = document.getElementById('skill-import-document-file');
+    if (fileInput) fileInput.value = '';
+  }
+}
+
 async function _handleSkillBundleZip(file) {
   if (!file) return;
   const btn = document.getElementById('skill-import-bundle-btn');
@@ -1935,6 +1968,11 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('skill-import-bundle-file')?.addEventListener('change', (e) => {
     const file = e.target.files?.[0];
     if (file) _handleSkillBundleZip(file);
+  });
+  document.getElementById('skill-import-document-btn')?.addEventListener('click', _pickSkillDocument);
+  document.getElementById('skill-import-document-file')?.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (file) _handleSkillDocument(file);
   });
   document.getElementById('add-skill-btn')?.addEventListener('click', addSkill);
   document.getElementById('skills-search')?.addEventListener('input', renderSkillsList);

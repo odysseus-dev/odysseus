@@ -1274,6 +1274,52 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         _fire_skill_added(user)
         return {"ok": True, "skill": entry, "files": len(files)}
 
+    @router.post("/import-from-document")
+    async def import_skill_from_document(request: Request, file: UploadFile = File(...)):
+        """Distill a PDF or text document into a SKILL.md bundle (book-to-skill style)."""
+        require_admin(request)
+        user = _owner(request)
+        from services.memory.skill_from_document import (
+            DOCUMENT_MAX_BYTES,
+            distill_document_to_bundle,
+            extract_upload_to_text,
+        )
+        from services.memory.skill_importer import SkillImportError
+        from src.endpoint_resolver import resolve_endpoint
+
+        filename = (file.filename or "document").strip()
+        try:
+            data = await read_upload_limited(file, DOCUMENT_MAX_BYTES, "Skill document")
+            text = extract_upload_to_text(data, filename)
+            url, model, headers = resolve_endpoint("utility", owner=user)
+            if not url or not model:
+                raise HTTPException(
+                    400,
+                    "No utility model configured. Set a utility model in Settings.",
+                )
+            files, _slug = await distill_document_to_bundle(
+                text,
+                url=url,
+                model=model,
+                headers=headers,
+                source_name=filename,
+            )
+            entry = skills_manager.import_bundle_from_files(
+                files,
+                owner=user,
+                source_url=f"document:{filename}",
+            )
+        except SkillImportError as e:
+            raise HTTPException(400, str(e)) from e
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("skill document import failed: %s", e)
+            raise HTTPException(500, "Skill import failed") from e
+
+        _fire_skill_added(user)
+        return {"ok": True, "skill": entry, "files": len(files)}
+
     @router.post("/add")
     async def add_skill(request: Request, body: SkillAddRequest):
         user = _owner(request)
