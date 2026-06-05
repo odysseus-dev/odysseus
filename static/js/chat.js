@@ -1611,10 +1611,11 @@ import createResearchSynapse from './researchSynapse.js';
                       .replace(/<\|channel>response\s*\n?/gi, '')
                       .replace(/<channel\|>/gi, '');
                     thinkText = thinkText.replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
-                    _liveThinkInner.innerHTML = markdownModule.mdToHtml(thinkText);
-                    // Keep thinking box scrolled to bottom
                     var thinkBox = _liveThinkInner.closest('.thinking-content');
-                    if (thinkBox) thinkBox.scrollTop = thinkBox.scrollHeight;
+                    var previousThinkScrollTop = thinkBox ? thinkBox.scrollTop : 0;
+                    _liveThinkInner.innerHTML = markdownModule.mdToHtml(thinkText);
+                    // Preserve the user's position while reasoning tokens stream in.
+                    if (thinkBox) thinkBox.scrollTop = previousThinkScrollTop;
                   }
                   uiModule.scrollHistory();
                   continue;
