@@ -126,10 +126,28 @@ def needs_auto_name(name: str) -> bool:
     return False
 
 
+def _heuristic_title(text: str) -> str:
+    """Derive a short session title from the message text itself — no LLM.
+
+    Used for in-process local providers where a title round-trip costs a full
+    prompt prefill on the only GPU, right when the user is most likely to send
+    their next message.
+    """
+    t = re.sub(r"\s+", " ", str(text or "")).strip()
+    t = t.replace("*", "").replace("`", "")  # inline markdown emphasis/code
+    t = t.strip("\"'").lstrip("#>- ").strip()
+    t = " ".join(t.split(" ")[:6])
+    if len(t) > 48:
+        t = t[:48].rsplit(" ", 1)[0] or t[:48]
+    t = t.rstrip(" .,;:!?")
+    return (t[:1].upper() + t[1:]) if t else ""
+
+
 async def auto_name_session(session_manager, sess):
     """Generate a short title for a session from its first user message."""
     try:
         from src.llm_core import llm_call_async
+        from src.nobodywho_provider import is_nobodywho_url
         from src.task_endpoint import resolve_task_endpoint
 
         # Find first user message
@@ -154,6 +172,17 @@ async def auto_name_session(session_manager, sess):
         )
         if not t_model:
             logger.debug("[auto-name] No model provided, skipping")
+            return
+
+        if is_nobodywho_url(t_url):
+            # NobodyWho runs in-process on this machine's only GPU: an LLM
+            # title would re-prefill the whole model right after the first
+            # answer and queue ahead of the user's next message. Derive the
+            # title from the message text instead.
+            title = _heuristic_title(first_msg)
+            if title and len(title) < 80:
+                session_manager.update_session_name(sess.id, title)
+                logger.info(f"Auto-named session {sess.id} (heuristic): {title}")
             return
 
         # max_tokens big enough that reasoning models (Minimax M2,
