@@ -443,7 +443,7 @@ def setup_cookbook_routes() -> APIRouter:
         # throughput. Retries set disable_hf_transfer to fall back to the plain,
         # slower-but-reliable downloader (resumes cleanly from the .incomplete files).
         # Use `python3 -m pip` not `pip` — macOS has no bare `pip` command.
-        lines.append(f"command -v hf >/dev/null 2>&1 || {_pip_install_fallback_chain('huggingface_hub', upgrade=True)}")
+        lines.append(f"hf --help >/dev/null 2>&1 || {_pip_install_fallback_chain('huggingface_hub', upgrade=True)}")
         if req.disable_hf_transfer:
             lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
             lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=4")
@@ -478,8 +478,8 @@ def setup_cookbook_routes() -> APIRouter:
                 ps_lines.append(_safe_env_prefix(req.env_prefix))
             # Try hf CLI, fall back to Python huggingface_hub, then auto-install
             ps_lines.append('try {{')
-            ps_lines.append('  $hfPath = Get-Command hf -ErrorAction SilentlyContinue')
-            ps_lines.append('  if ($hfPath) {{')
+            ps_lines.append('  hf --help 2>$null')
+            ps_lines.append('  if ($LASTEXITCODE -eq 0) {{')
             # Pipe $null to stdin to suppress interactive "update available? [Y/n]" prompt
             ps_lines.append(f'    $null | {hf_cmd}')
             ps_lines.append('  }} else {{')
@@ -546,7 +546,7 @@ def setup_cookbook_routes() -> APIRouter:
             # hf_transfer because the Rust parallel path is fast but has been
             # flaky near the end of very large multi-file downloads.
             # Use --break-system-packages on PEP-668 systems (Arch, newer Debian) so it doesn't bail.
-            runner_lines.append(f"command -v hf >/dev/null 2>&1 || {_pip_install_fallback_chain('huggingface_hub', python_cmd='pip', upgrade=True)}")
+            runner_lines.append(f"hf --help >/dev/null 2>&1 || {_pip_install_fallback_chain('huggingface_hub', python_cmd='pip', upgrade=True)}")
             if req.disable_hf_transfer:
                 runner_lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
                 runner_lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=4")
@@ -559,7 +559,7 @@ def setup_cookbook_routes() -> APIRouter:
             # token (the token is masked — we only print applied / not-set).
             runner_lines.append(_HF_TOKEN_STATUS_SNIPPET)
             # Try hf CLI first, fall back to Python huggingface_hub, then auto-install
-            runner_lines.append('if command -v hf &>/dev/null; then')
+            runner_lines.append('if hf --help &>/dev/null; then')
             # < /dev/null suppresses interactive "update available? [Y/n]" prompt
             runner_lines.append(f'  {hf_cmd} < /dev/null')
             runner_lines.append('elif python3 -c "import huggingface_hub" 2>/dev/null; then')
