@@ -603,15 +603,28 @@ def setup_cookbook_routes() -> APIRouter:
             # Show whether the HF token reached this run (masked) — tells a gated
             # "not authorized" failure apart from a missing token.
             lines.append(_HF_TOKEN_STATUS_SNIPPET)
+            lines.append('if hf --help &>/dev/null; then')
             if IS_WINDOWS:
-                # Detached path: no controlling TTY, so skip `< /dev/null`
-                # (handled by Popen stdin=DEVNULL) and don't keep a shell open.
-                lines.append(hf_cmd)
-                lines.append('_ec=$?; if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec)"; fi')
+                lines.append(f"  {hf_cmd}")
             else:
-                # < /dev/null suppresses interactive "update available? [Y/n]" prompt
-                lines.append(f"{hf_cmd} < /dev/null")
-                lines.append('_ec=$?; if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec)"; fi')
+                lines.append(f"  {hf_cmd} < /dev/null")
+            lines.append('elif python3 -c "import huggingface_hub" 2>/dev/null; then')
+            lines.append('  echo "hf CLI not found, using Python huggingface_hub..."')
+            lines.append(f'  python3 -c "import os; from huggingface_hub import snapshot_download; snapshot_download(\'{req.repo_id}\'{_dl_pyarg}, max_workers={4 if req.disable_hf_transfer else 8})"')
+            lines.append('else')
+            lines.append('  echo "Installing huggingface-hub and dependencies..."')
+            lines.append('  python3 -m pip install --no-deps -q huggingface-hub 2>/dev/null')
+            if req.disable_hf_transfer:
+                lines.append('  python3 -m pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests 2>/dev/null')
+                lines.append('  export HF_HUB_ENABLE_HF_TRANSFER=0')
+            else:
+                lines.append('  python3 -m pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests hf_transfer 2>/dev/null')
+                lines.append("  python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
+            lines.append(f'  python3 -c "import os; from huggingface_hub import snapshot_download; snapshot_download(\'{req.repo_id}\'{_dl_pyarg}, max_workers={4 if req.disable_hf_transfer else 8})"')
+            lines.append('fi')
+            lines.append('_ec=$?; if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec)"; fi')
+
+            if not IS_WINDOWS:
                 lines.append(f"rm -f '{wrapper_script}'")
                 lines.append('exec "${SHELL:-/bin/bash}"')
                 wrapper_script.write_text("\n".join(lines) + "\n", encoding="utf-8")
