@@ -1,0 +1,157 @@
+name: Build & Push (latest + semver tags)
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+    paths:
+      - 'app.py'
+      - 'core/**'
+      - 'routes/**'
+      - 'src/**'
+      - 'services/**'
+      - 'companion/**'
+      - 'scripts/**'
+      - 'static/**'
+      - 'requirements*.txt'
+      - 'Dockerfile'
+      - 'docker/**'
+      - 'pyproject.toml'
+      - '.github/path-filters.yaml'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/detect-changes.yaml'
+      - '.github/workflows/latest.yaml'
+      - '.github/workflows/build-image.yaml'
+  workflow_dispatch:
+
+concurrency:
+  group: build-latest
+  cancel-in-progress: false
+
+jobs:
+  detect-changes:
+    uses: ./.github/workflows/detect-changes.yaml
+
+  detect-release:
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect version changes
+        id: check
+        run: |
+          set -euo pipefail
+
+          read_version() {
+            grep -E '^APP_VERSION\s*=' core/constants.py | sed -E 's/.*"([^"]+)".*/\1/'
+          }
+
+          VERSION=$(read_version)
+          TAG="v${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+          SHOULD_BUILD=false
+
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            SHOULD_BUILD=true
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            SHOULD_BUILD=true
+          else
+            if ! git rev-parse HEAD^ >/dev/null 2>&1; then
+              SHOULD_BUILD=true
+            else
+              if git diff HEAD^ HEAD --name-only | grep -q '^core/constants\.py$'; then
+                if ! PREV=$(git show HEAD^:core/constants.py 2>/dev/null | grep -E '^APP_VERSION\s*=' | sed -E 's/.*"([^"]+)".*/\1/'); then
+                  SHOULD_BUILD=true
+                elif [ "$VERSION" != "$PREV" ]; then
+                  SHOULD_BUILD=true
+                fi
+              fi
+            fi
+
+            if [[ "${{ github.event_name }}" == "push" ]]; then
+              if ! git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+                SHOULD_BUILD=true
+              fi
+            fi
+          fi
+
+          echo "should_build=${SHOULD_BUILD}" >> "$GITHUB_OUTPUT"
+
+  skip:
+    needs: [detect-changes, detect-release]
+    if: >-
+      needs.detect-changes.outputs.changed != 'true'
+      && needs.detect-release.outputs.should_build != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: No release build required
+        run: echo "No app changes or release trigger detected. Skipping build."
+
+  ci:
+    needs: [detect-changes, detect-release]
+    if: >-
+      needs.detect-changes.outputs.changed == 'true'
+      || needs.detect-release.outputs.should_build == 'true'
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+    with:
+      skip_detect: true
+      require_scope: true
+      run: 'true'
+
+  build:
+    needs: [ci, detect-release]
+    if: needs.ci.result == 'success' && needs.detect-release.outputs.should_build == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yaml
+    secrets: inherit
+    with:
+      image_name: ${{ github.repository }}
+      tags: |
+        type=raw,value=latest
+        type=raw,value=next
+        type=semver,pattern=v{{version}},value=${{ needs.detect-release.outputs.version }}
+        type=semver,pattern=v{{major}}.{{minor}},value=${{ needs.detect-release.outputs.version }}
+        type=semver,pattern=v{{major}},value=${{ needs.detect-release.outputs.version }}
+      labels: |
+        org.opencontainers.image.version=${{ needs.detect-release.outputs.version }}
+
+  tag-release:
+    needs: [ci, detect-release, build]
+    if: >-
+      needs.ci.result == 'success'
+      && needs.detect-release.outputs.should_build == 'true'
+      && !startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create release tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          TAG="${{ needs.detect-release.outputs.tag }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists, skipping"
+          else
+            git tag -a "$TAG" -m "Release ${TAG}"
+            git push origin "$TAG"
+          fi

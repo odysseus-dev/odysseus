@@ -1,0 +1,49 @@
+name: Detect Changes
+
+on:
+  workflow_call:
+    outputs:
+      changed:
+        description: App or build-related paths changed
+        value: ${{ jobs.filter.outputs.changed }}
+
+jobs:
+  filter:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.scope.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed paths
+        id: filter
+        if: >-
+          github.event_name != 'workflow_dispatch'
+          && !startsWith(github.ref, 'refs/tags/v')
+        uses: dorny/paths-filter@v3
+        with:
+          filters: .github/path-filters.yaml
+
+      - name: Resolve scope
+        id: scope
+        env:
+          FILTER_CHANGED: ${{ steps.filter.outputs.app }}
+        run: |
+          set -euo pipefail
+
+          changed=false
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            changed=true
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            changed=true
+          elif ! git rev-parse HEAD^ >/dev/null 2>&1; then
+            changed=true
+          else
+            changed=${FILTER_CHANGED:-false}
+          fi
+
+          echo "changed=${changed}" >> "$GITHUB_OUTPUT"

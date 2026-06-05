@@ -1,0 +1,89 @@
+name: Build Image (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: Container image name (without registry/tag)
+        required: true
+        type: string
+      tags:
+        description: Newline separated list of metadata-action tag definitions
+        required: true
+        type: string
+      labels:
+        description: Extra metadata-action label lines (newline separated)
+        required: false
+        type: string
+        default: ''
+      build_args:
+        description: Newline separated docker build args (KEY=VALUE)
+        required: false
+        type: string
+        default: ''
+
+env:
+  REGISTRY: ghcr.io
+  DOCKER_BUILDKIT: 1
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read app version
+        id: version
+        run: |
+          VERSION=$(grep -E '^APP_VERSION\s*=' core/constants.py | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "value=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image name
+        id: image
+        shell: bash
+        run: |
+          IMAGE_NAME="${{ inputs.image_name }}"
+          echo "name=${IMAGE_NAME,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          tags: ${{ inputs.tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repositoryUrl }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.version.outputs.value }}
+            ${{ inputs.labels }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.value }}
+            ${{ inputs.build_args }}
+          cache-from: type=gha,scope=odysseus
+          cache-to: type=gha,mode=max,scope=odysseus

@@ -13,6 +13,26 @@ Odysseus has two branches:
 
 End-users cloning the repo will land on `dev` by default. To run the curated/stable version: `git checkout main` after clone.
 
+## Container images (CI/CD)
+
+GitHub Actions publishes pre-built images to `ghcr.io/pewdiepie-archdaemon/odysseus` when app or Docker-related files change (see `.github/path-filters.yaml`). Doc-only changes do not trigger image builds.
+
+| Trigger | Image tag(s) | Who cares |
+|---|---|---|
+| Push to `main` (no version bump) | `:next` | Early adopters tracking curated `main` |
+| Version bump on `main` | `:latest`, `:v1.2.3`, `:v1.2`, `:v1` | End users |
+| PR to `dev` + `deploy` label | `:pr-{number}` | Reviewers needing a runnable preview |
+
+Pushes to `dev` do **not** publish container images — only `main` and labeled PRs do.
+
+**Releasing (maintainers):**
+
+1. Bump `APP_VERSION` in `core/constants.py` (single source of truth; `/api/version` reads it).
+2. Fast-forward `main` to the stable `dev` commit.
+3. CI on `main` detects the version change, builds semver-tagged images, and creates git tag `v{version}`.
+
+Non-release pushes to `main` update the rolling `:next` image instead.
+
 ## Before You Start
 
 - Search existing issues and pull requests before opening a new one.
@@ -29,6 +49,17 @@ git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
 cp .env.example .env
 docker compose up -d --build
+```
+
+Pre-built images (no local build required):
+
+```bash
+# Rolling main build (non-release pushes to main)
+docker pull ghcr.io/pewdiepie-archdaemon/odysseus:next
+
+# Stable release (version bump on main)
+docker pull ghcr.io/pewdiepie-archdaemon/odysseus:latest
+# or pin: ghcr.io/pewdiepie-archdaemon/odysseus:v0.9.1
 ```
 
 Manual development uses Python 3.11+:
@@ -71,6 +102,7 @@ Good pull requests usually include:
 - Manual test steps or automated test results from running the actual app, not just the test suite.
 - Screenshots or short recordings for UI changes.
 - Links to related issues, for example `Fixes #123`.
+- To request a container build for review, add the `deploy` label after CI is green. The workflow publishes `ghcr.io/pewdiepie-archdaemon/odysseus:pr-{n}` and appends pull instructions to the PR description. Only runs when app or Docker-related files changed.
 
 Please keep PRs small. Large PRs that mix unrelated cleanup, formatting, refactors, and behavior changes are much harder to review.
 

@@ -1,40 +1,107 @@
 name: CI
 
 on:
+  workflow_call:
+    inputs:
+      skip_detect:
+        description: Use the `run` input instead of running path detection
+        type: boolean
+        default: false
+      run:
+        description: Run checks (true/false); used when skip_detect is true
+        type: string
+        default: 'false'
+      require_scope:
+        description: Fail when the app is not in scope (for deploy/build workflows)
+        type: boolean
+        default: false
+    outputs:
+      changed:
+        description: App was in CI scope
+        value: ${{ jobs.resolve-scope.outputs.changed }}
   push:
-    branches: [main]
+    branches: [dev, main]
   pull_request:
 
-# Least privilege: none of the jobs write to the repo.
 permissions:
   contents: read
 
-# Cancel superseded runs on the same ref to save Actions minutes.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  python-syntax:
-    name: Python syntax (compileall)
+  detect-changes:
+    if: github.event_name == 'workflow_call' && !inputs.skip_detect
+    uses: ./.github/workflows/detect-changes.yaml
+
+  resolve-scope:
+    needs: detect-changes
+    if: >-
+      always()
+      && (needs.detect-changes.result == 'success' || needs.detect-changes.result == 'skipped')
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.scope.outputs.changed }}
+    steps:
+      - name: Resolve CI scope
+        id: scope
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" != "workflow_call" ]]; then
+            changed=true
+          elif [[ "${{ inputs.skip_detect }}" == "true" ]]; then
+            changed="${{ inputs.run }}"
+          else
+            changed="${{ needs.detect-changes.outputs.changed }}"
+          fi
+
+          echo "changed=${changed}" >> "$GITHUB_OUTPUT"
+
+      - name: Require app in scope
+        if: inputs.require_scope == true
+        env:
+          CHANGED: ${{ steps.scope.outputs.changed }}
+        run: |
+          set -euo pipefail
+          if [[ "$CHANGED" != "true" ]]; then
+            echo "::error::No app or build-related changes detected for this changeset."
+            exit 1
+          fi
+
+  no-changes:
+    needs: resolve-scope
+    if: >-
+      needs.resolve-scope.result == 'success'
+      && needs.resolve-scope.outputs.changed != 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+      - name: Skip checks
+        run: echo "No app or docker changes detected. Checks skipped."
+
+  python-syntax:
+    name: Python syntax (compileall)
+    needs: resolve-scope
+    if: needs.resolve-scope.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      # Byte-compile sources — catches syntax errors without installing deps.
       - run: python -m compileall -q app.py core routes src services scripts tests
 
   node-syntax:
     name: JS syntax (node --check)
+    needs: resolve-scope
+    if: needs.resolve-scope.outputs.changed == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      # Syntax-check our own JS (skip vendored libs in static/lib).
       - name: node --check
         run: |
           shopt -s globstar nullglob
@@ -44,17 +111,16 @@ jobs:
 
   python-tests:
     name: Python tests (pytest)
+    needs: resolve-scope
+    if: needs.resolve-scope.outputs.changed == 'true'
     runs-on: ubuntu-latest
-    # Informational for now: the suite has known flaky / environment-dependent
-    # failures (test isolation + embedding-model assertions). Tracked under the
-    # ROADMAP "fresh install smoke tests" item; make this required once green.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
-      - run: mkdir -p data  # sqlite DB lives at ./data/app.db
+      - run: mkdir -p data
       - run: python -m pytest -q

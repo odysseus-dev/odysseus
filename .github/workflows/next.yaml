@@ -1,0 +1,119 @@
+name: Build & Push (next)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app.py'
+      - 'core/**'
+      - 'routes/**'
+      - 'src/**'
+      - 'services/**'
+      - 'companion/**'
+      - 'scripts/**'
+      - 'static/**'
+      - 'requirements*.txt'
+      - 'Dockerfile'
+      - 'docker/**'
+      - 'pyproject.toml'
+      - '.github/path-filters.yaml'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/detect-changes.yaml'
+      - '.github/workflows/next.yaml'
+      - '.github/workflows/build-image.yaml'
+  workflow_dispatch:
+
+concurrency:
+  group: build-next
+  cancel-in-progress: true
+
+jobs:
+  detect-changes:
+    uses: ./.github/workflows/detect-changes.yaml
+
+  detect-release:
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    outputs:
+      is_release: ${{ steps.release.outputs.is_release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect release build
+        id: release
+        run: |
+          set -euo pipefail
+
+          read_version() {
+            grep -E '^APP_VERSION\s*=' core/constants.py | sed -E 's/.*"([^"]+)".*/\1/'
+          }
+
+          is_release=false
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            VERSION=$(read_version)
+            TAG="v${VERSION}"
+
+            if ! git rev-parse HEAD^ >/dev/null 2>&1; then
+              is_release=true
+            else
+              if git diff HEAD^ HEAD --name-only | grep -q '^core/constants\.py$'; then
+                if ! PREVIOUS=$(git show HEAD^:core/constants.py 2>/dev/null | grep -E '^APP_VERSION\s*=' | sed -E 's/.*"([^"]+)".*/\1/'); then
+                  is_release=true
+                elif [ "$VERSION" != "$PREVIOUS" ]; then
+                  is_release=true
+                fi
+              fi
+            fi
+
+            if ! git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+              is_release=true
+            fi
+          fi
+
+          echo "is_release=${is_release}" >> "$GITHUB_OUTPUT"
+
+  skip:
+    needs: [detect-changes, detect-release]
+    if: >-
+      needs.detect-changes.outputs.changed != 'true'
+      || needs.detect-release.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip next build
+        run: |
+          if [[ "${{ needs.detect-release.outputs.is_release }}" == "true" ]]; then
+            echo "Release build — latest workflow handles tagging and semver images."
+          else
+            echo "No app or docker changes detected. Skipping next build."
+          fi
+
+  ci:
+    needs: [detect-changes, detect-release]
+    if: >-
+      needs.detect-changes.outputs.changed == 'true'
+      && needs.detect-release.outputs.is_release != 'true'
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+    with:
+      skip_detect: true
+      require_scope: true
+      run: 'true'
+
+  build:
+    needs: [ci, detect-changes, detect-release]
+    if: >-
+      needs.ci.result == 'success'
+      && needs.detect-changes.outputs.changed == 'true'
+      && needs.detect-release.outputs.is_release != 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yaml
+    secrets: inherit
+    with:
+      image_name: ${{ github.repository }}
+      tags: |
+        type=raw,value=next

@@ -1,0 +1,124 @@
+name: Build PR Images
+
+on:
+  pull_request:
+    branches:
+      - dev
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    paths:
+      - 'app.py'
+      - 'core/**'
+      - 'routes/**'
+      - 'src/**'
+      - 'services/**'
+      - 'companion/**'
+      - 'scripts/**'
+      - 'static/**'
+      - 'requirements*.txt'
+      - 'Dockerfile'
+      - 'docker/**'
+      - 'pyproject.toml'
+      - '.github/path-filters.yaml'
+      - '.github/workflows/detect-changes.yaml'
+      - '.github/workflows/pr-images.yaml'
+      - '.github/workflows/build-image.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: write
+
+jobs:
+  detect-changes:
+    if: contains(github.event.pull_request.labels.*.name, 'deploy')
+    uses: ./.github/workflows/detect-changes.yaml
+
+  verify-scope:
+    needs: detect-changes
+    if: contains(github.event.pull_request.labels.*.name, 'deploy')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require app in scope
+        env:
+          CHANGED: ${{ needs.detect-changes.outputs.changed }}
+        run: |
+          set -euo pipefail
+          if [[ "$CHANGED" != "true" ]]; then
+            echo "::error::deploy label set but no app or docker changes detected."
+            exit 1
+          fi
+
+  build:
+    needs: [detect-changes, verify-scope]
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'deploy')
+      && needs.detect-changes.outputs.changed == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-image.yaml
+    secrets: inherit
+    with:
+      image_name: ${{ github.repository }}
+      tags: |
+        type=raw,value=pr-${{ github.event.pull_request.number }}
+
+  comment-build-info:
+    needs: [detect-changes, verify-scope, build]
+    if: >-
+      always()
+      && contains(github.event.pull_request.labels.*.name, 'deploy')
+      && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Update PR description with build info
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const sha = context.payload.pull_request.head.sha.substring(0, 7);
+            const tag = `pr-${prNumber}`;
+            const image = `ghcr.io/${context.repo.owner}/${context.repo.repo}`.toLowerCase();
+
+            const marker = '<!-- container-build-info -->';
+            const list = `- **Odysseus**: \`${image}:${tag}\``;
+
+            const buildInfo = `${marker}
+
+            ---
+
+            <details>
+            <summary>📦 <strong>Container Build</strong></summary>
+
+            Image built from \`${sha}\`
+
+            ${list}
+
+            </details>`;
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+
+            let body = pr.body || '';
+            const markerIndex = body.indexOf(marker);
+            if (markerIndex !== -1) {
+              body = body.substring(0, markerIndex).trimEnd();
+            }
+            body = body + '\n\n' + buildInfo;
+
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              body: body
+            });
