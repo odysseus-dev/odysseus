@@ -110,10 +110,19 @@ if (-not (Test-Path $venvPy)) {
 }
 
 # 3. Install / update dependencies
-Write-Step "Installing dependencies (first run can take a few minutes)"
-& $venvPy -m pip install --upgrade pip --quiet
-& $venvPy -m pip install -r requirements.txt
-if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed. Scroll up for the pip error." }
+$reqHash = (Get-FileHash (Join-Path $PSScriptRoot "requirements.txt") -Algorithm SHA256).Hash
+$hashFile = Join-Path $PSScriptRoot "venv\.requirements_hash"
+$cachedHash = if (Test-Path $hashFile) { Get-Content $hashFile -Raw } else { "" }
+
+if ($reqHash.Trim() -ne $cachedHash.Trim()) {
+    Write-Step "Installing dependencies (requirements.txt changed)"
+    & $venvPy -m pip install --upgrade pip --quiet
+    & $venvPy -m pip install --upgrade -r requirements.txt
+    if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed. Scroll up for the pip error." }
+    $reqHash | Set-Content $hashFile -NoNewline
+} else {
+    Write-Step "Dependencies up to date (requirements.txt unchanged)"
+}
 
 # 4. First-time setup (creates data dirs, DB, .env, admin user)
 Write-Step "Running first-time setup"
