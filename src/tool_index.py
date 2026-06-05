@@ -83,6 +83,7 @@ COLLECTION_NAME = "odysseus_tool_index"
 # These are richer than the system prompt one-liners — they're for embedding.
 BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "bash": "Run shell commands on the server. Install packages, check files, git operations, curl, system info, process management, networking.",
+    "powershell": "Run a PowerShell script natively (pwsh / powershell.exe). Use on Windows for system tasks, file management, registry, environment variables, WMI, .NET APIs. Not bash — use PowerShell syntax.",
     "python": "Execute Python code for computation, data processing, math, scripting, parsing, API calls. Not for writing code for the user.",
     "web_search": "Quick single web lookup for a fact, current event, or doc mid-task. NOT for 'research X' / 'do research on X' requests — those are deep-research jobs (use trigger_research). web_search = one query; trigger_research = a full researched report in the sidebar.",
     "web_fetch": "Fetch and read the text content of a specific URL/website the user names (e.g. 'check example.com', 'open this link'). Use when you have a concrete URL; for open-ended lookups use web_search instead.",

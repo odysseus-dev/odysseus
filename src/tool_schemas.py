@@ -38,6 +38,20 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "powershell",
+            "description": "Run a PowerShell script natively (pwsh / powershell.exe). Use on Windows for system tasks, file management, registry, environment variables, WMI, .NET APIs. Not bash — use PowerShell syntax.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "The PowerShell script to execute"}
+                },
+                "required": ["command"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "python",
             "description": "Execute Python code to compute a result or test something",
             "parameters": {

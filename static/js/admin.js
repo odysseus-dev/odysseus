@@ -1280,6 +1280,7 @@ const MCP_PRESETS = [
 // ── Built-in tools management ──
 const TOOL_META = {
   bash:              { name: 'Shell',            desc: 'Execute bash commands',           cat: 'Code',       ctx: '~200' },
+  powershell:        { name: 'PowerShell',       desc: 'Run PowerShell scripts',          cat: 'Code',       ctx: '~200' },
   python:            { name: 'Python',           desc: 'Run Python scripts',              cat: 'Code',       ctx: '~200' },
   read_file:         { name: 'Read File',        desc: 'Read files from disk',            cat: 'Code',       ctx: '~150' },
   write_file:        { name: 'Write File',       desc: 'Write/create files',              cat: 'Code',       ctx: '~150' },
