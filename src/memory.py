@@ -294,7 +294,14 @@ class MemoryManager:
             return []
             
         # Define keyword categories for semantic matching
-        identity_words = ["name", "who", "i", "am", "called", "identity", "myself", "me", "my"]
+        # Identity wins only on strong identity words or explicit identity
+        # phrases. Bare first-person tokens (i / me / my / am / who) must NOT
+        # trigger identity on their own, or "I like jazz" and "what is my email"
+        # wrongly classify as identity before the preference / contact branches
+        # ever run.
+        identity_words = ["name", "called", "identity", "myself"]
+        identity_phrases = ["who am i", "who i am", "what am i", "am i called",
+                            "about me", "my name", "call me"]
         contact_words = ["phone", "email", "address", "contact", "number", "where", "located", "reach"]
         preference_words = ["like", "prefer", "favorite", "want", "love", "hate", "dislike", "enjoy", "interested"]
         task_words = ["todo", "task", "remind", "meeting", "appointment", "schedule", "deadline"]
@@ -310,7 +317,7 @@ class MemoryManager:
 
         # Determine query type based on keywords
         query_type = None
-        if query_tokens & set(identity_words):
+        if (query_tokens & set(identity_words)) or any(p in query_lower for p in identity_phrases):
             query_type = "identity"
         elif query_tokens & set(contact_words):
             query_type = "contact"

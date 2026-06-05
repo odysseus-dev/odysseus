@@ -36,6 +36,32 @@ def test_identity_query_still_returns_name(mgr):
     assert any("Sam Carter" in m["text"] for m in out)
 
 
+def test_bare_first_person_preference_query_is_not_identity(mgr):
+    # "I like jazz" has the bare pronoun "i" but is a preference query, not an
+    # identity one. It must not force-inject the name memory.
+    out = mgr.get_relevant_memories(
+        "I like jazz", [_NAME], threshold=0.05, max_items=20
+    )
+    assert all("Sam Carter" not in m["text"] for m in out), \
+        "bare 'i' wrongly classified the query as identity"
+
+
+def test_bare_my_contact_query_is_not_identity(mgr):
+    # "what is my email" should reach the contact branch, not identity.
+    out = mgr.get_relevant_memories(
+        "what is my email", [_NAME], threshold=0.05, max_items=20
+    )
+    assert all("Sam Carter" not in m["text"] for m in out), \
+        "bare 'my' wrongly classified the query as identity"
+
+
+def test_strong_identity_phrase_still_returns_name(mgr):
+    # Explicit identity phrasing must still win.
+    for q in ("who am I", "what am I called"):
+        out = mgr.get_relevant_memories(q, [_NAME], threshold=0.05, max_items=20)
+        assert any("Sam Carter" in m["text"] for m in out), q
+
+
 def test_no_memories_or_blank_query(mgr):
     assert mgr.get_relevant_memories("hello", []) == []
     assert mgr.get_relevant_memories("   ", [_NAME]) == []
