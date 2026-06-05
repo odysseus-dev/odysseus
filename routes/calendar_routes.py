@@ -399,7 +399,17 @@ def _parse_dt(s: str) -> datetime:
     # Last resort: dateutil's fuzzy parser
     try:
         from dateutil import parser as _du
-        return _du.parse(s)
+        parsed = _du.parse(s)
+        # Strip tz like every other return path above — this function's
+        # contract is naive datetimes (CalendarEvent.dtstart is naive). An
+        # offset-bearing non-ISO input (e.g. RFC-2822 "Mon, 05 Jan 2026
+        # 14:00:00 +0900") otherwise leaked tz-aware into the naive column and
+        # crashed read-back comparisons in _expand_rrule with "can't compare
+        # offset-naive and offset-aware datetimes".
+        if parsed.tzinfo is not None:
+            from datetime import timezone as _tz
+            return parsed.astimezone(_tz.utc).replace(tzinfo=None)
+        return parsed
     except Exception:
         raise ValueError(f"could not parse datetime: {s!r}")
 

@@ -1,15 +1,27 @@
+import os
 import sys
 import json
 from datetime import datetime
+from unittest.mock import patch
 
 import pytest
 
 from tests.helpers.import_state import clear_module, preserve_import_state
 
 # conftest.py stubs src.database; drop the stub so webhook_manager imports the
-# real module. preserve_import_state restores both sys.modules and the parent
-# src.database attribute after the block, preventing stub leakage into siblings.
-with preserve_import_state("src.database"):
+# real module. preserve_import_state restores sys.modules and parent-package
+# attributes for both src.database and core.database after the block, preventing
+# stub/engine leakage into siblings.
+#
+# Importing the real core.database runs init_db() -> create_all() against
+# DATABASE_URL (default sqlite:///./data/app.db); in a clean worktree with no
+# ./data directory that raises sqlite3.OperationalError during collection. Pin
+# DATABASE_URL to in-memory SQLite for the import: it needs no filesystem path
+# and leaves no artifact, and these tests never touch the real engine
+# (validate_webhook_url is pure; the delivery test monkeypatches SessionLocal).
+# patch.dict restores the prior DATABASE_URL after the block.
+with patch.dict(os.environ, {"DATABASE_URL": "sqlite:///:memory:"}), \
+        preserve_import_state("src.database", "core.database"):
     clear_module("src.database")
     _core_database = sys.modules.get("core.database")
     _core_database_all = (
