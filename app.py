@@ -64,6 +64,7 @@ from core.exceptions import (
 import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join
+from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
@@ -387,13 +388,7 @@ app.mount("/static", _RevalidatingStatic(directory="static"), name="static")
 @app.get("/api/generated-image/{filename}")
 async def serve_generated_image(filename: str, request: Request):
     """Serve generated images from the data directory."""
-    from pathlib import Path
-    import re
-    if not re.match(r'^[a-f0-9]{8,64}\.(png|jpg|jpeg|webp|gif|mp4|mov|webm|mkv|m4v)$', filename):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    img_path = Path("data/generated_images") / filename
-    if not img_path.exists():
-        raise HTTPException(status_code=404, detail="Image not found")
+    img_path = resolve_generated_image_path(filename)
     # SECURITY: filename is the only key, so anyone who knows / guesses a
     # 12-hex content hash could pull another user's image bytes. Require
     # auth and verify ownership via the gallery row (when one exists).
@@ -429,7 +424,7 @@ async def serve_generated_image(filename: str, request: Request):
     return FileResponse(
         str(img_path),
         media_type=mime,
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        headers=GENERATED_IMAGE_HEADERS,
     )
 
 # ========= YOUTUBE INIT =========
