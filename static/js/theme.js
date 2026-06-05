@@ -21,6 +21,7 @@ export const THEMES = {
   ume:        { bg:'#2b1b2e', fg:'#f5c2e7', panel:'#1e1420', border:'#6c4675', red:'#f5a0c0' },
   copper:     { bg:'#1c1410', fg:'#e8c39e', panel:'#140f0a', border:'#7a5533', red:'#d4764e' },
   terminal:   { bg:'#000000', fg:'#00ff41', panel:'#0a0a0a', border:'#003b00', red:'#00ff41' },
+  matrix:     { bg:'#0d0f0d', fg:'#00ff41', panel:'#0a0c0a', border:'#1a4d1a', red:'#00ff41' },
   organs:     { bg:'#0a0406', fg:'#efe1c8', panel:'#15080a', border:'#3a1519', red:'#c83240' },
   lavender:   { bg:'#f3eef8', fg:'#3d3551', panel:'#faf7ff', border:'#cec3de', red:'#9b6dcc' },
   gpt:        { bg:'#212121', fg:'#ececec', panel:'#171717', border:'#424242', red:'#949494',
@@ -55,6 +56,7 @@ const THEME_DEFAULT_PATTERN = {
   forest:     'petals',
   ocean:      'constellations',
   terminal:   'perlin-flow',
+  matrix:     'matrix',
   organs:     'rain',
   ume:        'petals',
   cute:       'sparkles',
@@ -63,6 +65,7 @@ const THEME_DEFAULT_PATTERN = {
 // Default effect colors for specific themes (overrides --fg)
 const THEME_DEFAULT_EFFECT_COLOR = {
   midnight:   '#ffffff',
+  matrix:     '#00ff41',
   organs:     '#451616',
   cute:       '#ff8cb8',
   ume:        '#f5a0c0',
@@ -71,8 +74,24 @@ const THEME_DEFAULT_EFFECT_COLOR = {
 // Default effect intensity (0..1) per theme. Any theme not listed defaults to 1.
 const THEME_DEFAULT_INTENSITY = {
   midnight:   0.5,
+  matrix:     0.8,
   terminal:   0.8,
   organs:     0.65,
+};
+
+// Default effect speed (0.01..1) per theme. Any theme not listed defaults to 0.1.
+const THEME_DEFAULT_SPEED = {
+  matrix:     0.1,
+};
+
+// Default effect size multiplier per theme. Any theme not listed defaults to 0.2.
+const THEME_DEFAULT_SIZE = {
+  matrix:     0.2,
+};
+
+// Default effect density (0.1..3) per theme. Any theme not listed defaults to 1.
+const THEME_DEFAULT_DENSITY = {
+  matrix:     1.0,
 };
 
 // Default frosted-glass state per theme. Themes not listed default to false.
@@ -101,6 +120,8 @@ export function saveCustomTheme(name, colors, opts) {
     if (opts.bgEffectColor) entry.bgEffectColor = opts.bgEffectColor;
     if (opts.bgEffectIntensity !== undefined) entry.bgEffectIntensity = opts.bgEffectIntensity;
     if (opts.bgEffectSize !== undefined) entry.bgEffectSize = opts.bgEffectSize;
+    if (opts.bgEffectSpeed !== undefined) entry.bgEffectSpeed = opts.bgEffectSpeed;
+    if (opts.bgEffectDensity !== undefined) entry.bgEffectDensity = opts.bgEffectDensity;
     if (opts.frosted !== undefined) entry.frosted = !!opts.frosted;
   }
   ct[name] = entry;
@@ -388,10 +409,12 @@ export function applyFontDensity(font, density) {
 const _BG_CLASSES = ['bg-pattern-dots',
   'bg-pattern-synapse', 'bg-pattern-rain', 'bg-pattern-constellations',
   'bg-pattern-perlin-flow',
-  'bg-pattern-petals', 'bg-pattern-sparkles', 'bg-pattern-embers'];
+  'bg-pattern-petals', 'bg-pattern-sparkles', 'bg-pattern-embers',
+  'bg-pattern-matrix'];
 const _CANVAS_PATTERNS = { synapse: _initSynapse, rain: _initRain, constellations: _initConstellations,
   'perlin-flow': _initPerlinFlow,
-  petals: _initPetals, sparkles: _initSparkles, embers: _initEmbers };
+  petals: _initPetals, sparkles: _initSparkles, embers: _initEmbers,
+  matrix: _initMatrix };
 
 export function applyBgEffectColor(color) {
   document.documentElement.style.setProperty('--bg-effect-color', color || '');
@@ -409,6 +432,18 @@ export function applyBgEffectSize(v) {
   document.documentElement.style.setProperty('--bg-effect-size', String(n));
 }
 
+export function applyBgEffectSpeed(v) {
+  // v is a multiplier 0.01..1. Default 0.5 when missing.
+  const n = (v === undefined || v === null || isNaN(v)) ? 0.5 : Math.max(0.01, Math.min(1, Number(v)));
+  document.documentElement.style.setProperty('--bg-effect-speed', String(n));
+}
+
+export function applyBgEffectDensity(v) {
+  // v is 0.1..3 (multiplier on natural column count). Default 1 when missing.
+  const n = (v === undefined || v === null || isNaN(v)) ? 1 : Math.max(0.1, Math.min(3, Number(v)));
+  document.documentElement.style.setProperty('--bg-effect-density', String(n));
+}
+
 /** Toggle the global "frosted glass" look — applies a translucent + blurred
  *  treatment to every panel, sidebar, modal, dropdown, and popover via CSS
  *  rules scoped to `body.theme-frosted`. */
@@ -422,6 +457,18 @@ function _getEffectSize() {
   return isNaN(v) ? 1 : v;
 }
 
+// Read current speed multiplier for JS effects (canvas-based).
+function _getEffectSpeed() {
+  const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bg-effect-speed'));
+  return isNaN(v) ? 1 : v;
+}
+
+// Read current column density for the matrix effect (0.1..1).
+function _getEffectDensity() {
+  const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bg-effect-density'));
+  return isNaN(v) ? 1 : v;
+}
+
 // Patterns where the intensity/size sliders have no visible effect.
 const _STATIC_PATTERNS = new Set(['none', 'dots']);
 
@@ -429,15 +476,19 @@ export function applyBgPattern(pattern) {
   const p = pattern || 'none';
   document.body.classList.remove(..._BG_CLASSES);
   // Clean up any canvas backgrounds
-  document.querySelectorAll('#synapse-canvas, #rain-canvas, #constellations-canvas, #perlin-flow-canvas, #petals-canvas, #sparkles-canvas, #embers-canvas').forEach(c => c.remove());
+  document.querySelectorAll('#synapse-canvas, #rain-canvas, #constellations-canvas, #perlin-flow-canvas, #petals-canvas, #sparkles-canvas, #embers-canvas, #matrix-canvas').forEach(c => c.remove());
   if (p !== 'none') document.body.classList.add('bg-pattern-' + p);
   if (_CANVAS_PATTERNS[p]) _CANVAS_PATTERNS[p]();
   // Hide sliders that do nothing on static patterns.
   const hide = _STATIC_PATTERNS.has(p);
   const ig = document.getElementById('theme-bg-intensity-group');
   const sg = document.getElementById('theme-bg-size-group');
+  const spg = document.getElementById('theme-bg-speed-group');
+  const dng = document.getElementById('theme-bg-density-group');
   if (ig) ig.style.display = hide ? 'none' : '';
   if (sg) sg.style.display = hide ? 'none' : '';
+  if (spg) spg.style.display = hide ? 'none' : '';
+  if (dng) dng.style.display = hide ? 'none' : '';
 }
 
 export function getSaved() {
@@ -458,6 +509,8 @@ export function save(name, colors, opts) {
     if (opts.bgEffectColor) obj.bgEffectColor = opts.bgEffectColor;
     if (opts.bgEffectIntensity !== undefined && opts.bgEffectIntensity !== 1) obj.bgEffectIntensity = opts.bgEffectIntensity;
     if (opts.bgEffectSize !== undefined && opts.bgEffectSize !== 1) obj.bgEffectSize = opts.bgEffectSize;
+    if (opts.bgEffectSpeed !== undefined && opts.bgEffectSpeed !== 1) obj.bgEffectSpeed = opts.bgEffectSpeed;
+    if (opts.bgEffectDensity !== undefined && opts.bgEffectDensity !== 1) obj.bgEffectDensity = opts.bgEffectDensity;
     if (opts.frosted) obj.frosted = true;
   }
   Storage.setJSON(LS_KEY, obj);
@@ -490,6 +543,9 @@ function syncPickers(colors) {
   document.getElementById('clr-panel').value = colors.panel;
   document.getElementById('clr-border').value = colors.border;
   document.getElementById('clr-red').value = colors.red;
+  const ha = document.getElementById('harmony-accent');
+  const hh = document.getElementById('harmony-accent-hex');
+  if (ha && colors.red) { ha.value = colors.red; if (hh) hh.textContent = colors.red; }
   syncAdvancedPickers(colors);
 }
 
@@ -665,12 +721,16 @@ export function initThemeUI() {
     const ec = document.getElementById('theme-bg-effect-color');
     const es = document.getElementById('theme-bg-intensity');
     const sz = document.getElementById('theme-bg-size');
+    const sp = document.getElementById('theme-bg-speed');
+    const dn = document.getElementById('theme-bg-density');
     if (fs) opts.font = fs.value;
     if (ds) opts.density = ds.value;
     if (ps) opts.bgPattern = ps.value;
     if (ec) opts.bgEffectColor = ec.value;
     if (es) opts.bgEffectIntensity = parseFloat(es.value) / 100;
     if (sz) opts.bgEffectSize = parseFloat(sz.value) / 100;
+    if (sp) opts.bgEffectSpeed = parseFloat(sp.value) / 100;
+    if (dn) opts.bgEffectDensity = parseFloat(dn.value) / 100;
     const fr = document.getElementById('theme-frosted-toggle');
     if (fr) opts.frosted = !!fr.checked;
     return opts;
@@ -697,7 +757,9 @@ export function initThemeUI() {
         const p = ct && ct.bgPattern ? ct.bgPattern : (THEME_DEFAULT_PATTERN[name] || 'none');
         const ec = ct && ct.bgEffectColor ? ct.bgEffectColor : (THEME_DEFAULT_EFFECT_COLOR[name] || '');
         const ei = (ct && ct.bgEffectIntensity !== undefined) ? ct.bgEffectIntensity : (THEME_DEFAULT_INTENSITY[name] !== undefined ? THEME_DEFAULT_INTENSITY[name] : 1);
-        const sz = (ct && ct.bgEffectSize !== undefined) ? ct.bgEffectSize : 1;
+        const sz = (ct && ct.bgEffectSize !== undefined) ? ct.bgEffectSize : (THEME_DEFAULT_SIZE[name] !== undefined ? THEME_DEFAULT_SIZE[name] : 0.2);
+        const sp = (ct && ct.bgEffectSpeed !== undefined) ? ct.bgEffectSpeed : (THEME_DEFAULT_SPEED[name] !== undefined ? THEME_DEFAULT_SPEED[name] : 0.1);
+        const dn = (ct && ct.bgEffectDensity !== undefined) ? ct.bgEffectDensity : (THEME_DEFAULT_DENSITY[name] !== undefined ? THEME_DEFAULT_DENSITY[name] : 1);
         const fr = (ct && ct.frosted !== undefined)
           ? !!ct.frosted
           : (THEME_DEFAULT_FROSTED[name] === true);
@@ -705,6 +767,8 @@ export function initThemeUI() {
         applyBgEffectColor(ec);
         applyBgEffectIntensity(ei);
         applyBgEffectSize(sz);
+        applyBgEffectSpeed(sp);
+        applyBgEffectDensity(dn);
         applyFrostedGlass(fr);
         applyBgPattern(p);
         const fs = document.getElementById('theme-font-select');
@@ -713,6 +777,8 @@ export function initThemeUI() {
         const ecs = document.getElementById('theme-bg-effect-color');
         const eis = document.getElementById('theme-bg-intensity');
         const szs = document.getElementById('theme-bg-size');
+        const sps = document.getElementById('theme-bg-speed');
+        const dns = document.getElementById('theme-bg-density');
         const frs = document.getElementById('theme-frosted-toggle');
         if (fs) fs.value = f;
         if (ds) ds.value = d;
@@ -720,8 +786,10 @@ export function initThemeUI() {
         if (ecs) ecs.value = ec || colors.fg || '#9cdef2';
         if (eis) eis.value = String(Math.round(ei * 100));
         if (szs) szs.value = String(Math.round(sz * 100));
+        if (sps) sps.value = String(Math.round(sp * 100));
+        if (dns) dns.value = String(Math.round(dn * 100));
         if (frs) frs.checked = fr;
-        save(name, colors, { font: f, density: d, bgPattern: p, bgEffectColor: ec, bgEffectIntensity: ei, bgEffectSize: sz, frosted: fr });
+        save(name, colors, { font: f, density: d, bgPattern: p, bgEffectColor: ec, bgEffectIntensity: ei, bgEffectSize: sz, bgEffectSpeed: sp, bgEffectDensity: dn, frosted: fr });
       });
     });
     g.querySelectorAll('.theme-delete-btn').forEach(btn => {
@@ -854,6 +922,8 @@ export function initThemeUI() {
           bgPattern: _activeSaved.bgPattern, bgEffectColor: _activeSaved.bgEffectColor,
           bgEffectIntensity: _activeSaved.bgEffectIntensity,
           bgEffectSize: _activeSaved.bgEffectSize,
+          bgEffectSpeed: _activeSaved.bgEffectSpeed,
+          bgEffectDensity: _activeSaved.bgEffectDensity,
         });
         _saveFull(_activeName, colors);
       } else {
@@ -1002,6 +1072,8 @@ export function initThemeUI() {
           bgPattern: _activeSaved.bgPattern, bgEffectColor: _activeSaved.bgEffectColor,
           bgEffectIntensity: _activeSaved.bgEffectIntensity,
           bgEffectSize: _activeSaved.bgEffectSize,
+          bgEffectSpeed: _activeSaved.bgEffectSpeed,
+          bgEffectDensity: _activeSaved.bgEffectDensity,
         });
         _saveFull(_activeName, base);
       } else {
@@ -1082,7 +1154,15 @@ export function initThemeUI() {
   const _initEffectIntensity = (saved && saved.bgEffectIntensity !== undefined)
     ? saved.bgEffectIntensity
     : (saved && THEME_DEFAULT_INTENSITY[saved.name] !== undefined ? THEME_DEFAULT_INTENSITY[saved.name] : 1);
-  const _initEffectSize = (saved && saved.bgEffectSize !== undefined) ? saved.bgEffectSize : 1;
+  const _initEffectSize = (saved && saved.bgEffectSize !== undefined)
+    ? saved.bgEffectSize
+    : (saved && THEME_DEFAULT_SIZE[saved.name] !== undefined ? THEME_DEFAULT_SIZE[saved.name] : 0.2);
+  const _initEffectSpeed = (saved && saved.bgEffectSpeed !== undefined)
+    ? saved.bgEffectSpeed
+    : (saved && THEME_DEFAULT_SPEED[saved.name] !== undefined ? THEME_DEFAULT_SPEED[saved.name] : 0.1);
+  const _initEffectDensity = (saved && saved.bgEffectDensity !== undefined)
+    ? saved.bgEffectDensity
+    : (saved && THEME_DEFAULT_DENSITY[saved.name] !== undefined ? THEME_DEFAULT_DENSITY[saved.name] : 1);
   const _initFrosted = (saved && saved.frosted !== undefined)
     ? !!saved.frosted
     : (saved && THEME_DEFAULT_FROSTED[saved.name] === true);
@@ -1090,6 +1170,8 @@ export function initThemeUI() {
   applyBgEffectColor(_initEffectColor);
   applyBgEffectIntensity(_initEffectIntensity);
   applyBgEffectSize(_initEffectSize);
+  applyBgEffectSpeed(_initEffectSpeed);
+  applyBgEffectDensity(_initEffectDensity);
   applyFrostedGlass(_initFrosted);
   applyBgPattern(_initPattern);
 
@@ -1163,6 +1245,24 @@ export function initThemeUI() {
     sizeSlider.value = String(Math.round(_initEffectSize * 100));
     sizeSlider.addEventListener('input', () => {
       applyBgEffectSize(parseFloat(sizeSlider.value) / 100);
+      const s = getSaved(); if (s) _saveFull(s.name, s.colors);
+    });
+  }
+
+  const speedSlider = document.getElementById('theme-bg-speed');
+  if (speedSlider) {
+    speedSlider.value = String(Math.round(_initEffectSpeed * 100));
+    speedSlider.addEventListener('input', () => {
+      applyBgEffectSpeed(parseFloat(speedSlider.value) / 100);
+      const s = getSaved(); if (s) _saveFull(s.name, s.colors);
+    });
+  }
+
+  const densitySlider = document.getElementById('theme-bg-density');
+  if (densitySlider) {
+    densitySlider.value = String(Math.round(_initEffectDensity * 100));
+    densitySlider.addEventListener('input', () => {
+      applyBgEffectDensity(parseFloat(densitySlider.value) / 100);
       const s = getSaved(); if (s) _saveFull(s.name, s.colors);
     });
   }
@@ -1657,6 +1757,125 @@ function _initRain() {
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
+  }
+  draw();
+}
+
+// ── Matrix — columns of falling half-width katakana + digits, movie-accurate ──
+function _initMatrix() {
+  if (document.getElementById('matrix-canvas')) return;
+  const canvas = document.createElement('canvas');
+  canvas.id = 'matrix-canvas';
+  canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;';
+  canvas.setAttribute('aria-hidden', 'true');
+  document.body.prepend(canvas);
+  const ctx = canvas.getContext('2d');
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let W, H, drops;
+
+  // Half-width katakana U+FF65–U+FF9F (movie-accurate, fits monospace columns)
+  // plus digits. Latin and full-width katakana are deliberately excluded —
+  // full-width breaks column alignment; Latin isn't in the film's glyph set.
+  const KATAKANA = Array.from({ length: 0xFF9F - 0xFF65 + 1 }, (_, i) => String.fromCharCode(0xFF65 + i)).join('');
+  const CHARS = '0123456789' + KATAKANA;
+  const BASE_FS = 14;
+  const TRAIL = 22;
+
+  const MAX_DENSITY = 3;
+
+  function initDrops(maxCols) {
+    const rowsOffscreen = Math.ceil(H / BASE_FS);
+    // Allocate for max possible density so we never need to resize the array
+    const capacity = Math.ceil(maxCols * MAX_DENSITY);
+    drops = Array.from({ length: capacity }, () => ({
+      y: Math.floor(Math.random() * -rowsOffscreen),
+      speed: 0.25 + Math.random() * 0.9,
+      chars: Array.from({ length: TRAIL + 1 }, () => CHARS[Math.floor(Math.random() * CHARS.length)]),
+    }));
+  }
+
+  function resize() {
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    initDrops(Math.floor(W / BASE_FS));
+  }
+  resize();
+  const _onResize = () => resize();
+  window.addEventListener('resize', _onResize);
+
+  function getColor() {
+    const s = getComputedStyle(document.documentElement);
+    return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#00ff41';
+  }
+
+  function parseHexRgb(hex) {
+    if (/^#[0-9a-f]{6}$/i.test(hex)) {
+      return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+    }
+    return [0, 255, 65];
+  }
+
+  function draw() {
+    if (!document.body.classList.contains('bg-pattern-matrix')) {
+      window.removeEventListener('resize', _onResize);
+      canvas.remove();
+      return;
+    }
+    requestAnimationFrame(draw);
+
+    const intenCss = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--bg-effect-intensity'));
+    const inten = isNaN(intenCss) ? 1 : intenCss;
+    const sizeMult = _getEffectSize();
+    const speedMult = _getEffectSpeed();
+    const density = _getEffectDensity();
+    const fs = Math.round(BASE_FS * Math.min(2, Math.max(0.5, sizeMult)));
+    // Density: spread active columns evenly across the full width
+    const maxCols = Math.floor(W / fs);
+    const activeCols = Math.max(1, Math.round(maxCols * density));
+    const colSpacing = W / activeCols;
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.font = `bold ${fs}px monospace`;
+    ctx.textBaseline = 'top';
+
+    const color = getColor();
+    const [r, g, b] = parseHexRgb(color);
+
+    for (let i = 0; i < Math.min(drops.length, activeCols); i++) {
+      const d = drops[i];
+      d.y += d.speed * speedMult;
+
+      // Randomly mutate characters as the column falls — movie-style shimmer
+      if (Math.random() < 0.4) {
+        d.chars[Math.floor(Math.random() * d.chars.length)] = CHARS[Math.floor(Math.random() * CHARS.length)];
+      }
+      if (Math.random() < 0.15) {
+        d.chars[Math.floor(Math.random() * d.chars.length)] = CHARS[Math.floor(Math.random() * CHARS.length)];
+      }
+
+      const headRow = Math.floor(d.y);
+      const x = i * colSpacing;
+
+      for (let j = 0; j <= TRAIL; j++) {
+        const row = headRow - j;
+        const py = row * fs;
+        if (py < -fs || py > H) continue;
+
+        if (j === 0) {
+          ctx.fillStyle = `rgba(200,255,210,${inten})`;
+        } else {
+          const fade = Math.pow(1 - j / (TRAIL + 1), 1.4) * inten;
+          ctx.fillStyle = `rgba(${r},${g},${b},${fade})`;
+        }
+        ctx.fillText(d.chars[j % d.chars.length], x, py);
+      }
+
+      if (d.y * fs > H + TRAIL * fs) {
+        d.y = Math.floor(Math.random() * -TRAIL);
+        d.speed = 0.25 + Math.random() * 0.9;
+      }
+    }
   }
   draw();
 }

@@ -12,13 +12,13 @@
   var THEME_DEFAULT_PATTERN = {
     dark:'none', light:'dots', midnight:'rain', paper:'dots',
     cyberpunk:'synapse', retrowave:'embers', forest:'petals',
-    ocean:'constellations', terminal:'perlin-flow', organs:'rain',
+    ocean:'constellations', terminal:'perlin-flow', matrix:'matrix', organs:'rain',
     ume:'petals', cute:'sparkles'
   };
   var THEME_DEFAULT_EFFECT_COLOR = {
-    midnight:'#ffffff', organs:'#451616', cute:'#ff8cb8', ume:'#f5a0c0'
+    midnight:'#ffffff', matrix:'#00ff41', organs:'#451616', cute:'#ff8cb8', ume:'#f5a0c0'
   };
-  var THEME_DEFAULT_INTENSITY = { midnight:0.5, terminal:0.8, organs:0.65 };
+  var THEME_DEFAULT_INTENSITY = { midnight:0.5, matrix:0.8, terminal:0.8, organs:0.65 };
   try {
     var t = JSON.parse(localStorage.getItem('odysseus-theme'));
     var s = document.documentElement.style;
@@ -100,7 +100,7 @@
      the static gradient ones (dots, synapse) need these CSS rules. */
   #synapse-canvas, #rain-canvas, #constellations-canvas,
   #perlin-flow-canvas, #petals-canvas, #sparkles-canvas,
-  #embers-canvas { opacity: var(--bg-effect-intensity, 1); }
+  #embers-canvas, #matrix-canvas { opacity: var(--bg-effect-intensity, 1); }
   body.bg-pattern-dots {
     background-image: radial-gradient(color-mix(in srgb, var(--bg-effect-color, var(--fg)) calc(5% * var(--bg-effect-intensity, 1)), transparent) 1px, transparent 1px);
     background-size: 20px 20px; background-attachment: fixed;
