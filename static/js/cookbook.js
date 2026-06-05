@@ -370,6 +370,7 @@ export function _buildServeCmd(f, modelName, backend) {
     const _kv = (f.vllm_kv_cache_dtype ?? '').toString().trim();
     if (_kv === 'fp8') cmd += ' --kv-cache-dtype fp8';
     if (f.max_seqs && f.max_seqs.toString().trim()) cmd += ` --max-num-seqs ${f.max_seqs.toString().trim()}`;
+    if (f.max_batched_tokens && f.max_batched_tokens.toString().trim()) cmd += ` --max-num-batched-tokens ${f.max_batched_tokens.toString().trim()}`;
     if (f.enforce_eager) cmd += ' --enforce-eager';
     if (f.trust_remote) cmd += ' --trust-remote-code';
     if (f.prefix_cache) cmd += ' --enable-prefix-caching';

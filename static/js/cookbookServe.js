@@ -611,6 +611,7 @@ function _rerenderCachedModels() {
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('GPU Mem','Fraction of GPU memory (0.0–1.0). Lower if OOM')}<input type="text" class="hwfit-sf" data-field="gpu_mem" value="${esc(sv('gpu_mem', '0.90'))}" /></label>`;
       panelHtml += `<label class="hwfit-backend-vllm">${_l('Swap','CPU swap space in GB. Leave empty to omit (removed in newer vLLM)')}<input type="text" class="hwfit-sf" data-field="swap" value="${esc(sv('swap', ''))}" placeholder="off" /></label>`;
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('Max Seqs','Maximum concurrent requests. Lower = less memory. Default 4 — prosumer GPUs often OOM on vLLM default 256 during CUDA graph capture.')}<input type="text" class="hwfit-sf" data-field="max_seqs" value="${esc(sv('max_seqs', '4'))}" placeholder="4" /></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm">${_l('Batched Tok','vLLM --max-num-batched-tokens. Lower this when long-context batching over-allocates memory. Blank = vLLM default.')}<input type="text" class="hwfit-sf" data-field="max_batched_tokens" value="${esc(sv('max_batched_tokens', ''))}" placeholder="auto" /></label>`;
       panelHtml += `<label>${_l('Dtype','Data type for weights. auto picks best for GPU')}<select class="hwfit-sf" data-field="dtype">${dtypeOpts}</select></label>`;
       panelHtml += `<label class="hwfit-backend-vllm">${_l('KV Cache','vLLM --kv-cache-dtype. auto uses the model/runtime default; fp8 reduces KV memory for long context.')}<select class="hwfit-sf" data-field="vllm_kv_cache_dtype" style="height:32px;">${vllmKvCacheOpts}</select></label>`;
       panelHtml += `</div>`;
@@ -1005,6 +1006,7 @@ function _rerenderCachedModels() {
             dtype: _ex(/--dtype\s+(\w+)/) || 'auto',
             vllm_kv_cache_dtype: _ex(/--kv-cache-dtype\s+([\w.-]+)/) || 'auto',
             max_seqs: _ex(/--max-num-seqs\s+(\d+)/) || '',
+            max_batched_tokens: _ex(/--max-num-batched-tokens\s+(\d+)/) || '',
             cache_type: _ex(/(?:--cache-type-k|-ctk)\s+(\S+)/) || '',
             llama_fit: _ex(/(?:--fit|-fit)\s+(on|off)/) || '',
             llama_split_mode: _ex(/(?:--split-mode|-sm)\s+(none|layer|row|tensor)/) || '',
@@ -1690,6 +1692,32 @@ function _rerenderCachedModels() {
                 { title: 'No GPU detected', confirmText: 'Launch anyway', cancelText: 'Cancel', danger: true },
               );
               if (!_proceed) return;
+            } else if (['vllm', 'sglang'].includes(serveState.backend)) {
+              const _target = parseFloat(serveState.gpu_mem || '0.90');
+              const _gpuTarget = Number.isFinite(_target) && _target > 0 && _target <= 1 ? _target : 0.90;
+              const _selectedRaw = String(serveState.gpus || serveState.gpu_id || '').trim();
+              const _selected = _selectedRaw
+                ? new Set(_selectedRaw.split(',').map(s => s.trim()).filter(Boolean))
+                : null;
+              const _checked = _probeGpus.filter(g => !_selected || _selected.has(String(g.index)));
+              const _busy = _checked.filter(g => {
+                const total = Number(g.total_mb) || 0;
+                const free = Number(g.free_mb) || 0;
+                return total > 0 && free / total < _gpuTarget;
+              });
+              if (_busy.length) {
+                const _lines = _busy.map(g => {
+                  const free = ((Number(g.free_mb) || 0) / 1024).toFixed(1);
+                  const total = ((Number(g.total_mb) || 0) / 1024).toFixed(1);
+                  return `GPU ${g.index}: ${free}/${total} GB free`;
+                }).join('\n');
+                const _pct = Math.round(_gpuTarget * 100);
+                const _proceed = await window.styledConfirm(
+                  `Selected GPU memory is already below the configured ${_pct}% target for ${serveState.backend.toUpperCase()}.\n\n${_lines}\n\nAnother model or process may be using VRAM. Launching anyway can OOM; lower GPU Mem, choose different GPUs, or stop the existing process first.\n\nLaunch anyway?`,
+                  { title: 'GPU memory already in use', confirmText: 'Launch anyway', cancelText: 'Cancel', danger: true },
+                );
+                if (!_proceed) return;
+              }
             }
           } catch {
             // Network / probe failure — don't block. Better to let the launch

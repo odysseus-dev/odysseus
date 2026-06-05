@@ -1413,6 +1413,7 @@ function _parseServeCmdToFields(cmd) {
     dtype: ex(/--dtype\s+(\w+)/) || 'auto',
     vllm_kv_cache_dtype: ex(/--kv-cache-dtype\s+([\w.-]+)/) || 'auto',
     max_seqs: ex(/--max-num-seqs\s+(\d+)/) || '',
+    max_batched_tokens: ex(/--max-num-batched-tokens\s+(\d+)/) || '',
     gpus: ex(/CUDA_VISIBLE_DEVICES=(\S+)/) || '',
     cache_type: ex(/(?:--cache-type-k|-ctk)\s+(\S+)/) || '',
     llama_fit: ex(/(?:--fit|-fit)\s+(on|off)/) || '',
