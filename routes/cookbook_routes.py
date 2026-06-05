@@ -15,11 +15,9 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, Depends
 
 from src.auth_helpers import require_user
-from src.constants import COOKBOOK_STATE_FILE
 from pydantic import BaseModel
 
 from core.middleware import require_admin
-from routes._validators import validate_remote_host, validate_ssh_port
 from core.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
@@ -38,8 +36,9 @@ from routes.cookbook_output import (
 logger = logging.getLogger(__name__)
 
 from routes.cookbook_helpers import (
-    _SESSION_ID_RE, _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_token,
-    _validate_local_dir, _validate_gpus, _shell_path,
+    _SSH_PORT_RE, _REMOTE_HOST_RE, _SESSION_ID_RE,
+    _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_remote_host, _validate_token,
+    _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
@@ -47,8 +46,6 @@ from routes.cookbook_helpers import (
     _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
     _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     _diagnose_serve_output, run_ssh_command_async,
-    _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
-    _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     _normalize_llama_cpp_python_cache_types,
     ModelDownloadRequest, ServeRequest,
 )
@@ -64,7 +61,7 @@ _HF_TOKEN_STATUS_SNIPPET = (
 
 def setup_cookbook_routes() -> APIRouter:
     router = APIRouter(tags=["cookbook"])
-    _cookbook_state_path = Path(COOKBOOK_STATE_FILE)
+    _cookbook_state_path = Path(os.environ.get("DATA_DIR", "data")) / "cookbook_state.json"
 
     def _mask_secret(value: str) -> str:
         if not value:
@@ -506,33 +503,24 @@ def setup_cookbook_routes() -> APIRouter:
         require_admin(request)
         # Defence-in-depth: even though this endpoint is admin-gated, refuse
         # values that would land in shell contexts with metacharacters.
-        backend = (req.backend or "").strip().lower()
-        is_ollama_download = backend == "ollama" or ("/" not in req.repo_id and ":" in req.repo_id)
-        if is_ollama_download:
-            _validate_serve_model_id(req.repo_id)
-            req.include = None
-            req.local_dir = None
-        else:
-            _validate_repo_id(req.repo_id)
-            _validate_include(req.include)
-        validate_remote_host(req.remote_host)
-        req.ssh_port = validate_ssh_port(req.ssh_port)
+        _validate_repo_id(req.repo_id)
+        _validate_include(req.include)
+        _validate_remote_host(req.remote_host)
+        req.ssh_port = _validate_ssh_port(req.ssh_port)
         req.local_dir = _validate_local_dir(req.local_dir)
-        req.hf_token = "" if is_ollama_download else (req.hf_token or _load_stored_hf_token())
+        req.hf_token = req.hf_token or _load_stored_hf_token()
         _validate_token(req.hf_token)
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
         session_id = f"cookbook-{uuid.uuid4().hex[:8]}"
         wrapper_script = TMUX_LOG_DIR / f"{session_id}.sh"
 
-        # Custom download dir: point the HF cache at <dir>/hub via env vars
-        # (HF_HOME + HUGGINGFACE_HUB_CACHE) instead of --local-dir. local_dir
-        # produces a flat layout (<dir>/<name>/<file>) and the local-dir
-        # bookkeeping files (.cache/huggingface/.gitignore.lock), and it
-        # also breaks robust resume on flaky transfers — the blob-based hub
-        # cache survives SSL ReadError mid-stream by reusing <sha>.incomplete,
-        # local_dir does not. See issue #2722.
-        _dl_hf_home_shell = _shell_path(req.local_dir.rstrip("/")) if req.local_dir else None
-        _dl_pyarg = ""  # snapshot_download honors the env vars too — no kwarg needed
+        # When a download directory is set, target a per-model subfolder under it
+        # (<dir>/<name>) so the flat-directory cache scan lists it as its own
+        # model. Without it, hf/snapshot_download falls back to the HF cache.
+        _dl_short = req.repo_id.split("/")[-1] if "/" in req.repo_id else req.repo_id
+        _dl_base = (req.local_dir.rstrip("/") + "/" + _dl_short) if req.local_dir else None
+        _dl_shell = _shell_path(_dl_base) if _dl_base else None      # for hf CLI / bash
+        _dl_pyarg = (", local_dir=os.path.expanduser(" + repr(_dl_base) + ")") if _dl_base else ""
 
         # Build the hf download command. Redirection to suppress the interactive
         # "update available? [Y/n]" prompt is added per-platform further down
@@ -540,7 +528,8 @@ def setup_cookbook_routes() -> APIRouter:
         hf_cmd = f"hf download {req.repo_id}"
         if req.include:
             hf_cmd += f" --include '{req.include}'"
-        ollama_cmd = f"ollama pull {shlex.quote(req.repo_id)}"
+        if _dl_shell:
+            hf_cmd += f" --local-dir {_dl_shell}"
 
         # Build the shell wrapper — runs hf download directly in tmux (which is a TTY)
         # No script/tee needed — we'll use tmux capture-pane to read output
@@ -548,15 +537,8 @@ def setup_cookbook_routes() -> APIRouter:
         lines.extend(_user_shell_path_bootstrap())
         if req.hf_token:
             lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
-        if _dl_hf_home_shell and not is_ollama_download:
-            # Make hf download / snapshot_download honor the chosen dir via the
-            # standard HF cache (gives us the models--org--name/blobs/... layout
-            # with resumable .incomplete blobs).
-            lines.append(f"export HF_HOME={_dl_hf_home_shell}")
-            lines.append(f"export HUGGINGFACE_HUB_CACHE={_dl_hf_home_shell}/hub")
-            lines.append(f"export HF_HUB_CACHE={_dl_hf_home_shell}/hub")
         # Ensure pip-user scripts (e.g. hf CLI installed via --user) are on PATH
-        lines.append('export PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"')
+        lines.append('export PATH="$HOME/.local/bin:$PATH"')
         # When Odysseus runs from a venv (e.g. native macOS install), put its bin
         # on PATH so the tmux shell finds the bundled `hf`/`python3` without an
         # activated venv. Local bash runs only — meaningless over SSH.
@@ -567,25 +549,14 @@ def setup_cookbook_routes() -> APIRouter:
         # throughput. Retries set disable_hf_transfer to fall back to the plain,
         # slower-but-reliable downloader (resumes cleanly from the .incomplete files).
         # Use `python3 -m pip` not `pip` — macOS has no bare `pip` command.
-        if is_ollama_download:
-            lines.append('if command -v ollama >/dev/null 2>&1; then')
-            lines.append(f'  ODYSSEUS_OLLAMA_PULL_CMD={shlex.quote(ollama_cmd)}')
-            lines.append('elif command -v docker >/dev/null 2>&1; then')
-            lines.append('  ODYSSEUS_OLLAMA_CONTAINER="$(docker ps --format \'{{.Names}}\' 2>/dev/null | grep -E \'^(ollama-rocm|ollama-test)$\' | head -1)"')
-            lines.append('  if [ -n "$ODYSSEUS_OLLAMA_CONTAINER" ]; then')
-            lines.append(f'    ODYSSEUS_OLLAMA_PULL_CMD={shlex.quote("docker exec ${ODYSSEUS_OLLAMA_CONTAINER} " + ollama_cmd)}')
-            lines.append('  fi')
-            lines.append('fi')
-            lines.append('if [ -z "$ODYSSEUS_OLLAMA_PULL_CMD" ]; then echo "ERROR: Ollama not found on this server. Install Ollama or start an ollama-rocm/ollama-test container."; exit 127; fi')
+        lines.append(f"command -v hf >/dev/null 2>&1 || {_pip_install_fallback_chain('huggingface_hub', upgrade=True)}")
+        if req.disable_hf_transfer:
+            lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
+            lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=4")
         else:
-            lines.append(f"command -v hf >/dev/null 2>&1 || {_pip_install_fallback_chain('huggingface_hub', upgrade=True)}")
-            if req.disable_hf_transfer:
-                lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
-                lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=4")
-            else:
-                lines.append(f"python3 -c 'import hf_transfer' 2>/dev/null || {_pip_install_fallback_chain('hf_transfer')}")
-                lines.append("python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
-                lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
+            lines.append(f"python3 -c 'import hf_transfer' 2>/dev/null || {_pip_install_fallback_chain('hf_transfer')}")
+            lines.append("python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
+            lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
 
         remote = req.remote_host  # None for local
         is_windows = req.platform == "windows"
@@ -609,46 +580,33 @@ def setup_cookbook_routes() -> APIRouter:
             ps_lines.append('New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null')
             if req.hf_token:
                 ps_lines.append(f"$env:HF_TOKEN = '{_ps_squote(req.hf_token)}'")
-            if req.local_dir and not is_ollama_download:
-                # Mirror the bash branch — point the HF cache at the user's dir
-                # via env vars instead of --local-dir, so resume works on flaky
-                # transfers (issue #2722).
-                _dl_ps = _ps_squote(req.local_dir.rstrip("/"))
-                ps_lines.append(f"$env:HF_HOME = '{_dl_ps}'")
-                ps_lines.append(f"$env:HUGGINGFACE_HUB_CACHE = '{_dl_ps}/hub'")
-                ps_lines.append(f"$env:HF_HUB_CACHE = '{_dl_ps}/hub'")
             if req.env_prefix:
                 ps_lines.append(_safe_env_prefix(req.env_prefix))
-            if is_ollama_download:
-                ps_lines.append('if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) { Write-Host "ERROR: Ollama not found. Install from https://ollama.com/download/windows"; exit 127 }')
-                ps_lines.append(f"$null | ollama pull '{_ps_squote(req.repo_id)}'")
-                ps_lines.append('if ($LASTEXITCODE -eq 0) { Write-Host ""; Write-Host "DOWNLOAD_OK" } else { Write-Host ""; Write-Host "DOWNLOAD_FAILED (exit $LASTEXITCODE)" }')
-            else:
-                # Try hf CLI, fall back to Python huggingface_hub, then auto-install
-                ps_lines.append('try {{')
-                ps_lines.append('  $hfPath = Get-Command hf -ErrorAction SilentlyContinue')
-                ps_lines.append('  if ($hfPath) {{')
-                # Pipe $null to stdin to suppress interactive "update available? [Y/n]" prompt
-                ps_lines.append(f'    $null | {hf_cmd}')
-                ps_lines.append('  }} else {{')
-                ps_lines.append('    python -c "import huggingface_hub" 2>$null')
-                ps_lines.append('    if ($LASTEXITCODE -eq 0) {{')
-                ps_lines.append('      Write-Host "hf CLI not found, using Python huggingface_hub..."')
-                ps_lines.append('      python -m pip install -q hf_transfer 2>$null')
-                ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
-                ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
-                ps_lines.append('    }} else {{')
-                ps_lines.append('      Write-Host "Installing huggingface-hub..."')
-                ps_lines.append('      python -m pip install -q huggingface-hub hf_transfer')
-                ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
-                ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
-                ps_lines.append('    }}')
-                ps_lines.append('  }}')
-                ps_lines.append('  if ($LASTEXITCODE -eq 0) {{ Write-Host ""; Write-Host "DOWNLOAD_OK" }}')
-                ps_lines.append('  else {{ Write-Host ""; Write-Host "DOWNLOAD_FAILED (exit $LASTEXITCODE)" }}')
-                ps_lines.append('}} catch {{')
-                ps_lines.append('  Write-Host ""; Write-Host "DOWNLOAD_FAILED ($_)"')
-                ps_lines.append('}}')
+            # Try hf CLI, fall back to Python huggingface_hub, then auto-install
+            ps_lines.append('try {{')
+            ps_lines.append('  $hfPath = Get-Command hf -ErrorAction SilentlyContinue')
+            ps_lines.append('  if ($hfPath) {{')
+            # Pipe $null to stdin to suppress interactive "update available? [Y/n]" prompt
+            ps_lines.append(f'    $null | {hf_cmd}')
+            ps_lines.append('  }} else {{')
+            ps_lines.append('    python -c "import huggingface_hub" 2>$null')
+            ps_lines.append('    if ($LASTEXITCODE -eq 0) {{')
+            ps_lines.append('      Write-Host "hf CLI not found, using Python huggingface_hub..."')
+            ps_lines.append('      python -m pip install -q hf_transfer 2>$null')
+            ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
+            ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
+            ps_lines.append('    }} else {{')
+            ps_lines.append('      Write-Host "Installing huggingface-hub..."')
+            ps_lines.append('      python -m pip install -q huggingface-hub hf_transfer')
+            ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
+            ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
+            ps_lines.append('    }}')
+            ps_lines.append('  }}')
+            ps_lines.append('  if ($LASTEXITCODE -eq 0) {{ Write-Host ""; Write-Host "DOWNLOAD_OK" }}')
+            ps_lines.append('  else {{ Write-Host ""; Write-Host "DOWNLOAD_FAILED (exit $LASTEXITCODE)" }}')
+            ps_lines.append('}} catch {{')
+            ps_lines.append('  Write-Host ""; Write-Host "DOWNLOAD_FAILED ($_)"')
+            ps_lines.append('}}')
             ps_lines.append(f'Remove-Item -Force "$HOME\\{remote_runner}" -ErrorAction SilentlyContinue')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.ps1"
             runner_path.write_text("\r\n".join(ps_lines) + "\r\n", encoding="utf-8")
@@ -679,10 +637,6 @@ def setup_cookbook_routes() -> APIRouter:
             runner_lines.append("deactivate 2>/dev/null; hash -r")
             if req.hf_token:
                 runner_lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
-            if _dl_hf_home_shell and not is_ollama_download:
-                runner_lines.append(f"export HF_HOME={_dl_hf_home_shell}")
-                runner_lines.append(f"export HUGGINGFACE_HUB_CACHE={_dl_hf_home_shell}/hub")
-                runner_lines.append(f"export HF_HUB_CACHE={_dl_hf_home_shell}/hub")
             if req.env_prefix:
                 runner_lines.append(_safe_env_prefix(req.env_prefix))
             else:
@@ -693,67 +647,42 @@ def setup_cookbook_routes() -> APIRouter:
                     'done'
                 )
             # Ensure pip-user scripts (e.g. hf CLI installed via --user) are on PATH
-            runner_lines.append('export PATH="$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"')
+            runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
             # Install hf CLI + optional hf_transfer best-effort. Retries disable
             # hf_transfer because the Rust parallel path is fast but has been
             # flaky near the end of very large multi-file downloads.
             # Use --break-system-packages on PEP-668 systems (Arch, newer Debian) so it doesn't bail.
-            if is_ollama_download:
-                runner_lines.append('if command -v ollama >/dev/null 2>&1; then')
-                runner_lines.append(f'  ODYSSEUS_OLLAMA_PULL_CMD={shlex.quote(ollama_cmd)}')
-                runner_lines.append('elif command -v docker >/dev/null 2>&1; then')
-                runner_lines.append('  ODYSSEUS_OLLAMA_CONTAINER="$(docker ps --format \'{{.Names}}\' 2>/dev/null | grep -E \'^(ollama-rocm|ollama-test)$\' | head -1)"')
-                runner_lines.append('  if [ -n "$ODYSSEUS_OLLAMA_CONTAINER" ]; then')
-                runner_lines.append(f'    ODYSSEUS_OLLAMA_PULL_CMD={shlex.quote("docker exec ${ODYSSEUS_OLLAMA_CONTAINER} " + ollama_cmd)}')
-                runner_lines.append('  fi')
-                runner_lines.append('fi')
-                runner_lines.append('if [ -z "$ODYSSEUS_OLLAMA_PULL_CMD" ]; then echo "ERROR: Ollama not found on this server. Install Ollama or start an ollama-rocm/ollama-test container."; exit 127; fi')
+            runner_lines.append(f"command -v hf >/dev/null 2>&1 || {_pip_install_fallback_chain('huggingface_hub', python_cmd='pip', upgrade=True)}")
+            if req.disable_hf_transfer:
+                runner_lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
+                runner_lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=4")
             else:
-                runner_lines.append(f"command -v hf >/dev/null 2>&1 || {_pip_install_fallback_chain('huggingface_hub', python_cmd='pip', upgrade=True)}")
-                if req.disable_hf_transfer:
-                    runner_lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
-                    runner_lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=4")
-                else:
-                    runner_lines.append(f"python3 -c 'import hf_transfer' 2>/dev/null || {_pip_install_fallback_chain('hf_transfer', python_cmd='pip')}")
-                    runner_lines.append("python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
-                    runner_lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
-                # Surface whether the HF token actually reached THIS server, so a gated
-                # download's "not authorized" failure can be told apart from a missing
-                # token (the token is masked — we only print applied / not-set).
-                runner_lines.append(_HF_TOKEN_STATUS_SNIPPET)
-            # Wrap the download in a retry loop. Large HF/Ollama transfers can
-            # hit transient network failures; both backends resume cached partials.
-            mw = 4 if req.disable_hf_transfer else 8
-            runner_lines.append('_max_retries=10; _attempt=0; _ec=0')
-            runner_lines.append('while [ $_attempt -lt $_max_retries ]; do')
-            runner_lines.append('  _attempt=$((_attempt+1))')
-            if is_ollama_download:
-                runner_lines.append('  eval "$ODYSSEUS_OLLAMA_PULL_CMD" < /dev/null')
+                runner_lines.append(f"python3 -c 'import hf_transfer' 2>/dev/null || {_pip_install_fallback_chain('hf_transfer', python_cmd='pip')}")
+                runner_lines.append("python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
+                runner_lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
+            # Surface whether the HF token actually reached THIS server, so a gated
+            # download's "not authorized" failure can be told apart from a missing
+            # token (the token is masked — we only print applied / not-set).
+            runner_lines.append(_HF_TOKEN_STATUS_SNIPPET)
+            # Try hf CLI first, fall back to Python huggingface_hub, then auto-install
+            runner_lines.append('if command -v hf &>/dev/null; then')
+            # < /dev/null suppresses interactive "update available? [Y/n]" prompt
+            runner_lines.append(f'  {hf_cmd} < /dev/null')
+            runner_lines.append('elif python3 -c "import huggingface_hub" 2>/dev/null; then')
+            runner_lines.append('  echo "hf CLI not found, using Python huggingface_hub..."')
+            runner_lines.append(f'  python3 -c "import os; from huggingface_hub import snapshot_download; snapshot_download(\'{req.repo_id}\'{_dl_pyarg}, max_workers={4 if req.disable_hf_transfer else 8})"')
+            runner_lines.append('else')
+            runner_lines.append('  echo "Installing huggingface-hub and dependencies..."')
+            runner_lines.append('  pip install --no-deps -q huggingface-hub 2>/dev/null')
+            if req.disable_hf_transfer:
+                runner_lines.append('  pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests 2>/dev/null')
+                runner_lines.append('  export HF_HUB_ENABLE_HF_TRANSFER=0')
             else:
-                runner_lines.append('  if command -v hf &>/dev/null; then')
-                runner_lines.append(f'    {hf_cmd} < /dev/null')
-                runner_lines.append('  elif python3 -c "import huggingface_hub" 2>/dev/null; then')
-                runner_lines.append('    [ $_attempt -eq 1 ] && echo "hf CLI not found, using Python huggingface_hub..."')
-                runner_lines.append(f'    python3 -c "import os; from huggingface_hub import snapshot_download; snapshot_download(\'{req.repo_id}\'{_dl_pyarg}, max_workers={mw})"')
-                runner_lines.append('  else')
-                runner_lines.append('    echo "Installing huggingface-hub and dependencies..."')
-                runner_lines.append('    pip install --no-deps -q huggingface-hub 2>/dev/null')
-                if req.disable_hf_transfer:
-                    runner_lines.append('    pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests 2>/dev/null')
-                    runner_lines.append('    export HF_HUB_ENABLE_HF_TRANSFER=0')
-                else:
-                    runner_lines.append('    pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests hf_transfer 2>/dev/null')
-                    runner_lines.append("    python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
-                runner_lines.append(f'    python3 -c "import os; from huggingface_hub import snapshot_download; snapshot_download(\'{req.repo_id}\'{_dl_pyarg}, max_workers={mw})"')
-                runner_lines.append('  fi')
-            runner_lines.append('  _ec=$?')
-            runner_lines.append('  if [ $_ec -eq 0 ]; then break; fi')
-            runner_lines.append('  if [ $_attempt -lt $_max_retries ]; then')
-            runner_lines.append('    echo ""; echo "Download attempt $_attempt failed (exit $_ec) — retrying in 30s..."')
-            runner_lines.append('    sleep 30')
-            runner_lines.append('  fi')
-            runner_lines.append('done')
-            runner_lines.append('if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec after $_attempt attempts)"; fi')
+                runner_lines.append('  pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests hf_transfer 2>/dev/null')
+                runner_lines.append("  python3 -c 'import hf_transfer' 2>/dev/null && export HF_HUB_ENABLE_HF_TRANSFER=1")
+            runner_lines.append(f'  python3 -c "import os; from huggingface_hub import snapshot_download; snapshot_download(\'{req.repo_id}\'{_dl_pyarg}, max_workers={4 if req.disable_hf_transfer else 8})"')
+            runner_lines.append('fi')
+            runner_lines.append('_ec=$?; if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec)"; fi')
             runner_lines.append(f"rm -f {remote_runner}")
             runner_lines.append('exec "${SHELL:-/bin/bash}"')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
@@ -779,30 +708,23 @@ def setup_cookbook_routes() -> APIRouter:
                 lines.append("deactivate 2>/dev/null; hash -r")
             # Show whether the HF token reached this run (masked) — tells a gated
             # "not authorized" failure apart from a missing token.
-            if not is_ollama_download:
-                lines.append(_HF_TOKEN_STATUS_SNIPPET)
-            # Retry loop — same rationale as the remote-bash path. Issue #2722.
-            _hf_invoke = 'eval "$ODYSSEUS_OLLAMA_PULL_CMD" < /dev/null' if is_ollama_download else (hf_cmd if IS_WINDOWS else f"{hf_cmd} < /dev/null")
-            lines.append('_max_retries=10; _attempt=0; _ec=0')
-            lines.append('while [ $_attempt -lt $_max_retries ]; do')
-            lines.append('  _attempt=$((_attempt+1))')
-            lines.append(f'  {_hf_invoke}')
-            lines.append('  _ec=$?')
-            lines.append('  if [ $_ec -eq 0 ]; then break; fi')
-            lines.append('  if [ $_attempt -lt $_max_retries ]; then')
-            lines.append('    echo ""; echo "Download attempt $_attempt failed (exit $_ec) — retrying in 30s..."')
-            lines.append('    sleep 30')
-            lines.append('  fi')
-            lines.append('done')
-            lines.append('if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec after $_attempt attempts)"; fi')
-            if not IS_WINDOWS:
+            lines.append(_HF_TOKEN_STATUS_SNIPPET)
+            if IS_WINDOWS:
+                # Detached path: no controlling TTY, so skip `< /dev/null`
+                # (handled by Popen stdin=DEVNULL) and don't keep a shell open.
+                lines.append(hf_cmd)
+                lines.append('_ec=$?; if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec)"; fi')
+            else:
+                # < /dev/null suppresses interactive "update available? [Y/n]" prompt
+                lines.append(f"{hf_cmd} < /dev/null")
+                lines.append('_ec=$?; if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec)"; fi')
                 lines.append(f"rm -f '{wrapper_script}'")
                 lines.append('exec "${SHELL:-/bin/bash}"')
                 wrapper_script.write_text("\n".join(lines) + "\n", encoding="utf-8")
                 wrapper_script.chmod(0o755)
             setup_cmd = None if IS_WINDOWS else f"tmux set-option -g history-limit 100000 2>/dev/null; tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))}"
 
-        logger.info(f"Model download: {req.repo_id} (backend={'ollama' if is_ollama_download else 'hf'}, include={req.include}, session={session_id}, remote={remote})")
+        logger.info(f"Model download: {req.repo_id} (include={req.include}, session={session_id}, remote={remote})")
         logger.info(f"Download setup_cmd: {setup_cmd}")
 
         if setup_cmd is None:
@@ -847,8 +769,9 @@ def setup_cookbook_routes() -> APIRouter:
         # Validate shell-bound inputs, matching the sibling list_gpus endpoint —
         # `host`/`ssh_port` are interpolated into an ssh command below, so an
         # unvalidated value (e.g. "x'; rm -rf ~ #") would be command injection.
-        host = validate_remote_host(host)
-        ssh_port = validate_ssh_port(ssh_port)
+        host = _validate_remote_host(host)
+        if ssh_port is not None and ssh_port != "" and not _SSH_PORT_RE.fullmatch(ssh_port):
+            raise HTTPException(400, "Invalid ssh_port")
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
         model_dirs = []
@@ -997,16 +920,11 @@ def setup_cookbook_routes() -> APIRouter:
             # listening" check without requiring ss/netstat/nmap.
             ssh_base = ["ssh", "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=no"]
             if ssh_port and str(ssh_port) != "22":
-                try:
-                    ssh_port = validate_ssh_port(ssh_port)
-                except HTTPException:
+                if not _SSH_PORT_RE.match(str(ssh_port)):
                     return None
                 ssh_base.extend(["-p", str(ssh_port)])
-            try:
-                host_arg = validate_remote_host(remote)
-            except HTTPException:
-                return None
-            if not host_arg:
+            host_arg = remote
+            if not _REMOTE_HOST_RE.match(host_arg):
                 return None
             probe_ports = " ".join(str(start_port + i) for i in range(max_offset + 1))
             script = (
@@ -1143,10 +1061,6 @@ def setup_cookbook_routes() -> APIRouter:
         probing /v1/models and dims the endpoint until the server is reachable,
         so registering immediately (before the server finishes loading) is safe.
         """
-        logger.info(
-            f"_auto_register_llm_endpoint: ENTRY repo_id={req.repo_id!r} "
-            f"remote={remote!r} cmd_prefix={req.cmd[:80]!r}"
-        )
         import re
         from core.database import SessionLocal, ModelEndpoint
 
@@ -1171,20 +1085,16 @@ def setup_cookbook_routes() -> APIRouter:
         else:
             port = 8080  # llama.cpp's llama-server default — the Apple Silicon path
 
-        # Determine host. The cookbook tmux for `local=true` serves runs INSIDE
-        # the odysseus container — so the right URL for the in-container
-        # backend to reach it is `localhost`, NOT `host.docker.internal`
-        # (the latter points at the docker HOST, which doesn't have a server
-        # on that port). The previous host.docker.internal fallback only made
-        # sense for /setup-added external services like systemd Ollama on the
-        # host — and those go through manual setup, not this auto-register
-        # code path. For remote serves we still use the SSH host alias.
+        # Determine host (mirrors the image path: SSH alias for remote serves).
+        # For local serves while Odysseus runs inside Docker, "localhost"
+        # resolves to the container itself — useless. Use host.docker.internal
+        # which compose maps to the actual host, matching what /setup adds
+        # for Ollama by hand.
         if remote:
             host = remote.split("@")[-1] if "@" in remote else remote
-        elif re.search(r"\bdocker\s+exec\s+(?:ollama-rocm|ollama-test)\b", req.cmd or ""):
-            host = "host.docker.internal"
         else:
-            host = "localhost"
+            from routes.model_routes import _docker_host_gateway_reachable
+            host = "host.docker.internal" if _docker_host_gateway_reachable() else "localhost"
 
         base_url = f"http://{host}:{port}/v1"
 
@@ -1193,9 +1103,7 @@ def setup_cookbook_routes() -> APIRouter:
 
         # If the serve command opts models into OpenAI tool-calling, record it so
         # agent_loop trusts emitted tool_calls instead of the name heuristic.
-        is_ollama_endpoint = "ollama" in (req.cmd or "").lower()
         supports_tools = True if "--enable-auto-tool-choice" in req.cmd else None
-        pinned_models = [req.repo_id] if is_ollama_endpoint and req.repo_id else []
 
         db = SessionLocal()
         try:
@@ -1205,43 +1113,10 @@ def setup_cookbook_routes() -> APIRouter:
                 existing.is_enabled = True
                 existing.model_type = "llm"
                 existing.name = display_name
-                if is_ollama_endpoint:
-                    existing.endpoint_kind = "ollama"
-                    if pinned_models:
-                        existing.cached_models = json.dumps(pinned_models)
-                        existing.pinned_models = json.dumps(pinned_models)
                 if supports_tools is not None:
                     existing.supports_tools = supports_tools
                 db.commit()
                 logger.info(f"Updated existing local model endpoint: {base_url}")
-                # Re-probe so cached_models matches what the server actually
-                # serves right now (the URL may have stayed the same but the
-                # model behind it changed across launches).
-                try:
-                    from routes.model_routes import _probe_endpoint
-                    import json as _json2
-                    probed = _probe_endpoint(base_url, existing.api_key, timeout=5)
-                    if probed:
-                        existing.cached_models = _json2.dumps(probed)
-                        db.commit()
-                except Exception as _pe:
-                    logger.warning(f"Re-probe failed for {base_url}: {_pe!r}")
-                # Sweep stale dupes: other endpoints with the same display name
-                # at DIFFERENT URLs (likely failed earlier-attempt ports) get
-                # deleted so the picker doesn't show an offline ghost next to
-                # the working one. Only sweeps endpoints whose id starts with
-                # `local-` so we never touch a user's hand-added DeepSeek/OpenAI/
-                # etc. entry with a coincidentally matching name.
-                stale = (db.query(ModelEndpoint)
-                         .filter(ModelEndpoint.name == display_name)
-                         .filter(ModelEndpoint.base_url != base_url)
-                         .filter(ModelEndpoint.id.like("local-%"))
-                         .all())
-                for s in stale:
-                    logger.info(f"Sweeping stale local endpoint {s.id} ({s.base_url})")
-                    db.delete(s)
-                if stale:
-                    db.commit()
                 return existing.id
 
             ep_id = f"local-{uuid.uuid4().hex[:8]}"
@@ -1252,42 +1127,11 @@ def setup_cookbook_routes() -> APIRouter:
                 api_key=None,
                 is_enabled=True,
                 model_type="llm",
-                endpoint_kind="ollama" if is_ollama_endpoint else "auto",
-                cached_models=json.dumps(pinned_models) if pinned_models else None,
-                pinned_models=json.dumps(pinned_models) if pinned_models else None,
                 supports_tools=supports_tools,
             )
             db.add(ep)
             db.commit()
             logger.info(f"Auto-registered local model endpoint: {display_name} @ {base_url}")
-            # Same sweep on first-register path: drop any pre-existing local-*
-            # endpoints with this display name pointed elsewhere.
-            stale = (db.query(ModelEndpoint)
-                     .filter(ModelEndpoint.name == display_name)
-                     .filter(ModelEndpoint.id != ep_id)
-                     .filter(ModelEndpoint.id.like("local-%"))
-                     .all())
-            for s in stale:
-                logger.info(f"Sweeping stale local endpoint {s.id} ({s.base_url})")
-                db.delete(s)
-            if stale:
-                db.commit()
-            # Probe /v1/models NOW and write cached_models so the chat
-            # picker actually shows the model on the next /api/models
-            # call. Without this immediate probe, the endpoint has empty
-            # cached_models until the next background refresh fires (up
-            # to a minute later) and the picker shows nothing — even
-            # though the endpoint is in the DB and the server is up.
-            try:
-                from routes.model_routes import _probe_endpoint
-                import json as _json2
-                probed = _probe_endpoint(base_url, None, timeout=5)
-                if probed:
-                    ep.cached_models = _json2.dumps(probed)
-                    db.commit()
-                    logger.info(f"Auto-register: probed {len(probed)} models @ {base_url}")
-            except Exception as _pe:
-                logger.warning(f"Auto-register: probe-after-create failed for {base_url}: {_pe!r}")
             return ep_id
         except Exception as e:
             logger.error(f"Failed to auto-register local model endpoint: {e}")
@@ -1309,8 +1153,8 @@ def setup_cookbook_routes() -> APIRouter:
         """
         require_admin(request)
         # Defence-in-depth: reject values that could break out of shell contexts.
-        validate_remote_host(req.remote_host)
-        req.ssh_port = validate_ssh_port(req.ssh_port)
+        _validate_remote_host(req.remote_host)
+        req.ssh_port = _validate_ssh_port(req.ssh_port)
         req.gpus = _validate_gpus(req.gpus)
         req.hf_token = req.hf_token or _load_stored_hf_token()
         _validate_token(req.hf_token)
@@ -1370,12 +1214,7 @@ def setup_cookbook_routes() -> APIRouter:
         # Otherwise the runner script picks one at runtime and `_auto_register`
         # below still registers the stale 11434 default — which on a host with
         # a systemd ollama lands on the wrong (unreachable-from-docker) service.
-        # Match "ollama serve" as a phrase (with optional flags after), not
-        # any substring containing "ollama" — otherwise commands like
-        # `docker exec ollama-test ollama-import …` get wrapped as if they
-        # were native `ollama serve`, prepending OLLAMA_HOST=… and then
-        # running the ollama-not-found preflight which exits 127.
-        if re.search(r"\bollama\s+serve\b", req.cmd) and "OLLAMA_HOST=" not in req.cmd:
+        if "ollama" in req.cmd and "OLLAMA_HOST=" not in req.cmd:
             _ollama_bind_host = "0.0.0.0" if remote else "127.0.0.1"
             _ollama_chosen_port = _pick_free_port_for_ollama(
                 remote, req.ssh_port, start_port=11434, max_offset=10,
@@ -1605,7 +1444,7 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('    ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('  fi')
                 runner_lines.append('fi')
-            elif re.search(r"\bollama\s+serve\b", req.cmd):
+            elif "ollama" in req.cmd:
                 handled_ollama_serve = True
                 _ollama_default_host = "0.0.0.0" if remote else "127.0.0.1"
                 _ollama_host, _ollama_port = _ollama_bind_from_cmd(
@@ -1638,6 +1477,38 @@ def setup_cookbook_routes() -> APIRouter:
                 if remote and _ollama_host in ("0.0.0.0", "::"):
                     runner_lines.append('echo "[odysseus] WARNING: remote Ollama will bind to ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT} so Odysseus can reach it from this host."')
                     runner_lines.append('echo "[odysseus] Ollama has no built-in authentication; expose this only on a trusted LAN/VPN or provide an explicit OLLAMA_HOST with your own access controls."')
+                # Free GPU VRAM before starting Ollama: kill any orphaned vLLM
+                # engine cores left from previous launches. vLLM holds ~14.5 GB
+                # of VRAM even after the API server exits, starving Ollama.
+                # Idempotent and no-op if no vLLM process is running.
+                #
+                # Multi-GPU safety: only auto-kill on single-GPU systems where
+                # VRAM contention is guaranteed. On multi-GPU boxes, blanket-
+                # killing all vLLM processes would nuke an intentional second
+                # instance on another GPU — let the user manage that manually.
+                runner_lines.append('echo "[odysseus] Checking for orphaned vLLM processes hogging GPU VRAM..."')
+                runner_lines.append('_n_gpus="$(nvidia-smi --query-gpu=count --format=csv,noheader 2>/dev/null || echo 0)"')
+                runner_lines.append('if [ "$_n_gpus" = "1" ]; then')
+                runner_lines.append('  _vllm_pids="$(pgrep -f "VLLM::EngineCore\|vllm serve" 2>/dev/null || true)"')
+                runner_lines.append('  if [ -n "$_vllm_pids" ]; then')
+                runner_lines.append('    echo "[odysseus] Found stale vLLM process(es): $_vllm_pids — attempting graceful stop..."')
+                runner_lines.append('    kill -TERM $_vllm_pids 2>/dev/null || true')
+                runner_lines.append('    sleep 3')
+                runner_lines.append('    # If still alive, force kill')
+                runner_lines.append('    _still_alive=""')
+                runner_lines.append('    for _pid in $_vllm_pids; do')
+                runner_lines.append('      kill -0 $_pid 2>/dev/null && _still_alive="$_still_alive $_pid"')
+                runner_lines.append('    done')
+                runner_lines.append('    if [ -n "$_still_alive" ]; then')
+                runner_lines.append('      echo "[odysseus] Process(es) $_still_alive did not stop — sending SIGKILL."')
+                runner_lines.append('      kill -9 $_still_alive 2>/dev/null || true')
+                runner_lines.append('    fi')
+                runner_lines.append('    sleep 2')
+                runner_lines.append('    echo "[odysseus] VRAM freed for Ollama."')
+                runner_lines.append('  fi')
+                runner_lines.append('else')
+                runner_lines.append('  echo "[odysseus] Multi-GPU system ($_n_gpus GPUs) — skipping vLLM auto-kill."')
+                runner_lines.append('fi')
                 runner_lines.append('echo "Starting ollama server on ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}..."')
                 runner_lines.append('OLLAMA_HOST="${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}" ollama serve')
                 runner_lines.append('_ody_exit=$?')
@@ -1650,13 +1521,35 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  echo "ERROR: vLLM does not run on macOS. Use Ollama or llama.cpp (Metal) instead."')
                 runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=1')
                 runner_lines.append('fi')
-                # Put ~/.local/bin on PATH first — without a venv, vllm installs
-                # there via --user and the non-login serve shell otherwise can't
-                # find the `vllm` CLI ("command not found"). Mirrors llama.cpp above.
-                runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
-                runner_lines.append('if ! command -v vllm &>/dev/null; then')
-                runner_lines.append('  echo "ERROR: vLLM is not installed."')
-                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
+                _append_vllm_linux_preflight_lines(runner_lines)
+                # Free GPU VRAM before launching vLLM: tell Ollama (if running
+                # on the Docker host) to unload any loaded models. Ollama holds
+                # ~9.5 GB with qwen2.5:14b until explicitly unloaded via the API
+                # or by stopping the server — vLLM would otherwise OOM on a
+                # single 16 GB GPU. Idempotent and no-op if Ollama is not found.
+                #
+                # Multi-GPU safety: only auto-unload on single-GPU systems.
+                # On multi-GPU boxes, Ollama may be using a different GPU than
+                # the one vLLM is about to claim — blanket-unloading all models
+                # is unnecessary and disruptive.
+                runner_lines.append('echo "[odysseus] Checking GPU count..."')
+                runner_lines.append('_n_gpus="$(nvidia-smi --query-gpu=count --format=csv,noheader 2>/dev/null || echo 0)"')
+                runner_lines.append('if [ "$_n_gpus" = "1" ] && command -v curl &>/dev/null; then')
+                runner_lines.append('  echo "[odysseus] Single GPU — checking for Ollama models to free VRAM..."')
+                runner_lines.append('  _ollama_models="$(curl -sf --max-time 3 http://host.docker.internal:11434/api/ps 2>/dev/null || echo \'{}\')"')
+                runner_lines.append('  _loaded="$(printf "%s" "$_ollama_models" | python3 -c "import json,sys; d=json.load(sys.stdin); [print(m[\"name\"]) for m in d.get(\"models\", [])]" 2>/dev/null)"')
+                runner_lines.append('  if [ -n "$_loaded" ]; then')
+                runner_lines.append('    echo "[odysseus] Unloading Ollama model(s): $_loaded"')
+                runner_lines.append('    for _m in $_loaded; do')
+                runner_lines.append('      curl -sf -o /dev/null --max-time 5 http://host.docker.internal:11434/api/generate -d "{\\\"model\\\":\\\"$_m\\\",\\\"keep_alive\\\":0,\\\"prompt\\\":\\\"\\\"}" 2>/dev/null || true')
+                runner_lines.append('    done')
+                runner_lines.append('    sleep 2')
+                runner_lines.append('    echo "[odysseus] VRAM freed — launching vLLM."')
+                runner_lines.append('  else')
+                runner_lines.append('    echo "[odysseus] No Ollama models loaded — proceeding."')
+                runner_lines.append('  fi')
+                runner_lines.append('else')
+                runner_lines.append('  echo "[odysseus] Multi-GPU system ($_n_gpus GPUs) or curl unavailable — skipping Ollama auto-unload."')
                 runner_lines.append('fi')
                 runner_lines.append(f"ODYSSEUS_SERVE_CMD='{_bash_squote(req.cmd)}'")
                 runner_lines.append('if [ -z "$ODYSSEUS_PREFLIGHT_EXIT" ]; then')
@@ -1766,25 +1659,7 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
                 runner_lines.append('fi')
 
-            handled_ollama_sidecar_probe = False
-            if (not handled_ollama_serve
-                and re.search(r"\bdocker\s+exec\s+(?:ollama-rocm|ollama-test)\s+ollama\s+show\b", req.cmd or "")):
-                handled_ollama_sidecar_probe = True
-                _append_serve_preflight_exit_lines(
-                    runner_lines,
-                    keep_shell_open=not local_windows,
-                )
-                runner_lines.append(req.cmd)
-                runner_lines.append('_ody_exit=$?')
-                runner_lines.append('echo')
-                runner_lines.append('echo "=== Process exited with code ${_ody_exit} ==="')
-                runner_lines.append('if [ "$_ody_exit" -eq 0 ]; then')
-                runner_lines.append('  echo "[odysseus] Ollama sidecar model is available; keeping Cookbook task attached to the persistent Ollama daemon."')
-                runner_lines.append('  while true; do sleep 3600; done')
-                runner_lines.append('fi')
-                runner_lines.append('exec bash -i')
-
-            if not handled_ollama_serve and not handled_ollama_sidecar_probe:
+            if not handled_ollama_serve:
                 _append_serve_preflight_exit_lines(
                     runner_lines,
                     keep_shell_open=not local_windows,
@@ -1874,26 +1749,6 @@ def setup_cookbook_routes() -> APIRouter:
         elif not is_pip_install:
             endpoint_id = _auto_register_llm_endpoint(req, remote)
 
-        # Crash watchdog: the auto-register above writes the endpoint row
-        # IMMEDIATELY (before the server has even bound its port) so the
-        # picker shows the model as it warms up. When the serve process
-        # crashes right at startup (missing module, bad cmd, port collision,
-        # ModuleNotFoundError on llama_cpp, etc.), the endpoint is left
-        # dangling — every subsequent chat returns 503 or an empty response.
-        # Schedule a background task to read the tmux output for the
-        # "=== Process exited with code N ===" marker the runner emits;
-        # if N != 0 within the watch window, delete the endpoint we just
-        # created. Skipped for diffusion (different image-endpoint cleanup
-        # path) and pip-install tasks (no endpoint to drop).
-        if endpoint_id and not is_diffusion and not is_pip_install:
-            asyncio.create_task(_serve_crash_watchdog(
-                endpoint_id=endpoint_id,
-                session_id=session_id,
-                remote=remote,
-                ssh_port=req.ssh_port,
-                is_windows=is_windows,
-            ))
-
         # Log to assistant
         try:
             from src.assistant_log import log_to_assistant
@@ -1921,11 +1776,12 @@ def setup_cookbook_routes() -> APIRouter:
     async def server_setup(request: Request, req: SetupRequest):
         """Install required dependencies on a remote server via SSH."""
         require_admin(request)
-        host = validate_remote_host(req.host)
+        host = _validate_remote_host(req.host)
         if not host:
             raise HTTPException(400, "host is required")
         port = req.ssh_port
-        port = validate_ssh_port(port)
+        if port is not None and port != "" and not re.fullmatch(r"\d{1,5}", port):
+            raise HTTPException(400, "Invalid ssh_port")
         pf = f"-p {port} " if port and port != "22" else ""
 
         # Detect platform: Windows first (echo %OS% → Windows_NT), then Termux, then Linux
@@ -2188,8 +2044,9 @@ def setup_cookbook_routes() -> APIRouter:
         `busy` is True when free_mb/total_mb < 0.5.
         """
         require_admin(request)
-        host = validate_remote_host(host)
-        ssh_port = validate_ssh_port(ssh_port)
+        host = _validate_remote_host(host)
+        if ssh_port is not None and ssh_port != "" and not _SSH_PORT_RE.fullmatch(ssh_port):
+            raise HTTPException(400, "Invalid ssh_port")
         gpu_query = "nvidia-smi --query-gpu=index,name,memory.free,memory.total,memory.used,utilization.gpu,uuid --format=csv,noheader,nounits"
         nvidia_error = None
         try:
@@ -2351,8 +2208,9 @@ def setup_cookbook_routes() -> APIRouter:
         sig = (req.signal or "TERM").upper()
         if sig not in ("TERM", "KILL", "INT"):
             raise HTTPException(400, "signal must be TERM, KILL, or INT")
-        host = validate_remote_host(req.host)
-        req.ssh_port = validate_ssh_port(req.ssh_port)
+        host = _validate_remote_host(req.host)
+        if req.ssh_port and not _SSH_PORT_RE.fullmatch(req.ssh_port):
+            raise HTTPException(400, "Invalid ssh_port")
         kill_cmd = f"kill -{sig} {req.pid}"
         try:
             if host:
@@ -2627,58 +2485,30 @@ def setup_cookbook_routes() -> APIRouter:
 
         return {"models": out}
 
-    # Rate-limit for the orphan-tmux adoption sweep. 60s interval so SSH
-    # work is genuinely sparse even on an actively-polled cookbook page.
+    # Rate-limit for the orphan-tmux adoption sweep. The UI polls
+    # tasks/status every ~3s; we don't want to SSH every host on every
+    # poll. 20s is fast enough that a model the agent launched in the
+    # background shows up "almost immediately" in the UI without being
+    # wasteful.
     _last_orphan_sweep_ts = [0.0]
-    _ORPHAN_SWEEP_MIN_INTERVAL_S = 60.0
-    # Concurrency guard so two requests racing don't both spawn a sweep.
-    _orphan_sweep_inflight = [False]
+    _ORPHAN_SWEEP_MIN_INTERVAL_S = 20.0
 
     def _maybe_sweep_orphans(tasks: list, state: dict) -> None:
         """Scan each configured cookbook server for `serve-*` tmux sessions
         the cookbook doesn't know about and adopt them into state.tasks.
 
-        Heavy SSH work runs in a background thread via asyncio.to_thread so
-        it never blocks the request that triggered it. Was previously
-        disabled because the sync implementation pegged uvicorn CPU during
-        active cookbook polling — re-enabled now with the work pushed off
-        the event loop and a slower (60s) cadence.
+        Writes are conditional: if no orphans are found, nothing is touched.
+        Rate-limited so polling UIs don't trigger SSH on every refresh.
         """
         import time as _time
+        import subprocess
+        logger.info(f"_maybe_sweep_orphans: entered, last_ts={_last_orphan_sweep_ts[0]}")
         now = _time.monotonic()
-        if _orphan_sweep_inflight[0]:
-            return
         if now - _last_orphan_sweep_ts[0] < _ORPHAN_SWEEP_MIN_INTERVAL_S:
+            logger.info(f"_maybe_sweep_orphans: rate-limited, {now - _last_orphan_sweep_ts[0]:.1f}s since last")
             return
         _last_orphan_sweep_ts[0] = now
-        _orphan_sweep_inflight[0] = True
-        # Snapshot inputs so the worker doesn't race with state mutations.
-        try:
-            tasks_snap = list(tasks or [])
-        except Exception:
-            tasks_snap = []
-        state_snap = state if isinstance(state, dict) else {}
 
-        # Caller is _cookbook_tasks_status_sync (sync context, no event
-        # loop). Use a plain background thread — no asyncio needed.
-        import threading
-        def _run_sweep() -> None:
-            try:
-                _sync_sweep_orphans(tasks_snap, state_snap)
-            except Exception as _e:
-                logger.warning(f"orphan sweep thread failed: {_e!r}")
-            finally:
-                _orphan_sweep_inflight[0] = False
-        try:
-            threading.Thread(target=_run_sweep, daemon=True, name="orphan-sweep").start()
-        except Exception as _e:
-            logger.warning(f"orphan sweep thread spawn failed: {_e!r}")
-            _orphan_sweep_inflight[0] = False
-        return
-
-    def _sync_sweep_orphans(tasks: list, state: dict) -> None:
-        """The actual sync sweep — never call this on the event loop."""
-        import subprocess
         env = state.get("env") if isinstance(state, dict) else {}
         servers = env.get("servers") if isinstance(env, dict) else []
         logger.info(f"orphan sweep starting: {len(servers) if isinstance(servers, list) else 0} server(s), known_sids={len([t for t in tasks if isinstance(t, dict) and t.get('sessionId')])}")
@@ -2697,19 +2527,14 @@ def setup_cookbook_routes() -> APIRouter:
             host = (srv.get("host") or "").strip()
             if not host:
                 continue  # local-only entry; the /proc scan handles it
-            try:
-                host = validate_remote_host(host)
-            except HTTPException:
+            if not _REMOTE_HOST_RE.match(host):
                 continue
             sport = str(srv.get("port") or "").strip()
             ssh_base = ["ssh", "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=no"]
             if sport and sport != "22":
-                try:
-                    sport = validate_ssh_port(sport)
-                except HTTPException:
+                if not _SSH_PORT_RE.match(sport):
                     continue
-                if sport != "22":
-                    ssh_base.extend(["-p", sport])
+                ssh_base.extend(["-p", sport])
 
             try:
                 ls = subprocess.run(
@@ -3258,18 +3083,12 @@ def setup_cookbook_routes() -> APIRouter:
             if not _SESSION_ID_RE.match(session_id):
                 logger.warning(f"Skipping task with unsafe session_id: {session_id!r}")
                 continue
-            if remote:
-                try:
-                    remote = validate_remote_host(remote)
-                except HTTPException:
-                    logger.warning(f"Skipping task with unsafe remoteHost: {remote!r}")
-                    continue
-            if _tport:
-                try:
-                    _tport = validate_ssh_port(str(_tport))
-                except HTTPException:
-                    logger.warning(f"Skipping task with unsafe sshPort: {_tport!r}")
-                    continue
+            if remote and not _REMOTE_HOST_RE.match(remote):
+                logger.warning(f"Skipping task with unsafe remoteHost: {remote!r}")
+                continue
+            if _tport and not _SSH_PORT_RE.match(str(_tport)):
+                logger.warning(f"Skipping task with unsafe sshPort: {_tport!r}")
+                continue
             if task_platform == "windows" and remote:
                 # Windows: check PID file + Get-Process, read log tail
                 sd = "$env:TEMP\\odysseus-sessions"
@@ -3339,43 +3158,28 @@ def setup_cookbook_routes() -> APIRouter:
                 except Exception:
                     pass
             else:
-                # Skip the live SSH check entirely for tasks already in a
-                # terminal state — they won't change, and 10s timeouts
-                # stacked per task were the dominant cost of this whole
-                # status endpoint (3+ minute stalls with ~8 accumulated
-                # stopped tasks). The agent's `list_served_models` call
-                # was blocking the chat stream every time.
-                _task_status = (task.get("status") or "").lower()
-                if _task_status in {"stopped", "done", "completed",
-                                    "crashed", "error", "failed",
-                                    "ended", "killed"}:
+                try:
+                    alive = subprocess.run(check_cmd, timeout=10, capture_output=True)
+                    is_alive = alive.returncode == 0
+                except Exception:
                     is_alive = False
-                    # Keep the persisted output_tail for the UI — it's
-                    # what the agent uses to diagnose past failures.
-                    full_snapshot = (task.get("output") or "")[-12000:]
-                else:
-                    try:
-                        alive = subprocess.run(check_cmd, timeout=4, capture_output=True)
-                        is_alive = alive.returncode == 0
-                    except Exception:
-                        is_alive = False
 
-                    # Capture last lines for progress. Prefer the "Downloading" line
-                    # (real aggregate bytes) over "Fetching N files" (whole-file count that
-                    # lags with hf_transfer). Falls back to the true last line otherwise.
-                    if is_alive:
-                        try:
-                            cap = subprocess.run(capture_cmd, timeout=4, capture_output=True, text=True)
-                            if cap.returncode == 0:
-                                full_snapshot = cap.stdout.strip()
-                                lines = [l.strip() for l in full_snapshot.split('\n') if l.strip()]
-                                downloading_lines = [l for l in lines if l.startswith("Downloading")]
-                                if downloading_lines:
-                                    progress_text = downloading_lines[-1]
-                                elif lines:
-                                    progress_text = lines[-1]
-                        except Exception:
-                            pass
+                # Capture last lines for progress. Prefer the "Downloading" line
+                # (real aggregate bytes) over "Fetching N files" (whole-file count that
+                # lags with hf_transfer). Falls back to the true last line otherwise.
+                if is_alive:
+                    try:
+                        cap = subprocess.run(capture_cmd, timeout=10, capture_output=True, text=True)
+                        if cap.returncode == 0:
+                            full_snapshot = cap.stdout.strip()
+                            lines = [l.strip() for l in full_snapshot.split('\n') if l.strip()]
+                            downloading_lines = [l for l in lines if l.startswith("Downloading")]
+                            if downloading_lines:
+                                progress_text = downloading_lines[-1]
+                            elif lines:
+                                progress_text = lines[-1]
+                    except Exception:
+                        pass
 
             # Determine status. For the local-Windows detached model the log file
             # persists after the process exits, so a finished download still has a
@@ -3406,24 +3210,20 @@ def setup_cookbook_routes() -> APIRouter:
                 elif has_exit and task_type == "download":
                     # Dependency installs are tracked as download tasks but only
                     # emit the generic runner exit marker, not HF download markers.
-                    if download_has_incomplete_evidence and not download_has_ok:
-                        status = "running" if is_alive else "stopped"
-                    else:
-                        status = "completed" if exit_code == 0 else "error"
+                    status = "completed" if exit_code == 0 else "error"
                 elif has_exit and "unrecognized arguments" in lower:
                     status = "error"
                 elif has_error and not ("application startup complete" in lower):
                     status = "error"
-                elif task_type == "download" and download_has_ok:
+                elif task_type == "download" and ("100%" in full_snapshot or "DOWNLOAD_OK" in full_snapshot):
+                    # Only download tasks treat 100% as "completed".
+                    # Serve tasks log 100%|██████| during inference progress
+                    # (diffusion sampling, etc.) — that's "running", not done.
                     if re.search(r"Fetching\s+0\s+files", full_snapshot, re.IGNORECASE):
                         status = "error"
                         download_zero_files = True
                     else:
                         status = "completed"
-                elif task_type == "download" and download_has_failed:
-                    status = "error"
-                elif task_type == "download" and download_has_incomplete_evidence:
-                    status = "running" if is_alive else "stopped"
                 elif "application startup complete" in lower:
                     status = "ready"
                 elif not is_alive:
@@ -3455,12 +3255,12 @@ def setup_cookbook_routes() -> APIRouter:
                     status = "stopped"
 
             # Parse structured phase info — single source of truth for the UI
-            phase_info = _parse_serve_phase(full_snapshot, task_type) if (task_type == "serve" and full_snapshot) else {}
+            phase_info = _parse_serve_phase(full_snapshot, task_type) if (task_type == "serve" and status == "running" and full_snapshot) else {}
             if phase_info.get("status") == "ready":
                 status = "ready"
             serve_phase = phase_info.get("phase", "")
             diagnosis = _diagnose_serve_output(full_snapshot) if task_type == "serve" and full_snapshot else None
-            if diagnosis and status in {"running", "unknown", "stopped"} and phase_info.get("status") != "ready":
+            if diagnosis and status in {"running", "unknown", "stopped"}:
                 status = "error"
             if download_zero_files:
                 diagnosis = {"message": "No matching files were downloaded. The model repo or filename/quant pattern may be wrong (for example a ':Q4_K_M' tag that does not exist in the repo). Check the repo and the include/quant pattern."}
