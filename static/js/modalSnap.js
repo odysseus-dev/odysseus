@@ -21,6 +21,14 @@ const SNAP_PX = 60;
 const UNSNAP_PX = 80;
 const MIN_CHAT_WIDTH = 380;
 const EMAIL_DOC_SPLIT_WIDTH_KEY = 'odysseus-email-doc-split-width';
+const EDGE_DOCK_WIDTH_KEY_PREFIX = 'odysseus-edge-dock-width';
+const MIN_EDGE_DOCK_WIDTH = 320;
+
+let _edgeDockHandlePositioner = null;
+
+function _positionEdgeDockResizeHandles() {
+  try { _edgeDockHandlePositioner && _edgeDockHandlePositioner(); } catch (_) {}
+}
 
 function _dockClassForSide(side) {
   return side === 'left' ? 'modal-left-docked' : 'modal-right-docked';
@@ -48,11 +56,61 @@ export function clearDockSide(side, owner = null) {
   if (side === 'left') {
     try { window._restoreSidebarIfRouteCollapsed?.(); } catch (_) {}
   }
+  _positionEdgeDockResizeHandles();
 }
 
 // Default dock width: ~38% of viewport, clamped to a reasonable band.
 function _defaultDockWidth() {
   return Math.min(640, Math.max(420, Math.round(window.innerWidth * 0.38)));
+}
+
+function _dockWidthStorageKey(modal, content, side) {
+  const id = modal?.id || content?.id || content?.dataset?.modalId || '';
+  return id ? `${EDGE_DOCK_WIDTH_KEY_PREFIX}:${side}:${id}` : null;
+}
+
+function _storedDockWidth(modal, content, side) {
+  const key = _dockWidthStorageKey(modal, content, side);
+  if (!key) return null;
+  try {
+    const n = parseFloat(localStorage.getItem(key) || '');
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function _saveDockWidth(modal, content, side, width) {
+  const key = _dockWidthStorageKey(modal, content, side);
+  if (!key) return;
+  try { localStorage.setItem(key, String(Math.round(width))); } catch (_) {}
+}
+
+function _minEdgeDockWidth() {
+  return window.innerWidth < 900 ? 280 : MIN_EDGE_DOCK_WIDTH;
+}
+
+function _clampRightDockWidth(width) {
+  const min = _minEdgeDockWidth();
+  const navRight = _leftNavRight();
+  const maxByChat = window.innerWidth - navRight - MIN_CHAT_WIDTH;
+  const max = Math.max(min, Math.min(Math.round(window.innerWidth * 0.82), maxByChat));
+  return Math.min(max, Math.max(min, Math.round(width)));
+}
+
+function _clampLeftDockWidth(width, left = _leftNavRight()) {
+  const min = _minEdgeDockWidth();
+  const available = Math.max(0, window.innerWidth - left);
+  const max = Math.max(min, available - 80);
+  return Math.min(max, Math.max(min, Math.round(width)));
+}
+
+function _resolveRightDockWidth(modal, content) {
+  return _clampRightDockWidth(content?._userDockWidth || _storedDockWidth(modal, content, 'right') || _defaultDockWidth());
+}
+
+function _resolveLeftDockWidth(content, left = _leftNavRight()) {
+  return _clampLeftDockWidth(content?._userDockWidth || _storedDockWidth(content?._dockOwner, content, 'left') || _resolveEmailDocSplitWidth(content, left), left);
 }
 
 function _showSnapHint(on, side = 'right') {
@@ -196,7 +254,9 @@ function _resolveEmailDocSplitWidth(content, left) {
 function _anchorLeftDock(content) {
   if (!content || content._dockSide !== 'left') return;
   const left = _leftNavRight();
-  const w = _resolveEmailDocSplitWidth(content, left);
+  const w = document.body.classList.contains('doc-view')
+    ? _resolveEmailDocSplitWidth(content, left)
+    : _resolveLeftDockWidth(content, left);
   content.style.left = left + 'px';
   content.style.width = w + 'px';
   content.style.maxWidth = w + 'px';
@@ -325,6 +385,7 @@ function _applyDockInternal(modal, side, dockClass) {
     content._preDockSnapshot.collapsedSidebar = true;
     content.style.right = 'auto';
     content._dockSide = 'left';
+    content._dockOwner = modal;
     _anchorLeftDock(content);
     w = parseFloat(content.style.width) || 0;
     document.body.classList.add('left-dock-active');
@@ -406,7 +467,7 @@ function _applyDockInternal(modal, side, dockClass) {
       };
     }
   } else {
-    w = _defaultDockWidth();
+    w = _resolveRightDockWidth(modal, content);
     content.style.left = 'auto';
     content.style.right = '0';
     content.style.width = w + 'px';
@@ -419,6 +480,8 @@ function _applyDockInternal(modal, side, dockClass) {
     }
   }
   content._dockSide = side;
+  content._dockOwner = modal;
+  _positionEdgeDockResizeHandles();
   // Watch for the docked modal disappearing (removed from DOM or hidden
   // via .hidden class) and clean up the body padding + sidebar in that
   // case. Without this, closing a docked window leaves a phantom strip
@@ -498,7 +561,9 @@ function _onDockedModalGone(modal, dockClass) {
     }
     delete _c._preDockSnapshot;
     delete _c._dockSide;
+    delete _c._dockOwner;
   }
+  _positionEdgeDockResizeHandles();
 }
 
 function _expandSidebarFromRail() {
@@ -526,6 +591,7 @@ export function clearRightDock(modal, cx, cy, dockClass) {
     _clearEmailDocSplitGeometry();
   }
   delete content._dockSide;
+  delete content._dockOwner;
   _disconnectLeftDockObservers(content);
   const snap = content._preDockSnapshot;
   // Re-expand the wide sidebar if we collapsed it — but only if the
@@ -571,6 +637,7 @@ export function clearRightDock(modal, cx, cy, dockClass) {
   content.style.top = (typeof targetTop === 'number') ? targetTop + 'px' : targetTop;
   delete content._preDockSnapshot;
   delete content._dockSuspended;
+  _positionEdgeDockResizeHandles();
 }
 
 // Temporarily release a docked modal's body push (chat returns to full
@@ -604,6 +671,7 @@ export function suspendDock(modal) {
     modal.classList.remove('email-snap-left');
     _clearEmailDocSplitGeometry();
     delete content._dockSide;
+    delete content._dockOwner;
     delete content._dockSuspended;
     return null;
   }
@@ -614,6 +682,7 @@ export function suspendDock(modal) {
     _expandSidebarFromRail();
   }
   content._dockSuspended = side;
+  _positionEdgeDockResizeHandles();
   return side;
 }
 
@@ -691,6 +760,161 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     },
   };
 }
+
+(function _initEdgeDockResizeHandles() {
+  if (typeof document === 'undefined') return;
+
+  const handles = {
+    left: document.createElement('div'),
+    right: document.createElement('div'),
+  };
+
+  for (const side of ['left', 'right']) {
+    const handle = handles[side];
+    handle.className = `edge-dock-resize-handle edge-dock-resize-handle-${side}`;
+    handle.style.position = 'fixed';
+    handle.style.top = '0';
+    handle.style.bottom = '0';
+    handle.style.width = '10px';
+    handle.style.cursor = 'col-resize';
+    handle.style.zIndex = '9999';
+    handle.style.background = 'linear-gradient(to right, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px)';
+    handle.style.pointerEvents = 'auto';
+    handle.style.touchAction = 'none';
+    handle.style.display = 'none';
+    handle.title = 'Drag to resize docked window';
+    document.body.appendChild(handle);
+  }
+
+  const _isUsableDockOwner = (owner) => {
+    if (!owner || !owner.isConnected) return false;
+    if (owner.classList?.contains('hidden')) return false;
+    if (owner.style?.display === 'none') return false;
+    const nodes = _resolveDockNodes(owner);
+    const content = nodes?.content;
+    if (!content || !content.isConnected) return false;
+    if (content.classList?.contains('hidden')) return false;
+    if (content.style?.display === 'none') return false;
+    const r = content.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+
+  const _activeDockOwner = (side) => {
+    const cls = _dockClassForSide(side);
+    const all = Array.from(document.querySelectorAll(`.${cls}`));
+    for (const owner of all.reverse()) {
+      if (_isUsableDockOwner(owner)) return owner;
+    }
+    return null;
+  };
+
+  const _setWidth = (owner, side, clientX) => {
+    const nodes = _resolveDockNodes(owner);
+    const content = nodes?.content;
+    if (!content) return 0;
+    let w = 0;
+    if (side === 'right') {
+      w = _clampRightDockWidth(window.innerWidth - clientX);
+      content._userDockWidth = w;
+      content.style.left = 'auto';
+      content.style.right = '0';
+      content.style.width = w + 'px';
+      content.style.maxWidth = w + 'px';
+      document.body.classList.add('right-dock-active');
+      document.documentElement.style.setProperty('--right-dock-w', w + 'px');
+      if (_shouldAutoCollapseSidebar(w)) {
+        _collapseSidebarToRail();
+        if (content._preDockSnapshot) content._preDockSnapshot.collapsedSidebar = true;
+      }
+    } else {
+      const left = _leftNavRight();
+      w = _clampLeftDockWidth(clientX - left, left);
+      content._userDockWidth = w;
+      content._emailDocSplitUserW = w;
+      content.style.left = left + 'px';
+      content.style.right = 'auto';
+      content.style.width = w + 'px';
+      content.style.maxWidth = w + 'px';
+      document.body.classList.add('left-dock-active');
+      document.documentElement.style.setProperty('--left-dock-w', '0px');
+    }
+    _positionEdgeDockResizeHandles();
+    return w;
+  };
+
+  _edgeDockHandlePositioner = () => {
+    const splitOwnsLeftSeam = document.body.classList.contains('email-doc-split-active')
+      && document.body.classList.contains('doc-view')
+      && window.innerWidth > 768;
+    for (const side of ['left', 'right']) {
+      const handle = handles[side];
+      if (window.innerWidth <= 768 || (side === 'left' && splitOwnsLeftSeam)) {
+        handle.style.display = 'none';
+        continue;
+      }
+      const owner = _activeDockOwner(side);
+      const content = owner && _resolveDockNodes(owner)?.content;
+      if (!content) {
+        handle.style.display = 'none';
+        continue;
+      }
+      const r = content.getBoundingClientRect();
+      const x = side === 'right' ? r.left : r.right;
+      if (!Number.isFinite(x) || x <= 0 || x >= window.innerWidth) {
+        handle.style.display = 'none';
+        continue;
+      }
+      handle.style.display = 'block';
+      handle.style.left = (x - 5) + 'px';
+    }
+  };
+
+  for (const side of ['left', 'right']) {
+    const handle = handles[side];
+    handle.addEventListener('pointerdown', (e) => {
+      if (handle.style.display === 'none') return;
+      const owner = _activeDockOwner(side);
+      if (!owner) return;
+      e.preventDefault();
+      e.stopPropagation();
+      handle.setPointerCapture?.(e.pointerId);
+      const nodes = _resolveDockNodes(owner);
+      const content = nodes?.content;
+      const prevCursor = document.body.style.cursor;
+      const prevUserSelect = document.body.style.userSelect;
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      document.body.classList.add('edge-dock-resizing');
+      _setWidth(owner, side, e.clientX);
+      const onMove = (ev) => {
+        ev.preventDefault();
+        _setWidth(owner, side, ev.clientX);
+      };
+      const onUp = (ev) => {
+        try { handle.releasePointerCapture?.(e.pointerId); } catch (_) {}
+        document.removeEventListener('pointermove', onMove, true);
+        document.removeEventListener('pointerup', onUp, true);
+        document.removeEventListener('pointercancel', onUp, true);
+        document.body.classList.remove('edge-dock-resizing');
+        document.body.style.cursor = prevCursor;
+        document.body.style.userSelect = prevUserSelect;
+        const finalW = side === 'right'
+          ? parseFloat(document.documentElement.style.getPropertyValue('--right-dock-w')) || content?.getBoundingClientRect?.().width || 0
+          : content?.getBoundingClientRect?.().width || 0;
+        if (finalW) _saveDockWidth(owner, content, side, finalW);
+        ev.preventDefault();
+      };
+      document.addEventListener('pointermove', onMove, true);
+      document.addEventListener('pointerup', onUp, true);
+      document.addEventListener('pointercancel', onUp, true);
+    });
+  }
+
+  new MutationObserver(_positionEdgeDockResizeHandles).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  new MutationObserver(_positionEdgeDockResizeHandles).observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+  window.addEventListener('resize', _positionEdgeDockResizeHandles);
+  _positionEdgeDockResizeHandles();
+})();
 
 (function _initSplitSeamIndicator() {
   if (typeof document === 'undefined') return;
