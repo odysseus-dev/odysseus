@@ -13,6 +13,7 @@ while completing reliably everywhere.
 """
 
 import tempfile
+import sys
 import uuid
 from types import SimpleNamespace
 
@@ -20,6 +21,21 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 from unittest.mock import MagicMock
+
+
+def _drop_fake_core_database():
+    parent = sys.modules.get("core")
+    attr = getattr(parent, "database", None) if parent is not None else None
+    mod = sys.modules.get("core.database") or attr
+    if mod is None or isinstance(getattr(mod, "__file__", None), str):
+        return
+    sys.modules.pop("core.database", None)
+    sys.modules.pop("src.database", None)
+    if parent is not None and attr is mod:
+        delattr(parent, "database")
+
+
+_drop_fake_core_database()
 
 import core.database as cdb
 import routes.document_routes as droutes

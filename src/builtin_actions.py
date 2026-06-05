@@ -38,13 +38,16 @@ class TaskDeferred(BaseException):
 
 
 async def action_tidy_sessions(owner: str, **kwargs) -> Tuple[str, bool]:
-    """Delete empty/throwaway sessions for the owner. Pure heuristic —
+    """Delete empty sessions for the owner. Pure heuristic —
     the LLM folder-sort phase is skipped (user opted to keep this task
     LLM-free; sorting can be triggered manually via the Chats UI)."""
     try:
         import asyncio
         from src.session_actions import run_auto_sort
-        result = await asyncio.wait_for(run_auto_sort(owner, skip_llm=True), timeout=60)
+        result = await asyncio.wait_for(
+            run_auto_sort(owner, skip_llm=True, delete_throwaway=False),
+            timeout=60,
+        )
         return result, True
     except asyncio.TimeoutError:
         logger.error("tidy_sessions action timed out")
@@ -759,201 +762,6 @@ async def action_extract_email_events(owner: str, **kwargs) -> Tuple[str, bool]:
         logger.error(f"extract_email_events action failed: {e}")
         return str(e), False
 
-
-async def action_mark_email_boundaries(owner: str, **kwargs) -> Tuple[str, bool]:
-    """LLM-based signature / quoted-reply boundary detection. For each new
-    inbox email that we haven't analyzed yet, ask the model to return char
-    offsets where the signature and quoted-reply start. Cache the offsets
-    keyed by Message-ID — once cached, the renderer uses them directly with
-    no further LLM calls. Caps at 30 emails per pass to keep cost bounded.
-    """
-    try:
-        import sqlite3 as _sql3
-        import json as _json
-        import re as _re
-        import email as _email_mod
-        import asyncio as _aio
-        from datetime import datetime as _dt
-        from routes.email_helpers import _imap_connect, _decode_header, SCHEDULED_DB
-        from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
-
-        # Pull recent inbox UIDs + Message-IDs directly via IMAP (the
-        # nested helpers in email_routes aren't importable, and this keeps
-        # the action self-contained).
-        def _pull_recent():
-            results = []
-            conn = _imap_connect(None)
-            try:
-                conn.select("INBOX", readonly=True)
-                status, data = conn.search(None, "ALL")
-                if status != "OK" or not data or not data[0]:
-                    return results
-                uids = data[0].split()[-50:][::-1]  # newest 50
-                for uid in uids:
-                    try:
-                        st, msg_data = conn.fetch(uid, "(RFC822.HEADER)")
-                        if st != "OK" or not msg_data or not msg_data[0]:
-                            continue
-                        raw = msg_data[0][1] if isinstance(msg_data[0], tuple) else None
-                        if not raw:
-                            continue
-                        msg = _email_mod.message_from_bytes(raw)
-                        results.append({
-                            "uid": uid.decode() if isinstance(uid, bytes) else str(uid),
-                            "message_id": (msg.get("Message-ID") or "").strip(),
-                            "subject": _decode_header(msg.get("Subject", "")),
-                        })
-                    except Exception:
-                        continue
-            finally:
-                try: conn.logout()
-                except Exception: pass
-            return results
-
-        mails = await _aio.to_thread(_pull_recent)
-        if not mails:
-            raise TaskNoop("no emails to analyze")
-
-        url, model, headers = resolve_endpoint("utility")
-        if not url or not model:
-            url, model, headers = resolve_endpoint("default")
-        if not url or not model:
-            return "No LLM endpoint available", False
-
-        c = _sql3.connect(SCHEDULED_DB)
-        already = {r[0] for r in c.execute(
-            "SELECT message_id FROM email_boundaries"
-        ).fetchall()}
-        c.close()
-
-        analyzed = 0
-        skipped = 0
-        for em in mails[:30]:
-            mid = (em.get("message_id") or "").strip()
-            if not mid or mid in already:
-                skipped += 1
-                continue
-            uid = em.get("uid")
-            if not uid:
-                continue
-            def _fetch_body(_uid):
-                conn = _imap_connect(None)
-                try:
-                    conn.select("INBOX", readonly=True)
-                    st, data = conn.fetch(_uid, "(BODY.PEEK[TEXT])")
-                    if st != "OK" or not data or not data[0]:
-                        return ""
-                    raw = data[0][1] if isinstance(data[0], tuple) else None
-                    if not raw:
-                        return ""
-                    try:
-                        return raw.decode("utf-8", errors="replace")
-                    except Exception:
-                        return str(raw)
-                finally:
-                    try: conn.logout()
-                    except Exception: pass
-            try:
-                body = (await _aio.to_thread(_fetch_body, str(uid))).strip()
-            except Exception as e:
-                logger.warning(f"boundary detection: IMAP fetch failed for uid={uid} mid={mid}: {e}")
-                continue
-            if not body or len(body) < 100:
-                continue
-            # Truncate very long bodies — boundaries usually live in the
-            # first few KB of plain text.
-            truncated = body[:8000]
-
-            prompt = (
-                "Identify where the signature and the quoted-reply start in "
-                "this email body. Return ONLY raw JSON, no prose. Schema:\n"
-                '{"sig_start": <int>, "quote_start": <int>}\n\n'
-                "Rules:\n"
-                "- sig_start = char offset where the sender's signature block "
-                "begins (closing phrase like 'Best regards' / 'Mit freundlichen' / "
-                "'Med vänliga' / contact details / disclaimer / job title block). "
-                "Use -1 if none.\n"
-                "- quote_start = char offset where any quoted-reply / forwarded "
-                "thread begins (lines like 'On <date>, <name> wrote:', "
-                "'From: ... Sent: ... Subject:' in any language — German 'Von:', "
-                "French 'De :', Spanish 'De:', etc.). Use -1 if none.\n"
-                "- Both offsets are byte/char positions in the input string starting "
-                "from 0. The signature/quote should INCLUDE the marker line itself.\n"
-                "- If both exist, sig_start is normally before quote_start (sig of "
-                "the current message, then quoted thread underneath).\n\n"
-                f"BODY (length={len(truncated)}):\n{truncated}"
-            )
-            try:
-                raw = await llm_call_async(
-                    url=url, model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.0, max_tokens=200,
-                    headers=headers, timeout=60,
-                )
-                from src.text_helpers import strip_think as _st
-                raw = _st(raw or "", prose=False, prompt_echo=False)
-                raw = _re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=_re.MULTILINE).strip()
-                # Balanced-brace match: handles {"sig_start": 10, "info": {}}
-                # which the previous [^{}] class would have broken on.
-                start = raw.find("{")
-                m_text = None
-                if start != -1:
-                    depth = 0
-                    for i in range(start, len(raw)):
-                        if raw[i] == "{":
-                            depth += 1
-                        elif raw[i] == "}":
-                            depth -= 1
-                            if depth == 0:
-                                m_text = raw[start:i + 1]
-                                break
-                if not m_text:
-                    logger.warning(f"boundary detection: no JSON object in LLM response for mid={mid}: {raw[:200]!r}")
-                    continue
-                parsed = _json.loads(m_text)
-                sig = int(parsed.get("sig_start", -1))
-                quote = int(parsed.get("quote_start", -1))
-            except Exception as e:
-                logger.warning(f"boundary detection failed for mid={mid}: {e}")
-                continue
-
-            # Also pre-parse the thread tree so the client never has to.
-            try:
-                from src.email_thread_parser import parse_thread, THREAD_PARSER_VERSION
-                # The boundary loop only has the plaintext body; parse_thread
-                # also accepts None for HTML so this is safe.
-                turns = parse_thread(None, body)
-                turns_json = (
-                    _json.dumps({"v": THREAD_PARSER_VERSION, "turns": turns})
-                    if turns else None
-                )
-            except Exception as _pe:
-                logger.debug(f"thread parse failed for {mid}: {_pe}")
-                turns_json = None
-
-            try:
-                c = _sql3.connect(SCHEDULED_DB)
-                c.execute(
-                    "INSERT OR REPLACE INTO email_boundaries "
-                    "(message_id, uid, folder, sig_start, quote_start, model_used, created_at, turns_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (mid, str(uid), "INBOX", sig, quote, model, _dt.utcnow().isoformat(), turns_json),
-                )
-                c.commit()
-                c.close()
-                analyzed += 1
-            except Exception as e:
-                logger.warning(f"could not cache boundaries for {mid}: {e}")
-
-        if analyzed == 0:
-            # All recent emails already had boundaries cached — nothing new
-            # to do, don't pollute Activity.
-            raise TaskNoop(f"boundaries already cached for {skipped} email(s)")
-        return f"Marked boundaries: {analyzed} new, {skipped} cached", True
-    except Exception as e:
-        logger.error(f"mark_email_boundaries failed: {e}")
-        return str(e), False
 
 
 # Sender local-parts (matched exactly or by prefix) whose mail never carries a
@@ -2205,7 +2013,6 @@ BUILTIN_ACTIONS = {
     # ping_events removed from the user-facing registry. Calendar reminders
     # are represented as Notes, so note pings are the single dispatch path.
     "daily_brief": action_daily_brief,
-    "mark_email_boundaries": action_mark_email_boundaries,
     "learn_sender_signatures": action_learn_sender_signatures,
     "ssh_command": action_ssh_command,
     "run_script": action_run_script,
@@ -2227,7 +2034,6 @@ BUILTIN_ACTION_INFO = {
     "extract_email_events": "Scan emails for booking/meeting confirmations and auto-add to calendar",
     "classify_events": "Tag upcoming events with importance (low/normal/high/critical) and type (work/health/travel/etc.); colors them too",
     "daily_brief": "Build a morning digest: today's calendar, unread email count + top senders, active todos",
-    "mark_email_boundaries": "LLM-detect signature & quoted-reply offsets in new emails; cached so future renders fold without further LLM calls",
     "learn_sender_signatures": "LLM learns each sender's signature from 3+ of their recent emails; cached per address so future renders fold sigs reliably without heuristics",
     "ssh_command": "Run a shell command on a local or remote host",
     "run_script": "Run a script locally or on ODYSSEUS_SCRIPT_HOST",

@@ -76,6 +76,15 @@ function _hlSearch(text) {
                        '<mark class="doclib-search-hl">$1</mark>');
   } catch { return esc; }
 }
+
+function _safeResearchHref(raw) {
+  try {
+    const parsed = new URL(String(raw || '').trim(), window.location.origin);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return _esc(parsed.href);
+  } catch {}
+  return '';
+}
+
 let _libraryEscHandler = null;
 let _librarySelectMode = false;
 let _librarySelectedIds = new Set();
@@ -389,6 +398,27 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       });
       wrap.appendChild(chip);
     }
+  }
+
+  function libraryRemoveDocumentFromState(docId) {
+    const removed = _libraryDocs.find(d => String(d.id) === String(docId));
+    _libraryDocs = _libraryDocs.filter(d => String(d.id) !== String(docId));
+    _librarySelectedIds.delete(docId);
+    _libraryTotal = Math.max(0, _libraryTotal - 1);
+
+    const lang = removed && (removed.language || 'text');
+    if (lang && Object.prototype.hasOwnProperty.call(_libraryLanguages, lang)) {
+      const next = Math.max(0, Number(_libraryLanguages[lang] || 0) - 1);
+      if (next > 0) {
+        _libraryLanguages[lang] = next;
+      } else {
+        delete _libraryLanguages[lang];
+      }
+    }
+
+    libraryRenderStats();
+    libraryRenderLangChips();
+    libraryUpdateBulkCount();
   }
 
   function libraryRenderGrid() {
@@ -709,8 +739,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         const res = await fetch(`${API_BASE}/api/document/${doc.id}/archive?archived=${toArchived}`, { method: 'POST', credentials: 'same-origin' });
         if (!res.ok) throw new Error('failed');
         // Drop it from the current view (it no longer belongs here) and refresh.
-        _libraryDocs = _libraryDocs.filter(d => d.id !== doc.id);
-        _libraryTotal = Math.max(0, _libraryTotal - 1);
+        libraryRemoveDocumentFromState(doc.id);
         libraryRenderGrid();
         if (uiModule) uiModule.showToast(toArchived ? 'Archived' : 'Restored');
       } catch { if (uiModule) uiModule.showError('Failed to ' + (toArchived ? 'archive' : 'restore')); }
@@ -802,8 +831,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       try {
         const res = await fetch(`${API_BASE}/api/document/${doc.id}/archive?archived=${toArchived}`, { method: 'POST', credentials: 'same-origin' });
         if (!res.ok) throw new Error('failed');
-        _libraryDocs = _libraryDocs.filter(d => d.id !== doc.id);
-        _libraryTotal = Math.max(0, _libraryTotal - 1);
+        libraryRemoveDocumentFromState(doc.id);
         libraryRenderGrid();
         if (uiModule) uiModule.showToast(toArchived ? 'Archived' : 'Restored');
       } catch { if (uiModule) uiModule.showError('Failed to ' + (toArchived ? 'archive' : 'restore')); }
@@ -1170,9 +1198,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         card.addEventListener('transitionend', () => card.remove(), { once: true });
         setTimeout(() => { if (card.parentElement) card.remove(); }, 400);
       }
-      _libraryDocs = _libraryDocs.filter(d => d.id !== docId);
-      _libraryTotal = Math.max(0, _libraryTotal - 1);
-      libraryRenderStats();
+      libraryRemoveDocumentFromState(docId);
       if (uiModule) uiModule.showToast('Document deleted');
     } catch (e) {
       if (uiModule) uiModule.showError(`Failed to delete document: ${e.message || e}`);
@@ -2632,7 +2658,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         const data = await res.json();
         _researchItems = data.research || data || [];
       } catch (e) {
-        grid.innerHTML = `<div class="hwfit-loading">Failed to load: ${e.message}</div>`;
+        grid.innerHTML = `<div class="hwfit-loading">Failed to load: ${_esc(e.message)}</div>`;
         return;
       }
       _renderResearchGrid();
@@ -2674,9 +2700,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const sources = Array.isArray(detail.sources) ? detail.sources : [];
       const sourcesList = sources.slice(0, 12).map((src, i) => {
         const title = _esc(src.title || src.url || `Source ${i + 1}`);
-        const url = src.url || '';
+        const url = _safeResearchHref(src.url);
         return url
-          ? `<li><a href="${_esc(url)}" target="_blank" rel="noopener">${title}</a></li>`
+          ? `<li><a href="${url}" target="_blank" rel="noopener">${title}</a></li>`
           : `<li>${title}</li>`;
       }).join('');
       const sourcesHtml = sources.length

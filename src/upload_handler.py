@@ -175,8 +175,8 @@ class UploadHandler:
         document_extensions = {
             '.pdf', '.docx', '.xlsx', '.pptx', '.xls', '.epub',
             '.txt', '.py', '.js', '.html', '.htm',
-            '.css', '.json', '.md', '.csv', '.log', '.xml', '.yml', 
-            '.yaml', '.sql', '.sh', '.bash', '.c', '.cpp', '.h', 
+            '.css', '.json', '.md', '.csv', '.log', '.xml', '.yml',
+            '.yaml', '.nix', '.sql', '.sh', '.bash', '.c', '.cpp', '.h',
             '.java', '.go', '.rs', '.php', '.rb', '.ts', '.jsx', '.tsx'
         }
         document_mime_types = {

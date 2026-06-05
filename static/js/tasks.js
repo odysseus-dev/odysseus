@@ -327,7 +327,6 @@ const _TASK_ICONS = {
   draft_email_replies: '<polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/>',
   extract_email_events:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M7 14h5"/><path d="M7 18h8"/>',
   classify_events:    '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 15h.01M12 15h.01M16 15h.01"/>',
-  mark_email_boundaries:'<path d="M4 4h16v16H4z"/><path d="M4 9h16"/><path d="M9 4v16"/>',
   learn_sender_signatures:'<path d="M20 6 9 17l-5-5"/><path d="M14 6h6v6"/>',
   check_email_urgency: '<path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>',
   // Skills
@@ -355,7 +354,6 @@ const _MODEL_BACKED_ACTIONS = new Set([
   'draft_email_replies',
   'extract_email_events',
   'classify_events',
-  'mark_email_boundaries',
   'learn_sender_signatures',
   'check_email_urgency',
   'test_skills',
@@ -498,7 +496,6 @@ const _CATEGORY_MAP = {
   extract_email_events: 'Calendar',
   summarize_emails:           'Email',
   draft_email_replies:        'Email',
-  mark_email_boundaries:      'Email',
   learn_sender_signatures:    'Email',
   check_email_urgency:        'Email',
   daily_brief:                'Assistant',
@@ -609,7 +606,6 @@ const _TASK_CACHE_LABELS = {
   summarize_emails: 'email summaries',
   draft_email_replies: 'AI reply drafts',
   extract_email_events: 'email calendar cache',
-  mark_email_boundaries: 'email boundaries',
   learn_sender_signatures: 'sender signatures',
   check_email_urgency: 'email tags',
 };
@@ -1739,7 +1735,7 @@ async function _renderActivityView() {
     <div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
       <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
         <h2 style="margin:0;padding:0;line-height:1;">Activity</h2>
-        <button class="memory-toolbar-btn" id="tasks-activity-refresh" title="Refresh" style="margin-left:auto;">Refresh</button>
+        <button class="memory-toolbar-btn" id="tasks-activity-refresh" title="Refresh" style="margin-left:auto;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg></button>
       </div>
       <p class="memory-desc">Recent task runs across all scheduled tasks.</p>
       <div style="display:flex;align-items:center;gap:6px;margin:6px 0 8px;">

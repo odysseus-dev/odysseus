@@ -2,6 +2,7 @@
 Extracted from cookbook_routes.py; the routes module imports the symbols it needs."""
 
 import logging
+import ntpath
 import os
 import posixpath
 import re
@@ -41,6 +42,15 @@ _GPU_LIST_RE = re.compile(r"^\d+(?:,\d+)*$")
 # only (no quotes, shell metacharacters, or spaces) since it lands in a shell
 # command. A leading ~ is expanded to $HOME at command-build time.
 _LOCAL_DIR_RE = re.compile(r"^~?/[A-Za-z0-9._/-]*$|^~$")
+_WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def _git_bash_path(path: str) -> str:
+    m = re.match(r"^([A-Za-z]):[\\/](.*)$", path)
+    if not m:
+        return path
+    drive, rest = m.groups()
+    return f"/{drive.lower()}/{rest.replace(chr(92), '/')}"
 
 
 def _validate_repo_id(v: str | None) -> str:
@@ -135,8 +145,11 @@ def _local_tooling_path_export(executable: str) -> str:
     # os.path.abspath("/opt/...") would incorrectly turn it into "D:\\opt\\...".
     if executable.startswith("/"):
         bin_dir = posixpath.dirname(executable)
+    elif _WINDOWS_DRIVE_PATH_RE.match(executable):
+        bin_dir = ntpath.dirname(executable)
     else:
         bin_dir = os.path.dirname(os.path.abspath(executable))
+    bin_dir = _git_bash_path(bin_dir)
     # Escape for a double-quoted context: $PATH must still expand, but spaces
     # and shell metacharacters in the path must be preserved literally.
     esc = (
@@ -248,6 +261,17 @@ def _venv_safe_local_pip_install_cmd(cmd: str, *, local: bool, in_venv: bool) ->
         if part not in {"--user", "--break-system-packages"}
     ]
     return shlex.join(stripped)
+
+
+def _user_shell_path_bootstrap() -> list[str]:
+    return [
+        'ODYSSEUS_USER_SHELL="${SHELL:-}"',
+        'if [ -n "$ODYSSEUS_USER_SHELL" ] && [ -x "$ODYSSEUS_USER_SHELL" ]; then',
+        '  ODYSSEUS_USER_PATH="$("$ODYSSEUS_USER_SHELL" -ic \'printf "__ODYSSEUS_PATH__%s\\n" "$PATH"\' 2>/dev/null | sed -n \'s/^__ODYSSEUS_PATH__//p\' | tail -n 1 || true)"',
+        '  if [ -n "$ODYSSEUS_USER_PATH" ]; then export PATH="$ODYSSEUS_USER_PATH:$PATH"; fi',
+        'fi',
+        'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }',
+    ]
 
 
 def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
@@ -528,9 +552,16 @@ def _append_serve_preflight_exit_lines(runner_lines: list[str], *, keep_shell_op
     runner_lines.append('fi')
 
 
-def _append_serve_exit_code_lines(runner_lines: list[str], *, keep_shell_open: bool) -> None:
+def _append_serve_exit_code_lines(
+    runner_lines: list[str],
+    *,
+    keep_shell_open: bool,
+    is_pip_install: bool = False,
+) -> None:
     """Append serve-runner lines that preserve and report the command exit code."""
     runner_lines.append('ODYSSEUS_CMD_EXIT=$?')
+    if is_pip_install:
+        runner_lines.append('if [ $ODYSSEUS_CMD_EXIT -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; fi')
     if keep_shell_open:
         runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="; exec "${SHELL:-/bin/bash}"')
     else:

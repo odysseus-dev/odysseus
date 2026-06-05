@@ -32,6 +32,7 @@ body:
       label: Area
       description: Which part of the application does this affect?
       options:
+        - "-- Please Select --"
         - Chat / Agent
         - Email
         - Calendar
@@ -83,6 +84,7 @@ body:
     attributes:
       label: Are you willing to implement this?
       options:
+        - "-- Please Select --"
         - "Yes — I can open a PR"
         - "Partially — I can help but need guidance"
         - "No — I am only filing the request"

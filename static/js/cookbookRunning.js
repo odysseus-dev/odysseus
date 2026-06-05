@@ -66,6 +66,23 @@ function _clearPillLabel(task) {
   return 'clear';
 }
 
+// A pip dependency/driver install (payload._dep) reports success with the
+// runner's "=== Process exited with code 0 ===" sentinel and pip's
+// "Successfully installed" line — never the HuggingFace download markers
+// (DONE / 100% / /snapshots/ / DOWNLOAD_OK) that the download heuristics look
+// for. Without this, a clean install whose tmux pane has already gone away is
+// misread as crashed/stopped even though pip exited 0. Prefer the authoritative
+// exit-code sentinel; fall back to pip's success line when no sentinel was
+// captured (and there's no install error in the same output).
+function _depInstallSucceeded(output) {
+  const text = String(output || '');
+  if (!text) return false;
+  const exitMatch = text.match(/=== Process exited with code (-?\d+) ===/);
+  if (exitMatch) return Number(exitMatch[1]) === 0;
+  return /\b(?:Successfully installed|Requirement already satisfied)\b/.test(text)
+    && !/\bERROR\b|No matching distribution|Could not find a version|Traceback \(most recent call last\)/.test(text);
+}
+
 function _shouldOfferCrashReport(task) {
   if (!task) return false;
   if (task._unreachable && task.type === 'serve') return true;
@@ -728,37 +745,48 @@ export function _tmuxCmd(task, tmuxArgs) {
 }
 
 function _winSessionCmd(task, tmuxArgs) {
-  const sd = '$env:TEMP\\odysseus-sessions';
+  const host = task.remoteHost;
+  const sd = host ? '$env:TEMP\\odysseus-sessions' : '$env:TEMP\\odysseus-tmux';
   const sid = task.sessionId;
   const pf = _sshPrefix(_getPort(task));
-  const host = task.remoteHost;
   if (tmuxArgs.includes('capture-pane')) {
     const lines = tmuxArgs.match(/-S\s*-?(\d+)/)?.[1] || '200';
-    const ps = `Get-Content '${sd}\\${sid}.log' -Tail ${lines} -ErrorAction SilentlyContinue`;
-    return `ssh ${pf}${host} "powershell -Command \\"${ps}\\""`;
+    const ps = host
+      ? `Get-Content '${sd}\\${sid}.log' -Tail ${lines} -ErrorAction SilentlyContinue`
+      : `Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.log') -Tail ${lines} -ErrorAction SilentlyContinue`;
+    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
   }
   if (tmuxArgs.includes('has-session')) {
-    const ps = `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Get-Process -Id $p -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } else { exit 1 } } else { exit 1 }`;
-    return `ssh ${pf}${host} "powershell -Command \\"${ps}\\""`;
+    const ps = host
+      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Get-Process -Id $p -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } else { exit 1 } } else { exit 1 }`
+      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Get-Process -Id $p -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } else { exit 1 } } else { exit 1 }`;
+    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
   }
   if (tmuxArgs.includes('kill-session')) {
-    const ps = `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`;
-    return `ssh ${pf}${host} "powershell -Command \\"${ps}\\""`;
+    const ps = host
+      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`
+      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.*') -Force -ErrorAction SilentlyContinue`;
+    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
   }
   if (tmuxArgs.includes('send-keys') && tmuxArgs.includes('C-c')) {
-    const ps = `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -ErrorAction SilentlyContinue }`;
-    return `ssh ${pf}${host} "powershell -Command \\"${ps}\\""`;
+    const ps = host
+      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -ErrorAction SilentlyContinue }`
+      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -ErrorAction SilentlyContinue }`;
+    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
   }
-  return `ssh ${pf}${host} 'tmux ${tmuxArgs}' 2>/dev/null`;
+  return host ? `ssh ${pf}${host} 'tmux ${tmuxArgs}' 2>/dev/null` : `tmux ${tmuxArgs} 2>/dev/null`;
 }
 
 function _tmuxGracefulKill(task) {
   if (_isWindows(task)) {
-    const sd = '$env:TEMP\\odysseus-sessions';
+    const host = task.remoteHost;
+    const sd = host ? '$env:TEMP\\odysseus-sessions' : '$env:TEMP\\odysseus-tmux';
     const sid = task.sessionId;
     const pf = _sshPrefix(_getPort(task));
-    const ps = `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`;
-    return `ssh ${pf}${task.remoteHost} "powershell -Command \\"${ps}\\""`;
+    const ps = host
+      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`
+      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.*') -Force -ErrorAction SilentlyContinue`;
+    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
   }
   if (task.remoteHost) {
     return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} 'tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null'`;
@@ -2116,8 +2144,11 @@ export function _renderRunningTab() {
           }});
         }
         if (_isWindows(task)) {
-          const sd = '$env:TEMP\\odysseus-sessions';
-          const logCmd = `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} "powershell -Command \\"Get-Content '${sd}\\${task.sessionId}.log' -Wait\\""`;
+          const host = task.remoteHost;
+          const sd = host ? '$env:TEMP\\odysseus-sessions' : '$env:TEMP\\odysseus-tmux';
+          const logCmd = host
+            ? `ssh ${_sshPrefix(_getPort(task))}${host} "powershell -Command \\"Get-Content '${sd}\\${task.sessionId}.log' -Wait\\""`
+            : `powershell -Command "Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${task.sessionId}.log') -Wait"`;
           items.push({ label: 'Copy log cmd', action: 'copy-tmux', custom: () => {
             _copyText(logCmd);
           }});
@@ -2252,6 +2283,10 @@ export function _renderRunningTab() {
 
     // Wire stop
     el.querySelector('.cookbook-task-action-stop').addEventListener('click', async () => {
+      // Abort the reconnect loop before sending kill so that a DOWNLOAD_FAILED
+      // marker written by the shell wrapper (on SIGINT/non-zero exit) cannot
+      // trigger an auto-retry after a manual stop.
+      if (el._abort) el._abort.abort();
       const badge = el.querySelector('.cookbook-task-status');
       if (badge) { badge.textContent = 'stopping...'; badge.className = 'cookbook-task-status cookbook-task-stopping'; }
       el.dataset.status = 'stopped';
@@ -2430,7 +2465,10 @@ async function _reconnectTask(el, task) {
           const downloadLooksSuccessful = !lastOutput.includes('DOWNLOAD_FAILED')
             && (lastOutput.includes('DONE') || lastOutput.includes('100%') || lastOutput.includes('/snapshots/') || lastOutput.includes('Download complete') || lastOutput.includes('DOWNLOAD_OK'));
           const serveLooksReady = task.type === 'serve' && _serveOutputLooksReady({ ...task, output: lastOutput });
-          const looksSuccessful = task.type === 'download' ? downloadLooksSuccessful : serveLooksReady;
+          // Dependency installs are tracked as download tasks but finish with a
+          // pip exit-0 sentinel, not HF download markers — so check that too.
+          const depInstallSucceeded = !!task.payload?._dep && _depInstallSucceeded(lastOutput);
+          const looksSuccessful = depInstallSucceeded || (task.type === 'download' ? downloadLooksSuccessful : serveLooksReady);
           if (!lastOutput.trim() || !looksSuccessful) {
             _updateTask(task.sessionId, { status: 'crashed' });
             el.dataset.status = 'crashed';
@@ -2456,6 +2494,26 @@ async function _reconnectTask(el, task) {
               const isNetwork = /connection|timeout|timed out|incompleteread|chunkedencoding|reset by peer|protocolerror|all connection attempts failed/i.test(lastOutput);
               const progressMatch = String(lastOutput || '').match(/(\d+)%\|/);
               const nearDone = progressMatch && Number(progressMatch[1]) >= 80;
+              // Reconnect: most "crashed" downloads near the end are actually
+              // finished — we just missed the DOWNLOAD_OK / /snapshots/ marker
+              // because output rolled over, or the tmux session ended a tick
+              // before we polled. Probing has-session and re-attaching to
+              // capture-pane lets the existing _reconnectTask flow pick up
+              // the real state (running, finished, or truly dead).
+              const _reconnectFix = {
+                label: 'Reconnect',
+                action: () => {
+                  _updateTask(task.sessionId, { status: 'running' });
+                  el.dataset.status = 'running';
+                  const badge2 = el.querySelector('.cookbook-task-status');
+                  if (badge2) { badge2.textContent = _statusLabel('running', task.type); badge2.className = 'cookbook-task-status'; }
+                  const _diagEl = el.querySelector('.cookbook-diagnosis');
+                  if (_diagEl) _diagEl.remove();
+                  const _wave = el.querySelector('.cookbook-task-wave'); if (_wave) _wave.style.display = '';
+                  const _up = el.querySelector('.cookbook-task-uptime'); if (_up) _up.style.display = '';
+                  _reconnectTask(el, task);
+                },
+              };
               const diag = {
                 message: isDisk
                   ? 'Download stopped because this server ran out of disk space.'
@@ -2467,28 +2525,88 @@ async function _reconnectTask(el, task) {
                 suggestion: isDisk
                   ? 'Suggested action: free disk space, then retry the download. HuggingFace resumes incomplete files when possible.'
                   : nearDone
-                  ? 'Suggested action: retry the download. It may briefly look like it restarted while cached files are checked, then it should reuse incomplete files.'
-                  : 'Suggested action: retry the download. HuggingFace resumes incomplete files when possible.',
-                fixes: [
-                  { label: 'Retry download', action: () => _retryTask(el, task) },
-                  { label: 'Copy last 50 lines', action: () => {
-                    const last = String(lastOutput || '').split('\n').slice(-50).join('\n');
-                    _copyText(last || 'No download log available.');
-                  } },
-                ],
+                  ? 'Suggested action: hit Reconnect first — the download may have finished after the output buffer rolled over. Retry only if reconnect cannot recover.'
+                  : 'Suggested action: hit Reconnect to re-attach to the tmux session. If that fails, retry — HuggingFace resumes incomplete files when possible.',
+                fixes: isDisk
+                  ? [
+                      { label: 'Retry download', action: () => _retryTask(el, task) },
+                      { label: 'Copy last 50 lines', action: () => {
+                        const last = String(lastOutput || '').split('\n').slice(-50).join('\n');
+                        _copyText(last || 'No download log available.');
+                      } },
+                    ]
+                  : [
+                      _reconnectFix,
+                      { label: 'Retry download', action: () => _retryTask(el, task) },
+                      { label: 'Copy last 50 lines', action: () => {
+                        const last = String(lastOutput || '').split('\n').slice(-50).join('\n');
+                        _copyText(last || 'No download log available.');
+                      } },
+                    ],
               };
               _showDiagnosis(el, diag, lastOutput);
+              // Auto-probe: if the tmux session is still alive (download
+              // genuinely still in progress), _selfHealStaleTasks flips the
+              // task back to running and the diagnosis disappears without
+              // the user needing to click Reconnect.
+              if (nearDone) setTimeout(() => { _selfHealStaleTasks().catch(() => {}); }, 1200);
             }
             _showCookbookNotif(true);
           } else {
-            _updateTask(task.sessionId, { status: 'done' });
-            el.dataset.status = 'done';
-            const badge = el.querySelector('.cookbook-task-status');
-            if (badge) { badge.textContent = _statusLabel('done', task.type); badge.className = 'cookbook-task-status cookbook-task-done'; }
-            const _chk = el.querySelector('.cookbook-task-check'); if (_chk) _chk.style.display = '';
-            const _sb = el.querySelector('.cookbook-task-serve-btn'); if (_sb) _sb.style.display = '';
-            _showCookbookNotif();
-            _refreshDepsAfterInstall(task);
+            // Debounce the done flip. Tmux capture-pane can fail transiently
+            // (network blip, ssh reconnect), and the verify has-session right
+            // above can briefly report dead even when the session is in the
+            // middle of finalizing. Marking done immediately + the periodic
+            // _selfHealStaleTasks then flipping back to running causes the
+            // status badge to oscillate between Finished and Downloading.
+            // Wait 30s and re-probe: only finalize as done if tmux is STILL
+            // gone. If the session resurfaces, restart _reconnectTask so live
+            // capture resumes without the user seeing a fake "done" first.
+            if (!task._doneConfirmAt) {
+              _updateTask(task.sessionId, { _doneConfirmAt: Date.now() + 30000 });
+              setTimeout(async () => {
+                try {
+                  const fresh = _loadTasks().find(t => t.sessionId === task.sessionId);
+                  if (!fresh) return;
+                  let stillAlive = false;
+                  try {
+                    const probe = await fetch('/api/shell/exec', {
+                      method: 'POST', credentials: 'same-origin',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ command: _tmuxCmd(task, `has-session -t ${task.sessionId}`), timeout: 5 }),
+                    });
+                    const pData = await probe.json();
+                    stillAlive = pData.exit_code === 0;
+                  } catch { /* network blip — treat as inconclusive, prefer running */ stillAlive = true; }
+                  if (stillAlive) {
+                    _updateTask(task.sessionId, { status: 'running', _doneConfirmAt: null });
+                    const _el = document.querySelector(`.cookbook-task[data-task-id="${task.sessionId}"]`);
+                    if (_el) {
+                      _el.dataset.status = 'running';
+                      const _badge = _el.querySelector('.cookbook-task-status');
+                      if (_badge) { _badge.textContent = _statusLabel('running', task.type); _badge.className = 'cookbook-task-status'; }
+                      const _wave = _el.querySelector('.cookbook-task-wave'); if (_wave) _wave.style.display = '';
+                      const _up = _el.querySelector('.cookbook-task-uptime'); if (_up) _up.style.display = '';
+                      _reconnectTask(_el, _loadTasks().find(t => t.sessionId === task.sessionId));
+                    }
+                    return;
+                  }
+                  _updateTask(task.sessionId, { status: 'done', _doneConfirmAt: null });
+                  const _el = document.querySelector(`.cookbook-task[data-task-id="${task.sessionId}"]`);
+                  if (_el) {
+                    _el.dataset.status = 'done';
+                    const _badge = _el.querySelector('.cookbook-task-status');
+                    if (_badge) { _badge.textContent = _statusLabel('done', task.type); _badge.className = 'cookbook-task-status cookbook-task-done'; }
+                    const _chk = _el.querySelector('.cookbook-task-check'); if (_chk) _chk.style.display = '';
+                    const _sb = _el.querySelector('.cookbook-task-serve-btn'); if (_sb) _sb.style.display = '';
+                  }
+                  _showCookbookNotif();
+                  _refreshDepsAfterInstall(task);
+                  _renderRunningTab();
+                  _processQueue();
+                } catch { /* swallow — next polling cycle will retry */ }
+              }, 30000);
+            }
           }
         }
         _renderRunningTab();
@@ -2668,7 +2786,7 @@ async function _reconnectTask(el, task) {
               const _accessDenied = /Access to model.*is restricted|gated repo|GatedRepoError|401 Unauthorized|403 Forbidden|not in the authorized list|awaiting a review|must (?:be authenticated|have access)/i.test(snapshot);
               const _dlKey = task.payload?.repo_id || task.name;
               const _dlN = _dlRetryCount.get(_dlKey) || 0;
-              if (!_accessDenied && !task._userStopped && task.type === 'download' && task.payload && _dlN < _DL_MAX_AUTO_RETRY) {
+              if (!controller.signal.aborted && !_accessDenied && task.type === 'download' && task.payload && _dlN < _DL_MAX_AUTO_RETRY) {
                 // Auto-retry: kill the dead session and re-launch (resumes from
                 // the cached .incomplete files) after a short delay.
                 _dlRetryCount.set(_dlKey, _dlN + 1);
@@ -3211,11 +3329,18 @@ async function _pollBackgroundStatus() {
         const live = statusById.get(task.sessionId);
         if (!live) continue;
         const updates = {};
+        // A finished dependency install whose tmux pane is gone is reported
+        // "stopped" by the backend (its pip package is never in the HF cache the
+        // dead-session check inspects). Recover "done" from the retained output's
+        // exit-0 sentinel so a clean install isn't downgraded to crashed.
+        const depDone = !!task.payload?._dep && _depInstallSucceeded(task.output);
         const nextStatus = live.status === 'completed'
           ? 'done'
           : (live.status === 'error'
             ? 'error'
-            : (live.status === 'stopped' ? (task.type === 'download' ? 'crashed' : 'stopped') : null));
+            : (live.status === 'stopped'
+                ? (depDone ? 'done' : (task.type === 'download' ? 'crashed' : 'stopped'))
+                : null));
         if (nextStatus && task.status !== nextStatus) {
           updates.status = nextStatus;
           if (nextStatus === 'done' && task.payload?._dep) completedDeps.push(task);

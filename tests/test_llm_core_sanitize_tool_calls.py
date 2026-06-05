@@ -141,4 +141,3 @@ def test_build_anthropic_payload_alternating_roles():
 
 
 
-

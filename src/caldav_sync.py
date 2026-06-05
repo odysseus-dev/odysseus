@@ -105,6 +105,25 @@ def _to_utc_naive(dt):
     return datetime(dt.year, dt.month, dt.day), True
 
 
+def _find_existing_event(db, pending, uid_val, calendar_id):
+    """Find the event to update for THIS calendar.
+
+    CalendarEvent.uid is the global primary key, so an unscoped lookup by uid
+    returns whatever row holds that VEVENT uid — including another owner's.
+    The old code then reassigned that row's calendar_id, moving (stealing)
+    another user's event into the syncing calendar whenever the two share a
+    uid (shared/subscribed/public calendars, or two accounts on one server).
+    Scope the lookup to the calendar being synced; a genuine cross-user uid
+    collision then fails the PK insert inside the per-calendar try/except
+    instead of hijacking the row. (import_ics was already fixed this way.)
+    """
+    from core.database import CalendarEvent
+    return pending.get(uid_val) or db.query(CalendarEvent).filter(
+        CalendarEvent.uid == uid_val,
+        CalendarEvent.calendar_id == calendar_id,
+    ).first()
+
+
 def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
     """The actual sync — synchronous, intended to run in a threadpool.
     Returns counts: {calendars, events, deleted, errors}."""
@@ -235,9 +254,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                             else ""
                         )
 
-                        existing = pending.get(uid_val) or db.query(CalendarEvent).filter(
-                            CalendarEvent.uid == uid_val,
-                        ).first()
+                        existing = _find_existing_event(db, pending, uid_val, local_cal.id)
                         if existing:
                             existing.calendar_id = local_cal.id
                             existing.summary = summary
@@ -248,6 +265,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                             existing.all_day = all_day
                             existing.is_utc = row_is_utc
                             existing.rrule = rrule
+                            existing.origin = "caldav"
                         else:
                             new_ev = CalendarEvent(
                                 uid=uid_val,
@@ -260,6 +278,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                                 all_day=all_day,
                                 is_utc=row_is_utc,
                                 rrule=rrule,
+                                origin="caldav",
                             )
                             db.add(new_ev)
                             pending[uid_val] = new_ev
@@ -269,8 +288,13 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                 # Prune locally-cached CalDAV events that vanished
                 # upstream (only within our sync window — events outside
                 # the window aren't in `objs`, so we'd false-delete them).
+                # Only rows we previously pulled from the server (origin=="caldav")
+                # are prunable; locally-created events (agent / email triage / a
+                # UI event whose write-back failed) carry origin NULL and must
+                # never be deleted just because the server didn't return them.
                 stale = db.query(CalendarEvent).filter(
                     CalendarEvent.calendar_id == local_cal.id,
+                    CalendarEvent.origin == "caldav",
                     CalendarEvent.dtstart >= start,
                     CalendarEvent.dtstart <= end,
                     ~CalendarEvent.uid.in_(seen_uids) if seen_uids else CalendarEvent.uid.isnot(None),

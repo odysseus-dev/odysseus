@@ -1,6 +1,23 @@
 import pytest
+import sys
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
+
+def _drop_fake_core_database():
+    parent = sys.modules.get("core")
+    attr = getattr(parent, "database", None) if parent is not None else None
+    mod = sys.modules.get("core.database") or attr
+    if mod is None or isinstance(getattr(mod, "__file__", None), str):
+        return
+    sys.modules.pop("core.database", None)
+    sys.modules.pop("src.database", None)
+    if parent is not None and attr is mod:
+        delattr(parent, "database")
+
+
+_drop_fake_core_database()
+
 from core.database import Base, Session, ChatMessage
 from datetime import datetime
 
@@ -35,4 +52,3 @@ def test_sqlite_foreign_keys_cascade():
     assert db.query(ChatMessage).count() == 0
     
     db.close()
-

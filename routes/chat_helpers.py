@@ -589,6 +589,8 @@ def _normalize_thinking(text: str) -> str:
     import re
     if not text:
         return text
+    from src.text_helpers import normalize_thinking_markup
+    text = normalize_thinking_markup(text)
     reasoning_prefix_re = re.compile(
         r'^\s*(?:thinking(?:\s+process)?\s*:|the user |i need |i should |i will |they are |the question |i can )',
         re.IGNORECASE,
@@ -699,6 +701,10 @@ def _extract_thinking_meta(text: str) -> dict | None:
     import re
     if not text:
         return None
+    from src.text_helpers import normalize_thinking_markup
+    original_text = text
+    text = normalize_thinking_markup(text)
+    normalized_changed = text != original_text
 
     # Check for <think> tags (native or injected)
     time_match = re.search(r'<think(?:ing)?\s+time="([\d.]+)"', text)
@@ -729,6 +735,9 @@ def _extract_thinking_meta(text: str) -> dict | None:
             if thinking and reply:
                 return {"thinking": thinking, "reply": reply, "time": think_time}
 
+    if normalized_changed and text.strip() and text.strip() != original_text.strip():
+        return {"thinking": "", "reply": text.strip(), "time": think_time}
+
     return None
 
 
@@ -737,7 +746,8 @@ def clean_thinking_for_save(content: str, metadata: dict | None = None) -> tuple
     md = dict(metadata) if metadata else {}
     info = _extract_thinking_meta(content)
     if info:
-        md["thinking"] = info["thinking"]
+        if info.get("thinking"):
+            md["thinking"] = info["thinking"]
         if info.get("time"):
             md["thinking_time"] = info["time"]
         return info["reply"], md
@@ -781,8 +791,10 @@ def save_assistant_response(
     # Extract thinking into metadata (don't pollute message content with <think> tags)
     _think_info = _extract_thinking_meta(full_response)
     if _think_info:
-        md["thinking"] = _think_info["thinking"]
-        md["thinking_time"] = _think_info.get("time")
+        if _think_info.get("thinking"):
+            md["thinking"] = _think_info["thinking"]
+        if _think_info.get("time"):
+            md["thinking_time"] = _think_info.get("time")
         _content = _think_info["reply"]
     else:
         _content = full_response
