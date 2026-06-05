@@ -4841,6 +4841,15 @@ body.bg-pattern-sparkles {
       pointer-events:auto;
       animation: modal-enter 0.25s ease-out both;
     }
+    .memory-modal-content,
+    .tasks-modal-content,
+    .preset-modal-content,
+    #cookbook-modal .modal-content,
+    #theme-popup,
+    .doclib-modal-content,
+    .gallery-modal-content {
+      container-type: inline-size;
+    }
     .modal-header {
       display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;
       cursor:grab; user-select:none;
@@ -23028,6 +23037,89 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
 .gallery-tab.active {
   opacity: 1;
   border-bottom-color: var(--red);
+}
+
+/* Narrow modal tab strips should stay on one row. Resized docked windows can
+   be much narrower than the viewport, so this cannot live only in mobile media
+   queries. */
+.cookbook-tabs,
+.memory-tabs,
+.admin-tabs,
+.lib-tabs,
+.gallery-tabs,
+.preset-tabs {
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.cookbook-tabs::-webkit-scrollbar,
+.memory-tabs::-webkit-scrollbar,
+.admin-tabs::-webkit-scrollbar,
+.lib-tabs::-webkit-scrollbar,
+.gallery-tabs::-webkit-scrollbar,
+.preset-tabs::-webkit-scrollbar {
+  display: none;
+}
+.cookbook-tabs > *,
+.memory-tabs > *,
+.admin-tabs > *,
+.lib-tabs > *,
+.gallery-tabs > *,
+.preset-tabs > * {
+  flex: 0 0 auto;
+}
+.cookbook-tab,
+.memory-tab,
+.admin-tab,
+.lib-tab,
+.gallery-tab,
+.preset-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  line-height: 1;
+}
+.gallery-tab {
+  gap: 6px;
+}
+
+@container (max-width: 360px) {
+  .cookbook-tab:has(svg),
+  .memory-tab:has(svg),
+  .admin-tab:has(svg),
+  .lib-tab:has(svg),
+  .gallery-tab:has(svg),
+  .preset-tab:has(svg) {
+    width: 34px;
+    min-width: 34px;
+    padding-left: 0;
+    padding-right: 0;
+    font-size: 0;
+  }
+
+  .cookbook-tab:has(svg) svg,
+  .memory-tab:has(svg) svg,
+  .admin-tab:has(svg) svg,
+  .lib-tab:has(svg) svg,
+  .gallery-tab:has(svg) svg,
+  .preset-tab:has(svg) svg {
+    width: 14px;
+    height: 14px;
+    margin-right: 0 !important;
+    vertical-align: middle !important;
+  }
+
+  .memory-tab:has(svg) .memory-count,
+  .gallery-tab:has(svg) .gallery-tab-label,
+  .gallery-tab:has(svg) .gallery-tab-close,
+  .cookbook-tab:has(svg) .cookbook-tab-count,
+  .preset-tab:has(svg) .preset-count {
+    display: none !important;
+  }
 }
 /* Icon + label layout inside each tab. */
 .gallery-tab {
