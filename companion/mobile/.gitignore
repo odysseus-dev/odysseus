@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.local
+
+# Capacitor native projects are generated locally with `npx cap add android`.
+# Keep them out of the PR; document the command in README instead.
+android/
+ios/
+.gradle/

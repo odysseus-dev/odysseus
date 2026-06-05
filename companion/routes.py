@@ -18,8 +18,8 @@ on a GET would be unsafe (Lax cookies ride top-level GET navigations), so GET
 
 import html
 
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import HTMLResponse, StreamingResponse
 
 from core.middleware import require_admin
 from src.auth_helpers import get_current_user
@@ -52,6 +52,43 @@ def owner_can_see(row_owner, owner) -> bool:
     return row_owner is None or row_owner == owner
 
 
+_fallback_session_manager = None
+
+
+def _resolve_session_manager(injected):
+    """Use the app-shared SessionManager when wired in (so the live in-memory
+    sessions match the owner's desktop UI), falling back to a lazily-built one
+    for standalone/test contexts that call setup_companion_routes() with no
+    args. Kept module-level so it can be monkeypatched in tests."""
+    global _fallback_session_manager
+    if injected is not None:
+        return injected
+    if _fallback_session_manager is None:
+        from core.session_manager import SessionManager
+        _fallback_session_manager = SessionManager()
+    return _fallback_session_manager
+
+
+def session_summary(sess, active: bool, status, public_model=None) -> dict:
+    """Shape one session row for a companion client. Pure so it's unit-testable.
+
+    `active`/`status` come from agent_runs (is_active/get_status) so the phone
+    knows which sessions are still generating and can reconnect to the live
+    stream without a probe request. `public_model` lets the caller blank a
+    blind-compare session's real model (issue #1285); defaults to the stored
+    model.
+    """
+    return {
+        "id": sess.id,
+        "name": sess.name,
+        "model": sess.model if public_model is None else public_model,
+        "message_count": getattr(sess, "message_count", 0) or 0,
+        "is_important": bool(getattr(sess, "is_important", False)),
+        "active": bool(active),
+        "status": status,
+    }
+
+
 def mint_pairing_token(owner: str, invalidate=None) -> tuple[str, str]:
     """Mint a pairing token AND invalidate the auth middleware's in-memory token
     cache, so the new token is accepted on the very next request without a server
@@ -66,7 +103,7 @@ def mint_pairing_token(owner: str, invalidate=None) -> tuple[str, str]:
     return token_id, raw_token
 
 
-def setup_companion_routes() -> APIRouter:
+def setup_companion_routes(session_manager=None) -> APIRouter:
     router = APIRouter(prefix="/api/companion", tags=["companion"])
 
     @router.get("/ping")
@@ -144,6 +181,78 @@ def setup_companion_routes() -> APIRouter:
         finally:
             db.close()
         return {"endpoints": out}
+
+    @router.get("/sessions")
+    def list_sessions(request: Request):
+        """The caller's own sessions, annotated with live run state.
+
+        Owner-scoped via token_owner: a paired phone sees exactly the sessions
+        the owner sees on the desktop UI -- never another user's. An unresolved
+        owner (no cookie user, ownerless token) gets an EMPTY list, never the
+        global set -- session_manager.get_sessions_for_user(None) returns ALL
+        sessions, so we must not pass None through.
+
+        Each row carries agent_runs is_active/get_status so the client knows
+        which sessions are still generating and can reconnect to
+        /sessions/{id}/stream without a probe request. Read-only; accepts a
+        cookie session or a chat-scoped bearer token (same as /info, /models).
+        """
+        from src import agent_runs
+        from routes.session_routes import _public_model, _HIDDEN_SYSTEM_SESSION_NAMES
+
+        owner = token_owner(request)
+        if not owner:
+            return {"sessions": []}
+
+        sm = _resolve_session_manager(session_manager)
+        out = []
+        for sess in sm.get_sessions_for_user(owner).values():
+            if getattr(sess, "archived", False):
+                continue
+            name = (sess.name or "").strip()
+            if name in ("Nobody", "Incognito") or name in _HIDDEN_SYSTEM_SESSION_NAMES:
+                continue
+            out.append(session_summary(
+                sess,
+                agent_runs.is_active(sess.id),
+                agent_runs.get_status(sess.id),
+                public_model=_public_model(sess.name, sess.model),
+            ))
+        # Live runs first so the phone surfaces in-flight work at the top; the
+        # client is free to re-sort.
+        out.sort(key=lambda s: not s["active"])
+        return {"sessions": out}
+
+    @router.get("/sessions/{session_id}/stream")
+    async def stream_session(request: Request, session_id: str):
+        """Live SSE for one session -- the phone's "watch what it's doing" view.
+
+        Thin wrapper over the SAME detached-run machinery the desktop UI uses
+        (agent_runs.subscribe replays the buffer so far, then streams live), so
+        a phone that connects mid-run picks up where it is, and disconnecting
+        does NOT stop the run. Owner-checked via _verify_session_owner (which
+        resolves the bearer token's real owner), so a paired phone can only
+        watch its own sessions. 404 if no run is active for this session.
+        """
+        from src import agent_runs
+        from routes.session_routes import _verify_session_owner
+
+        _verify_session_owner(request, session_id, _resolve_session_manager(session_manager))
+        if not agent_runs.is_active(session_id):
+            raise HTTPException(404, "No active run for this session")
+        return StreamingResponse(agent_runs.subscribe(session_id), media_type="text/event-stream")
+
+    @router.post("/sessions/{session_id}/stop")
+    async def stop_session(request: Request, session_id: str):
+        """The phone's Stop/interrupt button. Cancels the detached run server-
+        side (closing the SSE alone does not, by design). Owner-checked the same
+        way as the stream. Returns {stopped: bool} -- false if nothing was
+        running, which the client can treat as already-stopped."""
+        from src import agent_runs
+        from routes.session_routes import _verify_session_owner
+
+        _verify_session_owner(request, session_id, _resolve_session_manager(session_manager))
+        return {"stopped": agent_runs.stop(session_id)}
 
     @router.get("/pair")
     def pair_page(request: Request):

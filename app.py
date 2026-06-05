@@ -253,6 +253,13 @@ if AUTH_ENABLED:
     class AuthMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
             path = request.url.path
+            # CORS preflight (OPTIONS + Access-Control-Request-Method) carries no
+            # credentials by design and must reach the CORS middleware to be
+            # answered. Gating it on auth would 401 the preflight, so every
+            # cross-origin request from a browser/WebView client (e.g. the
+            # companion app) fails before the real request is ever sent.
+            if request.method == "OPTIONS" and "access-control-request-method" in request.headers:
+                return await call_next(request)
             if _is_auth_exempt(path):
                 return await call_next(request)
             # In-process internal-tool token bypass. Used by the agent
@@ -719,7 +726,7 @@ from routes.contacts_routes import setup_contacts_routes
 app.include_router(setup_contacts_routes())
 
 from companion import setup_companion_routes
-app.include_router(setup_companion_routes())
+app.include_router(setup_companion_routes(session_manager))
 
 # ========= ROUTES (kept in app.py) =========
 
