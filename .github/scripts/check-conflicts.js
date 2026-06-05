@@ -42,8 +42,8 @@ module.exports = async ({ github, context, core }) => {
             nodes {
               number
               mergeable
-              headRefName
-              author { login ... on User { __typename } }
+              baseRefName
+              author { login ... on Bot { __typename } }
             }
           }
         }
@@ -87,7 +87,7 @@ module.exports = async ({ github, context, core }) => {
       '',
       '```bash',
       'git fetch origin',
-      'git rebase origin/main',
+      'git rebase origin/dev',
       '# resolve any conflicts, then:',
       'git rebase --continue',
       'git push --force-with-lease',
@@ -97,7 +97,7 @@ module.exports = async ({ github, context, core }) => {
       '',
       '```bash',
       'git fetch origin',
-      'git merge origin/main',
+      'git merge origin/dev',
       '# resolve conflicts, commit, then:',
       'git push',
       '```',
@@ -126,19 +126,24 @@ module.exports = async ({ github, context, core }) => {
   }
 
   async function clearConflict(pr) {
-    // Early return: if the label isn't present, this PR was never flagged — nothing to do.
-    if (!(await hasLabel(pr.number))) return;
+    const [existing, labeled] = await Promise.all([
+      findBotComment(pr.number),
+      hasLabel(pr.number),
+    ]);
 
-    const existing = await findBotComment(pr.number);
+    if (!existing && !labeled) return;
+
     if (existing) {
       await github.rest.issues.deleteComment({ owner, repo, comment_id: existing.id });
     }
 
-    try {
-      await github.rest.issues.removeLabel({ owner, repo, issue_number: pr.number, name: LABEL });
-      core.info(`Cleared "${LABEL}" from PR #${pr.number} — conflict resolved.`);
-    } catch (e) {
-      if (e.status !== 404 && e.status !== 410) throw e;
+    if (labeled) {
+      try {
+        await github.rest.issues.removeLabel({ owner, repo, issue_number: pr.number, name: LABEL });
+        core.info(`Cleared "${LABEL}" from PR #${pr.number} — conflict resolved.`);
+      } catch (e) {
+        if (e.status !== 404 && e.status !== 410) throw e;
+      }
     }
   }
 
@@ -146,8 +151,9 @@ module.exports = async ({ github, context, core }) => {
 
   await ensureLabelExists();
 
-  const prs = await fetchAllOpenPRs();
-  core.info(`Scanning ${prs.length} open PR(s) for merge conflicts…`);
+  const allPrs = await fetchAllOpenPRs();
+  const prs = allPrs.filter(pr => pr.baseRefName === 'dev');
+  core.info(`Scanning ${prs.length} open PR(s) targeting dev for merge conflicts…`);
 
   let flagged = 0;
   let cleared = 0;
