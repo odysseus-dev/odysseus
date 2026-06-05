@@ -88,22 +88,30 @@ def setup_compare_routes(session_manager: SessionManager):
         # de-anonymizing the comparison before the user votes (issue #1285).
         slot_name = {session_left: "Model A", session_right: "Model B"}
 
-        # Create ephemeral sessions (prefixed [CMP])
-        for sid, model, endpoint in [(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]:
-            db = SessionLocal()
-            try:
-                from src.endpoint_resolver import build_chat_url, build_headers, normalize_base
+        # SECURITY: resolve and validate BOTH endpoints before creating any
+        # session. Compare copies a registered endpoint's Authorization header
+        # into the [CMP] session, so validating one endpoint while creating its
+        # session, then rejecting the other, would leave a partial compare
+        # session behind with that header attached. Doing all the owner-scope
+        # resolution + raw-URL rejection up front means a 403 on either endpoint
+        # aborts the whole request with nothing created and no header copied.
+        from src.endpoint_resolver import build_chat_url, build_headers, normalize_base
+        resolved = []
+        db = SessionLocal()
+        try:
+            for sid, model, endpoint in [(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]:
                 # Resolve the supplied URL to a ModelEndpoint the caller owns
                 # (their own rows + legacy null-owner shared rows), scoped so a
                 # comparison can't borrow another user's private endpoint key.
                 base = normalize_base(endpoint)
                 ep = _owned_endpoint_by_url(db, base, user)
-                # Only reject *unregistered* raw URLs for signed-in non-admins;
-                # a matched registered endpoint supplies an id so the caller can
+                # Reject *unregistered* raw URLs for signed-in non-admins; a
+                # matched registered endpoint supplies an id so the caller can
                 # still compare endpoints they own. Blanket-rejecting here (the
                 # earlier `endpoint_id=None` call) locked non-admins out of
                 # compare entirely, since compare resolves endpoints by URL with
                 # no endpoint_id. Mirrors the gallery inpaint/harmonize checks.
+                # Raised here (phase 1), before any session exists.
                 _reject_raw_endpoint_url_for_non_admin(
                     request, user, str(ep.id) if ep is not None else None, endpoint
                 )
@@ -119,24 +127,30 @@ def setup_compare_routes(session_manager: SessionManager):
                 session_endpoint_url = (
                     build_chat_url(normalize_base(ep.base_url)) if ep is not None else endpoint
                 )
-                name = f"[CMP] {slot_name[sid]}" if blind else f"[CMP] {model.split('/')[-1]}"
-                session_manager.create_session(
-                    session_id=sid,
-                    name=name,
-                    endpoint_url=session_endpoint_url,
-                    model=model,
-                    rag=False,
-                    owner=user,
-                )
-                # Copy API key from the matched endpoint config. Nothing is
-                # copied when `ep` is None (raw admin URL or no match), so a
-                # comparison can never inherit another user's key/headers.
-                if ep and ep.api_key:
-                    s = session_manager.sessions.get(sid)
-                    if s:
-                        s.headers = build_headers(ep.api_key, ep.base_url)
-            finally:
-                db.close()
+                # Headers come only from a matched endpoint's key; None when
+                # `ep` is None (raw admin URL or no match), so a comparison can
+                # never inherit another user's key/headers.
+                headers = build_headers(ep.api_key, ep.base_url) if (ep and ep.api_key) else None
+                resolved.append((sid, model, session_endpoint_url, headers))
+        finally:
+            db.close()
+
+        # Both endpoints validated — only now create the ephemeral [CMP]
+        # sessions and copy any resolved headers.
+        for sid, model, session_endpoint_url, headers in resolved:
+            name = f"[CMP] {slot_name[sid]}" if blind else f"[CMP] {model.split('/')[-1]}"
+            session_manager.create_session(
+                session_id=sid,
+                name=name,
+                endpoint_url=session_endpoint_url,
+                model=model,
+                rag=False,
+                owner=user,
+            )
+            if headers:
+                s = session_manager.sessions.get(sid)
+                if s:
+                    s.headers = headers
 
         # Store comparison record
         db = SessionLocal()

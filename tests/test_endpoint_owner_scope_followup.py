@@ -151,6 +151,49 @@ def test_compare_start_rejects_another_users_private_endpoint(monkeypatch):
     assert created == {}
 
 
+def test_compare_start_rejects_before_creating_any_session_on_mixed_endpoints(monkeypatch):
+    # Mixed request: endpoint A is a registered endpoint the caller owns,
+    # endpoint B is a raw/unregistered URL. Both endpoints are resolved and
+    # validated up front, so the unregistered B makes the WHOLE request 403 with
+    # nothing created — no half-built [CMP] session for A, and therefore none of
+    # A's Authorization header left behind. Fails on the old interleaved loop
+    # that created A's session before reaching (and rejecting) B.
+    import routes.compare_routes as cr
+    from src.endpoint_resolver import normalize_base
+
+    monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
+    owned = SimpleNamespace(id=7, api_key="sk-secret", base_url="http://127.0.0.1:8000/v1")
+    owned_base = normalize_base(owned.base_url)
+
+    def _scoped(db, base, owner):
+        # Only endpoint A's URL maps to a visible registered endpoint; B → None.
+        return owned if base == owned_base else None
+
+    monkeypatch.setattr(cr, "_owned_endpoint_by_url", _scoped)
+
+    created = {}
+
+    def _create_session(session_id, **kw):
+        created[session_id] = SimpleNamespace(headers={})
+
+    start = _compare_start_route(
+        SimpleNamespace(create_session=_create_session, sessions=_SessionStore(created))
+    )
+    with pytest.raises(HTTPException) as exc:
+        start(
+            _compare_request(),
+            prompt="p",
+            model_a="a",
+            model_b="b",
+            endpoint_a="http://127.0.0.1:8000/v1",     # owned, registered
+            endpoint_b="http://203.0.113.9:9999/v1",   # raw, unregistered
+        )
+
+    assert exc.value.status_code == 403
+    # No partial session survives the reject, so no copied header does either.
+    assert created == {}
+
+
 def test_compare_start_binds_session_to_registered_endpoint_url(monkeypatch):
     # The session must dial the registered endpoint's OWN normalized base URL,
     # never the raw caller-supplied string. Mint the owned row with a base URL
