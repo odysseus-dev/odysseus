@@ -160,9 +160,9 @@ class McpManager:
             if transport == "stdio":
                 res = await self._connect_stdio(server_id, name, command, args or [], env or {})
             elif transport == "sse":
-                res = await self._connect_sse(server_id, name, url)
+                res = await self._connect_sse(server_id, name, url, env)
             elif transport == "http":
-                res = await self._start_http_connect(server_id, name, url)
+                res = await self._start_http_connect(server_id, name, url, env=env)
             else:
                 logger.error(f"Unknown MCP transport: {transport}")
                 res = False
@@ -243,16 +243,35 @@ class McpManager:
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
 
-    async def _connect_sse(self, server_id: str, name: str, url: str) -> bool:
+    async def _connect_sse(self, server_id: str, name: str, url: str, env: Optional[Dict[str, str]] = None) -> bool:
         """Connect to an MCP server via SSE transport."""
         try:
             from mcp import ClientSession
             from mcp.client.sse import sse_client
             from contextlib import AsyncExitStack
+            import httpx
+            from urllib.parse import urlparse
+
+            headers = dict(env) if env else {}
+
+            # Local HTTPS hosts (localhost, host.docker.internal) use self-signed
+            # certs that the container doesn't trust. Skip verification for these.
+            parsed = urlparse(url)
+            _local = {"localhost", "host.docker.internal", "127.0.0.1"}
+            is_local_https = parsed.scheme == "https" and (
+                parsed.hostname in _local or (parsed.hostname or "").startswith("127.")
+            )
+
+            def _no_verify_factory(**kwargs):
+                kwargs.setdefault("verify", False)
+                return httpx.AsyncClient(**kwargs)
 
             stack = AsyncExitStack()
             try:
-                transport = await stack.enter_async_context(sse_client(url))
+                sse_kwargs: dict = {"headers": headers}
+                if is_local_https:
+                    sse_kwargs["httpx_client_factory"] = _no_verify_factory
+                transport = await stack.enter_async_context(sse_client(url, **sse_kwargs))
                 read_stream, write_stream = transport
                 session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
 
@@ -292,14 +311,21 @@ class McpManager:
             logger.warning("MCP package not installed. Install with: pip install mcp")
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
+        except BaseException as e:
+            # ExceptionGroup / TaskGroup wraps the real cause — unwrap it for logging.
+            causes = getattr(e, "exceptions", None)
+            if causes:
+                for sub in causes:
+                    logger.error(f"MCP SSE sub-exception for {name}: {type(sub).__name__}: {sub}")
+            raise
 
-    async def _start_http_connect(self, server_id: str, name: str, url: str, wait: float = 8.0) -> bool:
+    async def _start_http_connect(self, server_id: str, name: str, url: str, wait: float = 8.0, env: Optional[Dict[str, str]] = None) -> bool:
         """Begin a Streamable HTTP connect in the background. Returns within
         `wait` seconds: True if it connected (cached-token path), otherwise the
         flow is awaiting browser authorization and status becomes 'needs_auth'."""
         import asyncio
         self._connections[server_id] = {"status": "connecting", "name": name, "transport": "http"}
-        task = asyncio.create_task(self._connect_http(server_id, name, url))
+        task = asyncio.create_task(self._connect_http(server_id, name, url, env=env))
         self._connect_tasks[server_id] = task
         done, _ = await asyncio.wait({task}, timeout=wait)
         if task in done:
@@ -320,7 +346,7 @@ class McpManager:
             }
         return False
 
-    async def _connect_http(self, server_id: str, name: str, url: str) -> bool:
+    async def _connect_http(self, server_id: str, name: str, url: str, env: Optional[Dict[str, str]] = None) -> bool:
         """Connect to a Streamable HTTP MCP server (with automatic OAuth)."""
         try:
             from mcp import ClientSession
@@ -336,9 +362,10 @@ class McpManager:
                     "auth_url": auth_url,
                 }
 
+            headers = dict(env) if env else None
             provider = build_provider(server_id, url, on_redirect=_on_redirect)
             stack = AsyncExitStack()
-            transport = await stack.enter_async_context(streamablehttp_client(url, auth=provider))
+            transport = await stack.enter_async_context(streamablehttp_client(url, headers=headers, auth=provider))
             read_stream, write_stream, _get_session_id = transport
             session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
             await session.initialize()

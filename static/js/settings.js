@@ -5114,6 +5114,7 @@ async function initUnifiedIntegrations() {
             </div>
             <div id="uf-mcp-sse-fields" style="display:none;flex-direction:column;gap:6px;">
               <div class="settings-row"><label class="settings-label">URL</label><input id="uf-mcp-url" class="settings-input" placeholder="http://localhost:3001/sse"></div>
+              <div class="settings-row"><label class="settings-label">Headers</label><input id="uf-mcp-sse-env" class="settings-input" placeholder='{"Authorization": "Bearer token"}'></div>
             </div>
             <div class="settings-row" style="margin-top:4px"><button class="admin-btn-sm" id="uf-mcp-save">Save</button><button class="admin-btn-sm" id="uf-mcp-cancel" style="opacity:0.7">Cancel</button><span id="uf-mcp-msg" style="font-size:11px"></span></div>
           </div>
@@ -5141,6 +5142,8 @@ async function initUnifiedIntegrations() {
           fd.append('env', env);
         } else {
           fd.append('url', el('uf-mcp-url').value);
+          let sseEnv = '{}'; try { sseEnv = JSON.stringify(JSON.parse(el('uf-mcp-sse-env').value || '{}')); } catch (_) {}
+          fd.append('env', sseEnv);
         }
         const saveBtn = el('uf-mcp-save'), cancelBtn = el('uf-mcp-cancel');
         const _origLabel = saveBtn.textContent;
