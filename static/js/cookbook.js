@@ -798,10 +798,6 @@ async function _fetchDependencies() {
       // Inside a venv/conda env, `--user` is invalid (pip refuses), so we
       // only add `--user --break-system-packages` when there's no env —
       // for PEP-668-locked system pythons (Arch, newer Debian).
-      const _inEnv = _envState.env === 'venv' || _envState.env === 'conda';
-      const _pipFlags = (!_isWindows() && !_inEnv) ? ' --user --break-system-packages' : '';
-      const _py = _isWindows() ? 'python' : 'python3';
-      const cmd = `${_py} -m pip install${upgrade ? ' -U' : ''}${_pipFlags} "${pipName}"`;
       try {
         const reqBody = {
           repo_id: pipName,
