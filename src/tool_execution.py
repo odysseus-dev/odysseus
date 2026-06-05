@@ -29,6 +29,13 @@ from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES
 _AGENT_WORKDIR = str(pathlib.Path(__file__).parent.parent / "data")
 
 
+
+def find_powershell() -> "str | None":
+    """Locate pwsh (PowerShell 7+) or powershell.exe (Windows built-in).
+    Returns the executable path, or None if neither is on PATH."""
+    import shutil
+    return shutil.which("pwsh") or shutil.which("powershell")
+
 def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
     """Build a unified diff of a file write for display in the chat.
 
@@ -508,6 +515,7 @@ def _owner_is_admin(owner: Optional[str]) -> bool:
 # Map legacy tool names -> (MCP server_id, MCP tool_name)
 _MCP_TOOL_MAP = {
     "bash":           ("bash",       "bash"),
+    "powershell":     ("powershell", "powershell"),
     "python":         ("python",     "python"),
     "read_file":      ("filesystem", "read_file"),
     "write_file":     ("filesystem", "write_file"),
@@ -554,6 +562,7 @@ def _parse_write_file(content: str) -> Dict:
 
 _MCP_ARG_PARSERS: Dict[str, Callable[[str], Dict[str, str]]] = {
     "bash":           lambda c: {"command": c},
+    "powershell":     lambda c: {"command": c},
     "python":         lambda c: {"code": c},
     "web_search":     lambda c: {"query": c.split("\n")[0].strip()},
     "web_fetch":      lambda c: {"url": c.split("\n")[0].strip()},
@@ -689,6 +698,31 @@ async def _direct_fallback(
             )
             if timed_out:
                 return {"error": f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS)}
+            output = stdout.rstrip()
+            err = stderr.rstrip()
+            if err:
+                output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
+            output = _truncate(output, MAX_OUTPUT_CHARS)
+            return {"output": output or "(no output)", "exit_code": rc or 0}
+
+        if tool == "powershell":
+            pwsh = find_powershell()
+            if not pwsh:
+                return {"output": "PowerShell not found (pwsh / powershell.exe). Install PowerShell and ensure it is on PATH.", "exit_code": 1}
+            proc = await asyncio.create_subprocess_exec(
+                pwsh, "-NonInteractive", "-Command", content,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=_subproc_env,
+                cwd=workspace or _AGENT_WORKDIR,
+            )
+            stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
+                proc,
+                timeout=DEFAULT_BASH_TIMEOUT,
+                progress_cb=progress_cb,
+            )
+            if timed_out:
+                return {"error": f"powershell: timed out after {DEFAULT_BASH_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS)}
             output = stdout.rstrip()
             err = stderr.rstrip()
             if err:
@@ -1118,6 +1152,21 @@ async def _direct_fallback(
         return {"error": f"{tool}: {e}", "exit_code": 1}
 
     return None
+
+
+async def execute_tool(
+    tool: str,
+    content: str,
+    *,
+    session_id: Optional[str] = None,
+    workspace: Optional[str] = None,
+    progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+) -> Dict:
+    """Public thin wrapper around _direct_fallback for testing and direct callers."""
+    result = await _direct_fallback(tool, content, progress_cb=progress_cb, workspace=workspace)
+    if result is None:
+        return {"error": f"Unknown tool: {tool}", "exit_code": 1}
+    return result
 
 
 # ---------------------------------------------------------------------------
