@@ -698,23 +698,23 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         return list(fallback)
     return []
 
-
-def _ping_endpoint(
-    base_url: str, api_key: str = None, timeout: float = 1.5
-) -> Dict[str, Any]:
-	"""Reachability probe that does not require installed/listed models."""
+def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> Dict[str, Any]:
+    """Reachability probe that does not require installed/listed models."""
     from src.endpoint_resolver import resolve_url
-
     base = resolve_url(_normalize_base(base_url))
     headers = build_headers(api_key, base)
 
-	# Ollama exposes /v1/models (OpenAI-compatible) AND native /api/version,
+    # Ollama exposes /v1/models (OpenAI-compatible) AND native /api/version,
     # /api/tags. Probe native paths for Ollama-style endpoints, but avoid using
     # /models as a generic health check because large proxy catalogs can be slow.
     parsed_base = urlparse(base)
-    host = (parsed_base.hostname or "").lower()
+    looks_like_ollama = (
+        parsed_base.port == 11434
+        or "ollama" in (parsed_base.hostname or "").lower()
+    )
 
-    looks_like_ollama = parsed_base.port == 11434 or "ollama" in host
+    # APFEL-specific detection
+    host = (parsed_base.hostname or "").lower()
     looks_like_apfel = "apfel" in host or parsed_base.port == 11435
 
     def _result_from_response(r) -> Dict[str, Any]:
@@ -724,26 +724,21 @@ def _ping_endpoint(
                 return {
                     "reachable": False,
                     "status_code": r.status_code,
-                    "error": "That is Odysseus, not a model server.",
+                    "error": "That is Odysseus, not a model server. Use the Ollama URL, usually http://host.docker.internal:11434/v1 in Docker.",
                 }
-            return {
-                "reachable": False,
-                "status_code": r.status_code,
-                "error": f"HTTP {r.status_code} redirect",
-            }
+            return {"reachable": False, "status_code": r.status_code, "error": f"HTTP {r.status_code} redirect"}
         if 200 <= r.status_code < 300:
-            return {"reachable": True, "status_code": r.status_code, "error": None}
-        return {
-            "reachable": False,
-            "status_code": r.status_code,
-            "error": f"HTTP {r.status_code}",
-        }
+            return {
+                "reachable": True,
+                "status_code": r.status_code,
+                "error": None,
+            }
+        return {"reachable": False, "status_code": r.status_code, "error": f"HTTP {r.status_code}"}
 
-    last_error = None
+    last_error: Optional[str] = None
 
     try:
-        # APFEL does not look nor does it behave like Ollama.
-        # Hence, the check for liveness uses a different endpoint to verify the correct behaviour.
+        # APFEL does not behave like Ollama; use its health endpoint.
         if looks_like_apfel:
             root = base
             for suffix in ("/v1", "/api"):
