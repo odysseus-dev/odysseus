@@ -97,9 +97,9 @@ html, body { overflow-x: hidden; height: 100%; margin: 0; overscroll-behavior: n
 body {
   background-color: var(--bg);
   color: var(--fg);
-  /* Animate the dock push BOTH ways. Keeping the transition on the base body
-     (not on .right/left-dock-active) means removing the class on undock also
-     animates padding back to 0 — otherwise the chat snapped back instantly. */
+  /* Keep the base padding transition for older layout paths that still adjust
+     the body directly. Edge docks reserve workspace room on the flex panes
+     below so left + right docks can coexist without skewing the whole body. */
   transition: padding-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
               padding-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
   font-family: var(--font-family, 'Fira Code', monospace);
@@ -1773,6 +1773,8 @@ body.bg-pattern-sparkles {
       min-width:0;
       margin-top:8px;
       margin-bottom: 0;
+      transition: margin-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
+                  margin-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
     }
     .chat-meta { font-size:12px; color:color-mix(in srgb, var(--fg) 60%, transparent); margin-bottom:6px; }
     .chat-history {
@@ -14734,7 +14736,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   body.email-doc-split-active.doc-view .doc-editor-pane {
     position: fixed !important;
     left: var(--email-doc-split-right-x, 420px) !important;
-    right: 0 !important;
+    right: var(--right-dock-w, 0px) !important;
     top: 0 !important;
     bottom: 0 !important;
     width: auto !important;
@@ -14755,18 +14757,21 @@ body [data-act="from-sender"] {
   display: none !important;
 }
 
-/* Snap-to-right docking. A modal dragged to the right edge becomes a
-   docked side panel (mirrors Notes/Doc panels). Body reserves space via
-   padding-right so the chat / notes / doc panel underneath shrinks to
-   fit instead of being hidden behind the panel. */
+/* Edge docking. Docked panels are fixed to the viewport edge; the workspace
+   panes reserve room with margins so left + right docks can be active at the
+   same time without skewing the entire body box. */
 body.right-dock-active {
-  padding-right: var(--right-dock-w, 0px);
+  padding-right: 0;
 }
 body.left-dock-active {
   padding-left: 0;
 }
 body.left-dock-active:not(.email-doc-split-active) .chat-container {
   margin-left: var(--left-dock-w, 0px);
+}
+body.right-dock-active .chat-container,
+body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
+  margin-right: var(--right-dock-w, 0px);
 }
 .modal.modal-right-docked {
   align-items: stretch;

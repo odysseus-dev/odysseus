@@ -5,8 +5,8 @@
 // emailLibrary.js / documentLibrary.js / galleryEditor.js). While docked:
 //   - the modal-content lives at `right: 0; top: 0; bottom: 0` with a
 //     viewport-fraction width
-//   - body gets `right-dock-active` + `--right-dock-w` so the chat /
-//     doc panel / notes pane underneath reserves room via padding-right
+//   - body gets `right-dock-active` + `--right-dock-w` so the workspace
+//     underneath reserves room for the fixed side panel
 //   - if the remaining chat width would drop under 380px, the wide
 //     sidebar auto-collapses to the icon rail (mirrors notes-view UX)
 //
@@ -90,19 +90,37 @@ function _minEdgeDockWidth() {
   return window.innerWidth < 900 ? 280 : MIN_EDGE_DOCK_WIDTH;
 }
 
+function _activeDockWidth(side) {
+  if (side !== 'left' && side !== 'right') return 0;
+  const cls = side === 'left' ? 'left-dock-active' : 'right-dock-active';
+  if (!document.body.classList.contains(cls)) return 0;
+  const prop = side === 'left' ? '--left-dock-w' : '--right-dock-w';
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(prop);
+  const n = parseFloat(raw || '');
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function _clampDockWidthToSpace(width, min, max) {
+  const floor = Math.min(min, Math.max(220, Math.round(max)));
+  const ceiling = Math.max(floor, Math.round(max));
+  return Math.min(ceiling, Math.max(floor, Math.round(width)));
+}
+
 function _clampRightDockWidth(width) {
   const min = _minEdgeDockWidth();
   const navRight = _leftNavRight();
-  const maxByChat = window.innerWidth - navRight - MIN_CHAT_WIDTH;
-  const max = Math.max(min, Math.min(Math.round(window.innerWidth * 0.82), maxByChat));
-  return Math.min(max, Math.max(min, Math.round(width)));
+  const leftDockW = _activeDockWidth('left');
+  const maxByChat = window.innerWidth - navRight - leftDockW - MIN_CHAT_WIDTH;
+  const max = Math.min(Math.round(window.innerWidth * 0.82), maxByChat);
+  return _clampDockWidthToSpace(width, min, max);
 }
 
 function _clampLeftDockWidth(width, left = _leftNavRight()) {
   const min = _minEdgeDockWidth();
-  const available = Math.max(0, window.innerWidth - left);
-  const max = Math.max(min, Math.min(Math.round(available * 0.82), available - MIN_CHAT_WIDTH));
-  return Math.min(max, Math.max(min, Math.round(width)));
+  const rightDockW = _activeDockWidth('right');
+  const available = Math.max(0, window.innerWidth - left - rightDockW);
+  const max = Math.min(Math.round(available * 0.82), available - MIN_CHAT_WIDTH);
+  return _clampDockWidthToSpace(width, min, max);
 }
 
 function _resolveRightDockWidth(modal, content) {
@@ -148,7 +166,7 @@ function _shouldAutoCollapseSidebar(dockW) {
   const rl = (rail && window.getComputedStyle(rail).display !== 'none')
     ? rail.getBoundingClientRect().width
     : 0;
-  const remaining = window.innerWidth - sb - rl - dockW;
+  const remaining = window.innerWidth - sb - rl - _activeDockWidth('left') - dockW;
   return remaining < MIN_CHAT_WIDTH;
 }
 
@@ -217,7 +235,7 @@ function _applyEmailDocSplitGeometry(left, emailWidth) {
   if (!docPane || window.innerWidth <= 768) return;
   docPane.style.setProperty('position', 'fixed', 'important');
   docPane.style.setProperty('left', `${x}px`, 'important');
-  docPane.style.setProperty('right', '0px', 'important');
+  docPane.style.setProperty('right', 'var(--right-dock-w, 0px)', 'important');
   docPane.style.setProperty('top', '0px', 'important');
   docPane.style.setProperty('bottom', '0px', 'important');
   docPane.style.setProperty('width', 'auto', 'important');
