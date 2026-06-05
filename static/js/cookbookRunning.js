@@ -3359,6 +3359,12 @@ export async function _selfHealStaleTasks(opts = {}) {
     // SSH connection used to drive the badge back-and-forth on every probe
     // cycle; this enforces a stable view between flaps.
     if (t._lastStatusFlipAt && (Date.now() - t._lastStatusFlipAt < 45000)) return false;
+    // Dead-probe backoff: a probe that found no live session has nothing to
+    // heal, but the task stayed a candidate — so the monitor re-spawned a
+    // shell for it every 5s, forever. A dead tmux session doesn't come back;
+    // re-check only every 5 minutes (enough to recover from a remote probe
+    // that failed because SSH itself was down, without the storm).
+    if (t._lastDeadProbeAt && (Date.now() - t._lastDeadProbeAt < 300000)) return false;
     return true;
   });
   if (!candidates.length) return;
@@ -3392,6 +3398,11 @@ export async function _selfHealStaleTasks(opts = {}) {
             _el.dataset.status = 'running';
           }
         }
+      } else {
+        // No live session — nothing to heal. Remember it so the next monitor
+        // ticks skip this task instead of re-probing every 5s (see the
+        // dead-probe backoff in the candidate filter above).
+        _updateTask(t.sessionId, { _lastDeadProbeAt: Date.now() });
       }
     } catch { /* network blip — skip this one */ }
   }
@@ -3404,6 +3415,11 @@ export async function _selfHealStaleTasks(opts = {}) {
 export function _startBackgroundMonitor() {
   if (_bgMonitorInterval) return;
   _bgMonitorInterval = setInterval(() => {
+    // While a chat response is streaming, every spare cycle belongs to token
+    // generation — local in-process models share this machine's CPU/GPU with
+    // the server, and a poll tick can spawn a shell subprocess (self-heal's
+    // tmux probe). Skip the tick; status catches up on the next idle one.
+    if (window.__chatStreaming) return;
     _pollBackgroundStatus();
     _checkServeReachability();
     // Auto-reconnect: every cycle, look for download tasks marked finished/

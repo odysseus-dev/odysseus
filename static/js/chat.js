@@ -205,12 +205,17 @@ import createResearchSynapse from './researchSynapse.js';
       submitBtn.dataset.mode = 'streaming';
       submitBtn.dataset.phase = 'processing';
       isStreaming = true;
+      // Mirror for other modules (e.g. the cookbook background monitor pauses
+      // its polling while tokens are streaming — local models share this
+      // machine's CPU/GPU with the server).
+      window.__chatStreaming = true;
       _startStallWatchdog();
     } else if (state === 'idle') {
       submitBtn.dataset.mode = '';
       delete submitBtn.dataset.phase;
       submitBtn.classList.remove('recording');
       isStreaming = false;
+      window.__chatStreaming = false;
       _stopStallWatchdog();
       // Defer to global updater which handles mic/newchat/send modes
       if (window._updateSendBtnIcon) {
@@ -3120,6 +3125,7 @@ import createResearchSynapse from './researchSynapse.js';
     // Clear local state WITHOUT aborting the fetch
     currentAbort = null;
     isStreaming = false;
+    window.__chatStreaming = false;
     currentHolder = null;
     currentAccumulated = '';
     // Reset submit button so the new chat is ready to send
@@ -3544,6 +3550,7 @@ import createResearchSynapse from './researchSynapse.js';
           currentAbort.abort();
         }
         isStreaming = false;
+        window.__chatStreaming = false;
 
         // Release Web Lock
         if (_webLockRelease) {
