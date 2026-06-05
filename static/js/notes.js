@@ -5053,9 +5053,54 @@ async function _initReminders() {
   } catch {}
 }
 
-const notesModule = { openPanel, closePanel, togglePanel, isPanelOpen, openNotes: openPanel, closeNotes: closePanel, isNotesOpen: isPanelOpen, refreshDueBadge };
+// Open the notes panel and scroll/flash the matching note card. Used
+// by chatRenderer.js when the user clicks a [View note](#note-<id>)
+// link the agent emits after a manage_notes create. Falls back to
+// just opening the panel when the card isn't found (panel still
+// loading, note in a different filter, etc.).
+async function openNote(noteId) {
+  // If the panel is already open, openPanel() short-circuits and does
+  // nothing — including no re-fetch — so a freshly-created note added
+  // server-side never shows up. Force a refresh by closing first when
+  // open, then re-opening. Clicking the sidebar Notes button as a
+  // last resort keeps this working even if the module state got out
+  // of sync (rare but seen during HMR or after a stuck modal).
+  try {
+    if (isPanelOpen && isPanelOpen()) {
+      closePanel();
+      // give the close animation a frame to settle
+      await new Promise(r => setTimeout(r, 30));
+    }
+  } catch (_) {}
+  openPanel();
+  // openPanel() kicks off _fetchNotes() asynchronously, so the cards
+  // for newly-created notes may not be in the DOM yet. Also poll the
+  // _notes module array directly — if the note IS loaded but the
+  // active filter (e.g. archive view) is hiding it, we can still
+  // surface a confirmation toast.
+  if (!noteId) return;
+  let tries = 0;
+  const findAndFlash = () => {
+    const card = document.querySelector(`.note-card[data-note-id="${noteId}"]`)
+      || document.querySelector(`.note-card[data-note-id^="${noteId.slice(0, 8)}"]`);
+    if (card) {
+      try { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+      card.classList.add('note-card-flash');
+      setTimeout(() => card.classList.remove('note-card-flash'), 1600);
+      return true;
+    }
+    return false;
+  };
+  const tryNext = () => {
+    if (findAndFlash()) return;
+    if (++tries < 20) setTimeout(tryNext, 200);
+  };
+  setTimeout(tryNext, 120);
+}
+
+const notesModule = { openPanel, closePanel, togglePanel, isPanelOpen, openNote, openNotes: openPanel, closeNotes: closePanel, isNotesOpen: isPanelOpen, refreshDueBadge };
 export default notesModule;
-export { openPanel as openNotes, closePanel as closeNotes, isPanelOpen as isNotesOpen };
+export { openPanel as openNotes, closePanel as closeNotes, isPanelOpen as isNotesOpen, openNote };
 window.notesModule = notesModule;
 
 // Start reminder loop on module load (after a short delay so app loads first)

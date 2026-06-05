@@ -4815,7 +4815,15 @@ async function _cmdSetup(args, ctx) {
     } else {
       pendingSetupProvider = provider;
       setupMode = 'endpoint-key-for-provider';
-      await _setupReply(`Paste your ${provider.name} API key.`);
+      // Show the canonical "/setup <provider> <key>" usage so the user
+      // learns the one-shot form instead of relying on the pasted-key
+      // mode that always greets them with a generic prompt.
+      // _setupReply renders as plain text (no HTML) — use markdown
+      // backticks for the inline code instead of <code> + &lt;&gt;.
+      const _slug = (topic || '').toLowerCase();
+      await _setupReply(
+        `Paste your ${provider.name} API key, or run \`/setup ${_slug} <api-key>\` to set it in one step.`
+      );
     }
     return true;
   }
@@ -5538,7 +5546,31 @@ const COMMANDS = {
     category: 'Getting started',
     help: 'Add local or API model endpoints',
     handler: _cmdSetup,
-    usage: '/setup local URL  ·  /setup groq KEY  ·  /setup copilot  ·  /setup endpoint'
+    usage: '/setup local URL  ·  /setup groq KEY  ·  /setup copilot  ·  /setup endpoint',
+    // Provider subs so the autocomplete popup surfaces "/setup deepseek",
+    // "/setup openai", etc. when the user types "/setup de". Each sub's
+    // handler is a thin wrapper that re-prepends the sub name and
+    // re-dispatches into _cmdSetup, which already knows how to handle
+    // bare-provider (prompts for the key) AND provider-with-key (saves it).
+    // Without the explicit handler, the slash-dispatcher errors with
+    // "subDef.handler is not a function".
+    subs: {
+      deepseek:   { help: 'DeepSeek',      usage: '/setup deepseek sk-...',     handler: (a, c) => _cmdSetup(['deepseek',   ...a], c) },
+      openai:     { help: 'OpenAI',        usage: '/setup openai sk-proj-...',  handler: (a, c) => _cmdSetup(['openai',     ...a], c) },
+      anthropic:  { help: 'Anthropic',     usage: '/setup anthropic sk-ant-...',handler: (a, c) => _cmdSetup(['anthropic',  ...a], c) },
+      openrouter: { help: 'OpenRouter',    usage: '/setup openrouter sk-or-...',handler: (a, c) => _cmdSetup(['openrouter', ...a], c) },
+      groq:       { help: 'Groq',          usage: '/setup groq gsk_...',        handler: (a, c) => _cmdSetup(['groq',       ...a], c) },
+      gemini:     { help: 'Google Gemini', alias: ['google'], usage: '/setup gemini AIza...', handler: (a, c) => _cmdSetup(['gemini', ...a], c) },
+      xai:        { help: 'xAI (Grok)',    alias: ['grok'],   usage: '/setup xai xai-...',   handler: (a, c) => _cmdSetup(['xai',    ...a], c) },
+      ollama:     { help: 'Ollama Cloud',  usage: '/setup ollama KEY',          handler: (a, c) => _cmdSetup(['ollama',     ...a], c) },
+      copilot:    { help: 'GitHub Copilot', usage: '/setup copilot',            handler: (a, c) => _cmdSetup(['copilot',    ...a], c) },
+      local:      { help: 'Local model server (vLLM / LM Studio / llama.cpp / Ollama)',
+                    usage: '/setup local http://localhost:8000/v1',
+                    handler: (a, c) => _cmdSetup(['local', ...a], c) },
+      endpoint:   { help: 'Open the endpoint manager in Settings',
+                    usage: '/setup endpoint',
+                    handler: (a, c) => _cmdSetup(['endpoint', ...a], c) },
+    },
   },
   demo: {
     alias: ['tour'],

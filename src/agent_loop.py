@@ -335,8 +335,10 @@ If the user asks for a reminder/alarm before the event, pass `reminder_minutes` 
     "search_chats": "- ```search_chats``` — Search across all chat history. Use when user asks 'did we discuss X?' or 'find the conversation about Y'.",
     "pipeline": "- ```pipeline``` — Run a multi-step AI pipeline. Args (JSON) with ordered steps, each specifying a model and prompt. Use for complex workflows.",
     "ui_control": "- ```ui_control``` — Control the UI: toggle tools on/off, OPEN PANELS, open email reply drafts, switch models, change themes. Commands: `toggle <name> on/off` (names: bash/shell, web/search, research, incognito, document_editor/documents), `open_panel <name>` (panels: documents, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook), `open_email_reply <uid> <folder> <reply|reply-all|ai-reply>` (opens an email compose document, does NOT send), `set_mode agent/chat`, `switch_model <name>`, `set_theme <preset>`, `create_theme <name> <bg> <fg> <panel> <border> <accent>` (optional key=val for advanced colors AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false). \"open documents\" / \"open library\" / \"show gallery\" / \"open inbox\" / \"open notes\" / \"open cookbook\" all map to `open_panel <name>`. Theme presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute.",
+    "ask_user": "- ```ask_user``` — Ask the user a multiple-choice question when the task is genuinely ambiguous and the answer changes what you do next (pick an approach, confirm an assumption, choose a target). Args (JSON): {\"question\": \"...\", \"options\": [{\"label\": \"...\", \"description\": \"...\"?}, ...], \"multi\": false?}. 2-6 options. The user gets clickable buttons; calling this ENDS your turn and their choice comes back as your next message. Prefer sensible defaults — only ask when you truly can't proceed well without their input.",
     "list_served_models": "- ```list_served_models``` — Show what the Cookbook (LLM-serving subsystem) is currently running. NO args. Use this for ANY 'what's running' / 'what's serving' / 'show my cookbook' / 'is anything up' query. DO NOT shell out (`ps aux`, `docker ps`, etc.) — this tool is the source of truth. Failed serve tasks include recent logs plus diagnosis/retry suggestions; use those suggestions to call `serve_model` again with an adjusted command when appropriate.",
     "stop_served_model": "- ```stop_served_model``` — Stop a running model server. Args (JSON): {\"session_id\": \"<from list_served_models>\"}. Use for 'kill my cookbook' / 'stop the model' / 'shut down vLLM'.",
+    "tail_serve_output": "- ```tail_serve_output``` — Read the actual tmux stderr/traceback of a CURRENTLY failing cookbook task. Args (JSON): {\"session_id\": \"<from list_served_models>\", \"tail\": 150?}. **Use ONLY after** you just launched something via `serve_model` AND `list_served_models` reports YOUR new task as `crashed`/`error`. DO NOT use it on old stopped/completed download tasks (they're historical noise — won't predict whether a new launch succeeds). DO NOT call it before launching a fresh attempt. When you do call it, bump `tail` to 400+ only if the visible error references 'see root cause above'.",
     "download_model": "- ```download_model``` — Download a HuggingFace model. Args (JSON): {\"repo_id\": \"Qwen/Qwen3-8B\", \"host\": \"user@gpu-box\"?, \"include\": \"*Q4_K_M*\"?}.",
     "serve_model": "- ```serve_model``` — Start serving a model with vLLM / SGLang / llama.cpp / Ollama / Diffusers. Args (JSON): {\"repo_id\": \"...\", \"cmd\": \"vllm serve ... --port 8000\" or \"python3 -m sglang.launch_server ... --port 30000\" or \"python3 scripts/diffusion_server.py --model diffusers/stable-diffusion-xl-1.0-inpainting-0.1 --port 8100\", \"host\": \"user@gpu-box\"?}. For image/inpaint/diffusion models, use the `scripts/diffusion_server.py` command exactly. After launch, call `list_served_models`; if it returns a diagnosis with an adjusted command, retry with that command.",
     "list_downloads": "- ```list_downloads``` — Show in-progress HuggingFace model downloads (filters Cookbook tasks/status to downloads only). NO args. Use for 'what's downloading' / 'show my downloads' / 'check download progress'.",
@@ -1659,6 +1661,29 @@ async def stream_agent_loop(
     _tool_type_counts: collections.Counter = collections.Counter()
     _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
     _force_answer = False  # set by loop-breaker → next round runs with NO tools
+    # Supervisor: how many times we've nudged the model after it announced
+    # an action without emitting the tool call. Capped to prevent a model
+    # that *can't* call the tool from looping forever.
+    _intent_nudge_count = 0
+    _MAX_INTENT_NUDGES = 2
+
+    # "I said I would, then didn't" detector. The pattern that breaks debug
+    # loops on weak models (deepseek-v4-flash mid-2026): the model writes
+    # "Let me tail the output to see the error" and then ends the turn with
+    # no tool_calls. The intent is sincere but the function call gets dropped.
+    # Match the common phrasings + an action verb that maps to an available
+    # tool, so we don't nudge on harmless transitional text like "let me
+    # know what you think".
+    _INTENT_RE = re.compile(
+        r"(?:^|\n)\s*(?:let me|i'?ll|i will|going to|let's)\s+"
+        r"(?:tail|check|investigate|look at|see|tail|read|fetch|inspect|"
+        r"verify|diagnose|examine|debug|capture|grab|pull|view|run|call|"
+        r"trigger|launch|start|kick off|stop|kill|restart|adopt|serve|"
+        r"register|adopt|list|search|find|query|hit|ping|test)"
+        r"\b[^.\n]{0,140}",
+        re.IGNORECASE,
+    )
+    _awaiting_user = False  # set by ask_user → end the turn and wait for a choice
 
     # Document streaming state (persists across rounds)
     _doc_acc = ""          # accumulated tool-call JSON arguments
@@ -2010,6 +2035,46 @@ async def stream_agent_loop(
                     # never re-verify an unchanged state in a loop.
                     _effectful_used = False
                     continue
+            # ── Intent-without-action supervisor ─────────────────────
+            # Catch "Let me tail the output" / "I'll check the logs" /
+            # "Let me investigate" patterns where the model announces an
+            # action but emits no tool_call. The bug shows up most on
+            # smaller models trained to verbalize plans before acting.
+            # We inject one sharp nudge ("you said you would X — call the
+            # actual tool now") and loop again. Capped at
+            # _MAX_INTENT_NUDGES so a model that genuinely cannot use the
+            # tool doesn't pin us in a forever loop.
+            _intent_text = _THINK_RE.sub("", cleaned_round).strip()
+            _intent_match = _INTENT_RE.search(_intent_text) if _intent_text else None
+            # Only nudge when the round REALLY looks like an unfinished
+            # promise: short response (<400 chars), no fenced code/answer,
+            # and an action-intent phrase was matched. Long answers that
+            # happen to contain "let me know" are not stalls.
+            _looks_like_promise = (
+                _intent_match is not None
+                and len(_intent_text) < 400
+                and "```" not in _intent_text
+                and _intent_nudge_count < _MAX_INTENT_NUDGES
+            )
+            if _looks_like_promise:
+                _intent_nudge_count += 1
+                _matched_phrase = _intent_match.group(0).strip()
+                logger.info(f"[agent] intent-without-action nudge #{_intent_nudge_count} on round {round_num}: {_matched_phrase!r}")
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        f"You just wrote: \"{_matched_phrase}\" — but ended the "
+                        "turn without making the actual tool call. The user can "
+                        "see you announced the action but didn't run it, which "
+                        "is the most frustrating thing you can do. "
+                        "DO IT NOW: emit the actual function call this turn. "
+                        "If you decided not to do it after all, say so plainly in "
+                        "one sentence instead of restating the plan."
+                    ),
+                })
+                # Visible signal in the stream so the user knows we caught it.
+                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                continue
             break  # no tools — done
 
         # ── Loop-breaker (Terminus-style stall detector) ──────────────
@@ -2200,6 +2265,28 @@ async def stream_agent_loop(
                     f'data: {json.dumps({"type": "ui_control", "data": result})}\n\n'
                 )
 
+            # ask_user: the agent posed a multiple-choice question. Emit it so the
+            # frontend renders clickable options, then end the turn (below) and
+            # wait — the user's pick becomes the next message.
+            if "ask_user" in result:
+                # The question lives in the tool args. ChatMessage.to_dict()
+                # replays only role+content to the model next turn — tool_event
+                # metadata is dropped — so if the question is never in the saved
+                # assistant text, the model can't see it already asked and will
+                # loop and re-ask after the user answers. Stream it as assistant
+                # text (once) so it persists and is replayed. The card shows the
+                # options only, so this is the single visible copy of the question.
+                _auq = result["ask_user"]
+                _auq_q = (_auq.get("question") or "").strip()
+                if _auq_q and _auq_q not in full_response:
+                    _auq_delta = ("\n\n" if full_response.strip() else "") + _auq_q
+                    full_response += _auq_delta
+                    yield 'data: ' + json.dumps({"delta": _auq_delta}) + '\n\n'
+                yield (
+                    f'data: {json.dumps({"type": "ask_user", "data": result["ask_user"]})}\n\n'
+                )
+                _awaiting_user = True
+
             # Build output for frontend tool bubble.
             # Document tools get a short summary — content goes to the editor panel.
             output_text = ""
@@ -2285,6 +2372,19 @@ async def stream_agent_loop(
                 _anchor = f"\n\n[Open in Deep Research](#research-{_rsid})\n"
                 yield 'data: ' + json.dumps({"delta": _anchor}) + '\n\n'
 
+            # Same pattern for notes: when manage_notes creates a note
+            # and returns note_id, drop a `[View note](#note-<id>)` link
+            # into the stream so chatRenderer's click handler routes to
+            # the new openNote() in notes.js — opens the notes panel and
+            # scrolls/flashes the matching card. Without this, the agent
+            # would write "View note" as a phrase with no target.
+            _nid = result.get("note_id")
+            if _nid and block.tool_type == "manage_notes":
+                _title = (result.get("note_title") or "").strip()
+                _label = f"View note: {_title}" if _title else "View note"
+                _anchor = f"\n\n[{_label}](#note-{_nid})\n"
+                yield 'data: ' + json.dumps({"delta": _anchor}) + '\n\n'
+
             # Save for history persistence
             tool_event = {
                 "round": round_num,
@@ -2314,6 +2414,13 @@ async def stream_agent_loop(
 
         # If budget was hit, stop the loop
         if budget_hit:
+            break
+
+        # ask_user posed a question — stop here and wait for the user's choice.
+        # Don't feed tool results back or advance a round; the user's selection
+        # arrives as the next message and the agent resumes from there. The
+        # question text is already in the streamed response, so it persists.
+        if _awaiting_user:
             break
 
         # Feed results back to LLM for next round
