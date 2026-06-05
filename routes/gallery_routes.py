@@ -76,6 +76,9 @@ def setup_gallery_routes() -> APIRouter:
         file_hash = hashlib.sha256(content).hexdigest()
         db = SessionLocal()
         try:
+            if album_id and user is not None:
+                _get_or_404_album(db, album_id, user)
+
             # SECURITY: scope the dup-detect to THIS user — otherwise a
             # caller can probe whether someone else uploaded the same
             # file (the response leaks the existing row's id+filename).
@@ -1669,9 +1672,10 @@ def setup_gallery_routes() -> APIRouter:
         db = SessionLocal()
         try:
             album = _get_or_404_album(db, album_id, user)
-            db.query(GalleryImage).filter(GalleryImage.album_id == album_id).update(
-                {"album_id": None}, synchronize_session=False
-            )
+            q = db.query(GalleryImage).filter(GalleryImage.album_id == album_id)
+            if user is not None:
+                q = q.filter(GalleryImage.owner == user)
+            q.update({"album_id": None}, synchronize_session=False)
             db.delete(album)
             db.commit()
             return {"ok": True}
