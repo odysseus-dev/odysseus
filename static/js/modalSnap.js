@@ -737,15 +737,11 @@ export function makeRightDockController(modal, dockClass = 'modal-right-docked')
   return makeEdgeDockController(modal, 'right', dockClass);
 }
 
-// Read live rail+sidebar width — used as the LEFT "edge" for snap
-// detection, since the visible left boundary the user can drag to is
-// the nav, not x=0 (the rail covers 0..48 and the wide sidebar covers
-// 0..~290 when open).
+// Read the current visible left-nav edge for snap detection. Use measured
+// geometry instead of CSS vars because the sidebar can auto-collapse during a
+// dock operation while --sidebar-w is still settling.
 function _leftNavWidth() {
-  const rs = getComputedStyle(document.documentElement);
-  const rail = parseInt(rs.getPropertyValue('--icon-rail-w') || '48', 10) || 0;
-  const sb = parseInt(rs.getPropertyValue('--sidebar-w') || '0', 10) || 0;
-  return rail + sb;
+  return _leftNavRight();
 }
 
 // Generic edge-snap controller. `side` is 'left' or 'right'. Same pattern
