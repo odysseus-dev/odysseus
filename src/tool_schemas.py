@@ -1234,7 +1234,7 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         return None
 
     # Convert structured args back to the text format each tool expects
-    if tool_type == "bash":
+    if tool_type in ("bash", "powershell"):
         content = args.get("command", "")
     elif tool_type == "python":
         content = args.get("code", "")

@@ -308,7 +308,7 @@ def _parse_tool_code_block(raw: str) -> Optional[ToolBlock]:
     # No structured params: args_body is a raw single value (e.g. a bash
     # command). Keep the freeform special-casing for the simple tools.
     if mapped:
-        if mapped == "bash":
+        if mapped in ("bash", "powershell"):
             content = xml_params.get("command", args_body)
         elif mapped == "python":
             content = xml_params.get("code", args_body)
