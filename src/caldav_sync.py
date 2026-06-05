@@ -212,7 +212,7 @@ def _open_url_as_calendar(client, url: str):
     return client.calendar(url=target)
 
 
-def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
+def _sync_blocking(owner: str, url: str, username: str, password: str, account_id: str = "") -> dict:
     """The actual sync — synchronous, intended to run in a threadpool.
     Returns counts: {calendars, events, deleted, errors}."""
     # Lazy imports so a missing `caldav` dep doesn't break app startup —
@@ -272,14 +272,20 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                         name=display_name,
                         color="#5b8abf",
                         source="caldav",
+                        account_id=account_id or None,
                     )
                     db.add(local_cal)
                     db.commit()
                 else:
-                    # Refresh the display name if the user renamed it
-                    # remotely; preserve any local color override.
+                    # Refresh display name and stamp account_id if missing.
+                    changed = False
                     if local_cal.name != display_name:
                         local_cal.name = display_name
+                        changed = True
+                    if account_id and not local_cal.account_id:
+                        local_cal.account_id = account_id
+                        changed = True
+                    if changed:
                         db.commit()
                 result["calendars"] += 1
 
@@ -401,31 +407,69 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
     return result
 
 
-async def sync_caldav(owner: str) -> dict:
-    """Pull CalDAV state into local DB for `owner`. Returns counts +
-    errors. Loads credentials from the user's prefs; no-ops with a
-    clear error if CalDAV isn't configured."""
-    from routes.prefs_routes import _load_for_user
+def _load_caldav_accounts(owner: str) -> list:
+    """Return the list of CalDAV accounts for *owner*, auto-migrating the legacy
+    single-account ``caldav`` key to the new ``caldav_accounts`` list on first call."""
+    import uuid as _uuid
+    from routes.prefs_routes import _load_for_user, _save_for_user
 
-    cfg = (_load_for_user(owner) or {}).get("caldav", {}) or {}
-    url = (cfg.get("url") or "").strip()
-    user = (cfg.get("username") or "").strip()
-    pw = cfg.get("password") or ""
-    try:
-        from src.secret_storage import decrypt
-        pw = decrypt(pw)
-    except Exception:
-        pass
-    if not (url and user and pw):
+    prefs = _load_for_user(owner) or {}
+    if "caldav_accounts" in prefs:
+        return list(prefs["caldav_accounts"] or [])
+    # Migrate legacy single-account config to the list format.
+    legacy = prefs.get("caldav", {}) or {}
+    if legacy.get("url"):
+        accounts = [{
+            "id": str(_uuid.uuid4()),
+            "label": "CalDAV",
+            "url": legacy["url"],
+            "username": legacy.get("username", ""),
+            "password": legacy.get("password", ""),
+        }]
+        prefs["caldav_accounts"] = accounts
+        prefs.pop("caldav", None)
+        _save_for_user(owner, prefs)
+        return accounts
+    return []
+
+
+async def sync_caldav(owner: str) -> dict:
+    """Pull CalDAV state into local DB for `owner` across all configured accounts.
+    Returns aggregated counts + per-account errors."""
+    from src.secret_storage import decrypt
+
+    accounts = _load_caldav_accounts(owner)
+    if not accounts:
         return {
             "calendars": 0, "events": 0, "deleted": 0,
             "errors": ["CalDAV is not configured"],
         }
-    try:
-        url = validate_caldav_url(url)
-        return await asyncio.to_thread(_sync_blocking, owner, url, user, pw)
-    except ValueError as e:
-        return {"calendars": 0, "events": 0, "deleted": 0, "errors": [str(e)]}
-    except Exception as e:
-        logger.exception("CalDAV sync raised")
-        return {"calendars": 0, "events": 0, "deleted": 0, "errors": [str(e)[:200]]}
+
+    totals: dict = {"calendars": 0, "events": 0, "deleted": 0, "errors": []}
+    for acc in accounts:
+        url = (acc.get("url") or "").strip()
+        user = (acc.get("username") or "").strip()
+        pw = acc.get("password") or ""
+        account_id = acc.get("id") or ""
+        label = acc.get("label") or url or account_id
+        try:
+            pw = decrypt(pw)
+        except Exception:
+            pass
+        if not (url and user and pw):
+            totals["errors"].append(f"{label}: missing URL, username, or password")
+            continue
+        try:
+            url = validate_caldav_url(url)
+            result = await asyncio.to_thread(_sync_blocking, owner, url, user, pw, account_id)
+        except ValueError as e:
+            result = {"calendars": 0, "events": 0, "deleted": 0, "errors": [str(e)]}
+        except Exception as e:
+            logger.exception("CalDAV sync raised for account %s", label)
+            result = {"calendars": 0, "events": 0, "deleted": 0, "errors": [str(e)[:200]]}
+        totals["calendars"] += result.get("calendars", 0)
+        totals["events"] += result.get("events", 0)
+        totals["deleted"] += result.get("deleted", 0)
+        for err in result.get("errors", []):
+            totals["errors"].append(f"{label}: {err}")
+    return totals
