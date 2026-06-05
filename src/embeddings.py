@@ -230,7 +230,8 @@ def get_embedding_client():
         if model:
             os.environ["EMBEDDING_MODEL"] = model
         if api_key:
-            os.environ["EMBEDDING_API_KEY"] = api_key
+            from src.secret_storage import decrypt
+            os.environ["EMBEDDING_API_KEY"] = decrypt(api_key)
     # Try the HTTP embedding API — unless we already found it down this process
     # (avoids paying the connect timeout again on every RAG/memory/tool probe).
     if not _http_embed_down:

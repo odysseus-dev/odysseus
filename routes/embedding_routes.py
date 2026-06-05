@@ -273,7 +273,8 @@ def setup_embedding_routes():
         if model:
             data["model"] = model
         if api_key:
-            data["api_key"] = api_key
+            from src.secret_storage import encrypt
+            data["api_key"] = encrypt(api_key)
 
         _save_custom_endpoint(data)
         os.environ["EMBEDDING_URL"] = url
