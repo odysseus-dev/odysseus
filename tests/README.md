@@ -72,6 +72,16 @@ Use only for the guarded fake/stub `src.endpoint_resolver` cleanup pattern.
   cached against them.
 - Accepts explicit extra dependent module names to evict alongside the defaults.
 
+### `tests.helpers.sqlite_db.make_temp_sqlite`
+
+Use for the repeated file-backed temp sqlite setup in tests.
+
+- Only constructs `(SessionLocal, engine, tmpfile)` from the repeated block.
+- Does not patch modules and does not clean up the temp file.
+- The caller must bind `SessionLocal` explicitly onto whatever module the code
+  under test reads, and must keep the returned objects alive.
+- Do not use it as a general DB fixture framework.
+
 ## What not to abstract yet
 
 Some remaining patterns should stay as-is for now rather than being forced into
