@@ -757,7 +757,7 @@ async def _direct_fallback(
             if not pwsh:
                 return {"output": "PowerShell not found (pwsh / powershell.exe). Install PowerShell and ensure it is on PATH.", "exit_code": 1}
             proc = await asyncio.create_subprocess_exec(
-                pwsh, "-NonInteractive", "-Command", content,
+                pwsh, "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", content,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,
