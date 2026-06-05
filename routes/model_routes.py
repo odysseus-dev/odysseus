@@ -1,6 +1,5 @@
 # routes/model_routes.py
 """Routes for model and provider management."""
-
 import os
 import re
 import uuid
@@ -1690,27 +1689,33 @@ def setup_model_routes(model_discovery):
                         status = "empty"
                 base = _normalize_base(r.base_url)
                 kind = _effective_endpoint_kind(r, base)
-                results.append({
-                    "id": r.id,
-                    "name": r.name,
-                    "base_url": r.base_url,
-                    "has_key": bool(r.api_key),
-                    "api_key_fingerprint": _api_key_fingerprint(r.api_key),
-                    "is_enabled": r.is_enabled,
-                    "models": visible,
-                    "pinned_models": pinned,
-                    "hidden_count": len(hidden),
-                    "online": status != "offline",
-                    "status": status,
-                    "ping_error": (ping or {}).get("error") if ping else None,
-                    "model_type": getattr(r, "model_type", None) or "llm",
-                    "supports_tools": getattr(r, "supports_tools", None),
-                    "endpoint_kind": kind,
-                    "category": _classify_endpoint(base, kind),
-                    "model_refresh_mode": _endpoint_refresh_mode(r, kind),
-                    "model_refresh_interval": getattr(r, "model_refresh_interval", None),
-                    "model_refresh_timeout": getattr(r, "model_refresh_timeout", None),
-                })
+                results.append(
+                    {
+                        "id": r.id,
+                        "name": r.name,
+                        "base_url": r.base_url,
+                        "has_key": bool(r.api_key),
+                        "api_key_fingerprint": _api_key_fingerprint(r.api_key),
+                        "is_enabled": r.is_enabled,
+                        "models": visible,
+                        "pinned_models": pinned,
+                        "hidden_count": len(hidden),
+                        "online": status != "offline",
+                        "status": status,
+                        "ping_error": (ping or {}).get("error") if ping else None,
+                        "model_type": getattr(r, "model_type", None) or "llm",
+                        "supports_tools": getattr(r, "supports_tools", None),
+                        "endpoint_kind": kind,
+                        "category": _classify_endpoint(base, kind),
+                        "model_refresh_mode": _endpoint_refresh_mode(r, kind),
+                        "model_refresh_interval": getattr(
+                            r, "model_refresh_interval", None
+                        ),
+                        "model_refresh_timeout": getattr(
+                            r, "model_refresh_timeout", None
+                        ),
+                    }
+                )
             return results
         finally:
             db.close()
@@ -1800,9 +1805,17 @@ def setup_model_routes(model_discovery):
                 if _candidate_key == _incoming_api_key:
                     existing = _candidate
                     break
-                if _incoming_api_key and not _candidate_key and _empty_key_existing is None:
+                if (
+                    _incoming_api_key
+                    and not _candidate_key
+                    and _empty_key_existing is None
+                ):
                     _empty_key_existing = _candidate
-            if existing is None and _incoming_api_key and _empty_key_existing is not None:
+            if (
+                existing is None
+                and _incoming_api_key
+                and _empty_key_existing is not None
+            ):
                 existing = _empty_key_existing
             if existing:
                 changed = False
@@ -1957,9 +1970,11 @@ def setup_model_routes(model_discovery):
             "models": _merge_model_ids(model_ids, _pinned),
             "pinned_models": _pinned,
             "online": bool(model_ids) or bool(_pinned) or bool(ping.get("reachable")),
-            "status": "online"
-            if (model_ids or _pinned)
-            else ("empty" if ping.get("reachable") else "offline"),
+            "status": (
+                "online"
+                if (model_ids or _pinned)
+                else ("empty" if ping.get("reachable") else "offline")
+            ),
             "ping_error": ping.get("error") if ping else None,
             "endpoint_kind": requested_kind,
             "category": _classify_endpoint(base_url, requested_kind),
@@ -2001,9 +2016,11 @@ def setup_model_routes(model_discovery):
         return {
             "base_url": base_url,
             "online": bool(models) or bool(ping.get("reachable")),
-            "status": "online"
-            if models
-            else ("empty" if ping.get("reachable") else "offline"),
+            "status": (
+                "online"
+                if models
+                else ("empty" if ping.get("reachable") else "offline")
+            ),
             "ping_error": ping.get("error") if ping else None,
             "models": models,
             "count": len(models),
@@ -2378,7 +2395,9 @@ def setup_model_routes(model_discovery):
                 "base_url": ep.base_url,
                 "has_key": bool(ep.api_key),
                 "api_key_fingerprint": _api_key_fingerprint(ep.api_key),
-                "pinned_models": _normalize_model_ids(getattr(ep, "pinned_models", None)),
+                "pinned_models": _normalize_model_ids(
+                    getattr(ep, "pinned_models", None)
+                ),
                 "endpoint_kind": getattr(ep, "endpoint_kind", None) or "auto",
                 "model_refresh_mode": getattr(ep, "model_refresh_mode", None) or "auto",
                 "model_refresh_interval": getattr(ep, "model_refresh_interval", None),
