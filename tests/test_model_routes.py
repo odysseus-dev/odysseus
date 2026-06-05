@@ -1,6 +1,7 @@
 """Tests for model route helper functions — pure logic, no server needed."""
 import sys
 import types
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import httpx
@@ -199,6 +200,9 @@ class TestClassifyEndpoint:
     def test_malformed_url(self):
         assert _classify_endpoint("not-a-url") == "api"
 
+    def test_codex_cli_internal_url_is_api(self):
+        assert _classify_endpoint("odysseus://codex-cli/codex-cli") == "api"
+
 
 # ── setup probing ──
 
@@ -296,3 +300,69 @@ class TestSetupProbeSafety:
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
 
         assert _probe_endpoint("https://api.anthropic.com/v1") == ANTHROPIC_MODELS
+
+    def test_codex_cli_internal_url_is_not_live_probed(self):
+        assert _probe_endpoint("odysseus://codex-cli/codex-cli", timeout=1) == []
+
+
+class _EmptyQuery:
+    def filter(self, *args, **kwargs):
+        return self
+
+    def order_by(self, *args, **kwargs):
+        return self
+
+    def all(self):
+        return []
+
+
+class _EmptyDb:
+    def query(self, *args, **kwargs):
+        return _EmptyQuery()
+
+    def close(self):
+        pass
+
+
+def _api_models_endpoint():
+    router = model_routes.setup_model_routes(model_discovery=None)
+    for route in router.routes:
+        if getattr(route, "path", "") == "/api/models" and "GET" in getattr(route, "methods", set()):
+            return route.endpoint
+    raise AssertionError("GET /api/models route not found")
+
+
+def _request(user=""):
+    return SimpleNamespace(
+        state=SimpleNamespace(current_user=user),
+        headers={},
+        app=SimpleNamespace(state=SimpleNamespace(auth_manager=None)),
+    )
+
+
+def test_api_models_appends_offline_codex_provider_item(monkeypatch):
+    from src import codex_model_provider
+
+    codex_item = {
+        "host": "custom",
+        "port": 0,
+        "url": "odysseus://codex-cli/codex-cli",
+        "models": ["codex-cli/chatgpt-experimental"],
+        "models_display": ["chatgpt-experimental"],
+        "models_extra": [],
+        "models_extra_display": [],
+        "endpoint_id": "codex-cli",
+        "endpoint_name": "Codex / ChatGPT",
+        "category": "api",
+        "model_type": "llm",
+        "provider_type": "codex_cli",
+        "auth_type": "codex_cli",
+        "offline": True,
+        "capabilities": {"chat_supported": False},
+    }
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: _EmptyDb())
+    monkeypatch.setattr(codex_model_provider, "codex_model_list_item_if_available", lambda: codex_item)
+
+    out = _api_models_endpoint()(_request(), refresh=True)
+
+    assert out["items"] == [codex_item]

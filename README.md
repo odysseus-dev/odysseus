@@ -230,6 +230,7 @@ Key settings:
 | `CODEX_BIN` | `codex` | Optional path/name for the official Codex CLI used by Settings -> Integrations -> Codex / ChatGPT sign-in. |
 | `CODEX_HOME` | Codex default | Optional Codex credential/config home. If unset, the Codex CLI uses its own default, normally `~/.codex`. |
 | `ODYSSEUS_CODEX_AUTH_ENABLED` | `true` | Enables the admin-gated Codex / ChatGPT device-code auth UI. Set to `false` to hide/disable the flow. |
+| `ODYSSEUS_CODEX_MODEL_PROVIDER_ENABLED` | `false` | Enables the experimental Codex CLI model-provider status surface. Chat execution remains disabled until the follow-up provider slice. |
 | `SEARXNG_INSTANCE` | `http://localhost:8080` | SearXNG URL. Docker overrides this to `http://searxng:8080`. |
 | `SEARXNG_SECRET` | generated on first Docker boot | Optional SearXNG cookie/CSRF secret. Leave blank unless you need to pin it. |
 | `AUTH_ENABLED` | `true` | Enable/disable login |
@@ -259,6 +260,8 @@ codex login --device-auth
 ```
 
 The UI shows the verification URL and one-time device code, polls the CLI process for completion, and then uses `codex login status` / `codex logout` for status checks and unlinking. Install the Codex CLI first (`npm install -g @openai/codex`, or the current official install method), and set `CODEX_BIN` only if `codex` is not on the service user's `PATH`.
+
+Set `ODYSSEUS_CODEX_MODEL_PROVIDER_ENABLED=true` to expose the experimental Codex CLI model-provider status surface; model chat execution is intentionally deferred to a follow-up slice.
 
 Security notes:
 

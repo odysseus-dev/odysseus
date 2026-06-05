@@ -290,6 +290,12 @@ def _classify_endpoint(base_url: str) -> str:
     Includes the Tailscale CGNAT range (100.64.0.0/10) so tailnet-hosted
     servers (e.g. Cookbook serve endpoints) get reachability-probed too."""
     try:
+        from src.codex_model_provider import is_internal_url as _is_codex_internal_url
+        if _is_codex_internal_url(base_url):
+            return "api"
+    except Exception:
+        pass
+    try:
         host = urlparse(base_url).hostname or ""
         if host in _LOCAL_HOSTS or host.startswith(_PRIVATE_PREFIXES):
             return "local"
@@ -304,6 +310,12 @@ def _classify_endpoint(base_url: str) -> str:
 def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
     For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
+    try:
+        from src.codex_model_provider import is_internal_url as _is_codex_internal_url
+        if _is_codex_internal_url(base_url):
+            return []
+    except Exception:
+        pass
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
     if _detect_provider(base) == "anthropic":
@@ -582,6 +594,14 @@ def setup_model_routes(model_discovery):
                     "model_type": ep_model_type,
                     "offline": True,
                 })
+
+        try:
+            from src.codex_model_provider import codex_model_list_item_if_available
+            codex_item = codex_model_list_item_if_available()
+            if codex_item:
+                items.append(codex_item)
+        except Exception as e:
+            logger.debug("Codex model provider list item unavailable: %s", e)
 
         return {"hosts": [], "items": items}
 

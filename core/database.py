@@ -330,6 +330,11 @@ class ModelEndpoint(TimestampMixin, Base):
     # is the historical default. When non-null, the model picker only shows
     # the endpoint to that user (admins always see everything).
     owner = Column(String, nullable=True, index=True)
+    # Provider/auth metadata for non-API-key integrations. Existing endpoints
+    # keep OpenAI-compatible API-key semantics by default.
+    provider_type = Column(String, nullable=False, default="openai_compat")
+    auth_type = Column(String, nullable=False, default="api_key")
+    provider_config = Column(Text, nullable=True)
 
 class McpServer(TimestampMixin, Base):
     """Admin-configured MCP (Model Context Protocol) tool servers."""
@@ -822,6 +827,34 @@ def _migrate_add_supports_tools_column():
         conn.close()
     except Exception as e:
         logging.getLogger(__name__).warning(f"supports_tools migration failed: {e}")
+
+
+def _migrate_add_model_endpoint_provider_columns():
+    """Add provider/auth metadata columns to model_endpoints if missing."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(model_endpoints)")
+        columns = [row[1] for row in cursor.fetchall()]
+        changed = False
+        if columns and "provider_type" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN provider_type TEXT NOT NULL DEFAULT 'openai_compat'")
+            changed = True
+        if columns and "auth_type" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN auth_type TEXT NOT NULL DEFAULT 'api_key'")
+            changed = True
+        if columns and "provider_config" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN provider_config TEXT")
+            changed = True
+        if changed:
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added provider metadata columns to model_endpoints")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"model endpoint provider metadata migration failed: {e}")
 
 
 def _migrate_add_cached_models_column():
@@ -1496,6 +1529,7 @@ def init_db():
     _migrate_add_model_type_column()
     _migrate_add_model_endpoint_owner_column()
     _migrate_add_supports_tools_column()
+    _migrate_add_model_endpoint_provider_columns()
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()
     _migrate_add_document_archived_column()
