@@ -3,6 +3,11 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
+from tests.helpers.import_state import clear_fake_database_modules
+
+clear_fake_database_modules()
+
 from core.database import Base, Session as DbSession, ChatMessage as DbChatMessage
 from core.session_manager import SessionManager
 from src.topic_analyzer import analyze_topics

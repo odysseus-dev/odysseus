@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from core.database import SessionLocal, GalleryImage, GalleryAlbum, ModelEndpoint
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user, require_privilege
+from src.upload_limits import read_upload_limited
 
 from routes.gallery_helpers import (
     GalleryPatch, _extract_exif, _image_to_dict, _owner_filter, _human_size,
@@ -20,13 +21,37 @@ from routes.gallery_helpers import (
 
 logger = logging.getLogger(__name__)
 
+GALLERY_UPLOAD_MAX_BYTES = int(os.getenv("ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES", str(100 * 1024 * 1024)))
+GALLERY_TRANSFORM_UPLOAD_MAX_BYTES = int(os.getenv("ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES", str(25 * 1024 * 1024)))
+
 
 def _sanitize_gallery_filename(filename: str) -> str:
     """Return a local filename safe to join under generated_images."""
-    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(filename or "").name)[:128]
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(str(filename or "")).name)[:128]
     if not safe_name or safe_name in {".", ".."}:
         safe_name = uuid.uuid4().hex[:12]
     return safe_name
+
+
+GALLERY_IMAGE_DIR = Path("data/generated_images")
+
+
+def _gallery_image_path(filename: str) -> Path:
+    """Resolve a stored gallery filename without leaving generated_images."""
+    if not isinstance(filename, str):
+        raise HTTPException(400, "Unsafe gallery filename")
+    safe_name = _sanitize_gallery_filename(filename)
+    original = str(filename or "")
+    root = GALLERY_IMAGE_DIR.resolve()
+    path = (GALLERY_IMAGE_DIR / safe_name).resolve()
+    try:
+        if os.path.commonpath([str(root), str(path)]) != str(root):
+            raise ValueError
+    except Exception:
+        raise HTTPException(400, "Unsafe gallery filename")
+    if safe_name != original:
+        raise HTTPException(400, "Unsafe gallery filename")
+    return path
 
 def setup_gallery_routes() -> APIRouter:
     router = APIRouter(tags=["gallery"])
@@ -45,7 +70,7 @@ def setup_gallery_routes() -> APIRouter:
 
         user = get_current_user(request)
         album_id = form.get("album_id") or None
-        content = await file.read()
+        content = await read_upload_limited(file, GALLERY_UPLOAD_MAX_BYTES, "Gallery upload")
 
         # Duplicate detection via SHA-256
         file_hash = hashlib.sha256(content).hexdigest()
@@ -130,7 +155,7 @@ def setup_gallery_routes() -> APIRouter:
             if not file or not hasattr(file, 'read'):
                 raise HTTPException(400, "No image provided")
 
-            content = await file.read()
+            content = await read_upload_limited(file, GALLERY_UPLOAD_MAX_BYTES, "Gallery replacement")
             img_dir = Path("data/generated_images")
             img_dir.mkdir(parents=True, exist_ok=True)
             img_path = img_dir / _sanitize_gallery_filename(img.filename)
@@ -207,7 +232,7 @@ def setup_gallery_routes() -> APIRouter:
             if not user or img.owner != user:
                 raise HTTPException(403, "Not your image")
 
-            img_path = Path("data/generated_images") / img.filename
+            img_path = _gallery_image_path(img.filename)
             if not img_path.exists():
                 raise HTTPException(404, "Image file not found")
 
@@ -250,7 +275,7 @@ def setup_gallery_routes() -> APIRouter:
         if not file: raise HTTPException(400, "No image")
         scale = int(form.get("scale", "2"))
 
-        image_bytes = await file.read()
+        image_bytes = await read_upload_limited(file, GALLERY_TRANSFORM_UPLOAD_MAX_BYTES, "Image upload")
         b64 = base64.b64encode(image_bytes).decode()
 
         # Find image endpoint
@@ -294,7 +319,7 @@ def setup_gallery_routes() -> APIRouter:
         strength = float(form.get("strength", "0.55"))
         if not file: raise HTTPException(400, "No image")
 
-        image_bytes = await file.read()
+        image_bytes = await read_upload_limited(file, GALLERY_TRANSFORM_UPLOAD_MAX_BYTES, "Image upload")
         b64 = base64.b64encode(image_bytes).decode()
 
         db = SessionLocal()
@@ -501,18 +526,24 @@ def setup_gallery_routes() -> APIRouter:
             albums = q.order_by(GalleryAlbum.created_at.desc()).all()
             result = []
             for a in albums:
-                count = db.query(GalleryImage).filter(
+                _count_q = db.query(GalleryImage).filter(
                     GalleryImage.album_id == a.id, GalleryImage.is_active == True
-                ).count()
+                )
+                if user:
+                    _count_q = _count_q.filter(GalleryImage.owner == user)
+                count = _count_q.count()
                 cover_url = None
                 if a.cover_id:
                     cover = db.query(GalleryImage).filter(GalleryImage.id == a.cover_id).first()
                     if cover:
                         cover_url = f"/api/generated-image/{cover.filename}"
                 elif count > 0:
-                    first = db.query(GalleryImage).filter(
+                    _cover_q = db.query(GalleryImage).filter(
                         GalleryImage.album_id == a.id, GalleryImage.is_active == True
-                    ).order_by(GalleryImage.created_at.desc()).first()
+                    )
+                    if user:
+                        _cover_q = _cover_q.filter(GalleryImage.owner == user)
+                    first = _cover_q.order_by(GalleryImage.created_at.desc()).first()
                     if first:
                         cover_url = f"/api/generated-image/{first.filename}"
                 result.append({
@@ -645,7 +676,14 @@ def setup_gallery_routes() -> APIRouter:
             if req.favorite is not None:
                 img.favorite = req.favorite
             if req.album_id is not None:
-                img.album_id = req.album_id if req.album_id else None
+                if req.album_id:
+                    # Validate the target album belongs to the caller before
+                    # moving the image into it — mirrors add_to_album, so you
+                    # cannot file your image into another user's album.
+                    _get_or_404_album(db, req.album_id, user)
+                    img.album_id = req.album_id
+                else:
+                    img.album_id = None
             db.commit()
             db.refresh(img)
             return _image_to_dict(img)
@@ -688,11 +726,11 @@ def setup_gallery_routes() -> APIRouter:
             used = set()
             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
                 for img in imgs:
-                    src = os.path.join("data", "generated_images", img.filename)
-                    if not os.path.exists(src):
+                    src = _gallery_image_path(img.filename)
+                    if not src.exists():
                         continue
-                    ext = os.path.splitext(img.filename)[1] or ".png"
-                    base = (img.prompt or "").strip() or os.path.splitext(img.filename)[0]
+                    ext = src.suffix or ".png"
+                    base = (img.prompt or "").strip() or src.stem
                     base = re.sub(r"[^\w\-. ]+", "", base)[:60].strip() or img.id
                     name = f"{base}{ext}"
                     i = 1
@@ -814,9 +852,9 @@ def setup_gallery_routes() -> APIRouter:
 
             img_filename = img.filename
             # Remove the file from disk
-            img_path = os.path.join("data", "generated_images", img_filename)
-            if os.path.exists(img_path):
-                os.remove(img_path)
+            img_path = _gallery_image_path(img_filename)
+            if img_path.exists():
+                img_path.unlink()
 
             # Soft-delete the record
             img.is_active = False
@@ -1704,7 +1742,7 @@ def setup_gallery_routes() -> APIRouter:
         try:
             img = _get_or_404_image(db, image_id, user)
 
-            img_path = Path("data/generated_images") / img.filename
+            img_path = _gallery_image_path(img.filename)
             if not img_path.exists():
                 raise HTTPException(404, "Image file not found")
 
@@ -1803,5 +1841,3 @@ def setup_gallery_routes() -> APIRouter:
             db.close()
 
     return router
-
-

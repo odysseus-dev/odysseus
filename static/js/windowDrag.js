@@ -93,11 +93,11 @@ export function makeWindowDraggable(modal, options = {}) {
   }
 
   const rightDock = enableDock ? makeEdgeDockController(modal, 'right') : null;
-  // Left dock is opt-in (enableLeftDock). For most windows it's off — the
-  // sidebar lives on the left, so a left dock collides with it. The email
-  // window enables it so you can park the message on the left and read it
-  // while replying in the document on the right.
-  const leftDock = (enableDock && options.enableLeftDock) ? makeEdgeDockController(modal, 'left') : null;
+  // Left dock is enabled by default too. modalSnap collapses the wide sidebar
+  // and anchors the panel beside the icon rail, so it no longer collides with
+  // the navigation. Callers can still pass enableLeftDock:false for a special
+  // modal that should only dock right.
+  const leftDock = (enableDock && options.enableLeftDock !== false) ? makeEdgeDockController(modal, 'left') : null;
 
   // Per-drag state, reset on mousedown.
   let dragging = false;
@@ -149,6 +149,13 @@ export function makeWindowDraggable(modal, options = {}) {
   const _startDrag = (cx, cy) => {
     dragging = true;
     if (modal) modal.classList.add('modal-dragging');
+    // Cancel any in-flight open animation so we don't pin a mid-animation
+    // rect and then jump once the animation settles.
+    try {
+      content.getAnimations()
+        .filter(a => a.playState !== 'finished')
+        .forEach(a => a.cancel());
+    } catch (_) {}
     const rect = content.getBoundingClientRect();
     if (onDragStart) {
       try { onDragStart({ rect, cx, cy }); } catch (_) {}

@@ -10,7 +10,7 @@ def get_current_user(request: Request) -> Optional[str]:
     return getattr(request.state, 'current_user', None)
 
 
-def effective_user(request: Request):
+def effective_user(request: Request) -> Optional[str]:
     """The real human behind the request, for ownership/attribution.
 
     Cookie sessions resolve to the logged-in username. Bearer ``ody_`` callers

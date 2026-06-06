@@ -1,5 +1,6 @@
 """Regression tests for task-result delivery into chat sessions (issue #326)."""
 import asyncio
+import sys
 import types as _types
 
 import pytest
@@ -11,6 +12,11 @@ if not isinstance(sqlalchemy, _types.ModuleType):
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from tests.helpers.import_state import clear_fake_database_modules
+
+clear_fake_database_modules()
+
+import core.database as cdb
 from core.database import Base, Session as DbSession
 from src.task_scheduler import TaskScheduler
 
@@ -46,10 +52,15 @@ def _make_task():
     )
 
 
-def test_session_delivery_survives_empty_database():
+def test_session_delivery_survives_empty_database(monkeypatch):
     """On a fresh/wiped database there is no session to inherit endpoint/model
     from, so _resolve_defaults returns None. The delivery must still persist a
     session instead of crashing on the NOT NULL constraint (issue #326)."""
+    monkeypatch.setitem(sys.modules, "core.database", cdb)
+    parent = sys.modules.get("core")
+    if parent is not None:
+        monkeypatch.setattr(parent, "database", cdb, raising=False)
+
     db = _make_db()
     scheduler = TaskScheduler.__new__(TaskScheduler)
     scheduler._session_manager = None
