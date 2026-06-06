@@ -21,6 +21,10 @@ youtube-transcript-api
 # Markdown rendering for research reports (src/visual_report.py).
 # Imported at module-top so it's a hard core dep, not optional.
 markdown
+# HTML sanitizer for rendered research reports (src/visual_report.py). Report
+# content is untrusted (LLM output over crawled pages) and report pages run
+# under a relaxed CSP, so the rendered HTML is allowlist-sanitized.
+nh3
 # Calendar .ics import/export (routes/calendar_routes.py).
 icalendar
 # Recurrence rule expansion for calendar events (routes/calendar_routes.py).

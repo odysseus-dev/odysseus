@@ -1,16 +1,10 @@
-import importlib.machinery
-import importlib.util
-from pathlib import Path
 from types import SimpleNamespace
+
+from tests.helpers.cli_loader import load_script
 
 
 def _load_preset_cli():
-    path = Path(__file__).resolve().parent.parent / "scripts" / "odysseus-preset"
-    loader = importlib.machinery.SourceFileLoader("odysseus_preset_set_corrupt", str(path))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
+    return load_script("odysseus-preset")
 
 
 def test_set_replaces_corrupt_existing_entry(monkeypatch):

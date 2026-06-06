@@ -180,6 +180,21 @@ def _is_windows_bash_stub(path: str) -> bool:
     )
 
 
+def git_bash_path(path: str | Path) -> str:
+    """Convert a path to POSIX style suitable for Git Bash on Windows.
+
+    Transforms drive letters (e.g., 'C:\\path') to POSIX '/c/path',
+    and uses forward slashes.
+    """
+    p = Path(path)
+    p_str = p.as_posix()
+    if IS_WINDOWS and len(p_str) >= 2 and p_str[1] == ":":
+        drive = p_str[0].lower()
+        return f"/{drive}{p_str[2:]}"
+    return p_str
+
+
+
 def find_bash() -> Optional[str]:
     """Locate a real ``bash`` interpreter, or None.
 

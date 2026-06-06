@@ -676,7 +676,7 @@ function _createGroupBubble(model, box) {
   // Role label — use character name if assigned, otherwise model name
   const roleLabel = model._groupName || (model.character ? model.character.characterName : chatRenderer.shortModel(model.mid));
   const roleTs = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  wrap.innerHTML = `<div class="role">${roleLabel} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
+  wrap.innerHTML = `<div class="role">${uiModule.esc(roleLabel)} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
   chatRenderer.applyModelColor(wrap.querySelector('.role'), model.mid);
 
   // Spinner — identical to chat.js line 3062
@@ -860,11 +860,14 @@ async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl) {
           }
           // Generated image
           else if (json.type === 'generated_image' && json.url) {
-            const img = document.createElement('img');
-            img.src = json.url;
-            img.style.cssText = 'max-width:100%;border-radius:8px;margin:8px 0;';
-            img.loading = 'lazy';
-            bodyEl.appendChild(img);
+            const safeImageUrl = chatRenderer.safeDisplayImageSrc(json.url);
+            if (safeImageUrl) {
+              const img = document.createElement('img');
+              img.src = safeImageUrl;
+              img.style.cssText = 'max-width:100%;border-radius:8px;margin:8px 0;';
+              img.loading = 'lazy';
+              bodyEl.appendChild(img);
+            }
           }
           // Error
           else if (json.error) {

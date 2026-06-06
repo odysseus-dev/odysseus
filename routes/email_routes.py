@@ -49,7 +49,7 @@ from routes.email_helpers import (
     _EMAIL_REPLY_SYS_PROMPT_BASE, _POOL_HOOKS,
     SendEmailRequest, ExtractStyleRequest,
     ATTACHMENTS_DIR, COMPOSE_UPLOADS_DIR, SCHEDULED_DB,
-    attachment_extract_dir,
+    attachment_extract_dir, _email_cache_owner_clause,
 )
 from routes.email_pollers import _start_poller
 
@@ -934,9 +934,11 @@ def setup_email_routes():
                     import sqlite3 as _sql3
                     _c = _sql3.connect(SCHEDULED_DB)
                     placeholders = ",".join("?" * len(ids))
+                    owner_clause, owner_params = _email_cache_owner_clause(owner)
                     rows = _c.execute(
-                        f"SELECT message_id, summary FROM email_summaries WHERE message_id IN ({placeholders})",
-                        ids,
+                        f"SELECT message_id, summary FROM email_summaries "
+                        f"WHERE message_id IN ({placeholders}) AND {owner_clause}",
+                        (*ids, *owner_params),
                     ).fetchall()
                     _c.close()
                     by_id = {r[0]: r[1] for r in rows}
@@ -1219,15 +1221,16 @@ def setup_email_routes():
             try:
                 import sqlite3 as _sql3
                 _c = _sql3.connect(SCHEDULED_DB)
+                owner_clause, owner_params = _email_cache_owner_clause(owner)
                 _row = _c.execute(
-                    "SELECT summary FROM email_summaries WHERE message_id = ?",
-                    (message_id.strip(),),
+                    f"SELECT summary FROM email_summaries WHERE message_id = ? AND {owner_clause}",
+                    (message_id.strip(), *owner_params),
                 ).fetchone()
                 if _row:
                     cached_summary = _row[0]
                 _row2 = _c.execute(
-                    "SELECT reply FROM email_ai_replies WHERE message_id = ?",
-                    (message_id.strip(),),
+                    f"SELECT reply FROM email_ai_replies WHERE message_id = ? AND {owner_clause}",
+                    (message_id.strip(), *owner_params),
                 ).fetchone()
                 if _row2:
                     cached_ai_reply = _apply_email_style_mechanics(_extract_reply(_row2[0] or ""))
@@ -2549,10 +2552,10 @@ def setup_email_routes():
                     _c = _sql3.connect(SCHEDULED_DB)
                     _c.execute("""
                         INSERT OR REPLACE INTO email_summaries
-                        (message_id, uid, folder, subject, sender, summary, model_used, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        (message_id, owner, uid, folder, subject, sender, summary, model_used, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        mid, data.get("uid", ""), data.get("folder", ""),
+                        mid, owner, data.get("uid", ""), data.get("folder", ""),
                         subject, sender, content, model, datetime.utcnow().isoformat(),
                     ))
                     _c.commit()
@@ -2587,9 +2590,10 @@ def setup_email_routes():
             if message_id:
                 try:
                     _c = _sql3.connect(SCHEDULED_DB)
+                    owner_clause, owner_params = _email_cache_owner_clause(owner)
                     _row = _c.execute(
-                        "SELECT reply, model_used FROM email_ai_replies WHERE message_id = ?",
-                        (message_id,),
+                        f"SELECT reply, model_used FROM email_ai_replies WHERE message_id = ? AND {owner_clause}",
+                        (message_id, *owner_params),
                     ).fetchone()
                     _c.close()
                     if _row and _row[0]:
@@ -2791,9 +2795,9 @@ def setup_email_routes():
                     _c = _sql3.connect(SCHEDULED_DB)
                     _c.execute("""
                         INSERT OR REPLACE INTO email_ai_replies
-                        (message_id, uid, folder, reply, model_used, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (message_id, source_uid, source_folder, reply, model, datetime.utcnow().isoformat()))
+                        (message_id, owner, uid, folder, reply, model_used, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (message_id, owner, source_uid, source_folder, reply, model, datetime.utcnow().isoformat()))
                     _c.commit()
                     _c.close()
                 except Exception as e:

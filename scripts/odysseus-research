@@ -25,6 +25,24 @@ from pathlib import Path
 
 _DATA_DIR = _REPO_ROOT / "data" / "deep_research"
 
+# The CLI's --status takes the user-facing label "complete", but the writer
+# in services/research/research_handler.py stores `status="done"` when a run
+# finishes (and the legacy src/research_handler.py does the same). Without
+# this alias, --status complete filters every finished record out and the
+# user sees an empty list. Map at filter time so the on-disk corpus is the
+# source of truth and the CLI surface stays the friendlier word. The other
+# choices ("running", "cancelled", "error") are stored verbatim, so they
+# fall through unchanged.
+_STATUS_CLI_TO_STORED = {"complete": "done"}
+
+
+def _status_matches(stored, requested: str) -> bool:
+    stored = (stored or "")
+    if not isinstance(stored, str):
+        stored = ""
+    target = _STATUS_CLI_TO_STORED.get(requested, requested)
+    return stored == target
+
 
 def _load_path(path: Path) -> dict | None:
     try:
@@ -72,7 +90,7 @@ def cmd_list(args):
         data = _load_path(path)
         if data is None:
             continue
-        if args.status and (data.get("status") or "") != args.status:
+        if args.status and not _status_matches(data.get("status"), args.status):
             continue
         out.append(_summarize(rp_id, data))
     out.sort(key=lambda r: r.get("started_at") or "", reverse=True)

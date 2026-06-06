@@ -22,7 +22,13 @@ logger = logging.getLogger(__name__)
 # Tools that are ALWAYS included regardless of retrieval results.
 # These are the most commonly needed and should never be missing.
 ALWAYS_AVAILABLE = frozenset({
-    "bash", "python", "web_search", "web_fetch", "read_file",
+    "bash", "python", "web_search", "web_fetch",
+    # File tools: read AND write/edit. An agent with disk access should always
+    # be able to change files, not just read them — otherwise a bare "edit X"
+    # request can miss write_file/edit_file (RAG-only) and the model wrongly
+    # falls back to edit_document (editor panel). All admin-gated by tool_security.
+    "read_file", "write_file", "edit_file",
+    "grep", "glob", "ls",  # code-navigation tools (admin-gated by tool_security)
     "api_call",  # For configured integrations (Miniflux, Gitea, Linkding, etc.)
     # The two genuinely AMBIENT cookbook tools — "what's running" and
     # "kill it" can be asked any time without prior cookbook context,
@@ -31,9 +37,26 @@ ALWAYS_AVAILABLE = frozenset({
     # keyword hints when the user is actually talking about cookbook.
     # Keeping the always-on set small leaves room in the ~16-tool
     # budget for manage_tasks / manage_calendar / etc.
-    "list_served_models", "stop_served_model",
+    "list_served_models", "stop_served_model", "tail_serve_output",
+    # Serving is a core agent capability — keep these always available so
+    # the router doesn't lose them on phrasings like "servic" / "fire up" / "boot".
+    "serve_model", "serve_preset", "list_serve_presets",
+    "list_cached_models", "list_cookbook_servers",
+    # Fallback when serve_model's allowlist rejects a cmd or when the
+    # model was launched out-of-band via bash+tmux — without this the
+    # session is invisible to the cookbook UI even though it's running.
+    "adopt_served_model",
     # Generic API loopback — the catch-all when no named tool fits.
     "app_api",
+    # Memory is ambient — "remember this" can follow any message regardless
+    # of topic. Without this, RAG drops it and the agent falls back to
+    # app_api /api/memory/add which fails with 422 on first attempt.
+    "manage_memory",
+    # Ask the user a multiple-choice question for a decision/clarification.
+    # Always reachable so the agent can pause and ask at any point.
+    "ask_user",
+    # Write back to the active plan (tick steps done / revise) during execution.
+    "update_plan",
 })
 
 # Tools that the Personal Assistant always has access to during scheduled
@@ -63,8 +86,12 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "python": "Execute Python code for computation, data processing, math, scripting, parsing, API calls. Not for writing code for the user.",
     "web_search": "Quick single web lookup for a fact, current event, or doc mid-task. NOT for 'research X' / 'do research on X' requests — those are deep-research jobs (use trigger_research). web_search = one query; trigger_research = a full researched report in the sidebar.",
     "web_fetch": "Fetch and read the text content of a specific URL/website the user names (e.g. 'check example.com', 'open this link'). Use when you have a concrete URL; for open-ended lookups use web_search instead.",
-    "read_file": "Read a file from disk and return its contents. View source code, config files, logs.",
-    "write_file": "Write content to a file on disk. Create new files, save output, update configs.",
+    "read_file": "Read a file from disk and return its contents. View source code, config files, logs. Supports an optional line range (offset/limit) for large files.",
+    "grep": "Search file CONTENTS for a regex across a directory tree (ripgrep-backed, honours .gitignore). Returns file:line:match. Use to find where code/symbols/strings live — prefer over bash grep.",
+    "glob": "Find FILES by glob pattern (e.g. '**/*.py'), newest first. Use to locate files by name/extension — prefer over bash find/ls.",
+    "ls": "List a directory's entries (folders then files with sizes). Use to see what's in a folder — prefer over bash ls.",
+    "write_file": "Write/create or fully rewrite a file ON DISK (source code, configs, project files). Use for new files or full rewrites — NOT create_document (editor panel) and NOT a bash heredoc.",
+    "edit_file": "Edit an existing file ON DISK by exact string replacement (fix a bug, change a function). Shows a diff. The tool for changing files on disk — NOT edit_document (editor panel) and NOT bash sed/heredoc.",
     "create_document": "Create a new document in the editor panel. For code, articles, text content longer than 15 lines, unless an already-open document/email draft is the obvious target. If an email compose draft is open, edit that draft instead of creating another document.",
     "edit_document": "Preferred tool for editing an existing document — targeted find-and-replace. Use for any small change: add a function, fix a bug, tweak a section, rename things.",
     "update_document": "Replace the entire active document content. ONLY for full rewrites (>50% changed). Do not use for small edits — use edit_document instead.",
@@ -88,7 +115,9 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "create_session": "Create a new chat with a name and model.",
     "list_sessions": "List all chats with their metadata (the UI calls these 'chats'). Use for 'list my chats', 'rename all my chats' (list first, then manage_session to rename each).",
     "send_to_session": "Send a message to another chat. Cross-chat communication.",
-    "search_chats": "Search through chat history across all sessions.",
+    "search_chats": "Search past session transcripts across chats.",
+    "ask_user": "Ask the user a multiple-choice question to get a decision or clarification. Use this when the task is genuinely ambiguous and the answer changes what you do next — pick between approaches, confirm an assumption, choose among options — instead of guessing. Provide a clear `question` and 2-6 `options` (each with a short `label`, optional `description`). Calling this ENDS your turn: the user sees clickable buttons and their choice arrives as your next message. Don't use it for things you can decide from context or sensible defaults, or for irreversible-action confirmation if a dedicated flow exists.",
+    "update_plan": "Write back to the ACTIVE PLAN while executing an approved plan: mark steps done or revise them. After finishing a step call this with the full checklist and that step marked done; when the user asks to change the plan call it with the revised checklist. Always pass the COMPLETE markdown checklist (`- [ ]` / `- [x]`), not a diff. The user's docked plan window updates live. No effect when there is no active plan.",
     "ui_control": "Control the UI and toggle tools on/off. Use this to turn off / turn on / disable / enable individual tools and features: shell (bash), search (web), research, browser, documents, incognito. Open panels (documents library, gallery, email inbox, sessions, notes, memories/brain, skills, settings, cookbook) via `open_panel <name>`. Use `open_email_reply <uid> <folder> reply` to open an email reply draft document without sending. Also switches between chat/agent modes, changes the current model, and applies/creates themes.",
     "list_email_accounts": "List configured email accounts and default status. Use before reading or sending mail when the user mentions Gmail, work mail, custom domain mail, another mailbox, or asks to compare/check multiple inboxes.",
     "list_emails": "List emails for a folder/account, newest first, including read messages by default. Shows subject, sender, date, UID, account, and AI summary. Check inbox, find emails needing replies. Supports account from list_email_accounts for Gmail/work/custom mailboxes. For last/latest/newest email, use max_results=1 and unread_only=false.",
@@ -102,11 +131,12 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "resolve_contact": "Look up a contact's email address by name. Searches CardDAV address book and sent email history. Use when the user says 'message [name]', 'email [name]', or 'send to [name]' without an email address.",
     "manage_contact": "Create, update, delete, or list CardDAV contacts. Use to save a new contact, change an existing one's email/phone, or remove one. Action=list returns uids needed for update/delete. Use when the user says 'save this contact', 'add [name] to contacts', 'update [name]'s email', 'delete [name] from contacts'. Do not use for user identity facts like 'my name is <name>'; those are memory.",
     "manage_notes": "Create and manage notes and checklists (Google Keep-style). ALWAYS use this for note/todo/checklist/reminder creation — NEVER hit /api/notes via app_api. Accepts natural-language `due_date` like 'tomorrow at 9am' or '11pm today' (parsed in the USER'S timezone). The due_date IS the reminder — it fires a notification at that time, so do NOT also create a calendar event for the same reminder. Set colors, labels, pin, archive. Do NOT use manage_memory for note content.",
-    "manage_calendar": "Calendar event management: list, create, update, delete. Each event can carry a tag/category (event_type — work/personal/health/travel/meal/social/admin/other) and importance (low/normal/high/critical). Use ISO datetimes; supports all-day events. For event reminders/alarms, pass reminder_minutes; this creates the Notes reminder, so do not also call manage_notes for the same reminder.",
+    "manage_calendar": "Calendar event management: list, create, update, delete. Each event can carry a tag/category (event_type — work/personal/health/travel/meal/social/admin/other) and importance (low/normal/high/critical). Resolve today/tomorrow using the Current date and time context, then use ISO datetimes in the user's local wall time; supports all-day events. For event reminders/alarms, pass reminder_minutes; this creates the Notes reminder, so do not also call manage_notes for the same reminder.",
     "download_model": "Download a HuggingFace model to a local or remote server. Specify repo_id (e.g. 'Qwen/Qwen3-8B'), optional server host, and optional include filter for specific files.",
-    "serve_model": "Start serving a model with vLLM, SGLang, llama.cpp, Ollama, or Diffusers. For image/inpainting/diffusion use python3 scripts/diffusion_server.py --model <repo> --port 8100. After launch, call list_served_models for readiness/errors and retry suggestions.",
+    "serve_model": "Start serving a model with vLLM, SGLang, llama.cpp, Ollama, or Diffusers. cmd MUST start with the binary directly — e.g. `vllm serve /mnt/HADES/models/Qwen3.5-397B-A17B-AWQ --port 8003 --tensor-parallel-size 8 …`. NEVER prefix with `cd …`, `source …`, or chain with `&&`/`||` — those get rejected by the validator. The venv activation (env_prefix) and CUDA env are added automatically from the target host's saved settings. For image/inpainting/diffusion use python3 scripts/diffusion_server.py --model <repo> --port 8100. After launch, call list_served_models for readiness/errors and retry suggestions. If serve_model fails with 'Invalid characters in cmd', simplify to the bare binary + args.",
     "list_served_models": "List currently running model servers in the Cookbook — shows status (loading, ready, idle, error), model name, port, throughput, and serve failure diagnosis/retry suggestions. Use when the user asks 'what's running', 'show my cookbook', 'which models are up', 'what's serving'.",
     "stop_served_model": "Stop a running model server in the Cookbook by session ID or model name. Use when the user says 'kill my cookbook', 'stop the model', 'kill the serve', 'shut down vLLM', 'cancel the running model'.",
+    "tail_serve_output": "Read the actual tmux stderr/traceback of a cookbook serve/download task. Use to debug WHY a task is `crashed`/`error` (compute_89 nvcc mismatch, OOM, missing kernels, wrong attention backend, etc.) so you can call serve_model with adjusted flags. Pass session_id from list_served_models; tail defaults to 300, bump if the error references 'see root cause above'.",
     "list_downloads": "List in-progress HuggingFace model downloads in the Cookbook. Shows model name, phase, percent, session ID. Use for 'what's downloading', 'show my downloads', 'check download progress'.",
     "cancel_download": "Cancel an in-progress model download by tmux session ID. Use for 'cancel the download', 'stop downloading X', 'kill the download'. Call list_downloads first to get the session_id.",
     "search_hf_models": "Search HuggingFace for models matching a query (e.g. 'qwen 8B', 'flux', 'llama-3 instruct'). Returns ranked repo IDs with sizes and download counts. Use for 'find a model', 'search huggingface for X', 'what models are there for Y'.",
