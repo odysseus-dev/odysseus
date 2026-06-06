@@ -81,7 +81,7 @@ module.exports = async ({ github, context, core }) => {
       MARKER,
       '⚠️ **This PR has a merge conflict — a quick rebase will unblock it**',
       '',
-      '`main` has moved since this branch was opened. Reviewers can\'t merge until the conflict is resolved.',
+      '`dev` has moved since this branch was opened. Reviewers can\'t merge until the conflict is resolved.',
       '',
       '**To fix it:**',
       '',
