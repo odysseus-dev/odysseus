@@ -4,7 +4,13 @@ import type { ChatOptions, ModelOption } from '../lib/api';
 import { DEFAULT_OPTIONS, listModels, startSession, uploadFiles } from '../lib/api';
 import { ChevronLeftIcon } from '../components/icons';
 import ToolToggles from '../components/ToolToggles';
-import { AttachButton, AttachPreviews, type PendingFile } from '../components/Attachments';
+import {
+  AttachButton,
+  AttachPreviews,
+  PcFilesButton,
+  type Pending,
+} from '../components/Attachments';
+import FsBrowser from '../components/FsBrowser';
 
 // Compose + start a new chat from the phone. Pick a model (flattened from the
 // server's endpoints), type a first message, send -> the server starts the run
@@ -22,13 +28,15 @@ export default function NewSessionScreen({
   const [picked, setPicked] = useState(0);
   const [message, setMessage] = useState('');
   const [options, setOptions] = useState<ChatOptions>(DEFAULT_OPTIONS);
-  const [pending, setPending] = useState<PendingFile[]>([]);
+  const [pending, setPending] = useState<Pending[]>([]);
+  const [showBrowser, setShowBrowser] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   function removeAttachment(i: number) {
     setPending((p) => {
-      URL.revokeObjectURL(p[i]?.url);
+      const item = p[i];
+      if (item?.kind === 'local') URL.revokeObjectURL(item.url);
       return p.filter((_, j) => j !== i);
     });
   }
@@ -48,10 +56,11 @@ export default function NewSessionScreen({
     setBusy(true);
     setError(null);
     try {
-      let attachments: string[] = [];
-      if (pending.length) {
-        const up = await uploadFiles(conn, pending.map((p) => p.file));
-        attachments = up.map((a) => a.id);
+      const locals = pending.filter((p) => p.kind === 'local');
+      let attachments = pending.filter((p) => p.kind === 'remote').map((p) => p.id);
+      if (locals.length) {
+        const up = await uploadFiles(conn, locals.map((p) => (p as { file: File }).file));
+        attachments = [...up.map((a) => a.id), ...attachments];
       }
       const { session_id } = await startSession(conn, {
         message: message.trim(),
@@ -66,6 +75,18 @@ export default function NewSessionScreen({
       console.warn('startSession failed', e);
       setBusy(false);
     }
+  }
+
+  if (showBrowser) {
+    return (
+      <FsBrowser
+        conn={conn}
+        onClose={() => setShowBrowser(false)}
+        onPick={(att) =>
+          setPending((p) => [...p, { kind: 'remote', id: att.id, name: att.name, mime: att.mime }])
+        }
+      />
+    );
   }
 
   return (
@@ -119,6 +140,7 @@ export default function NewSessionScreen({
             onPick={(picked) => setPending((p) => [...p, ...picked])}
             disabled={busy}
           />
+          <PcFilesButton onClick={() => setShowBrowser(true)} disabled={busy} />
           <ToolToggles value={options} onChange={setOptions} disabled={busy} />
         </div>
         <AttachPreviews pending={pending} onRemove={removeAttachment} disabled={busy} />

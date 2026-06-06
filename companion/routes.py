@@ -353,6 +353,113 @@ def setup_companion_routes(session_manager=None, upload_handler=None) -> APIRout
             raise HTTPException(500, "All file uploads failed")
         return {"files": out}
 
+    @router.get("/fs/browse")
+    def fs_browse(request: Request, path: str = ""):
+        """Browse the PC filesystem so the phone can pick a file to attach.
+
+        ADMIN-ONLY, the same gate as /api/workspace/browse: enumerating the host
+        filesystem is sensitive, so a non-admin (or an ownerless token) is
+        refused. Unlike workspace browse this lists files too, not just dirs.
+        Hidden entries and symlinked dirs are skipped; paths are canonicalised so
+        the client navigates real directories.
+        """
+        import os
+
+        from src.tool_security import owner_is_admin_or_single_user
+
+        owner = token_owner(request)
+        if not owner_is_admin_or_single_user(owner):
+            raise HTTPException(403, "File browsing is admin-only")
+
+        target = os.path.realpath(os.path.expanduser(path.strip() or "~"))
+        if not os.path.isdir(target):
+            target = os.path.realpath(os.path.expanduser("~"))
+
+        dirs, files = [], []
+        try:
+            with os.scandir(target) as it:
+                for entry in it:
+                    try:
+                        if entry.name.startswith("."):
+                            continue
+                        child = os.path.join(target, entry.name)
+                        if entry.is_dir(follow_symlinks=False):
+                            dirs.append({"name": entry.name, "path": child})
+                        elif entry.is_file(follow_symlinks=False):
+                            try:
+                                size = entry.stat(follow_symlinks=False).st_size
+                            except OSError:
+                                size = 0
+                            files.append({"name": entry.name, "path": child, "size": size})
+                    except OSError:
+                        continue
+        except (PermissionError, OSError):
+            pass
+
+        parent = os.path.dirname(target)
+        return {
+            "path": target,
+            "parent": parent if parent and parent != target else None,
+            "dirs": sorted(dirs, key=lambda d: d["name"].lower()),
+            "files": sorted(files, key=lambda f: f["name"].lower()),
+        }
+
+    @router.post("/fs/attach")
+    async def fs_attach(request: Request):
+        """Copy a PC file (picked via /fs/browse) into a normal attachment so it
+        flows through the SAME owner-checked pipeline as a phone upload. Returns
+        the attachment id for a chat send. ADMIN-ONLY, owner-stamped.
+
+        Reuses upload_handler.save_upload (size/type validation, dedup,
+        thumbnails) by wrapping the local file in a minimal UploadFile-like shim
+        -- save_upload only reads .file and .filename.
+        """
+        import os
+
+        from src.tool_security import owner_is_admin_or_single_user
+
+        owner = token_owner(request)
+        if not owner:
+            raise HTTPException(401, "Could not resolve an owner for this token")
+        if not owner_is_admin_or_single_user(owner):
+            raise HTTPException(403, "File access is admin-only")
+        if upload_handler is None:
+            raise HTTPException(503, "Uploads are not available on this server")
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        raw = (body.get("path") or "").strip()
+        if not raw:
+            raise HTTPException(400, "path is required")
+        path = os.path.realpath(os.path.expanduser(raw))
+        if not os.path.isfile(path):
+            raise HTTPException(404, "File not found")
+
+        class _LocalUpload:
+            def __init__(self, p):
+                self.filename = os.path.basename(p)
+                self.file = open(p, "rb")
+
+        client_ip = request.client.host if request.client else "unknown"
+        up = _LocalUpload(path)
+        try:
+            meta = upload_handler.save_upload(up, client_ip, owner=owner)
+        finally:
+            try:
+                up.file.close()
+            except Exception:
+                pass
+        return {
+            "id": meta["id"],
+            "name": meta["name"],
+            "mime": meta["mime"],
+            "size": meta["size"],
+            "width": meta.get("width"),
+            "height": meta.get("height"),
+        }
+
     @router.get("/sessions")
     def list_sessions(request: Request):
         """The caller's own sessions, annotated with live run state.

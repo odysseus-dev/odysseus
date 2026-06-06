@@ -13,7 +13,13 @@ import {
 import { splitThinking } from '../lib/thinking';
 import { ChevronLeftIcon } from '../components/icons';
 import ToolToggles from '../components/ToolToggles';
-import { AttachButton, AttachPreviews, type PendingFile } from '../components/Attachments';
+import {
+  AttachButton,
+  AttachPreviews,
+  PcFilesButton,
+  type Pending,
+} from '../components/Attachments';
+import FsBrowser from '../components/FsBrowser';
 
 // A chat message plus, for the optimistic bubble of a just-sent turn, local
 // preview URLs for any images attached (server history is text-only).
@@ -47,7 +53,8 @@ export default function SessionScreen({
   const [picked, setPicked] = useState(0);
   const [draft, setDraft] = useState('');
   const [options, setOptions] = useState<ChatOptions>(DEFAULT_OPTIONS);
-  const [pending, setPending] = useState<PendingFile[]>([]);
+  const [pending, setPending] = useState<Pending[]>([]);
+  const [showBrowser, setShowBrowser] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   // Bumped after a successful send to re-run the subscribe effect on the new run.
@@ -173,7 +180,8 @@ export default function SessionScreen({
 
   function removeAttachment(i: number) {
     setPending((p) => {
-      URL.revokeObjectURL(p[i]?.url);
+      const item = p[i];
+      if (item?.kind === 'local') URL.revokeObjectURL(item.url);
       return p.filter((_, j) => j !== i);
     });
   }
@@ -186,15 +194,18 @@ export default function SessionScreen({
     setSendError(null);
     const queued = pending;
     try {
-      // Upload any attachments first so we can pass their ids with the turn.
-      let attachments: string[] = [];
-      if (queued.length) {
-        const up = await uploadFiles(conn, queued.map((p) => p.file));
-        attachments = up.map((a) => a.id);
+      // Local files upload now; PC files already carry an attachment id.
+      const locals = queued.filter((p) => p.kind === 'local');
+      let attachments = queued.filter((p) => p.kind === 'remote').map((p) => p.id);
+      if (locals.length) {
+        const up = await uploadFiles(conn, locals.map((p) => (p as { file: File }).file));
+        attachments = [...up.map((a) => a.id), ...attachments];
       }
-      // Optimistically show the user's turn (with image previews); the run will
-      // stream the reply. The object URLs stay valid for this bubble.
-      const images = queued.filter((p) => p.file.type.startsWith('image/')).map((p) => p.url);
+      // Optimistically show the user's turn (local image previews stay valid for
+      // this bubble); the run will stream the reply.
+      const images = locals
+        .filter((p) => (p as { file: File }).file.type.startsWith('image/'))
+        .map((p) => (p as { url: string }).url);
       setMessages((m) => [...m, { role: 'user', content: text, images }]);
       setDraft('');
       setPending([]);
@@ -219,6 +230,18 @@ export default function SessionScreen({
   const isLive = stream === 'live' || stream === 'connecting' || sending;
   const liveBlock = Boolean(answer.trim() || thinking);
   const empty = stream !== 'loading' && messages.length === 0 && !liveBlock;
+
+  if (showBrowser) {
+    return (
+      <FsBrowser
+        conn={conn}
+        onClose={() => setShowBrowser(false)}
+        onPick={(att) =>
+          setPending((p) => [...p, { kind: 'remote', id: att.id, name: att.name, mime: att.mime }])
+        }
+      />
+    );
+  }
 
   return (
     <div className="screen detail">
@@ -307,6 +330,7 @@ export default function SessionScreen({
           onPick={(picked) => setPending((p) => [...p, ...picked])}
           disabled={isLive}
         />
+        <PcFilesButton onClick={() => setShowBrowser(true)} disabled={isLive} />
         <textarea
           className="composer-input"
           value={draft}

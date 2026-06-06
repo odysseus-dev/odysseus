@@ -133,6 +133,49 @@ export async function startSession(
   return (await resp.json()) as { session_id: string; name: string };
 }
 
+export interface FsDir {
+  name: string;
+  path: string;
+}
+export interface FsFile {
+  name: string;
+  path: string;
+  size: number;
+}
+export interface FsListing {
+  path: string;
+  parent: string | null;
+  dirs: FsDir[];
+  files: FsFile[];
+}
+
+/** Browse the PC filesystem (admin-only on the server). Empty path => home. */
+export async function fsBrowse(conn: Connection, path = ''): Promise<FsListing> {
+  return getJSON<FsListing>(
+    conn,
+    `/api/companion/fs/browse?path=${encodeURIComponent(path)}`,
+  );
+}
+
+/** Copy a PC file into an attachment and return its metadata (incl. id). */
+export async function fsAttach(conn: Connection, path: string): Promise<Attachment> {
+  const resp = await fetch(`${conn.baseUrl}/api/companion/fs/attach`, {
+    method: 'POST',
+    headers: { ...authHeaders(conn), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`;
+    try {
+      detail = ((await resp.json()) as { detail?: string }).detail || detail;
+    } catch {
+      /* keep status */
+    }
+    throw new Error(detail);
+  }
+  return (await resp.json()) as Attachment;
+}
+
 export interface ChatMsg {
   role: 'user' | 'assistant';
   content: string;
