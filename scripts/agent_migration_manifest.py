@@ -209,23 +209,31 @@ def looks_textual(path: Path) -> bool:
     return bool(guessed and (guessed.startswith("text/") or guessed in {"application/json"}))
 
 
-def iter_archive_files(paths: Iterable[Path]) -> tuple[list[Path], list[InputWarning]]:
-    files: list[Path] = []
-    warnings: list[InputWarning] = []
+def iter_archive_dir(path: Path) -> Iterable[Path | InputWarning]:
+    try:
+        children = sorted(path.iterdir())
+    except Exception as exc:
+        yield InputWarning(str(path), f"could not scan archive directory: {exc}")
+        return
+    for child in children:
+        if child.is_symlink():
+            yield InputWarning(str(child), "skipped symlinked archive path")
+            continue
+        if child.is_file():
+            yield child
+        elif child.is_dir():
+            yield from iter_archive_dir(child)
+
+
+def iter_archive_files(paths: Iterable[Path]) -> Iterable[Path | InputWarning]:
     for path in paths:
         if path.is_symlink():
-            warnings.append(InputWarning(str(path), "skipped symlinked archive path"))
+            yield InputWarning(str(path), "skipped symlinked archive path")
             continue
         if path.is_file():
-            files.append(path)
+            yield path
         elif path.is_dir():
-            for child in sorted(path.rglob("*")):
-                if child.is_symlink():
-                    warnings.append(InputWarning(str(child), "skipped symlinked archive path"))
-                    continue
-                if child.is_file():
-                    files.append(child)
-    return files, warnings
+            yield from iter_archive_dir(path)
 
 
 def collect_archive_paths(
@@ -250,10 +258,11 @@ def collect_archive_paths(
             continue
         existing_paths.append(path)
 
-    archive_files, traversal_warnings = iter_archive_files(existing_paths)
-    warnings.extend(traversal_warnings)
-
-    for path in archive_files:
+    for entry in iter_archive_files(existing_paths):
+        if isinstance(entry, InputWarning):
+            warnings.append(entry)
+            continue
+        path = entry
         if not looks_textual(path):
             warnings.append(InputWarning(str(path), "skipped non-text archive file"))
             continue
