@@ -36423,3 +36423,85 @@ body.theme-frosted .modal {
    the input beside it (.confirm-btn won't stretch on its own). */
 .ask-user-other-send { flex-shrink: 0; white-space: nowrap; min-height: 39px; }
 .ask-user-other-send:disabled { opacity: 0.5; cursor: default; }
+
+/* --- Companion app pairing overlay (Tools -> Companion app) --- */
+.companion-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+}
+.companion-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--panel, #111);
+  border: 1px solid var(--border, #355a66);
+  border-radius: 14px;
+  color: var(--fg, #9cdef2);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.companion-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border, #355a66);
+}
+.companion-head h4 { margin: 0; font-size: 15px; }
+.companion-close {
+  background: none;
+  border: none;
+  color: var(--muted, #888);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.companion-body { padding: 18px; text-align: center; }
+.companion-qr {
+  width: 230px;
+  height: 230px;
+  max-width: 100%;
+  background: #fff;
+  border-radius: 10px;
+  padding: 8px;
+  box-sizing: border-box;
+}
+.companion-hint { color: var(--muted, #888); font-size: 13px; margin: 12px 0 4px; line-height: 1.5; }
+.companion-note { color: var(--muted, #888); font-size: 11px; margin: 12px 0 0; line-height: 1.5; }
+.companion-err { color: var(--red, #e06c75); font-size: 13px; margin: 8px 0; }
+.companion-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--bg, #282c34);
+  border: 1px solid var(--border, #355a66);
+  border-radius: 8px;
+  text-align: left;
+}
+.companion-field-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted, #888);
+  margin-bottom: 2px;
+}
+.companion-field code { font-size: 12px; word-break: break-all; color: var(--fg, #9cdef2); }
+.companion-copy {
+  flex-shrink: 0;
+  background: var(--accent, #00aaff);
+  color: #00121f;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
