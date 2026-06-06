@@ -433,6 +433,7 @@ async function loadEndpoints() {
             </div>
             <div style="display:flex;gap:4px;align-items:center;">
               <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
+              ${_isLocalEndpoint(ep.base_url) ? `<button class="admin-btn-sm" data-adm-toggle-tools="${ep.id}" data-adm-tools-val="${ep.supports_tools === true ? 'true' : ep.supports_tools === false ? 'false' : 'auto'}" title="Toggle native tool calling for this endpoint. Auto = use heuristic (fenced blocks for Ollama /v1). On = always use native function calling. Off = always use fenced blocks.">Tools: ${ep.supports_tools === true ? 'On' : ep.supports_tools === false ? 'Off' : 'Auto'}</button>` : ''}
               <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
               ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
             </div>
@@ -475,6 +476,24 @@ async function loadEndpoints() {
     };
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => { e.stopPropagation(); await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' }); loadEndpoints(); });
+    });
+    queryAll('[data-adm-toggle-tools]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const epId = btn.dataset.admToggleTools;
+        const cur = btn.dataset.admToolsVal;
+        // Cycle: auto -> true -> false -> auto
+        const next = cur === 'auto' ? 'true' : cur === 'true' ? 'false' : 'auto';
+        const body = {};
+        if (next === 'auto') body.supports_tools = null;
+        else body.supports_tools = next === 'true';
+        await fetch(`/api/model-endpoints/${epId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        loadEndpoints();
+      });
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
       btn.addEventListener('click', (e) => {
