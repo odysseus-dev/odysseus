@@ -7,6 +7,8 @@ from typing import Dict, List
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from routes.auth_routes import SESSION_COOKIE
+
 logger = logging.getLogger(__name__)
 
 
@@ -53,7 +55,7 @@ def setup_ws_routes():
         await websocket.accept()
 
         # ── Auth: validate session cookie ────────────────────────────────
-        session_id = websocket.cookies.get("session_id")
+        session_id = websocket.cookies.get(SESSION_COOKIE)
         auth_mgr = getattr(websocket.app.state, "auth_manager", None)
 
         # Also check bearer token in headers (used by API-token callers)
