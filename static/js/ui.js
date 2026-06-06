@@ -8,6 +8,14 @@ import themeModule from './theme.js';
 import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
 import { registerMenuDismiss, dismissTopMenu, dismissOrRemove } from './escMenuStack.js';
+import { _matchesCombo } from './keyboard-shortcuts.js';
+import { EMAIL_SHORTCUT_DEFAULTS } from './emailShortcutDefaults.js';
+import { keybindEnabled, resolveKeybind } from './keybindUtils.js';
+
+function _isEmailModalEl(modal) {
+  if (!modal?.id) return false;
+  return modal.id === 'email-lib-modal' || modal.id.startsWith('email-reader-');
+}
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -1213,6 +1221,31 @@ if (!window._odyEscExpandGuard) {
 
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || e.defaultPrevented) return;
+    // Settings → Shortcuts rebind captures Esc; don't close a modal underneath.
+    if (document.querySelector('.shortcut-key.listening')) return;
+    if (document.getElementById('email-cmd-palette') || document.getElementById('email-move-picker')) return;
+
+    const emailShortcuts = document.getElementById('email-shortcuts-overlay');
+    if (emailShortcuts) {
+      e.stopImmediatePropagation(); e.preventDefault();
+      emailShortcuts._shortcutsKeyDetach?.();
+      emailShortcuts.remove();
+      return;
+    }
+    const emailSource = document.getElementById('email-source-overlay');
+    if (emailSource) {
+      e.stopImmediatePropagation(); e.preventDefault();
+      emailSource.remove();
+      return;
+    }
+
+    const emailBulk = document.getElementById('email-lib-bulk');
+    const emailModal = document.getElementById('email-lib-modal');
+    if (emailModal && _isVisible(emailModal) && emailBulk && !emailBulk.classList.contains('hidden')) {
+      e.stopImmediatePropagation(); e.preventDefault();
+      document.getElementById('email-lib-bulk-cancel')?.click();
+      return;
+    }
 
     // Find the single thing to close, in priority order. The first hit wins.
     // Important: if a thinking block is open we MUST handle it ourselves and
@@ -1238,6 +1271,14 @@ if (!window._odyEscExpandGuard) {
     const expanded = document.querySelector('.doclib-card-expanded');
     const think = document.querySelector('.thinking-content.expanded');
     if (expanded) {
+      const inEmail = expanded.closest('#email-lib-modal');
+      if (inEmail) {
+        // Back to inbox list — not the same as closing the mail window.
+        e.stopImmediatePropagation(); e.preventDefault();
+        try { expanded.click(); } catch {}
+        return;
+      }
+      if (!keybindEnabled('cancel')) return;
       e.stopImmediatePropagation(); e.preventDefault();
       try { expanded.click(); } catch {}
       return;
@@ -1279,6 +1320,16 @@ if (!window._odyEscExpandGuard) {
     }
     const topModal = pickTopModal();
     if (!topModal) return;
+    // Honor Settings → Shortcuts: cleared binds disable Esc closing.
+    if (_isEmailModalEl(topModal)) {
+      if (!keybindEnabled('email_close', EMAIL_SHORTCUT_DEFAULTS)) return;
+      const emailClose = resolveKeybind('email_close', EMAIL_SHORTCUT_DEFAULTS);
+      if (emailClose && !_matchesCombo(e, emailClose)) return;
+    } else {
+      if (!keybindEnabled('cancel')) return;
+      const cancel = resolveKeybind('cancel');
+      if (cancel && !_matchesCombo(e, cancel)) return;
+    }
     const closeBtn = topModal.querySelector('.close-btn, .modal-close-btn, [data-action="close"]');
     e.stopImmediatePropagation();
     e.preventDefault();

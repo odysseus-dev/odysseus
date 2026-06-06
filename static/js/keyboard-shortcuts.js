@@ -2,7 +2,12 @@
 // Keyboard Shortcuts — dynamic keybinds
 // ============================================
 
-import { IS_MAC, isAltGrEvent } from './platform.js';
+import { EMAIL_SHORTCUT_DEFAULTS } from './emailShortcutDefaults.js';
+import {
+  readStoredKeybinds, resolveKeybind, matchesCombo, installKeyDebugProbe, keybindEnabled,
+} from './keybindUtils.js';
+
+export { resolveKeybind, matchesCombo as _matchesCombo } from './keybindUtils.js';
 
 const _defaultKeybinds = {
   search: 'ctrl+k', toggle_sidebar: 'ctrl+alt+b', new_session: 'ctrl+alt+n',
@@ -13,23 +18,15 @@ const _defaultKeybinds = {
   open_calendar: 'ctrl+alt+c', open_compare: '', open_cookbook: '',
   open_research: '', open_gallery: '', open_library: '', open_memory: '',
   open_notes: '', open_tasks: '', open_theme: '',
+  ...EMAIL_SHORTCUT_DEFAULTS,
 };
 
-export function _matchesCombo(e, combo, isMac = IS_MAC) {
-  if (!combo) return false;
-  // Drop AltGr keystrokes so typing characters on non-US layouts can't fire a
-  // Ctrl+Alt shortcut — e.g. the destructive delete_session. See platform.js.
-  if (isAltGrEvent(e, isMac)) return false;
-  const parts = combo.split('+');
-  const needCtrl = parts.includes('ctrl');
-  const needAlt = parts.includes('alt');
-  const needShift = parts.includes('shift');
-  const key = parts.filter(p => p !== 'ctrl' && p !== 'alt' && p !== 'shift')[0] || '';
-  if (needCtrl !== (e.ctrlKey || e.metaKey)) return false;
-  if (needAlt !== e.altKey) return false;
-  if (needShift !== e.shiftKey) return false;
-  return e.key.toLowerCase() === key;
+function _mergeKeybinds(serverKeybinds) {
+  const stored = readStoredKeybinds();
+  return { ..._defaultKeybinds, ...(serverKeybinds || {}), ...(stored || {}) };
 }
+
+const _matchesCombo = matchesCombo;
 
 /**
  * Initialize keyboard shortcuts.
@@ -53,12 +50,12 @@ export function initKeyboardShortcuts(modules) {
     _closeCompareIfActive, _deactivateIncognito, API_BASE
   } = modules;
 
-  window._odysseusKeybinds = { ..._defaultKeybinds };
+  window._odysseusKeybinds = _mergeKeybinds();
 
-  // Load saved keybinds
+  // Load saved keybinds (localStorage wins over server so cleared binds stick).
   fetch('/api/auth/settings', { credentials: 'same-origin' })
     .then(r => r.json())
-    .then(s => { if (s.keybinds) window._odysseusKeybinds = { ..._defaultKeybinds, ...s.keybinds }; })
+    .then(s => { window._odysseusKeybinds = _mergeKeybinds(s.keybinds); })
     .catch(() => {});
 
   // ── Esc cancels select mode (capture phase, before modal-close) ──
@@ -145,6 +142,8 @@ export function initKeyboardShortcuts(modules) {
     const kb = window._odysseusKeybinds;
 
     if (_matchesCombo(e, kb.search)) {
+      const emailModal = document.getElementById('email-lib-modal');
+      if (emailModal && !emailModal.classList.contains('hidden')) return;
       e.preventDefault();
       if (searchChatModule) {
         searchChatModule.isOpen() ? searchChatModule.closeSearch() : searchChatModule.openSearch();
@@ -289,4 +288,6 @@ export function initKeyboardShortcuts(modules) {
       return;
     }
   });
+
+  installKeyDebugProbe(EMAIL_SHORTCUT_DEFAULTS);
 }
