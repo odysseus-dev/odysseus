@@ -1073,9 +1073,8 @@ async function _deleteSkill(name, card = null) {
       card.classList.add('doclib-card-deleting');
       card.addEventListener('transitionend', () => card.remove(), { once: true });
       setTimeout(() => { if (card.parentElement) card.remove(); }, 400);
-    } else {
-      await loadSkills();
     }
+    await loadSkills();
     uiModule.showToast('Skill deleted');
   } catch (e) { uiModule.showError('Delete failed: ' + e.message); }
 }
