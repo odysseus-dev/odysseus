@@ -830,20 +830,62 @@ def git_clone(workspace: str | None, url: str, target: str | None = None, name: 
     return {"ok": True, "path": os.path.realpath(dest)}
 
 
+def _git_remotes(ctx: RepoContext) -> set[str]:
+    result = git_run(ctx.repo_root, ["remote"], check=False)
+    if result.returncode != 0:
+        return set()
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def _parse_refs(decoration: str, remotes: set[str]) -> list[dict[str, Any]]:
+    """Turn a `--decorate=short` `%D` string into typed ref objects so the
+    frontend never has to string-parse decorations. Ref names cannot contain a
+    space, so splitting on ", " is unambiguous."""
+    refs: list[dict[str, Any]] = []
+    for raw in (decoration or "").strip().split(", "):
+        name = raw.strip()
+        if not name:
+            continue
+        if name.startswith("HEAD -> "):
+            refs.append({"name": name[len("HEAD -> "):].strip(), "type": "head", "current": True})
+        elif name == "HEAD":
+            refs.append({"name": "HEAD", "type": "head", "current": True})
+        elif name.startswith("tag: "):
+            refs.append({"name": name[len("tag: "):].strip(), "type": "tag", "current": False})
+        else:
+            remote = name.split("/", 1)[0] in remotes
+            refs.append({"name": name, "type": "remote" if remote else "local", "current": False})
+    return refs
+
+
 def git_history(workspace: str, path: str | None = None, limit: int = 50) -> dict[str, Any]:
     ctx = repo_context(workspace)
     limit = max(1, min(int(limit or 50), 200))
-    args = ["log", f"-n{limit}", "--date=iso-strict", "--pretty=format:%H%x1f%an%x1f%ae%x1f%ad%x1f%s"]
+    fmt = "%H%x1f%P%x1f%D%x1f%an%x1f%ae%x1f%ad%x1f%s"
+    args = ["log", f"-n{limit}", "--date-order", "--decorate=short", "--date=iso-strict", f"--pretty=format:{fmt}"]
     if path:
+        # File scope stays linear on the current branch (single file).
         args.extend(["--", _repo_rel(ctx, path)])
-    elif ctx.prefix:
-        args.extend(["--", ctx.prefix])
+    else:
+        # Repo scope draws every local + remote ref as a lane.
+        args.append("--all")
+        if ctx.prefix:
+            args.extend(["--", ctx.prefix])
     result = git_run(ctx.repo_root, args)
+    remotes = _git_remotes(ctx)
     commits = []
     for line in result.stdout.splitlines():
         parts = line.split("\x1f")
-        if len(parts) == 5:
-            commits.append({"sha": parts[0], "author": parts[1], "email": parts[2], "date": parts[3], "message": parts[4]})
+        if len(parts) == 7:
+            commits.append({
+                "sha": parts[0],
+                "parents": parts[1].split(),
+                "refs": _parse_refs(parts[2], remotes),
+                "author": parts[3],
+                "email": parts[4],
+                "date": parts[5],
+                "message": parts[6],
+            })
     return {"ok": True, "commits": commits}
 
 

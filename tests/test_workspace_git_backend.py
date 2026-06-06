@@ -868,3 +868,89 @@ def test_resolve_conflict_rejects_leaked_diff3_base(monkeypatch, tmp_path):
     )
     assert leaked.status_code == 400
     assert leaked.json()["code"] == "merge_conflict"
+
+
+def _history_topology(repo, tmp_path):
+    """Build a repo with a tag, a feature branch, a merge commit and a
+    remote-tracking ref, returning (default_branch, base_sha)."""
+    (repo / "f.txt").write_text("a\n", encoding="utf-8")
+    _git(repo, "add", "f.txt")
+    _git(repo, "commit", "-m", "base")
+    _git(repo, "tag", "v1.0")
+    base_sha = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    main = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+
+    _git(repo, "checkout", "-b", "feature")
+    (repo / "f.txt").write_text("a\nb\n", encoding="utf-8")
+    _git(repo, "commit", "-am", "feature work")
+
+    _git(repo, "checkout", main)
+    (repo / "g.txt").write_text("c\n", encoding="utf-8")
+    _git(repo, "add", "g.txt")
+    _git(repo, "commit", "-m", "main work")
+    _git(repo, "merge", "--no-ff", "feature", "-m", "merge feature")
+
+    # A remote-tracking ref plus a registered remote so it types as "remote".
+    _git(repo, "update-ref", f"refs/remotes/origin/{main}", main)
+    _git(repo, "remote", "add", "origin", str(tmp_path / "fake-remote"))
+    return main, base_sha
+
+
+def test_git_history_includes_parents_and_typed_refs(monkeypatch, tmp_path):
+    import src.workspace_git as workspace_git
+
+    repo = _init_repo(tmp_path / "repo")
+    main, base_sha = _history_topology(repo, tmp_path)
+
+    history = workspace_git.git_history(str(repo))
+    commits = history["commits"]
+    assert commits, "expected commits under repo scope"
+
+    for commit in commits:
+        assert isinstance(commit["parents"], list)
+        assert isinstance(commit["refs"], list)
+        for ref in commit["refs"]:
+            assert set(ref) == {"name", "type", "current"}
+            assert ref["type"] in {"head", "local", "remote", "tag"}
+
+    by_sha = {commit["sha"]: commit for commit in commits}
+
+    merge = next(commit for commit in commits if commit["message"] == "merge feature")
+    assert len(merge["parents"]) == 2
+    assert all(parent in by_sha for parent in merge["parents"])
+
+    base = by_sha[base_sha]
+    assert base["parents"] == []
+    assert any(ref["type"] == "tag" and ref["name"] == "v1.0" for ref in base["refs"])
+
+    all_refs = [ref for commit in commits for ref in commit["refs"]]
+    assert any(ref["type"] == "head" and ref["current"] and ref["name"] == main for ref in all_refs)
+    assert any(ref["type"] == "remote" and ref["name"] == f"origin/{main}" for ref in all_refs)
+    assert any(ref["type"] == "local" and ref["name"] == "feature" for ref in all_refs)
+
+
+def test_git_history_repo_scope_surfaces_all_branches(monkeypatch, tmp_path):
+    """Repo scope uses --all, so a branch not reachable from HEAD still appears."""
+    import src.workspace_git as workspace_git
+
+    repo = _init_repo(tmp_path / "repo")
+    main, _ = _history_topology(repo, tmp_path)
+
+    # An orphan-ish side branch whose tip is not on the current branch.
+    _git(repo, "checkout", "-b", "sidebar")
+    (repo / "side.txt").write_text("side\n", encoding="utf-8")
+    _git(repo, "add", "side.txt")
+    _git(repo, "commit", "-m", "side commit")
+    _git(repo, "checkout", main)
+
+    repo_messages = [commit["message"] for commit in workspace_git.git_history(str(repo))["commits"]]
+    assert "side commit" in repo_messages
+
+    # File scope stays linear on the current branch and omits the side branch.
+    file_history = workspace_git.git_history(str(repo), path="f.txt")
+    file_messages = [commit["message"] for commit in file_history["commits"]]
+    assert "side commit" not in file_messages
+    assert "base" in file_messages
+    for commit in file_history["commits"]:
+        assert isinstance(commit["parents"], list)
+        assert isinstance(commit["refs"], list)
