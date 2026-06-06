@@ -55,6 +55,7 @@ async function loadUsers() {
           </div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;">
+          <button class="admin-btn-sm" data-adm-toggle-admin="${esc(u.username)}" data-make-admin="${u.is_admin ? '0' : '1'}" style="font-size:11px;">${u.is_admin ? 'Revoke admin' : 'Make admin'}</button>
           <button class="admin-btn-sm" data-adm-rename-user="${esc(u.username)}" style="font-size:11px;">Rename</button>
           ${u.is_admin ? '' : `<button class="admin-btn-delete" data-adm-del-user="${esc(u.username)}" style="font-size:11px;">Remove</button>`}
           ${u.is_admin ? '' : '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>'}
@@ -113,7 +114,7 @@ async function loadUsers() {
         // Toggle panel visibility + rotate chevron + load models
         let _modelsLoaded = false;
         header.addEventListener('click', (e) => {
-          if (e.target.closest('.admin-btn-delete, [data-adm-rename-user]')) return;
+          if (e.target.closest('.admin-btn-delete, [data-adm-rename-user], [data-adm-toggle-admin]')) return;
           privPanel.classList.toggle('hidden');
           const chevron = header.querySelector('.admin-user-chevron');
           if (chevron) {
@@ -196,6 +197,42 @@ async function loadUsers() {
           const res = await fetch('/api/auth/users', { method: 'DELETE', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) });
           if (res.ok) loadUsers();
           else uiModule.showError('Failed to delete user');
+        });
+      }
+
+      // Promote / demote (admin toggle) — present on every row
+      const adminToggleBtn = row.querySelector('[data-adm-toggle-admin]');
+      if (adminToggleBtn) {
+        adminToggleBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const username = adminToggleBtn.dataset.admToggleAdmin;
+          const makeAdmin = adminToggleBtn.dataset.makeAdmin === '1';
+          const confirmMsg = makeAdmin
+            ? `Grant admin rights to "${username}"? They'll get full access to all settings and users — including the power to demote or remove other admins (you included).`
+            : `Revoke admin rights from "${username}"? They'll lose access to the admin panel.`;
+          if (!await uiModule.styledConfirm(confirmMsg, { confirmText: makeAdmin ? 'Make admin' : 'Revoke admin', danger: !makeAdmin })) return;
+          adminToggleBtn.disabled = true;
+          try {
+            const res = await fetch(`/api/auth/users/${encodeURIComponent(username)}/admin`, {
+              method: 'PUT',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ is_admin: makeAdmin }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              uiModule.showError(data.detail || 'Failed to change admin status');
+              adminToggleBtn.disabled = false;
+              return;
+            }
+            // Demoting yourself drops your own admin access — reload into the
+            // normal-user view (mirrors the rename-self reload above).
+            if (data.self) { window.location.reload(); return; }
+            loadUsers();
+          } catch (err) {
+            uiModule.showError('Failed to change admin status');
+            adminToggleBtn.disabled = false;
+          }
         });
       }
 
