@@ -163,6 +163,18 @@ _SENSITIVE_BASENAMES: set[str] = {
 _SENSITIVE_FILE_PATTERNS: tuple[str, ...] = (
     "authorized_keys", "id_rsa", "id_ed25519", "id_ecdsa",
     "known_hosts",
+    # Odysseus' own credential / session / config stores. These live directly
+    # inside DATA_DIR, which is the agent's default tool root (see
+    # _tool_path_roots), so without this entry read_file/write_file are allowed
+    # to touch them. That is dangerous because the path is model-controlled:
+    #   - sessions.json holds live session tokens; a stolen token replays to
+    #     POST /api/auth/users and creates an admin (full account takeover).
+    #   - auth.json holds password hashes.
+    #   - .app_key is the Fernet key that decrypts every other stored secret.
+    #   - app.db is the application database.
+    #   - settings.json can be used to widen tool_path_extra_roots.
+    # Deny them here so they fail closed regardless of which model is wired in.
+    "auth.json", "sessions.json", ".app_key", "app.db", "settings.json",
 )
 
 
