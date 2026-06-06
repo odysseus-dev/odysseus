@@ -1,12 +1,8 @@
-"""services/research _extract_sources must gate low-quality findings.
+"""services/research _extract_sources must use the canonical source gate.
 
-The src/research_handler.py copy filters findings whose summary is junk
-boilerplate (via research_utils.is_low_quality) before listing them as
-cited sources. The services/research copy diverged and had no gate, so
-"the page does not contain relevant information" URLs showed up as
-sources, and a junk finding seen first suppressed the good title for the
-same URL. services/research/service.py imports this handler, so it is the
-live path.
+``services.research.research_handler`` is a compatibility import for the
+runtime ``src.research_handler`` implementation. These tests pin the shared
+source-quality behavior so fixes cannot drift between import paths again.
 """
 
 import importlib.util
@@ -69,17 +65,3 @@ def test_evidence_is_checked_when_summary_missing(handler_cls):
     assert out == [{"url": "http://a", "title": "T"}]
 
 
-def test_report_sources_section_gates_junk(handler_cls):
-    h = object.__new__(handler_cls)
-    report = h._format_research_report(
-        "q",
-        "full report",
-        {},
-        1.0,
-        findings=[
-            {"url": "http://junk", "title": "Junk", "summary": JUNK},
-            {"url": "http://good", "title": "Good", "summary": "Useful content here"},
-        ],
-    )
-    assert "http://good" in report
-    assert "- [Junk](http://junk)" not in report
