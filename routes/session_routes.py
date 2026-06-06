@@ -58,40 +58,6 @@ def _content_to_text(content) -> str:
     return ""
 
 
-def _message_role(message) -> str:
-    if isinstance(message, ChatMessage):
-        return message.role or ""
-    if isinstance(message, dict):
-        return message.get("role", "") or ""
-    return getattr(message, "role", "") or ""
-
-
-def _message_text(message) -> str:
-    if isinstance(message, ChatMessage):
-        content = message.content
-    elif isinstance(message, dict):
-        content = message.get("content")
-    else:
-        content = getattr(message, "content", None)
-    return _content_to_text(content)
-
-
-def _message_metadata(message) -> dict:
-    if isinstance(message, ChatMessage):
-        metadata = message.metadata
-    elif isinstance(message, dict):
-        metadata = message.get("metadata")
-    else:
-        metadata = getattr(message, "metadata", None)
-    return metadata if isinstance(metadata, dict) else {}
-
-
-def _reject_compact_during_active_run(session_id: str) -> None:
-    from src import agent_runs
-    if agent_runs.is_active(session_id):
-        raise HTTPException(409, "Session has an active run; try compacting after it finishes")
-
-
 def _verify_session_owner(request: Request, session_id: str, session_manager=None):
     """Verify the current user owns the session, honoring single-user modes.
 
@@ -921,77 +887,77 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             session = session_manager.get_session(session_id)
         except KeyError:
             raise HTTPException(404, f"Session {session_id} not found")
-        _reject_compact_during_active_run(session_id)
-
-        history = list(session.history or [])
-        if len(history) < 6:
-            raise HTTPException(400, "Not enough messages to compact")
-
-        # Keep a small recent tail verbatim. The prior half-chat/20-message
-        # tail made manual compaction look like it did nothing on normal chats.
-        recent_keep = min(8, max(4, len(history) // 4))
-        older = history[:-recent_keep]
-        recent = history[-recent_keep:]
-        if not older:
-            raise HTTPException(400, "Nothing old enough to compact")
 
         from src.context_compactor import SELF_SUMMARY_SYSTEM_PROMPT
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
 
-        owner = getattr(session, "owner", None) or effective_user(request)
-        url, model, headers = resolve_endpoint("utility", owner=owner)
-        if not url or not model:
-            url, model, headers = session.endpoint_url, session.model, session.headers
-        if not url or not model:
-            raise HTTPException(400, "No model configured for compaction")
+        async with session_manager.session_lock(session_id):
+            history = list(session.history or [])
+            if len(history) < 6:
+                raise HTTPException(400, "Not enough messages to compact")
 
-        prior_compactions = sum(
-            1 for m in history
-            if _message_metadata(m).get("compacted") or "[Conversation summary" in _message_text(m)
-        )
-        prompt = SELF_SUMMARY_SYSTEM_PROMPT.replace(
-            "{count}", str(len(older))
-        ).replace(
-            "{n}", str(prior_compactions + 1)
-        )
-        convo_text = "\n".join(
-            f"{_message_role(m).upper()}: {_message_text(m)[:2000]}"
-            for m in older
-        )
-        try:
-            summary = await llm_call_async(
-                url,
-                model,
-                [{"role": "system", "content": prompt}, {"role": "user", "content": convo_text}],
-                temperature=0.2,
-                max_tokens=1024,
-                headers=headers,
-                timeout=60,
+            # Keep a small recent tail verbatim. The prior half-chat/20-message
+            # tail made manual compaction look like it did nothing on normal chats.
+            recent_keep = min(8, max(4, len(history) // 4))
+            older = history[:-recent_keep]
+            recent = history[-recent_keep:]
+            if not older:
+                raise HTTPException(400, "Nothing old enough to compact")
+
+            owner = getattr(session, "owner", None) or effective_user(request)
+            url, model, headers = resolve_endpoint("utility", owner=owner)
+            if not url or not model:
+                url, model, headers = session.endpoint_url, session.model, session.headers
+            if not url or not model:
+                raise HTTPException(400, "No model configured for compaction")
+
+            prior_compactions = sum(
+                1 for m in history
+                if (m.metadata or {}).get("compacted") or "[Conversation summary" in (m.content or "")
             )
-        except Exception as e:
-            logger.error("Manual compaction failed: %s", e)
-            raise HTTPException(500, "Compaction failed")
+            prompt = SELF_SUMMARY_SYSTEM_PROMPT.replace(
+                "{count}", str(len(older))
+            ).replace(
+                "{n}", str(prior_compactions + 1)
+            )
+            convo_text = "\n".join(
+                f"{m.role.upper()}: {(m.content or '')[:2000]}"
+                for m in older
+            )
+            try:
+                summary = await llm_call_async(
+                    url,
+                    model,
+                    [{"role": "system", "content": prompt}, {"role": "user", "content": convo_text}],
+                    temperature=0.2,
+                    max_tokens=1024,
+                    headers=headers,
+                    timeout=60,
+                )
+            except Exception as e:
+                logger.error("Manual compaction failed: %s", e)
+                raise HTTPException(500, "Compaction failed")
 
-        summary_msg = ChatMessage(
-            role="system",
-            content=f"[Conversation summary]\n{summary}",
-            metadata={
-                "compacted": True,
-                "summarized_count": len(older),
-                "timestamp": datetime.utcnow().isoformat(),
-            },
-        )
-        new_history = [summary_msg] + recent
-        if not session_manager.replace_messages(session_id, new_history):
-            raise HTTPException(500, "Failed to save compacted history")
+            summary_msg = ChatMessage(
+                role="system",
+                content=f"[Conversation summary]\n{summary}",
+                metadata={
+                    "compacted": True,
+                    "summarized_count": len(older),
+                    "timestamp": datetime.utcnow().isoformat(),
+                },
+            )
+            new_history = [summary_msg] + recent
+            if not session_manager.replace_messages(session_id, new_history):
+                raise HTTPException(500, "Failed to save compacted history")
 
-        return {
-            "ok": True,
-            "summarized": len(older),
-            "kept": len(recent),
-            "message_count": len(new_history),
-        }
+            return {
+                "ok": True,
+                "summarized": len(older),
+                "kept": len(recent),
+                "message_count": len(new_history),
+            }
 
     @router.post("/sessions/auto-sort")
     def auto_sort_sessions(request: Request, skip_llm: bool = False):
