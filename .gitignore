@@ -50,6 +50,7 @@ Thumbs.db
 *.cache
 cache/
 output.txt.txt
+.webui_secret_key
 
 # Media (uploaded/generated)
 *.jpg

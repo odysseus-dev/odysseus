@@ -495,7 +495,7 @@ function _initChatSwipeToOpenSidebar() {
     '#sidebar', '#icon-rail', '.modal', '.input-bar', '#message',
     '#minimized-dock', '.minimized-dock-chip', '#dock-trash-zone',
     'pre', 'table', '.agent-tool-output', '.agent-thread-cmd',
-    'input', 'textarea', 'select',
+    'input', 'textarea', 'select', '.chat-input-left'
   ].join(', ');
 
   let sx = 0, sy = 0, track = false, decided = false;

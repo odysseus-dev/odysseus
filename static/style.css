@@ -2242,7 +2242,9 @@ body.bg-pattern-sparkles {
        can be in a split pane). */
     .chat-input-bar { container-type: inline-size; container-name: chatbar; }
     @container chatbar (max-width: 340px) {
-      .chat-input-right .mode-toggle { display: none !important; }
+      .chat-input-right .mode-toggle button span{ 
+        display: none !important;
+      }
     }
     @container chatbar (max-width: 260px) {
       #model-picker-wrap { display: none !important; }
@@ -2253,6 +2255,7 @@ body.bg-pattern-sparkles {
       align-items: center;
       flex-wrap: nowrap;
       overflow: hidden;
+      overflow-x:auto;
       min-width: 0;
       flex: 1;
     }
