@@ -50,8 +50,9 @@ def test_pdf_body_marker_stripped_without_eating_text(monkeypatch, tmp_path):
     )
 
     body = content[0]["text"] if isinstance(content, list) else content
-    # The leading page text must survive intact.
-    assert "[Page 1 text]:" in body
-    assert "to the board, the agenda is set" in body
-    # The old lstrip(chars) corruption ate "[P" then "to" -> "age 1 text]: the board".
-    assert "age 1 text" not in body
+    body_lines = body.splitlines()
+    # The leading page marker and page text must survive intact.
+    assert "[Page 1 text]:" in body_lines
+    assert "to the board, the agenda is set" in body_lines
+    # The old lstrip(chars) corruption produced a line like "age 1 text]:" (missing "[P").
+    assert "age 1 text]:" not in body_lines

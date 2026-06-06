@@ -11,17 +11,15 @@ is reserved for the same reason (bearer-token owner attribution collision).
 See the privilege-escalation finding from the 2026-06 code review.
 """
 
-import sys
-
 import pytest
+
+from tests.helpers.import_state import clear_module
 
 
 def _fresh_auth_manager(tmp_path):
     # Same import dance as test_security_regressions: drop any cached stub so
     # we exercise the real module from disk rather than a conftest mock.
-    sys.modules.pop("core.auth", None)
-    if "core" in sys.modules and hasattr(sys.modules["core"], "auth"):
-        delattr(sys.modules["core"], "auth")
+    clear_module("core.auth")
     from core.auth import AuthManager
 
     return AuthManager(str(tmp_path / "auth.json"))

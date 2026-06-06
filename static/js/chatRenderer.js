@@ -4,10 +4,11 @@
 import uiModule from './ui.js';
 import markdownModule from './markdown.js';
 import { addAITTSButton } from './tts-ai.js';
-import { providerLogo } from './providers.js';
+import { providerLogo, providerLabel } from './providers.js';
 import settingsModule from './settings.js';
 import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
+import { matchModelKey } from './model/matchKey.js';
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
@@ -23,6 +24,29 @@ function _safeHref(url) {
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return uiModule.esc(url);
   } catch(e) { /* invalid URL */ }
   return '#';
+}
+
+export function safeToolScreenshotSrc(raw) {
+  const src = String(raw || '').trim();
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(src)) {
+    return src;
+  }
+  return '';
+}
+
+export function safeDisplayImageSrc(raw) {
+  const src = String(raw || '').trim();
+  if (!src) return '';
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(src)) {
+    return src;
+  }
+  try {
+    const parsed = new URL(src, window.location.origin);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.href;
+    }
+  } catch (_) {}
+  return '';
 }
 
 function _makeActionBtn(className, title, text, handler) {
@@ -513,6 +537,39 @@ export function shortModel(name) {
   return short;
 }
 
+function modelValue(name) {
+  if (name == null) return '';
+  return String(name).trim();
+}
+
+export function sameModelName(left, right) {
+  const a = modelValue(left);
+  const b = modelValue(right);
+  if (!a || !b) return false;
+  return a.toLowerCase() === b.toLowerCase()
+    || shortModel(a).toLowerCase() === shortModel(b).toLowerCase();
+}
+
+export function modelRouteLabel(requestedModel, actualModel) {
+  const requested = modelValue(requestedModel);
+  const actual = modelValue(actualModel) || requested;
+  if (!requested || sameModelName(requested, actual)) return shortModel(actual || requested);
+  return shortModel(requested) + ' -> ' + shortModel(actual);
+}
+
+export function replyModelPair(modelName, metadata) {
+  const meta = metadata || {};
+  const actualFromMeta = modelValue(meta.model || meta.actual_model);
+  const requestedFromMeta = modelValue(meta.requested_model || meta.selected_model);
+  if (actualFromMeta || requestedFromMeta) {
+    const actual = actualFromMeta || requestedFromMeta || modelValue(modelName);
+    const requested = requestedFromMeta || actual;
+    return { requestedModel: requested, actualModel: actual };
+  }
+  const fallback = modelValue(modelName);
+  return { requestedModel: fallback, actualModel: fallback };
+}
+
 /**
  * Generate a consistent HSL color for a model name.
  * Returns an hsl() string. The hue is derived from a string hash,
@@ -532,11 +589,8 @@ export function modelColor(name) {
 /** Look up model info (pricing + context) by substring match */
 export function getModelInfo(modelName) {
   if (!modelName) return null;
-  const name = modelName.toLowerCase();
-  for (const [key, info] of Object.entries(MODEL_INFO)) {
-    if (name.includes(key)) return { key, ...info };
-  }
-  return null;
+  const key = matchModelKey(modelName, Object.keys(MODEL_INFO));
+  return key ? { key, ...MODEL_INFO[key] } : null;
 }
 
 function _fmtCtx(n) {
@@ -556,7 +610,11 @@ export function applyModelColor(roleEl, modelName) {
   }
   // Replace generic dot with provider logo if available
   const logo = providerLogo(modelName);
-  if (logo && !roleEl.querySelector('.role-provider-logo')) {
+  const existingLogo = roleEl.querySelector('.role-provider-logo');
+  if (!logo) {
+    if (existingLogo) existingLogo.remove();
+    roleEl.classList.remove('has-logo');
+  } else if (!existingLogo) {
     const span = document.createElement('span');
     span.className = 'role-provider-logo';
     span.innerHTML = logo;
@@ -579,6 +637,12 @@ export function applyModelColor(roleEl, modelName) {
       if (logoHtml) html += '<span class="role-provider-logo" style="opacity:0.7">' + logoHtml + '</span>';
       html += short + '</div>';
       html += '<div><span class="ctx-label">Model</span> ' + modelName.split('/').pop() + '</div>';
+      // Provider = the serving endpoint, distinct from the model vendor/logo
+      // (e.g. the same model via OpenRouter vs Copilot vs Anthropic direct).
+      const _epUrl = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
+        ? window.sessionModule.getCurrentEndpointUrl() : null;
+      const _provLabel = providerLabel(_epUrl);
+      if (_provLabel) html += '<div><span class="ctx-label">Provider</span> ' + uiModule.esc(_provLabel) + '</div>';
       // Show static context initially, then fetch real from server
       const _realCtx = window._realContextLengths && window._realContextLengths[modelName];
       if (_realCtx) {
@@ -634,13 +698,10 @@ export function applyModelColor(roleEl, modelName) {
 
 export function getModelCost(modelName, inputTokens, outputTokens) {
   if (!modelName) return null;
-  const name = modelName.toLowerCase();
-  for (const [key, price] of Object.entries(MODEL_PRICING)) {
-    if (name.includes(key)) {
-      return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
-    }
-  }
-  return null;
+  const key = matchModelKey(modelName, Object.keys(MODEL_PRICING));
+  if (!key) return null;
+  const price = MODEL_PRICING[key];
+  return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
 }
 
 /**
@@ -981,7 +1042,12 @@ document.addEventListener('click', function(e) {
 // matching module via a dynamic import (avoids circular deps —
 // sessions.js itself imports chatRenderer.js).
 document.addEventListener('click', function(e) {
-  const a = e.target && e.target.closest && e.target.closest('a[href]');
+  // Walk past Text nodes — clicking link text yields a Text node target
+  // whose .closest is undefined, so preventDefault never fires and the
+  // browser performs a default hash-navigation that resets the session.
+  let _t = e.target;
+  while (_t && _t.nodeType === Node.TEXT_NODE) _t = _t.parentElement;
+  const a = _t && _t.closest && _t.closest('a[href]');
   if (!a) return;
   const href = a.getAttribute('href') || '';
   if (!href.startsWith('#')) return;
@@ -1057,12 +1123,19 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   const body = document.createElement('div');
   body.className = 'body';
 
+  const safeImageUrl = safeDisplayImageSrc(imageUrl);
+  if (!safeImageUrl) {
+    body.textContent = '[Image unavailable]';
+    wrap.appendChild(body);
+    return wrap;
+  }
+
   const img = document.createElement('img');
   img.className = 'generated-image';
   img.alt = prompt || 'Generated image';
   img.title = prompt || 'Generated image';
-  img.src = imageUrl;
-  img.addEventListener('click', () => { window.open(img.src, '_blank'); });
+  img.src = safeImageUrl;
+  img.addEventListener('click', () => { window.open(safeImageUrl, '_blank', 'noopener,noreferrer'); });
   body.appendChild(img);
 
   if (prompt) {
@@ -1897,8 +1970,12 @@ export function addMessage(role, content, modelName, metadata) {
           wrap.className = 'msg msg-ai' + (r > 0 ? ' msg-continuation' : '');
           const roleEl = document.createElement('div');
           roleEl.className = 'role';
-          const contModel = modelName || metadata?.model;
-          roleEl.textContent = shortModel(contModel);
+          const pair = replyModelPair(modelName, metadata);
+          const contModel = pair.actualModel || pair.requestedModel;
+          roleEl.textContent = modelRouteLabel(pair.requestedModel, contModel);
+          if (pair.requestedModel && contModel && !sameModelName(pair.requestedModel, contModel)) {
+            roleEl.title = pair.requestedModel + ' -> ' + contModel;
+          }
           applyModelColor(roleEl, contModel);
           if (r === 0) roleEl.appendChild(roleTimestamp(metadata?.timestamp));
           wrap.appendChild(roleEl);
@@ -1952,13 +2029,37 @@ export function addMessage(role, content, modelName, metadata) {
             if (ev.output && ev.output.trim()) {
               outHtml = `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(ev.output)}</pre></details>`;
             }
-            if (ev.screenshot) {
-              outHtml += `<details class="agent-tool-output"><summary>Screenshot</summary><img src="${esc(ev.screenshot)}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" /></details>`;
+            const screenshotSrc = safeToolScreenshotSrc(ev.screenshot);
+            if (screenshotSrc) {
+              outHtml += `<details class="agent-tool-output"><summary>Screenshot</summary><img src="${esc(screenshotSrc)}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" /></details>`;
+            }
+            // File-write/edit diff (persisted in the tool event) \u2014 re-render it
+            // so it survives reload, matching the live stream.
+            let evDiffHtml = '';
+            if (ev.diff && ev.diff.text) {
+              const d = ev.diff;
+              const stat = [
+                d.new_file ? '<span class="diff-stat-new">new</span>' : '',
+                d.added ? `<span class="diff-stat-add">+${d.added}</span>` : '',
+                d.removed ? `<span class="diff-stat-del">\u2212${d.removed}</span>` : '',
+              ].filter(Boolean).join(' ');
+              const rows = d.text.split('\n').map(line => {
+                let cls = 'diff-ctx', text = line;
+                if (line.startsWith('+++') || line.startsWith('---')) cls = 'diff-meta';
+                else if (line.startsWith('@@')) cls = 'diff-hunk';
+                // Drop the leading diff marker (+/-/space) — colour encodes add/del.
+                else if (line.startsWith('+')) { cls = 'diff-add'; text = line.slice(1); }
+                else if (line.startsWith('-')) { cls = 'diff-del'; text = line.slice(1); }
+                else if (line.startsWith(' ')) { text = line.slice(1); }
+                return `<span class="${cls}">${esc(text) || '&nbsp;'}</span>`;
+              }).join('');  // spans are display:block \u2014 a literal \n would double-space
+              evDiffHtml = `<details class="agent-tool-output agent-tool-diff"><summary><span class="diff-file">${esc(d.file || 'diff')}</span> <span class="diff-summary-stats">${stat}</span></summary><pre class="diff-pre">${rows}</pre></details>`;
             }
             const node = document.createElement('div');
             node.className = 'agent-thread-node' + (ok ? '' : ' error');
-            const evCmdHtml = ev.command ? `<pre class="agent-thread-cmd">${esc(ev.command)}</pre>` : '';
-            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(ev.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}</div>`;
+            // Hide the raw JSON command when a diff says it better (same as live).
+            const evCmdHtml = (ev.command && !(ev.diff && ev.diff.text)) ? `<pre class="agent-thread-cmd">${esc(ev.command)}</pre>` : '';
+            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(ev.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}${evDiffHtml}</div>`;
             // Click handling is delegated globally \u2014 see chat.js init.
             threadWrap.appendChild(node);
           }
@@ -1997,8 +2098,9 @@ export function addMessage(role, content, modelName, metadata) {
     r.className = 'role';
     const isSlash = metadata?.source === 'slash';
     const isCompacted = metadata?.compacted;
-    const resolvedModel = modelName || metadata?.model;
-    var _roleText = role === 'user' ? 'You' : (isSlash || isCompacted) ? 'Odysseus' : shortModel(resolvedModel);
+    const replyModels = replyModelPair(modelName, metadata);
+    const resolvedModel = replyModels.actualModel || replyModels.requestedModel;
+    var _roleText = role === 'user' ? 'You' : (isSlash || isCompacted) ? 'Odysseus' : modelRouteLabel(replyModels.requestedModel, resolvedModel);
     if (role === 'assistant' && (metadata?.research || metadata?.research_clarification)) {
       _roleText += ' (Research)';
     }
@@ -2009,6 +2111,9 @@ export function addMessage(role, content, modelName, metadata) {
     }
     r.textContent = _roleText;
     if (role !== 'user') {
+      if (!isSlash && !isCompacted && replyModels.requestedModel && resolvedModel && !sameModelName(replyModels.requestedModel, resolvedModel)) {
+        r.title = replyModels.requestedModel + ' -> ' + resolvedModel;
+      }
       if (!isSlash && !isCompacted) applyModelColor(r, resolvedModel);
       r.appendChild(roleTimestamp(metadata?.timestamp));
     }
@@ -2275,6 +2380,9 @@ export function addMessage(role, content, modelName, metadata) {
 
 const chatRenderer = {
   shortModel,
+  sameModelName,
+  modelRouteLabel,
+  replyModelPair,
   modelColor,
   applyModelColor,
   getModelCost,
@@ -2284,6 +2392,8 @@ const chatRenderer = {
   updateSessionCostUI,
   roleTimestamp,
   stripToolBlocks,
+  safeToolScreenshotSrc,
+  safeDisplayImageSrc,
   buildSourcesBox,
   buildFindingsBox,
   appendReportButton,

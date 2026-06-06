@@ -185,6 +185,15 @@ class ChatProcessor:
                 "role": "system",
                 "content": preset_system_prompt
             })
+        if not agent_mode:
+            try:
+                from src.user_time import current_datetime_prompt
+                preface.append({
+                    "role": "system",
+                    "content": current_datetime_prompt(),
+                })
+            except Exception:
+                logger.debug("Failed to add current date/time context", exc_info=True)
         preface.append({
             "role": "system",
             "content": UNTRUSTED_CONTEXT_POLICY,

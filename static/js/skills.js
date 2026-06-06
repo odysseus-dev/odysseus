@@ -1818,6 +1818,35 @@ async function _showSkillSource(name) {
   });
 }
 
+async function importSkillFromUrl() {
+  const input = document.getElementById('skill-import-url');
+  const url = (input?.value || '').trim();
+  if (!url) {
+    uiModule.showError('Paste a GitHub or skills.sh URL first');
+    return;
+  }
+  const btn = document.getElementById('skill-import-url-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(`${API}/api/skills/import-from-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+    if (input) input.value = '';
+    await loadSkills();
+    const name = data.skill?.name || 'skill';
+    uiModule.showToast(`Imported ${name} (${data.files || 1} file(s))`);
+    if (name) openSkill(name);
+  } catch (err) {
+    uiModule.showError('Import failed: ' + err.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function addSkill() {
   const name = document.getElementById('new-skill-name')?.value.trim()
     || document.getElementById('new-skill-title')?.value.trim();
@@ -1866,6 +1895,10 @@ async function addSkill() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('skill-import-url-btn')?.addEventListener('click', importSkillFromUrl);
+  document.getElementById('skill-import-url')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') importSkillFromUrl();
+  });
   document.getElementById('add-skill-btn')?.addEventListener('click', addSkill);
   document.getElementById('skills-search')?.addEventListener('input', renderSkillsList);
   document.getElementById('skills-sort')?.addEventListener('change', (e) => {

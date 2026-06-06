@@ -4,7 +4,11 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File
 import logging
 
+from src.upload_limits import read_upload_limited
+
 logger = logging.getLogger(__name__)
+
+STT_MAX_AUDIO_BYTES = 25 * 1024 * 1024
 
 
 def setup_stt_routes(stt_service):
@@ -30,7 +34,7 @@ def setup_stt_routes(stt_service):
                     detail={"message": "STT service not available or set to browser mode"}
                 )
 
-            audio_bytes = await file.read()
+            audio_bytes = await read_upload_limited(file, STT_MAX_AUDIO_BYTES, "Audio file")
             if not audio_bytes:
                 raise HTTPException(status_code=400, detail={"message": "Empty audio file"})
 

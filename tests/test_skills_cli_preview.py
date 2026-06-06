@@ -4,26 +4,18 @@
 description (e.g. a number from a hand-edited/legacy skill store) is truthy, so
 `123[:200]` raised TypeError. `_preview_text` coerces non-strings to "".
 """
-import importlib.machinery
-import importlib.util
 import sys
 import types
-from pathlib import Path
 from unittest.mock import MagicMock
 
-ROOT = Path(__file__).resolve().parents[1]
+from tests.helpers.cli_loader import load_script
 
 
 def _load_cli(monkeypatch):
     mod = types.ModuleType("services.memory.skills")
     mod.SkillsManager = MagicMock()
     monkeypatch.setitem(sys.modules, "services.memory.skills", mod)
-    path = ROOT / "scripts" / "odysseus-skills"
-    loader = importlib.machinery.SourceFileLoader("odysseus_skills_cli", str(path))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
+    return load_script("odysseus-skills")
 
 
 def test_preview_text_ignores_non_string(monkeypatch):

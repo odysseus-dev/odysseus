@@ -21,6 +21,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 from unittest.mock import MagicMock
 
+from tests.helpers.import_state import clear_fake_database_modules
+
+clear_fake_database_modules()
+
 import core.database as cdb
 import routes.document_routes as droutes
 from core.database import Document

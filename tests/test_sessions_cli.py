@@ -1,9 +1,8 @@
-import importlib.machinery
-import importlib.util
 import sys
-from pathlib import Path
 from types import ModuleType
 from types import SimpleNamespace
+
+from tests.helpers.cli_loader import load_script
 
 
 def _load_sessions_cli(monkeypatch):
@@ -13,13 +12,7 @@ def _load_sessions_cli(monkeypatch):
     database_mod.Session = object
     monkeypatch.setitem(sys.modules, "core", core_mod)
     monkeypatch.setitem(sys.modules, "core.database", database_mod)
-
-    path = Path(__file__).resolve().parent.parent / "scripts" / "odysseus-sessions"
-    loader = importlib.machinery.SourceFileLoader("odysseus_sessions_cli_under_test", str(path))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
+    return load_script("odysseus-sessions")
 
 
 def test_serialize_normalizes_numeric_counters(monkeypatch):
