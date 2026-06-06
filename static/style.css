@@ -10238,8 +10238,9 @@ textarea.memory-add-input {
 }
 
 .memory-toolbar-btn:disabled {
-  opacity: 1;
+  opacity: 0.35;
   cursor: default;
+  outline: none;
 }
 .memory-toolbar-btn.spinning {
   border-color: transparent;
