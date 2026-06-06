@@ -36,7 +36,9 @@ def _seed(*owners):
         db.close()
 
 
-def test_none_user_returns_all_rows():
+def test_none_user_returns_all_rows(monkeypatch):
+    # Single-user mode: auth is off, so None means "the only user" → show all.
+    monkeypatch.setenv("AUTH_ENABLED", "false")
     _seed(None, None, "alice")
     db = _TS()
     try:

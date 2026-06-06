@@ -22,13 +22,20 @@ from unittest.mock import MagicMock
 if "core.database" not in sys.modules:
     sys.modules["core.database"] = types.ModuleType("core.database")
 _cd = sys.modules["core.database"]
-_cd.Base = MagicMock()
-for _name in (
-    "Session", "ChatMessage", "Document", "DocumentVersion", "GalleryImage",
-    "GalleryAlbum", "SessionLocal", "Comparison", "ModelEndpoint",
-):
-    if not hasattr(_cd, _name):
-        setattr(_cd, _name, MagicMock())
+# Only stub attributes on a fake module we just created. NEVER clobber the
+# real, file-backed core.database (it has __file__): replacing its Base with a
+# MagicMock leaks into every later test that relies on Base.metadata — e.g. the
+# sqlite-FK and gallery-owner suites call create_all() against it and would get
+# zero tables ("no such table: sessions").
+if not getattr(_cd, "__file__", None):
+    if not hasattr(_cd, "Base"):
+        _cd.Base = MagicMock()
+    for _name in (
+        "Session", "ChatMessage", "Document", "DocumentVersion", "GalleryImage",
+        "GalleryAlbum", "SessionLocal", "Comparison", "ModelEndpoint",
+    ):
+        if not hasattr(_cd, _name):
+            setattr(_cd, _name, MagicMock())
 
 from routes.compare_routes import _owned_endpoint_by_url  # noqa: E402
 

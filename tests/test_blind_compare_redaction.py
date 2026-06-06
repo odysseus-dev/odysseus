@@ -47,6 +47,11 @@ finally:
             sys.modules.pop(_name, None)
         else:
             sys.modules[_name] = _val
+    # Evict the route module so its router (built here under the MagicMock
+    # src.request_models stub) isn't served from cache to consumers that need
+    # the real SessionResponse — e.g. test_archived_sessions_model_filter. Our
+    # SR local keeps the binding it captured above.
+    sys.modules.pop("routes.session_routes", None)
 
 
 # ── backend: GET /api/sessions model redaction ─────────────────────────────

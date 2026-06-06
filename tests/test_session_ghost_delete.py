@@ -46,6 +46,11 @@ finally:
             sys.modules.pop(_name, None)
         else:
             sys.modules[_name] = _val
+    # Evict the route module so its router (built here under the MagicMock
+    # src.request_models stub) isn't served from cache to consumers that need
+    # the real SessionResponse — e.g. test_archived_sessions_model_filter. Our
+    # SM/SR locals keep the bindings they captured above.
+    sys.modules.pop("routes.session_routes", None)
 
 from fastapi import HTTPException  # noqa: E402
 

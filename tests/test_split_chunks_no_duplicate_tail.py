@@ -14,7 +14,10 @@ def test_no_duplicate_tail_chunk():
 
 
 def test_no_chunk_is_contained_in_another():
-    text = "".join(chr(33 + (k % 90)) for k in range(2000))
+    # Non-repeating text: each 5-char token ("0000 0001 ...") is unique, so a
+    # chunk can only be a substring of another if it's a genuine duplicate
+    # (a periodic string would trip this assertion regardless of the bug).
+    text = " ".join(f"{k:04d}" for k in range(400))
     chunks = split_chunks(text, size=1000, overlap=200)
     # The buggy version produced a final 200-char chunk fully inside the prior one.
     for a in range(len(chunks)):

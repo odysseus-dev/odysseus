@@ -28,17 +28,35 @@ _STUBS = {
     "core.models": {"ChatMessage": MagicMock()},
     "src.request_models": {"SessionResponse": MagicMock()},
 }
-for _name, _attrs in _STUBS.items():
-    if _name not in sys.modules:
+# Stub for the duration of the imports below, then RESTORE — leaving these
+# MagicMock modules in sys.modules pollutes sibling tests (a leaked
+# src.request_models.SessionResponse breaks FastAPI response-model validation
+# in test_archived_sessions_model_filter). SR/effective_user keep the bindings
+# they captured under the stubs.
+_ABSENT = object()
+_saved = {_name: sys.modules.get(_name, _ABSENT) for _name in _STUBS}
+try:
+    for _name, _attrs in _STUBS.items():
         _m = types.ModuleType(_name)
         for _k, _v in _attrs.items():
             setattr(_m, _k, _v)
         sys.modules[_name] = _m
 
-from fastapi import HTTPException  # noqa: E402
+    from fastapi import HTTPException  # noqa: E402
 
-from src.auth_helpers import effective_user  # noqa: E402
-import routes.session_routes as SR  # noqa: E402
+    from src.auth_helpers import effective_user  # noqa: E402
+    import routes.session_routes as SR  # noqa: E402
+finally:
+    for _name, _val in _saved.items():
+        if _val is _ABSENT:
+            sys.modules.pop(_name, None)
+        else:
+            sys.modules[_name] = _val
+    # Evict the route module so its router (built here with a MagicMock
+    # SessionResponse response_model) isn't served from cache to consumers
+    # that need the real model — e.g. test_archived_sessions_model_filter.
+    # Our SR local keeps the binding it captured above.
+    sys.modules.pop("routes.session_routes", None)
 
 
 def _req(**state):

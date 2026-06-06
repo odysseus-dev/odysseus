@@ -345,7 +345,7 @@ class TestClassifyEndpoint:
         def fake_head(*args, **kwargs):
             raise AssertionError("generic proxy health check should not use HEAD")
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, verify=None):
             seen.append(("GET", url))
             request = httpx.Request("GET", url)
             return httpx.Response(200, request=request)
@@ -376,7 +376,7 @@ class TestSetupProbeSafety:
         monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
         monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, verify=None):
             request = httpx.Request("GET", url)
             response = httpx.Response(401, request=request)
             raise httpx.HTTPStatusError("unauthorized", request=request, response=response)
@@ -389,7 +389,7 @@ class TestSetupProbeSafety:
         monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
         monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, verify=None):
             raise httpx.ConnectError("offline")
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
@@ -400,7 +400,7 @@ class TestSetupProbeSafety:
         monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
         monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, verify=None):
             raise httpx.ConnectError("offline")
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
@@ -412,7 +412,7 @@ class TestSetupProbeSafety:
         monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
         seen = []
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, verify=None):
             seen.append(url)
             request = httpx.Request("GET", url)
             response = httpx.Response(
@@ -432,7 +432,7 @@ class TestSetupProbeSafety:
         monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
         seen = []
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, verify=None):
             seen.append((url, headers))
             request = httpx.Request("GET", url)
             response = httpx.Response(
@@ -451,7 +451,7 @@ class TestSetupProbeSafety:
         monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
         monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, verify=None):
             raise httpx.ConnectError("offline")
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
@@ -1111,8 +1111,15 @@ def test_llm_core_list_model_ids_uses_cached_configured_proxy(monkeypatch):
     ep.hidden_models = json.dumps(["hidden-model"])
     db = _RouteDb([ep])
 
-    monkeypatch.setattr(src_database, "ModelEndpoint", _RouteModelEndpoint)
-    monkeypatch.setattr(src_database, "SessionLocal", lambda: db)
+    # Patch the LIVE src.database module object (not the collection-time
+    # `src_database` ref): llm_core._configured_cached_model_ids does a lazy
+    # `from src.database import ...`, and a sibling test
+    # (test_webhook_ssrf_resilience) deletes src.database from sys.modules, so
+    # the cached object can differ at run time. Fetching it here keeps both
+    # sides on the same object. raising=False: the conftest stub may lack the attr.
+    _src_db_live = sys.modules.get("src.database") or src_database
+    monkeypatch.setattr(_src_db_live, "ModelEndpoint", _RouteModelEndpoint, raising=False)
+    monkeypatch.setattr(_src_db_live, "SessionLocal", lambda: db, raising=False)
     monkeypatch.setattr(llm_core.httpx, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("/models should not be fetched")))
 
     assert llm_core.list_model_ids("http://100.117.136.97:34521/v1/chat/completions", timeout=1) == ["cached-model"]
