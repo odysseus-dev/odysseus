@@ -820,6 +820,15 @@ def setup_companion_routes(session_manager=None, upload_handler=None) -> APIRout
             body = {}
         return await _proxy_internal(request, owner, "POST", "/api/email/ai-reply", json_body=body)
 
+    @router.post("/email/summarize")
+    async def email_summarize(request: Request):
+        owner = _require_owner(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        return await _proxy_internal(request, owner, "POST", "/api/email/summarize", json_body=body)
+
     @router.get("/calendar/calendars")
     async def calendar_calendars(request: Request):
         return await _proxy_internal(request, _require_owner(request), "GET", "/api/calendar/calendars")

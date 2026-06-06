@@ -190,6 +190,10 @@ export interface EmailRead {
   body_text?: string;
   body_html?: string;
   body?: string;
+  message_id?: string;
+  folder?: string;
+  cached_summary?: string | null;
+  cached_ai_reply?: string | null;
 }
 
 export async function listEmailAccounts(conn: Connection): Promise<EmailAccount[]> {
@@ -232,6 +236,18 @@ export function flagEmail(
 }
 export function sendEmail(conn: Connection, body: Record<string, unknown>): Promise<unknown> {
   return postJSON(conn, '/api/companion/email/send', body);
+}
+export function summarizeEmail(
+  conn: Connection,
+  body: Record<string, unknown>,
+): Promise<{ success: boolean; summary?: string; error?: string }> {
+  return postJSON(conn, '/api/companion/email/summarize', body);
+}
+export function aiReplyEmail(
+  conn: Connection,
+  body: Record<string, unknown>,
+): Promise<{ success: boolean; reply?: string; error?: string }> {
+  return postJSON(conn, '/api/companion/email/ai-reply', body);
 }
 
 export interface CalEvent {

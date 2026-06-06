@@ -737,6 +737,56 @@ button {
   border-top: 1px solid var(--border);
   padding-top: 14px;
 }
+/* Rendered HTML email body. Constrain it to the screen and tame email markup so
+   it reads on a phone instead of dumping desktop-width tables/inline styles. */
+.email-html {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.email-html img {
+  max-width: 100%;
+  height: auto;
+}
+.email-html table {
+  max-width: 100%;
+}
+.email-html a {
+  color: var(--accent);
+  word-break: break-word;
+}
+.email-html * {
+  max-width: 100%;
+  white-space: normal !important;
+}
+.email-ai-bar {
+  display: flex;
+  gap: 8px;
+  margin: 14px 0 4px;
+}
+.email-summary {
+  margin: 10px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(0, 170, 255, 0.08);
+}
+.email-summary-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.email-summary p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
 .email-reply {
   display: inline-flex;
   align-items: center;

@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
+import DOMPurify from 'dompurify';
 import type { Connection } from '../lib/connection';
 import type { EmailAccount, EmailItem, EmailRead } from '../lib/api';
 import {
+  aiReplyEmail,
   flagEmail,
   listEmailAccounts,
   listEmails,
   readEmail,
   sendEmail,
+  summarizeEmail,
 } from '../lib/api';
 import { ChevronLeftIcon, RefreshIcon, SendIcon } from '../components/icons';
 
@@ -22,6 +25,9 @@ export default function EmailScreen({ conn, onBack }: { conn: Connection; onBack
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<View>('list');
   const [open, setOpen] = useState<EmailRead | null>(null);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [summarizing, setSummarizing] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
 
   // compose state
   const [to, setTo] = useState('');
@@ -58,13 +64,63 @@ export default function EmailScreen({ conn, onBack }: { conn: Connection; onBack
   async function openEmail(item: EmailItem) {
     setView('read');
     setOpen(null);
+    setSummary(null);
     try {
       const full = await readEmail(conn, item.uid, { accountId });
       setOpen(full);
+      setSummary(full.cached_summary || null);
       if (!item.is_read) flagEmail(conn, item.uid, 'mark-read', { accountId }).catch(() => {});
     } catch {
       setError('Could not open that email.');
       setView('list');
+    }
+  }
+
+  async function doSummary(e: EmailRead, text: string) {
+    setSummarizing(true);
+    setError(null);
+    try {
+      const r = await summarizeEmail(conn, {
+        uid: e.uid,
+        folder: e.folder,
+        account_id: accountId,
+        body: text,
+        subject: e.subject,
+        from: e.from_address,
+      });
+      if (r.success && r.summary) setSummary(r.summary);
+      else setError(r.error || 'Could not summarize.');
+    } catch {
+      setError('Could not summarize.');
+    } finally {
+      setSummarizing(false);
+    }
+  }
+
+  async function doAiReply(e: EmailRead, text: string) {
+    setAiBusy(true);
+    setError(null);
+    try {
+      const r = await aiReplyEmail(conn, {
+        to: e.from_address,
+        subject: e.subject,
+        original_body: text,
+        uid: e.uid,
+        folder: e.folder,
+        message_id: e.message_id,
+      });
+      if (r.success && r.reply) {
+        setTo(e.from_address || '');
+        setSubject(/^re:/i.test(e.subject || '') ? e.subject || '' : `Re: ${e.subject || ''}`);
+        setBody(r.reply);
+        setView('compose');
+      } else {
+        setError(r.error || 'Could not draft a reply.');
+      }
+    } catch {
+      setError('Could not draft a reply.');
+    } finally {
+      setAiBusy(false);
     }
   }
 
@@ -139,7 +195,8 @@ export default function EmailScreen({ conn, onBack }: { conn: Connection; onBack
 
   // ---- read view ----
   if (view === 'read') {
-    const text = open ? open.body_text || stripHtml(open.body_html) || open.body || '' : '';
+    const html = open ? open.body_html || (looksLikeHtml(open.body) ? open.body || '' : '') : '';
+    const text = open ? open.body || stripHtml(open.body_html) || '' : '';
     return (
       <div className="screen detail">
         <header className="detail-header">
@@ -160,7 +217,44 @@ export default function EmailScreen({ conn, onBack }: { conn: Connection; onBack
               <h2 className="email-subject">{open.subject || '(no subject)'}</h2>
               <div className="email-from">{open.from_name || open.from_address}</div>
               <div className="email-date">{open.date_display || open.date}</div>
-              <pre className="msg-text email-body">{text}</pre>
+
+              <div className="email-ai-bar">
+                <button
+                  className="chip"
+                  type="button"
+                  disabled={summarizing}
+                  onClick={() => doSummary(open, text)}
+                >
+                  {summarizing ? 'Summarizing...' : 'AI summary'}
+                </button>
+                <button
+                  className="chip"
+                  type="button"
+                  disabled={aiBusy}
+                  onClick={() => doAiReply(open, text)}
+                >
+                  {aiBusy ? 'Drafting...' : 'AI reply'}
+                </button>
+              </div>
+
+              {summary && (
+                <div className="email-summary">
+                  <div className="email-summary-label">AI summary</div>
+                  <p>{summary}</p>
+                </div>
+              )}
+
+              {error && <div className="error">{error}</div>}
+
+              {html ? (
+                <div
+                  className="email-html"
+                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(html) }}
+                />
+              ) : (
+                <pre className="msg-text email-body">{text}</pre>
+              )}
+
               <button className="stop send email-reply" onClick={() => startReply(open)} type="button">
                 <SendIcon size={16} /> Reply
               </button>
@@ -216,6 +310,12 @@ function stripHtml(html?: string): string {
   const tmp = document.createElement('div');
   tmp.innerHTML = html;
   return (tmp.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// Some servers put the HTML part in `body` with an empty `body_html`. Render it
+// as HTML if it clearly contains tags, otherwise treat it as plain text.
+function looksLikeHtml(s?: string): boolean {
+  return !!s && /<(\/?[a-z][\s\S]*?|!doctype)>/i.test(s);
 }
 
 function shortDate(d?: string): string {
