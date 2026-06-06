@@ -76,6 +76,35 @@ only when you intentionally want LAN/reverse-proxy access.
 > **On Apple Silicon (M-series) Macs:** Docker can't reach the Metal GPU, so
 > Cookbook serves local models on CPU only. For GPU-accelerated model serving,
 > run natively instead — see [Apple Silicon](#apple-silicon) below.
+>
+> **Podman.** Podman 4.7+ is a drop-in replacement for Docker. Use
+> `podman-compose` with the Podman overlay:
+>
+> ```bash
+> git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+> cd odysseus
+> cp .env.example .env
+> scripts/podman-setup.sh
+> ```
+>
+> Or run manually:
+> ```bash
+> podman-compose -f docker-compose.yml -f docker/podman.yml up -d --build
+> ```
+>
+> GPU overlays work with an extra `-f`:
+> ```bash
+> # NVIDIA — requires nvidia-container-toolkit configured for Podman
+> podman-compose -f docker-compose.yml -f docker/podman.yml -f docker/podman.gpu-nvidia.yml up -d
+> # AMD
+> podman-compose -f docker-compose.yml -f docker/podman.yml -f docker/gpu.amd.yml up -d
+> ```
+>
+> For auto-start on boot with rootless Podman:
+> ```bash
+> loginctl enable-linger
+> systemctl --user enable podman-restart
+> ```
 
 ### Native Linux / macOS
 ```bash

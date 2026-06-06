@@ -1,0 +1,25 @@
+# Podman-specific compose overlay.
+#
+# The main docker-compose.yml is compatible with Podman 4.7+  but uses
+# Docker-specific values that podman-compose cannot fully resolve:
+#   - extra_hosts with the special host-gateway value
+#   - deploy.resources for NVIDIA GPU reservations
+#
+# This overlay replaces those with Podman-native equivalents.
+#
+# Usage:
+#   podman-compose -f docker-compose.yml -f docker/podman.yml up -d
+#
+# GPU overlays (add one more -f):
+#   NVIDIA: ... -f docker/podman.gpu-nvidia.yml
+#   AMD:    ... -f docker/gpu.amd.yml
+#
+# Or set COMPOSE_FILE in .env:
+#   COMPOSE_FILE=docker-compose.yml:docker/podman.yml
+services:
+  odysseus:
+    extra_hosts:
+      # Podman resolves host-gateway to the host's bridge gateway IP on
+      # bridge networks, so the same mapping works as in Docker. Redundant
+      # with the base compose entry but makes the Podman intent explicit.
+      - "host.docker.internal:host-gateway"

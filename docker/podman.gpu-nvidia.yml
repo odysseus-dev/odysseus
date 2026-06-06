@@ -1,0 +1,26 @@
+# NVIDIA GPU overlay for Podman.
+# Docker's `deploy.resources.reservations.devices` (Compose v3) is not supported
+# by podman-compose. This overlay uses CDI (Container Device Interface) instead.
+#
+# Prerequisites:
+#   1. Install nvidia-container-toolkit:
+#      sudo apt install nvidia-container-toolkit   # Debian/Ubuntu
+#      sudo dnf install nvidia-container-toolkit   # Fedora
+#   2. Configure for Podman:
+#      sudo nvidia-ctk runtime configure --runtime=podman
+#      sudo systemctl restart podman
+#   3. Verify:
+#      podman info | grep -i nvidia
+#
+# Usage:
+#   podman-compose -f docker-compose.yml -f docker/podman.yml -f docker/podman.gpu-nvidia.yml up -d
+#
+# Or set COMPOSE_FILE in .env:
+#   COMPOSE_FILE=docker-compose.yml:docker/podman.yml:docker/podman.gpu-nvidia.yml
+services:
+  odysseus:
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    devices:
+      - nvidia.com/gpu=all
