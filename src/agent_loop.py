@@ -628,7 +628,8 @@ def _build_system_prompt(
         _ov_sig = _hl.sha256(_json.dumps(get_builtin_overrides() or {}, sort_keys=True).encode()).hexdigest()
     except Exception:
         _ov_sig = ""
-    cache_key = (frozenset(disabled_tools or []), bool(mcp_mgr), needs_admin, _rt_key, compact, _ov_sig, suppress_local_context)
+    _mcp_gen = getattr(mcp_mgr, "_generation", 0) if mcp_mgr else 0
+    cache_key = (frozenset(disabled_tools or []), _mcp_gen, needs_admin, _rt_key, compact, _ov_sig, suppress_local_context)
     if _cached_base_prompt and _cached_base_prompt_key == cache_key and not active_document:
         agent_prompt = _cached_base_prompt
         # Skill index is user-editable (name + description), so it must never
@@ -1855,11 +1856,10 @@ async def stream_agent_loop(
                     s for s in FUNCTION_TOOL_SCHEMAS
                     if s.get("function", {}).get("name") in _relevant_tools
                 ]
-                _mcp_filtered = [
-                    s for s in mcp_schemas
-                    if s.get("function", {}).get("name") in _relevant_tools
-                ]
-                all_tool_schemas = base_schemas + _mcp_filtered
+                # MCP schemas are user-configured and already a small set — don't
+                # RAG-filter them or they get outcompeted by native tools in the
+                # top-k budget and silently disappear from the model's context.
+                all_tool_schemas = base_schemas + mcp_schemas
             else:
                 base_schemas = FUNCTION_TOOL_SCHEMAS if _needs_admin else [
                     s for s in FUNCTION_TOOL_SCHEMAS
