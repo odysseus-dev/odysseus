@@ -1,4 +1,4 @@
-"""Pin modelStreamQuirks.js pattern matching (node --input-type=module)."""
+"""Pin modelStreamQuirks.js universal policy (node --input-type=module)."""
 
 import json
 import shutil
@@ -12,10 +12,10 @@ _HELPER = _REPO / "static" / "js" / "model" / "modelStreamQuirks.js"
 _HAS_NODE = shutil.which("node") is not None
 
 
-def _match(model):
+def _eval(js_expr):
     js = (
-        f"import {{ matchModelStreamQuirk }} from '{_HELPER.as_uri()}';"
-        f"console.log(JSON.stringify(matchModelStreamQuirk({json.dumps(model)})));"
+        f"import * as m from '{_HELPER.as_uri()}';"
+        f"console.log(JSON.stringify({js_expr}));"
     )
     proc = subprocess.run(
         ["node", "--input-type=module"],
@@ -23,22 +23,24 @@ def _match(model):
     )
     assert proc.returncode == 0, proc.stderr
     raw = proc.stdout.strip()
-    return json.loads(raw) if raw != "null" else None
+    return json.loads(raw) if raw else None
 
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
-def test_gemma4_e4b_exact():
-    out = _match("gemma4:e4b")
-    assert out["pattern"] == "gemma4:e4b"
-    assert out["quirk"]["thinkingOnlyStallMs"] == 15_000
+def test_universal_policy_constants():
+    out = _eval("({ nudge: m.THINKING_ONLY_NUDGE_MS, timeout: m.THINKING_ONLY_TIMEOUT_MS })")
+    assert out["nudge"] == 12_000
+    assert out["timeout"] == 25_000
 
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
-def test_gemma4_wildcard():
-    out = _match("gemma4:12b")
-    assert out["pattern"] == "gemma4:*"
+def test_resolve_policy_any_model():
+    out = _eval("m.resolveThinkingStallPolicy('qwen3:14b')")
+    assert out["nudgeMs"] == 12_000
+    assert out["timeoutMs"] == 25_000
+    assert out["autoContinueOnThinkingOnly"] is True
 
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
-def test_unknown_model():
-    assert _match("qwen3:8b") is None
+def test_no_override_by_default():
+    assert _eval("m.matchModelStreamQuirk('gemma4:e4b')") is None
