@@ -119,8 +119,8 @@ def _refresh_google_token(account_id: str) -> str | None:
         row.oauth_token_expiry = str(int(time.time()) + data.get("expires_in", 3600))
         db.commit()
         return access_token
-    except Exception as e:
-        logger.warning(f"Google token refresh failed: {e}")
+    except Exception:
+        logger.warning(f"Google token refresh failed for account {account_id}")
         return None
     finally:
         db.close()
