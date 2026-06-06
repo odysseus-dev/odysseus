@@ -2,8 +2,12 @@
 
 A thin **remote control** for an Odysseus server, built with Vite + React + TypeScript and packaged for Android via Capacitor. The phone does no AI work - it pairs with your PC and talks to the `/api/companion/*` endpoints to list sessions, watch one stream live, and stop it.
 
-> Status: MVP. Implemented: pair -> list sessions -> live stream -> stop.
-> Planned: QR pairing, start a new session, push notifications (silent/loud).
+> Implemented: QR / manual pairing; list & open any session; start a chat and
+> send follow-ups; switch model mid-chat; reasoning ("thinking") view;
+> agent / web-search / terminal toggles; attach images from the phone or a PC
+> file; chat search; and the desktop tools (email read/AI-summary/AI-reply/send,
+> calendar, notes, tasks).
+> Planned: voice dictation, push notifications (needs HTTPS / a tunnel).
 
 ## How it talks to the PC
 
@@ -37,15 +41,43 @@ token minted at `<server>/api/companion/pair` (admin only).
 
 ## Build the Android app
 
+Requires Android Studio (for the SDK + a bundled JDK 17/21). The generated
+`android/` folder is gitignored - regenerate it locally; only the web app and
+`capacitor.config.ts` are committed.
+
 ```bash
+npm install
 npm run build              # vite build -> dist/
 npx cap add android        # one-time: generates the native android/ project
-npm run cap:sync           # copy web build into the native project
-npm run cap:android        # build + run on a connected device/emulator
+npx cap sync android       # copy the web build + plugins into android/
 ```
 
-Requires Android Studio + SDK. The generated `android/` folder is gitignored
-(regenerate locally); only the web app and `capacitor.config.ts` are committed.
+Then apply two project tweaks (Capacitor's defaults need nudging) before the
+first Gradle build:
+
+1. **SDK level** - `android/variables.gradle`: set `compileSdkVersion` and
+   `targetSdkVersion` to a platform you actually have installed (e.g. `35`).
+   Capacitor 6 defaults to `34`.
+2. **Camera permission** for the QR scanner - add to
+   `android/app/src/main/AndroidManifest.xml`:
+   ```xml
+   <uses-permission android:name="android.permission.CAMERA" />
+   <uses-feature android:name="android.hardware.camera" android:required="false" />
+   ```
+
+Build the APK (point Gradle at a JDK 17/21 if your system default is newer -
+Android Studio ships one under `…/Android Studio/jbr`):
+
+```bash
+cd android
+# optional, if your default `java` is >21:
+#   echo "org.gradle.java.home=/path/to/Android Studio/jbr" >> gradle.properties
+./gradlew assembleDebug     # -> app/build/outputs/apk/debug/app-debug.apk
+```
+
+Install the resulting `app-debug.apk` on a phone (enable "install from unknown
+sources"). `cleartext: true` in `capacitor.config.ts` lets the installed app
+reach a plain-http LAN server; drop it once you front Odysseus with HTTPS.
 
 ## Reaching it from anywhere
 
