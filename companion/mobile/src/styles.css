@@ -25,6 +25,8 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  /* Never let a stray wide child scroll the whole page sideways. */
+  overflow-x: hidden;
 }
 
 body {
@@ -52,6 +54,9 @@ body {
 
 .screen {
   flex: 1;
+  /* min-width:0 so a wide child (e.g. a long session/model name) can't push
+     this flex item past the viewport and get clipped off the right edge. */
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -238,8 +243,12 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   font-size: 12px;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .row-sub .sep {
   width: 3px;
