@@ -63,3 +63,27 @@ def test_non_addresses_are_preserved():
 def test_ipv4_still_redacted_and_length_capped():
     assert sanitize_error("dial 192.168.1.5:9000 refused") == "dial [redacted] refused"
     assert len(sanitize_error("x" * 500)) == 200
+
+
+def test_ipv6_zone_id_is_redacted():
+    # Link-local addresses often carry a %zone (fe80::1%eth0). The whole token,
+    # zone included, must go — ipaddress validates the address part.
+    out = sanitize_error("bind fe80::1%eth0 unreachable")
+    assert "[redacted]" in out
+    assert "::" not in out and "%eth0" not in out and "fe80" not in out
+
+
+def test_ipv4_mapped_ipv6_is_scrubbed():
+    # ::ffff:192.168.0.1 — the v4 pass removes the dotted quad and the v6 pass
+    # the remnant. Neither the address nor "::" may survive.
+    out = sanitize_error("to ::ffff:192.168.0.1 closed")
+    assert "192.168" not in out and "::" not in out
+    assert "[redacted" in out
+
+
+def test_invalid_ipv6_is_not_partially_mangled():
+    # Nine groups is not a valid address. Backing the scrub with ipaddress means
+    # the whole token is preserved, instead of a hand-rolled 8-group regex
+    # chewing off "1:2:3:4:5:6:7:8" and leaving a dangling ":9".
+    msg = "weird id 1:2:3:4:5:6:7:8:9 here"
+    assert sanitize_error(msg) == msg

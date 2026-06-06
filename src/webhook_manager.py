@@ -136,22 +136,48 @@ def validate_events(events_str: str) -> str:
     return ",".join(events)
 
 
+# Broad candidate matcher for the IPv6 redaction pass. Deliberately loose: a
+# bracketed literal with an optional :port, or a bare run of hex groups joined by
+# colons (plus an optional %zone). It does NOT try to encode the IPv6 grammar —
+# ipaddress.ip_address() is the real validator (see _redact_if_ipv6), so any
+# colon-bearing string it rejects (clock times, MACs, "std::vector") is left
+# alone. Each branch is a single greedy class or a repetition over a mandatory
+# ':' delimiter, so there is no nested-quantifier backtracking (ReDoS-safe).
+_IPV6_CANDIDATE = re.compile(
+    r'\[[0-9A-Fa-f:.%]*\](?::\d+)?'
+    r'|(?<![\w.:%])[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,}(?:%[0-9A-Za-z._-]+)?'
+)
+
+
+def _redact_if_ipv6(match: re.Match) -> str:
+    """Redact a candidate token only if the stdlib parses it as an IPv6 address."""
+    token = match.group(0)
+    candidate = token
+    if candidate.startswith('['):
+        # Bracketed literal: keep only what's inside [...], dropping any :port.
+        candidate = candidate[1:candidate.index(']')]
+    # A zone id (fe80::1%eth0) is not part of the address ipaddress parses.
+    candidate = candidate.split('%', 1)[0]
+    # The loose bare pattern can trail one stray ':' (e.g. "::1:" in "host ::1:
+    # down"); drop it unless it's the "::" compression marker.
+    if candidate.endswith(':') and not candidate.endswith('::'):
+        candidate = candidate[:-1]
+    try:
+        addr = ipaddress.ip_address(candidate)
+    except ValueError:
+        return token
+    return '[redacted]' if isinstance(addr, ipaddress.IPv6Address) else token
+
+
 def sanitize_error(error: str, max_len: int = 200) -> str:
     """Strip potentially sensitive details from error messages."""
     # Remove IPv4 addresses and ports
     cleaned = re.sub(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?', '[redacted]', error)
-    # Remove IPv6 addresses too — a delivery error can otherwise leak an
-    # internal v6 address (::1, fe80::/fc00:: ...) into the stored last_error.
-    # Three forms (bracketed literal, full 8-group, ::-compressed), each narrow
-    # enough to leave clock times ("12:34:56"), MACs, and C++ "::" tokens alone.
-    # The ::-branch is a lookahead over a flat character class, so there is no
-    # nested quantifier to backtrack on (no ReDoS on long colon/hex runs).
-    cleaned = re.sub(
-        r'\[[0-9A-Fa-f:]*:[0-9A-Fa-f:]*\](?::\d+)?'
-        r'|(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}'
-        r'|(?<![:.\w])(?=[0-9A-Fa-f:]*::)[0-9A-Fa-f:]+',
-        '[redacted]', cleaned,
-    )
+    # Remove IPv6 addresses too — a delivery error can otherwise leak an internal
+    # v6 address (::1, fe80::/fc00:: ...) into the stored last_error. Find broad
+    # candidates and let ipaddress.ip_address() decide, so the false-positive
+    # guards (clock times, MACs, C++ "::") come from the stdlib, not a regex.
+    cleaned = _IPV6_CANDIDATE.sub(_redact_if_ipv6, cleaned)
     # Remove hostnames in URLs
     cleaned = re.sub(r'https?://[^\s/]+', '[redacted-url]', cleaned)
     return cleaned[:max_len]
