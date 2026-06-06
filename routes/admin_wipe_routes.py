@@ -91,17 +91,23 @@ def setup_admin_wipe_routes(session_manager):
                 db.query(Memory).delete()
                 db.commit()
                 _wipe_memory_files()
-                # Drop the vector store too so semantic search doesn't
-                # return ghosts. Lazy import — chromadb may not be
-                # initialised in every deployment.
+                # Drop the vector store too so semantic search doesn't return
+                # ghosts. Lazy import — chromadb may not be initialised in every
+                # deployment. `vector_cleared` is initialised BEFORE the try so a
+                # failure can never leave it unbound (which would NameError into the
+                # outer except and 500 an already-committed wipe). clear() returns a
+                # proven-empty bool, so the response can't claim success while
+                # ghosts remain.
+                vector_cleared = False
                 try:
                     from src.memory_vector import get_memory_vector_store
                     mv = get_memory_vector_store()
                     if mv and hasattr(mv, "clear"):
-                        mv.clear()
+                        vector_cleared = bool(mv.clear())
                 except Exception as e:
-                    logger.info(f"Memory vector clear skipped: {e}")
-                return {"status": "deleted", "kind": kind, "count": count}
+                    logger.warning(f"Memory vector clear skipped: {e}")
+                return {"status": "deleted", "kind": kind, "count": count,
+                        "vector_cleared": vector_cleared}
 
             if kind == "skills":
                 # Skills live as SKILL.md files under data/skills/. Drop
