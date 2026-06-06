@@ -2613,11 +2613,11 @@ function _renderGrid() {
   if (state._libPendingExpandUid) {
     const target = filtered.find(e => String(e.uid) === String(state._libPendingExpandUid));
     const wantUid = state._libPendingExpandUid;
-    state._libPendingExpandUid = null;
     if (target) {
       const cards = grid.querySelectorAll('.doclib-card');
       const targetCard = Array.from(cards).find(c => c.dataset.uid === String(wantUid));
       if (targetCard) {
+        state._libPendingExpandUid = null;
         requestAnimationFrame(() => _toggleCardPreview(targetCard, target));
       }
     }
