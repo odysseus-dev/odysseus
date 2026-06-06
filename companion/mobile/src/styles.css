@@ -703,6 +703,51 @@ button {
   opacity: 0.45;
 }
 
+/* --- Search --- */
+.search-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 12px;
+  color: var(--muted);
+}
+.search-field input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 15px;
+}
+.search-field input:focus {
+  outline: none;
+}
+.search-hit {
+  align-items: flex-start;
+}
+.search-snippet {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.search-role {
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  margin-right: 6px;
+}
+
 /* --- Tools: email / calendar / notes / tasks --- */
 .email-row .row-main {
   gap: 2px;

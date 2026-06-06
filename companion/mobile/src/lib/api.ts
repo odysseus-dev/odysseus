@@ -299,6 +299,18 @@ export function taskAction(conn: Connection, id: string, action: 'pause' | 'resu
   return postJSON(conn, `/api/companion/tasks/${encodeURIComponent(id)}/${action}`, {});
 }
 
+export interface SearchHit {
+  session_id: string;
+  session_name: string;
+  role: string;
+  content_snippet: string;
+  timestamp: string | null;
+}
+/** Search the owner's chat history. Returns most-recent matches first. */
+export function searchChats(conn: Connection, q: string, limit = 25): Promise<SearchHit[]> {
+  return getJSON(conn, '/api/companion/search' + qs({ q, limit }));
+}
+
 export interface FsDir {
   name: string;
   path: string;

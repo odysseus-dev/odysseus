@@ -6,6 +6,7 @@ import SessionsScreen from './screens/SessionsScreen';
 import SessionScreen from './screens/SessionScreen';
 import NewSessionScreen from './screens/NewSessionScreen';
 import SettingsScreen from './screens/SettingsScreen';
+import SearchScreen from './screens/SearchScreen';
 import ToolsScreen, { type ToolName } from './screens/ToolsScreen';
 import EmailScreen from './screens/EmailScreen';
 import CalendarScreen from './screens/CalendarScreen';
@@ -23,6 +24,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('sessions');
   const [openSessionId, setOpenSessionId] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [openTool, setOpenTool] = useState<ToolName | null>(null);
 
   useEffect(() => {
@@ -53,6 +55,19 @@ export default function App() {
     );
   }
 
+  if (searching) {
+    return (
+      <SearchScreen
+        conn={conn}
+        onBack={() => setSearching(false)}
+        onOpen={(sid) => {
+          setSearching(false);
+          setOpenSessionId(sid);
+        }}
+      />
+    );
+  }
+
   if (openSessionId) {
     return (
       <SessionScreen
@@ -75,7 +90,12 @@ export default function App() {
     <div className="app">
       <main className="app-body">
         {tab === 'sessions' && (
-          <SessionsScreen conn={conn} onOpen={setOpenSessionId} onNew={() => setComposing(true)} />
+          <SessionsScreen
+            conn={conn}
+            onOpen={setOpenSessionId}
+            onNew={() => setComposing(true)}
+            onSearch={() => setSearching(true)}
+          />
         )}
         {tab === 'tools' && <ToolsScreen onOpen={setOpenTool} />}
         {tab === 'settings' && (

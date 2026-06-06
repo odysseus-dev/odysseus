@@ -759,6 +759,19 @@ def setup_companion_routes(session_manager=None, upload_handler=None) -> APIRout
         _verify_session_owner(request, session_id, _resolve_session_manager(session_manager))
         return {"stopped": agent_runs.stop(session_id)}
 
+    @router.get("/search")
+    async def search_chats(request: Request, q: str = "", limit: int = 25):
+        """Search the owner's chat history (subject to owner impersonation, so it
+        scopes to the real owner, not the sandbox "api" user). Proxies the
+        desktop's GET /api/search; returns [{session_id, session_name, role,
+        content_snippet, timestamp}]."""
+        owner = _require_owner(request)
+        if not q.strip():
+            return []
+        return await _proxy_internal(
+            request, owner, "GET", "/api/search", params={"q": q, "limit": limit}
+        )
+
     # ---------------------------------------------------------------- #
     # Tools: thin owner-impersonating proxies over the desktop's existing
     # owner-scoped routes (see _proxy_internal). Each pins a fixed path.
