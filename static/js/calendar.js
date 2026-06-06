@@ -3439,6 +3439,28 @@ window.addEventListener('calendar-refresh', () => {
     .catch(() => {});
 });
 
+// Settings dispatches this after integrations are added/edited/deleted. CalDAV
+// setup lives there, so reset the one-shot sync guard and pull immediately;
+// otherwise a user who opened Calendar before adding an account can stay on an
+// empty cached view until a full reload or manual Sync now.
+window.addEventListener('odysseus-integrations-changed', () => {
+  _caldavSyncedOnce = false;
+  _allEvents = {};
+  _fetchedRanges = [];
+  try { localStorage.removeItem(LS_KEY); } catch (_) {}
+  _syncCaldav(false)
+    .then(async () => {
+      await _fetchCalendars();
+      const range = (_view === 'year')
+        ? [`${_currentDate.getFullYear()}-01-01`, `${_currentDate.getFullYear() + 1}-01-01`]
+        : (_view === 'week') ? _weekRange(_currentDate) : _monthRange(_currentDate);
+      await _fetchEvents(range[0], range[1], /*force*/ true);
+      if (_open) _render();
+      _updateBadge();
+    })
+    .catch(() => {});
+});
+
 // Cross-session catch-up: when the tab/app becomes visible again (you alt-tab
 // back, the mobile app comes to the foreground, or you switch back from
 // another browser session), drop the range cache and re-fetch. Without this,
