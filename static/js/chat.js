@@ -24,6 +24,11 @@ import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
+import {
+  DEFAULT_THINKING_ONLY_STALL_MS,
+  getModelStreamQuirk,
+  MIN_REPLY_AFTER_THINKING_CHARS,
+} from './model/modelStreamQuirks.js';
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -40,6 +45,12 @@ import { createStreamRenderer } from './streamingRenderer.js';
   let _stallWatchdog = null;
   let _stallBannerShown = false;
   const STALL_THRESHOLD_MS = 60000;
+  // Quirk-model thinking-only stall (see model/modelStreamQuirks.js)
+  let _activeStreamModel = '';
+  let _watchdogRoundText = '';
+  let _thinkingClosedAt = 0;
+  let _streamHadToolStart = false;
+  let _thinkingOnlyHandled = false;
   let _sendInFlight = false;   // covers the window from click → streaming start
   let _displayOverride = null; // Override visible user bubble text (hides injected prompts)
   let _hideUserBubble = false; // Skip user bubble entirely (e.g. continue after stop)
@@ -600,7 +611,12 @@ import { createStreamRenderer } from './streamingRenderer.js';
     // Reset tracking variables at start
     currentAccumulated = '';
     currentHolder = null;
-    
+    _activeStreamModel = sessionModule.getCurrentModel?.() || '';
+    _watchdogRoundText = '';
+    _thinkingClosedAt = 0;
+    _streamHadToolStart = false;
+    _thinkingOnlyHandled = false;
+
     try {
       // Re-enable auto-scroll when user sends a message
       uiModule.setAutoScroll(true);
@@ -1397,6 +1413,7 @@ import { createStreamRenderer } from './streamingRenderer.js';
                   _replyElDone.className = 'live-reply-content';
                   _streamElDone.appendChild(_replyElDone);
                 }
+                _thinkingClosedAt = Date.now();
               }
               // Normal foreground completion — metrics will be displayed in the final render block below
               break;
@@ -1437,6 +1454,7 @@ import { createStreamRenderer } from './streamingRenderer.js';
                 const wasEmpty = !accumulated;
                 accumulated += _delta;
                 roundText += _delta;
+                _watchdogRoundText = roundText;
                 currentAccumulated = accumulated; // Update global tracker
                 // First token arrived — switch stop button from processing to streaming
                 if (wasEmpty && submitBtn && !_isBg) {
@@ -1663,6 +1681,7 @@ import { createStreamRenderer } from './streamingRenderer.js';
 
                   // Render any reply text that arrived with the closing </think> token
                   _renderStream();
+                  _thinkingClosedAt = Date.now();
                 } else {
                   // Normal streaming
                   if (spinner && spinner.element) spinner.destroy();
@@ -1996,6 +2015,7 @@ import { createStreamRenderer } from './streamingRenderer.js';
                   holder._requestedModel = metrics.requested_model || holder._requestedModel || modelName;
                   holder._actualModel = metrics.model || holder._actualModel || holder._requestedModel;
                 }
+                if (metrics?.model) _activeStreamModel = metrics.model;
                 if (_isBg) {
                   var bgM = _backgroundStreams.get(streamSessionId);
                   if (bgM) bgM.metrics = json.data;
@@ -2010,6 +2030,7 @@ import { createStreamRenderer } from './streamingRenderer.js';
 
               } else if (json.type === 'tool_start') {
                 if (_isBg) continue;
+                _streamHadToolStart = true;
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
                 // Force-close thinking if still open — tools are real content, not thinking
@@ -2489,6 +2510,8 @@ import { createStreamRenderer } from './streamingRenderer.js';
                 box.appendChild(newWrap);
                 roundHolder = newWrap;
                 roundText = '';
+                _watchdogRoundText = '';
+                _thinkingClosedAt = 0;
                 // Destroy any previous spinner before creating new one
                 if (spinner && spinner.element) spinner.destroy();
                 // Show spinner while waiting for text (skip for research — has its own progress)
@@ -2527,6 +2550,8 @@ import { createStreamRenderer } from './streamingRenderer.js';
                 // Reset round bubble state so the teacher's first text starts a new bubble
                 roundHolder = null;
                 roundText = '';
+                _watchdogRoundText = '';
+                _thinkingClosedAt = 0;
                 roundFinalized = false;
                 currentToolBubble = null;
                 uiModule.scrollHistory();
@@ -3280,16 +3305,121 @@ import { createStreamRenderer } from './streamingRenderer.js';
     box.appendChild(bar);
     if (uiModule.scrollHistory) uiModule.scrollHistory();
   }
+  function _replyLenAfterThinking(text) {
+    const closeRe = /<\/(?:think(?:ing)?|thought)>|<channel\|>/gi;
+    let match = null;
+    let last = null;
+    while ((match = closeRe.exec(text || '')) !== null) last = match;
+    const reply = last
+      ? (text || '').slice(last.index + last[0].length).trim()
+      : (text || '').trim();
+    return reply.replace(/<[^>]*>/g, '').trim().length;
+  }
+
+  function _activeStreamQuirk() {
+    const model = _activeStreamModel || sessionModule.getCurrentModel?.() || '';
+    return getModelStreamQuirk(model);
+  }
+
+  function _tryThinkingOnlyNudge(holder, accumulated, sessionId) {
+    if (_autoNudges >= _AUTO_NUDGE_CAP) return false;
+    _autoNudges++;
+    if (holder && accumulated) {
+      holder.dataset.raw = accumulated;
+      try {
+        holder.querySelector('.body').innerHTML =
+          markdownModule.processWithThinking(markdownModule.squashOutsideCode(accumulated));
+      } catch (_) {}
+    }
+    _pendingContinue = holder || null;
+    _hideUserBubble = true;
+    _autoContinuePending = true;
+    const _abandon = () => {
+      _pendingContinue = null;
+      _hideUserBubble = false;
+      _autoContinuePending = false;
+    };
+    setTimeout(() => {
+      if (sessionId && sessionModule.getCurrentSessionId() !== sessionId) { _abandon(); return; }
+      const msgInput = uiModule.el('message');
+      const sb = document.querySelector('.send-btn');
+      if (!msgInput || !sb) { _abandon(); return; }
+      msgInput.value = (
+        'You finished reasoning but did not call any tools or write a reply. '
+        + 'Emit the actual tool call now (function calling or a ```tool fence), '
+        + 'or write your answer to the user — do not restate the plan.'
+      );
+      sb.click();
+    }, 200);
+    return true;
+  }
+
+  function _showThinkingOnlyStallBanner(secs) {
+    if (document.getElementById('stall-banner')) return;
+    _stallBannerShown = true;
+    const box = document.getElementById('chat-history');
+    if (!box) return;
+    const bar = document.createElement('div');
+    bar.id = 'stall-banner';
+    bar.className = 'stall-banner';
+    bar.innerHTML = `<span class="stall-banner-txt">Thinking finished but no reply for ${secs}s — model may be stuck describing tools.</span>`;
+    const cont = document.createElement('button');
+    cont.className = 'stall-banner-btn';
+    cont.textContent = 'Nudge it';
+    cont.title = 'Ask the model to emit the tool call or reply';
+    cont.addEventListener('click', () => {
+      _removeStallBanner();
+      const mi = uiModule.el('message');
+      if (mi) {
+        mi.value = (
+          'You finished reasoning but did not call any tools or write a reply. '
+          + 'Emit the actual tool call now, or answer the user directly.'
+        );
+        const sb = document.querySelector('.send-btn');
+        if (sb) sb.click();
+      }
+    });
+    const stop = document.createElement('button');
+    stop.className = 'stall-banner-btn stall-banner-stop';
+    stop.textContent = 'Stop';
+    stop.addEventListener('click', () => { _removeStallBanner(); abortCurrentRequest(true); });
+    bar.appendChild(cont);
+    bar.appendChild(stop);
+    box.appendChild(bar);
+    if (uiModule.scrollHistory) uiModule.scrollHistory();
+  }
+
+  function _handleThinkingOnlyStall(quirk, sessionId) {
+    if (quirk.autoContinueOnThinkingOnly
+        && _tryThinkingOnlyNudge(currentHolder, currentAccumulated, sessionId)) {
+      return;
+    }
+    _showThinkingOnlyStallBanner(Math.round((quirk.thinkingOnlyStallMs || DEFAULT_THINKING_ONLY_STALL_MS) / 1000));
+  }
+
   function _startStallWatchdog() {
-    // Disabled: the server-side stall detector / auto-continue (agent
-    // loop-breaker) handles quiet/stalled streams now, so the manual
-    // "Quiet for Nm — still working?" banner is redundant (and annoying).
     if (_stallWatchdog) { clearInterval(_stallWatchdog); _stallWatchdog = null; }
     _removeStallBanner();
+    const sessionId = sessionModule.getCurrentSessionId?.();
+    _stallWatchdog = setInterval(() => {
+      if (!isStreaming) { _stopStallWatchdog(); return; }
+      const quirk = _activeStreamQuirk();
+      if (!quirk?.thinkingOnlyStallMs) return;
+      if (_streamHadToolStart || _thinkingOnlyHandled) return;
+      if (!_thinkingClosedAt) return;
+      const replyLen = _replyLenAfterThinking(_watchdogRoundText);
+      if (replyLen >= MIN_REPLY_AFTER_THINKING_CHARS) return;
+      const elapsed = Date.now() - _thinkingClosedAt;
+      if (elapsed < quirk.thinkingOnlyStallMs) return;
+      _thinkingOnlyHandled = true;
+      _handleThinkingOnlyStall(quirk, sessionId);
+    }, 1000);
   }
   function _stopStallWatchdog() {
     if (_stallWatchdog) { clearInterval(_stallWatchdog); _stallWatchdog = null; }
     _removeStallBanner();
+    _thinkingClosedAt = 0;
+    _thinkingOnlyHandled = false;
   }
 
   /** Show a "Cancelled by user" record in `holder` and persist an empty

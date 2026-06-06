@@ -1768,7 +1768,7 @@ async def stream_agent_loop(
     # tool, so we don't nudge on harmless transitional text like "let me
     # know what you think".
     _INTENT_RE = re.compile(
-        r"(?:^|\n)\s*(?:let me|i'?ll|i will|going to|let's)\s+"
+        r"(?:^|\n|[.!?]\s+)\s*(?:let me|i'?ll|i will|going to|let's)\s+"
         r"(?:tail|check|investigate|look at|see|tail|read|fetch|inspect|"
         r"verify|diagnose|examine|debug|capture|grab|pull|view|run|call|"
         r"trigger|launch|start|kick off|stop|kill|restart|adopt|serve|"
@@ -2145,19 +2145,26 @@ async def stream_agent_loop(
             # tool doesn't pin us in a forever loop.
             _intent_text = _THINK_RE.sub("", cleaned_round).strip()
             _intent_match = _INTENT_RE.search(_intent_text) if _intent_text else None
+            _matched_phrase = _intent_match.group(0).strip() if _intent_match else ""
+            # Quirk models (e.g. gemma4:e4b) often bury "call list_served_models"
+            # inside <think> without ever emitting tool fences.
+            if not _intent_match:
+                from src.model_stream_quirks import quirk_thinking_intent
+                _tool_in_think = quirk_thinking_intent(round_response, model)
+                if _tool_in_think:
+                    _matched_phrase = f"call {_tool_in_think}"
             # Only nudge when the round REALLY looks like an unfinished
             # promise: short response (<400 chars), no fenced code/answer,
             # and an action-intent phrase was matched. Long answers that
             # happen to contain "let me know" are not stalls.
             _looks_like_promise = (
-                _intent_match is not None
+                bool(_matched_phrase)
                 and len(_intent_text) < 400
                 and "```" not in _intent_text
                 and _intent_nudge_count < _MAX_INTENT_NUDGES
             )
             if _looks_like_promise:
                 _intent_nudge_count += 1
-                _matched_phrase = _intent_match.group(0).strip()
                 logger.info(f"[agent] intent-without-action nudge #{_intent_nudge_count} on round {round_num}: {_matched_phrase!r}")
                 messages.append({
                     "role": "system",
