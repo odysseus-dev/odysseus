@@ -18,6 +18,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/compare", tags=["compare"])
 
 
+def _owned_endpoint_by_url(db, base_url, owner):
+    """ModelEndpoint whose base_url == `base_url` and is VISIBLE to `owner`
+    (their own rows + legacy null-owner "shared" rows); None otherwise.
+
+    Owner-scoped on purpose. ModelEndpoint is per-user (core/database.py: non-null
+    owner = private, "the model picker only shows the endpoint to that user") and
+    holds a decrypted `api_key`. start_comparison copies the matched row's api_key
+    into the caller-owned [CMP] session's headers, which then drives that session's
+    /api/chat_stream calls — so an UNSCOPED base_url match would let a user mint a
+    comparison bound to ANOTHER user's private endpoint and spend that owner's
+    api_key / reach whatever base_url they configured. Mirrors
+    session_routes._owned_endpoint. A null/empty owner is a no-op (single-user /
+    legacy mode).
+    """
+    from core.database import ModelEndpoint
+    from src.auth_helpers import owner_filter
+    q = db.query(ModelEndpoint).filter(ModelEndpoint.base_url == base_url)
+    return owner_filter(q, ModelEndpoint, owner).first()
+
+
 class RecordVoteRequest(BaseModel):
     prompt: str
     models: List[str]
@@ -46,34 +66,7 @@ def setup_compare_routes(session_manager: SessionManager):
         comp_id = str(uuid.uuid4())
         sid_a = str(uuid.uuid4())
         sid_b = str(uuid.uuid4())
-
-        # Create ephemeral sessions (prefixed [CMP])
-        for sid, model, endpoint in [(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]:
-            user = getattr(request.state, 'current_user', None)
-            session_manager.create_session(
-                session_id=sid,
-                name=f"[CMP] {model.split('/')[-1]}",
-                endpoint_url=endpoint,
-                model=model,
-                rag=False,
-                owner=user,
-            )
-            # Copy API key from endpoint config
-            db = SessionLocal()
-            try:
-                from core.database import ModelEndpoint
-                from src.endpoint_resolver import build_headers, normalize_base
-                # Find matching endpoint by URL
-                base = normalize_base(endpoint)
-                ep = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.base_url == base
-                ).first()
-                if ep and ep.api_key:
-                    s = session_manager.sessions.get(sid)
-                    if s:
-                        s.headers = build_headers(ep.api_key, ep.base_url)
-            finally:
-                db.close()
+        user = getattr(request.state, 'current_user', None)
 
         # Blind mapping: randomly assign left/right
         blind = str(is_blind).lower() == "true"
@@ -83,6 +76,42 @@ def setup_compare_routes(session_manager: SessionManager):
                 mapping = {"left": "b", "right": "a"}
         else:
             mapping = {"left": "a", "right": "b"}
+
+        # Map session IDs to left/right based on blind mapping
+        session_left = sid_a if mapping["left"] == "a" else sid_b
+        session_right = sid_a if mapping["right"] == "a" else sid_b
+
+        # In blind mode, name the helper sessions by their neutral slot
+        # ("Model A" / "Model B") instead of the real model. Otherwise the
+        # session name leaks the model in the sidebar and GET /api/sessions,
+        # de-anonymizing the comparison before the user votes (issue #1285).
+        slot_name = {session_left: "Model A", session_right: "Model B"}
+
+        # Create ephemeral sessions (prefixed [CMP])
+        for sid, model, endpoint in [(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]:
+            name = f"[CMP] {slot_name[sid]}" if blind else f"[CMP] {model.split('/')[-1]}"
+            session_manager.create_session(
+                session_id=sid,
+                name=name,
+                endpoint_url=endpoint,
+                model=model,
+                rag=False,
+                owner=user,
+            )
+            # Copy API key from endpoint config
+            db = SessionLocal()
+            try:
+                from src.endpoint_resolver import build_headers, normalize_base
+                # Find matching endpoint by URL, scoped to the caller so a
+                # comparison can't borrow another user's private endpoint key.
+                base = normalize_base(endpoint)
+                ep = _owned_endpoint_by_url(db, base, user)
+                if ep and ep.api_key:
+                    s = session_manager.sessions.get(sid)
+                    if s:
+                        s.headers = build_headers(ep.api_key, ep.base_url)
+            finally:
+                db.close()
 
         # Store comparison record
         db = SessionLocal()
@@ -103,18 +132,18 @@ def setup_compare_routes(session_manager: SessionManager):
         finally:
             db.close()
 
-        # Map session IDs to left/right based on blind mapping
-        session_left = sid_a if mapping["left"] == "a" else sid_b
-        session_right = sid_a if mapping["right"] == "a" else sid_b
-
+        # In blind mode, withhold the model identities AND the left/right
+        # mapping from the response. The client already knows model_a/model_b
+        # (it sent them), so returning either would defeat blind mode. They are
+        # revealed by POST /api/compare/{id}/vote once the user has voted (#1285).
         return {
             "id": comp_id,
             "session_left": session_left,
             "session_right": session_right,
-            "model_left": model_a if mapping["left"] == "a" else model_b,
-            "model_right": model_a if mapping["right"] == "a" else model_b,
+            "model_left": None if blind else (model_a if mapping["left"] == "a" else model_b),
+            "model_right": None if blind else (model_a if mapping["right"] == "a" else model_b),
             "is_blind": blind,
-            "mapping": mapping,
+            "mapping": None if blind else mapping,
         }
 
     @router.post("/{comp_id}/vote")

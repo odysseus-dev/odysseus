@@ -5,6 +5,7 @@ import os
 import uuid
 import urllib.parse
 import html
+from pathlib import Path
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, HTMLResponse
 import logging
@@ -12,11 +13,81 @@ import httpx
 
 from core.database import McpServer, SessionLocal
 from core.middleware import require_admin
+from src.constants import DATA_DIR
 from src.mcp_manager import McpManager
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
+
+
+def _mcp_oauth_base_dir() -> Path:
+    """Directory that may contain OAuth files managed by Odysseus."""
+    return (Path(DATA_DIR) / "mcp_oauth").resolve(strict=False)
+
+
+def _resolve_mcp_oauth_path(raw_path, field_name: str) -> str:
+    """Resolve an MCP OAuth path and keep it under DATA_DIR/mcp_oauth."""
+    raw = str(raw_path or "").strip()
+    if not raw:
+        return ""
+
+    base = _mcp_oauth_base_dir()
+    path = Path(os.path.expanduser(raw))
+    if not path.is_absolute():
+        path = base / path
+    resolved = path.resolve(strict=False)
+
+    try:
+        resolved.relative_to(base)
+    except ValueError as exc:
+        raise HTTPException(
+            400,
+            f"Invalid OAuth {field_name}: path must stay under {base}",
+        ) from exc
+    return str(resolved)
+
+
+def _sanitize_mcp_oauth_config(oauth_cfg):
+    """Return an OAuth config copy with file paths confined to mcp_oauth."""
+    if not oauth_cfg:
+        return oauth_cfg
+    if not isinstance(oauth_cfg, dict):
+        return {}
+    sanitized = dict(oauth_cfg)
+    for field_name in ("keys_file", "token_file"):
+        if sanitized.get(field_name):
+            sanitized[field_name] = _resolve_mcp_oauth_path(
+                sanitized[field_name],
+                field_name,
+            )
+    return sanitized
+
+
+def _mcp_oauth_token_missing(oauth_cfg, *, strict: bool = True) -> bool:
+    """Check token existence without letting legacy bad paths break listing."""
+    if not isinstance(oauth_cfg, dict):
+        return False
+    try:
+        token_file = _resolve_mcp_oauth_path(oauth_cfg.get("token_file", ""), "token_file")
+    except HTTPException:
+        if strict:
+            raise
+        logger.warning("Ignoring MCP OAuth config with unsafe token_file")
+        return True
+    return bool(token_file and not os.path.exists(token_file))
+
+
+def _apply_mcp_oauth_env(env: dict, oauth_cfg) -> None:
+    """Pass sanitized Gmail package paths to MCP servers that honor them."""
+    if not oauth_cfg or not isinstance(env, dict):
+        return
+    keys_file = oauth_cfg.get("keys_file")
+    token_file = oauth_cfg.get("token_file")
+    if keys_file:
+        env["GMAIL_OAUTH_PATH"] = keys_file
+    if token_file:
+        env["GMAIL_CREDENTIALS_PATH"] = token_file
 
 
 def _load_disabled_map():
@@ -53,8 +124,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 oauth_cfg = json.loads(srv.oauth_config) if srv.oauth_config else None
                 needs_oauth = False
                 if oauth_cfg:
-                    token_file = os.path.expanduser(oauth_cfg.get("token_file", ""))
-                    needs_oauth = token_file and not os.path.exists(token_file)
+                    needs_oauth = _mcp_oauth_token_missing(oauth_cfg, strict=False)
                 disabled_list = json.loads(srv.disabled_tools) if srv.disabled_tools else []
                 total_tools = status.get("tool_count", 0)
                 result.append({
@@ -71,6 +141,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                     "disabled_tool_count": len(disabled_list),
                     "enabled_tool_count": max(0, total_tools - len(disabled_list)),
                     "error": status.get("error"),
+                    "auth_url": status.get("auth_url"),
                     "has_oauth": oauth_cfg is not None,
                     "needs_oauth": needs_oauth,
                 })
@@ -101,6 +172,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
             raise HTTPException(400, "command is required for stdio transport")
         if transport == "sse" and not url:
             raise HTTPException(400, "url is required for SSE transport")
+        if transport == "http" and not url:
+            raise HTTPException(400, "url is required for HTTP transport")
 
         # Parse JSON fields
         try:
@@ -111,26 +184,33 @@ def setup_mcp_routes(mcp_manager: McpManager):
             parsed_env = json.loads(env) if env else {}
         except json.JSONDecodeError:
             parsed_env = {}
+        if not isinstance(parsed_env, dict):
+            parsed_env = {}
 
         # Parse OAuth config
         parsed_oauth_config = None
         if oauth_config:
             try:
-                parsed_oauth_config = json.loads(oauth_config)
+                parsed_oauth_config = _sanitize_mcp_oauth_config(json.loads(oauth_config))
             except json.JSONDecodeError:
                 pass
+        _apply_mcp_oauth_env(parsed_env, parsed_oauth_config)
 
         # Write OAuth credentials file if provided (for Google MCP servers)
         logger.info(f"MCP add_server: oauth_file={oauth_file!r}")
         if oauth_file:
             try:
                 oauth_data = json.loads(oauth_file)
-                oauth_dir = os.path.expanduser(oauth_data.get("dir", ""))
+                oauth_dir = _resolve_mcp_oauth_path(oauth_data.get("dir", ""), "dir")
                 oauth_filename = oauth_data.get("filename", "")
                 client_id = oauth_data.get("client_id", "")
                 client_secret = oauth_data.get("client_secret", "")
                 if oauth_dir and oauth_filename and client_id and client_secret:
-                    os.makedirs(oauth_dir, exist_ok=True)
+                    filepath = _resolve_mcp_oauth_path(
+                        Path(oauth_dir) / str(oauth_filename),
+                        "filename",
+                    )
+                    os.makedirs(os.path.dirname(filepath), exist_ok=True)
                     creds = {
                         "installed": {
                             "client_id": client_id,
@@ -140,7 +220,6 @@ def setup_mcp_routes(mcp_manager: McpManager):
                             "token_uri": "https://accounts.google.com/o/oauth2/token",
                         }
                     }
-                    filepath = os.path.join(oauth_dir, oauth_filename)
                     with open(filepath, "w", encoding="utf-8") as f:
                         json.dump(creds, f, indent=2)
                     logger.info(f"Wrote OAuth credentials to {filepath}")
@@ -171,9 +250,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
         # Check if OAuth token already exists — skip connection attempt if not
         needs_oauth = False
         if parsed_oauth_config:
-            token_file = os.path.expanduser(parsed_oauth_config.get("token_file", ""))
-            if token_file and not os.path.exists(token_file):
-                needs_oauth = True
+            needs_oauth = _mcp_oauth_token_missing(parsed_oauth_config)
 
         connected = False
         if not needs_oauth:
@@ -188,6 +265,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
             )
 
         status = mcp_manager.get_server_status(server_id)
+        needs_auth = status.get("status") == "needs_auth"
         return {
             "id": server_id,
             "name": name,
@@ -196,6 +274,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
             "tool_count": status.get("tool_count", 0),
             "error": "OAuth authorization required" if needs_oauth else status.get("error"),
             "needs_oauth": needs_oauth,
+            "needs_auth": needs_auth,
+            "auth_url": status.get("auth_url"),
         }
 
     @router.post("/servers/{server_id}/reconnect")
@@ -228,6 +308,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 "status": status.get("status", "disconnected"),
                 "tool_count": status.get("tool_count", 0),
                 "error": status.get("error"),
+                "auth_url": status.get("auth_url"),
+                "needs_auth": status.get("status") == "needs_auth",
             }
         finally:
             db.close()
@@ -349,8 +431,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
             if not srv.oauth_config:
                 raise HTTPException(400, "Server has no OAuth config")
 
-            oauth_cfg = json.loads(srv.oauth_config)
-            keys_file = os.path.expanduser(oauth_cfg.get("keys_file", ""))
+            oauth_cfg = _sanitize_mcp_oauth_config(json.loads(srv.oauth_config))
+            keys_file = oauth_cfg.get("keys_file", "")
             if not keys_file or not os.path.exists(keys_file):
                 raise HTTPException(400, "OAuth keys file not found")
 
@@ -393,10 +475,18 @@ def setup_mcp_routes(mcp_manager: McpManager):
 
     @router.get("/oauth/callback")
     async def oauth_callback(code: str, state: str, request: Request):
-        """Handle OAuth callback from Google — exchange code for tokens."""
+        """Handle OAuth callback. Generic MCP OAuth flows resolve via the
+        pending-state registry; Google flows fall through to the legacy path."""
         require_admin(request)
-        server_id = state
-        return await _exchange_and_connect(server_id, code, request)
+        from src.mcp_oauth import resolve_pending
+        if resolve_pending(state, code):
+            return HTMLResponse(_oauth_result_page(
+                "Authorization Successful",
+                "The MCP server is connecting. You can close this window and return to Odysseus.",
+                success=True,
+            ))
+        # Legacy Google path: state is the server_id
+        return await _exchange_and_connect(state, code, request)
 
     @router.post("/oauth/exchange/{server_id}")
     async def oauth_exchange(server_id: str, request: Request, callback_url: str = Form(...)):
@@ -411,6 +501,17 @@ def setup_mcp_routes(mcp_manager: McpManager):
         except Exception:
             return HTMLResponse(_oauth_result_page("Error", "Invalid URL format."), status_code=400)
 
+        # Generic MCP OAuth: if the pasted URL carries a state we are waiting on,
+        # resolve it directly (the background connect finishes the handshake).
+        state = params.get("state", [None])[0]
+        from src.mcp_oauth import resolve_pending
+        if state and resolve_pending(state, code):
+            return HTMLResponse(_oauth_result_page(
+                "Authorization Successful",
+                "The MCP server is connecting. You can close this window and return to Odysseus.",
+                success=True,
+            ))
+
         return await _exchange_and_connect(server_id, code, request)
 
     async def _exchange_and_connect(server_id: str, code: str, request: Request):
@@ -423,9 +524,11 @@ def setup_mcp_routes(mcp_manager: McpManager):
             if not srv.oauth_config:
                 return HTMLResponse(_oauth_result_page("Error", "No OAuth config."), status_code=400)
 
-            oauth_cfg = json.loads(srv.oauth_config)
-            keys_file = os.path.expanduser(oauth_cfg.get("keys_file", ""))
-            token_file = os.path.expanduser(oauth_cfg.get("token_file", ""))
+            oauth_cfg = _sanitize_mcp_oauth_config(json.loads(srv.oauth_config))
+            keys_file = oauth_cfg.get("keys_file", "")
+            token_file = oauth_cfg.get("token_file", "")
+            if not keys_file or not token_file:
+                raise HTTPException(400, "OAuth keys/token file not configured")
 
             with open(keys_file, encoding="utf-8") as f:
                 keys_data = json.load(f)
@@ -488,6 +591,9 @@ def setup_mcp_routes(mcp_manager: McpManager):
                     "Authorized but Connection Failed",
                     f"Tokens saved, but the server failed to connect: {status.get('error', 'unknown error')}. Try reconnecting from Settings.",
                 ))
+        except HTTPException as e:
+            logger.warning(f"OAuth callback rejected: {e.detail}")
+            return HTMLResponse(_oauth_result_page("Error", str(e.detail)), status_code=e.status_code)
         except Exception as e:
             logger.exception(f"OAuth callback error: {e}")
             return HTMLResponse(_oauth_result_page("Error", str(e)), status_code=500)

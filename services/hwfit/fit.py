@@ -362,9 +362,23 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
     elif target_quant:
         # User picked a specific quant
         quant_to_try = target_quant
+    elif gpu_count >= 2:
+        # Multi-GPU box: vLLM/SGLang can't serve GGUF Q* quants (those are
+        # llama.cpp-only). Default non-prequantized models to BF16 so the row
+        # is meaningful on a multi-GPU rig. If BF16 doesn't fit, the model
+        # surfaces as too_tight — better than showing a Q4 row the user
+        # can't actually serve with vLLM on >1 GPU.
+        quant_to_try = "BF16"
     else:
-        # Default: Q4_K_M (user's stated preference)
+        # Default: Q4_K_M (user's stated preference) — kept for single-GPU
+        # and RAM modes where llama.cpp serving is the natural path.
         quant_to_try = "Q4_K_M"
+
+    # Multi-GPU filter: skip the row if the resolved quant is a GGUF tier
+    # (Q*/IQ-prefixed) — vLLM/SGLang can't serve those, so showing them on
+    # a 2+ GPU rig just clutters the list with unservable candidates.
+    if gpu_count >= 2 and quant_to_try and not target_quant and quant_to_try.upper().startswith(("Q2", "Q3", "Q4", "Q5", "Q6", "Q8", "IQ")):
+        return None
 
     result = _try_quant_at(model, quant_to_try, ctx, effective_vram, 0 if native_gpu_only else eff_ram)
 
@@ -457,8 +471,42 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None, targe
     }
 
 
+def _version_key(name):
+    """Parse the model's version number from its display name so equal-score
+    rows can break ties in favor of the newer release (e.g. M2.7 > M2.5).
+    Returns a float; 0.0 for names with no recognizable version. The regex
+    grabs the FIRST 'word-with-digits' pattern after a hyphen/underscore,
+    so e.g. 'MiniMax-M2.7' -> 2.7, 'Qwen3.6-35B' -> 3.6, 'M2' -> 2.0."""
+    import re as _re
+    if not name:
+        return 0.0
+    # Match the version-marker word: a letter followed by a number with
+    # optional decimal, e.g. M2.7, V4, Pro3. Take the first hit; ignore
+    # "B" param-count suffixes (Qwen3-235B should yield 3, not 235).
+    for m in _re.finditer(r"[A-Za-z](\d+(?:\.\d+)?)(?![A-Za-z])", name):
+        val = m.group(1)
+        # Skip param-count tokens (e.g. "235B" gives "235" but the next
+        # char would be "B" — already excluded by the negative lookahead).
+        try:
+            f = float(val)
+        except ValueError:
+            continue
+        # Heuristic: bare integers >= 100 are almost certainly param counts
+        # (1B/3B/8B/70B/235B…), not version numbers. Skip them.
+        if "." not in val and f >= 100:
+            continue
+        return f
+    return 0.0
+
+
 SORT_KEYS = {
-    "score": lambda r: r["score"],
+    # Score sort with version-aware tiebreaker — when two rows tie on
+    # composite score (a common case for the SAME base model in different
+    # versions, e.g. MiniMax-M2.5 vs M2.7 both at the same FP8 budget),
+    # prefer the newer version. Without this, ties resolved to whatever
+    # order they came out of the registry, which let older releases land
+    # above newer ones in user-facing lists.
+    "score": lambda r: (r["score"], _version_key(r.get("name") or "")),
     "speed": lambda r: r["speed_tps"],
     "vram": lambda r: r["required_gb"],
     "params": lambda r: r["params_b"],
@@ -470,8 +518,14 @@ SORT_KEYS = {
 }
 
 
-def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None, target_context=None):
-    """Rank all models against detected hardware. Returns sorted list of fit results."""
+def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None, target_context=None, fit_only=False):
+    """Rank all models against detected hardware. Returns sorted list of fit results.
+
+    fit_only: when True, drop rows whose fit_level is "too_tight" (model doesn't
+    actually fit on the chosen budget). When False (default), every model is
+    shown — sorting by Param means highest-param PERIOD, even ones that won't
+    run, so the user can see the truth.
+    """
     models = get_models()
     results = []
 
@@ -510,7 +564,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
             })
         if use_case == "image_gen":
             sort_fn = SORT_KEYS.get(sort, SORT_KEYS["score"])
-            results.sort(key=sort_fn, reverse=(sort != "vram"))
+            results.sort(key=sort_fn, reverse=True)  # see main path below
             return results[:limit]
 
     # If user picked a native prequantized format, filter to only those models.
@@ -522,6 +576,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
     system_backend = (system.get("backend") or "").lower()
     apple_silicon = system_backend in ("mps", "metal", "apple")
     rocm = system_backend == "rocm"
+    is_windows = system.get("platform") == "windows"
 
     # Consumer AMD Radeon (RDNA, gfx10/11/12): the practical local serving path
     # is GGUF via llama.cpp. vLLM/SGLang on ROCm are validated for datacenter
@@ -561,7 +616,11 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
         # servable path, so a model needs a real GGUF to be recommended.
         # Otherwise the Cookbook rates vLLM-only AWQ/GPTQ builds "GOOD" on a
         # Radeon that can't actually serve them.
-        if (apple_silicon or consumer_amd) and not (m.get("is_gguf") or m.get("gguf_sources")):
+        #
+        # Windows is the same: Odysseus only supports llama.cpp on Windows,
+        # which requires GGUF. vLLM/SGLang are explicitly blocked, so AWQ/GPTQ
+        # models without a GGUF source are unservable there.
+        if (apple_silicon or consumer_amd or is_windows) and not (m.get("is_gguf") or m.get("gguf_sources")):
             continue
 
         # Format filter: AWQ tab -> only AWQ models, FP4 tab -> FP4-family models, etc.
@@ -596,14 +655,21 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
 
         results.append(result)
 
-    # Pick the visible SET by best fit (score) first, so it stays the same no
-    # matter which column the user sorts by — otherwise sorting by params would
-    # truncate to the N biggest models (huge ones that don't even fit) while
-    # sorting by vram showed the N smallest. Only AFTER choosing the set do we
-    # order it by the requested column.
-    results.sort(key=SORT_KEYS["score"], reverse=True)
-    results = results[:limit]
+    # Pick the visible SET by the REQUESTED column. Per-user feedback: sorting
+    # by Param should show the highest-param models PERIOD, not just those that
+    # already fit. Same for every other column. Models that don't fit are still
+    # in the list with their fit_level marking the constraint, so the user can
+    # see the truth instead of a quietly-truncated view. Score sort is unchanged
+    # (it's the default ranking and naturally pushes non-fits to the bottom).
+    if fit_only:
+        # Hide rows that definitely don't fit (the "too_tight" badge) — user
+        # explicitly asked for a Fit-only view.
+        results = [r for r in results if r.get("fit_level") != "too_tight"]
     sort_fn = SORT_KEYS.get(sort, SORT_KEYS["score"])
-    # vram ascending (smallest first), everything else descending (biggest first)
-    results.sort(key=sort_fn, reverse=(sort != "vram"))
+    # Always sort descending then truncate top-N so each column shows the
+    # global highest by that metric. Before, vram was special-cased
+    # ascending → truncate kept the 50 SMALLEST models and "highest VRAM"
+    # could never appear, breaking the column-click toggle.
+    results.sort(key=sort_fn, reverse=True)
+    results = results[:limit]
     return results

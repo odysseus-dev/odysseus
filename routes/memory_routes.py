@@ -29,8 +29,11 @@ from src.llm_core import llm_call_async
 from services.memory.memory_extractor import audit_memories
 from src.auth_helpers import get_current_user, require_user
 from src.endpoint_resolver import resolve_endpoint
+from src.upload_limits import read_upload_limited
 
 logger = logging.getLogger(__name__)
+
+MEMORY_IMPORT_MAX_BYTES = int(os.getenv("ODYSSEUS_MEMORY_IMPORT_MAX_BYTES", str(10 * 1024 * 1024)))
 
 def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionManager, memory_vector=None):
     """Set up memory-related routes."""
@@ -38,6 +41,18 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
 
     def _owner(request: Request) -> Optional[str]:
         return get_current_user(request)
+
+    def _assert_session_owner(session_obj, user):
+        """SECURITY: 404 if the caller does not own this session.
+
+        SessionManager.get_session is NOT owner-scoped — it returns any
+        session by id. These routes accept a caller-supplied session id, so
+        without this gate a user could target another tenant's session and
+        leak their chat history, their session-scoped LLM credentials, or the
+        session title. Mirrors session_routes / webhook_routes ownership.
+        """
+        if user is not None and getattr(session_obj, "owner", None) != user:
+            raise HTTPException(404, "Session not found")
 
     def _verify_memory_owner(memory: dict, user: Optional[str]):
         """Raise 404 if user doesn't own this memory.
@@ -161,12 +176,12 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     @router.get("/by-session/{session_id}")
     def get_memory_by_session(request: Request, session_id: str):
         """Get all memories associated with a specific session."""
+        user = _owner(request)
         try:
-            session_manager.get_session(session_id)
+            _session_obj = session_manager.get_session(session_id)
         except KeyError:
             raise HTTPException(404, f"Session {session_id} not found")
-
-        user = _owner(request)
+        _assert_session_owner(_session_obj, user)
         memories = memory_manager.load(owner=user)
         session_memories = [m for m in memories if m.get("session_id") == session_id]
 
@@ -196,6 +211,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
             sess = session_manager.get_session(session)
         except KeyError:
             raise HTTPException(404, "Session not found")
+        _assert_session_owner(sess, _owner(request))
 
         system_msg = {
             "role": "system",
@@ -277,6 +293,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         if not endpoint_url and session:
             try:
                 sess = session_manager.get_session(session)
+                _assert_session_owner(sess, _owner(request))
                 endpoint_url = sess.endpoint_url
                 model = sess.model
                 headers = sess.headers
@@ -327,6 +344,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         if session:
             try:
                 sess = session_manager.get_session(session)
+                _assert_session_owner(sess, _owner(request))
                 endpoint_url = sess.endpoint_url
                 model = sess.model
                 headers = sess.headers
@@ -338,8 +356,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         if not endpoint_url or not model:
             raise HTTPException(400, "No LLM model configured. Set a default model in Settings.")
 
-        # Read file content
-        content = await file.read()
+        content = await read_upload_limited(file, MEMORY_IMPORT_MAX_BYTES, "Memory import")
         filename = file.filename or "upload"
         _, ext = os.path.splitext(filename.lower())
 

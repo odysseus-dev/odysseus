@@ -8,7 +8,7 @@ and the task scheduler / builtin actions system.
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +22,10 @@ _THROWAWAY_NAMES = {
     "ok", "lol", "bruh", "hmm", "hm", "meh",
 }
 _THROWAWAY_MAX_MESSAGES = 4
+_FRESH_EMPTY_SESSION_GRACE = timedelta(minutes=10)
 
 
-async def run_auto_sort(owner: str, skip_llm: bool = False) -> str:
+async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bool = True) -> str:
     """Run session cleanup + (optional) AI folder sort for the given owner.
 
     Args:
@@ -32,6 +33,7 @@ async def run_auto_sort(owner: str, skip_llm: bool = False) -> str:
         skip_llm: when True, do only Phase 1 (delete empty/throwaway sessions);
             skip Phase 2 (AI folder assignment). Used by the built-in daily
             background sweep so it never burns LLM tokens.
+        delete_throwaway: when False, only empty/incognito sessions are deleted.
 
     Returns a human-readable summary of what was done.
     """
@@ -53,6 +55,8 @@ async def run_auto_sort(owner: str, skip_llm: bool = False) -> str:
         for row in rows:
             if getattr(row, 'is_important', False):
                 continue
+            created_at = row.created_at or row.updated_at or datetime.utcnow()
+            is_fresh = (datetime.utcnow() - created_at) < _FRESH_EMPTY_SESSION_GRACE
             if (row.name or "").strip() == "Incognito":
                 deleted_throwaway += 1
                 db.delete(row)
@@ -64,9 +68,11 @@ async def run_auto_sort(owner: str, skip_llm: bool = False) -> str:
             should_delete = False
 
             if msg_count == 0:
+                if is_fresh:
+                    continue
                 should_delete = True
                 deleted_empty += 1
-            elif msg_count <= _THROWAWAY_MAX_MESSAGES:
+            elif delete_throwaway and msg_count <= _THROWAWAY_MAX_MESSAGES:
                 name = (row.name or "").strip().lower()
                 first_msg = db.query(DbMsg.content).filter(
                     DbMsg.session_id == row.id, DbMsg.role == "user"

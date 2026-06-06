@@ -153,7 +153,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         with a `pdf_source` marker so the viewer renders the pages without
         overlays.
         """
-        from src.constants import UPLOAD_DIR
         from src.pdf_forms import has_form_fields, extract_fields
         from src.pdf_form_doc import (
             save_field_sidecar,
@@ -950,7 +949,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         any wrong values before triggering the actual download.
         """
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, load_field_sidecar
-        from src.constants import UPLOAD_DIR
 
         user = get_current_user(request)
         db = SessionLocal()
@@ -1015,7 +1013,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         Frontend overlays HTML form controls at those positions.
         """
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, load_field_sidecar
-        from src.constants import UPLOAD_DIR
 
         user = get_current_user(request)
         db = SessionLocal()
@@ -1083,7 +1080,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         frontend overlays HTML form inputs on top)."""
         from fastapi.responses import Response
         from src.pdf_form_doc import find_source_upload_id
-        from src.constants import UPLOAD_DIR
 
         user = get_current_user(request)
         db = SessionLocal()
@@ -1132,7 +1128,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         import json
         import fitz
         from src.pdf_form_doc import find_source_upload_id
-        from src.constants import UPLOAD_DIR
         from src.document_processor import _resolve_vl_model, _load_vl_settings
         from src.llm_core import llm_call_async
 
@@ -1275,7 +1270,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from starlette.background import BackgroundTask
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, parse_markdown_annotations
         from src.pdf_forms import fill_fields, stamp_annotations
-        from src.constants import UPLOAD_DIR
         from core.database import Signature
 
         # Track temp files for this request so they get unlinked AFTER
@@ -1370,7 +1364,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from starlette.background import BackgroundTask
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, load_field_sidecar, parse_markdown_annotations
         from src.pdf_forms import fill_fields, stamp_signatures, stamp_annotations
-        from src.constants import UPLOAD_DIR
         from core.database import Signature
 
         _to_unlink: list[str] = []
@@ -1512,7 +1505,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             load_field_sidecar, parse_markdown_annotations,
         )
         from src.pdf_forms import fill_fields, stamp_signatures, stamp_annotations
-        from src.constants import UPLOAD_DIR
         from core.database import Signature
         # COMPOSE_UPLOADS_DIR lives in email_routes — re-derive here so we
         # don't import from a routes file (cycle-prone). Same env override
@@ -1637,9 +1629,11 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             #    context (To/Subject/In-Reply-To/References).
             try:
                 from routes.email_routes import _imap, _decode_header
+                from routes.email_helpers import _q
             except Exception:
                 _imap = None
                 _decode_header = lambda x: x or ""
+                _q = lambda x: x or ""
 
             to_addr = ""
             from_name = ""
@@ -1649,7 +1643,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if _imap:
                 try:
                     with _imap(doc.source_email_account_id or None) as conn:
-                        conn.select(doc.source_email_folder, readonly=True)
+                        conn.select(_q(doc.source_email_folder), readonly=True)
                         status, data = conn.fetch(doc.source_email_uid.encode(), "(RFC822.HEADER)")
                     if status == "OK" and data and data[0]:
                         raw_hdr = data[0][1]
