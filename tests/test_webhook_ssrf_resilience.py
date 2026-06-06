@@ -122,3 +122,12 @@ async def test_webhook_delivery_uses_naive_utc_timestamps(monkeypatch):
     assert db.updates[0]["last_status_code"] == 204
     assert db.committed is True
     assert db.closed is True
+
+
+def test_sanitize_error_scrubs_ipv6():
+    from src.webhook_manager import sanitize_error
+    raw_error = "Connection timeout to host fe80::1a2b:3c4d:5e6f on port 8080 and [::1]"
+    sanitized = sanitize_error(raw_error)
+    assert "fe80::" not in sanitized
+    assert "::1" not in sanitized
+    assert sanitized == "Connection timeout to host [redacted] on port 8080 and [redacted]"

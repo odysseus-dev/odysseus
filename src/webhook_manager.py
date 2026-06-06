@@ -140,6 +140,18 @@ def sanitize_error(error: str, max_len: int = 200) -> str:
     """Strip potentially sensitive details from error messages."""
     # Remove IP addresses and ports
     cleaned = re.sub(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?', '[redacted]', error)
+    
+    def replacer(match):
+        ip_candidate = match.group(0).strip('[]')
+        try:
+            ipaddress.IPv6Address(ip_candidate.split('%')[0])
+            return '[redacted]'
+        except ValueError:
+            return match.group(0)
+
+    # Remove IPv6 addresses (match anything with at least two colons, validate via ipaddress)
+    cleaned = re.sub(r'\[?[0-9a-fA-F:]+:[0-9a-fA-F:]+:[0-9a-fA-F:%]+\]?', replacer, cleaned)
+
     # Remove hostnames in URLs
     cleaned = re.sub(r'https?://[^\s/]+', '[redacted-url]', cleaned)
     return cleaned[:max_len]
