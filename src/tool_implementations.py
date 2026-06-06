@@ -2111,6 +2111,13 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         """Parse agent event datetimes in the user's timezone when available."""
         return _parse_dt_pair(parse_due_for_user(raw))
 
+    def _first_nonempty_arg(*names: str):
+        for name in names:
+            value = args.get(name)
+            if value not in (None, ""):
+                return value
+        return None
+
     def _create_calendar_reminder(summary: str, location: str, dtstart: datetime,
                                   all_day: bool, minutes_before: int,
                                   is_utc: bool = False) -> tuple[Optional[str], Optional[str]]:
@@ -2168,12 +2175,18 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
 
         elif action == "list_events":
             try:
-                if args.get("start"):
-                    start_dt = _parse_dt(args["start"])
+                start_raw = _first_nonempty_arg(
+                    "start", "start_date", "range_start", "from", "dtstart", "since"
+                )
+                end_raw = _first_nonempty_arg(
+                    "end", "end_date", "range_end", "to", "dtend", "until"
+                )
+                if start_raw:
+                    start_dt = _parse_dt(start_raw)
                 else:
                     start_dt = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-                if args.get("end"):
-                    end_dt = _parse_dt(args["end"])
+                if end_raw:
+                    end_dt = _parse_dt(end_raw)
                 else:
                     end_dt = start_dt + timedelta(days=14)
             except ValueError as e:

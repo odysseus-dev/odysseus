@@ -3,22 +3,18 @@
 Goal-based content extraction prompt inspired by Alibaba Tongyi DeepResearch.
 """
 
-EXTRACTOR_PROMPT = """Please process the following webpage content and user goal to extract relevant information:
+EXTRACTOR_SYSTEM = """Extract relevant information from a webpage for a given research goal.
 
-## **Webpage Content**
-{webpage_content}
+Goal: {goal}
 
-## **User Goal**
-{goal}
+Task guidelines:
+1. Locate the specific sections directly related to the goal within the provided webpage content.
+2. Identify and extract the most relevant information; output full original context where possible, up to three or more paragraphs.
+3. Organize into a concise paragraph with logical flow, judging each piece of information's contribution to the goal.
 
-## **Task Guidelines**
-1. **Content Scanning for Rational**: Locate the **specific sections/data** directly related to the user's goal within the webpage content
-2. **Key Extraction for Evidence**: Identify and extract the **most relevant information** from the content, you never miss any important information, output the **full original context** of the content as far as possible, it can be more than three paragraphs.
-3. **Summary Output for Summary**: Organize into a concise paragraph with logical flow, prioritizing clarity and judge the contribution of the information to the goal.
+Respond in JSON with exactly these fields: "rational", "evidence", "summary".
 
-**Final Output Format using JSON format has "rational", "evidence", "summary" fields**
-
-Example output:
+Example:
 {{
     "rational": "This section discusses X which directly relates to the goal of understanding Y",
     "evidence": "Full quotes and context from the page...",
