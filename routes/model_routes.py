@@ -1169,7 +1169,11 @@ def setup_model_routes(model_discovery):
             t0 = _time.time()
             try:
                 import asyncio as _asyncio
-                ping = await _asyncio.to_thread(_ping_endpoint, data["base"], data.get("api_key"), 1.5)
+                # 8s (was 1.5s): a busy LOCAL endpoint mid-inference (e.g. a
+                # slow first token during prompt prefill on a loaded GPU host)
+                # would otherwise time out and be falsely reported offline,
+                # causing the chat UI to cancel a live request. (infra-cvh)
+                ping = await _asyncio.to_thread(_ping_endpoint, data["base"], data.get("api_key"), 8.0)
                 lat = round((_time.time() - t0) * 1000)
                 return {
                     "alive": bool(ping.get("reachable")),

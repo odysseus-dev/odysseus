@@ -155,6 +155,9 @@ def start(session_id: str, agen: AsyncGenerator[str, None]) -> _Run:
     return run
 
 
+_HEARTBEAT_S = 5.0  # SSE keepalive interval during idle gaps (infra-cvh)
+
+
 async def subscribe(session_id: str) -> AsyncGenerator[str, None]:
     """Replay the run's buffer from the start, then stream live until it ends.
     Safe to call repeatedly (reconnect) and from multiple clients at once."""
@@ -175,7 +178,15 @@ async def subscribe(session_id: str) -> AsyncGenerator[str, None]:
         if run.status != "running":
             return
         while True:
-            seq, ev = await q.get()
+            try:
+                seq, ev = await asyncio.wait_for(q.get(), timeout=_HEARTBEAT_S)
+            except asyncio.TimeoutError:
+                # Keep the SSE connection alive during long gaps (tool execution,
+                # model latency) so the client stall-watchdog and any proxy/network
+                # idle timers never trip. Comment lines are ignored by SSE parsers
+                # but still reset those timers. (infra-cvh, 2026-06-05)
+                yield ": heartbeat\n\n"
+                continue
             if seq is None:            # end sentinel
                 while next_seq < len(run.buffer):   # flush any tail the sentinel raced
                     yield run.buffer[next_seq]

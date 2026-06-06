@@ -916,7 +916,7 @@ import createResearchSynapse from './researchSynapse.js';
             } finally {
               processingProbeAbort = null;
             }
-          }, 10000);
+          }, 30000);  // was 10000: slow local agent turns emit no CONTENT token until after the tool round (~15-20s); give them grace before probing (infra-cvh)
         }
       }
       
