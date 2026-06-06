@@ -11,7 +11,7 @@ from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
-from src.auth_helpers import get_current_user, effective_user
+from src.auth_helpers import get_current_user, effective_user, _auth_disabled
 
 
 def _sanitize_export_filename(name: str) -> str:
@@ -106,8 +106,8 @@ def _verify_session_owner(request: Request, session_id: str, session_manager=Non
     that only care about persisted sessions keep their exact prior behavior.
     """
     user = effective_user(request)
-    if not user:
-        raise HTTPException(403, "Authentication required")
+    if not user and not _auth_disabled():
+        raise HTTPException(401, "Authentication required")
     db = SessionLocal()
     try:
         row = db.query(DbSession.owner).filter(DbSession.id == session_id).first()
