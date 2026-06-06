@@ -10,6 +10,12 @@ signed by a private root CA which is not part of the standard system bundle:
     certificate chain` (see issue #722).
   - On-premise enterprise LLM gateways often present a corporate CA that
     has not been imported into the runtime's trust store.
+  - LAN reverse proxies fronting a local model server (e.g. LM Studio,
+    llama.cpp) over a wildcard cert such as ``*.lan.domain.com`` (issued
+    by Let's Encrypt or a private CA). The Docker container's certifi
+    bundle may not carry the full intermediate chain, producing
+    ``CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate``
+    (see issue #3039). Export the full chain and point the env var at it.
 
 Operators point `LLM_CA_BUNDLE` at a PEM file containing the extra CA
 cert(s). The default system / certifi trust store is loaded first, then
@@ -24,6 +30,17 @@ Example (GigaChat):
     # https://www.gosuslugi.ru/crt/rootca_ssl_rsa2022.cer
     # Convert to PEM and point the env var at it.
     LLM_CA_BUNDLE=/etc/odysseus/ca/russian-trusted-root.pem
+
+Example (LAN reverse proxy — Docker Compose):
+    # 1. Export the full TLS chain served by the proxy:
+    #    openssl s_client -connect llm.lan.domain.com:443 -showcerts \
+    #      </dev/null 2>/dev/null \
+    #      | awk '/BEGIN CERTIFICATE/,/END CERTIFICATE/' \
+    #      > certs/lan-chain.pem
+    # 2. Add a volume to docker-compose.yml:
+    #    - ./certs/lan-chain.pem:/etc/odysseus/ca/lan-chain.pem:ro,z
+    # 3. Set in .env:
+    LLM_CA_BUNDLE=/etc/odysseus/ca/lan-chain.pem
 
 Scope:
     `llm_verify()` is intentionally consumed by only two call sites — the
