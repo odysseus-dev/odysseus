@@ -94,13 +94,42 @@ export interface ChatMsg {
   content: string;
 }
 
+export interface SessionHistory {
+  messages: ChatMsg[];
+  /** The session's current model, so the in-chat picker can default to it. */
+  model: string;
+  name: string;
+}
+
 /** Saved conversation for a session (works for finished sessions too). */
-export async function getMessages(conn: Connection, id: string): Promise<ChatMsg[]> {
-  const { messages } = await getJSON<{ messages: ChatMsg[] }>(
+export async function getMessages(conn: Connection, id: string): Promise<SessionHistory> {
+  const data = await getJSON<{ messages: ChatMsg[]; model?: string; name?: string }>(
     conn,
     `/api/companion/sessions/${encodeURIComponent(id)}/messages`,
   );
-  return messages;
+  return { messages: data.messages, model: data.model || '', name: data.name || '' };
+}
+
+/** Send a follow-up turn into an existing session. Optionally switches the
+ *  model first (the in-chat picker). The run streams via streamSession. */
+export async function sendMessage(
+  conn: Connection,
+  id: string,
+  opts: { message: string; endpointId?: string; model?: string },
+): Promise<void> {
+  const resp = await fetch(
+    `${conn.baseUrl}/api/companion/sessions/${encodeURIComponent(id)}/message`,
+    {
+      method: 'POST',
+      headers: { ...authHeaders(conn), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: opts.message,
+        endpoint_id: opts.endpointId,
+        model: opts.model,
+      }),
+    },
+  );
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} sending message`);
 }
 
 export async function stopSession(conn: Connection, id: string): Promise<boolean> {

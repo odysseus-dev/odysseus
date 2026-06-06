@@ -89,6 +89,86 @@ def session_summary(sess, active: bool, status, public_model=None) -> dict:
     }
 
 
+async def _fire_chat_run(request: Request, owner: str, sid: str, message: str) -> None:
+    """Kick off the detached chat run for `sid` and return once it's registered.
+
+    Internal loopback to /api/chat_stream -- the SAME path the desktop uses, so
+    the run reuses the real pipeline (models, tools, reasoning, message saving)
+    and is owned by `owner` (stamped via X-Odysseus-Owner). chat_stream calls
+    agent_runs.start before it streams, so by the time response headers arrive
+    the run is detached and self-draining; we close the loopback immediately
+    (closing an SSE never stops a detached run) and the phone watches via
+    /sessions/{id}/stream. Shared by start_session (new chat) and send_message
+    (follow-up turn) so both go through identical machinery.
+    """
+    import httpx
+
+    from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
+
+    port = request.url.port or _pairing.default_port()
+    url = f"http://127.0.0.1:{port}/api/chat_stream"
+    headers = {INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN, "X-Odysseus-Owner": owner}
+    data = {"message": message, "session": sid}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            # Opening the stream sends the request and waits for headers; that is
+            # enough to guarantee the run started. We never read the body.
+            async with client.stream("POST", url, data=data, headers=headers) as resp:
+                if resp.status_code >= 400:
+                    raise HTTPException(502, f"chat_stream returned {resp.status_code}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"could not start the run: {e}")
+
+
+def _resolve_endpoint_url(owner, endpoint_id: str):
+    """Resolve an owner-visible, enabled endpoint id to (chat_url, base_url,
+    api_key). 404s if the endpoint is missing or owned by someone else. Shared
+    by the new-chat and model-switch paths."""
+    from core.database import SessionLocal, ModelEndpoint
+    from src.endpoint_resolver import build_chat_url, normalize_base
+
+    db = SessionLocal()
+    try:
+        ep = db.query(ModelEndpoint).filter(
+            ModelEndpoint.id == endpoint_id,
+            ModelEndpoint.is_enabled == True,  # noqa: E712
+        ).first()
+        if ep is None or not owner_can_see(ep.owner, owner):
+            raise HTTPException(404, "Model endpoint not found")
+        return build_chat_url(normalize_base(ep.base_url)), (ep.base_url or ""), (ep.api_key or "")
+    finally:
+        db.close()
+
+
+def _switch_session_model(session, sid: str, owner, endpoint_id: str, model: str) -> None:
+    """Switch a session's model/endpoint mid-conversation, mirroring the desktop
+    PATCH /session/{sid} path: resolve the endpoint owner-scoped, then update
+    model + endpoint_url + auth headers both in memory and in the DB row so the
+    next run (and the desktop UI) use the new model."""
+    from datetime import datetime
+
+    from core.database import Session as DbSession, SessionLocal
+    from src.endpoint_resolver import build_headers
+
+    chat_url, base_url, api_key = _resolve_endpoint_url(owner, endpoint_id)
+    session.model = model
+    session.endpoint_url = chat_url
+    session.headers = build_headers(api_key, base_url) if api_key else {}
+    db = SessionLocal()
+    try:
+        db_session = db.query(DbSession).filter(DbSession.id == sid).first()
+        if db_session:
+            db_session.model = model
+            db_session.endpoint_url = chat_url
+            db_session.headers = session.headers or {}
+            db_session.updated_at = datetime.utcnow()
+            db.commit()
+    finally:
+        db.close()
+
+
 def mint_pairing_token(owner: str, invalidate=None) -> tuple[str, str]:
     """Mint a pairing token AND invalidate the auth middleware's in-memory token
     cache, so the new token is accepted on the very next request without a server
@@ -242,8 +322,6 @@ def setup_companion_routes(session_manager=None) -> APIRouter:
         """
         import uuid as _uuid
 
-        import httpx
-
         owner = token_owner(request)
         if not owner:
             raise HTTPException(401, "Could not resolve an owner for this token")
@@ -261,19 +339,7 @@ def setup_companion_routes(session_manager=None) -> APIRouter:
             raise HTTPException(400, "endpoint_id and model are required")
 
         # Resolve the endpoint to a chat URL, owner-scoped (own or shared rows).
-        from core.database import SessionLocal, ModelEndpoint
-        from src.endpoint_resolver import build_chat_url, normalize_base
-        db = SessionLocal()
-        try:
-            ep = db.query(ModelEndpoint).filter(
-                ModelEndpoint.id == endpoint_id,
-                ModelEndpoint.is_enabled == True,  # noqa: E712
-            ).first()
-            if ep is None or not owner_can_see(ep.owner, owner):
-                raise HTTPException(404, "Model endpoint not found")
-            endpoint_url = build_chat_url(normalize_base(ep.base_url))
-        finally:
-            db.close()
+        endpoint_url, _, _ = _resolve_endpoint_url(owner, endpoint_id)
 
         # Create the (empty) session first; chat_stream adds the user message.
         sm = _resolve_session_manager(session_manager)
@@ -281,25 +347,7 @@ def setup_companion_routes(session_manager=None) -> APIRouter:
         name = (message[:40] or "New chat").strip()
         sm.create_session(sid, name, endpoint_url, model, owner=owner)
 
-        # Internal-tool loopback: trusted because it originates from 127.0.0.1
-        # with no proxy headers; X-Odysseus-Owner attributes the run to the owner.
-        from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
-        port = request.url.port or _pairing.default_port()
-        url = f"http://127.0.0.1:{port}/api/chat_stream"
-        headers = {INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN, "X-Odysseus-Owner": owner}
-        data = {"message": message, "session": sid}
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-                # Opening the stream sends the request and waits for headers; that
-                # is enough to guarantee the run started. We never read the body.
-                async with client.stream("POST", url, data=data, headers=headers) as resp:
-                    if resp.status_code >= 400:
-                        raise HTTPException(502, f"chat_stream returned {resp.status_code}")
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(502, f"could not start the run: {e}")
-
+        await _fire_chat_run(request, owner, sid, message)
         return {"session_id": sid, "name": name}
 
     @router.get("/sessions/{session_id}/messages")
@@ -326,7 +374,57 @@ def setup_companion_routes(session_manager=None) -> APIRouter:
             if not isinstance(content, str):
                 content = _content_to_text(content)
             out.append({"role": role, "content": content})
-        return {"messages": out}
+        # model/name let the phone default its in-chat model picker and title
+        # without a second round-trip to the sessions list.
+        return {"messages": out, "model": getattr(sess, "model", "") or "", "name": sess.name}
+
+    @router.post("/sessions/{session_id}/message")
+    async def send_message(request: Request, session_id: str):
+        """Send a follow-up turn into an EXISTING session from the phone.
+
+        Same internal-loopback machinery as POST /sessions (new chat), but the
+        session already exists, so we just verify ownership, optionally switch
+        the model (body endpoint_id+model -- the phone's in-chat model picker,
+        mirroring the desktop), refuse if a run is already in flight, then fire
+        the detached run. The phone re-attaches to /sessions/{id}/stream to watch
+        it. Owner-checked; no new LLM logic.
+        """
+        from src import agent_runs
+        from routes.session_routes import _verify_session_owner
+
+        owner = token_owner(request)
+        if not owner:
+            raise HTTPException(401, "Could not resolve an owner for this token")
+
+        sm = _resolve_session_manager(session_manager)
+        _verify_session_owner(request, session_id, sm)
+        try:
+            sess = sm.get_session(session_id)
+        except KeyError:
+            raise HTTPException(404, "Session not found")
+
+        if agent_runs.is_active(session_id):
+            raise HTTPException(409, "A run is already in progress for this session")
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        message = (body.get("message") or "").strip()
+        if not message:
+            raise HTTPException(400, "message is required")
+
+        # Optional mid-chat model switch (the in-chat picker). Both must be given.
+        model = (body.get("model") or "").strip()
+        endpoint_id = (body.get("endpoint_id") or "").strip()
+        if model and endpoint_id and model != getattr(sess, "model", ""):
+            _switch_session_model(sess, session_id, owner, endpoint_id, model)
+
+        if not getattr(sess, "model", "").strip():
+            raise HTTPException(400, "This session has no model selected")
+
+        await _fire_chat_run(request, owner, session_id, message)
+        return {"ok": True}
 
     @router.get("/sessions/{session_id}/stream")
     async def stream_session(request: Request, session_id: str):

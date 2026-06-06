@@ -288,12 +288,85 @@ button {
 .stop:disabled {
   opacity: 0.45;
 }
+/* In-chat model picker, sized to fill the header between back and status. */
+.model-select {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 13px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.model-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.model-select:disabled {
+  opacity: 0.7;
+}
+/* Compact run-state indicator (replaces the wordy pill now the header holds
+   the model picker). */
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--border);
+  flex: none;
+}
+.status-dot.live,
+.status-dot.connecting {
+  background: var(--green);
+  box-shadow: 0 0 0 4px rgba(80, 250, 123, 0.18);
+}
+.status-dot.error {
+  background: var(--red);
+}
+
 .detail-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: 16px;
+}
+
+/* Composer pinned at the bottom of the conversation. */
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 12px calc(10px + var(--safe-bottom));
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+.composer-input {
+  flex: 1;
+  min-width: 0;
+  max-height: 140px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1.4;
+  resize: none;
+}
+.composer-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.composer-input:disabled {
+  opacity: 0.6;
+}
+.composer .stop {
+  flex: none;
 }
 .stream-text {
   white-space: pre-wrap;

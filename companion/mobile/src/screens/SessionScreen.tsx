@@ -1,18 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Connection } from '../lib/connection';
-import type { ChatMsg, StreamEvent } from '../lib/api';
-import { getMessages, stopSession, streamSession } from '../lib/api';
+import type { ChatMsg, ModelOption, StreamEvent } from '../lib/api';
+import { getMessages, listModels, sendMessage, stopSession, streamSession } from '../lib/api';
 import { splitThinking } from '../lib/thinking';
 import { ChevronLeftIcon } from '../components/icons';
 
 type Stream = 'loading' | 'connecting' | 'live' | 'done' | 'inactive' | 'error';
 
-// Session view. Loads the saved conversation first (so ANY session opens, not
-// just one with a live run), then attaches the live SSE on top: if a run is
-// active its output streams into an in-progress assistant bubble; if not, we
-// just show the saved messages. Reasoning models' chain-of-thought shows in a
-// collapsible "Thinking" block while live (it's stripped from saved messages,
-// same as the desktop).
+// Session view: a full conversation with a composer at the bottom, so the phone
+// can carry a chat as far as the desktop can. Loads the saved history first (so
+// ANY session opens, not just one with a live run), then attaches the live SSE
+// on top. Sending a follow-up posts to /message and re-attaches the stream.
+// The model picker in the header switches models mid-chat, like the desktop.
+// Reasoning models' chain-of-thought shows in a collapsible "Thinking" block.
 export default function SessionScreen({
   conn,
   sessionId,
@@ -29,8 +29,16 @@ export default function SessionScreen({
   const [statusLine, setStatusLine] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [thinkOpen, setThinkOpen] = useState(true);
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [picked, setPicked] = useState(0);
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+  // Bumped after a successful send to re-run the subscribe effect on the new run.
+  const [runNonce, setRunNonce] = useState(0);
   const bodyRef = useRef<HTMLDivElement>(null);
   const hasHistory = useRef(false);
+  const sessionIdRef = useRef(sessionId);
 
   const { answer, thinking } = useMemo(() => {
     const split = splitThinking(rawAnswer);
@@ -41,22 +49,42 @@ export default function SessionScreen({
     if (answer.trim()) setThinkOpen(false);
   }, [answer]);
 
+  // Model options for the in-chat picker (same source as the new-chat screen).
+  useEffect(() => {
+    listModels(conn).then(setModels).catch(() => {});
+  }, [conn]);
+
   useEffect(() => {
     const ctrl = new AbortController();
     let cancelled = false;
-    setMessages([]);
+    // Only wipe the transcript when the session itself changes -- a follow-up
+    // (runNonce bump) keeps the bubbles already on screen.
+    const sessionChanged = sessionIdRef.current !== sessionId;
+    sessionIdRef.current = sessionId;
+    if (sessionChanged) {
+      setMessages([]);
+      hasHistory.current = false;
+    }
     setRawAnswer('');
     setFlaggedThink('');
+    setStatusLine(null);
     setStream('loading');
     setThinkOpen(true);
-    hasHistory.current = false;
 
     // 1. Saved conversation first.
     getMessages(conn, sessionId)
-      .then((m) => {
+      .then((h) => {
         if (cancelled) return;
-        setMessages(m);
-        hasHistory.current = m.length > 0;
+        setMessages(h.messages);
+        hasHistory.current = h.messages.length > 0;
+        // Default the picker to the session's current model the first time.
+        if (h.model) {
+          setModels((ms) => {
+            const i = ms.findIndex((m) => m.model === h.model);
+            if (i >= 0) setPicked(i);
+            return ms;
+          });
+        }
       })
       .catch(() => {})
       .finally(() => {
@@ -94,8 +122,8 @@ export default function SessionScreen({
     async function finishRun() {
       setStream('done');
       try {
-        const m = await getMessages(conn, sessionId);
-        if (!cancelled) setMessages(m);
+        const h = await getMessages(conn, sessionId);
+        if (!cancelled) setMessages(h.messages);
       } catch {
         /* keep what we have */
       }
@@ -109,7 +137,7 @@ export default function SessionScreen({
       cancelled = true;
       ctrl.abort(); // leaving detaches; the run keeps going server-side
     };
-  }, [conn, sessionId]);
+  }, [conn, sessionId, runNonce]);
 
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight });
@@ -127,7 +155,33 @@ export default function SessionScreen({
     }
   }
 
-  const isLive = stream === 'live' || stream === 'connecting';
+  async function onSend() {
+    const text = draft.trim();
+    const model = models[picked];
+    if (!text || sending || isLive) return;
+    setSending(true);
+    setSendError(null);
+    // Optimistically show the user's turn; the run will stream the reply.
+    setMessages((m) => [...m, { role: 'user', content: text }]);
+    setDraft('');
+    try {
+      await sendMessage(conn, sessionId, {
+        message: text,
+        endpointId: model?.endpointId,
+        model: model?.model,
+      });
+      setRawAnswer('');
+      setFlaggedThink('');
+      setRunNonce((n) => n + 1); // re-attach the stream to the new run
+    } catch (e) {
+      setSendError('Could not send. Is the model reachable?');
+      console.warn('sendMessage failed', e);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const isLive = stream === 'live' || stream === 'connecting' || sending;
   const liveBlock = Boolean(answer.trim() || thinking);
   const empty = stream !== 'loading' && messages.length === 0 && !liveBlock;
 
@@ -137,12 +191,24 @@ export default function SessionScreen({
         <button className="ghost" onClick={onBack} type="button" aria-label="Back">
           <ChevronLeftIcon size={24} />
         </button>
-        <span className={'status-pill ' + stream}>{stream}</span>
-        {isLive && (
-          <button className="stop" onClick={onStop} type="button" disabled={stopping}>
-            {stopping ? 'Stopping...' : 'Stop'}
-          </button>
-        )}
+        <select
+          className="model-select"
+          value={picked}
+          onChange={(e) => setPicked(Number(e.target.value))}
+          disabled={models.length === 0 || isLive}
+          aria-label="Model"
+        >
+          {models.length === 0 && <option>model</option>}
+          {models.map((m, i) => (
+            <option key={m.endpointId + m.model} value={i}>
+              {m.model}
+              {models.some((o) => o.model === m.model && o.endpointId !== m.endpointId)
+                ? ` (${m.endpointName})`
+                : ''}
+            </option>
+          ))}
+        </select>
+        <span className={'status-dot ' + stream} title={stream} aria-label={stream} />
       </header>
 
       <div className="detail-body" ref={bodyRef}>
@@ -177,13 +243,45 @@ export default function SessionScreen({
         {stream === 'loading' && <div className="muted pad">Loading...</div>}
         {empty && (
           <div className="muted pad">
-            {stream === 'error'
-              ? 'Could not load this session.'
-              : 'No messages yet.'}
+            {stream === 'error' ? 'Could not load this session.' : 'No messages yet.'}
           </div>
         )}
         {statusLine && <div className="tool-line">{statusLine}</div>}
       </div>
+
+      {sendError && <div className="error">{sendError}</div>}
+
+      <form
+        className="composer"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSend();
+        }}
+      >
+        <textarea
+          className="composer-input"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              onSend();
+            }
+          }}
+          placeholder={isLive ? 'Running...' : 'Message Odysseus...'}
+          rows={1}
+          disabled={isLive}
+        />
+        {isLive ? (
+          <button className="stop" onClick={onStop} type="button" disabled={stopping}>
+            {stopping ? '...' : 'Stop'}
+          </button>
+        ) : (
+          <button className="stop send" type="submit" disabled={!draft.trim()}>
+            Send
+          </button>
+        )}
+      </form>
     </div>
   );
 }
