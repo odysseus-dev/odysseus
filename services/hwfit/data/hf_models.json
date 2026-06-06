@@ -8203,29 +8203,35 @@
    }
   ]
  },
- {
-  "name": "deepseek-ai/DeepSeek-V2-Lite-Chat",
-  "provider": "DeepSeek",
-  "parameter_count": "15.7B",
-  "parameters_raw": 15706484224,
-  "min_ram_gb": 8.8,
-  "recommended_ram_gb": 14.6,
-  "min_vram_gb": 8.0,
-  "quantization": "Q4_K_M",
-  "context_length": 163840,
-  "use_case": "Instruction following, chat",
-  "capabilities": [],
-  "pipeline_tag": "text-generation",
-  "architecture": "deepseek_v2",
-  "hf_downloads": 330400,
-  "hf_likes": 134,
-  "release_date": "2024-05-15",
-  "is_moe": true,
-  "num_experts": 64,
-  "active_experts": 6,
-  "active_parameters": 2184182961,
-  "_discovered": true
- },
+  {
+   "name": "deepseek-ai/DeepSeek-V2-Lite-Chat",
+   "provider": "DeepSeek",
+   "parameter_count": "15.7B",
+   "parameters_raw": 15706484224,
+   "min_ram_gb": 8.8,
+   "recommended_ram_gb": 14.6,
+   "min_vram_gb": 8.0,
+   "quantization": "Q4_K_M",
+   "context_length": 163840,
+   "use_case": "Instruction following, chat",
+   "capabilities": [],
+   "pipeline_tag": "text-generation",
+   "architecture": "deepseek_v2",
+   "hf_downloads": 330400,
+   "hf_likes": 134,
+   "release_date": "2024-05-15",
+   "is_moe": true,
+   "num_experts": 64,
+   "active_experts": 6,
+   "active_parameters": 2184182961,
+   "gguf_sources": [
+    {
+     "repo": "legraphista/DeepSeek-V2-Lite-Chat-IMat-GGUF",
+     "provider": "legraphista"
+    }
+   ],
+   "_discovered": true
+  },
  {
   "name": "deepseek-ai/DeepSeek-V2-Lite",
   "provider": "DeepSeek",
