@@ -11,7 +11,7 @@ def _resolve_local_llm_router_fallback(
     owner=None,
     prompt: str = "background utility task",
 ):
-    """Map __auto_stack__ to a concrete local model for background LLM calls."""
+    """Map Auto (Local LLMs) sentinel to a concrete local model for background LLM calls."""
     from src.local_llm_router_routing import (
         is_local_llm_router_auto_model,
         resolve_local_llm_router,

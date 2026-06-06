@@ -22,10 +22,13 @@ import documentModule from './document.js';
 import * as emailInbox from './emailInbox.js';
 import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
+import { getLocalLlmRouterReadiness, noteAutoResolvedModel } from './modelPicker.js';
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
+  const LOCAL_LLM_ROUTER_AUTO_MODEL_ID = '__auto_stack__';
+  const AUTO_SELECTING_LABEL = 'Selecting model';
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 
   let API_BASE = '';
@@ -534,6 +537,17 @@ import { createStreamRenderer } from './streamingRenderer.js';
       }
     }
 
+    const _sendModel = sessionModule.getCurrentModel?.() || '';
+    if (_sendModel === LOCAL_LLM_ROUTER_AUTO_MODEL_ID) {
+      const readiness = getLocalLlmRouterReadiness();
+      if (!readiness.ok) {
+        if (uiModule.showToast) uiModule.showToast(readiness.message);
+        else if (uiModule.showError) uiModule.showError(readiness.message);
+        _releaseSendFlag();
+        return;
+      }
+    }
+
     // --- API key guard: warn if message looks like an API key ---
     if (API_KEY_RE.test(msg.trim())) {
       if (!await window.styledConfirm('This looks like an API key. Sending it to the AI could expose it.\n\nDid you mean to use /setup instead?', { confirmText: 'Send anyway', danger: true })) {
@@ -896,6 +910,7 @@ import { createStreamRenderer } from './streamingRenderer.js';
       holder._researchQuery = msg; // Store query for notification text
       
       const modelName = sessionModule.getCurrentModel() || null;
+      const _isAutoStack = modelName === LOCAL_LLM_ROUTER_AUTO_MODEL_ID;
 
       let loadingText = 'Initializing...';
 
@@ -908,10 +923,10 @@ import { createStreamRenderer } from './streamingRenderer.js';
       } else if (el('research-toggle').checked) {
         loadingText = 'Deep research mode active...';
       } else {
-        loadingText = 'Processing request...';
+        loadingText = _isAutoStack ? 'Selecting model...' : 'Processing request...';
       }
 
-      var roleLabel = _modelRouteLabel(modelName, modelName);
+      var roleLabel = _isAutoStack ? AUTO_SELECTING_LABEL : _modelRouteLabel(modelName, modelName);
       var _charNameInit = presetsModule.getCharacterName ? presetsModule.getCharacterName() : '';
       if (_charNameInit) roleLabel = _charNameInit;
       const roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
@@ -1823,21 +1838,27 @@ import { createStreamRenderer } from './streamingRenderer.js';
                   sessionModule.updateModelPicker();
                 }
                 continue;
-              } else if (json.type === 'model_info') {
-                // Update role label with model name as soon as we know it
+              } else if (json.type === 'model_info' || json.type === 'model_resolved') {
                 if (!_isBg && holder) {
                   const roleEl = holder.querySelector('.role');
                   if (roleEl) {
                     holder._requestedModel = json.requested_model || json.model || holder._requestedModel;
                     holder._actualModel = json.model || holder._actualModel || holder._requestedModel;
                     if (json.suffix) holder._roleSuffix = json.suffix;
-                    // Prepend character name if sent by server or set locally
                     var _charName = json.character_name || (presetsModule.getCharacterName ? presetsModule.getCharacterName() : '');
                     if (_charName) holder._characterName = _charName;
                     _setRoleModelLabel(roleEl, holder._requestedModel, holder._actualModel, {
                       suffix: holder._roleSuffix,
                       characterName: holder._characterName,
                     });
+                    if (json.local_llm_router) {
+                      noteAutoResolvedModel(json.model, json.route_reasons);
+                    }
+                    if (json.local_llm_router && json.model && spinner) {
+                      spinner.updateMessage(_shortModel(json.model) + ' - Generating');
+                    } else if (json.type === 'model_info' && spinner) {
+                      spinner.updateMessage('Generating response');
+                    }
                   }
                 }
               } else if (json.type === 'fallback') {
