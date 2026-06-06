@@ -653,13 +653,45 @@ def _validate_serve_cmd(v: str | None) -> str | None:
         if not any(c in inner for c in (";", "&&", "||", "$(", "`")):
             cleaned_v = cleaned_v.replace(match.group(0), "/placeholder/safe/path.gguf")
 
-    # `||` may only join serve invocations (the documented fallback chain); every
-    # other shell control/substitution operator stays banned, and each ||-part
-    # must start with an allowlisted binary, so no arbitrary payload can ride
-    # along. (`$(` was the original intent; bare `$` is fine for shell-safe paths.)
+    # Build an "unquoted skeleton": the command with all quoted spans removed,
+    # using the shell's own quoting rules (single quotes are literal; double
+    # quotes honour backslash escapes; an unquoted backslash escapes the next
+    # char — matching _bash_squote/_shell_squote). Shell operators are then
+    # rejected only when they appear in this skeleton, i.e. OUTSIDE quotes — so a
+    # quoted arg like a vLLM ``--chat-template '…<|turn>…'`` value (which
+    # legitimately contains < > | { }) never trips the check, while an injected
+    # ``llama-server … | rm -rf /`` (unquoted pipe) does.
+    skeleton = []
+    i, n, quote = 0, len(cleaned_v), None
+    while i < n:
+        c = cleaned_v[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+        elif quote == '"':
+            if c == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if c == '"':
+                quote = None
+        elif c == "'":
+            quote = "'"
+        elif c == '"':
+            quote = '"'
+        elif c == "\\" and i + 1 < n:
+            i += 2
+            continue
+        else:
+            skeleton.append(c)
+        i += 1
+    # `||` is the one allowed top-level operator (a fallback chain between two
+    # allowlisted serve binaries) — drop it before scanning for a lone `|`.
+    skeleton = "".join(skeleton).replace("||", " ")
+    if any(op in skeleton for op in (";", "&", "|", "<", ">", "$(", "`")):
+        raise HTTPException(400, "Invalid characters in cmd")
+    # Every ||-part must still START with an allowlisted binary, so a fallback
+    # segment can't smuggle in a non-serve command.
     for part in cleaned_v.split("||"):
-        if any(c in part for c in (";", "&&", "$(")):
-            raise HTTPException(400, "Invalid characters in cmd")
         _check_serve_binary(part.strip())
     return v
 

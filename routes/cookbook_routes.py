@@ -129,20 +129,33 @@ def _ensure_windows_llama_server() -> str | None:
 
     try:
         rel = json.loads(_get("https://api.github.com/repos/ggml-org/llama.cpp/releases/latest", 25).decode("utf-8"))
-        assets = {(a.get("name") or "").lower(): a.get("browser_download_url") for a in rel.get("assets", [])}
+        assets = {(a.get("name") or "").lower(): (a.get("browser_download_url"), a.get("digest")) for a in rel.get("assets", [])}
 
         def _pick(*subs):
-            for name, url in assets.items():
+            for name, (url, digest) in assets.items():
                 if name.endswith(".zip") and all(s in name for s in subs):
-                    return name, url
+                    return name, url, digest
             return None
+
+        def _get_verified(url: str, digest: str | None, timeout: int) -> bytes:
+            # _get already enforces HTTPS + a GitHub host. Additionally verify the
+            # bytes against the SHA-256 GitHub reports for this asset (carried in
+            # the TLS-verified api.github.com response) — this catches a tampered
+            # or corrupt download even if the asset CDN is compromised. Older API
+            # responses omit `digest`; then the HTTPS+host guard from _get stands.
+            blob = _get(url, timeout)
+            if digest and digest.startswith("sha256:"):
+                import hashlib
+                if hashlib.sha256(blob).hexdigest() != digest.split(":", 1)[1].strip().lower():
+                    raise ValueError(f"checksum mismatch for {os.path.basename(url)}")
+            return blob
 
         # Vulkan — small, synchronous: the always-available GPU fallback. (CPU
         # build only if no Vulkan asset exists at all.)
         if not vk_exe.exists():
             vk = _pick("bin-win-vulkan", "x64") or _pick("bin-win-vulkan") or _pick("bin-win-cpu", "x64") or _pick("bin-win-cpu")
             if vk:
-                _extract(_get(vk[1], 600), vk_dir)
+                _extract(_get_verified(vk[1], vk[2], 600), vk_dir)
 
         # CUDA — large; provision in the background so the first serve isn't
         # blocked on a ~0.5 GB download. Prefer the newest CUDA major (13.x →
@@ -153,13 +166,13 @@ def _ensure_windows_llama_server() -> str | None:
                 m = _re.search(r"cuda-(\d+\.\d+)", cuda[0])
                 cudart = _pick("cudart", f"cuda-{m.group(1)}") if m else _pick("cudart")
 
-                def _provision_cuda(cuda_url, cudart_url):
+                def _provision_cuda(cuda_url, cuda_digest, cudart_url, cudart_digest):
                     try:
                         tmp = bin_dir / "llama-cpp-cuda.tmp"
                         shutil.rmtree(tmp, ignore_errors=True)
-                        _extract(_get(cuda_url, 1800), tmp)
+                        _extract(_get_verified(cuda_url, cuda_digest, 1800), tmp)
                         if cudart_url:
-                            _extract(_get(cudart_url, 1800), tmp)
+                            _extract(_get_verified(cudart_url, cudart_digest, 1800), tmp)
                         if (tmp / "llama-server.exe").exists():
                             shutil.rmtree(cuda_dir, ignore_errors=True)
                             os.replace(tmp, cuda_dir)
@@ -172,7 +185,7 @@ def _ensure_windows_llama_server() -> str | None:
 
                 threading.Thread(
                     target=_provision_cuda,
-                    args=(cuda[1], cudart[1] if cudart else None),
+                    args=(cuda[1], cuda[2], cudart[1] if cudart else None, cudart[2] if cudart else None),
                     daemon=True,
                 ).start()
 
