@@ -55,6 +55,14 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def sha256_path(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def stable_id(kind: str, source_name: str, *parts: Any) -> str:
     raw = "\x1f".join([kind, source_name, *[str(part) for part in parts]])
     return f"{kind}:{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:16]}"
@@ -230,31 +238,34 @@ def collect_archive_paths(
             warnings.append(InputWarning(str(path), "skipped non-text archive file"))
             continue
         try:
-            raw = path.read_bytes()
+            st = path.stat()
         except Exception as exc:
-            warnings.append(InputWarning(str(path), f"could not read archive file: {exc}"))
+            warnings.append(InputWarning(str(path), f"could not stat archive file: {exc}"))
             continue
-        if len(raw) > max_bytes:
+        size = st.st_size
+        try:
+            file_hash = sha256_path(path)
+        except Exception as exc:
+            warnings.append(InputWarning(str(path), f"could not hash archive file: {exc}"))
+            continue
+        if include_content and size > max_bytes:
             warnings.append(InputWarning(str(path), f"skipped archive content over {max_bytes} bytes"))
-            include_this_content = False
-        else:
-            include_this_content = include_content
         archive_item: dict[str, Any] = {
-            "id": stable_id("archive", source_name, path, sha256_bytes(raw)),
+            "id": stable_id("archive", source_name, path, file_hash),
             "kind": "archive_document",
             "title": path.name,
             "source": source_name,
             "metadata": {
                 "source_path": str(path),
-                "size_bytes": len(raw),
-                "sha256": sha256_bytes(raw),
+                "size_bytes": size,
+                "sha256": file_hash,
             },
         }
-        if include_this_content:
+        if include_content and size <= max_bytes:
             try:
-                archive_item["content"] = raw.decode("utf-8")
+                archive_item["content"] = path.read_text(encoding="utf-8")
             except UnicodeDecodeError:
-                archive_item["content"] = raw.decode("utf-8", errors="replace")
+                archive_item["content"] = path.read_text(encoding="utf-8", errors="replace")
                 archive_item["metadata"]["decoded_with_replacement"] = True
         items.append(archive_item)
     return items, warnings
