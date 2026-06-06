@@ -889,6 +889,61 @@ def git_history(workspace: str, path: str | None = None, limit: int = 50) -> dic
     return {"ok": True, "commits": commits}
 
 
+_COMMIT_SHA_RE = re.compile(r"[0-9a-fA-F]{4,40}")
+
+
+def _numstat_count(value: str) -> int | None:
+    """A numstat column is a decimal count, or '-' for a binary file."""
+    return int(value) if value.isdigit() else None
+
+
+def git_commit_stat(workspace: str, sha: str) -> dict[str, Any]:
+    ctx = repo_context(workspace)
+    candidate = (sha or "").strip()
+    if not _COMMIT_SHA_RE.fullmatch(candidate):
+        raise GitWorkspaceError("git_failed", "invalid commit id")
+    verify = git_run(ctx.repo_root, ["rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}"], check=False)
+    resolved = verify.stdout.strip()
+    if verify.returncode != 0 or not resolved:
+        raise GitWorkspaceError("git_failed", "unknown commit")
+    # An RS (\x1e) terminates the header so a multi-line body never collides with
+    # the numstat block that follows; fields inside the header split on US (\x1f).
+    fmt = "%H%x1f%P%x1f%an%x1f%ae%x1f%ad%x1f%s%x1f%b%x1e"
+    result = git_run(ctx.repo_root, ["show", "--no-color", "--numstat", f"--format={fmt}", resolved, "--"])
+    header, _, rest = result.stdout.partition("\x1e")
+    fields = header.split("\x1f")
+    if len(fields) != 7:
+        raise GitWorkspaceError("git_failed", "could not read commit")
+    files: list[dict[str, Any]] = []
+    additions = 0
+    deletions = 0
+    for line in rest.splitlines():
+        if "\t" not in line:
+            continue
+        ins_raw, del_raw, path = line.split("\t", 2)
+        insertions = _numstat_count(ins_raw)
+        removed = _numstat_count(del_raw)
+        additions += insertions or 0
+        deletions += removed or 0
+        files.append({"path": path, "insertions": insertions, "deletions": removed})
+    return {
+        "ok": True,
+        "commit": {
+            "sha": fields[0],
+            "parents": fields[1].split(),
+            "author": fields[2],
+            "email": fields[3],
+            "date": fields[4],
+            "subject": fields[5],
+            "body": fields[6].rstrip("\n"),
+            "files": files,
+            "fileCount": len(files),
+            "additions": additions,
+            "deletions": deletions,
+        },
+    }
+
+
 def git_blame(workspace: str, path: str) -> dict[str, Any]:
     file_info = read_workspace_file(workspace, path)
     if file_info.get("binary"):

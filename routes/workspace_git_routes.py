@@ -16,6 +16,7 @@ from src.workspace_git import (
     git_clone,
     git_commit,
     git_commit_selected,
+    git_commit_stat,
     git_conflicts,
     git_create_branch,
     git_diff,
@@ -259,6 +260,14 @@ def setup_workspace_git_routes() -> APIRouter:
         limit: int = Query(default=50),
     ):
         return _run(request, git_history, workspace, path, limit)
+
+    @router.get("/commit")
+    def commit_stat(
+        request: Request,
+        workspace: str | None = Query(default=None),
+        sha: str | None = Query(default=None),
+    ):
+        return _run(request, git_commit_stat, workspace, sha)
 
     @router.get("/blame")
     def blame(request: Request, workspace: str | None = Query(default=None), path: str | None = Query(default=None)):

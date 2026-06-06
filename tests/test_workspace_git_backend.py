@@ -59,6 +59,7 @@ def test_all_workspace_file_and_git_endpoints_reject_non_admin_owner(monkeypatch
         ("/api/workspace/git/diff", {"workspace": str(tmp_path)}),
         ("/api/workspace/git/branches", {"workspace": str(tmp_path)}),
         ("/api/workspace/git/history", {"workspace": str(tmp_path)}),
+        ("/api/workspace/git/commit", {"workspace": str(tmp_path), "sha": "abcdef"}),
         ("/api/workspace/git/blame", {"workspace": str(tmp_path), "path": "x"}),
         ("/api/workspace/git/conflicts", {"workspace": str(tmp_path)}),
     ]
@@ -954,3 +955,65 @@ def test_git_history_repo_scope_surfaces_all_branches(monkeypatch, tmp_path):
     for commit in file_history["commits"]:
         assert isinstance(commit["parents"], list)
         assert isinstance(commit["refs"], list)
+
+
+def _commit_with_changes(repo):
+    """Second commit changing a text file, adding a text file and a binary file.
+    Returns the new commit sha."""
+    (repo / "f.txt").write_text("a\nb\nc\n", encoding="utf-8")
+    _git(repo, "add", "f.txt")
+    _git(repo, "commit", "-m", "base")
+
+    (repo / "f.txt").write_text("a\nB\nc\nd\n", encoding="utf-8")
+    (repo / "new.txt").write_text("new\n", encoding="utf-8")
+    (repo / "image.bin").write_bytes(b"\x00\x01\x02bin")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "subject line", "-m", "body one\nbody two")
+    return _git(repo, "rev-parse", "HEAD").stdout.strip()
+
+
+def test_commit_stat_endpoint_returns_changed_files(monkeypatch, tmp_path):
+    client = _client(monkeypatch)
+    repo = _init_repo(tmp_path / "repo")
+    head_sha = _commit_with_changes(repo)
+
+    response = client.get("/api/workspace/git/commit", params={"workspace": str(repo), "sha": head_sha})
+    assert response.status_code == 200
+    commit = response.json()["commit"]
+
+    assert commit["sha"] == head_sha
+    assert commit["subject"] == "subject line"
+    assert commit["body"].splitlines() == ["body one", "body two"]
+    assert len(commit["parents"]) == 1
+    assert commit["fileCount"] == 3
+    assert commit["additions"] == 3   # f.txt +2, new.txt +1
+    assert commit["deletions"] == 1   # f.txt -1
+
+    files = {entry["path"]: entry for entry in commit["files"]}
+    assert files["f.txt"]["insertions"] == 2 and files["f.txt"]["deletions"] == 1
+    assert files["new.txt"]["insertions"] == 1 and files["new.txt"]["deletions"] == 0
+    # Binary files report no line counts.
+    assert files["image.bin"]["insertions"] is None and files["image.bin"]["deletions"] is None
+
+
+def test_commit_stat_endpoint_accepts_abbreviated_sha(monkeypatch, tmp_path):
+    client = _client(monkeypatch)
+    repo = _init_repo(tmp_path / "repo")
+    head_sha = _commit_with_changes(repo)
+
+    response = client.get("/api/workspace/git/commit", params={"workspace": str(repo), "sha": head_sha[:8]})
+    assert response.status_code == 200
+    assert response.json()["commit"]["sha"] == head_sha
+
+
+def test_commit_stat_endpoint_rejects_invalid_sha(monkeypatch, tmp_path):
+    client = _client(monkeypatch)
+    repo = _init_repo(tmp_path / "repo")
+    _commit_with_changes(repo)
+
+    for bad in ["zzz", "; rm -rf /", "../../etc/passwd", "HEAD", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"]:
+        response = client.get("/api/workspace/git/commit", params={"workspace": str(repo), "sha": bad})
+        assert response.status_code == 400, f"expected rejection for {bad!r}"
+        body = response.json()
+        assert body["ok"] is False
+        assert body["code"]
