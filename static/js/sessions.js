@@ -2184,12 +2184,26 @@ async function _checkServerStream(sessionId) {
     box.appendChild(holder);
     uiModule.scrollHistory();
 
+    // sessions.js executes before chat.js in module order, so window.chatModule
+    // may not be set yet when _checkServerStream first runs. Retry resumeStream
+    // on the first poll tick where it becomes available.
+    let _resumeRetried = false;
     const pollId = setInterval(async () => {
       if (getCurrentSessionId() !== sessionId) {
         clearInterval(pollId);
         spinner.destroy();
         if (holder.parentNode) holder.remove();
         return;
+      }
+      if (!_resumeRetried && window.chatModule && window.chatModule.resumeStream) {
+        _resumeRetried = true;
+        const attached = await window.chatModule.resumeStream(sessionId);
+        if (attached) {
+          clearInterval(pollId);
+          spinner.destroy();
+          if (holder.parentNode) holder.remove();
+          return;
+        }
       }
       try {
         const r = await fetch(`${API_BASE}/api/chat/stream_status/${sessionId}`);

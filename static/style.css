@@ -842,7 +842,7 @@ body.bg-pattern-sparkles {
       display: flex; gap: 6px; flex-wrap: wrap;
       max-width: calc(100vw - 24px);
       padding: 4px;
-      z-index: 10020;
+      z-index: 100;
       pointer-events: none;
     }
     .minimized-dock-chip {

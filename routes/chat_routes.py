@@ -893,6 +893,8 @@ def setup_chat_routes(
             elif chat_mode == "chat":
                 _chat_start = time.time()
                 _answered_by = None  # set if the selected model failed and a fallback answered
+                _requested_model = sess.model
+                _actual_model = None
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
                 try:
                     _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
@@ -925,10 +927,18 @@ def setup_chat_routes(
                                     # Selected model failed; a fallback answered.
                                     # Forward the notice and remember the real model.
                                     _answered_by = data.get("answered_by") or _answered_by
+                                    _actual_model = _actual_model or _answered_by
+                                    data["selected_model"] = data.get("selected_model") or _requested_model
                                     yield chunk
+                                elif data.get("type") == "model_actual":
+                                    _actual_model = data.get("model") or _actual_model
+                                    data["requested_model"] = _requested_model
+                                    yield f'data: {json.dumps(data)}\n\n'
                                 elif data.get("type") == "usage":
                                     last_metrics = data.get("data", {})
-                                    last_metrics["model"] = _answered_by or sess.model
+                                    _reported_model = last_metrics.get("model")
+                                    last_metrics["requested_model"] = _requested_model
+                                    last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model
                                     if ctx.context_length and last_metrics.get("input_tokens"):
                                         pct = min(round((last_metrics["input_tokens"] / ctx.context_length) * 100, 1), 100.0)
                                         last_metrics["context_percent"] = pct
@@ -965,7 +975,8 @@ def setup_chat_routes(
                                     "tokens_per_second": _tps,
                                     "context_percent": _ctx_pct,
                                     "context_length": ctx.context_length,
-                                    "model": sess.model,
+                                    "model": _actual_model or _answered_by or _requested_model,
+                                    "requested_model": _requested_model,
                                     "usage_source": "estimated",
                                 }
                                 yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
@@ -994,7 +1005,14 @@ def setup_chat_routes(
                 except (asyncio.CancelledError, GeneratorExit):
                     if full_response:
                         logger.info("Client disconnected mid-stream (chat mode) for session %s, saving partial (%d chars)", session, len(full_response))
-                        _stopped_content, _stopped_md = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model})
+                        _stopped_content, _stopped_md = clean_thinking_for_save(
+                            full_response,
+                            {
+                                "stopped": True,
+                                "model": _actual_model or _answered_by or _requested_model,
+                                "requested_model": _requested_model,
+                            },
+                        )
                         sess.add_message(ChatMessage("assistant", _stopped_content, metadata=_stopped_md))
                         if not incognito:
                             session_manager.save_sessions()
@@ -1006,6 +1024,8 @@ def setup_chat_routes(
                 _agent_rounds = 0
                 _agent_tool_calls = 0
                 _answered_by = None  # set if the selected model failed and a fallback answered
+                _requested_model = sess.model
+                _actual_model = None
                 try:
                     from src.settings import get_setting
                     from src.agent_tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
@@ -1071,10 +1091,18 @@ def setup_chat_routes(
                                     # model so metrics reflect it, not the masked
                                     # selected model.
                                     _answered_by = data.get("answered_by") or _answered_by
+                                    _actual_model = _actual_model or _answered_by
+                                    data["selected_model"] = data.get("selected_model") or _requested_model
                                     yield chunk
+                                elif data.get("type") == "model_actual":
+                                    _actual_model = data.get("model") or _actual_model
+                                    data["requested_model"] = _requested_model
+                                    yield f'data: {json.dumps(data)}\n\n'
                                 elif data.get("type") == "metrics":
                                     last_metrics = data.get("data", {})
-                                    last_metrics["model"] = _answered_by or sess.model
+                                    _reported_model = last_metrics.get("model")
+                                    last_metrics["requested_model"] = last_metrics.get("requested_model") or _requested_model
+                                    last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model
                                     yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
                             except json.JSONDecodeError:
                                 yield chunk
@@ -1115,7 +1143,14 @@ def setup_chat_routes(
                     try:
                         if full_response:
                             logger.info("Client disconnected mid-stream for session %s, saving partial response (%d chars)", session, len(full_response))
-                            _stopped_content2, _stopped_md2 = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model})
+                            _stopped_content2, _stopped_md2 = clean_thinking_for_save(
+                                full_response,
+                                {
+                                    "stopped": True,
+                                    "model": _actual_model or _answered_by or _requested_model,
+                                    "requested_model": _requested_model,
+                                },
+                            )
                             sess.add_message(ChatMessage("assistant", _stopped_content2, metadata=_stopped_md2))
                             if not incognito:
                                 session_manager.save_sessions()
