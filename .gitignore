@@ -89,3 +89,5 @@ docs/windows-port/
 compound.config.json
 *.error.log
 _scratch/
+scripts/local-dev-down.sh
+scripts/local-dev-up.sh
