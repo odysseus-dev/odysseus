@@ -73,6 +73,7 @@ def test_all_workspace_file_and_git_endpoints_reject_non_admin_owner(monkeypatch
         ("/api/workspace/git/commit-selected", {"workspace": str(tmp_path), "paths": ["x"], "message": "m"}),
         ("/api/workspace/git/checkout", {"workspace": str(tmp_path), "branch": "main"}),
         ("/api/workspace/git/checkout-stash", {"workspace": str(tmp_path), "branch": "main"}),
+        ("/api/workspace/git/branch/create", {"workspace": str(tmp_path), "branch": "feature"}),
         ("/api/workspace/git/fetch", {"workspace": str(tmp_path)}),
         ("/api/workspace/git/pull", {"workspace": str(tmp_path)}),
         ("/api/workspace/git/push", {"workspace": str(tmp_path)}),
@@ -424,6 +425,42 @@ def test_git_commit_branches_and_local_remote_actions(monkeypatch, tmp_path):
     assert client.post("/api/workspace/git/push", json={"workspace": str(repo)}).status_code == 200
 
 
+def test_git_create_branch(monkeypatch, tmp_path):
+    client = _client(monkeypatch)
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "file.txt").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", "file.txt")
+    _git(repo, "commit", "-m", "base")
+
+    created = client.post("/api/workspace/git/branch/create", json={"workspace": str(repo), "branch": "feature-x"})
+    assert created.status_code == 200
+    assert created.json()["branch"] == "feature-x"
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "feature-x"
+
+    # Creating an existing branch is rejected.
+    dup = client.post("/api/workspace/git/branch/create", json={"workspace": str(repo), "branch": "feature-x"})
+    assert dup.status_code == 400
+    assert dup.json()["code"] == "git_failed"
+
+    # Invalid names are rejected before reaching the worktree.
+    for bad in ("bad name", "-x", "foo..bar"):
+        resp = client.post("/api/workspace/git/branch/create", json={"workspace": str(repo), "branch": bad})
+        assert resp.status_code == 400, bad
+
+
+def test_git_create_branch_rejects_nested_workspace(monkeypatch, tmp_path):
+    client = _client(monkeypatch)
+    repo = _init_repo(tmp_path / "repo")
+    workspace = repo / "sub"
+    workspace.mkdir()
+    (workspace / "file.txt").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "base")
+    resp = client.post("/api/workspace/git/branch/create", json={"workspace": str(workspace), "branch": "feature"})
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "outside_workspace"
+
+
 def test_git_commit_staged_changes(monkeypatch, tmp_path):
     client = _client(monkeypatch)
     repo = _init_repo(tmp_path / "repo")
@@ -722,3 +759,43 @@ def test_missing_git_returns_stable_error(monkeypatch, tmp_path):
 
     assert response.status_code == 400
     assert response.json()["code"] == "missing_git"
+
+
+def test_conflict_marker_detection_covers_diff3_and_is_anchored():
+    import src.workspace_git as workspace_git
+
+    detect = workspace_git._contains_conflict_markers
+
+    # Standard merge-style markers (with and without labels).
+    assert detect("a\n<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> branch\nb\n")
+    assert detect("<<<<<<<\nx\n=======\ny\n>>>>>>>\n")
+    # diff3/zdiff3 base separator must be treated as a remaining marker so a
+    # leaked base section cannot pass validation and get staged.
+    assert detect("ours\n||||||| merged common ancestors\nbase\n=======\ntheirs\n")
+    assert detect("clean\n||||||| base\nstuff\n")
+    assert not detect("resolved\n")
+    # Exact-7-char anchoring: an 8+ char underline / long rule / inline text is NOT
+    # a conflict marker.
+    assert not detect("Title\n========\n\nbody text\n")  # 8 '=' (reST underline)
+    assert not detect("section\n====================\nbody\n")  # long rule
+    assert not detect("the operator <<<<<<< is documented inline\n")  # mid-line
+
+
+def test_resolve_conflict_rejects_leaked_diff3_base(monkeypatch, tmp_path):
+    client = _client(monkeypatch)
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "f.txt").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", "f.txt")
+    _git(repo, "commit", "-m", "base")
+
+    # Content that still carries a diff3 base separator must be rejected, not staged.
+    leaked = client.post(
+        "/api/workspace/git/conflict/resolve",
+        json={
+            "workspace": str(repo),
+            "path": "f.txt",
+            "content": "ours\n||||||| merged common ancestors\nbase\n",
+        },
+    )
+    assert leaked.status_code == 400
+    assert leaked.json()["code"] == "merge_conflict"

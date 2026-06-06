@@ -676,6 +676,29 @@ def git_checkout(workspace: str, branch: str, *, stash: bool = False) -> dict[st
     return {"ok": True, "branch": branch, "stashed": stashed}
 
 
+def git_create_branch(workspace: str, branch: str) -> dict[str, Any]:
+    """Create a new branch and switch to it. `git checkout -b` carries any
+    uncommitted changes onto the new branch (normal git behaviour), so no stash
+    is needed here. Rejects unsafe/duplicate names with a clean error."""
+    ctx = repo_context(workspace)
+    _require_repo_root_workspace(ctx)
+    branch = (branch or "").strip()
+    if not branch:
+        raise GitWorkspaceError("git_failed", "branch name is required")
+    # Reject leading '-' (option injection) before any name reaches git.
+    if branch.startswith("-"):
+        raise GitWorkspaceError("git_failed", f"invalid branch name: {branch}")
+    if git_run(ctx.repo_root, ["check-ref-format", "--branch", branch], check=False).returncode != 0:
+        raise GitWorkspaceError("git_failed", f"invalid branch name: {branch}")
+    with _mutation_lock(ctx.repo_root):
+        _reject_unsafe_git_config(ctx.repo_root)
+        exists = git_run(ctx.repo_root, ["rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], check=False)
+        if exists.returncode == 0:
+            raise GitWorkspaceError("git_failed", f"branch already exists: {branch}")
+        git_run(ctx.repo_root, ["checkout", "-b", branch])
+    return {"ok": True, "branch": branch, "created": True}
+
+
 def git_remote_action(workspace: str, action: str) -> dict[str, Any]:
     if action not in {"fetch", "pull", "push"}:
         raise GitWorkspaceError("git_failed", "unknown remote action")
@@ -784,8 +807,21 @@ def git_blame(workspace: str, path: str) -> dict[str, Any]:
     return {"ok": True, "path": _to_workspace_rel(ctx, rel), "lines": lines}
 
 
+# Match a real git conflict-marker line: exactly seven marker characters at the
+# start of a line, optionally followed by a label (e.g. "<<<<<<< HEAD"). Anchoring
+# and the exact-7 length keep legitimate content from false-positiving — an 8+ char
+# "========" underline or a long "====" rule is not a marker — while still catching
+# every marker git emits. The "|||||||" alternative is the diff3/zdiff3 base
+# separator, so resolutions in that conflict style cannot slip a leaked base
+# section past validation and get staged.
+_CONFLICT_MARKER_RE = re.compile(
+    r"^(?:<{7}|\|{7}|={7}|>{7})(?:[ \t].*)?$",
+    re.MULTILINE,
+)
+
+
 def _contains_conflict_markers(text: str) -> bool:
-    return "<<<<<<<" in text or "=======" in text or ">>>>>>>" in text
+    return bool(_CONFLICT_MARKER_RE.search(text))
 
 
 def git_conflicts(workspace: str) -> dict[str, Any]:

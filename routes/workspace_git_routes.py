@@ -16,6 +16,7 @@ from src.workspace_git import (
     git_commit,
     git_commit_selected,
     git_conflicts,
+    git_create_branch,
     git_diff,
     git_discard,
     git_history,
@@ -122,6 +123,10 @@ def setup_workspace_git_routes() -> APIRouter:
     @router.post("/checkout-stash")
     def checkout_stash(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
         return _run(request, git_checkout, body.get("workspace"), body.get("branch"), stash=True)
+
+    @router.post("/branch/create")
+    def branch_create(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+        return _run(request, git_create_branch, body.get("workspace"), body.get("branch"))
 
     @router.post("/fetch")
     def fetch(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
