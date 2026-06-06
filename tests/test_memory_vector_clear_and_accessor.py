@@ -174,3 +174,250 @@ def test_get_memory_vector_store_recovers_from_unhealthy(monkeypatch, tmp_path):
     second = mv.get_memory_vector_store(str(tmp_path))
     assert second.healthy
     assert second is not first
+
+
+# ---------------------------------------------------------------------------
+# Decouple clear/count from embedding availability + registration (PR #1968
+# follow-up). The reviewer's case: a memory-wipe must clear ghost vectors even
+# when the standalone embedding factory is down at wipe time, as long as
+# ChromaDB is reachable.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _reset_singletons():
+    """Reset BOTH process singletons around every test so the module-global
+    `_store` and the ChromaDB client can't leak across tests and flake by order."""
+    import src.memory_vector as mv
+    import src.chroma_client as cc
+    mv._store = None
+    cc._client = None
+    yield
+    mv._store = None
+    cc._client = None
+
+
+def _make_degraded_store(monkeypatch, data_dir):
+    """ChromaDB up, embedder unavailable -> `_collection` set, `_healthy` False."""
+    import src.chroma_client as cc
+    import src.embeddings as emb
+    import src.memory_vector as mv
+
+    client = _FakeClient()
+    monkeypatch.setattr(cc, "get_chroma_client", lambda: client)
+
+    def _no_embed():
+        raise RuntimeError("embedding endpoint unavailable")
+
+    monkeypatch.setattr(emb, "get_embedding_client", _no_embed)
+    monkeypatch.setattr(mv, "_store", None, raising=False)
+    store = mv.MemoryVectorStore(str(data_dir))
+    return mv, store, client
+
+
+class _StubbornClient:
+    """delete_collection RAISES; get_or_create_collection returns the SAME
+    (still-populated) collection — models ChromaDB after a swallowed delete."""
+
+    def __init__(self):
+        self.coll = _FakeCollection()
+
+    def get_or_create_collection(self, name, metadata=None):
+        return self.coll
+
+    def delete_collection(self, name):
+        raise RuntimeError("delete failed")
+
+
+class _RecreateFailsClient:
+    """delete_collection succeeds; the recreate (2nd get_or_create) raises."""
+
+    def __init__(self):
+        self.coll = _FakeCollection()
+        self._calls = 0
+
+    def get_or_create_collection(self, name, metadata=None):
+        self._calls += 1
+        if self._calls == 1:
+            return self.coll  # initial construction
+        raise RuntimeError("recreate failed")
+
+    def delete_collection(self, name):
+        pass
+
+
+def test_init_chroma_up_embedder_down_is_degraded_with_live_collection(monkeypatch, tmp_path):
+    """A2: Chroma up but no embedder -> NOT healthy, yet `_collection` is live so
+    clear/count still work, and `_model` is None."""
+    _mv, store, _client = _make_degraded_store(monkeypatch, tmp_path)
+    assert store.healthy is False
+    assert store._collection is not None
+    assert store._model is None
+
+
+def test_init_chroma_down_leaves_no_collection(monkeypatch, tmp_path):
+    """A3: Chroma connect fails -> not healthy and no collection at all."""
+    import src.chroma_client as cc
+    import src.embeddings as emb
+    import src.memory_vector as mv
+
+    monkeypatch.setattr(emb, "get_embedding_client", lambda: _FakeEmbedder())
+
+    def _down():
+        raise RuntimeError("chroma down")
+
+    monkeypatch.setattr(cc, "get_chroma_client", _down)
+    store = mv.MemoryVectorStore(str(tmp_path))
+    assert store.healthy is False
+    assert store._collection is None
+
+
+def test_count_reflects_collection_when_embeddings_down(monkeypatch, tmp_path):
+    """A4: count() reflects the LIVE collection on a degraded store (pre-fix it
+    masked to 0 whenever unhealthy, hiding surviving ghosts)."""
+    _mv, store, _client = _make_degraded_store(monkeypatch, tmp_path)
+    store._collection.add(ids=["m1"], embeddings=[[0.0]], documents=["x"], metadatas=[{}])
+    assert store.count() == 1
+
+
+def test_clear_empties_when_embeddings_down(monkeypatch, tmp_path):
+    """A5 (core regression): clear() empties the index on a Chroma-up/embeddings-down
+    store. Pre-fix clear() was `_healthy`-gated and silently no-op'd here."""
+    _mv, store, _client = _make_degraded_store(monkeypatch, tmp_path)
+    store._collection.add(ids=["a", "b"], embeddings=[[0.0]] * 2, documents=["x", "y"], metadatas=[{}, {}])
+    assert store.count() == 2
+    assert store.clear() is True
+    assert store.count() == 0
+
+
+def test_clear_returns_false_when_no_collection(monkeypatch, tmp_path):
+    """A6: clear() on a Chroma-down store (no collection) is a safe False, no raise."""
+    import src.chroma_client as cc
+    import src.memory_vector as mv
+
+    def _down():
+        raise RuntimeError("chroma down")
+
+    monkeypatch.setattr(cc, "get_chroma_client", _down)
+    store = mv.MemoryVectorStore(str(tmp_path))
+    assert store._collection is None
+    assert store.clear() is False
+
+
+def test_double_clear_is_idempotent(monkeypatch, tmp_path):
+    """A8b: clearing twice stays True and empty, no raise."""
+    _mv, store = _make_healthy_store(monkeypatch, tmp_path)
+    store._collection.add(ids=["a"], embeddings=[[0.0]], documents=["x"], metadatas=[{}])
+    assert store.clear() is True
+    assert store.clear() is True
+    assert store.count() == 0
+
+
+def test_clear_false_when_delete_swallowed_but_collection_populated(monkeypatch, tmp_path):
+    """A8c (the "vector_cleared can't lie" guard): a swallowed delete_collection +
+    recreate-returns-populated must yield False, not True. A naive "didn't throw"
+    clear() would return True while ghosts remain."""
+    import src.chroma_client as cc
+    import src.embeddings as emb
+    import src.memory_vector as mv
+
+    client = _StubbornClient()
+    monkeypatch.setattr(cc, "get_chroma_client", lambda: client)
+    monkeypatch.setattr(emb, "get_embedding_client", lambda: _FakeEmbedder())
+    store = mv.MemoryVectorStore(str(tmp_path))
+    assert store.healthy
+    store._collection.add(ids=["ghost"], embeddings=[[0.0]], documents=["x"], metadatas=[{}])
+    assert store.count() == 1
+    assert store.clear() is False
+    assert store.count() == 1
+
+
+def test_clear_false_when_recreate_raises_midway(monkeypatch, tmp_path):
+    """A8d: delete succeeds, recreate raises -> clear() returns False, no propagation."""
+    import src.chroma_client as cc
+    import src.embeddings as emb
+    import src.memory_vector as mv
+
+    client = _RecreateFailsClient()
+    monkeypatch.setattr(cc, "get_chroma_client", lambda: client)
+    monkeypatch.setattr(emb, "get_embedding_client", lambda: _FakeEmbedder())
+    store = mv.MemoryVectorStore(str(tmp_path))
+    assert store.healthy
+    assert store.clear() is False
+
+
+def test_rebuild_with_entries_and_no_model_preserves_data(monkeypatch, tmp_path):
+    """A8e (data-loss guard): rebuild([entries]) on a model-less store must NOT
+    delete the existing collection (which would be silent data loss); it's a logged
+    no-op leaving vectors intact."""
+    _mv, store, _client = _make_degraded_store(monkeypatch, tmp_path)
+    assert store._model is None
+    store._collection.add(ids=["keep"], embeddings=[[0.0]], documents=["x"], metadatas=[{}])
+    assert store.count() == 1
+    store.rebuild([{"id": "new", "text": "hello"}])
+    assert store.count() == 1
+
+
+def test_registered_store_reused_when_embeddings_down(monkeypatch, tmp_path):
+    """B9 (reviewer's case): the app registered a healthy store built with an
+    embedder; embeddings are down at wipe time. The accessor returns the REGISTERED
+    store (not an unhealthy second store), and clear() empties it."""
+    import src.chroma_client as cc
+    import src.embeddings as emb
+    import src.memory_vector as mv
+
+    client = _FakeClient()
+    monkeypatch.setattr(cc, "get_chroma_client", lambda: client)
+
+    app_store = mv.MemoryVectorStore(str(tmp_path), embedding_model=_FakeEmbedder())
+    assert app_store.healthy
+    app_store._collection.add(ids=["m1"], embeddings=[[0.0]], documents=["x"], metadatas=[{}])
+    assert app_store.count() == 1
+    mv.set_memory_vector_store(app_store)
+
+    def _no_embed():
+        raise RuntimeError("embedding endpoint unavailable")
+
+    monkeypatch.setattr(emb, "get_embedding_client", _no_embed)
+
+    got = mv.get_memory_vector_store()
+    assert got is app_store
+    assert got.healthy
+    assert got.clear() is True
+    assert app_store.count() == 0
+
+
+def test_accessor_clears_when_unregistered_and_embeddings_down(monkeypatch, tmp_path):
+    """B10 (startup-degraded gap that registration alone misses): nothing registered,
+    embeddings down, but Chroma up with a pre-seeded ghost. The freshly-built accessor
+    store still has a collection and clears it."""
+    import src.chroma_client as cc
+    import src.embeddings as emb
+    import src.memory_vector as mv
+
+    client = _FakeClient()
+    coll = client.get_or_create_collection(mv.MemoryVectorStore.COLLECTION_NAME)
+    coll.add(ids=["ghost"], embeddings=[[0.0]], documents=["x"], metadatas=[{}])
+
+    monkeypatch.setattr(cc, "get_chroma_client", lambda: client)
+
+    def _no_embed():
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(emb, "get_embedding_client", _no_embed)
+
+    store = mv.get_memory_vector_store(str(tmp_path))
+    assert store._collection is not None
+    assert store.healthy is False
+    assert store.count() == 1
+    assert store.clear() is True
+    assert store.count() == 0
+
+
+def test_set_memory_vector_store_registers_for_accessor(monkeypatch, tmp_path):
+    """D15 (thin wiring assertion): set_memory_vector_store(s) makes the accessor
+    return exactly s. The app_initializer call site sits inside `if memory_vector.healthy:`
+    so only healthy stores are registered (verified by inspection / the route tests)."""
+    _mv, store = _make_healthy_store(monkeypatch, tmp_path)
+    import src.memory_vector as mv
+    mv.set_memory_vector_store(store)
+    assert mv.get_memory_vector_store() is store

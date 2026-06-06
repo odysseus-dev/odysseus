@@ -55,7 +55,7 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
     # Initialize memory vector store (share embedding model with RAG if available)
     memory_vector = None
     try:
-        from src.memory_vector import MemoryVectorStore
+        from src.memory_vector import MemoryVectorStore, set_memory_vector_store
         embedding_model = getattr(rag_manager, '_model', None) if rag_manager else None
         memory_vector = MemoryVectorStore(DATA_DIR, embedding_model=embedding_model)
         if memory_vector.healthy:
@@ -65,6 +65,11 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
                 if existing:
                     memory_vector.rebuild(existing)
                     logger.info(f"Rebuilt memory vector index from {len(existing)} existing entries")
+            # Register this healthy instance as the process-wide store so callers
+            # that don't hold it (the admin memory-wipe) reuse it instead of
+            # building a fresh, embedding-probing second store whose clear() can
+            # no-op. Register only when healthy.
+            set_memory_vector_store(memory_vector)
             logger.info("MemoryVectorStore initialized")
         else:
             logger.warning("MemoryVectorStore DEGRADED: ChromaDB vector memory unavailable")

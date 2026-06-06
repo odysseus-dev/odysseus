@@ -25,28 +25,43 @@ class MemoryVectorStore:
         self._initialize()
 
     def _initialize(self):
+        # Connect ChromaDB FIRST. clear()/rebuild([])/count() need only the
+        # collection, not an embedder — so a missing embedding backend must not
+        # stop the admin memory-wipe from clearing ghost vectors.
         try:
             from src.chroma_client import get_chroma_client
-
-            if self._model is None:
-                from src.embeddings import get_embedding_client
-                self._model = get_embedding_client()
-                if self._model is None:
-                    raise RuntimeError("No embedding backend available")
-                logger.info(f"MemoryVectorStore using embeddings: {self._model.url}")
 
             client = get_chroma_client()
             self._collection = client.get_or_create_collection(
                 name=self.COLLECTION_NAME,
                 metadata={"hnsw:space": "cosine"},
             )
-
-            self._healthy = True
-            count = self._collection.count()
-            logger.info(f"MemoryVectorStore ready (entries={count})")
-
         except Exception as e:
-            logger.error(f"MemoryVectorStore init failed: {e}")
+            logger.error(f"MemoryVectorStore Chroma init failed: {e}")
+            return
+
+        # Resolve an embedder for add/search. Its absence is NON-fatal: the
+        # collection stays usable for clear/count/remove. Only a store with BOTH
+        # Chroma and an embedder is `healthy` (add/search are healthy-gated).
+        if self._model is None:
+            try:
+                from src.embeddings import get_embedding_client
+                self._model = get_embedding_client()
+            except Exception as e:
+                logger.warning(f"MemoryVectorStore embeddings probe failed: {e}")
+                self._model = None
+        if self._model is None:
+            logger.warning(
+                "MemoryVectorStore DEGRADED: ChromaDB up but no embedding backend; "
+                "semantic add/search disabled, clear/count still available"
+            )
+            return
+
+        self._healthy = True
+        try:
+            logger.info(f"MemoryVectorStore ready (entries={self._collection.count()})")
+        except Exception:
+            pass
 
     @property
     def healthy(self) -> bool:
@@ -57,8 +72,15 @@ class MemoryVectorStore:
         return vecs.tolist()
 
     def count(self) -> int:
-        """Return the number of stored vectors."""
-        if not self._healthy:
+        """Return the number of stored vectors (live collection count).
+
+        Gated on the collection, not `_healthy`, so it reflects the REAL
+        collection even on a DEGRADED (embeddings-down) store — a wiped index
+        can't masquerade as populated, nor surviving ghosts as empty. Returns 0
+        only when there is no collection. A transient `count()` raise propagates;
+        callers guard it (`app_initializer` wraps init; `clear()` uses a raw
+        count in its own try)."""
+        if self._collection is None:
             return 0
         return self._collection.count()
 
@@ -133,8 +155,20 @@ class MemoryVectorStore:
 
     def rebuild(self, memories: List[Dict]):
         """Rebuild the entire index from a list of memory entries.
-        Each entry must have 'id' and 'text' keys."""
-        if not self._healthy:
+        Each entry must have 'id' and 'text' keys.
+
+        Only the Chroma collection is required to recreate an EMPTY index (the
+        admin clear path). Re-adding entries needs an embedder; if one isn't
+        available we must NOT delete the existing collection — that would be
+        silent data loss — so a model-less rebuild WITH entries is a logged
+        no-op that leaves the existing vectors intact."""
+        if self._collection is None:
+            return
+        if memories and self._model is None:
+            logger.warning(
+                f"MemoryVectorStore rebuild skipped: {len(memories)} entries but no "
+                "embedding backend; existing vectors left intact"
+            )
             return
 
         from src.chroma_client import get_chroma_client
@@ -174,28 +208,56 @@ class MemoryVectorStore:
 
         logger.info(f"MemoryVectorStore rebuilt with {len(ids)} entries")
 
-    def clear(self):
+    def clear(self) -> bool:
         """Remove ALL vectors from the index (used by the admin memory-wipe).
 
         Implemented as an empty rebuild — delete + recreate the collection — so a
         memory wipe doesn't leave 'ghost' entries retrievable via semantic search.
-        Never raises: a no-op when unhealthy, and a logged warning if ChromaDB
-        became unreachable after init (rebuild -> get_chroma_client can raise), so
-        the caller isn't relied on to swallow it."""
-        if not self._healthy:
-            return
+        Needs only the Chroma collection, NOT an embedder.
+
+        Returns True only when the index is PROVABLY empty afterward (re-read
+        count == 0), and False on any no-op / failure / uncertainty — so the admin
+        route can honestly report whether vectors were dropped instead of assuming
+        a silent success. Never raises.
+
+        The post-check reads the freshly recreated handle directly: ChromaDB
+        collection names are unique and delete_collection removes the data, so a
+        swallowed delete leaves get_or_create_collection returning the original
+        POPULATED collection (count > 0 -> False), while a successful delete
+        yields a fresh EMPTY one (count == 0 -> True)."""
+        if self._collection is None:
+            return False
         try:
             self.rebuild([])
-            logger.info("MemoryVectorStore cleared")
+            remaining = self._collection.count()  # raw post-check on the live handle
         except Exception as e:
             logger.warning(f"MemoryVectorStore clear failed (vectors may remain): {e}")
+            return False
+        if remaining == 0:
+            logger.info("MemoryVectorStore cleared")
+            return True
+        logger.warning(f"MemoryVectorStore clear left {remaining} vectors")
+        return False
 
 
 # Process-wide shared instance. Every MemoryVectorStore backs the same ChromaDB
 # collection (via get_chroma_client), so a single shared accessor is enough for
 # callers that don't already hold the app's instance — e.g. the admin memory-wipe
-# (routes/admin_wipe_routes.py) and the scheduler-driven consolidation.
+# (routes/admin_wipe_routes.py).
 _store: Optional["MemoryVectorStore"] = None
+
+
+def set_memory_vector_store(store: "MemoryVectorStore") -> None:
+    """Register the app's startup-built store as the process-wide instance.
+
+    The app builds one MemoryVectorStore at startup with RAG's embedding model
+    (src/app_initializer.py). Registering it here means later callers — the admin
+    memory-wipe especially — reuse that healthy store instead of constructing a
+    fresh one that re-probes get_embedding_client(), which can be down even when
+    the app's store is fine (its clear() would then no-op and leave ghosts). Only
+    healthy stores should be registered."""
+    global _store
+    _store = store
 
 
 def get_memory_vector_store(data_dir: str = None) -> "MemoryVectorStore":
