@@ -201,6 +201,17 @@ files instead, which bundle the base stack plus the GPU settings:
 - `docker-compose.gpu-amd.yml` — still requires host ROCm/kfd/DRI setup, the
   `video`/`render` group membership, and `RENDER_GID` when needed.
 
+Both GPU overlays (and the standalone files above) also start **Ollama in the
+stack** with GPU access. Odysseus defaults to `http://ollama:11434/v1`.
+Pull models after first boot:
+
+```bash
+docker compose exec ollama ollama pull qwen2.5-coder:7b
+```
+
+For host-only Ollama instead, use the base `docker-compose.yml` without a GPU
+overlay and add `http://host.docker.internal:11434/v1` in Settings.
+
 The base `docker-compose.yml` plus the `docker/gpu.*.yml` overlays remain the
 source of truth; the standalone files mirror them for single-file deployments.
 

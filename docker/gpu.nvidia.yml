@@ -1,4 +1,4 @@
-# NVIDIA GPU overlay. Enable by setting COMPOSE_FILE in .env:
+# NVIDIA GPU + in-stack Ollama overlay. Enable in .env:
 #   COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml
 #
 # Use scripts/check-docker-gpu.sh to diagnose GPU passthrough, optionally
@@ -16,13 +16,39 @@
 # Verify with:
 #   docker info | grep -i nvidia
 #
-# This overlay only passes the host GPU through to the container.
-# The slim Odysseus image does not bundle CUDA userspace or inference
-# engines — install vLLM / llama-cpp-python / SGLang via
-# Cookbook -> Dependencies (or pip) before serving GPU models.
+# Starts Ollama in the stack with GPU access and points Odysseus at
+# http://ollama:11434/v1 by default. Pull models after first boot, e.g.:
+#   docker compose exec ollama ollama pull qwen2.5-coder:7b
+#
+# The odysseus GPU passthrough is for Cookbook serve engines (vLLM /
+# llama-cpp-python). Ollama uses the standard CUDA-enabled image below.
 services:
   odysseus:
     environment:
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434/v1}
+      - EMBEDDING_URL=${EMBEDDING_URL:-http://ollama:11434/v1/embeddings}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    depends_on:
+      ollama:
+        condition: service_started
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  ollama:
+    image: docker.io/ollama/ollama
+    ports:
+      - "${OLLAMA_BIND:-127.0.0.1}:11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-5m}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     deploy:
@@ -32,3 +58,7 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  ollama-data:

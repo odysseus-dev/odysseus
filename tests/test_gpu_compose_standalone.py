@@ -5,8 +5,11 @@ single compose file and do not honor COMPOSE_FILE or multiple ``-f`` overlays,
 so the repo ships standalone ``docker-compose.gpu-*.yml`` files that inline the
 GPU overlay. The base ``docker-compose.yml`` plus ``docker/gpu.*.yml`` overlays
 remain the source of truth; these tests assert each standalone file equals the
-base compose with only the matching overlay merged into the ``odysseus``
-service. No Docker / docker compose is required — everything is pure YAML.
+base compose with the matching overlay merged in. Regenerate standalones with:
+
+    python scripts/sync-gpu-compose-standalone.py
+
+No Docker / docker compose is required — everything is pure YAML.
 """
 
 import copy
@@ -24,6 +27,7 @@ NVIDIA_STANDALONE = ROOT / "docker-compose.gpu-nvidia.yml"
 AMD_STANDALONE = ROOT / "docker-compose.gpu-amd.yml"
 
 SERVICE = "odysseus"
+OLLAMA = "ollama"
 
 
 def _load(path: Path) -> dict:
@@ -35,10 +39,7 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
 
     Mappings merge recursively; list-valued service fields are concatenated
     (compose appends override sequences such as ``environment`` rather than
-    replacing them); scalars are overwritten. The overlays here only append to
-    ``environment`` and add otherwise-absent keys (``deploy``, ``devices``,
-    ``group_add``), so this keeps the expected merge explicit without invoking
-    docker compose.
+    replacing them); scalars are overwritten.
     """
     result = copy.deepcopy(base)
     for key, value in overlay.items():
@@ -52,12 +53,19 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
 
 
 def _merge_overlay_into_base(base: dict, overlay: dict) -> dict:
-    """Build the expected standalone config: base + overlay on odysseus only."""
+    """Build the expected standalone config: base + overlay on all services."""
     expected = copy.deepcopy(base)
-    overlay_service = overlay["services"][SERVICE]
-    expected["services"][SERVICE] = _deep_merge(
-        expected["services"][SERVICE], overlay_service
-    )
+    for name, overlay_svc in overlay.get("services", {}).items():
+        if name in expected["services"]:
+            expected["services"][name] = _deep_merge(
+                expected["services"][name], overlay_svc
+            )
+        else:
+            expected["services"][name] = copy.deepcopy(overlay_svc)
+    if overlay.get("volumes"):
+        expected["volumes"] = _deep_merge(
+            expected.get("volumes", {}), overlay["volumes"]
+        )
     return expected
 
 
@@ -85,63 +93,81 @@ def test_amd_standalone_equals_base_plus_overlay(base):
 
 
 @pytest.mark.parametrize("standalone_path", [NVIDIA_STANDALONE, AMD_STANDALONE])
-def test_non_odysseus_services_match_base(base, standalone_path):
+def test_non_odysseus_services_match_base_or_overlay(base, standalone_path):
+    overlay_path = (
+        NVIDIA_OVERLAY if standalone_path == NVIDIA_STANDALONE else AMD_OVERLAY
+    )
+    overlay = _load(overlay_path)
     standalone = _load(standalone_path)
     for name, definition in base["services"].items():
         if name == SERVICE:
             continue
         assert standalone["services"][name] == definition
-    assert set(standalone["services"]) == set(base["services"])
+    assert standalone["services"][OLLAMA] == overlay["services"][OLLAMA]
+    assert set(standalone["services"]) == set(base["services"]) | {OLLAMA}
 
 
 @pytest.mark.parametrize("standalone_path", [NVIDIA_STANDALONE, AMD_STANDALONE])
-def test_top_level_volumes_match_base(base, standalone_path):
+def test_top_level_volumes_include_ollama(base, standalone_path):
+    overlay_path = (
+        NVIDIA_OVERLAY if standalone_path == NVIDIA_STANDALONE else AMD_OVERLAY
+    )
+    overlay = _load(overlay_path)
     standalone = _load(standalone_path)
-    assert standalone.get("volumes") == base.get("volumes")
+    expected_volumes = _deep_merge(base.get("volumes", {}), overlay.get("volumes", {}))
+    assert standalone.get("volumes") == expected_volumes
 
 
 # --- odysseus = base service + only the overlay additions ------------------
 
 
 def test_nvidia_odysseus_adds_only_overlay(base):
+    overlay = _load(NVIDIA_OVERLAY)
     standalone = _load(NVIDIA_STANDALONE)
     svc = standalone["services"][SERVICE]
     base_svc = base["services"][SERVICE]
+    overlay_svc = overlay["services"][SERVICE]
 
-    # Base environment preserved, plus exactly the two NVIDIA variables.
-    assert "NVIDIA_VISIBLE_DEVICES=all" in svc["environment"]
-    assert "NVIDIA_DRIVER_CAPABILITIES=compute,utility" in svc["environment"]
-    added_env = set(svc["environment"]) - set(base_svc["environment"])
-    assert added_env == {
-        "NVIDIA_VISIBLE_DEVICES=all",
-        "NVIDIA_DRIVER_CAPABILITIES=compute,utility",
-    }
-
-    # deploy block is new and matches the overlay's GPU reservation exactly.
+    assert svc["environment"] == base_svc["environment"] + overlay_svc["environment"]
+    assert svc["depends_on"] == _deep_merge(
+        base_svc["depends_on"], overlay_svc["depends_on"]
+    )
     assert "deploy" not in base_svc
     devices = svc["deploy"]["resources"]["reservations"]["devices"]
     assert devices == [
         {"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}
     ]
-
-    # No AMD-only keys leaked in.
     assert "devices" not in svc
     assert "group_add" not in svc
 
 
 def test_amd_odysseus_adds_only_overlay(base):
+    overlay = _load(AMD_OVERLAY)
     standalone = _load(AMD_STANDALONE)
     svc = standalone["services"][SERVICE]
     base_svc = base["services"][SERVICE]
+    overlay_svc = overlay["services"][SERVICE]
 
-    # Environment is unchanged from base for AMD.
-    assert svc["environment"] == base_svc["environment"]
-
-    # devices and group_add are new and match the overlay exactly.
+    assert svc["environment"] == base_svc["environment"] + overlay_svc["environment"]
+    assert svc["depends_on"] == _deep_merge(
+        base_svc["depends_on"], overlay_svc["depends_on"]
+    )
     assert "devices" not in base_svc
     assert "group_add" not in base_svc
     assert svc["devices"] == ["/dev/kfd", "/dev/dri"]
     assert svc["group_add"] == ["video", "${RENDER_GID:-render}"]
-
-    # No NVIDIA-only keys leaked in.
     assert "deploy" not in svc
+
+
+def test_nvidia_ollama_has_gpu_reservation():
+    overlay = _load(NVIDIA_OVERLAY)
+    ollama = overlay["services"][OLLAMA]
+    devices = ollama["deploy"]["resources"]["reservations"]["devices"]
+    assert devices == [{"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}]
+
+
+def test_amd_ollama_uses_rocm_image_and_devices():
+    overlay = _load(AMD_OVERLAY)
+    ollama = overlay["services"][OLLAMA]
+    assert ollama["image"] == "docker.io/ollama/ollama:rocm"
+    assert ollama["devices"] == ["/dev/kfd", "/dev/dri"]

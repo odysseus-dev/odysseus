@@ -1,19 +1,50 @@
-# AMD ROCm GPU overlay. Enable by setting COMPOSE_FILE in .env:
+# AMD ROCm GPU + in-stack Ollama overlay. Enable in .env:
 #   COMPOSE_FILE=docker-compose.yml:docker/gpu.amd.yml
 #   RENDER_GID=<numeric output of: getent group render | cut -d: -f3>
 #
 # Requires ROCm drivers on the host (kfd + DRI devices). The host user
-# running Docker must be in the `video` and `render` groups.
+# running Docker/Podman must be in the `video` and `render` groups.
+# Set RENDER_GID to the numeric render group id (podman-compose cannot
+# resolve the name "render" inside the container image).
 #
-# This overlay only passes the host GPU through to the container.
-# The slim Odysseus image does not bundle ROCm userspace or inference
-# engines — install ROCm-compatible builds of vLLM / llama-cpp-python
-# via Cookbook -> Dependencies (or pip) before serving GPU models.
+# Starts Ollama (ollama/ollama:rocm) in the stack and points Odysseus at
+# http://ollama:11434/v1 by default. Pull models after first boot, e.g.:
+#   podman compose exec ollama ollama pull qwen2.5-coder:7b
+#
+# The odysseus GPU passthrough is for Cookbook serve engines (vLLM /
+# llama-cpp-python). Ollama uses its own ROCm image and devices below.
 services:
   odysseus:
+    environment:
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://ollama:11434/v1}
+      - EMBEDDING_URL=${EMBEDDING_URL:-http://ollama:11434/v1/embeddings}
+    depends_on:
+      ollama:
+        condition: service_started
     devices:
       - /dev/kfd
       - /dev/dri
     group_add:
       - video
       - ${RENDER_GID:-render}
+
+  ollama:
+    image: docker.io/ollama/ollama:rocm
+    ports:
+      - "${OLLAMA_BIND:-127.0.0.1}:11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-5m}
+      - HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-}
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+      - ${RENDER_GID:-render}
+    restart: unless-stopped
+
+volumes:
+  ollama-data:
