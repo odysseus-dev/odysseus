@@ -1,28 +1,23 @@
 import { useState } from 'react';
 import type { Connection } from '../lib/connection';
-import { normalizeBaseUrl, saveConnection } from '../lib/connection';
+import { normalizeBaseUrl, parsePairingPayload, saveConnection } from '../lib/connection';
 import { ping } from '../lib/api';
-import { BrandMark } from '../components/icons';
+import { BrandMark, QrIcon } from '../components/icons';
+import QrScanner from '../components/QrScanner';
 
-// First-run screen: point the app at your Odysseus and paste the pairing token.
-// Generate the token on the PC at  <server>/api/companion/pair  (admin only).
-// A QR scanner is a planned follow-up -- the pairing payload is already JSON
-// {v, host, port, token}, so scanning can prefill both fields.
+// First-run screen: point the app at your Odysseus and pair. Scan the QR on the
+// PC's  <server>/api/companion/pair  page (admin only), or enter the address and
+// token by hand. The pairing payload is JSON {v, host, port, token}.
 export default function PairScreen({ onPaired }: { onPaired: (c: Connection) => void }) {
   const [url, setUrl] = useState('');
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function connect() {
-    setError(null);
-    const baseUrl = normalizeBaseUrl(url);
-    if (!baseUrl || !token.trim()) {
-      setError('Enter your server address and a pairing token.');
-      return;
-    }
-    const conn: Connection = { baseUrl, token: token.trim() };
+  async function connectWith(conn: Connection) {
     setBusy(true);
+    setError(null);
     try {
       const res = await ping(conn); // validates host + token in one round-trip
       conn.name = res.name;
@@ -39,6 +34,32 @@ export default function PairScreen({ onPaired }: { onPaired: (c: Connection) => 
     }
   }
 
+  function connect() {
+    const baseUrl = normalizeBaseUrl(url);
+    if (!baseUrl || !token.trim()) {
+      setError('Enter your server address and a pairing token.');
+      return;
+    }
+    connectWith({ baseUrl, token: token.trim() });
+  }
+
+  function onScan(text: string) {
+    setScanning(false);
+    const parsed = parsePairingPayload(text);
+    if (!parsed) {
+      setError('That QR code is not an Odysseus pairing code.');
+      return;
+    }
+    // Prefill the fields too, so a failed ping leaves something to edit.
+    setUrl(parsed.baseUrl);
+    setToken(parsed.token);
+    connectWith(parsed);
+  }
+
+  if (scanning) {
+    return <QrScanner onResult={onScan} onClose={() => setScanning(false)} />;
+  }
+
   return (
     <div className="screen pair">
       <div className="brand">
@@ -46,6 +67,14 @@ export default function PairScreen({ onPaired }: { onPaired: (c: Connection) => 
         <span>Odysseus</span>
       </div>
       <p className="muted">Pair this phone with your PC to use it as a remote.</p>
+
+      <button className="primary scan" onClick={() => setScanning(true)} type="button" disabled={busy}>
+        <QrIcon size={20} />
+        <span>Scan pairing code</span>
+      </button>
+      <div className="or-divider">
+        <span>or enter manually</span>
+      </div>
 
       <label className="field">
         <span>Server address</span>
@@ -77,7 +106,7 @@ export default function PairScreen({ onPaired }: { onPaired: (c: Connection) => 
       </button>
 
       <p className="hint">
-        Generate a token on the PC at <code>/api/companion/pair</code> (admin).
+        Generate a pairing code on the PC at <code>/api/companion/pair</code> (admin).
         For access away from home, put your PC and phone on a private tunnel
         (e.g. Tailscale) and pair with that address.
       </p>

@@ -22,6 +22,22 @@ export function normalizeBaseUrl(raw: string): string {
   return u.replace(/\/+$/, '');
 }
 
+// Decode a scanned pairing QR. The PC encodes compact JSON
+// {v, host, port, token} (companion/pairing.py); turn it into a Connection.
+// Returns null for anything that isn't a valid pairing payload.
+export function parsePairingPayload(raw: string): Connection | null {
+  try {
+    const obj = JSON.parse(raw) as { host?: unknown; port?: unknown; token?: unknown };
+    if (typeof obj.host !== 'string' || !obj.host || !obj.token) return null;
+    const port = obj.port ? `:${obj.port}` : '';
+    const baseUrl = normalizeBaseUrl(`${obj.host}${port}`);
+    if (!baseUrl) return null;
+    return { baseUrl, token: String(obj.token) };
+  } catch {
+    return null;
+  }
+}
+
 export async function loadConnection(): Promise<Connection | null> {
   const { value } = await Preferences.get({ key: KEY });
   if (!value) return null;
