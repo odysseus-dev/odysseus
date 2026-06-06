@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from services.memory.skills import SkillsManager
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, require_privilege
 from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
@@ -1077,6 +1077,9 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         if skill.get("owner") != user:
             raise HTTPException(404, "Skill not found")
 
+    def _require_skill_management(request: Request) -> Optional[str]:
+        return require_privilege(request, "can_manage_memory")
+
     def _fire_skill_added(user: Optional[str]):
         try:
             from src.event_bus import fire_event
@@ -1201,7 +1204,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
 
     @router.post("/add")
     async def add_skill(request: Request, body: SkillAddRequest):
-        user = _owner(request)
+        user = _require_skill_management(request)
         entry = skills_manager.add_skill(
             # New shape
             name=body.name,
@@ -1268,7 +1271,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         import asyncio as _asyncio
         from src.endpoint_resolver import resolve_endpoint
 
-        user = _owner(request)
+        user = _require_skill_management(request)
         body = await request.json()
         task = (body.get("task") or "").strip()
 
@@ -1349,7 +1352,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         import asyncio as _asyncio
         import time as _time
 
-        user = _owner(request)
+        user = _require_skill_management(request)
         body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
         scope = (body.get("scope") or "all").lower()
         requested_names = body.get("names")
@@ -1428,7 +1431,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
 
     @router.post("/audit-all/cancel")
     async def audit_cancel(request: Request):
-        user = _owner(request)
+        user = _require_skill_management(request)
         job = _skill_audit_jobs.get((user or "",))
         if job:
             job["cancel"] = True
@@ -1443,7 +1446,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
     async def save_skill_markdown(request: Request, skill_id: str):
         """Replace SKILL.md with new raw content. Parses + validates first."""
         from services.memory.skill_format import Skill
-        user = _owner(request)
+        user = _require_skill_management(request)
         body = await request.json()
         new_content = body.get("markdown")
         if not isinstance(new_content, str) or not new_content.strip():
@@ -1494,7 +1497,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
 
     @router.put("/{skill_id}")
     async def update_skill(request: Request, skill_id: str, body: SkillUpdateRequest):
-        user = _owner(request)
+        user = _require_skill_management(request)
         skills = skills_manager.load(owner=user)
         match = next((s for s in skills if s.get("name") == skill_id or s.get("id") == skill_id), None)
         if not match:
@@ -1513,7 +1516,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
 
     @router.delete("/{skill_id}")
     async def delete_skill(request: Request, skill_id: str):
-        user = _owner(request)
+        user = _require_skill_management(request)
         skills = skills_manager.load(owner=user)
         match = next((s for s in skills if s.get("name") == skill_id or s.get("id") == skill_id), None)
         if not match:

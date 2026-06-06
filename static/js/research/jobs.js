@@ -264,7 +264,11 @@ function _connectStream(job) {
   es.onmessage = (evt) => {
     try {
       const d = JSON.parse(evt.data);
-      if (d.status === 'not_found') { _finishJob(job, 'error'); return; }
+      if (d.status === 'not_found') {
+        job.errorMsg = 'This research job is no longer active on the server. It may have been interrupted by an app restart; retry to run it again.';
+        _finishJob(job, 'error');
+        return;
+      }
       job.progress = d;
       if (d.model && !job.modelName) job.modelName = d.model;
       if (d.final) {
@@ -287,17 +291,42 @@ async function _pollFallback(job) {
   if (job.status !== 'running') return;
   try {
     const res = await fetch(`${_apiBase}/api/research/status/${job.id}`, { credentials: 'same-origin' });
-    if (!res.ok) { _finishJob(job, 'error'); return; }
+    if (!res.ok) {
+      job.errorMsg = await _readResearchError(res);
+      _finishJob(job, 'error');
+      return;
+    }
     const d = await res.json();
     job.progress = d.progress || {};
     if (d.avg_duration) job.avgDuration = d.avg_duration;
     if (d.status !== 'running') {
+      if (d.status === 'error' && !job.errorMsg) {
+        job.errorMsg = d.error || d.result || 'Research failed. Check the app logs for details.';
+      }
       _finishJob(job, d.status === 'done' ? 'done' : 'error');
       if (d.status === 'done') _fetchResult(job);
       return;
     }
     setTimeout(() => _pollFallback(job), 2000);
-  } catch { _finishJob(job, 'error'); }
+  } catch (e) {
+    job.errorMsg = e?.message || 'Lost connection while checking research status.';
+    _finishJob(job, 'error');
+  }
+}
+
+async function _readResearchError(res) {
+  try {
+    const text = await res.text();
+    if (!text) return `Research status check failed (${res.status}).`;
+    try {
+      const data = JSON.parse(text);
+      return data.detail || data.error || text;
+    } catch {
+      return text;
+    }
+  } catch {
+    return `Research status check failed (${res.status}).`;
+  }
 }
 
 function _finishJob(job, status) {

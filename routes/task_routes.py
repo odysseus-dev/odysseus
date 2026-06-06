@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import secrets
 import uuid
 from datetime import datetime
@@ -253,7 +254,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
     @router.post("/onboarding")
     async def update_tasks_onboarding(request: Request, body: dict):
-        user = _owner(request)
+        user = _require_task_admin(request)
         prefs = _load_for_user(user) or {}
         prefs["tasks_opened"] = True
         enable = bool(body.get("enabled"))
@@ -299,12 +300,12 @@ def setup_task_routes(task_scheduler) -> APIRouter:
     _ADMIN_ONLY_ACTIONS = {"run_local", "run_script", "ssh_command"}
 
     def _is_admin(user: str | None) -> bool:
-        if not user:
-            return False
         # In-process tool-loopback marker — AuthMiddleware validated
         # the internal token + loopback client before stamping this,
         # so treat as admin-equivalent.
         if user == "internal-tool":
+            return True
+        if os.getenv("AUTH_ENABLED", "true").lower() == "false":
             return True
         try:
             from core.auth import AuthManager
@@ -312,13 +313,21 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             if not auth.is_configured:
                 # Unconfigured single-user deploy: trust the local owner.
                 return True
+            if not user:
+                return False
             return bool(auth.is_admin(user))
         except Exception:
             return False
 
+    def _require_task_admin(request: Request) -> str | None:
+        user = _owner(request)
+        if not _is_admin(user):
+            raise HTTPException(403, "Admin only")
+        return user
+
     @router.post("")
     async def create_task(request: Request, req: TaskCreate):
-        user = _owner(request)
+        user = _require_task_admin(request)
 
         # Validate
         if req.task_type in ("llm", "research") and not req.prompt:
@@ -430,7 +439,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
     @router.post("/{task_id}/clear-cache")
     async def clear_task_cache(request: Request, task_id: str):
         """Clear derived cache for one built-in task."""
-        user = _owner(request)
+        user = _require_task_admin(request)
         db = SessionLocal()
         try:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
@@ -516,7 +525,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
     @router.put("/{task_id}")
     async def update_task(request: Request, task_id: str, req: TaskUpdate):
-        user = _owner(request)
+        user = _require_task_admin(request)
         db = SessionLocal()
         try:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
@@ -602,7 +611,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
     @router.delete("/{task_id}")
     async def delete_task(request: Request, task_id: str):
-        user = _owner(request)
+        user = _require_task_admin(request)
         db = SessionLocal()
         try:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
@@ -618,7 +627,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
     @router.post("/{task_id}/pause")
     async def pause_task(request: Request, task_id: str):
-        user = _owner(request)
+        user = _require_task_admin(request)
         db = SessionLocal()
         try:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
@@ -634,7 +643,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
     @router.post("/{task_id}/resume")
     async def resume_task(request: Request, task_id: str):
-        user = _owner(request)
+        user = _require_task_admin(request)
         db = SessionLocal()
         try:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
@@ -657,7 +666,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
     @router.post("/{task_id}/revert")
     async def revert_task(request: Request, task_id: str):
         """Reset a built-in (housekeeping) task to its default config."""
-        user = _owner(request)
+        user = _require_task_admin(request)
         db = SessionLocal()
         try:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
@@ -696,7 +705,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
     @router.post("/{task_id}/run")
     async def run_task_now(request: Request, task_id: str, force: bool = False):
-        user = _owner(request)
+        user = _require_task_admin(request)
         db = SessionLocal()
         try:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
@@ -713,7 +722,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
     @router.post("/{task_id}/stop")
     async def stop_task_now(request: Request, task_id: str):
-        user = _owner(request)
+        user = _require_task_admin(request)
         db = SessionLocal()
         try:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
@@ -891,7 +900,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
     @router.post("/{task_id}/webhook-regenerate")
     async def regenerate_webhook(request: Request, task_id: str):
-        user = _owner(request)
+        user = _require_task_admin(request)
         db = SessionLocal()
         try:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()

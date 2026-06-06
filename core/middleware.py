@@ -19,17 +19,15 @@ INTERNAL_TOOL_HEADER = "X-Odysseus-Internal-Token"
 
 def require_admin(request: Request):
     """Raise 403 if the current user isn't an admin.
-    Allows access when auth is explicitly disabled, or when the request carries
-    the in-process internal-tool token used by loopback agent tools.
+    Allows access when auth is explicitly disabled, or when AuthMiddleware has
+    already stamped the request as a trusted internal-tool loopback call.
     """
-    # In-process bypass for tool-layer loopback calls. Two paths:
-    # (a) header-direct (caller set X-Odysseus-Internal-Token), or
-    # (b) the auth middleware already validated the token and stamped
-    #     request.state.current_user = "internal-tool".
+    # In-process bypass for tool-layer loopback calls. The auth middleware must
+    # validate the internal token together with the loopback/proxy checks before
+    # stamping this sentinel user; route dependencies should not trust the raw
+    # header again because dependencies do not know whether the request was
+    # actually loopback.
     try:
-        hdr = request.headers.get(INTERNAL_TOOL_HEADER)
-        if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
-            return
         if getattr(request.state, "current_user", None) == "internal-tool":
             return
     except Exception:
