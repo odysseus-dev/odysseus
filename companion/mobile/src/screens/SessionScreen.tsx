@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Connection } from '../lib/connection';
-import type { ChatMsg, ModelOption, StreamEvent } from '../lib/api';
-import { getMessages, listModels, sendMessage, stopSession, streamSession } from '../lib/api';
+import type { ChatMsg, ChatOptions, ModelOption, StreamEvent } from '../lib/api';
+import { DEFAULT_OPTIONS, getMessages, listModels, sendMessage, stopSession, streamSession } from '../lib/api';
 import { splitThinking } from '../lib/thinking';
 import { ChevronLeftIcon } from '../components/icons';
+import ToolToggles from '../components/ToolToggles';
 
 type Stream = 'loading' | 'connecting' | 'live' | 'done' | 'inactive' | 'error';
 
@@ -32,6 +33,7 @@ export default function SessionScreen({
   const [models, setModels] = useState<ModelOption[]>([]);
   const [picked, setPicked] = useState(0);
   const [draft, setDraft] = useState('');
+  const [options, setOptions] = useState<ChatOptions>(DEFAULT_OPTIONS);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   // Bumped after a successful send to re-run the subscribe effect on the new run.
@@ -169,6 +171,7 @@ export default function SessionScreen({
         message: text,
         endpointId: model?.endpointId,
         model: model?.model,
+        options,
       });
       setRawAnswer('');
       setFlaggedThink('');
@@ -250,6 +253,8 @@ export default function SessionScreen({
       </div>
 
       {sendError && <div className="error">{sendError}</div>}
+
+      <ToolToggles value={options} onChange={setOptions} disabled={isLive} />
 
       <form
         className="composer"

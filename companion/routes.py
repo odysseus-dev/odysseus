@@ -89,7 +89,30 @@ def session_summary(sess, active: bool, status, public_model=None) -> dict:
     }
 
 
-async def _fire_chat_run(request: Request, owner: str, sid: str, message: str) -> None:
+def _chat_run_options(body: dict) -> dict:
+    """Translate the phone's capability toggles into chat_stream form fields,
+    mirroring the desktop's static/js/chat.js:
+      - agent mode is the master switch that gives the model tools;
+      - web search is a pre-search augmentation in chat mode (use_web) and a
+        live tool in agent mode (allow_web_search);
+      - terminal (bash) is an agent-only tool, so enabling it implies agent mode.
+    Anything omitted/false leaves the run as a plain chat, same as before."""
+    agent = bool(body.get("agent"))
+    web = bool(body.get("web"))
+    terminal = bool(body.get("terminal"))
+    if terminal:
+        agent = True
+    extra = {"mode": "agent" if agent else "chat"}
+    if web:
+        extra["allow_web_search" if agent else "use_web"] = "true"
+    if terminal:
+        extra["allow_bash"] = "true"
+    return extra
+
+
+async def _fire_chat_run(
+    request: Request, owner: str, sid: str, message: str, extra: dict | None = None
+) -> None:
     """Kick off the detached chat run for `sid` and return once it's registered.
 
     Internal loopback to /api/chat_stream -- the SAME path the desktop uses, so
@@ -109,6 +132,8 @@ async def _fire_chat_run(request: Request, owner: str, sid: str, message: str) -
     url = f"http://127.0.0.1:{port}/api/chat_stream"
     headers = {INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN, "X-Odysseus-Owner": owner}
     data = {"message": message, "session": sid}
+    if extra:
+        data.update(extra)
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
             # Opening the stream sends the request and waits for headers; that is
@@ -347,7 +372,7 @@ def setup_companion_routes(session_manager=None) -> APIRouter:
         name = (message[:40] or "New chat").strip()
         sm.create_session(sid, name, endpoint_url, model, owner=owner)
 
-        await _fire_chat_run(request, owner, sid, message)
+        await _fire_chat_run(request, owner, sid, message, _chat_run_options(body))
         return {"session_id": sid, "name": name}
 
     @router.get("/sessions/{session_id}/messages")
@@ -423,7 +448,7 @@ def setup_companion_routes(session_manager=None) -> APIRouter:
         if not getattr(sess, "model", "").strip():
             raise HTTPException(400, "This session has no model selected")
 
-        await _fire_chat_run(request, owner, session_id, message)
+        await _fire_chat_run(request, owner, session_id, message, _chat_run_options(body))
         return {"ok": True}
 
     @router.get("/sessions/{session_id}/stream")

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { Connection } from '../lib/connection';
-import type { ModelOption } from '../lib/api';
-import { listModels, startSession } from '../lib/api';
+import type { ChatOptions, ModelOption } from '../lib/api';
+import { DEFAULT_OPTIONS, listModels, startSession } from '../lib/api';
 import { ChevronLeftIcon } from '../components/icons';
+import ToolToggles from '../components/ToolToggles';
 
 // Compose + start a new chat from the phone. Pick a model (flattened from the
 // server's endpoints), type a first message, send -> the server starts the run
@@ -19,6 +20,7 @@ export default function NewSessionScreen({
   const [models, setModels] = useState<ModelOption[]>([]);
   const [picked, setPicked] = useState(0);
   const [message, setMessage] = useState('');
+  const [options, setOptions] = useState<ChatOptions>(DEFAULT_OPTIONS);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,6 +43,7 @@ export default function NewSessionScreen({
         message: message.trim(),
         endpointId: model.endpointId,
         model: model.model,
+        options,
       });
       onCreated(session_id);
     } catch (e) {
@@ -95,6 +98,8 @@ export default function NewSessionScreen({
             autoFocus
           />
         </label>
+
+        <ToolToggles value={options} onChange={setOptions} disabled={busy} />
 
         {error && <div className="error">{error}</div>}
       </div>

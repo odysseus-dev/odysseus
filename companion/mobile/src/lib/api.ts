@@ -71,10 +71,20 @@ export async function listModels(conn: Connection): Promise<ModelOption[]> {
   return out;
 }
 
+/** Per-turn capability toggles, mirroring the desktop: agent mode unlocks
+ *  tools, web adds search, terminal allows the shell (and implies agent). */
+export interface ChatOptions {
+  agent: boolean;
+  web: boolean;
+  terminal: boolean;
+}
+
+export const DEFAULT_OPTIONS: ChatOptions = { agent: false, web: false, terminal: false };
+
 /** Start a new chat. Returns the new session id to open + watch. */
 export async function startSession(
   conn: Connection,
-  opts: { message: string; endpointId: string; model: string },
+  opts: { message: string; endpointId: string; model: string; options?: ChatOptions },
 ): Promise<{ session_id: string; name: string }> {
   const resp = await fetch(`${conn.baseUrl}/api/companion/sessions`, {
     method: 'POST',
@@ -83,6 +93,7 @@ export async function startSession(
       message: opts.message,
       endpoint_id: opts.endpointId,
       model: opts.model,
+      ...opts.options,
     }),
   });
   if (!resp.ok) throw new Error(`HTTP ${resp.status} starting session`);
@@ -115,7 +126,7 @@ export async function getMessages(conn: Connection, id: string): Promise<Session
 export async function sendMessage(
   conn: Connection,
   id: string,
-  opts: { message: string; endpointId?: string; model?: string },
+  opts: { message: string; endpointId?: string; model?: string; options?: ChatOptions },
 ): Promise<void> {
   const resp = await fetch(
     `${conn.baseUrl}/api/companion/sessions/${encodeURIComponent(id)}/message`,
@@ -126,6 +137,7 @@ export async function sendMessage(
         message: opts.message,
         endpoint_id: opts.endpointId,
         model: opts.model,
+        ...opts.options,
       }),
     },
   );

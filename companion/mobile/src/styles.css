@@ -335,6 +335,34 @@ button {
   padding: 16px;
 }
 
+/* Capability chips (Agent / Web / Terminal), shared by the composer and the
+   new-chat screen. Highlight in the accent colour when active. */
+.toggles {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px 0;
+  flex-wrap: wrap;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 7px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.chip.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(0, 170, 255, 0.12);
+}
+.chip:disabled {
+  opacity: 0.5;
+}
+
 /* Composer pinned at the bottom of the conversation. */
 .composer {
   display: flex;
