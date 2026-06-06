@@ -14,6 +14,7 @@ These are pure-function tests — no FastAPI app boot, no DB.
 import sys
 import types
 import json
+import importlib
 from pathlib import Path
 
 import pytest
@@ -860,19 +861,14 @@ def test_web_fetch_guard_blocks_redirect_into_private(monkeypatch):
 
     class _Resp:
         status_code = 302
+        url = "http://public.example/start"
         headers = {"location": "http://169.254.169.254/latest/meta-data/"}
 
-    class _FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def get(self, url): return _Resp()
-
-    monkeypatch.setattr(httpx, "Client", _FakeClient)
+    monkeypatch.setattr(httpx, "get", lambda url, **kwargs: _Resp())
 
     with _pytest.raises(httpx.RequestError) as exc:
         content._get_public_url("http://public.example/start", headers={}, timeout=5)
-    assert "non-public" in str(exc.value)
+    assert "Blocked" in str(exc.value)
 
 
 # ── audit fixes (2026-06-01): email XSS, attachment traversal, authz ──
@@ -943,53 +939,113 @@ def test_mcp_oauth_page_escapes_reflected_values():
         assert f"{var} = html.escape({var}" in body, var
 
 
+def _import_mcp_routes():
+    sys.modules.pop("routes.mcp_routes", None)
+    return importlib.import_module("routes.mcp_routes")
+
+
+def test_mcp_oauth_paths_resolve_under_data_dir(tmp_path, monkeypatch):
+    mcp_routes = _import_mcp_routes()
+    monkeypatch.setattr(mcp_routes, "DATA_DIR", str(tmp_path / "data"))
+
+    resolved = Path(mcp_routes._resolve_mcp_oauth_path("gmail/credentials.json", "token_file"))
+
+    base = (tmp_path / "data" / "mcp_oauth").resolve()
+    assert resolved == base / "gmail" / "credentials.json"
+
+
+@pytest.mark.parametrize("raw_path", [
+    "../../etc/passwd",
+    "/tmp/evil.keys",
+    "~/.gmail-mcp/credentials.json",
+])
+def test_mcp_oauth_paths_reject_escapes(tmp_path, monkeypatch, raw_path):
+    from fastapi import HTTPException
+
+    mcp_routes = _import_mcp_routes()
+    monkeypatch.setattr(mcp_routes, "DATA_DIR", str(tmp_path / "data"))
+
+    with pytest.raises(HTTPException) as exc:
+        mcp_routes._resolve_mcp_oauth_path(raw_path, "token_file")
+    assert exc.value.status_code == 400
+
+
+def test_mcp_oauth_filename_join_cannot_escape_base(tmp_path, monkeypatch):
+    from fastapi import HTTPException
+
+    mcp_routes = _import_mcp_routes()
+    monkeypatch.setattr(mcp_routes, "DATA_DIR", str(tmp_path / "data"))
+
+    safe_dir = mcp_routes._resolve_mcp_oauth_path("gmail", "dir")
+    with pytest.raises(HTTPException):
+        mcp_routes._resolve_mcp_oauth_path(Path(safe_dir) / "../../escape.json", "filename")
+
+
+def test_mcp_oauth_config_sanitizes_paths_and_env(tmp_path, monkeypatch):
+    mcp_routes = _import_mcp_routes()
+    monkeypatch.setattr(mcp_routes, "DATA_DIR", str(tmp_path / "data"))
+
+    cfg = mcp_routes._sanitize_mcp_oauth_config({
+        "provider": "google",
+        "keys_file": "gmail/gcp-oauth.keys.json",
+        "token_file": "gmail/credentials.json",
+        "scopes": ["https://www.googleapis.com/auth/gmail.modify"],
+    })
+    env = {}
+    mcp_routes._apply_mcp_oauth_env(env, cfg)
+
+    base = (tmp_path / "data" / "mcp_oauth" / "gmail").resolve()
+    assert cfg["keys_file"] == str(base / "gcp-oauth.keys.json")
+    assert cfg["token_file"] == str(base / "credentials.json")
+    assert env["GMAIL_OAUTH_PATH"] == cfg["keys_file"]
+    assert env["GMAIL_CREDENTIALS_PATH"] == cfg["token_file"]
+
+
+def test_gmail_mcp_preset_uses_contained_oauth_paths():
+    src = Path(__file__).resolve().parents[1] / "static" / "js" / "admin.js"
+    text = src.read_text()
+    preset = text.split('{ name: "Gmail"', 1)[1].split('{ name: "Email (IMAP/SMTP)"', 1)[0]
+
+    assert "~/.gmail-mcp" not in preset
+    assert 'oauthFile: { dir: "gmail"' in preset
+    assert 'keys_file: "gmail/gcp-oauth.keys.json"' in preset
+    assert 'token_file: "gmail/credentials.json"' in preset
+
+
 
 # -- export/gallery filename hardening ----------------------------------------
 
-def _install_route_import_stubs(monkeypatch):
-    core_mod = types.ModuleType("core")
-    core_mod.__path__ = []
-
-    db_mod = types.ModuleType("core.database")
-    db_mod.SessionLocal = lambda: None
-    for name in (
-        "Session",
-        "Document",
-        "GalleryImage",
-        "GalleryAlbum",
-        "ModelEndpoint",
-    ):
-        setattr(db_mod, name, type(name, (), {}))
-
-    session_manager_mod = types.ModuleType("core.session_manager")
-    session_manager_mod.SessionManager = type("SessionManager", (), {})
-
-    models_mod = types.ModuleType("core.models")
-    models_mod.ChatMessage = type("ChatMessage", (), {})
-
-    monkeypatch.setitem(sys.modules, "core", core_mod)
-    monkeypatch.setitem(sys.modules, "core.database", db_mod)
-    monkeypatch.setitem(sys.modules, "core.session_manager", session_manager_mod)
-    monkeypatch.setitem(sys.modules, "core.models", models_mod)
+def _drop_route_module_cache(dotted_name):
+    """Evict a cached route module from both sys.modules and the parent package
+    attribute. The next import then re-binds against the live core.database
+    instead of reusing a stale (possibly stub-polluted) module object — Python
+    can reach a module via either path, so both must be cleared."""
+    sys.modules.pop(dotted_name, None)
+    pkg_name, _, attr = dotted_name.rpartition(".")
+    pkg = sys.modules.get(pkg_name)
+    if pkg is not None and hasattr(pkg, attr):
+        delattr(pkg, attr)
 
 
-def _import_session_routes_for_filename(monkeypatch):
-    _install_route_import_stubs(monkeypatch)
-    monkeypatch.delitem(sys.modules, "routes.session_routes", raising=False)
-    from routes import session_routes
-    return session_routes
+def _import_session_routes_for_filename():
+    # Only the pure _sanitize_export_filename helper is exercised here, so import
+    # against the REAL core.database. Importing under a stub Session class would
+    # leak a stub-bound DbSession into the cached module and break later tests
+    # that reuse routes.session_routes (e.g. the archived-sessions filter).
+    _drop_route_module_cache("routes.session_routes")
+    return importlib.import_module("routes.session_routes")
 
 
-def _import_gallery_routes_for_filename(monkeypatch):
-    _install_route_import_stubs(monkeypatch)
-    monkeypatch.delitem(sys.modules, "routes.gallery_helpers", raising=False)
-    monkeypatch.delitem(sys.modules, "routes.gallery_routes", raising=False)
-    from routes import gallery_routes
-    return gallery_routes
+def _import_gallery_routes_for_filename():
+    # Same rationale as the session route helper: import _sanitize_gallery_filename
+    # against the real core.database and leave a clean, real module cached.
+    _drop_route_module_cache("routes.gallery_routes")
+    _drop_route_module_cache("routes.gallery_helpers")
+    return importlib.import_module("routes.gallery_routes")
 
 
-def test_export_filename_sanitizer_blocks_header_and_path_chars(monkeypatch):
-    mod = _import_session_routes_for_filename(monkeypatch)
+def test_export_filename_sanitizer_blocks_header_and_path_chars():
+    mod = _import_session_routes_for_filename()
 
     out = mod._sanitize_export_filename('chat.md\r\nX-Test: yes/..\\evil;quote".txt\x00')
 
@@ -999,15 +1055,15 @@ def test_export_filename_sanitizer_blocks_header_and_path_chars(monkeypatch):
         assert ch not in out
 
 
-def test_export_filename_sanitizer_preserves_safe_names(monkeypatch):
-    mod = _import_session_routes_for_filename(monkeypatch)
+def test_export_filename_sanitizer_preserves_safe_names():
+    mod = _import_session_routes_for_filename()
 
     assert mod._sanitize_export_filename("conversation_20260602.md") == "conversation_20260602.md"
     assert mod._sanitize_export_filename("") == ""
 
 
-def test_gallery_replace_filename_sanitizer_uses_basename(monkeypatch):
-    mod = _import_gallery_routes_for_filename(monkeypatch)
+def test_gallery_replace_filename_sanitizer_uses_basename():
+    mod = _import_gallery_routes_for_filename()
 
     out = mod._sanitize_gallery_filename("../../etc/cron.d/evil image.png")
 
@@ -1017,7 +1073,7 @@ def test_gallery_replace_filename_sanitizer_uses_basename(monkeypatch):
 
 
 def test_gallery_replace_filename_sanitizer_falls_back_when_empty(monkeypatch):
-    mod = _import_gallery_routes_for_filename(monkeypatch)
+    mod = _import_gallery_routes_for_filename()
     monkeypatch.setattr(mod.uuid, "uuid4", lambda: types.SimpleNamespace(hex="abcdef1234567890"))
 
     assert mod._sanitize_gallery_filename("../") == "abcdef123456"

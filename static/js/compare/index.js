@@ -1090,6 +1090,7 @@ function _exportPrint() {
   // the system print dialog — user can pick "Save as PDF" from there.
   const w = window.open('', '_blank');
   if (!w) return;
+  try { w.opener = null; } catch (_) {}
   const escape = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const html = '<!doctype html><meta charset="utf-8"><title>Compare export</title>' +
     '<style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;max-width:780px;margin:32px auto;padding:0 24px;line-height:1.55;color:#222}' +

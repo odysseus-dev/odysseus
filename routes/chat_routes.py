@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import time
 import logging
 from datetime import datetime
@@ -19,6 +20,7 @@ from src import agent_runs
 from src.model_context import estimate_tokens
 from src.chat_helpers import coerce_message_and_session
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
+from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
 from src.auth_helpers import get_current_user
@@ -393,7 +395,25 @@ def setup_chat_routes(
         search_context = form_data.get("search_context")  # pre-fetched web search results (compare mode)
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
         incognito = str(form_data.get("incognito", "")).lower() == "true"
+        plan_mode = str(form_data.get("plan_mode", "")).lower() == "true"
         chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
+        # Workspace: confine the agent's file/shell tools to this folder. Validate
+        # it's a real directory; ignore (no confinement) otherwise.
+        workspace = (form_data.get("workspace") or "").strip()
+        if workspace:
+            _ws_real = os.path.realpath(os.path.expanduser(workspace))
+            workspace = _ws_real if os.path.isdir(_ws_real) else ""
+        # Plan mode is a modifier on agent mode — it only makes sense with tools.
+        if plan_mode:
+            chat_mode = "agent"
+        # An approved plan being EXECUTED: the frontend sends the checklist back
+        # on each turn so we can pin it in context. This way a long plan on a
+        # weak model survives history truncation — the agent can always re-read
+        # the plan. Ignored while still proposing (plan_mode on). Capped so a
+        # huge plan can't blow the prompt.
+        approved_plan = ""
+        if not plan_mode:
+            approved_plan = (form_data.get("approved_plan") or "").strip()[:8192]
         # Did the USER explicitly pick agent mode? (vs. us auto-escalating
         # below). Skill extraction should only learn from real agent sessions,
         # not chats we quietly promoted for a notes/calendar intent.
@@ -652,6 +672,13 @@ def setup_chat_routes(
             if chat_mode == 'chat':
                 disabled_tools.update({"bash", "python", "read_file", "write_file", "web_search", "web_fetch", "search_chats", "manage_tasks"})
 
+        # Plan mode: investigate read-only, propose a plan, don't mutate. Block
+        # every tool not on the read-only allowlist. (stream_agent_loop enforces
+        # this again + drops MCP, so this is belt-and-suspenders.)
+        if plan_mode:
+            from src.tool_security import plan_mode_disabled_tools
+            disabled_tools.update(plan_mode_disabled_tools())
+
         async def stream_with_save() -> AsyncGenerator[str, None]:
             # _effective_mode is read-only here; closure captures it from
             # the outer scope. (Was `nonlocal` but never reassigned.)
@@ -866,6 +893,8 @@ def setup_chat_routes(
             elif chat_mode == "chat":
                 _chat_start = time.time()
                 _answered_by = None  # set if the selected model failed and a fallback answered
+                _requested_model = sess.model
+                _actual_model = None
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
                 try:
                     _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
@@ -898,10 +927,18 @@ def setup_chat_routes(
                                     # Selected model failed; a fallback answered.
                                     # Forward the notice and remember the real model.
                                     _answered_by = data.get("answered_by") or _answered_by
+                                    _actual_model = _actual_model or _answered_by
+                                    data["selected_model"] = data.get("selected_model") or _requested_model
                                     yield chunk
+                                elif data.get("type") == "model_actual":
+                                    _actual_model = data.get("model") or _actual_model
+                                    data["requested_model"] = _requested_model
+                                    yield f'data: {json.dumps(data)}\n\n'
                                 elif data.get("type") == "usage":
                                     last_metrics = data.get("data", {})
-                                    last_metrics["model"] = _answered_by or sess.model
+                                    _reported_model = last_metrics.get("model")
+                                    last_metrics["requested_model"] = _requested_model
+                                    last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model
                                     if ctx.context_length and last_metrics.get("input_tokens"):
                                         pct = min(round((last_metrics["input_tokens"] / ctx.context_length) * 100, 1), 100.0)
                                         last_metrics["context_percent"] = pct
@@ -938,7 +975,8 @@ def setup_chat_routes(
                                     "tokens_per_second": _tps,
                                     "context_percent": _ctx_pct,
                                     "context_length": ctx.context_length,
-                                    "model": sess.model,
+                                    "model": _actual_model or _answered_by or _requested_model,
+                                    "requested_model": _requested_model,
                                     "usage_source": "estimated",
                                 }
                                 yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
@@ -967,7 +1005,14 @@ def setup_chat_routes(
                 except (asyncio.CancelledError, GeneratorExit):
                     if full_response:
                         logger.info("Client disconnected mid-stream (chat mode) for session %s, saving partial (%d chars)", session, len(full_response))
-                        _stopped_content, _stopped_md = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model})
+                        _stopped_content, _stopped_md = clean_thinking_for_save(
+                            full_response,
+                            {
+                                "stopped": True,
+                                "model": _actual_model or _answered_by or _requested_model,
+                                "requested_model": _requested_model,
+                            },
+                        )
                         sess.add_message(ChatMessage("assistant", _stopped_content, metadata=_stopped_md))
                         if not incognito:
                             session_manager.save_sessions()
@@ -979,9 +1024,19 @@ def setup_chat_routes(
                 _agent_rounds = 0
                 _agent_tool_calls = 0
                 _answered_by = None  # set if the selected model failed and a fallback answered
+                _requested_model = sess.model
+                _actual_model = None
                 try:
                     from src.settings import get_setting
+                    from src.agent_tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
                     _tool_budget = int(get_setting("agent_max_tool_calls", 0))
+                    # Per-message round cap from settings; clamp defensively in
+                    # case settings.json was hand-edited to a bad value.
+                    try:
+                        _max_rounds = int(get_setting("agent_max_rounds", _DEFAULT_ROUNDS) or _DEFAULT_ROUNDS)
+                    except (TypeError, ValueError):
+                        _max_rounds = _DEFAULT_ROUNDS
+                    _max_rounds = max(1, min(_max_rounds, 200))
 
                     async for chunk in stream_agent_loop(
                         sess.endpoint_url,
@@ -992,12 +1047,16 @@ def setup_chat_routes(
                         max_tokens=ctx.preset.max_tokens,
                         prompt_type=preset_id,
                         max_tool_calls=_tool_budget,
+                        max_rounds=_max_rounds,
                         context_length=ctx.context_length,
                         active_document=active_doc,
                         session_id=session,
                         disabled_tools=disabled_tools if disabled_tools else None,
                         owner=_user,
                         fallbacks=_fallback_candidates,
+                        workspace=workspace or None,
+                        plan_mode=plan_mode,
+                        approved_plan=approved_plan or None,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -1017,6 +1076,9 @@ def setup_chat_routes(
                                     "tool_start", "tool_output", "agent_step",
                                     "doc_stream_open", "doc_stream_delta",
                                     "doc_update", "doc_suggestions", "ui_control",
+                                    "rounds_exhausted",
+                                    "ask_user",
+                                    "plan_update",
                                 ):
                                     if data.get("type") == "agent_step":
                                         _agent_rounds = max(_agent_rounds, data.get("round", 1))
@@ -1029,10 +1091,18 @@ def setup_chat_routes(
                                     # model so metrics reflect it, not the masked
                                     # selected model.
                                     _answered_by = data.get("answered_by") or _answered_by
+                                    _actual_model = _actual_model or _answered_by
+                                    data["selected_model"] = data.get("selected_model") or _requested_model
                                     yield chunk
+                                elif data.get("type") == "model_actual":
+                                    _actual_model = data.get("model") or _actual_model
+                                    data["requested_model"] = _requested_model
+                                    yield f'data: {json.dumps(data)}\n\n'
                                 elif data.get("type") == "metrics":
                                     last_metrics = data.get("data", {})
-                                    last_metrics["model"] = _answered_by or sess.model
+                                    _reported_model = last_metrics.get("model")
+                                    last_metrics["requested_model"] = last_metrics.get("requested_model") or _requested_model
+                                    last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model
                                     yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
                             except json.JSONDecodeError:
                                 yield chunk
@@ -1073,7 +1143,14 @@ def setup_chat_routes(
                     try:
                         if full_response:
                             logger.info("Client disconnected mid-stream for session %s, saving partial response (%d chars)", session, len(full_response))
-                            _stopped_content2, _stopped_md2 = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model})
+                            _stopped_content2, _stopped_md2 = clean_thinking_for_save(
+                                full_response,
+                                {
+                                    "stopped": True,
+                                    "model": _actual_model or _answered_by or _requested_model,
+                                    "requested_model": _requested_model,
+                                },
+                            )
                             sess.add_message(ChatMessage("assistant", _stopped_content2, metadata=_stopped_md2))
                             if not incognito:
                                 session_manager.save_sessions()
@@ -1167,45 +1244,16 @@ def setup_chat_routes(
             return []
 
         _user = get_current_user(request)
-        query_term = q.strip()
-        db = SessionLocal()
-        try:
-            base_q = (
-                db.query(DBChatMessage, DBSession.name)
-                .join(DBSession, DBChatMessage.session_id == DBSession.id)
-                .filter(
-                    DBSession.archived == False,
-                    DBChatMessage.content.ilike(f"%{query_term}%"),
-                    DBChatMessage.role.in_(["user", "assistant"]),
-                )
+        return [
+            result.to_dict()
+            for result in search_session_messages(
+                q,
+                limit=limit,
+                owner=_user,
+                restrict_owner=_user is not None,
+                include_legacy_owner=False,
             )
-            if _user:
-                base_q = base_q.filter(DBSession.owner == _user)
-            rows = base_q.order_by(DBChatMessage.timestamp.desc()).limit(limit).all()
-
-            results = []
-            for msg, session_name in rows:
-                content = msg.content or ""
-                lower_content = content.lower()
-                idx = lower_content.find(query_term.lower())
-                if idx == -1:
-                    snippet = content[:120]
-                else:
-                    start = max(0, idx - 50)
-                    end = min(len(content), idx + len(query_term) + 50)
-                    snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
-
-                results.append({
-                    "session_id": msg.session_id,
-                    "session_name": session_name or "Untitled",
-                    "role": msg.role,
-                    "content_snippet": snippet,
-                    "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
-                })
-
-            return results
-        finally:
-            db.close()
+        ]
 
     # ------------------------------------------------------------------ #
     # POST /api/rewrite — lightweight rewrite of last AI message (no tools)

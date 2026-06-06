@@ -1629,9 +1629,11 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             #    context (To/Subject/In-Reply-To/References).
             try:
                 from routes.email_routes import _imap, _decode_header
+                from routes.email_helpers import _q
             except Exception:
                 _imap = None
                 _decode_header = lambda x: x or ""
+                _q = lambda x: x or ""
 
             to_addr = ""
             from_name = ""
@@ -1641,7 +1643,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             if _imap:
                 try:
                     with _imap(doc.source_email_account_id or None) as conn:
-                        conn.select(doc.source_email_folder, readonly=True)
+                        conn.select(_q(doc.source_email_folder), readonly=True)
                         status, data = conn.fetch(doc.source_email_uid.encode(), "(RFC822.HEADER)")
                     if status == "OK" and data and data[0]:
                         raw_hdr = data[0][1]

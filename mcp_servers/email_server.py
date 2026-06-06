@@ -38,6 +38,11 @@ def _b(value) -> bytes:
     return str(value).encode()
 
 
+def _q(name: str) -> str:
+    """Quote an IMAP mailbox name for commands that take mailbox args."""
+    return '"' + (name or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _uid_fetch_rows(data) -> list:
     return [d for d in (data or []) if isinstance(d, bytes) and b"UID " in d]
 
@@ -419,7 +424,7 @@ def _list_emails(folder="INBOX", max_results=20, unresponded_only=False,
     account selects mailbox (None = default).
     """
     conn = _imap_connect(account)
-    select_status, _ = conn.select(folder, readonly=True)
+    select_status, _ = conn.select(_q(folder), readonly=True)
     if select_status != "OK":
         conn.logout()
         raise ValueError(f"IMAP folder not found: {folder}")
@@ -542,7 +547,7 @@ def _search_emails(query, folders=None, max_results=20, account=None):
     try:
         for folder in folders:
             try:
-                status, _ = conn.select(folder, readonly=True)
+                status, _ = conn.select(_q(folder), readonly=True)
                 if status != "OK":
                     continue
                 status, data = conn.uid("SEARCH", None, search_cmd)
@@ -653,7 +658,7 @@ def _read_email(uid=None, message_id=None, folder="INBOX", account=None):
     """Read full email content by UID or message-ID. account = mailbox selector."""
     cfg = _load_config(account)
     conn = _imap_connect(account)
-    conn.select(folder, readonly=True)
+    conn.select(_q(folder), readonly=True)
 
     if message_id and not uid:
         status, data = conn.uid("SEARCH", None, f'(HEADER Message-ID "{message_id}")')
@@ -827,7 +832,7 @@ def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, b
         imap = _imap_connect(send_account)
         try:
             sent_folder = _detect_sent_folder(imap)
-            append_st, append_data = imap.append(sent_folder, "\\Seen", None, msg.as_bytes())
+            append_st, append_data = imap.append(_q(sent_folder), "\\Seen", None, msg.as_bytes())
             if append_st == "OK" and append_data:
                 m = re.search(rb"APPENDUID\s+\d+\s+(\d+)", append_data[0] or b"")
                 if m:
@@ -854,7 +859,7 @@ def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, b
 def _reply_to_email(uid, body, folder="INBOX", reply_all=False, account=None):
     """Reply to an existing email by UID. Threads via In-Reply-To/References."""
     conn = _imap_connect(account)
-    conn.select(folder, readonly=True)
+    conn.select(_q(folder), readonly=True)
     status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
     conn.logout()
     if status != "OK" or not msg_data or not msg_data[0]:
@@ -896,7 +901,7 @@ def _reply_to_email(uid, body, folder="INBOX", reply_all=False, account=None):
 def _set_flag(uid, folder, flag, add=True, account=None):
     """Add or remove an IMAP flag (e.g. \\Seen, \\Answered, \\Deleted)."""
     conn = _imap_connect(account)
-    conn.select(folder)
+    conn.select(_q(folder))
     op = "+FLAGS" if add else "-FLAGS"
     try:
         status, data = conn.uid("STORE", _b(uid), op, flag)
@@ -918,7 +923,7 @@ def _bulk_set_flag(uids, folder, flag, add=True, account=None):
     conn = _imap_connect(account)
     touched = []
     try:
-        conn.select(folder)
+        conn.select(_q(folder))
         op = "+FLAGS" if add else "-FLAGS"
         msg_set = ",".join(str(u) for u in uids)
         try:
@@ -945,7 +950,7 @@ def _bulk_move(uids, source_folder, dest_folder, account=None, role: str = ""):
     conn = _imap_connect(account)
     moved = 0
     try:
-        conn.select(source_folder)
+        conn.select(_q(source_folder))
         dest_folder = _resolve_folder(conn, dest_folder, role or _folder_role_from_name(dest_folder))
         msg_set = ",".join(str(u) for u in uids)
         try:
@@ -956,10 +961,11 @@ def _bulk_move(uids, source_folder, dest_folder, account=None, role: str = ""):
         if not existing:
             return 0
         moved = len(existing)
-        status, _ = conn.uid("MOVE", _b(msg_set), dest_folder)
+        dest_arg = _q(dest_folder)
+        status, _ = conn.uid("MOVE", _b(msg_set), dest_arg)
         if status != "OK":
             # Fallback: UID copy + flag-delete + expunge
-            status, _ = conn.uid("COPY", _b(msg_set), dest_folder)
+            status, _ = conn.uid("COPY", _b(msg_set), dest_arg)
             if status != "OK":
                 return 0
             status, _ = conn.uid("STORE", _b(msg_set), "+FLAGS", "\\Deleted")
@@ -976,7 +982,7 @@ def _search_uids(folder="INBOX", criteria="UNSEEN", account=None):
     ALL, ANSWERED). Used to resolve selectors like all_unread → uids."""
     conn = _imap_connect(account)
     try:
-        conn.select(folder, readonly=True)
+        conn.select(_q(folder), readonly=True)
         status, data = conn.uid("SEARCH", None, criteria)
         if status != "OK" or not data or not data[0]:
             return []
@@ -988,7 +994,7 @@ def _search_uids(folder="INBOX", criteria="UNSEEN", account=None):
 def _move_message(uid, source_folder, dest_folder, account=None, role: str = ""):
     """Move a message between folders. Tries IMAP MOVE, falls back to copy+delete."""
     conn = _imap_connect(account)
-    conn.select(source_folder)
+    conn.select(_q(source_folder))
     try:
         dest_folder = _resolve_folder(conn, dest_folder, role or _folder_role_from_name(dest_folder))
         try:
@@ -998,11 +1004,12 @@ def _move_message(uid, source_folder, dest_folder, account=None, role: str = "")
         existing = _uid_fetch_rows(data)
         if status != "OK" or not existing:
             return False
-        status, _ = conn.uid("MOVE", _b(uid), dest_folder)
+        dest_arg = _q(dest_folder)
+        status, _ = conn.uid("MOVE", _b(uid), dest_arg)
         if status == "OK":
             return True
         # Fallback: UID copy + delete
-        status, _ = conn.uid("COPY", _b(uid), dest_folder)
+        status, _ = conn.uid("COPY", _b(uid), dest_arg)
         if status != "OK":
             return False
         status, _ = conn.uid("STORE", _b(uid), "+FLAGS", "\\Deleted")
@@ -1032,7 +1039,7 @@ def _archive_email(uid, folder="INBOX", account=None):
 def _download_attachment(uid, index, folder="INBOX", account=None):
     """Extract a specific attachment to disk and return its local path."""
     conn = _imap_connect(account)
-    conn.select(folder, readonly=True)
+    conn.select(_q(folder), readonly=True)
     status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
     conn.logout()
     if status != "OK":

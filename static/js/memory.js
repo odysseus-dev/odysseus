@@ -18,6 +18,26 @@ let selectedIds = new Set();
 
 const MEMORY_CATEGORIES = ['fact', 'identity', 'preference', 'contact', 'project', 'goal', 'task'];
 
+function _ensureNewMemoryCategorySelect() {
+  const sel = document.getElementById('new-memory-category');
+  if (!sel || sel.dataset.wired === '1') return;
+  sel.dataset.wired = '1';
+  MEMORY_CATEGORIES.forEach(cat => {
+    const opt = document.createElement('option');
+    opt.value = cat;
+    opt.textContent = cat;
+    if (cat === 'fact') opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+function _readNewMemoryCategory() {
+  _ensureNewMemoryCategorySelect();
+  const sel = document.getElementById('new-memory-category');
+  const cat = sel?.value || 'fact';
+  return MEMORY_CATEGORIES.includes(cat) ? cat : 'fact';
+}
+
 let _memoryDragWired = false;
 function _wireMemoryDrag() {
   if (_memoryDragWired) return;
@@ -274,6 +294,7 @@ async function syncPrefToggle(elementId, prefKey, onMsg, offMsg, dimBelow = true
 }
 
 export async function loadMemories() {
+  _ensureNewMemoryCategorySelect();
   try {
     const response = await fetch(`${window.location.origin}/api/memory`);
 
@@ -977,6 +998,7 @@ export function updateMemoryCount() {
 export async function addNewMemory() {
   const input = document.getElementById('new-memory-input');
   const text = input.value.trim();
+  const category = _readNewMemoryCategory();
 
   if (!text) {
     showError('Memory text cannot be empty');
@@ -991,6 +1013,7 @@ export async function addNewMemory() {
       },
       body: JSON.stringify({
         text: text,
+        category: category,
       })
     });
 

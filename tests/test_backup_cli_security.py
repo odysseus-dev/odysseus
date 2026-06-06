@@ -1,5 +1,3 @@
-import importlib.machinery
-import importlib.util
 import io
 import tarfile
 from pathlib import Path
@@ -7,14 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.helpers.cli_loader import load_script
+
 
 def _load_backup_cli():
-    path = Path(__file__).resolve().parent.parent / "scripts" / "odysseus-backup"
-    loader = importlib.machinery.SourceFileLoader("odysseus_backup_under_test", str(path))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
+    return load_script("odysseus-backup")
 
 
 def _patch_repo(module, monkeypatch, root: Path):

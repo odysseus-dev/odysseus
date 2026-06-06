@@ -16,6 +16,10 @@ src = src.replace(
   /import \{ splitTableRow \} from '\.\/markdown\/tableRow\.js';/,
   'const splitTableRow = (row) => row.split("|").filter((cell) => cell.trim() !== "");'
 );
+src = src.replace(
+  /import \{ replaceEmojiShortcodes, hasEmojiShortcode \} from '\.\/emojiShortcodes\.js';/,
+  'const hasEmojiShortcode = (t) => !!t && t.indexOf(":") !== -1 && /:[a-z0-9_+-]{1,40}:/i.test(t); const replaceEmojiShortcodes = (t) => t;'
+);
 src = src.replace(/export function /g, 'function ');
 src = src.replace(/export const /g, 'const ');
 src = src.replace(/export default markdownModule;?/g, '');

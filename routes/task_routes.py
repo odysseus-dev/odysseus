@@ -18,6 +18,119 @@ from routes.prefs_routes import _load_for_user, _save_for_user
 logger = logging.getLogger(__name__)
 
 
+def _maybe_cascade_calendar_event(task) -> None:
+    """Delete the linked calendar event when a cookbook_serve task is
+    removed. Two lookup strategies:
+
+      1. PRIMARY — `cookbook_event_uid` marker stashed in task.prompt
+         by cookbookSchedule.js right after creating the event. Direct
+         UID match, no ambiguity.
+
+      2. FALLBACK — for tasks created before the marker was wired up
+         (or when the PATCH to add the marker failed silently), scan
+         the Cookbook calendar for events whose summary equals the
+         task name and delete the matches.
+
+    Best-effort throughout: errors are logged but never block the task
+    deletion itself."""
+    if not task or task.task_type != "action" or task.action != "cookbook_serve":
+        return
+
+    import httpx
+    from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
+    headers = {INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN}
+    if task.owner:
+        headers["X-Odysseus-Owner"] = task.owner
+
+    # Strategy 1: explicit UID marker in prompt.
+    event_uid = ""
+    if task.prompt:
+        try:
+            cfg = json.loads(task.prompt)
+            if isinstance(cfg, dict):
+                event_uid = (cfg.get("cookbook_event_uid") or "").strip()
+        except Exception:
+            pass
+
+    def _try_delete(uid: str) -> bool:
+        try:
+            with httpx.Client(timeout=10) as client:
+                r = client.delete(
+                    f"http://localhost:7000/api/calendar/events/{uid}",
+                    headers=headers,
+                )
+                if r.status_code >= 400:
+                    logger.info(
+                        f"task delete: cascade calendar event {uid} returned "
+                        f"HTTP {r.status_code}"
+                    )
+                    return False
+                return True
+        except Exception as e:
+            logger.warning(f"task delete: cascade calendar event {uid} failed: {e}")
+            return False
+
+    if event_uid:
+        _try_delete(event_uid)
+        return
+
+    # Strategy 2: scan the Cookbook calendar for matching summaries.
+    # Only runs for tasks missing the marker (old tasks or PATCH failures).
+    if not task.name:
+        return
+    try:
+        with httpx.Client(timeout=10) as client:
+            # Find the Cookbook calendar.
+            cal_r = client.get("http://localhost:7000/api/calendar/calendars", headers=headers)
+            if cal_r.status_code >= 400:
+                return
+            cals = (cal_r.json() or {}).get("calendars", [])
+            cookbook_cal = next(
+                (c for c in cals if (c.get("name") or "").lower() == "cookbook"),
+                None,
+            )
+            if not cookbook_cal:
+                return
+            cal_href = cookbook_cal.get("href") or cookbook_cal.get("id") or ""
+            # List events in a wide window to catch recurring + upcoming.
+            from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+            now = _dt.now(_tz.utc)
+            start = (now - _td(days=30)).isoformat()
+            end = (now + _td(days=365)).isoformat()
+            ev_r = client.get(
+                "http://localhost:7000/api/calendar/events",
+                params={"start": start, "end": end, "calendar": cal_href},
+                headers=headers,
+            )
+            if ev_r.status_code >= 400:
+                return
+            events = (ev_r.json() or {}).get("events", [])
+            # Match by exact summary. Tasks named "Serve: <model>" are
+            # created from the schedule modal; the event's summary mirrors
+            # the task name 1:1 by design.
+            target = (task.name or "").strip()
+            uids_to_delete = set()
+            for ev in events:
+                if (ev.get("summary") or "").strip() != target:
+                    continue
+                uid = ev.get("uid") or ev.get("id") or ""
+                # Strip the "::occurrence" suffix on recurring expansions —
+                # we want to delete the MASTER once, not each instance.
+                if "::" in uid:
+                    uid = uid.split("::", 1)[0]
+                if uid:
+                    uids_to_delete.add(uid)
+            for uid in uids_to_delete:
+                _try_delete(uid)
+            if uids_to_delete:
+                logger.info(
+                    f"task delete: cascade matched {len(uids_to_delete)} calendar event(s) "
+                    f"by summary fallback for task {task.id} ({target!r})"
+                )
+    except Exception as e:
+        logger.warning(f"task delete: cascade fallback scan failed: {e}")
+
+
 class TaskCreate(BaseModel):
     name: Optional[str] = None
     prompt: Optional[str] = None
@@ -455,7 +568,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
         import sqlite3
         from pathlib import Path
-        from routes.email_helpers import SCHEDULED_DB
+        from routes.email_helpers import SCHEDULED_DB, OWNER_SCOPED_EMAIL_CACHE_TABLES, _email_cache_owner_clause
 
         cleared = {}
         conn = sqlite3.connect(SCHEDULED_DB)
@@ -468,6 +581,13 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                             (user,),
                         ).fetchone()[0]
                         conn.execute("DELETE FROM email_tags WHERE owner = ? OR owner = ''", (user,))
+                    elif table in OWNER_SCOPED_EMAIL_CACHE_TABLES and user:
+                        owner_clause, owner_params = _email_cache_owner_clause(user)
+                        before = conn.execute(
+                            f"SELECT COUNT(*) FROM {table} WHERE {owner_clause}",
+                            owner_params,
+                        ).fetchone()[0]
+                        conn.execute(f"DELETE FROM {table} WHERE {owner_clause}", owner_params)
                     else:
                         before = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                         conn.execute(f"DELETE FROM {table}")
@@ -609,6 +729,12 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 raise HTTPException(404, "Task not found")
             if user and task.owner != user:
                 raise HTTPException(403, "Access denied")
+            # Cascade: cookbook_serve tasks may have a linked calendar
+            # event (created via the "Create event in calendar" toggle
+            # in the schedule modal). If so, delete the calendar event
+            # too so the calendar doesn't end up holding a phantom event
+            # for a task that no longer exists.
+            _maybe_cascade_calendar_event(task)
             db.delete(task)
             db.commit()
             return {"ok": True}
