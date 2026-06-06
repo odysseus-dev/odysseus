@@ -618,6 +618,36 @@ function _initModelPickerDropdown() {
       _openPickerShortcut('models');
     });
   }
+  const refreshBtn = document.getElementById('model-picker-refresh-btn');
+  async function _refreshModelListFromServer() {
+    if (!window.modelsModule || typeof window.modelsModule.refreshModels !== 'function') return;
+    const prevText = refreshBtn ? refreshBtn.textContent : '';
+    if (refreshBtn) {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = 'Refreshing…';
+    }
+    try {
+      await window.modelsModule.refreshModels(true);
+      _localProbeFetchedAt = 0;
+      await _refreshLocalProbe();
+      _populate(search.value || '');
+      updateModelPicker();
+      if (uiModule && uiModule.showToast) uiModule.showToast('Model list refreshed');
+    } catch (_) {
+      if (uiModule && uiModule.showError) uiModule.showError('Failed to refresh model list');
+    } finally {
+      if (refreshBtn) {
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = prevText || 'Refresh model list';
+      }
+    }
+  }
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _refreshModelListFromServer();
+    });
+  }
   document.addEventListener('click', (e) => {
     if (!menu.classList.contains('hidden') && !menu.contains(e.target) && e.target !== btn) {
       _close();

@@ -177,17 +177,23 @@ export async function refreshModels(force = false) {
     box.appendChild(_loadingSpinner.createElement());
     _loadingSpinner.start();
     try {
-      if (!_fetchInflight) {
-        _fetchInflight = fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' })
-          .then(async (res) => {
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return res.json();
-          })
-          .finally(() => { _fetchInflight = null; });
+      if (force) {
+        const res = await fetch(`${API_BASE}/api/models?refresh=true`, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        _cachedItems = (await res.json()).items || [];
+      } else {
+        if (!_fetchInflight) {
+          _fetchInflight = fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' })
+            .then(async (res) => {
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+              return res.json();
+            })
+            .finally(() => { _fetchInflight = null; });
+        }
+        const data = await _fetchInflight;
+        _cachedItems = data.items || [];
       }
-      const data = await _fetchInflight;
       _lastFetchTime = Date.now();
-      _cachedItems = data.items || [];
     } catch (e) {
       console.error(e);
       box.textContent = '(scan failed)';

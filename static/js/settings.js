@@ -170,8 +170,9 @@ function initOpacityToggle() {
 const _aiEndpointRefreshers = new Set();
 let _aiEndpointRefreshInFlight = null;
 
-async function _fetchModelEndpoints() {
-  const epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+async function _fetchModelEndpoints(refresh = false) {
+  const url = refresh ? '/api/model-endpoints?refresh=true' : '/api/model-endpoints';
+  const epRes = await fetch(url, { credentials: 'same-origin' });
   const endpoints = await epRes.json();
   return Array.isArray(endpoints) ? endpoints : [];
 }
@@ -389,7 +390,7 @@ async function initDefaultChat() {
   }
 
   try {
-    _endpoints = await _fetchModelEndpoints();
+    _endpoints = await _fetchModelEndpoints(true);
     _fillEndpointSelect(epSel, _endpoints, epSel.value, false);
   } catch (e) { console.warn('Failed to load endpoints for default chat', e); }
 

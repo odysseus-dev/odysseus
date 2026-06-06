@@ -269,7 +269,7 @@ class TestIsChatModel:
 
     @pytest.mark.parametrize("model_id", [
         "dall-e-3", "tts-1", "whisper-1", "text-embedding-3-small",
-        "gpt-image-1", "sora-1",
+        "gpt-image-1", "sora-1", "all-minilm:l6-v2", "nomic-embed-text",
     ])
     def test_non_chat_models(self, model_id):
         assert _is_chat_model(model_id) is False
@@ -1398,3 +1398,22 @@ def test_manual_refresh_timeout_keeps_cached_models_and_warns(monkeypatch):
     assert db.commits == 0
     assert response.headers["X-Model-Refresh-Status"] == "failed"
     assert "kept cached models" in response.headers["X-Model-Refresh-Warning"]
+
+
+# ── ENDPOINT_PROBE_TIMEOUT ──
+
+class TestEndpointProbeTimeout:
+    def test_default(self, monkeypatch):
+        monkeypatch.delenv("ENDPOINT_PROBE_TIMEOUT", raising=False)
+        from core.constants import get_endpoint_probe_timeout
+        assert get_endpoint_probe_timeout() == 15
+
+    def test_env_override(self, monkeypatch):
+        monkeypatch.setenv("ENDPOINT_PROBE_TIMEOUT", "30")
+        from core.constants import get_endpoint_probe_timeout
+        assert get_endpoint_probe_timeout() == 30
+
+    def test_env_clamped(self, monkeypatch):
+        monkeypatch.setenv("ENDPOINT_PROBE_TIMEOUT", "999")
+        from core.constants import get_endpoint_probe_timeout
+        assert get_endpoint_probe_timeout() == 120

@@ -20,11 +20,13 @@ from core.middleware import require_admin
 from src.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS
 from src.tls_overrides import llm_verify
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
+from core.constants import ENDPOINT_PROBE_TIMEOUT
 from src.endpoint_resolver import (
     normalize_base as _normalize_base,
     build_chat_url,
     build_models_url,
     build_headers,
+    _first_chat_model,
 )
 from src.auth_helpers import _auth_disabled, owner_filter
 
@@ -384,8 +386,8 @@ def _endpoint_refresh_timeout(ep: Any, category: str) -> float:
     except Exception:
         val = 0
     if val > 0:
-        return float(max(1, min(30, val)))
-    return 2.5 if category == "local" else 2.0
+        return float(max(1, min(60, val)))
+    return float(ENDPOINT_PROBE_TIMEOUT) if category == "local" else 2.0
 
 
 def _manual_refresh_timeout(ep: Any, category: str, requested: Any = None) -> float:
@@ -452,7 +454,25 @@ def _explicit_model_list_timeout(base_url: str, endpoint_kind: str = "auto", req
     category = _classify_endpoint(base_url, kind)
     if kind in ("api", "proxy") or category == "api":
         return 30.0
-    return 3.0 if _is_ollama_base(base_url) else 2.0
+    if category == "local" or _is_ollama_base(base_url):
+        return float(ENDPOINT_PROBE_TIMEOUT)
+    return 2.0
+
+
+def _reachability_timeout(base_url: str, category: str = "local", requested: Any = None) -> float:
+    """Timeout for cheap reachability pings (/api/version, base URL, etc.).
+
+    Local/LAN Ollama hosts can take several seconds to answer even when
+    healthy (cold GPU, model load, cross-network from K8s). Reuse
+    ENDPOINT_PROBE_TIMEOUT so the UI does not flash offline on slow pings
+    while /models probes succeed with the same budget.
+    """
+    requested_val = _parse_positive_int(requested, minimum=1, maximum=120)
+    if requested_val is not None:
+        return float(requested_val)
+    if category == "local" or _is_ollama_base(base_url):
+        return float(ENDPOINT_PROBE_TIMEOUT)
+    return 1.5
 
 
 def _cached_model_ids(ep: Any) -> List[str]:
@@ -481,6 +501,8 @@ _NON_CHAT_PREFIXES = (
 _NON_CHAT_CONTAINS = (
     "-realtime", "-transcribe", "-tts", "-codex",
     "codex-",
+    # Ollama embedding models — all-minilm:l6-v2 lacks "embedding" in the name.
+    "minilm", "-embed", "nomic-embed", "mxbai-embed", "arctic-embed", "bge-",
 )
 _NON_CHAT_EXACT_PREFIXES = (
     "gpt-audio",  # gpt-audio, gpt-audio-mini etc. (not gpt-4o-audio-preview which is chat)
@@ -614,9 +636,11 @@ def _effective_endpoint_kind(ep: Any, base_url: str) -> str:
 
 
 
-def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
+def _probe_endpoint(base_url: str, api_key: str = None, timeout: int | None = None) -> List[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
     For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
+    if timeout is None:
+        timeout = ENDPOINT_PROBE_TIMEOUT
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
     if _detect_provider(base) == "anthropic":
@@ -699,10 +723,12 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     return []
 
 
-def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> Dict[str, Any]:
+def _ping_endpoint(base_url: str, api_key: str = None, timeout: float | None = None) -> Dict[str, Any]:
     """Reachability probe that does not require installed/listed models."""
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
+    if timeout is None:
+        timeout = _reachability_timeout(base, _classify_endpoint(base, "auto"))
     headers = build_headers(api_key, base)
 
     # Ollama exposes /v1/models (OpenAI-compatible) AND native /api/version,
@@ -887,6 +913,37 @@ def setup_model_routes(model_discovery):
 
     def _refresh_key(base: str, api_key: Optional[str]) -> str:
         return f"{base.rstrip('/')}\x00{api_key or ''}"
+
+    def _sync_refresh_endpoint_caches(clear_failures: bool = False) -> int:
+        """Re-probe enabled endpoints now and persist cached_models. Returns count updated."""
+        updated = 0
+        db = SessionLocal()
+        try:
+            endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+            for ep in endpoints:
+                base = _normalize_base(ep.base_url)
+                key = _refresh_key(base, getattr(ep, "api_key", None))
+                if clear_failures:
+                    st = _refresh_state.get(key)
+                    if st:
+                        st.pop("fail_count", None)
+                        st.pop("last_failure", None)
+                kind = _effective_endpoint_kind(ep, base)
+                category = _classify_endpoint(base, kind)
+                timeout = _manual_refresh_timeout(ep, category)
+                ids = _probe_endpoint(base, ep.api_key, timeout=timeout)
+                if ids:
+                    ep.cached_models = json.dumps(ids)
+                    st = _refresh_state.setdefault(key, {})
+                    st["last_success"] = _time.time()
+                    st["fail_count"] = 0
+                    st.pop("last_failure", None)
+                    updated += 1
+            db.commit()
+        finally:
+            db.close()
+        _invalidate_models_cache()
+        return updated
 
     def _ts(value: Any) -> float:
         try:
@@ -1131,10 +1188,15 @@ def setup_model_routes(model_discovery):
         cache_entry = _models_cache.get(_cache_key)
         if not refresh and cache_entry is not None and (now - cache_entry["time"]) < _MODELS_CACHE_TTL:
             return cache_entry["data"]
+        if refresh:
+            # Caller wants live data (e.g. after `ollama pull`). Background
+            # refresh alone returns stale cached_models on the first response.
+            _sync_refresh_endpoint_caches(clear_failures=True)
         result = _fetch_models(owner=owner, is_admin=_is_admin)
         _models_cache[_cache_key] = {"data": result, "time": now}
-        # Kick off background refresh to update caches from live endpoints
-        _refresh_caches_bg(force=refresh)
+        if not refresh:
+            # Kick off background refresh to update caches from live endpoints
+            _refresh_caches_bg(force=False)
         return result
 
     # Brief cache for local-probe results so picker-open doesn't hammer
@@ -1146,10 +1208,10 @@ def setup_model_routes(model_discovery):
 
     @router.get("/model-endpoints/probe-local")
     async def probe_local_endpoints(request: Request):
-        """Fast parallel reachability check for LOCAL endpoints only.
+        """Reachability check for LOCAL endpoints only.
         Cloud endpoints (api.openai.com, api.anthropic.com, etc.) are
-        assumed up. Local endpoints get a 1.5s cheap reachability probe so the UI
-        can dim stale entries pointing at dead vLLM servers. Returns
+        assumed up. Local endpoints use ENDPOINT_PROBE_TIMEOUT (default 15s)
+        so slow LAN Ollama hosts are not misclassified as offline. Returns
         {ep_id: {alive, latency_ms, error}}."""
         require_admin(request)
         now = _time.time()
@@ -1178,7 +1240,7 @@ def setup_model_routes(model_discovery):
             t0 = _time.time()
             try:
                 import asyncio as _asyncio
-                ping = await _asyncio.to_thread(_ping_endpoint, data["base"], data.get("api_key"), 1.5)
+                ping = await _asyncio.to_thread(_ping_endpoint, data["base"], data.get("api_key"))
                 lat = round((_time.time() - t0) * 1000)
                 return {
                     "alive": bool(ping.get("reachable")),
@@ -1229,7 +1291,7 @@ def setup_model_routes(model_discovery):
             }
             try:
                 t0 = _time.time()
-                ping = _ping_endpoint(base, ep.api_key, timeout=1.5)
+                ping = _ping_endpoint(base, ep.api_key)
                 entry["latency_ms"] = round((_time.time() - t0) * 1000)
                 entry["status"] = "online" if ping.get("reachable") or cached_count else "offline"
                 entry["error"] = ping.get("error")
@@ -1380,8 +1442,10 @@ def setup_model_routes(model_discovery):
     # ---- Admin: model endpoints CRUD ----
 
     @router.get("/model-endpoints")
-    def list_model_endpoints(request: Request) -> List[Dict[str, Any]]:
+    def list_model_endpoints(request: Request, refresh: bool = False) -> List[Dict[str, Any]]:
         require_admin(request)
+        if refresh:
+            _sync_refresh_endpoint_caches(clear_failures=True)
         db = SessionLocal()
         try:
             rows = db.query(ModelEndpoint).order_by(ModelEndpoint.created_at).all()
@@ -1396,7 +1460,13 @@ def setup_model_routes(model_discovery):
                 status = "online" if (all_models or pinned) else "offline"
                 ping = None
                 if not all_models and not pinned and r.is_enabled:
-                    ping = _ping_endpoint(r.base_url, r.api_key, timeout=1.0)
+                    base = _normalize_base(r.base_url)
+                    kind = _effective_endpoint_kind(r, base)
+                    ping = _ping_endpoint(
+                        r.base_url,
+                        r.api_key,
+                        timeout=_reachability_timeout(base, _classify_endpoint(base, kind)),
+                    )
                     if ping.get("reachable"):
                         status = "empty"
                 base = _normalize_base(r.base_url)
@@ -1569,7 +1639,15 @@ def setup_model_routes(model_discovery):
         model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=explicit_timeout) if should_probe else []
         ping = {"reachable": False, "error": None}
         if (should_probe or requested_kind in ("api", "proxy")) and not model_ids:
-            ping = _ping_endpoint(base_url, api_key.strip() or None, timeout=min(explicit_timeout, 2.0))
+            ping = _ping_endpoint(
+                base_url,
+                api_key.strip() or None,
+                timeout=_reachability_timeout(
+                    base_url,
+                    _classify_endpoint(base_url, requested_kind),
+                    refresh_timeout,
+                ),
+            )
         if require_model_list and not model_ids:
             raise HTTPException(400, _model_endpoint_error_message(base_url, ping))
 
@@ -1610,7 +1688,6 @@ def setup_model_routes(model_discovery):
             # to list first.
             settings = _load_settings()
             if not settings.get("default_endpoint_id"):
-                from src.endpoint_resolver import _first_chat_model
                 settings["default_endpoint_id"] = ep.id
                 settings["default_model"] = _first_chat_model(model_ids) or ""
                 _save_settings(settings)
@@ -1654,7 +1731,15 @@ def setup_model_routes(model_discovery):
         configured_timeout = _parse_positive_int(model_refresh_timeout, minimum=1, maximum=60)
         probe_timeout = _explicit_model_list_timeout(base_url, requested_kind, configured_timeout)
         models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
-        ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=min(probe_timeout, 2.0))
+        ping = {"reachable": True, "error": None} if models else _ping_endpoint(
+            base_url,
+            api_key.strip() or None,
+            timeout=_reachability_timeout(
+                base_url,
+                _classify_endpoint(base_url, requested_kind),
+                configured_timeout,
+            ),
+        )
         return {
             "base_url": base_url,
             "online": bool(models) or bool(ping.get("reachable")),
@@ -1899,7 +1984,7 @@ def setup_model_routes(model_discovery):
                 try:
                     visible = _visible_models(ep.cached_models, getattr(ep, "hidden_models", None), getattr(ep, "pinned_models", None))
                     if visible:
-                        model = visible[0]
+                        model = _first_chat_model(visible) or visible[0]
                 except Exception:
                     pass
             return {"endpoint_id": ep.id, "endpoint_url": chat_url, "model": model}

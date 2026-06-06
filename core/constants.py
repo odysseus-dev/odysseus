@@ -38,3 +38,21 @@ CLEANUP_INTERVAL_HOURS = int(os.getenv("CLEANUP_INTERVAL_HOURS", "24"))
 # Default parameters
 DEFAULT_TEMPERATURE = 1.0
 DEFAULT_MAX_TOKENS = 0
+
+
+def get_endpoint_probe_timeout(default: int = 15) -> int:
+    """Seconds to wait when probing an endpoint's /v1/models list.
+
+    Override via ENDPOINT_PROBE_TIMEOUT (1–120). Useful for LAN Ollama hosts
+    that can take several seconds to answer on cold/wake.
+    """
+    raw = os.getenv("ENDPOINT_PROBE_TIMEOUT", "").strip()
+    if not raw:
+        return default
+    try:
+        return max(1, min(int(raw), 120))
+    except ValueError:
+        return default
+
+
+ENDPOINT_PROBE_TIMEOUT = get_endpoint_probe_timeout()

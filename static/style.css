@@ -2841,6 +2841,36 @@ body.bg-pattern-sparkles {
       max-height: min(280px, 50dvh);
       overflow-y: auto;
     }
+    .model-picker-footer {
+      border-top: 1px solid var(--border);
+      padding: 5px 6px 6px;
+    }
+    .model-picker-refresh-btn {
+      appearance: none;
+      display: block;
+      width: 100%;
+      margin: 0;
+      padding: 6px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: color-mix(in srgb, var(--fg) 4%, transparent);
+      color: color-mix(in srgb, var(--fg) 72%, transparent);
+      font-size: 0.78em;
+      cursor: pointer;
+      text-align: center;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }
+    .model-picker-refresh-btn:hover:not(:disabled),
+    .model-picker-refresh-btn:focus-visible:not(:disabled) {
+      border-color: var(--red);
+      color: var(--fg);
+      background: color-mix(in srgb, var(--red) 10%, var(--panel));
+      outline: none;
+    }
+    .model-picker-refresh-btn:disabled {
+      opacity: 0.55;
+      cursor: wait;
+    }
     .model-picker-list.is-empty {
       max-height: 0;
       overflow: hidden;
