@@ -16,7 +16,8 @@ from typing import Callable, Dict, List, Optional, Set
 
 from src.research_utils import strip_thinking, is_low_quality
 
-from src.goal_based_extractor import EXTRACTOR_PROMPT
+from src.goal_based_extractor import EXTRACTOR_SYSTEM
+from src.prompt_security import untrusted_context_message
 
 logger = logging.getLogger(__name__)
 
@@ -625,11 +626,12 @@ class DeepResearcher:
             else:
                 content = truncated
 
-        prompt = EXTRACTOR_PROMPT.format(webpage_content=content, goal=question)
-
         try:
             response = await self._llm(
-                [{"role": "user", "content": prompt}],
+                [
+                    {"role": "user", "content": EXTRACTOR_SYSTEM.format(goal=question)},
+                    untrusted_context_message("webpage", content),
+                ],
                 temperature=0.2,
                 max_tokens=2048,
                 timeout=self.extraction_timeout,
