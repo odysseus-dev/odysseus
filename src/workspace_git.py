@@ -658,6 +658,47 @@ def _is_dirty(ctx: RepoContext) -> bool:
     return bool(git_run(ctx.repo_root, ["status", "--porcelain"], check=False).stdout.strip())
 
 
+# Auto-stashes created during branch switches are tagged with this prefix so we
+# only ever pop our own (never the user's manual `git stash`). The stash's git
+# subject is "On <source-branch>: odysseus-branch-switch ...", which lets us key
+# a parked change-set to the branch it was made on and restore it on return.
+_AUTOSTASH_PREFIX = "odysseus-branch-switch"
+
+
+def _autostash_entries(repo_root: str) -> list[dict[str, str]]:
+    """Our branch-switch stashes, each as {ref, branch} where branch is the
+    source branch the stash was created on (parsed from the 'On <branch>:' subject)."""
+    result = git_run(repo_root, ["stash", "list", "--format=%gd%x00%gs"], check=False)
+    if result.returncode != 0:
+        return []
+    entries: list[dict[str, str]] = []
+    for line in result.stdout.splitlines():
+        ref, sep, subject = line.partition("\x00")
+        if not sep or not subject.startswith("On "):
+            continue
+        head, sep2, message = subject[3:].partition(": ")
+        if not sep2 or not message.startswith(_AUTOSTASH_PREFIX):
+            continue
+        entries.append({"ref": ref, "branch": head.strip()})
+    return entries
+
+
+def _restore_autostash(repo_root: str, branch: str) -> dict[str, bool]:
+    """Pop the parked change-set for `branch` (the branch just checked out), if
+    one exists and the worktree is clean. Only touches our tagged stashes."""
+    if bool(git_run(repo_root, ["status", "--porcelain"], check=False).stdout.strip()):
+        return {"restored": False}
+    for item in _autostash_entries(repo_root):
+        if item["branch"] != branch:
+            continue
+        result = git_run(repo_root, ["stash", "pop", "--index", item["ref"]], check=False)
+        if result.returncode == 0:
+            return {"restored": True}
+        # Conflict on restore: leave the stash in place for manual recovery.
+        return {"restored": False, "restore_failed": True}
+    return {"restored": False}
+
+
 def git_checkout(workspace: str, branch: str, *, stash: bool = False) -> dict[str, Any]:
     ctx = repo_context(workspace)
     _require_repo_root_workspace(ctx)
@@ -670,10 +711,31 @@ def git_checkout(workspace: str, branch: str, *, stash: bool = False) -> dict[st
         if _is_dirty(ctx):
             if not stash:
                 raise GitWorkspaceError("dirty_worktree", "worktree has uncommitted changes")
-            git_run(ctx.repo_root, ["stash", "push", "-u", "-m", "Odysseus checkout stash"])
-            stashed = True
-        git_run(ctx.repo_root, ["checkout", branch])
-    return {"ok": True, "branch": branch, "stashed": stashed}
+            # Park dirty changes tagged to the CURRENT branch so returning here
+            # later restores them (per-branch auto-stash).
+            current = git_run(ctx.repo_root, ["branch", "--show-current"], check=False).stdout.strip()
+            result = git_run(ctx.repo_root, ["stash", "push", "-u", "-m", f"{_AUTOSTASH_PREFIX} to {branch}"])
+            stashed = "No local changes to save" not in (result.stdout + result.stderr)
+            try:
+                git_run(ctx.repo_root, ["checkout", branch])
+            except GitWorkspaceError:
+                # Roll back the stash so the user's changes are never stranded.
+                still_here = git_run(ctx.repo_root, ["branch", "--show-current"], check=False).stdout.strip()
+                if stashed and current == still_here:
+                    git_run(ctx.repo_root, ["stash", "pop", "--index", "stash@{0}"], check=False)
+                raise
+        else:
+            git_run(ctx.repo_root, ["checkout", branch])
+        # Whether we arrived clean or after parking, restore this branch's
+        # previously-parked changes if any.
+        restored = _restore_autostash(ctx.repo_root, branch)
+    return {
+        "ok": True,
+        "branch": branch,
+        "stashed": stashed,
+        "restored": bool(restored.get("restored")),
+        "restoreFailed": bool(restored.get("restore_failed")),
+    }
 
 
 def git_create_branch(workspace: str, branch: str) -> dict[str, Any]:

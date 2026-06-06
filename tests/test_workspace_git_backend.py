@@ -74,6 +74,7 @@ def test_all_workspace_file_and_git_endpoints_reject_non_admin_owner(monkeypatch
         ("/api/workspace/git/checkout", {"workspace": str(tmp_path), "branch": "main"}),
         ("/api/workspace/git/checkout-stash", {"workspace": str(tmp_path), "branch": "main"}),
         ("/api/workspace/git/branch/create", {"workspace": str(tmp_path), "branch": "feature"}),
+        ("/api/workspace/git/commit-message", {"workspace": str(tmp_path)}),
         ("/api/workspace/git/fetch", {"workspace": str(tmp_path)}),
         ("/api/workspace/git/pull", {"workspace": str(tmp_path)}),
         ("/api/workspace/git/push", {"workspace": str(tmp_path)}),
@@ -423,6 +424,74 @@ def test_git_commit_branches_and_local_remote_actions(monkeypatch, tmp_path):
     assert client.post("/api/workspace/git/fetch", json={"workspace": str(repo)}).status_code == 200
     assert client.post("/api/workspace/git/pull", json={"workspace": str(repo)}).status_code == 200
     assert client.post("/api/workspace/git/push", json={"workspace": str(repo)}).status_code == 200
+
+
+def test_generate_commit_message(monkeypatch, tmp_path):
+    import routes.workspace_git_routes as wgr
+    import src.llm_core as llm_core
+
+    client = _client(monkeypatch)
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "file.txt").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", "file.txt")
+    _git(repo, "commit", "-m", "base")
+    # Staged change to describe.
+    (repo / "file.txt").write_text("base\nhello world\n", encoding="utf-8")
+    _git(repo, "add", "file.txt")
+
+    # Resolve to a fake model + stub the LLM so no provider is hit.
+    monkeypatch.setattr(wgr, "resolve_task_endpoint", lambda *a, **k: ("http://fake", "test-model", {}))
+    captured = {}
+
+    def _fake_llm(url, model, messages, **kwargs):
+        captured["model"] = model
+        captured["prompt"] = messages[-1]["content"]
+        return "feat: add hello world line\n\nAppend a greeting to file.txt."
+
+    monkeypatch.setattr(llm_core, "llm_call", _fake_llm)
+
+    resp = client.post("/api/workspace/git/commit-message", json={"workspace": str(repo)})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["message"].startswith("feat: add hello world line")
+    # The staged diff was fed to the model.
+    assert "hello world" in captured["prompt"]
+    assert captured["model"] == "test-model"
+
+    # Clean tree -> nothing to describe -> clean error.
+    _git(repo, "commit", "-m", "done")
+    empty = client.post("/api/workspace/git/commit-message", json={"workspace": str(repo)})
+    assert empty.status_code == 400
+    assert empty.json()["code"] in ("git_failed", "no_changes")
+
+
+def test_git_checkout_stash_restores_per_branch(monkeypatch, tmp_path):
+    client = _client(monkeypatch)
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "file.txt").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", "file.txt")
+    _git(repo, "commit", "-m", "base")
+    _git(repo, "branch", "other")
+    start = _git(repo, "branch", "--show-current").stdout.strip()
+
+    # Uncommitted WIP on the starting branch.
+    (repo / "file.txt").write_text("base\nWIP-on-start\n", encoding="utf-8")
+
+    # Switch away: WIP is auto-parked, target arrives clean.
+    away = client.post("/api/workspace/git/checkout-stash", json={"workspace": str(repo), "branch": "other"})
+    assert away.status_code == 200
+    assert away.json()["stashed"] is True
+    assert "WIP-on-start" not in (repo / "file.txt").read_text(encoding="utf-8")
+
+    # Switch back: the branch's parked WIP is restored.
+    back = client.post("/api/workspace/git/checkout-stash", json={"workspace": str(repo), "branch": start})
+    assert back.status_code == 200
+    assert back.json()["restored"] is True
+    assert "WIP-on-start" in (repo / "file.txt").read_text(encoding="utf-8")
+
+    # The auto-stash is consumed (not left lingering).
+    assert "odysseus-branch-switch" not in _git(repo, "stash", "list").stdout
 
 
 def test_git_create_branch(monkeypatch, tmp_path):

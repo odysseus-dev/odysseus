@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body, Query, Request
 from fastapi.responses import JSONResponse
 
 from src.auth_helpers import get_current_user
+from src.task_endpoint import resolve_task_endpoint
 from src.tool_security import owner_is_admin_or_single_user
 from src.workspace_git import (
     GitWorkspaceError,
@@ -60,6 +61,95 @@ def _body_list(body: dict[str, Any], key: str) -> list[str]:
 
 def _hunk_id(body: dict[str, Any]) -> str:
     return str(body.get("hunkId") or body.get("hunk_id") or "")
+
+
+# ── AI commit-message generation ────────────────────────────────────────────
+_COMMIT_MSG_MAX_DIFF = 12000
+
+
+def _resolve_commit_model(session_id: str | None, owner: str | None):
+    """(endpoint_url, model, headers) for the message. Prefer the exact model/
+    endpoint/key of the chat session the user has selected; fall back to the
+    configured background-task endpoint when no session model is available."""
+    if session_id:
+        try:
+            from src.ai_interaction import get_session_manager
+            sm = get_session_manager()
+            sess = sm.get_session(session_id) if sm else None
+            if sess and getattr(sess, "model", None):
+                return (
+                    getattr(sess, "endpoint_url", None) or None,
+                    sess.model,
+                    getattr(sess, "headers", None) or None,
+                )
+        except Exception:
+            pass
+    return resolve_task_endpoint(owner=owner)
+
+
+def _clean_commit_text(raw: str) -> str:
+    text = raw or ""
+    try:
+        from src.text_helpers import strip_think
+        text = strip_think(text, prose=False, prompt_echo=False)
+    except Exception:
+        pass
+    text = (text or "").strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    if len(text) >= 2 and text[0] in "\"'" and text[-1] == text[0]:
+        text = text[1:-1].strip()
+    return text
+
+
+def _generate_commit_message(workspace: str | None, session_id: str | None, owner: str | None) -> dict[str, Any]:
+    # Prefer the staged diff; fall back to the full working-tree diff.
+    diff = git_diff(workspace, None, True)
+    patch = (diff.get("patch") or "").strip()
+    scope = "staged"
+    if not patch:
+        diff = git_diff(workspace, None, False)
+        patch = (diff.get("patch") or "").strip()
+        scope = "uncommitted"
+    if not patch:
+        raise GitWorkspaceError("no_changes", "No changes to describe")
+    truncated = bool(diff.get("truncated")) or len(patch) > _COMMIT_MSG_MAX_DIFF
+    if len(patch) > _COMMIT_MSG_MAX_DIFF:
+        patch = patch[:_COMMIT_MSG_MAX_DIFF]
+
+    url, model, headers = _resolve_commit_model(session_id, owner)
+    if not model:
+        raise GitWorkspaceError("llm_failed", "No model is available to generate a message")
+
+    system = (
+        "You write clear git commit messages. Return ONLY the commit message: a "
+        "concise imperative subject line (<= 72 chars), optionally followed by a "
+        "blank line and a short body. No markdown, no code fences, no surrounding "
+        "quotes, no preamble."
+    )
+    note = "\n\n[diff truncated]" if truncated else ""
+    user = f"Write a commit message for these {scope} changes:\n\n{patch}{note}"
+    try:
+        from src.llm_core import llm_call
+        raw = llm_call(
+            url, model,
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=0.3, max_tokens=512, headers=headers or None, timeout=30,
+        )
+    except GitWorkspaceError:
+        raise
+    except Exception as exc:  # provider/network failure
+        raise GitWorkspaceError("llm_failed", f"Model call failed: {exc}")
+
+    message = _clean_commit_text(raw)
+    if not message:
+        raise GitWorkspaceError("llm_failed", "The model returned an empty message")
+    return {"ok": True, "message": message, "model": model, "truncated": truncated}
 
 
 def setup_workspace_git_routes() -> APIRouter:
@@ -127,6 +217,19 @@ def setup_workspace_git_routes() -> APIRouter:
     @router.post("/branch/create")
     def branch_create(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
         return _run(request, git_create_branch, body.get("workspace"), body.get("branch"))
+
+    @router.post("/commit-message")
+    def commit_message(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+        blocked = _authorized(request)
+        if blocked is not None:
+            return blocked
+        owner = get_current_user(request)
+        session_id = body.get("sessionId") or body.get("session_id")
+        try:
+            return _generate_commit_message(body.get("workspace"), session_id, owner)
+        except GitWorkspaceError as exc:
+            status = 403 if exc.code == "not_authorized" else 400
+            return _error(status, exc.code, exc.message)
 
     @router.post("/fetch")
     def fetch(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
