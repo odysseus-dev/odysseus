@@ -930,8 +930,17 @@ import createResearchSynapse from './researchSynapse.js';
               } else if (status.alive) {
                 const latency = status.latency_ms ? ` (${status.latency_ms}ms)` : '';
                 spinner.updateMessage(`Endpoint online${latency}; waiting for first token`);
+              } else if (status.timed_out) {
+                // The probe TIMED OUT — the endpoint is up but BUSY (e.g.
+                // processing a large prompt; time-to-first-token can exceed the
+                // 1.5s probe when a big attachment / long context is sent). A
+                // busy server is NOT a dead one, so do NOT cancel — keep
+                // waiting; a token arriving or the request finishing clears
+                // this. Only a genuine connection failure (else below) cancels.
+                spinner.updateMessage('Model busy (large prompt) — waiting for first token');
               } else {
-                // Probe confirms the endpoint isn't responding. Don't
+                // Probe confirms the endpoint isn't responding (connection
+                // refused / no listener — truly down, not merely slow). Don't
                 // sit on a hung fetch — give the user 5s to read the
                 // status, then auto-abort with reason='offline' so the
                 // catch handler shows a clean "switch model" message

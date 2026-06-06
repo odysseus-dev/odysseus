@@ -177,6 +177,34 @@ class TestPingEndpoint:
         assert result["status_code"] is None
         assert "Connection refused" in result["error"]
 
+    def test_connection_refused_is_not_timed_out(self, monkeypatch):
+        # A refused connection (no listener) is DEAD, not busy → timed_out False.
+        # The chat watchdog uses this to still cancel a hung request to a dead
+        # endpoint (on POSIX, where closed ports refuse rather than time out).
+        _patch_resolve(monkeypatch)
+
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
+            raise httpx.ConnectError("Connection refused")
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        assert _ping_endpoint("https://api.example.com/v1")["timed_out"] is False
+
+    def test_timeout_is_marked_busy_not_dead(self, monkeypatch):
+        # A probe TIMEOUT means up-but-slow (e.g. processing a large prompt) — NOT
+        # necessarily dead. timed_out True lets the chat keep waiting instead of
+        # cancelling a healthy request. (On Windows even dead ports time out, so
+        # treating a timeout as "don't cancel" is the safe cross-platform choice;
+        # a genuinely dead endpoint is still caught by the main fetch failing.)
+        _patch_resolve(monkeypatch)
+
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
+            raise httpx.ConnectTimeout("timed out")
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        result = _ping_endpoint("https://api.example.com/v1")
+        assert result["reachable"] is False
+        assert result["timed_out"] is True
+
     def test_ollama_native_version_fallback(self, monkeypatch):
         _patch_resolve(monkeypatch)
 

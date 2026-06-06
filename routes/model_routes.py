@@ -733,6 +733,11 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
         return {"reachable": False, "status_code": r.status_code, "error": f"HTTP {r.status_code}"}
 
     last_error: Optional[str] = None
+    # Distinguish "busy" (the probe timed out — server is up but slow, e.g.
+    # mid prompt-eval on a large request) from "dead" (connection refused —
+    # no listener). Callers use this to avoid cancelling a healthy-but-busy
+    # request. Reset to False on each attempt so the LAST attempt's nature wins.
+    timed_out = False
 
     try:
         if looks_like_ollama:
@@ -748,8 +753,10 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
                     if result["reachable"]:
                         return result
                     last_error = result.get("error")
+                    timed_out = False
                 except Exception as e:
                     last_error = str(e)[:120]
+                    timed_out = isinstance(e, httpx.TimeoutException)
     except Exception:
         pass
 
@@ -758,8 +765,9 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
         return _result_from_response(r)
     except Exception as e:
         last_error = str(e)[:120]
+        timed_out = isinstance(e, httpx.TimeoutException)
 
-    return {"reachable": False, "status_code": None, "error": last_error}
+    return {"reachable": False, "status_code": None, "error": last_error, "timed_out": timed_out}
 
 
 
@@ -1185,9 +1193,13 @@ def setup_model_routes(model_discovery):
                     "latency_ms": lat,
                     "status_code": ping.get("status_code"),
                     "error": ping.get("error"),
+                    # True = up-but-slow (probe timed out), not dead. Lets the chat
+                    # avoid cancelling a healthy request that's busy (e.g. a large
+                    # prompt with long time-to-first-token).
+                    "timed_out": bool(ping.get("timed_out")),
                 }
             except Exception as e:
-                return {"alive": False, "latency_ms": None, "status_code": None, "error": str(e)[:120]}
+                return {"alive": False, "latency_ms": None, "status_code": None, "error": str(e)[:120], "timed_out": False}
 
         import asyncio as _asyncio
         results_list = await _asyncio.gather(
