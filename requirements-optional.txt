@@ -37,4 +37,5 @@ markitdown[docx,pptx,xlsx,xls]==0.1.5
 
 # Auto (Local LLMs) — per-message routing across local Ollama models.
 # Install via Cookbook → Packages or: pip install 'local-llm-router[ollama]'
-local-llm-router[ollama]
+# 0.4.2+ required for preset tier_slots (complex / complex_alt agent-chat split).
+local-llm-router[ollama]>=0.4.2

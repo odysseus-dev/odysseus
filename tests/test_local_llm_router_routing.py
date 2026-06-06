@@ -21,10 +21,10 @@ def test_is_local_llm_router_auto_model():
 
 
 @patch("src.local_llm_router_routing.resolve_model_on_endpoint")
-@patch("src.local_llm_router_routing.build_model_pool")
+@patch("src.local_llm_router_routing._configure_llr_from_installed")
 @patch("src.local_llm_router_routing.load_local_llm_router")
-def test_resolve_local_llm_router_passes_mode_and_reasons(mock_load_ss, mock_pool, mock_resolve):
-    mock_pool.return_value = ["gemma4:e4b", "qwen3:8b"]
+def test_resolve_local_llm_router_passes_mode_and_reasons(mock_load_ss, mock_configure, mock_resolve):
+    mock_configure.return_value = {"pool": ["gemma4:e4b", "qwen3:8b"]}
     decision = MagicMock()
     decision.tier = MagicMock(value="simple")
     decision.model = "gemma4:e4b"
@@ -41,7 +41,7 @@ def test_resolve_local_llm_router_passes_mode_and_reasons(mock_load_ss, mock_poo
         mode="agent",
     )
 
-    router.configure.assert_called_once()
+    mock_configure.assert_called_once()
     router.explain.assert_called_once_with("Reply with exactly: pong", mode="agent")
     assert isinstance(res, LocalLlmRouterResolution)
     assert res.model == "gemma4:e4b"
@@ -101,7 +101,8 @@ def test_build_model_pool_falls_back_to_installed_only(mock_installed, mock_load
     ss.recommended_models.return_value = ["gemma4:e4b", "qwen3:8b"]
     mock_load_ss.return_value = ss
     pool = build_model_pool("http://127.0.0.1:11434")
-    assert pool == ["qwen3:8b", "qwen3:14b", "llama3.2:3b"]
+    assert set(pool) == {"qwen3:8b", "qwen3:14b", "llama3.2:3b"}
+    assert len(pool) == 3
 
 
 @patch("src.local_llm_router_routing.installed_tags_for_endpoint")
@@ -242,3 +243,63 @@ def test_resolve_task_endpoint_passthrough_non_auto():
     )
     assert model == "qwen3:8b"
     assert headers == {"X": "1"}
+
+
+def test_build_llr_session_16gb_preset_tiers_and_pool_order():
+    from src.local_llm_router_routing import _build_llr_session
+
+    installed = [
+        "gemma4:e4b",
+        "qwen3.5:9b",
+        "qwen3.6:35b-a3b",
+        "qwen3:14b",
+        "qwen2.5-coder:14b",
+        "deepseek-r1:8b",
+    ]
+    ctx = _build_llr_session(installed, vram_gb=16, quant="qat")
+
+    assert ctx["profile"] == "workstation_16gb"
+    assert ctx["pool"] == [
+        "gemma4:e4b",
+        "qwen3.5:9b",
+        "qwen3.6:35b-a3b",
+        "qwen3:14b",
+        "qwen2.5-coder:14b",
+        "deepseek-r1:8b",
+    ]
+    assert ctx["tiers"].complex == "qwen3.6:35b-a3b"
+    assert ctx["tiers"].complex_alt == "qwen3:14b"
+    assert ctx["tiers"].code == "qwen2.5-coder:14b"
+
+
+@patch("src.local_llm_router_routing.get_setting")
+@patch("src.local_llm_router_routing.installed_tags_for_endpoint")
+def test_configure_uses_llr_preset_complex_and_complex_alt(mock_installed, mock_setting):
+    from src.local_llm_router_routing import _configure_llr_from_installed
+    from src.local_llm_router_runtime import load_local_llm_router
+
+    mock_setting.side_effect = lambda key, default=None: {
+        "local_llm_router_vram_gb": 16,
+        "local_llm_router_quant": "qat",
+        "local_llm_router_models": [],
+    }.get(key, default)
+    installed = [
+        "gemma4:e4b",
+        "qwen3.5:9b",
+        "qwen3.6:35b-a3b",
+        "qwen3:14b",
+        "qwen2.5-coder:14b",
+        "deepseek-r1:8b",
+    ]
+    mock_installed.return_value = installed
+
+    _configure_llr_from_installed(installed)
+    session = load_local_llm_router().get_session()
+    assert session.tiers.complex == "qwen3.6:35b-a3b"
+    assert session.tiers.complex_alt == "qwen3:14b"
+
+    router = load_local_llm_router()
+    agent = router.explain("architecture tradeoffs", hint="design", mode="agent")
+    chat = router.explain("architecture tradeoffs", hint="design", mode="chat")
+    assert agent.model == "qwen3.6:35b-a3b"
+    assert chat.model == "qwen3:14b"
