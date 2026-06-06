@@ -138,8 +138,20 @@ def validate_events(events_str: str) -> str:
 
 def sanitize_error(error: str, max_len: int = 200) -> str:
     """Strip potentially sensitive details from error messages."""
-    # Remove IP addresses and ports
+    # Remove IPv4 addresses and ports
     cleaned = re.sub(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?', '[redacted]', error)
+    # Remove IPv6 addresses too — a delivery error can otherwise leak an
+    # internal v6 address (::1, fe80::/fc00:: ...) into the stored last_error.
+    # Three forms (bracketed literal, full 8-group, ::-compressed), each narrow
+    # enough to leave clock times ("12:34:56"), MACs, and C++ "::" tokens alone.
+    # The ::-branch is a lookahead over a flat character class, so there is no
+    # nested quantifier to backtrack on (no ReDoS on long colon/hex runs).
+    cleaned = re.sub(
+        r'\[[0-9A-Fa-f:]*:[0-9A-Fa-f:]*\](?::\d+)?'
+        r'|(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}'
+        r'|(?<![:.\w])(?=[0-9A-Fa-f:]*::)[0-9A-Fa-f:]+',
+        '[redacted]', cleaned,
+    )
     # Remove hostnames in URLs
     cleaned = re.sub(r'https?://[^\s/]+', '[redacted-url]', cleaned)
     return cleaned[:max_len]
