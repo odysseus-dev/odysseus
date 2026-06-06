@@ -641,9 +641,11 @@ def _validate_serve_cmd(v: str | None) -> str | None:
             _check_serve_binary(part.strip())
         return v
 
-    # Otherwise: a single invocation — no shell metacharacters allowed.
-    # Temporarily replace safe $(printf %s ...) expressions with a placeholder
-    # to avoid triggering the metacharacter/command-injection checks.
+    # Otherwise: one or more serve invocations, optionally chained with `||`
+    # fallback — e.g. native ``llama-server … || python -m llama_cpp.server …``,
+    # the llama.cpp form on POSIX *and* local Windows (Git Bash). Temporarily
+    # replace safe $(printf %s ...) expressions with a placeholder so they don't
+    # trip the injection checks.
     cleaned_v = v
     printf_matches = list(re.finditer(r"\$\(\s*printf\s+%s\s+([^\n()]*?)\)", v))
     for match in printf_matches:
@@ -651,10 +653,14 @@ def _validate_serve_cmd(v: str | None) -> str | None:
         if not any(c in inner for c in (";", "&&", "||", "$(", "`")):
             cleaned_v = cleaned_v.replace(match.group(0), "/placeholder/safe/path.gguf")
 
-    # (`$(` was the original intent; bare `$` is fine for shell-safe paths.)
-    if any(c in cleaned_v for c in (";", "&&", "||", "$(")):
-        raise HTTPException(400, "Invalid characters in cmd")
-    _check_serve_binary(v)
+    # `||` may only join serve invocations (the documented fallback chain); every
+    # other shell control/substitution operator stays banned, and each ||-part
+    # must start with an allowlisted binary, so no arbitrary payload can ride
+    # along. (`$(` was the original intent; bare `$` is fine for shell-safe paths.)
+    for part in cleaned_v.split("||"):
+        if any(c in part for c in (";", "&&", "$(")):
+            raise HTTPException(400, "Invalid characters in cmd")
+        _check_serve_binary(part.strip())
     return v
 
 

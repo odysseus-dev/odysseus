@@ -451,14 +451,18 @@ export function _buildServeCmd(f, modelName, backend) {
     // mixes "zero GPU layers" with CUDA unified-memory + flash-attn and fails to
     // start (issue #1291). Only affects the ngl=0 path; GPU serving is unchanged.
     const _cpuOnly = String(f.ngl).trim() === '0';
+    // Local Windows runs the serve command through Git Bash (not PowerShell), so
+    // it takes the same `VAR=val cmd` bash env prefixes as POSIX. Only REMOTE
+    // Windows uses the PowerShell `$env:VAR=...;` form (its .ps1 runner).
+    const _remoteWin = _isWindows() && !!_envState.remoteHost;
     const lcPrefix = (() => {
       let p = '';
-      if (f.unified_mem && !_cpuOnly && !_isWindows()) p += `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 `;
-      if (gpuId && !_isWindows()) p += `CUDA_VISIBLE_DEVICES=${gpuId} `;
+      if (f.unified_mem && !_cpuOnly && !_remoteWin) p += `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 `;
+      if (gpuId && !_remoteWin) p += `CUDA_VISIBLE_DEVICES=${gpuId} `;
       return p;
     })();
-    if (f.unified_mem && !_cpuOnly && _isWindows()) cmd += `$env:GGML_CUDA_ENABLE_UNIFIED_MEMORY="1"; `;
-    if (gpuId && _isWindows()) cmd += `$env:CUDA_VISIBLE_DEVICES="${gpuId}"; `;
+    if (f.unified_mem && !_cpuOnly && _remoteWin) cmd += `$env:GGML_CUDA_ENABLE_UNIFIED_MEMORY="1"; `;
+    if (gpuId && _remoteWin) cmd += `$env:CUDA_VISIBLE_DEVICES="${gpuId}"; `;
     if (!_isWindows()) {
       // Resolve GGUF path once, fail loudly if nothing matched (prevents
       // `--model ""` which causes confusing downstream errors).
@@ -495,8 +499,12 @@ export function _buildServeCmd(f, modelName, backend) {
     }
     if (_kv) {
       _lcExtra += ` --cache-type-k ${_kv} --cache-type-v ${_kv}`;
-      // llama-cpp-python exposes these as type_k/type_v; pass through best-effort.
-      _lcpExtra += ` --type_k ${_kv} --type_v ${_kv}`;
+      // llama-cpp-python takes type_k/type_v as ggml_type *integers*, not strings
+      // (passing "q8_0" errors with `--type_k: invalid int value`). Map the common
+      // cache types; omit when unknown so the bindings keep their f16 default.
+      const _ggmlType = { f32: 0, f16: 1, q4_0: 2, q4_1: 3, q5_0: 6, q5_1: 7, q8_0: 8 };
+      const _kvCode = _ggmlType[String(_kv).toLowerCase()];
+      if (_kvCode !== undefined) _lcpExtra += ` --type_k ${_kvCode} --type_v ${_kvCode}`;
     }
     const _llamaFit = String(f.llama_fit || '').trim();
     if (['on', 'off'].includes(_llamaFit)) _lcExtra += ` --fit ${_llamaFit}`;
@@ -528,9 +536,17 @@ export function _buildServeCmd(f, modelName, backend) {
       _lcpExtra += ` --clip_model_path "${f._mmproj_path}"`;
     }
     const _lcpServer = `${lcPrefix}${py} -m llama_cpp.server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} --n_gpu_layers ${f.ngl || '99'} --n_ctx ${f.ctx || '8192'}${_lcpExtra}`;
-    if (_isWindows()) {
+    if (_isWindows() && _envState.remoteHost) {
+      // Remote Windows runs via a PowerShell runner where `||` chaining isn't
+      // reliable and a native llama-server isn't auto-provisioned — keep the
+      // Python bindings (now with a valid integer --type_k, see above).
       cmd += _lcpServer;
     } else {
+      // POSIX and LOCAL Windows both have a native llama-server available — on
+      // Windows it's a prebuilt CUDA build (Blackwell-capable) with a Vulkan
+      // fallback, provisioned by _ensure_windows_llama_server into ~/bin. Prefer
+      // it: its flags (-ngl, -c, --cache-type-k, --flash-attn) are correct,
+      // unlike llama-cpp-python's. Python bindings stay as a last-resort fallback.
       cmd += `${lcPrefix}llama-server --model ${modelArg} --host 0.0.0.0 --port ${f.port || '8080'} -ngl ${f.ngl || '99'} -c ${f.ctx || '8192'}${_lcExtra}`;
       cmd += ` || ${_lcpServer}`;
     }

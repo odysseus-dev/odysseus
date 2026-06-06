@@ -33,24 +33,72 @@ from routes.shell_routes import TMUX_LOG_DIR
 logger = logging.getLogger(__name__)
 
 
-def _ensure_windows_llama_server() -> str | None:
-    """On native Windows, make a prebuilt ``llama-server.exe`` available in
-    ``~/bin`` so the serve flow doesn't fall into the Linux-only source build
-    (git clone + cmake), which can't work on a stock Windows box.
+# Bash launcher installed as ~/bin/llama-server on native Windows. Git Bash
+# resolves this extension-less script ahead of any ~/bin/llama-server.exe, so it
+# transparently becomes the `llama-server` the serve command invokes. It prefers
+# the CUDA build (GPU on NVIDIA incl. Blackwell sm_120 via the CUDA 13.x runners)
+# and falls back to the self-contained Vulkan build (any modern NVIDIA/AMD
+# driver, immune to CUDA-kernel arch mismatches) if CUDA fails to *start*. A
+# server that loaded and served runs until stopped — and a normal Stop kills or
+# orphans this wrapper rather than letting it return — so the fallback only fires
+# on a genuine fast CUDA startup crash (well before the ~20s a healthy load
+# takes), never on a normal Stop.
+_WIN_LLAMA_LAUNCHER = """#!/bin/bash
+# Managed by Odysseus cookbook — prefer CUDA llama-server, fall back to Vulkan.
+_cuda="$HOME/bin/llama-cpp-cuda/llama-server.exe"
+_vk="$HOME/bin/llama-cpp-vulkan/llama-server.exe"
+if [ -x "$_cuda" ]; then
+  SECONDS=0
+  "$_cuda" "$@"
+  _rc=$?
+  if [ "$_rc" -ne 0 ] && [ "$SECONDS" -lt 12 ] && [ -x "$_vk" ]; then
+    echo "[odysseus] CUDA llama-server exited in ${SECONDS}s (code $_rc) — falling back to the Vulkan build." >&2
+    exec "$_vk" "$@"
+  fi
+  exit "$_rc"
+elif [ -x "$_vk" ]; then
+  exec "$_vk" "$@"
+else
+  echo "[odysseus] No provisioned llama-server (CUDA or Vulkan) found in ~/bin." >&2
+  exit 127
+fi
+"""
 
-    Downloads the official llama.cpp **Vulkan** Windows build once (GPU-accelerated
-    on NVIDIA *and* AMD via the installed graphics driver — no CUDA toolkit/runtime
-    to match), extracting llama-server.exe + its DLLs next to each other. Falls
-    back to the CPU build if no Vulkan asset is found. Idempotent: returns
-    immediately if the binary is already present. Returns ~/bin or None on failure.
-    """
+
+def _ensure_windows_llama_server() -> str | None:
+    """On native Windows, provision prebuilt llama.cpp server binaries into ~/bin
+    and install a ``llama-server`` launcher, so the serve flow doesn't fall into
+    the Linux-only source build (git clone + cmake) that can't work on a stock
+    Windows box.
+
+    Two GPU builds are provisioned side by side:
+
+    * **Vulkan** (``~/bin/llama-cpp-vulkan``) — the self-contained Vulkan build,
+      GPU-accelerated on any modern NVIDIA/AMD driver with no CUDA toolkit to
+      match. Small (~34 MB), fetched synchronously as the reliable fallback.
+    * **CUDA** (``~/bin/llama-cpp-cuda``) — the official CUDA 13.x Windows build
+      (self-contained ``llama-server.exe`` + ``ggml-cuda.dll``) plus its cudart
+      runtime DLLs. CUDA 13.x ships sm_120 kernels, so it runs on Blackwell
+      (RTX 50-series) GPUs. It's ~0.5 GB, so it downloads in a background thread;
+      the launcher uses Vulkan until it lands, then prefers CUDA.
+
+    The installed ``~/bin/llama-server`` launcher (see ``_WIN_LLAMA_LAUNCHER``)
+    prefers CUDA and falls back to Vulkan if CUDA fails to start. Idempotent.
+    Returns ~/bin, or None on total failure. POSIX no-op (returns None)."""
     if not IS_WINDOWS:
         return None
     bin_dir = Path.home() / "bin"
-    exe = bin_dir / "llama-server.exe"
-    if exe.exists():
+    cuda_dir = bin_dir / "llama-cpp-cuda"
+    vk_dir = bin_dir / "llama-cpp-vulkan"
+    wrapper = bin_dir / "llama-server"
+    cuda_exe = cuda_dir / "llama-server.exe"
+    vk_exe = vk_dir / "llama-server.exe"
+    if wrapper.exists() and (cuda_exe.exists() or vk_exe.exists()):
         return str(bin_dir)
+
     import io
+    import re as _re
+    import threading
     import urllib.request
     import zipfile
 
@@ -59,35 +107,92 @@ def _ensure_windows_llama_server() -> str | None:
         with urllib.request.urlopen(rq, timeout=timeout) as r:
             return r.read()
 
-    try:
-        rel = json.loads(_get("https://api.github.com/repos/ggml-org/llama.cpp/releases/latest", 25).decode("utf-8"))
-        assets = rel.get("assets", [])
-
-        def _pick(*subs):
-            for a in assets:
-                n = (a.get("name") or "").lower()
-                if n.endswith(".zip") and all(s in n for s in subs):
-                    return a
-            return None
-
-        # Vulkan = one zip, GPU on any modern driver. CPU build as last resort.
-        asset = _pick("bin-win-vulkan", "x64") or _pick("bin-win-vulkan") or _pick("bin-win-cpu", "x64") or _pick("bin-win-cpu")
-        if not asset:
-            logger.warning("No prebuilt Windows llama-server asset found in latest release")
-            return None
-        logger.info(f"Provisioning prebuilt llama-server: {asset.get('name')} ({rel.get('tag_name')})")
-        bin_dir.mkdir(parents=True, exist_ok=True)
-        blob = _get(asset["browser_download_url"], 600)
+    def _extract(blob: bytes, dest: Path) -> None:
+        dest.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(io.BytesIO(blob)) as z:
             for member in z.namelist():
                 fn = os.path.basename(member)
                 if fn.lower().endswith((".exe", ".dll")):
-                    with z.open(member) as src, open(bin_dir / fn, "wb") as dst:
+                    with z.open(member) as src, open(dest / fn, "wb") as dst:
                         shutil.copyfileobj(src, dst)
-        return str(bin_dir) if exe.exists() else None
+
+    try:
+        rel = json.loads(_get("https://api.github.com/repos/ggml-org/llama.cpp/releases/latest", 25).decode("utf-8"))
+        assets = {(a.get("name") or "").lower(): a.get("browser_download_url") for a in rel.get("assets", [])}
+
+        def _pick(*subs):
+            for name, url in assets.items():
+                if name.endswith(".zip") and all(s in name for s in subs):
+                    return name, url
+            return None
+
+        # Vulkan — small, synchronous: the always-available GPU fallback. (CPU
+        # build only if no Vulkan asset exists at all.)
+        if not vk_exe.exists():
+            vk = _pick("bin-win-vulkan", "x64") or _pick("bin-win-vulkan") or _pick("bin-win-cpu", "x64") or _pick("bin-win-cpu")
+            if vk:
+                _extract(_get(vk[1], 600), vk_dir)
+
+        # CUDA — large; provision in the background so the first serve isn't
+        # blocked on a ~0.5 GB download. Prefer the newest CUDA major (13.x →
+        # Blackwell sm_120) and pair it with the matching cudart runtime.
+        if not cuda_exe.exists():
+            cuda = _pick("bin-win-cuda-13", "x64") or _pick("bin-win-cuda-12", "x64") or _pick("bin-win-cuda", "x64")
+            if cuda:
+                m = _re.search(r"cuda-(\d+\.\d+)", cuda[0])
+                cudart = _pick("cudart", f"cuda-{m.group(1)}") if m else _pick("cudart")
+
+                def _provision_cuda(cuda_url, cudart_url):
+                    try:
+                        tmp = bin_dir / "llama-cpp-cuda.tmp"
+                        shutil.rmtree(tmp, ignore_errors=True)
+                        _extract(_get(cuda_url, 1800), tmp)
+                        if cudart_url:
+                            _extract(_get(cudart_url, 1800), tmp)
+                        if (tmp / "llama-server.exe").exists():
+                            shutil.rmtree(cuda_dir, ignore_errors=True)
+                            os.replace(tmp, cuda_dir)
+                            logger.info("Provisioned CUDA llama-server build (GPU incl. Blackwell sm_120)")
+                        else:
+                            shutil.rmtree(tmp, ignore_errors=True)
+                    except Exception as e:
+                        logger.warning(f"CUDA llama-server provisioning failed (Vulkan still available): {e}")
+                        shutil.rmtree(bin_dir / "llama-cpp-cuda.tmp", ignore_errors=True)
+
+                threading.Thread(
+                    target=_provision_cuda,
+                    args=(cuda[1], cudart[1] if cudart else None),
+                    daemon=True,
+                ).start()
+
+        if not (cuda_exe.exists() or vk_exe.exists()):
+            logger.warning("No prebuilt Windows llama-server asset found in latest release")
+            return None
+
+        # Install the launcher (CUDA-first, Vulkan-fallback). LF line endings so
+        # Git Bash runs the shebang; Git Bash resolves it ahead of any .exe.
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        with open(wrapper, "w", encoding="utf-8", newline="\n") as f:
+            f.write(_WIN_LLAMA_LAUNCHER)
+        safe_chmod(wrapper, 0o755)
+
+        # Tidy any legacy loose build (older versions extracted llama.cpp straight
+        # into ~/bin). The launcher + subdir builds supersede it. Targeted to the
+        # llama.cpp file families so a user's own ~/bin tools are never touched;
+        # the extension-less `llama-server` launcher is preserved (no .exe/.dll).
+        if vk_exe.exists() or cuda_exe.exists():
+            for f in bin_dir.iterdir():
+                if (f.is_file() and f.suffix.lower() in (".exe", ".dll")
+                        and f.name.lower().startswith(("llama", "ggml", "mtmd", "rpc-server", "libomp"))):
+                    try:
+                        f.unlink()
+                    except OSError:
+                        pass
+        return str(bin_dir)
     except Exception as e:
         logger.warning(f"Prebuilt llama-server provisioning failed: {e}")
-        return None
+        legacy = bin_dir / "llama-server.exe"
+        return str(bin_dir) if legacy.exists() else None
 
 from routes.cookbook_helpers import (
     _SSH_PORT_RE, _REMOTE_HOST_RE, _SESSION_ID_RE,

