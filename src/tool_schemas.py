@@ -258,7 +258,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_chats",
-            "description": "Search the user's past chat conversations by keyword. Use when the user asks about previous chats, past conversations, or wants to find a discussion they had before. Returns matching sessions with clickable links.",
+            "description": "Search the user's past session transcripts by keyword. Use when the user asks about previous chats, past conversations, or when direct transcript evidence is better than persistent memory. Returns matching sessions with clickable links and nearby context.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -545,8 +545,8 @@ FUNCTION_TOOL_SCHEMAS = [
                     "uid": {"type": "string", "description": "Event UID (for update/delete)"},
                     "calendar_href": {"type": "string", "description": "Specific calendar URL (optional; defaults to first calendar)"},
                     "calendar": {"type": "string", "description": "Filter list_events by calendar name or href"},
-                    "start": {"type": "string", "description": "list_events range start (ISO datetime); defaults to today"},
-                    "end": {"type": "string", "description": "list_events range end (ISO datetime); defaults to +14 days"},
+                    "start": {"type": "string", "description": "list_events range start (ISO datetime); defaults to today. Prefer start; backend also accepts start_date, range_start, from, dtstart, since."},
+                    "end": {"type": "string", "description": "list_events range end (ISO datetime); defaults to +14 days. Prefer end; backend also accepts end_date, range_end, to, dtend, until."},
                     "event_type": {"type": "string", "description": "Tag / category for the event. Common values: work, personal, health, travel, meal, social, admin, other. Aliases accepted: tag, category, type."},
                     "importance": {"type": "string", "enum": ["low", "normal", "high", "critical"], "description": "Priority level (defaults to 'normal')"},
                     "reminder_minutes": {"type": "integer", "description": "For create_event: create an Odysseus reminder this many minutes before the event, e.g. 5 for 'reminder 5 min before'."},

@@ -19,6 +19,7 @@ import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
+from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES
 
 # Persistent working directory for agent subprocesses.
 # Resolves to <repo_root>/data, which is the bind-mounted volume in Docker
@@ -26,10 +27,6 @@ from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_u
 # Using this as cwd and HOME prevents the agent from silently creating files
 # in ephemeral container layers that are lost on the next rebuild.
 _AGENT_WORKDIR = str(pathlib.Path(__file__).parent.parent / "data")
-
-MAX_OUTPUT_CHARS = 10_000
-MAX_READ_CHARS = 20_000
-MAX_DIFF_LINES = 400  # cap unified-diff size returned to the UI
 
 
 def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:

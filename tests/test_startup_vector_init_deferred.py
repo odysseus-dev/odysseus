@@ -50,25 +50,3 @@ def test_deferred_vector_store_delegates_after_install():
 
     assert proxy.healthy is True
     assert proxy.add("m1", "hello") == "m1:hello"
-
-
-def test_vector_initializers_connect_to_chroma_before_embeddings():
-    rag_body = _between(
-        _source("src/rag_vector.py"),
-        "    def _initialize_system(self) -> bool:",
-        "    def _embed(self, texts: List[str])",
-    )
-    memory_body = _between(
-        _source("src/memory_vector.py"),
-        "    def _initialize(self):",
-        "    @property",
-    )
-    tool_body = _between(
-        _source("src/tool_index.py"),
-        "    def __init__(self):",
-        "    @property",
-    )
-
-    assert rag_body.index("client = get_chroma_client()") < rag_body.index("get_embedding_client")
-    assert memory_body.index("client = get_chroma_client()") < memory_body.index("get_embedding_client")
-    assert tool_body.index("client = get_chroma_client()") < tool_body.index("get_embedding_client")

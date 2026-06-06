@@ -20,6 +20,7 @@ from src import agent_runs
 from src.model_context import estimate_tokens
 from src.chat_helpers import coerce_message_and_session
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
+from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
 from src.auth_helpers import get_current_user
@@ -892,6 +893,8 @@ def setup_chat_routes(
             elif chat_mode == "chat":
                 _chat_start = time.time()
                 _answered_by = None  # set if the selected model failed and a fallback answered
+                _requested_model = sess.model
+                _actual_model = None
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
                 try:
                     _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
@@ -924,10 +927,18 @@ def setup_chat_routes(
                                     # Selected model failed; a fallback answered.
                                     # Forward the notice and remember the real model.
                                     _answered_by = data.get("answered_by") or _answered_by
+                                    _actual_model = _actual_model or _answered_by
+                                    data["selected_model"] = data.get("selected_model") or _requested_model
                                     yield chunk
+                                elif data.get("type") == "model_actual":
+                                    _actual_model = data.get("model") or _actual_model
+                                    data["requested_model"] = _requested_model
+                                    yield f'data: {json.dumps(data)}\n\n'
                                 elif data.get("type") == "usage":
                                     last_metrics = data.get("data", {})
-                                    last_metrics["model"] = _answered_by or sess.model
+                                    _reported_model = last_metrics.get("model")
+                                    last_metrics["requested_model"] = _requested_model
+                                    last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model
                                     if ctx.context_length and last_metrics.get("input_tokens"):
                                         pct = min(round((last_metrics["input_tokens"] / ctx.context_length) * 100, 1), 100.0)
                                         last_metrics["context_percent"] = pct
@@ -964,7 +975,8 @@ def setup_chat_routes(
                                     "tokens_per_second": _tps,
                                     "context_percent": _ctx_pct,
                                     "context_length": ctx.context_length,
-                                    "model": sess.model,
+                                    "model": _actual_model or _answered_by or _requested_model,
+                                    "requested_model": _requested_model,
                                     "usage_source": "estimated",
                                 }
                                 yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
@@ -993,7 +1005,14 @@ def setup_chat_routes(
                 except (asyncio.CancelledError, GeneratorExit):
                     if full_response:
                         logger.info("Client disconnected mid-stream (chat mode) for session %s, saving partial (%d chars)", session, len(full_response))
-                        _stopped_content, _stopped_md = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model})
+                        _stopped_content, _stopped_md = clean_thinking_for_save(
+                            full_response,
+                            {
+                                "stopped": True,
+                                "model": _actual_model or _answered_by or _requested_model,
+                                "requested_model": _requested_model,
+                            },
+                        )
                         sess.add_message(ChatMessage("assistant", _stopped_content, metadata=_stopped_md))
                         if not incognito:
                             session_manager.save_sessions()
@@ -1005,6 +1024,8 @@ def setup_chat_routes(
                 _agent_rounds = 0
                 _agent_tool_calls = 0
                 _answered_by = None  # set if the selected model failed and a fallback answered
+                _requested_model = sess.model
+                _actual_model = None
                 try:
                     from src.settings import get_setting
                     from src.agent_tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
@@ -1070,10 +1091,18 @@ def setup_chat_routes(
                                     # model so metrics reflect it, not the masked
                                     # selected model.
                                     _answered_by = data.get("answered_by") or _answered_by
+                                    _actual_model = _actual_model or _answered_by
+                                    data["selected_model"] = data.get("selected_model") or _requested_model
                                     yield chunk
+                                elif data.get("type") == "model_actual":
+                                    _actual_model = data.get("model") or _actual_model
+                                    data["requested_model"] = _requested_model
+                                    yield f'data: {json.dumps(data)}\n\n'
                                 elif data.get("type") == "metrics":
                                     last_metrics = data.get("data", {})
-                                    last_metrics["model"] = _answered_by or sess.model
+                                    _reported_model = last_metrics.get("model")
+                                    last_metrics["requested_model"] = last_metrics.get("requested_model") or _requested_model
+                                    last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model
                                     yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
                             except json.JSONDecodeError:
                                 yield chunk
@@ -1114,7 +1143,14 @@ def setup_chat_routes(
                     try:
                         if full_response:
                             logger.info("Client disconnected mid-stream for session %s, saving partial response (%d chars)", session, len(full_response))
-                            _stopped_content2, _stopped_md2 = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model})
+                            _stopped_content2, _stopped_md2 = clean_thinking_for_save(
+                                full_response,
+                                {
+                                    "stopped": True,
+                                    "model": _actual_model or _answered_by or _requested_model,
+                                    "requested_model": _requested_model,
+                                },
+                            )
                             sess.add_message(ChatMessage("assistant", _stopped_content2, metadata=_stopped_md2))
                             if not incognito:
                                 session_manager.save_sessions()
@@ -1208,45 +1244,16 @@ def setup_chat_routes(
             return []
 
         _user = get_current_user(request)
-        query_term = q.strip()
-        db = SessionLocal()
-        try:
-            base_q = (
-                db.query(DBChatMessage, DBSession.name)
-                .join(DBSession, DBChatMessage.session_id == DBSession.id)
-                .filter(
-                    DBSession.archived == False,
-                    DBChatMessage.content.ilike(f"%{query_term}%"),
-                    DBChatMessage.role.in_(["user", "assistant"]),
-                )
+        return [
+            result.to_dict()
+            for result in search_session_messages(
+                q,
+                limit=limit,
+                owner=_user,
+                restrict_owner=_user is not None,
+                include_legacy_owner=False,
             )
-            if _user:
-                base_q = base_q.filter(DBSession.owner == _user)
-            rows = base_q.order_by(DBChatMessage.timestamp.desc()).limit(limit).all()
-
-            results = []
-            for msg, session_name in rows:
-                content = msg.content or ""
-                lower_content = content.lower()
-                idx = lower_content.find(query_term.lower())
-                if idx == -1:
-                    snippet = content[:120]
-                else:
-                    start = max(0, idx - 50)
-                    end = min(len(content), idx + len(query_term) + 50)
-                    snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
-
-                results.append({
-                    "session_id": msg.session_id,
-                    "session_name": session_name or "Untitled",
-                    "role": msg.role,
-                    "content_snippet": snippet,
-                    "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
-                })
-
-            return results
-        finally:
-            db.close()
+        ]
 
     # ------------------------------------------------------------------ #
     # POST /api/rewrite — lightweight rewrite of last AI message (no tools)

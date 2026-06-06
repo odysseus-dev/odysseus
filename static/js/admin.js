@@ -2120,14 +2120,22 @@ function initBackup() {
     const btn = el('adm-importDataBtn');
     btn.disabled = true; btn.textContent = 'Importing...'; msg.textContent = '';
     try {
-      const text = await file.text();
-      const data = JSON.parse(text);
+      const text = (await file.text()).replace(/^\uFEFF/, '').trim();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        throw new Error('Invalid backup file: ' + e.message);
+      }
       const res = await fetch('/api/import', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
-      const result = await res.json();
+      const result = await res.json().catch(() => null);
+      if (!result) {
+        throw new Error(`Import failed: server returned ${res.status}`);
+      }
       if (res.ok && result.ok) {
         msg.textContent = result.message || 'Import successful.'; msg.className = 'admin-success';
       } else {
