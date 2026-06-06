@@ -3824,38 +3824,29 @@ body.bg-pattern-sparkles {
     pre.pre-compact .edit-code.bottom,
     pre.pre-compact .run-code.bottom { top: auto; bottom: 3px; }
 
- /* ============================================================
-   FIX: Prevent copy/edit/run buttons from flickering apna work 
-   ============================================================ */
-
-/* 1. Desktop standard state: hide buttons safely without breaking DOM layout */
-pre .copy-code, 
-pre .edit-code, 
-pre .run-code {
-    opacity: 0 !important;
-    visibility: hidden !important;
-    pointer-events: none;
-    transition: opacity 0.15s ease, visibility 0.15s ease;
+/* Touch devices: no hover, so always show copy/run/edit buttons */
+@media (hover: none) {
+    pre .copy-code, pre .edit-code, pre .run-code {
+        opacity: 0.7;
+    }
 }
 
-/* 2. Desktop hover state: show smoothly when mouse enters the pre block */
-pre:hover .copy-code, 
-pre:hover .edit-code, 
-pre:hover .run-code {
-    opacity: 1 !important;
-    visibility: visible !important;
+/* Ensure action buttons don't break layout or flicker during re-renders */
+pre .copy-code, pre .edit-code, pre .run-code {
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+pre:hover .copy-code, pre:hover .edit-code, pre:hover .run-code {
+    visibility: visible;
+    opacity: 0.7;
     pointer-events: auto;
 }
 
-/* 3. Touch devices: retain original behavior (always visible) */
-@media (hover: none) {
-    pre .copy-code, 
-    pre .edit-code, 
-    pre .run-code { 
-        opacity: 0.7 !important; 
-        visibility: visible !important;
-        pointer-events: auto;
-    }
+pre .copy-code:hover, pre .edit-code:hover, pre .run-code:hover {
+    opacity: 1;
 }
 
     /* Code runner output panel */
