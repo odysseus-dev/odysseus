@@ -1,10 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Connection } from '../lib/connection';
 import type { ChatMsg, ChatOptions, ModelOption, StreamEvent } from '../lib/api';
-import { DEFAULT_OPTIONS, getMessages, listModels, sendMessage, stopSession, streamSession } from '../lib/api';
+import {
+  DEFAULT_OPTIONS,
+  getMessages,
+  listModels,
+  sendMessage,
+  stopSession,
+  streamSession,
+  uploadFiles,
+} from '../lib/api';
 import { splitThinking } from '../lib/thinking';
 import { ChevronLeftIcon } from '../components/icons';
 import ToolToggles from '../components/ToolToggles';
+import { AttachButton, AttachPreviews, type PendingFile } from '../components/Attachments';
+
+// A chat message plus, for the optimistic bubble of a just-sent turn, local
+// preview URLs for any images attached (server history is text-only).
+type LocalMsg = ChatMsg & { images?: string[] };
 
 type Stream = 'loading' | 'connecting' | 'live' | 'done' | 'inactive' | 'error';
 
@@ -23,7 +36,7 @@ export default function SessionScreen({
   sessionId: string;
   onBack: () => void;
 }) {
-  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [messages, setMessages] = useState<LocalMsg[]>([]);
   const [rawAnswer, setRawAnswer] = useState('');
   const [flaggedThink, setFlaggedThink] = useState('');
   const [stream, setStream] = useState<Stream>('loading');
@@ -34,6 +47,7 @@ export default function SessionScreen({
   const [picked, setPicked] = useState(0);
   const [draft, setDraft] = useState('');
   const [options, setOptions] = useState<ChatOptions>(DEFAULT_OPTIONS);
+  const [pending, setPending] = useState<PendingFile[]>([]);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   // Bumped after a successful send to re-run the subscribe effect on the new run.
@@ -157,21 +171,39 @@ export default function SessionScreen({
     }
   }
 
+  function removeAttachment(i: number) {
+    setPending((p) => {
+      URL.revokeObjectURL(p[i]?.url);
+      return p.filter((_, j) => j !== i);
+    });
+  }
+
   async function onSend() {
     const text = draft.trim();
     const model = models[picked];
-    if (!text || sending || isLive) return;
+    if ((!text && pending.length === 0) || sending || isLive) return;
     setSending(true);
     setSendError(null);
-    // Optimistically show the user's turn; the run will stream the reply.
-    setMessages((m) => [...m, { role: 'user', content: text }]);
-    setDraft('');
+    const queued = pending;
     try {
+      // Upload any attachments first so we can pass their ids with the turn.
+      let attachments: string[] = [];
+      if (queued.length) {
+        const up = await uploadFiles(conn, queued.map((p) => p.file));
+        attachments = up.map((a) => a.id);
+      }
+      // Optimistically show the user's turn (with image previews); the run will
+      // stream the reply. The object URLs stay valid for this bubble.
+      const images = queued.filter((p) => p.file.type.startsWith('image/')).map((p) => p.url);
+      setMessages((m) => [...m, { role: 'user', content: text, images }]);
+      setDraft('');
+      setPending([]);
       await sendMessage(conn, sessionId, {
         message: text,
         endpointId: model?.endpointId,
         model: model?.model,
         options,
+        attachments,
       });
       setRawAnswer('');
       setFlaggedThink('');
@@ -218,7 +250,14 @@ export default function SessionScreen({
         {messages.map((m, i) => (
           <div key={i} className={'msg msg-' + m.role}>
             <div className="msg-role">{m.role}</div>
-            <pre className="msg-text">{m.content}</pre>
+            {m.images && m.images.length > 0 && (
+              <div className="msg-images">
+                {m.images.map((src, j) => (
+                  <img key={j} src={src} alt="attachment" />
+                ))}
+              </div>
+            )}
+            {m.content && <pre className="msg-text">{m.content}</pre>}
           </div>
         ))}
 
@@ -255,6 +294,7 @@ export default function SessionScreen({
       {sendError && <div className="error">{sendError}</div>}
 
       <ToolToggles value={options} onChange={setOptions} disabled={isLive} />
+      <AttachPreviews pending={pending} onRemove={removeAttachment} disabled={isLive} />
 
       <form
         className="composer"
@@ -263,6 +303,10 @@ export default function SessionScreen({
           onSend();
         }}
       >
+        <AttachButton
+          onPick={(picked) => setPending((p) => [...p, ...picked])}
+          disabled={isLive}
+        />
         <textarea
           className="composer-input"
           value={draft}
@@ -282,7 +326,7 @@ export default function SessionScreen({
             {stopping ? '...' : 'Stop'}
           </button>
         ) : (
-          <button className="stop send" type="submit" disabled={!draft.trim()}>
+          <button className="stop send" type="submit" disabled={!draft.trim() && pending.length === 0}>
             Send
           </button>
         )}

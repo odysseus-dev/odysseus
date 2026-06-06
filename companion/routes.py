@@ -18,7 +18,7 @@ on a GET would be unsafe (Lax cookies ride top-level GET navigations), so GET
 
 import html
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 from core.middleware import require_admin
@@ -107,7 +107,18 @@ def _chat_run_options(body: dict) -> dict:
         extra["allow_web_search" if agent else "use_web"] = "true"
     if terminal:
         extra["allow_bash"] = "true"
+    # Attachment ids from POST /api/companion/upload; chat_stream parses this as
+    # a JSON list and resolves each id owner-scoped.
+    atts = body.get("attachments")
+    if isinstance(atts, list) and atts:
+        import json as _json
+        extra["attachments"] = _json.dumps([str(a) for a in atts])
     return extra
+
+
+def _has_attachments(body: dict) -> bool:
+    atts = body.get("attachments")
+    return isinstance(atts, list) and len(atts) > 0
 
 
 async def _fire_chat_run(
@@ -208,7 +219,7 @@ def mint_pairing_token(owner: str, invalidate=None) -> tuple[str, str]:
     return token_id, raw_token
 
 
-def setup_companion_routes(session_manager=None) -> APIRouter:
+def setup_companion_routes(session_manager=None, upload_handler=None) -> APIRouter:
     router = APIRouter(prefix="/api/companion", tags=["companion"])
 
     @router.get("/ping")
@@ -287,6 +298,61 @@ def setup_companion_routes(session_manager=None) -> APIRouter:
             db.close()
         return {"endpoints": out}
 
+    @router.post("/upload")
+    async def upload(request: Request, files: list[UploadFile] = File(...)):
+        """Accept files from the phone (camera/gallery) and return attachment ids
+        to hand to a chat send (POST /sessions or /sessions/{id}/message).
+
+        Owner-stamped with the token's REAL owner, not the sandbox "api" user --
+        chat_handler resolves attachment ids with an exact owner match (no admin
+        shortcut on that path), so an upload owned by "api" would be invisible to
+        the owner's session. Mirrors the stock /api/upload route (same handler,
+        same per-IP concurrency guard); we just attribute it to the right owner
+        and scope it under the companion prefix so the phone can reach it with a
+        bearer token. Files are served back via the existing /api/upload/{id}.
+        """
+        import time
+
+        from src.upload_handler import count_recent_uploads
+
+        owner = token_owner(request)
+        if not owner:
+            raise HTTPException(401, "Could not resolve an owner for this token")
+        if upload_handler is None:
+            raise HTTPException(503, "Uploads are not available on this server")
+        if not files:
+            raise HTTPException(400, "No files uploaded")
+
+        client_ip = request.client.host if request.client else "unknown"
+        recent = count_recent_uploads(
+            upload_handler.upload_rate_log.get(client_ip, []), time.time()
+        )
+        if recent >= upload_handler.max_concurrent_uploads:
+            raise HTTPException(
+                429,
+                f"Maximum concurrent uploads ({upload_handler.max_concurrent_uploads}) exceeded",
+            )
+
+        out = []
+        for u in files:
+            try:
+                meta = upload_handler.save_upload(u, client_ip, owner=owner)
+                out.append({
+                    "id": meta["id"],
+                    "name": meta["name"],
+                    "mime": meta["mime"],
+                    "size": meta["size"],
+                    "width": meta.get("width"),
+                    "height": meta.get("height"),
+                })
+            except HTTPException:
+                raise
+            except Exception:
+                continue
+        if not out:
+            raise HTTPException(500, "All file uploads failed")
+        return {"files": out}
+
     @router.get("/sessions")
     def list_sessions(request: Request):
         """The caller's own sessions, annotated with live run state.
@@ -358,7 +424,7 @@ def setup_companion_routes(session_manager=None) -> APIRouter:
         message = (body.get("message") or "").strip()
         model = (body.get("model") or "").strip()
         endpoint_id = (body.get("endpoint_id") or "").strip()
-        if not message:
+        if not message and not _has_attachments(body):
             raise HTTPException(400, "message is required")
         if not endpoint_id or not model:
             raise HTTPException(400, "endpoint_id and model are required")
@@ -369,7 +435,7 @@ def setup_companion_routes(session_manager=None) -> APIRouter:
         # Create the (empty) session first; chat_stream adds the user message.
         sm = _resolve_session_manager(session_manager)
         sid = str(_uuid.uuid4())
-        name = (message[:40] or "New chat").strip()
+        name = (message[:40] or "Photo").strip()
         sm.create_session(sid, name, endpoint_url, model, owner=owner)
 
         await _fire_chat_run(request, owner, sid, message, _chat_run_options(body))
@@ -436,7 +502,7 @@ def setup_companion_routes(session_manager=None) -> APIRouter:
         except Exception:
             body = {}
         message = (body.get("message") or "").strip()
-        if not message:
+        if not message and not _has_attachments(body):
             raise HTTPException(400, "message is required")
 
         # Optional mid-chat model switch (the in-chat picker). Both must be given.

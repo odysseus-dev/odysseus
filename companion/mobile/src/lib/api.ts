@@ -81,10 +81,42 @@ export interface ChatOptions {
 
 export const DEFAULT_OPTIONS: ChatOptions = { agent: false, web: false, terminal: false };
 
+export interface Attachment {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  width?: number | null;
+  height?: number | null;
+}
+
+/** Upload files from the phone (camera/gallery). Returns attachment ids to pass
+ *  as `attachments` on a chat send. The ids are owned by the token's real owner,
+ *  so the chat pipeline resolves them. */
+export async function uploadFiles(conn: Connection, files: File[]): Promise<Attachment[]> {
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f);
+  // Note: do NOT set Content-Type -- the browser adds the multipart boundary.
+  const resp = await fetch(`${conn.baseUrl}/api/companion/upload`, {
+    method: 'POST',
+    headers: authHeaders(conn),
+    body: fd,
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} uploading`);
+  const { files: out } = (await resp.json()) as { files: Attachment[] };
+  return out;
+}
+
 /** Start a new chat. Returns the new session id to open + watch. */
 export async function startSession(
   conn: Connection,
-  opts: { message: string; endpointId: string; model: string; options?: ChatOptions },
+  opts: {
+    message: string;
+    endpointId: string;
+    model: string;
+    options?: ChatOptions;
+    attachments?: string[];
+  },
 ): Promise<{ session_id: string; name: string }> {
   const resp = await fetch(`${conn.baseUrl}/api/companion/sessions`, {
     method: 'POST',
@@ -93,6 +125,7 @@ export async function startSession(
       message: opts.message,
       endpoint_id: opts.endpointId,
       model: opts.model,
+      attachments: opts.attachments,
       ...opts.options,
     }),
   });
@@ -126,7 +159,13 @@ export async function getMessages(conn: Connection, id: string): Promise<Session
 export async function sendMessage(
   conn: Connection,
   id: string,
-  opts: { message: string; endpointId?: string; model?: string; options?: ChatOptions },
+  opts: {
+    message: string;
+    endpointId?: string;
+    model?: string;
+    options?: ChatOptions;
+    attachments?: string[];
+  },
 ): Promise<void> {
   const resp = await fetch(
     `${conn.baseUrl}/api/companion/sessions/${encodeURIComponent(id)}/message`,
@@ -137,6 +176,7 @@ export async function sendMessage(
         message: opts.message,
         endpoint_id: opts.endpointId,
         model: opts.model,
+        attachments: opts.attachments,
         ...opts.options,
       }),
     },

@@ -483,6 +483,80 @@ button {
   border-radius: 10px;
   padding: 10px 12px;
 }
+.msg-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.msg-images img {
+  max-width: 200px;
+  max-height: 200px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+/* --- Attachments (picker, thumbnails) --- */
+.attach {
+  flex: none;
+  align-self: flex-end;
+  padding-bottom: 10px;
+}
+.compose-attach {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.compose-attach .toggles {
+  padding: 0;
+}
+.attach-previews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px 0;
+}
+.thumb {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  overflow: hidden;
+}
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.thumb-file {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  word-break: break-word;
+  text-align: center;
+}
+.thumb-x {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+}
 
 /* --- Compose (new chat) --- */
 .compose-body {

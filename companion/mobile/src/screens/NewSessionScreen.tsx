@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { Connection } from '../lib/connection';
 import type { ChatOptions, ModelOption } from '../lib/api';
-import { DEFAULT_OPTIONS, listModels, startSession } from '../lib/api';
+import { DEFAULT_OPTIONS, listModels, startSession, uploadFiles } from '../lib/api';
 import { ChevronLeftIcon } from '../components/icons';
 import ToolToggles from '../components/ToolToggles';
+import { AttachButton, AttachPreviews, type PendingFile } from '../components/Attachments';
 
 // Compose + start a new chat from the phone. Pick a model (flattened from the
 // server's endpoints), type a first message, send -> the server starts the run
@@ -21,8 +22,16 @@ export default function NewSessionScreen({
   const [picked, setPicked] = useState(0);
   const [message, setMessage] = useState('');
   const [options, setOptions] = useState<ChatOptions>(DEFAULT_OPTIONS);
+  const [pending, setPending] = useState<PendingFile[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function removeAttachment(i: number) {
+    setPending((p) => {
+      URL.revokeObjectURL(p[i]?.url);
+      return p.filter((_, j) => j !== i);
+    });
+  }
 
   useEffect(() => {
     listModels(conn)
@@ -35,15 +44,21 @@ export default function NewSessionScreen({
 
   async function send() {
     const model = models[picked];
-    if (!model || !message.trim()) return;
+    if (!model || (!message.trim() && pending.length === 0)) return;
     setBusy(true);
     setError(null);
     try {
+      let attachments: string[] = [];
+      if (pending.length) {
+        const up = await uploadFiles(conn, pending.map((p) => p.file));
+        attachments = up.map((a) => a.id);
+      }
       const { session_id } = await startSession(conn, {
         message: message.trim(),
         endpointId: model.endpointId,
         model: model.model,
         options,
+        attachments,
       });
       onCreated(session_id);
     } catch (e) {
@@ -64,7 +79,7 @@ export default function NewSessionScreen({
           className="stop send"
           onClick={send}
           type="button"
-          disabled={busy || !message.trim() || models.length === 0}
+          disabled={busy || (!message.trim() && pending.length === 0) || models.length === 0}
         >
           {busy ? 'Starting...' : 'Send'}
         </button>
@@ -99,7 +114,14 @@ export default function NewSessionScreen({
           />
         </label>
 
-        <ToolToggles value={options} onChange={setOptions} disabled={busy} />
+        <div className="compose-attach">
+          <AttachButton
+            onPick={(picked) => setPending((p) => [...p, ...picked])}
+            disabled={busy}
+          />
+          <ToolToggles value={options} onChange={setOptions} disabled={busy} />
+        </div>
+        <AttachPreviews pending={pending} onRemove={removeAttachment} disabled={busy} />
 
         {error && <div className="error">{error}</div>}
       </div>
