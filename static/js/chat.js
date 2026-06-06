@@ -23,6 +23,7 @@ import * as emailInbox from './emailInbox.js';
 import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
 import createResearchSynapse from './researchSynapse.js';
+import { createStreamRenderer } from './streamingRenderer.js';
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -1167,9 +1168,6 @@ import createResearchSynapse from './researchSynapse.js';
       let _liveThinkToggle = null;
       let _liveThinkDomId = null;
 
-      // Offscreen measurement div — reused across renders
-      let _measureDiv = null;
-
       function _replyAfterClosedThinking(text) {
         const closeRe = /<\/(?:think(?:ing)?|thought)>|<channel\|>/gi;
         let match = null;
@@ -1224,19 +1222,18 @@ import createResearchSynapse from './researchSynapse.js';
             }
           }
           if (replyTrimmed) {
-            const replyHtml = markdownModule.mdToHtml(markdownModule.squashOutsideCode(replyTrimmed));
-            const prevLen = liveReply._prevTextLen || 0;
-            liveReply.innerHTML = replyHtml;
-            _fadeNewTokens(liveReply, prevLen);
-            liveReply._prevTextLen = liveReply.textContent.length;
-            if (window.hljs) liveReply.querySelectorAll('pre code').forEach((b) => window.hljs.highlightElement(b));
+            const r = liveReply._streamRenderer ||
+              (liveReply._streamRenderer = createStreamRenderer(liveReply, {
+                render: (t) => markdownModule.mdToHtml(markdownModule.squashOutsideCode(t)),
+                hljs: window.hljs,
+              }));
+            r.update(replyTrimmed);
           }
           // Reply empty or not — preserve thinking bar, don't fall through to full re-render
           uiModule.scrollHistory();
           return;
         }
 
-        const prevLen = contentEl._prevTextLen || 0;
         // If thinking is still streaming (unclosed <think>), show indicator instead of raw text
         if (markdownModule.hasUnclosedThinkTag && markdownModule.hasUnclosedThinkTag(dt)) {
           const thinkStart = dt.search(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought/i);
@@ -1250,65 +1247,25 @@ import createResearchSynapse from './researchSynapse.js';
           contentEl.innerHTML =
             '<div class="thinking-section"><div class="thinking-header"><div class="thinking-header-left">Thinking' +
             (lines > 1 ? ` (${lines} lines)` : '') + '</div></div></div>';
-          contentEl._prevTextLen = 0;
+          // The stream renderer self-heals when it next sees this overwritten
+          // container (streamingRenderer.js), so no explicit reset is needed here.
           uiModule.scrollHistory();
           return;
         }
-        const html = markdownModule.processWithThinking(markdownModule.squashOutsideCode(dt));
 
-        // Smooth expand only for regular chat text (not thinking/agent blocks)
-        const _hasThinking = html.includes('thinking-section');
-        const _isAgentRound = roundHolder !== holder;
-        if (!_hasThinking && !_isAgentRound) {
-          // Render into offscreen clone to measure new height before swapping
-          if (!_measureDiv) {
-            _measureDiv = document.createElement('div');
-            _measureDiv.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;z-index:-1;';
-          }
-          _measureDiv.style.width = contentEl.offsetWidth + 'px';
-          _measureDiv.className = contentEl.className;
-          _measureDiv.innerHTML = html;
-          contentEl.parentNode.appendChild(_measureDiv);
-          const measuredH = _measureDiv.offsetHeight;
-          _measureDiv.remove();
-          const curMin = parseFloat(contentEl.style.minHeight) || 0;
-          contentEl.style.minHeight = Math.max(curMin, measuredH) + 'px';
-        } else {
-          contentEl.style.minHeight = '';
-        }
-
-        contentEl.innerHTML = html;
-        _fadeNewTokens(contentEl, prevLen);
-        contentEl._prevTextLen = contentEl.textContent.length;
-        if (window.hljs) contentEl.querySelectorAll('pre code').forEach((b) => window.hljs.highlightElement(b));
+        // Incremental streaming render: freeze finalized blocks, re-render only the
+        // growing tail, and highlight each code block once on completion. This is
+        // what keeps code-block hover buttons from flickering and avoids the O(N^2)
+        // re-parse/re-highlight of the whole message on every token.
+        // See streamingRenderer.js / streamingSegmenter.js.
+        const renderer = contentEl._streamRenderer ||
+          (contentEl._streamRenderer = createStreamRenderer(contentEl, {
+            render: (t) => markdownModule.processWithThinking(markdownModule.squashOutsideCode(t)),
+            hljs: window.hljs,
+          }));
+        renderer.update(dt);
         uiModule.scrollHistory();
       };
-
-      // Walk text nodes, skip past `prevLen` characters of old text,
-      // wrap everything after that in <span class="token-new"> for fade-in
-      function _fadeNewTokens(container, prevLen) {
-        if (!prevLen) return; // First chunk — skip, whole msg already has entrance anim
-        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-        let charCount = 0;
-        const toWrap = [];
-        while (walker.nextNode()) {
-          const node = walker.currentNode;
-          const len = node.textContent.length;
-          if (charCount + len <= prevLen) { charCount += len; continue; }
-          const splitAt = charCount < prevLen ? prevLen - charCount : 0;
-          toWrap.push({ node, splitAt });
-          charCount += len;
-        }
-        for (const { node, splitAt } of toWrap) {
-          const parent = node.parentNode;
-          if (!parent || parent.closest('pre, .think-content')) continue;
-          const target = splitAt > 0 ? node.splitText(splitAt) : node;
-          const span = document.createElement('span');
-          span.className = 'token-new';
-          parent.replaceChild(span, target);
-          span.appendChild(target);
-        }
-      }
 
       let _nextIsError = false;
       let _streamSawDone = false;
