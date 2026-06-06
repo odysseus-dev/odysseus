@@ -609,7 +609,7 @@ export function renderMemoryList() {
 
   if (filtered.length === 0) {
     const selectBtn = document.getElementById('memory-select-btn');
-    if (selectBtn) selectBtn.classList.add('hidden');
+    if (selectBtn) selectBtn.disabled = true;
     if (selectMode) exitSelectMode();
     const searchTerm = document.getElementById('memory-search')?.value?.trim() || '';
     const _smiley = '<span style="vertical-align:-3px;margin-left:6px;">' + uiModule.emptyStateIcon('smiley') + '</span>';
@@ -631,7 +631,7 @@ export function renderMemoryList() {
   }
 
   const selectBtn = document.getElementById('memory-select-btn');
-  if (selectBtn) selectBtn.classList.remove('hidden');
+  if (selectBtn) selectBtn.disabled = false;
 
   filtered.forEach(memory => {
     const item = document.createElement('div');

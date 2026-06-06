@@ -622,14 +622,14 @@ function renderSkillsList() {
 
   if (!sorted.length && !showBuiltin) {
     const selectBtn = document.getElementById('skills-select-btn');
-    if (selectBtn) selectBtn.classList.add('hidden');
+    if (selectBtn) selectBtn.disabled = true;
     if (_selectMode) _exitSelectMode();
     container.innerHTML = `<div style="text-align:center;opacity:0.4;padding:24px 0;font-size:11px;">${loaded ? 'No skills yet, use agent for it to auto extract them.' : 'Loading…'}</div>`;
     return;
   }
 
   const selectBtn = document.getElementById('skills-select-btn');
-  if (selectBtn) selectBtn.classList.remove('hidden');
+  if (selectBtn) selectBtn.disabled = false;
 
   // Library-style cards: a compact bar that expands in-place to show the
   // SKILL.md, with a footer (Delete left; Edit / Run / Approve right).
