@@ -587,9 +587,13 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
 
         if preset == "discord_webhook":
             import httpx
+            from urllib.parse import urlparse as _urlparse
             webhook_url = (integ.get("base_url") or "").strip()
             if not webhook_url:
                 return {"ok": False, "message": "No webhook URL set — paste the full Discord webhook URL into the Base URL field."}
+            _host = (_urlparse(webhook_url).hostname or "").lower()
+            if _host not in ("discord.com", "discordapp.com", "ptb.discord.com", "canary.discord.com"):
+                return {"ok": False, "message": "Webhook URL must point at discord.com."}
             payload = {
                 "embeds": [{
                     "title": "Odysseus connectivity test",
@@ -602,7 +606,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                     r = await client.post(webhook_url, json=payload)
                 if r.is_success:
                     return {"ok": True, "message": "Test embed sent — check your Discord channel to confirm it arrived."}
-                return {"ok": False, "message": f"Discord returned HTTP {r.status_code}: {r.text[:200]}"}
+                return {"ok": False, "message": f"Discord returned HTTP {r.status_code}."}
             except Exception as e:
                 return {"ok": False, "message": f"Request failed: {e}"[:400]}
 
