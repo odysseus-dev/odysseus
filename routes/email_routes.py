@@ -65,6 +65,26 @@ ODYSSEUS_MAIL_ORIGIN = "odysseus-ui"
 _EMAIL_SETUP_LOG = Path(__file__).resolve().parent.parent / "logs" / "email_setup.log"
 
 
+def _humanize_mail_error(exc: Exception | str) -> str:
+    """Turn low-level IMAP/socket errors into actionable UI text."""
+    s = str(exc).strip()
+    low = s.lower()
+    if "connection refused" in low or "errno 61" in low:
+        return (
+            "Cannot reach the IMAP server (connection refused). "
+            "Check host, port (993 for SSL or 143 + STARTTLS), firewall, and that the server is online."
+        )
+    if "authenticationfailed" in low or "authentication failed" in low or "invalid credentials" in low:
+        return (
+            "IMAP login failed. Check username, password, and whether your provider requires an app password."
+        )
+    if "timed out" in low or "timeout" in low:
+        return f"IMAP server timed out ({s[:100]})."
+    if s.startswith("Mail operation failed:"):
+        return s
+    return f"Mail operation failed: {s[:180]}" if s else "Mail operation failed"
+
+
 def _email_setup_log(event: str, *, level: int = logging.INFO, **fields) -> None:
     """Persist email account setup events to logs/email_setup.log (no passwords)."""
     try:
@@ -1022,8 +1042,7 @@ def setup_email_routes():
             return {"emails": emails, "total": total, "folder": folder, "offset": offset}
         except Exception as e:
             logger.error(f"Failed to list emails: {e}")
-            detail = str(e).strip()
-            return {"emails": [], "total": 0, "error": f"Mail operation failed: {detail[:180]}" if detail else "Mail operation failed"}
+            return {"emails": [], "total": 0, "error": _humanize_mail_error(e)}
         finally:
             if conn:
                 try:
