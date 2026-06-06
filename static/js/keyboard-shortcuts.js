@@ -3,6 +3,7 @@
 // ============================================
 
 import { EMAIL_SHORTCUT_DEFAULTS } from './emailShortcutDefaults.js';
+import { dismissTopMenu } from './escMenuStack.js';
 import {
   readStoredKeybinds, resolveKeybind, matchesCombo, installKeyDebugProbe, keybindEnabled,
 } from './keybindUtils.js';
@@ -18,6 +19,7 @@ const _defaultKeybinds = {
   open_calendar: 'ctrl+alt+c', open_compare: '', open_cookbook: '',
   open_research: '', open_gallery: '', open_library: '', open_memory: '',
   open_notes: '', open_tasks: '', open_theme: '',
+  open_email: '',
   ...EMAIL_SHORTCUT_DEFAULTS,
 };
 
@@ -69,6 +71,15 @@ export function initKeyboardShortcuts(modules) {
   // closing the surrounding modal.
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
+    // Email command/move palette — Esc closes the palette, not bulk selection.
+    if (document.getElementById('email-cmd-palette') || document.getElementById('email-move-picker')) return;
+    // Transient dropdown menus (bulk Actions, per-card …) dismiss before select mode.
+    if (dismissTopMenu()) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      return;
+    }
     const cancels = document.querySelectorAll('[id$="-bulk-cancel"]');
     for (const btn of cancels) {
       // Do not rely on offsetParent: visible fixed-position or modal-contained
@@ -272,6 +283,7 @@ export function initKeyboardShortcuts(modules) {
       open_notes:    'tool-notes-btn',
       open_tasks:    'tool-tasks-btn',
       open_theme:    'tool-theme-btn',
+      open_email:    'email-section-title',
     };
     for (const action in _toolBtns) {
       if (_matchesCombo(e, kb[action])) {

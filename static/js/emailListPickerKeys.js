@@ -87,9 +87,21 @@ export function bindEmailListPickerKeys(overlay, input, { onEscape } = {}) {
   const onKey = (e) => { _handlePickerKeydown(e, overlay); };
   (input || _inputEl(overlay))?.addEventListener('keydown', onKey);
 
+  // Capture on document so Esc closes the palette before the global bulk-select
+  // handler (keyboard-shortcuts.js) clears email multi-select.
+  const onDocEsc = (e) => {
+    if (e.key !== 'Escape' || !overlay.isConnected) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation?.();
+    onEscape?.();
+  };
+  document.addEventListener('keydown', onDocEsc, true);
+
   return () => {
     const inp = input || _inputEl(overlay);
     inp?.removeEventListener('keydown', onKey);
+    document.removeEventListener('keydown', onDocEsc, true);
     delete overlay._emailPickerOnEscape;
     delete overlay.dataset.highlightIdx;
   };

@@ -1720,6 +1720,7 @@ const SHORTCUT_DEFAULTS = {
   open_notes:     '',
   open_tasks:     '',
   open_theme:     '',
+  open_email:     '',
   ...EMAIL_SHORTCUT_DEFAULTS,
 };
 
@@ -1744,6 +1745,7 @@ const SHORTCUT_ICONS = {
   open_notes:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg>',
   open_tasks:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg>',
   open_theme:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg>',
+  open_email:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>',
   ...EMAIL_SHORTCUT_ICONS,
 };
 
@@ -1768,6 +1770,7 @@ const SHORTCUT_LABELS = {
   open_notes:     'Open Notes',
   open_tasks:     'Open Tasks',
   open_theme:     'Open Theme',
+  open_email:     'Open Email',
   ...EMAIL_SHORTCUT_LABELS,
 };
 
@@ -1775,7 +1778,7 @@ const SHORTCUT_CATEGORIES = [
   { name: 'Navigation', keys: ['search', 'toggle_sidebar', 'focus_input', 'settings'] },
   { name: 'Sessions', keys: ['new_session', 'fav_session', 'delete_session'] },
   { name: 'Tools', keys: ['incognito', 'tts', 'cancel'] },
-  { name: 'Open Tools', keys: ['open_calendar', 'open_compare', 'open_cookbook', 'open_research', 'open_gallery', 'open_library', 'open_memory', 'open_notes', 'open_tasks', 'open_theme'] },
+  { name: 'Open Tools', keys: ['open_calendar', 'open_compare', 'open_cookbook', 'open_research', 'open_gallery', 'open_library', 'open_memory', 'open_notes', 'open_tasks', 'open_theme', 'open_email'] },
   { name: 'Email', keys: Object.keys(EMAIL_SHORTCUT_DEFAULTS) },
 ];
 
@@ -2861,6 +2864,34 @@ async function initEmailAccountsSettings() {
       if (!body.name) { el('eaf-msg').textContent = 'Need at least a Name or Email'; el('eaf-msg').style.color = 'var(--red)'; return; }
 
       try {
+        const testBody = { ...body };
+        if (isEdit && !testBody.imap_password) testBody.account_id = a.id;
+        if (testBody.imap_host && testBody.imap_user && (testBody.imap_password || isEdit)) {
+          el('eaf-msg').textContent = 'Testing connection…';
+          el('eaf-msg').style.color = '';
+          const tr = await fetch('/api/email/accounts/test', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(testBody),
+          });
+          const td = await tr.json();
+          if (!td.ok) {
+            const imapErr = td.imap?.error || 'IMAP failed';
+            const hint = /connection refused/i.test(imapErr)
+              ? 'Cannot reach the IMAP server. Check host, port (993 vs 143), and firewall.'
+              : imapErr;
+            const saveAnyway = await window.styledConfirm(
+              `Connection test failed:\n${hint}\n\nSave this account anyway?`,
+              { confirmText: 'Save anyway', cancelText: 'Fix settings', danger: true },
+            );
+            if (!saveAnyway) {
+              el('eaf-msg').textContent = `IMAP: ${hint}`;
+              el('eaf-msg').style.color = 'var(--red)';
+              return;
+            }
+          }
+        }
+
         const url = isEdit ? `/api/email/accounts/${a.id}` : '/api/email/accounts';
         const method = isEdit ? 'PUT' : 'POST';
         const r = await fetch(url, {

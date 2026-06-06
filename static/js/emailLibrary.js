@@ -32,6 +32,7 @@ import {
   EMAIL_SHORTCUT_OVERLAY_KEYS,
 } from './emailShortcutDefaults.js';
 import { bindEmailListPickerKeys, resetEmailListPickerHighlight } from './emailListPickerKeys.js';
+import { bindMenuDismiss } from './escMenuStack.js';
 import {
   createCommandPaletteOverlay, wireCommandPaletteDismiss,
   renderCommandPaletteItems, setCommandPaletteEmpty,
@@ -270,7 +271,7 @@ function _buildEmailCommandPaletteCommands(close) {
       if (expanded) return;
       const c = card || document.querySelector(`#email-lib-grid .doclib-card[data-uid="${CSS.escape(String(em.uid))}"]`);
       if (c) void _toggleCardPreview(c, em);
-    }, { keywords: ['read', 'view', 'expand', 'enter', 'open'], meta: 'Enter' });
+    }, { keywords: ['read', 'view', 'expand', 'enter', 'open', ..._emailPaletteKw('email_open')], meta: _emailPaletteKb('email_open') || 'Enter' });
     add('Reply', () => { close(); void _runEmailComposeAction(em, 'reply'); },
       { keywords: ['respond', 'answer', 'compose', ..._emailPaletteKw('email_reply')], meta: _emailPaletteKb('email_reply') });
     add('Reply all', () => { close(); void _runEmailComposeAction(em, 'reply-all'); },
@@ -919,9 +920,29 @@ function _openSettingsTab(tab) {
   if (tabBtn) tabBtn.click();
 }
 
-function _emailSetupHintHtml() {
+function _humanizeEmailLoadError(msg) {
+  const s = String(msg || '').trim();
+  const low = s.toLowerCase();
+  if (low.includes('connection refused') || low.includes('errno 61')) {
+    return 'Cannot reach the IMAP server. Check host, port (993 vs 143 + STARTTLS), and firewall — or pick another account above.';
+  }
+  if (low.includes('timed out') || low.includes('timeout') || low.includes('504')) {
+    return 'IMAP server timed out. The host may be slow or unreachable — try another account or increase ODYSSEUS_IMAP_TIMEOUT_SECONDS.';
+  }
+  if (low.includes('authentication failed') || low.includes('authenticationfailed')) {
+    return 'IMAP login failed for this account. Check password / app password in Settings → Integrations.';
+  }
+  return s.replace(/^Mail operation failed:\s*/i, '') || 'Failed to load';
+}
+
+function _emailSetupHintHtml(errMsg = '') {
+  const low = String(errMsg || '').toLowerCase();
+  const extra = low.includes('connection refused') || low.includes('authentication')
+    ? '<div style="margin-top:4px;opacity:0.65;">Try Test connection in Settings before using this account.</div>'
+    : '';
   return '<div style="margin-top:6px;opacity:0.72;font-size:11px;">' +
     'Setup: <a href="#" data-open-settings="integrations" style="color:var(--accent,var(--red));text-decoration:underline;">Settings &rsaquo; Integrations</a>' +
+    extra +
     '</div>';
 }
 
@@ -1692,7 +1713,7 @@ export function openEmailLibrary(opts = {}) {
       return;
     }
 
-    if (e.key === 'Enter' && libOpen && !_isEmailTypingTarget(e.target)) {
+    if (_matchesCombo(e, emailKeybind('email_open')) && libOpen && !_isEmailTypingTarget(e.target)) {
       if (_openHighlightedEmailCard()) {
         _stopEmailKey(e);
         return;
@@ -2291,8 +2312,9 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
       // Refresh button passes `force: true` to add it back.
       const buster = force ? `&_=${Date.now()}` : '';
       const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folderAtStart)}${accountQS}&limit=100&offset=${offsetAtStart}&filter=${filterAtStart}${attQS}${threadQS}${buster}`);
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (seq !== _libLoadSeq || accountAtStart !== (state._libAccountId || '')) return;
+      if (!res.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
       if (data.error) throw new Error(data.error);
       state._libEmails = data.emails || [];
       state._libTotal = data.total || 0;
@@ -2309,9 +2331,20 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
     // If we already painted the cached list, leave it on screen — beats
     // wiping it for "Failed to load" when there's still readable content.
     if (!cached) {
-      const msg = e && e.message ? `Failed to load: ${e.message}` : 'Failed to load';
-      grid.innerHTML = `<div class="email-loading">${_esc(msg)}${_emailSetupHintHtml()}</div>`;
+      const raw = e && e.message ? e.message : 'Failed to load';
+      const msg = `Failed to load: ${_humanizeEmailLoadError(raw)}`;
+      grid.innerHTML = `<div class="email-loading">${_esc(msg)}<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;"><button type="button" class="memory-toolbar-btn" id="email-lib-retry-load">Retry</button><button type="button" class="memory-toolbar-btn" data-acc-switch="">All accounts</button></div>${_emailSetupHintHtml(raw)}</div>`;
       _wireEmailSetupHint(grid);
+      grid.querySelector('#email-lib-retry-load')?.addEventListener('click', () => {
+        void _loadEmails({ force: true, useCache: false });
+      });
+      grid.querySelector('button[data-acc-switch]')?.addEventListener('click', () => {
+        state._libAccountId = null;
+        _publishActiveAccount();
+        _renderAccountsStrip();
+        void _loadFolders({ resetMissing: true });
+        void _loadEmails({ force: true, useCache: false });
+      });
     }
   } finally {
     if (seq === _libLoadSeq) state._libLoading = false;
@@ -5797,13 +5830,11 @@ function _showBulkActionsMenu(anchor) {
   dropdown.appendChild(cancelIt);
   document.body.appendChild(dropdown);
   _fitEmailDropdown(dropdown, rect);
-  const close = (ev) => {
-    if (!dropdown.contains(ev.target) && ev.target !== anchor) {
-      dropdown.remove();
-      document.removeEventListener('click', close, true);
-    }
-  };
-  setTimeout(() => document.addEventListener('click', close, true), 10);
+  bindMenuDismiss(
+    dropdown,
+    () => dropdown.remove(),
+    (ev) => dropdown.contains(ev.target) || ev.target === anchor,
+  );
 }
 
 function _updateBulkBar() {

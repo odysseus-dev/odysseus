@@ -5,6 +5,7 @@
 import { resolveKeybind } from './keybindUtils.js';
 
 export const EMAIL_SHORTCUT_DEFAULTS = {
+  email_open: 'enter',
   email_next: 'j',
   email_prev: 'k',
   email_archive: 'e',
@@ -26,6 +27,7 @@ export const EMAIL_SHORTCUT_DEFAULTS = {
 
 /** Labels for Settings → Shortcuts and the in-email help overlay. */
 export const EMAIL_SHORTCUT_LABELS = {
+  email_open: 'Open highlighted email',
   email_next: 'Next message',
   email_prev: 'Previous message',
   email_archive: 'Archive',
@@ -47,7 +49,7 @@ export const EMAIL_SHORTCUT_LABELS = {
 
 /** Actions shown in the in-email shortcuts overlay (subset, user-facing order). */
 export const EMAIL_SHORTCUT_OVERLAY_KEYS = [
-  'email_next', 'email_prev', 'email_archive', 'email_reply', 'email_reply_all',
+  'email_open', 'email_next', 'email_prev', 'email_archive', 'email_reply', 'email_reply_all',
   'email_forward', 'email_star', 'email_toggle_read', 'email_view_source', 'email_focus_search',
   'email_command_palette', 'email_close',
 ];
