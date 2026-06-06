@@ -162,26 +162,22 @@ function _renderProjectsSection() {
 
   const title = document.createElement('span');
   title.className = 'folder-name';
-  title.style.flex = '1';
+  title.style.cssText = 'flex:1;cursor:pointer;';
   title.textContent = 'Projects';
+  title.title = 'Open Projects';
+  title.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (window.projectsViewModule) window.projectsViewModule.openProjectsListView();
+  });
 
   const newBtn = document.createElement('button');
   newBtn.className = 'folder-delete-btn';
   newBtn.style.cssText = 'color:var(--accent-primary);font-size:14px;padding:0 4px;';
   newBtn.textContent = '+';
   newBtn.title = 'New Project';
-  newBtn.addEventListener('click', async (e) => {
+  newBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const name = await styledPrompt('Project name:', {
-      title: 'New project',
-      placeholder: 'e.g. Research, Work, Personal',
-      confirmText: 'Create',
-    });
-    if (!name || !name.trim()) return;
-    const fd = new FormData();
-    fd.append('name', name.trim());
-    const resp = await fetch(`${API_BASE}/api/projects`, { method: 'POST', body: fd });
-    if (resp.ok) await loadProjects();
+    if (window.projectsViewModule) window.projectsViewModule.openProjectsListView();
   });
 
   header.appendChild(title);
@@ -212,20 +208,10 @@ function _renderProjectsSection() {
     item.appendChild(icon);
     item.appendChild(nameSpan);
 
-    item.addEventListener('click', () => {
-      if (_activeProjectId === p.id) {
-        _activeProjectId = null;
-      } else {
-        _activeProjectId = p.id;
-      }
-      _renderProjectsSection();
-      renderSessionList();
-    });
-
-    item.addEventListener('dblclick', async (e) => {
+    item.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (window.projectModalModule && window.projectModalModule.openProjectModal) {
-        window.projectModalModule.openProjectModal(p.id);
+      if (window.projectsViewModule) {
+        window.projectsViewModule.openProjectView(p.id);
       }
     });
 
@@ -2128,6 +2114,12 @@ export async function materializePendingSession() {
   Storage.set('lastSessionId', payload.id);
   history.replaceState(null, '', '#' + payload.id);
 
+  // If this chat was started from inside a project, assign it now
+  if (pending.projectId) {
+    await fetch(`${API_BASE}/api/projects/${pending.projectId}/sessions/${payload.id}`, { method: 'POST' })
+      .catch(() => {});
+  }
+
   // Reload sidebar to show the new session — await it so the session
   // is fully registered before the caller proceeds (prevents race conditions)
   await loadSessions().catch(() => {});
@@ -3382,7 +3374,8 @@ const sessionModule = {
   closeArchive,
   setSessionHasDocs,
   getSortMode,
-  setSortMode
+  setSortMode,
+  setPendingChat: (v) => { _pendingChat = v; },
 };
 
 export { updateModelPicker };
