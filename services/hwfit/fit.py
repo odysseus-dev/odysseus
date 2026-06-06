@@ -95,12 +95,19 @@ def _lookup_apple_bandwidth(system):
 
 
 def _lookup_bandwidth(system):
-    gpu_name = system.get("gpu_name")
+    if isinstance(system, dict):
+        gpu_name = system.get("gpu_name")
+    else:
+        gpu_name = system
+
     if not isinstance(gpu_name, str) or not gpu_name:
         return None
-    bw = _lookup_apple_bandwidth(system)
-    if bw is not None:
-        return bw
+
+    if isinstance(system, dict):
+        bw = _lookup_apple_bandwidth(system)
+        if bw is not None:
+            return bw
+
     gn = gpu_name.lower()
     for key in _BW_KEYS_SORTED:
         if key in gn:
