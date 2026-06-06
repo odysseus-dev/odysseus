@@ -825,6 +825,27 @@ body.bg-pattern-sparkles {
       transition: background 0.15s, color 0.15s;
     }
     .modal-minimize-btn:hover { background: var(--fg); color: var(--bg); }
+    .modal-fullscreen-btn {
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--fg);
+      cursor: pointer;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      margin-left: 0;
+      margin-right: 4px;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      flex-shrink: 0;
+      transition: background 0.15s, color 0.15s;
+    }
+    .modal-fullscreen-btn:hover,
+    .modal-fullscreen-btn.active { background: var(--fg); color: var(--bg); }
+    .modal-fullscreen-btn .hidden { display: none; }
     .modal.modal-minimized { display: none !important; }
     /* Window tile snap ghost (desktop only) */
     #tile-ghost {
@@ -6147,6 +6168,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       flex-direction: column;
       max-height: 60vh;
     }
+    .search-popup input.search-palette-input,
     .search-popup input#search-input {
       width: 100%;
       background: transparent;
@@ -6159,8 +6181,20 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       padding: 14px 16px;
       box-sizing: border-box;
     }
+    .search-popup input.search-palette-input::placeholder,
     .search-popup input#search-input::placeholder {
       color: color-mix(in srgb, var(--fg) 30%, transparent);
+    }
+    /* Email command / move palettes — above tool modals */
+    #email-cmd-palette.search-overlay,
+    #email-move-picker.search-overlay,
+    #email-shortcuts-overlay.search-overlay {
+      z-index: 10056;
+    }
+    #email-lib-modal .doclib-card.email-grid-key-focus {
+      outline: 2px solid color-mix(in srgb, var(--accent, #e8a830) 50%, transparent);
+      outline-offset: -2px;
+      background: color-mix(in srgb, var(--red) 8%, transparent);
     }
     .search-results {
       overflow-y: auto;
@@ -21458,6 +21492,17 @@ body.gallery-selecting .gallery-dl-btn,
   animation: shortcut-pulse 1s infinite;
 }
 .shortcut-key.listening kbd { border-color: var(--accent, #cc6a3a); }
+.shortcut-clear-btn {
+  width: 24px; height: 24px; border-radius: 4px; border: 1px solid var(--border);
+  background: transparent; color: color-mix(in srgb, var(--fg) 55%, transparent);
+  cursor: pointer; font-size: 16px; line-height: 1;
+  display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+}
+.shortcut-clear-btn:hover {
+  border-color: var(--accent, #cc6a3a);
+  color: var(--accent, #cc6a3a);
+  background: color-mix(in srgb, var(--accent, #cc6a3a) 10%, var(--bg));
+}
 .shortcut-action-btn {
   width: 24px; height: 24px; border-radius: 4px; border: 1px solid var(--border);
   background: transparent; color: var(--fg); cursor: pointer; font-size: 13px;
@@ -27528,6 +27573,9 @@ button .spinner-whirlpool {
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   font-size: 12px;
 }
 .email-card-reader-loading {
@@ -27717,12 +27765,121 @@ button .spinner-whirlpool {
                "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla";
   font-variant-emoji: emoji;
 }
+/* Plain-only MIME (no text/html part) — normal wrapping, no per-char breaks */
+/* Shadow-DOM mail body host — content lives in shadow root, not these rules */
+.email-reader-body.email-shadow-body {
+  white-space: normal;
+  overflow-wrap: normal;
+  word-break: normal;
+  letter-spacing: normal;
+  word-spacing: normal;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  color: var(--fg);
+  /* Host sets font-variant-emoji:emoji for compose; that inherits into the
+     shadow root and WebKit renders digits with emoji-style spacing (2 0 2 6). */
+  font-variant-emoji: text;
+  padding: 10px 14px;
+}
+.email-remote-images-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-shrink: 0;
+  margin: 0 14px 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary, var(--hl-function)) 35%, var(--border));
+  background: color-mix(in srgb, var(--accent-primary, var(--hl-function)) 10%, var(--panel, var(--bg)));
+  font-size: 11px;
+  color: var(--fg);
+}
+.email-remote-images-banner.hidden { display: none; }
+.email-remote-images-banner-text { opacity: 0.85; line-height: 1.35; }
+.email-remote-images-banner-btn {
+  flex-shrink: 0;
+  font-size: 11px !important;
+  padding: 4px 10px !important;
+}
+.email-reader-body.email-plain-body {
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+  letter-spacing: normal;
+  word-spacing: normal;
+}
+.email-plain-document {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
+  font-size: inherit;
+  line-height: inherit;
+  margin: 0;
+}
+.email-reader-body.email-plain-body,
+.email-reader-body.email-plain-body * {
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
+}
+.email-reader-body.email-iframe-body {
+  white-space: normal;
+  overflow-wrap: normal;
+  padding: 0;
+  overflow: hidden;
+}
+.email-html-iframe {
+  display: block;
+  width: 100%;
+  min-height: 80px;
+  border: none;
+  background: #fff;
+  color-scheme: light;
+}
+
 /* When rendering HTML emails, override pre-wrap so layout works */
 .email-reader-body.html-body {
   white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+  overflow-x: auto;
+  letter-spacing: normal;
+  word-spacing: normal;
 }
-.email-reader-body.html-body img { max-width: 100%; height: auto; }
-.email-reader-body.html-body table { max-width: 100%; border-collapse: collapse; }
+.email-reader-body.html-body * {
+  letter-spacing: normal !important;
+  word-spacing: normal !important;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.email-reader-body.html-body img { max-width: 100%; height: auto; display: inline-block; }
+.email-reader-body.html-body table {
+  border-collapse: collapse;
+  width: auto;
+  max-width: none;
+}
+.email-reader-body.html-body td,
+.email-reader-body.html-body th {
+  vertical-align: top;
+}
+/* Undo per-character tracking spans common in marketing mail */
+.email-reader-body.html-body span {
+  display: inline !important;
+  width: auto !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.email-reader-body.html-body p {
+  margin: 0.35em 0;
+}
+.email-reader-body.html-body div:empty {
+  display: none;
+}
 /* Preserve highlights — sender's intent (snark, callouts) gets through, but
    rendered with a theme-aware accent so it stays legible in any theme. The
    sanitizer rewrites `<span style="background:yellow">…</span>` to <mark>. */
@@ -28166,9 +28323,13 @@ button .spinner-whirlpool {
 .email-thread-turn-body a {
   color: var(--accent-primary, var(--red));
   text-decoration: underline;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   word-break: normal;
   cursor: pointer;
+}
+.email-reader-body.html-body a,
+.email-bubble-body.html-body a {
+  overflow-wrap: normal;
 }
 .email-reader-body a:hover,
 .email-bubble-body a:hover,
@@ -28639,15 +28800,19 @@ button .spinner-whirlpool {
 
 /* Senders embed inline colors in their HTML that clash with the app's
    theme (black text in dark mode, white backgrounds, yellow highlights,
-   etc.). Force theme colors on every descendant of the rendered body so
-   emails inherit the user's chosen palette regardless of what the
-   sender's mail client emits. */
-.email-reader-body *,
-.email-bubble-body * {
+   etc.). Force theme text colors on descendants. Plain-text bodies still
+   strip backgrounds; HTML newsletters keep layout backgrounds/images. */
+.email-reader-body:not(.html-body) *,
+.email-bubble-body:not(.html-body) * {
   color: var(--fg) !important;
   -webkit-text-fill-color: currentColor !important;
   background-color: transparent !important;
   background-image: none !important;
+}
+.email-reader-body.html-body *,
+.email-bubble-body.html-body * {
+  color: var(--fg) !important;
+  -webkit-text-fill-color: currentColor !important;
 }
 .email-reader-body a,
 .email-bubble-body a,
