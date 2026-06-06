@@ -314,6 +314,19 @@ if AUTH_ENABLED:
                             matched_scopes = scopes or []
                             break
                     if matched_id:
+                        from src.api_token_capabilities import authorize_api_token_route
+
+                        route_decision = authorize_api_token_route(
+                            request.method,
+                            path,
+                            matched_scopes,
+                        )
+                        if not route_decision.allowed:
+                            return JSONResponse(
+                                status_code=403,
+                                content={"error": route_decision.error},
+                            )
+
                         # Update last_used_at off the hot path. Doing it
                         # inline used to keep the request open across an
                         # extra commit; do it fire-and-forget instead.
