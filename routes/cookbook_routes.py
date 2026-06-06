@@ -103,6 +103,17 @@ def _ensure_windows_llama_server() -> str | None:
     import zipfile
 
     def _get(url: str, timeout: int) -> bytes:
+        # Only ever fetch over HTTPS from GitHub. urllib already verifies TLS
+        # certs, so this blocks a compromised/MITM'd API response from pointing
+        # the binary download at an http:// or off-GitHub host (downgrade /
+        # redirect-to-evil). GitHub serves release assets from github.com and
+        # *.githubusercontent.com.
+        from urllib.parse import urlparse as _urlparse
+        _h = (_urlparse(url).hostname or "").lower()
+        if _urlparse(url).scheme != "https" or not (
+            _h == "github.com" or _h.endswith(".github.com") or _h.endswith(".githubusercontent.com")
+        ):
+            raise ValueError(f"refusing non-HTTPS/non-GitHub download URL: {url[:80]}")
         rq = urllib.request.Request(url, headers={"User-Agent": "odysseus-cookbook"})
         with urllib.request.urlopen(rq, timeout=timeout) as r:
             return r.read()
@@ -2394,9 +2405,23 @@ def setup_cookbook_routes() -> APIRouter:
                 "    except Exception:\n"
                 "        try: return os.path.getsize(p)\n"
                 "        except Exception: return 0\n"
-                "downloaded=0\n"
+                "downloaded=0; _seen=set()\n"
+                # Sum every file under the model dir, de-duplicated by inode. On a
+                # POSIX HF cache the real bytes live in blobs/ and snapshots/ are
+                # symlinks to them — a plain walk would count both and ~double the
+                # size. os.stat() follows the symlink, so the snapshot and its blob
+                # resolve to the SAME (dev,ino) and are counted once. On this setup
+                # (Windows, symlinks off) blobs/ is empty and the file lives only in
+                # snapshots/, so the walk is already correct; the dedupe is a no-op.
                 "for root,_,fns in os.walk(d):\n"
-                "    for fn in fns: downloaded+=fsize(os.path.join(root,fn))\n"
+                "    for fn in fns:\n"
+                "        p=os.path.join(root,fn)\n"
+                "        try:\n"
+                "            st=os.stat(p)\n"
+                "            if st.st_ino and (st.st_dev,st.st_ino) in _seen: continue\n"
+                "            if st.st_ino: _seen.add((st.st_dev,st.st_ino))\n"
+                "        except Exception: pass\n"
+                "        downloaded+=fsize(p)\n"
                 "total=0; shards=set(); done=set();\n"
                 "snap=os.path.join(d,'snapshots');\n"
                 "if os.path.isdir(snap):\n"
