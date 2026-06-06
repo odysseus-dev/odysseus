@@ -54,7 +54,13 @@
   "hf_downloads": 28458,
   "hf_likes": 0,
   "release_date": "2025-11-17",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/gpt2-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "peft-internal-testing/tiny-random-GPTJForCausalLM",
@@ -142,7 +148,13 @@
   "hf_downloads": 21555,
   "hf_likes": 7,
   "release_date": "2025-11-18",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Olmo-3-7B-Think-DPO-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "MaxJeblick/llama2-0b-unit-test",
@@ -256,7 +268,13 @@
   "hf_downloads": 22058,
   "hf_likes": 0,
   "release_date": "2025-10-21",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/tiny-random-Phi3ForCausalLM-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "llamafactory/tiny-random-qwen3",
@@ -277,7 +295,13 @@
   "hf_downloads": 47369,
   "hf_likes": 0,
   "release_date": "2026-01-06",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/tiny-random-qwen3-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "tiny-random/qwen3-next-moe",
@@ -340,7 +364,13 @@
   "hf_downloads": 32384,
   "hf_likes": 43,
   "release_date": "2023-07-08",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/TinyLLama-v0-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "optimum-intel-internal-testing/tiny-random-gpt-oss-mxfp4",
@@ -420,7 +450,13 @@
   "hf_downloads": 21730,
   "hf_likes": 2,
   "release_date": "2024-10-13",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/falcon-mamba-tiny-dev-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "arnir0/Tiny-LLM",
@@ -439,7 +475,13 @@
   "hf_downloads": 54600,
   "hf_likes": 45,
   "release_date": "2024-11-03",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Text-Scrutiny-LLM-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "EleutherAI/pythia-14m",
@@ -458,7 +500,13 @@
   "hf_downloads": 33322,
   "hf_likes": 0,
   "release_date": "2026-02-24",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/pythia-14m-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "hmellor/tiny-random-BambaForCausalLM",
@@ -496,7 +544,13 @@
   "hf_downloads": 391187,
   "hf_likes": 2,
   "release_date": "2024-06-23",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/gpt2-mini-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "EleutherAI/pythia-14m-deduped",
@@ -572,7 +626,13 @@
   "hf_downloads": 301062,
   "hf_likes": 33,
   "release_date": "2026-01-12",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Falcon-H1-Tiny-90M-Instruct-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "EleutherAI/pythia-70m-deduped",
@@ -591,7 +651,13 @@
   "hf_downloads": 613928,
   "hf_likes": 27,
   "release_date": "2023-02-13",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/pythia-70m-deduped-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "gratefulasi/lumeleto",
@@ -648,7 +714,13 @@
   "hf_downloads": 161407,
   "hf_likes": 68,
   "release_date": "2024-03-06",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/mamba-130m-hf-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "HuggingFaceTB/SmolLM2-135M",
@@ -667,7 +739,13 @@
   "hf_downloads": 954486,
   "hf_likes": 168,
   "release_date": "2024-10-31",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Reasoning-SmolLM2-135M-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "HuggingFaceTB/SmolLM2-135M-Instruct",
@@ -715,7 +793,13 @@
   "hf_downloads": 359214,
   "hf_likes": 133,
   "release_date": "2024-07-15",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/SmolLM-135M-Instruct-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "HuggingFaceTB/SmolLM-135M",
@@ -734,7 +818,13 @@
   "hf_downloads": 156129,
   "hf_likes": 249,
   "release_date": "2024-07-14",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/SmolLM-135M-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "nomic-ai/nomic-embed-text-v1.5",
@@ -865,7 +955,13 @@
   "hf_downloads": 82245,
   "hf_likes": 3,
   "release_date": "2023-02-08",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/pythia-160m-deduped-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Vamsi/T5_Paraphrase_Paws",
@@ -907,7 +1003,13 @@
   "num_experts": 8,
   "active_experts": 2,
   "active_parameters": 71001329,
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/teeny-tiny-mixtral-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "lmstudio-community/LFM2.5-1.2B-Instruct-MLX-6bit",
@@ -1065,7 +1167,13 @@
   "hf_downloads": 36444,
   "hf_likes": 87,
   "release_date": "2024-10-31",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/SmolLM2-360M-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "LiquidAI/LFM2-350M-Extract",
@@ -1082,7 +1190,13 @@
   "architecture": "lfm2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "bartowski/LiquidAI_LFM2-350M-Extract-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "LiquidAI/LFM2-350M-Math",
@@ -1099,7 +1213,13 @@
   "architecture": "lfm2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "bartowski/LiquidAI_LFM2-350M-Math-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "LiquidAI/LFM2-350M-ENJP-MT",
@@ -1116,7 +1236,13 @@
   "architecture": "lfm2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/LFM2-350M-ENJP-MT-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "LiquidAI/LFM2-350M-PII-Extract-JP",
@@ -1133,7 +1259,13 @@
   "architecture": "lfm2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/LFM2-350M-PII-Extract-JP-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "lmstudio-community/LFM2-350M-MLX-8bit",
@@ -1186,7 +1318,13 @@
   "hf_downloads": 26935,
   "hf_likes": 83,
   "release_date": "2024-07-15",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/SmolLM-360M-Instruct-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "openbmb/MiniCPM4-0.5B",
@@ -1205,7 +1343,13 @@
   "hf_downloads": 28889,
   "hf_likes": 77,
   "release_date": "2025-06-05",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/MiniCPM4-0.5B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "LiquidAI/LFM2-VL-450M",
@@ -1222,7 +1366,13 @@
   "architecture": "lfm2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "bartowski/LiquidAI_LFM2-VL-450M-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "lmstudio-community/Qwen3-1.7B-MLX-8bit",
@@ -1322,7 +1472,13 @@
   "hf_downloads": 1200041,
   "hf_likes": 378,
   "release_date": "2024-09-15",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/Dolphin3.0-Qwen2.5-0.5B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2-0.5B-Instruct",
@@ -1420,7 +1576,13 @@
   "hf_downloads": 88847,
   "hf_likes": 36,
   "release_date": "2023-02-13",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/pythia-410m-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "EleutherAI/pythia-410m-deduped",
@@ -1439,7 +1601,13 @@
   "hf_downloads": 32196,
   "hf_likes": 20,
   "release_date": "2023-02-13",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/pythia-410m-deduped-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "h2oai/h2o-danube3-500m-chat",
@@ -1483,7 +1651,13 @@
   "hf_downloads": 25562,
   "hf_likes": 16,
   "release_date": "2025-05-01",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Falcon-H1-0.5B-Base-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "RedHatAI/Qwen3-30B-A3B-Instruct-2507-speculator.eagle3",
@@ -1544,7 +1718,13 @@
   "hf_downloads": 1303926,
   "hf_likes": 137,
   "release_date": "2022-10-08",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/bloomz-560m-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "bigscience/bloom-560m",
@@ -1563,7 +1743,13 @@
   "hf_downloads": 134778,
   "hf_likes": 371,
   "release_date": "2022-05-19",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/bloom-560m-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen3-4B-MLX-4bit",
@@ -1659,7 +1845,13 @@
   "hf_downloads": 87380,
   "hf_likes": 92,
   "release_date": "2024-01-31",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Qwen1.5-0.5B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen1.5-0.5B",
@@ -1678,7 +1870,13 @@
   "hf_downloads": 26651,
   "hf_likes": 173,
   "release_date": "2024-01-22",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/d-Qwen1.5-0.5B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "lmstudio-community/Qwen3-4B-Thinking-2507-MLX-4bit",
@@ -1758,7 +1956,13 @@
   "architecture": "lfm2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "unsloth/LFM2-700M-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "lmstudio-community/LFM2-700M-MLX-8bit",
@@ -1839,7 +2043,13 @@
   "hf_downloads": 146728,
   "hf_likes": 62,
   "release_date": "2025-09-23",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Qwen3Guard-Gen-0.6B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen3-0.6B-FP8",
@@ -1948,7 +2158,13 @@
   "architecture": "qwen3_5",
   "hf_downloads": 4680,
   "hf_likes": 37,
-  "release_date": "2026-02-28"
+  "release_date": "2026-02-28",
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Wellby-Qwen3.5-0.8B-Base-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "lmstudio-community/Qwen3-4B-Thinking-2507-MLX-6bit",
@@ -2049,7 +2265,13 @@
   "hf_downloads": 27818,
   "hf_likes": 43,
   "release_date": "2023-03-10",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/EleutherAI_pythia-1b-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
@@ -2067,7 +2289,13 @@
   "architecture": "llama",
   "hf_downloads": 1870099,
   "hf_likes": 1538,
-  "release_date": "2023-12-30"
+  "release_date": "2023-12-30",
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "nm-testing/tinyllama-oneshot-w8w8-test-static-shape-change",
@@ -2105,7 +2333,13 @@
   "hf_downloads": 49973,
   "hf_likes": 26,
   "release_date": "2023-04-06",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Coder-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "lmstudio-community/Qwen3-4B-Thinking-2507-MLX-8bit",
@@ -2208,7 +2442,13 @@
   "architecture": "lfm2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "unsloth/LFM2-1.2B-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "LiquidAI/LFM2.5-1.2B-Base",
@@ -2225,7 +2465,13 @@
   "architecture": "lfm2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/LFM2.5-1.2B-Base-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "LiquidAI/LFM2.5-1.2B-Thinking",
@@ -2242,7 +2488,13 @@
   "architecture": "lfm2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "unsloth/LFM2.5-1.2B-Thinking-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "LiquidAI/LFM2.5-1.2B-JP",
@@ -2259,7 +2511,13 @@
   "architecture": "lfm2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/LFM2.5-1.2B-JP-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "LiquidAI/LFM2-1.2B-Tool",
@@ -2276,7 +2534,13 @@
   "architecture": "lfm2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "bartowski/LiquidAI_LFM2-1.2B-Tool-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "LiquidAI/LFM2-1.2B-RAG",
@@ -2293,7 +2557,13 @@
   "architecture": "lfm2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "bartowski/LiquidAI_LFM2-1.2B-RAG-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "LiquidAI/LFM2-1.2B-Extract",
@@ -2310,7 +2580,13 @@
   "architecture": "lfm2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "bartowski/LiquidAI_LFM2-1.2B-Extract-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "lmstudio-community/LFM2.5-1.2B-Thinking-MLX-8bit",
@@ -2363,7 +2639,13 @@
   "hf_downloads": 23538,
   "hf_likes": 26,
   "release_date": "2024-04-12",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/OLMo-1B-hf-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Zyphra/Zamba2-1.2B-instruct",
@@ -2400,7 +2682,13 @@
   "architecture": "llama",
   "hf_downloads": 1453836,
   "hf_likes": 2306,
-  "release_date": "2024-09-18"
+  "release_date": "2024-09-18",
+  "gguf_sources": [
+   {
+    "repo": "bartowski/OneLLM-Doey-ChatQA-V1-Llama-3.2-1B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "hmellor/Ilama-3.2-1B",
@@ -2419,7 +2707,13 @@
   "hf_downloads": 89998,
   "hf_likes": 0,
   "release_date": "2025-07-22",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/1B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "warshanks/Jan-nano-AWQ",
@@ -2457,7 +2751,13 @@
   "architecture": "exaone4",
   "hf_downloads": 100975,
   "hf_likes": 172,
-  "release_date": "2025-07-11"
+  "release_date": "2025-07-11",
+  "gguf_sources": [
+   {
+    "repo": "bartowski/LGAI-EXAONE_EXAONE-4.0-1.2B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "lmstudio-community/DeepSeek-R1-0528-Qwen3-8B-MLX-4bit",
@@ -2518,7 +2818,13 @@
   "hf_downloads": 63725,
   "hf_likes": 38,
   "release_date": "2025-02-05",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/1B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "EleutherAI/gpt-neo-1.3B",
@@ -2537,7 +2843,13 @@
   "hf_downloads": 48440,
   "hf_likes": 324,
   "release_date": "2022-03-02",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/1.3b-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "microsoft/phi-1_5",
@@ -2556,7 +2868,13 @@
   "hf_downloads": 152337,
   "hf_likes": 1355,
   "release_date": "2023-09-10",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/phi-1_5-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "starvector/starvector-1b-im2svg",
@@ -2594,7 +2912,13 @@
   "hf_downloads": 533223,
   "hf_likes": 70,
   "release_date": "2025-04-17",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/OLMo-2-0425-1B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "allenai/OLMo-2-0425-1B-Instruct",
@@ -2714,7 +3038,13 @@
   "hf_downloads": 27804,
   "hf_likes": 26,
   "release_date": "2023-02-09",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/pythia-1.4b-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
@@ -2790,7 +3120,13 @@
   "hf_downloads": 3508972,
   "hf_likes": 161,
   "release_date": "2024-06-03",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Qwen2-1.5B-Instruct-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-Math-1.5B",
@@ -2811,7 +3147,13 @@
   "hf_downloads": 1064952,
   "hf_likes": 102,
   "release_date": "2024-09-16",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Qwen2.5-Math-1.5B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-1.5B",
@@ -2832,7 +3174,13 @@
   "hf_downloads": 431369,
   "hf_likes": 166,
   "release_date": "2024-09-15",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/Dolphin3.0-Qwen2.5-1.5B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2-1.5B",
@@ -2851,7 +3199,13 @@
   "hf_downloads": 114016,
   "hf_likes": 99,
   "release_date": "2024-05-31",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/Hercules-5.0-Qwen2-1.5B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-Math-1.5B-Instruct",
@@ -2933,7 +3287,13 @@
   "architecture": "lfm2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "bartowski/LiquidAI_LFM2-VL-1.6B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "LiquidAI/LFM2.5-VL-1.6B",
@@ -2950,7 +3310,13 @@
   "architecture": "lfm2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "unsloth/LFM2.5-VL-1.6B-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "lmstudio-community/LFM2.5-VL-1.6B-MLX-4bit",
@@ -3019,7 +3385,13 @@
   "architecture": "stablelm",
   "hf_downloads": 955,
   "hf_likes": 34,
-  "release_date": "2024-04-08"
+  "release_date": "2024-04-08",
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/stablelm-2-1_6b-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "HuggingFaceTB/SmolLM-1.7B",
@@ -3038,7 +3410,13 @@
   "hf_downloads": 63387,
   "hf_likes": 180,
   "release_date": "2024-07-14",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/SmolLM-1.7B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "HuggingFaceTB/SmolLM2-1.7B",
@@ -3057,7 +3435,13 @@
   "hf_downloads": 25638,
   "hf_likes": 144,
   "release_date": "2024-10-30",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/SmolLM2-1.7B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "cyankiwi/Nanbeige4.1-3B-AWQ-8bit",
@@ -3098,7 +3482,13 @@
   "hf_downloads": 295900,
   "hf_likes": 64,
   "release_date": "2025-04-28",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Qwen3-1.7B-Base-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "lmstudio-community/Qwen3-1.7B-MLX-bf16",
@@ -3138,7 +3528,13 @@
   "hf_downloads": 38813,
   "hf_likes": 122,
   "release_date": "2022-05-19",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/bloom-1b7-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-1.5B-Instruct-AWQ",
@@ -3262,7 +3658,13 @@
   "hf_downloads": 72445,
   "hf_likes": 73,
   "release_date": "2024-01-30",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/J.O.S.I.E.-x-Qwen1.5-1.8B-Chat-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "jonathanli/induction-vl2-mdl-fswd7-20000-720p-proj-256-var",
@@ -3415,7 +3817,13 @@
   "architecture": "qwen3_5",
   "hf_downloads": 3336,
   "hf_likes": 33,
-  "release_date": "2026-02-28"
+  "release_date": "2026-02-28",
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Qwen3.5-2B-Base-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "lmstudio-community/Phi-4-reasoning-plus-MLX-4bit",
@@ -3562,7 +3970,13 @@
   "hf_downloads": 25773,
   "hf_likes": 180,
   "release_date": "2025-09-22",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/LFM2-2.6B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "LiquidAI/LFM2-2.6B-Exp",
@@ -3579,7 +3993,13 @@
   "architecture": "lfm2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "unsloth/LFM2-2.6B-Exp-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "LiquidAI/LFM2-2.6B-Transcript",
@@ -3596,7 +4016,13 @@
   "architecture": "lfm2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/LFM2-2.6B-Transcript-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "google/gemma-2-2b-it",
@@ -3682,7 +4108,13 @@
   "hf_downloads": 1651432,
   "hf_likes": 3429,
   "release_date": "2023-12-13",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/phi-2-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "stabilityai/stablelm-3b-4e1t",
@@ -3701,7 +4133,13 @@
   "hf_downloads": 24407,
   "hf_likes": 312,
   "release_date": "2023-09-29",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/stablelm-3b-4e1t-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "HuggingFaceTB/SmolLM3-3B",
@@ -3760,7 +4198,13 @@
   "hf_downloads": 30567,
   "hf_likes": 94,
   "release_date": "2022-05-19",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/bloom-3b-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "bigcode/starcoder2-3b",
@@ -3779,7 +4223,13 @@
   "hf_downloads": 97310,
   "hf_likes": 216,
   "release_date": "2023-11-29",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/starcoder2-3b-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "TechxGenus/gemma-1.1-2b-it-GPTQ",
@@ -3903,7 +4353,13 @@
   "hf_downloads": 44516,
   "hf_likes": 16,
   "release_date": "2025-03-27",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/xLAM-2-3b-fc-r-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-Coder-3B",
@@ -3948,7 +4404,13 @@
   "architecture": "llama",
   "hf_downloads": 1409393,
   "hf_likes": 702,
-  "release_date": "2024-09-18"
+  "release_date": "2024-09-18",
+  "gguf_sources": [
+   {
+    "repo": "bartowski/Hermes-3-Llama-3.2-3B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "ibm-research/PowerMoE-3b",
@@ -3971,7 +4433,13 @@
   "num_experts": 40,
   "active_experts": 8,
   "active_parameters": 809828716,
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/PowerMoE-3b-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-3B-Instruct-AWQ",
@@ -4034,7 +4502,13 @@
   "hf_downloads": 73193,
   "hf_likes": 37,
   "release_date": "2024-04-23",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/granite-3b-code-base-2k-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "ibm-research/PowerLM-3b",
@@ -4053,7 +4527,13 @@
   "hf_downloads": 30013,
   "hf_likes": 20,
   "release_date": "2024-08-14",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/PowerLM-3b-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-VL-3B-Instruct",
@@ -4210,7 +4690,13 @@
   "hf_downloads": 88805,
   "hf_likes": 18,
   "release_date": "2024-10-16",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/HTML-Pruner-Phi-3.8B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Sreenington/Phi-3-mini-4k-instruct-AWQ",
@@ -4288,7 +4774,13 @@
   "hf_downloads": 417673,
   "hf_likes": 941,
   "release_date": "2026-02-10",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Nanbeige4.1-3B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "google/gemma-3n-E2B-it",
@@ -4332,7 +4824,13 @@
   "hf_downloads": 548989,
   "hf_likes": 81,
   "release_date": "2025-04-28",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/RELEX-Qwen3-4B-Base-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen3-4B-AWQ",
@@ -4486,7 +4984,13 @@
   "hf_downloads": 53732,
   "hf_likes": 41,
   "release_date": "2025-09-30",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Qwen3-4B-SafeRL-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen3-4B-Instruct-2507-FP8",
@@ -4640,7 +5144,13 @@
   "architecture": "qwen3_5",
   "hf_downloads": 3593,
   "hf_likes": 38,
-  "release_date": "2026-02-27"
+  "release_date": "2026-02-27",
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Qwen3.5-4B-Base-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "nvidia/Qwen3-8B-NVFP4",
@@ -4878,7 +5388,13 @@
   "architecture": "llama",
   "hf_downloads": 15481,
   "hf_likes": 70,
-  "release_date": "2023-11-22"
+  "release_date": "2023-11-22",
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/Yi-6B-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "arcee-ai/Trinity-Nano-Preview",
@@ -4901,7 +5417,13 @@
   "num_experts": 128,
   "active_experts": 8,
   "active_parameters": 669375358,
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/arcee-ai_Trinity-Nano-Preview-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "cyankiwi/GLM-4.7-Flash-AWQ-4bit",
@@ -4938,7 +5460,13 @@
   "architecture": "llama",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": null
+  "release_date": null,
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/vicuna-7B-v1.5-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "tartuNLP/Llammas-base-p1-GPT-4o-human-error-mix-paragraph-GEC",
@@ -4976,7 +5504,13 @@
   "hf_downloads": 617643,
   "hf_likes": 2272,
   "release_date": "2023-07-13",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/mintrec-1-meta-llama-Llama-2-7b-hf-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "huggyllama/llama-7b",
@@ -4995,7 +5529,13 @@
   "hf_downloads": 103505,
   "hf_likes": 354,
   "release_date": "2023-04-03",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/MathCoder2-CodeLlama-7B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "NousResearch/Llama-2-7b-hf",
@@ -5014,7 +5554,13 @@
   "hf_downloads": 81336,
   "hf_likes": 171,
   "release_date": "2023-07-18",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/mintrec-1-meta-llama-Llama-2-7b-hf-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "NousResearch/Llama-2-7b-chat-hf",
@@ -5033,7 +5579,13 @@
   "hf_downloads": 20573,
   "hf_likes": 194,
   "release_date": "2023-07-18",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Llama-2-7b-hf-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "meta-llama/CodeLlama-7b-Instruct-hf",
@@ -5051,7 +5603,13 @@
   "architecture": "llama",
   "hf_downloads": 5404,
   "hf_likes": 59,
-  "release_date": "2024-03-13"
+  "release_date": "2024-03-13",
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/CodeLlama-7b-hf-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "codellama/CodeLlama-7b-Instruct-hf",
@@ -5070,7 +5628,13 @@
   "hf_downloads": 65896,
   "hf_likes": 254,
   "release_date": "2023-08-24",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/CodeLlama-7b-hf-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "codellama/CodeLlama-7b-hf",
@@ -5089,7 +5653,13 @@
   "hf_downloads": 54518,
   "hf_likes": 375,
   "release_date": "2023-08-24",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/CodeLlama-7b-hf-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "deepseek-ai/deepseek-coder-6.7b-instruct",
@@ -5108,7 +5678,13 @@
   "hf_downloads": 97176,
   "hf_likes": 478,
   "release_date": "2023-10-29",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/deepseek-coder-6.7B-instruct-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "deepseek-ai/DeepSeek-V4-Flash",
@@ -5221,7 +5797,13 @@
   "hf_downloads": 28134,
   "hf_likes": 122,
   "release_date": "2023-10-23",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/deepseek-coder-6.7B-base-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "allenai/OLMoE-1B-7B-0125",
@@ -5244,7 +5826,13 @@
   "num_experts": 64,
   "active_experts": 8,
   "active_parameters": 1167608556,
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/OLMoE-1B-7B-0125-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "allenai/OLMoE-1B-7B-0125-Instruct",
@@ -5267,7 +5855,13 @@
   "num_experts": 64,
   "active_experts": 8,
   "active_parameters": 1167608556,
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/OLMoE-1B-7B-0125-Instruct-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "EleutherAI/pythia-6.9b",
@@ -5286,7 +5880,13 @@
   "hf_downloads": 20516,
   "hf_likes": 59,
   "release_date": "2023-02-14",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/pythia-6.9b-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "openchat/openchat-3.5-0106",
@@ -5303,7 +5903,13 @@
   "architecture": "mistral",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": null
+  "release_date": null,
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/openchat-3.5-0106-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "XiaomiMiMo/MiMo-7B-RL",
@@ -5337,7 +5943,13 @@
   "architecture": "llama",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": null
+  "release_date": null,
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/Orca-2-7B-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "omni-research/Tarsier-7b",
@@ -5374,7 +5986,13 @@
   "architecture": "starcoder2",
   "hf_downloads": 19199,
   "hf_likes": 208,
-  "release_date": "2024-02-20"
+  "release_date": "2024-02-20",
+  "gguf_sources": [
+   {
+    "repo": "bartowski/dolphincoder-starcoder2-7b-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "tiiuae/falcon-7b-instruct",
@@ -5392,7 +6010,13 @@
   "architecture": "falcon",
   "hf_downloads": 47656,
   "hf_likes": 1031,
-  "release_date": "2023-04-25"
+  "release_date": "2023-04-25",
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/falcon-7b-instruct-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "HuggingFaceH4/zephyr-7b-beta",
@@ -5410,7 +6034,13 @@
   "architecture": "mistral",
   "hf_downloads": 107437,
   "hf_likes": 1834,
-  "release_date": "2023-10-26"
+  "release_date": "2023-10-26",
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/zephyr-7B-beta-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "mistralai/Mistral-7B-Instruct-v0.2",
@@ -5431,7 +6061,13 @@
   "hf_downloads": 2920309,
   "hf_likes": 3088,
   "release_date": "2023-12-11",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/Mistral-7B-Instruct-v0.2-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "speakleash/Bielik-7B-Instruct-v0.1",
@@ -5450,7 +6086,13 @@
   "hf_downloads": 101914,
   "hf_likes": 63,
   "release_date": "2024-03-30",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Bielik-7B-Instruct-v0.1-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "prometheus-eval/prometheus-7b-v2.0",
@@ -5469,7 +6111,13 @@
   "hf_downloads": 54661,
   "hf_likes": 100,
   "release_date": "2024-02-13",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/prometheus-7b-v2.0-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Salesforce/xLAM-7b-r",
@@ -5513,7 +6161,13 @@
   "hf_downloads": 27068,
   "hf_likes": 80,
   "release_date": "2023-12-09",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/neural-chat-7B-v3-3-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "Featherless-Chat-Models/Mistral-7B-Instruct-v0.2",
@@ -5534,7 +6188,13 @@
   "hf_downloads": 26186,
   "hf_likes": 0,
   "release_date": "2025-05-08",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/Mistral-7B-Instruct-v0.2-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "augmxnt/shisa-gamma-7b-v1",
@@ -5553,7 +6213,13 @@
   "hf_downloads": 20213,
   "hf_likes": 18,
   "release_date": "2023-12-23",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/shisa-gamma-7b-v1-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "dphn/dolphin-2.6-mistral-7b",
@@ -5572,7 +6238,13 @@
   "hf_downloads": 60305,
   "hf_likes": 105,
   "release_date": "2023-12-27",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/dolphin-2.6-mistral-7B-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "mistralai/Mistral-7B-Instruct-v0.3",
@@ -5683,7 +6355,13 @@
   "hf_downloads": 134834,
   "hf_likes": 4,
   "release_date": "2025-11-17",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Olmo-3-7B-Instruct-SFT-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "allenai/Olmo-3-1025-7B",
@@ -5702,7 +6380,13 @@
   "hf_downloads": 71128,
   "hf_likes": 54,
   "release_date": "2025-09-12",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Olmo-3-1025-7B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "TechxGenus/starcoder2-7b-GPTQ",
@@ -5851,7 +6535,13 @@
   "hf_downloads": 2029944,
   "hf_likes": 266,
   "release_date": "2024-09-15",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Qwen2.5-7B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-Coder-7B-Instruct-AWQ",
@@ -5968,7 +6658,13 @@
   "hf_downloads": 240132,
   "hf_likes": 137,
   "release_date": "2024-09-16",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Qwen2.5-Coder-7B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
@@ -6009,7 +6705,13 @@
   "hf_downloads": 73949,
   "hf_likes": 154,
   "release_date": "2025-04-03",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/Dream-org_Dream-v0-Instruct-7B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2-7B",
@@ -6028,7 +6730,13 @@
   "hf_downloads": 70734,
   "hf_likes": 170,
   "release_date": "2024-06-04",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/Einstein-v7-Qwen2-7B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-Math-7B",
@@ -6049,7 +6757,13 @@
   "hf_downloads": 68238,
   "hf_likes": 106,
   "release_date": "2024-09-16",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Qwen2.5-Math-7B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "DeepHat/DeepHat-V1-7B",
@@ -6068,7 +6782,13 @@
   "hf_downloads": 63374,
   "hf_likes": 111,
   "release_date": "2025-04-25",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/DeepHat-V1-7B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-7B-Instruct-1M",
@@ -6159,7 +6879,13 @@
   "hf_downloads": 195550,
   "hf_likes": 787,
   "release_date": "2023-08-03",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Qwen-7B-Chat-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen-7B",
@@ -6178,7 +6904,13 @@
   "hf_downloads": 189346,
   "hf_likes": 396,
   "release_date": "2023-08-03",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen1.5-7B",
@@ -6197,7 +6929,13 @@
   "hf_downloads": 75458,
   "hf_likes": 56,
   "release_date": "2024-01-22",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/CodeQwen1.5-7B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "BSC-LT/salamandra-7b-instruct",
@@ -6319,7 +7057,13 @@
   "hf_downloads": 2463959,
   "hf_likes": 6473,
   "release_date": "2024-04-17",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/mintrec-1-meta-llama-Meta-Llama-3-8B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "meta-llama/Meta-Llama-3-8B-Instruct",
@@ -6392,7 +7136,13 @@
   "hf_downloads": 399621,
   "hf_likes": 137,
   "release_date": "2024-04-18",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/saiga_llama3_8b-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "NousResearch/Meta-Llama-3.1-8B-Instruct",
@@ -6438,7 +7188,13 @@
   "hf_downloads": 163719,
   "hf_likes": 272,
   "release_date": "2024-07-22",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Llama-Guard-3-8B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "nvidia/Llama-3.1-8B-Instruct-FP8",
@@ -6539,7 +7295,13 @@
   "hf_downloads": 53389,
   "hf_likes": 13,
   "release_date": "2025-11-18",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Foundation-Sec-1.1-8B-Instruct-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "lmms-lab/llava-onevision-qwen2-7b-ov",
@@ -6670,7 +7432,13 @@
   "hf_downloads": 790734,
   "hf_likes": 87,
   "release_date": "2025-04-28",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/RELEX-Qwen3-8B-Base-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen3-8B-AWQ",
@@ -6740,7 +7508,13 @@
   "hf_downloads": 32025,
   "hf_likes": 34,
   "release_date": "2025-06-18",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Huihui-Qwen3-8B-abliterated-v2-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen3-8B-FP8",
@@ -6928,7 +7702,13 @@
   "hf_downloads": 24028,
   "hf_likes": 121,
   "release_date": "2026-02-04",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/NVIDIA-Nemotron-Nano-9B-v2-Japanese-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "nvidia/NVIDIA-Nemotron-Nano-9B-v2-FP8",
@@ -6964,7 +7744,13 @@
   "architecture": "nemotron",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-06-01"
+  "release_date": "2025-06-01",
+  "gguf_sources": [
+   {
+    "repo": "bartowski/nvidia_NVIDIA-Nemotron-Nano-9B-v2-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "lmstudio-community/Qwen3-32B-MLX-8bit",
@@ -7068,7 +7854,13 @@
   "hf_downloads": 22553,
   "hf_likes": 24,
   "release_date": "2024-10-23",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/glm-4-9b-hf-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "THUDM/glm-4-9b-chat",
@@ -7111,7 +7903,13 @@
   "hf_downloads": 23550,
   "hf_likes": 143,
   "release_date": "2024-06-04",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/glm-4-9b-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen3.5-9B",
@@ -7160,7 +7958,13 @@
   "architecture": "qwen3_5",
   "hf_downloads": 5324,
   "hf_likes": 38,
-  "release_date": "2026-02-26"
+  "release_date": "2026-02-26",
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Qwen3.5-9B-Base-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "solidrust/gemma-2-9b-it-AWQ",
@@ -7214,7 +8018,13 @@
   "architecture": "llama",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": null
+  "release_date": null,
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/SOLAR-10.7B-Instruct-v1.0-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "naver-hyperclovax/HyperCLOVAX-SEED-Omni-8B",
@@ -7252,7 +8062,13 @@
   "hf_downloads": 232376,
   "hf_likes": 55,
   "release_date": "2025-11-07",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/speakleash_Bielik-11B-v3.0-Instruct-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "cjvt/GaMS3-12B-Instruct",
@@ -7271,7 +8087,13 @@
   "hf_downloads": 26653,
   "hf_likes": 1,
   "release_date": "2025-12-04",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/GaMS3-12B-Instruct-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "EleutherAI/pythia-12b",
@@ -7290,7 +8112,13 @@
   "hf_downloads": 43453,
   "hf_likes": 144,
   "release_date": "2023-02-28",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/pythia-12b-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "google/gemma-3-12b-it",
@@ -7406,7 +8234,13 @@
   "num_experts": 2,
   "active_experts": 2,
   "active_parameters": 12879138816,
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/MixTAO-7Bx2-MoE-v8.1-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "microsoft/Orca-2-13b",
@@ -7423,7 +8257,13 @@
   "architecture": "llama",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": null
+  "release_date": null,
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/Orca-2-13B-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "lmsys/vicuna-13b-v1.5",
@@ -7440,7 +8280,13 @@
   "architecture": "llama",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": null
+  "release_date": null,
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/vicuna-13B-v1.5-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "WizardLMTeam/WizardLM-13B-V1.2",
@@ -7457,7 +8303,13 @@
   "architecture": "llama",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": null
+  "release_date": null,
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/WizardLM-13B-V1.2-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "cais/HarmBench-Llama-2-13b-cls",
@@ -7476,7 +8328,13 @@
   "hf_downloads": 30370,
   "hf_likes": 27,
   "release_date": "2024-02-03",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/HarmBench-Llama-2-13b-cls-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "meta-llama/CodeLlama-13b-Instruct-hf",
@@ -7494,7 +8352,13 @@
   "architecture": "llama",
   "hf_downloads": 6450,
   "hf_likes": 27,
-  "release_date": "2024-03-13"
+  "release_date": "2024-03-13",
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/CodeLlama-13b-hf-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "microsoft/phi-4",
@@ -7761,7 +8625,13 @@
   "hf_downloads": 207053,
   "hf_likes": 12,
   "release_date": "2025-10-10",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "unsloth/Qwen3-14B-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "Goekdeniz-Guelmez/Josiefied-Qwen3-14B-abliterated-v3",
@@ -7782,7 +8652,13 @@
   "hf_downloads": 55059,
   "hf_likes": 24,
   "release_date": "2025-05-12",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/Goekdeniz-Guelmez_Josiefied-Qwen3-14B-abliterated-v3-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen3-14B-Base",
@@ -7803,7 +8679,13 @@
   "hf_downloads": 50835,
   "hf_likes": 49,
   "release_date": "2025-04-28",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Qwen3-14B-Base-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-14B-Instruct",
@@ -7973,7 +8855,13 @@
   "hf_downloads": 100307,
   "hf_likes": 144,
   "release_date": "2024-09-15",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/nbeerbower_Dumpling-Qwen2.5-14B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-14B-Instruct-GPTQ-Int4",
@@ -8041,7 +8929,13 @@
   "hf_downloads": 41195,
   "hf_likes": 6,
   "release_date": "2025-10-26",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/ChemDFM-R-14B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-14B-Instruct-GPTQ-Int8",
@@ -8107,7 +9001,13 @@
   "architecture": "starcoder",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": null
+  "release_date": null,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/WizardCoder-15B-V1.0-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "nvidia/Qwen3-30B-A3B-NVFP4",
@@ -8174,7 +9074,13 @@
   "architecture": "starcoder2",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": null
+  "release_date": null,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/dolphincoder-starcoder2-15b-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct",
@@ -8203,35 +9109,35 @@
    }
   ]
  },
-  {
-   "name": "deepseek-ai/DeepSeek-V2-Lite-Chat",
-   "provider": "DeepSeek",
-   "parameter_count": "15.7B",
-   "parameters_raw": 15706484224,
-   "min_ram_gb": 8.8,
-   "recommended_ram_gb": 14.6,
-   "min_vram_gb": 8.0,
-   "quantization": "Q4_K_M",
-   "context_length": 163840,
-   "use_case": "Instruction following, chat",
-   "capabilities": [],
-   "pipeline_tag": "text-generation",
-   "architecture": "deepseek_v2",
-   "hf_downloads": 330400,
-   "hf_likes": 134,
-   "release_date": "2024-05-15",
-   "is_moe": true,
-   "num_experts": 64,
-   "active_experts": 6,
-   "active_parameters": 2184182961,
-   "gguf_sources": [
-    {
-     "repo": "legraphista/DeepSeek-V2-Lite-Chat-IMat-GGUF",
-     "provider": "legraphista"
-    }
-   ],
-   "_discovered": true
-  },
+ {
+  "name": "deepseek-ai/DeepSeek-V2-Lite-Chat",
+  "provider": "DeepSeek",
+  "parameter_count": "15.7B",
+  "parameters_raw": 15706484224,
+  "min_ram_gb": 8.8,
+  "recommended_ram_gb": 14.6,
+  "min_vram_gb": 8.0,
+  "quantization": "Q4_K_M",
+  "context_length": 163840,
+  "use_case": "Instruction following, chat",
+  "capabilities": [],
+  "pipeline_tag": "text-generation",
+  "architecture": "deepseek_v2",
+  "hf_downloads": 330400,
+  "hf_likes": 134,
+  "release_date": "2024-05-15",
+  "is_moe": true,
+  "num_experts": 64,
+  "active_experts": 6,
+  "active_parameters": 2184182961,
+  "gguf_sources": [
+   {
+    "repo": "legraphista/DeepSeek-V2-Lite-Chat-IMat-GGUF",
+    "provider": "legraphista"
+   }
+  ],
+  "_discovered": true
+ },
  {
   "name": "deepseek-ai/DeepSeek-V2-Lite",
   "provider": "DeepSeek",
@@ -8253,7 +9159,13 @@
   "num_experts": 64,
   "active_experts": 6,
   "active_parameters": 2184182961,
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/DeepSeek-V2-Lite-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "RedHatAI/DeepSeek-Coder-V2-Lite-Instruct-FP8",
@@ -8364,7 +9276,13 @@
   "hf_downloads": 22326,
   "hf_likes": 139,
   "release_date": "2024-01-08",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/deepseek-moe-16b-base-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "inclusionAI/Ling-lite",
@@ -8386,7 +9304,13 @@
   "is_moe": true,
   "num_experts": 64,
   "active_experts": 6,
-  "active_parameters": 2336524543
+  "active_parameters": 2336524543,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/inclusionAI_Ling-lite-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "nvidia/Qwen3-32B-NVFP4",
@@ -8485,7 +9409,13 @@
   "hf_downloads": 20010,
   "hf_likes": 88,
   "release_date": "2024-01-10",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/internlm2-chat-20b-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "openai/gpt-oss-20b",
@@ -8783,7 +9713,13 @@
   "active_parameters": 2300000000,
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-11-28"
+  "release_date": "2025-11-28",
+  "gguf_sources": [
+   {
+    "repo": "bartowski/LiquidAI_LFM2-24B-A2B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "mistralai/Mistral-Small-24B-Instruct-2501",
@@ -9076,7 +10012,13 @@
   "num_experts": 128,
   "active_experts": 8,
   "active_parameters": 3339450907,
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Qwen3-30B-A3B-Base-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "typhoon-ai/typhoon2.5-qwen3-30b-a3b",
@@ -9232,7 +10174,13 @@
   "num_experts": 128,
   "active_experts": 8,
   "active_parameters": 3339450907,
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/Alibaba-NLP_Tongyi-DeepResearch-30B-A3B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen3-30B-A3B-Instruct-2507-FP8",
@@ -9423,7 +10371,13 @@
   "architecture": "nemotron_h",
   "hf_downloads": 1025721,
   "hf_likes": 648,
-  "release_date": "2025-12-04"
+  "release_date": "2025-12-04",
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16",
@@ -9461,7 +10415,13 @@
   "hf_downloads": 23630,
   "hf_likes": 59,
   "release_date": "2026-02-03",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/OpenResearcher-30B-A3B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8",
@@ -9497,7 +10457,13 @@
   "architecture": "exaone",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": "2025-07-15"
+  "release_date": "2025-07-15",
+  "gguf_sources": [
+   {
+    "repo": "bartowski/LGAI-EXAONE_EXAONE-4.0-32B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "LGAI-EXAONE/EXAONE-4.0.1-32B",
@@ -9516,7 +10482,13 @@
   "hf_downloads": 186516,
   "hf_likes": 24,
   "release_date": "2025-07-29",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/LGAI-EXAONE_EXAONE-4.0.1-32B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "LGAI-EXAONE/EXAONE-4.0-32B-FP8",
@@ -9749,7 +10721,13 @@
   "hf_downloads": 1453252,
   "hf_likes": 173,
   "release_date": "2024-09-15",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/Dumpling-Qwen2.5-32B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
@@ -9832,7 +10810,13 @@
   "hf_downloads": 152016,
   "hf_likes": 118,
   "release_date": "2025-08-10",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/baichuan-inc_Baichuan-M2-32B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-32B-Instruct-GPTQ-Int8",
@@ -9901,7 +10885,13 @@
   "architecture": "llama",
   "hf_downloads": 950,
   "hf_likes": 19,
-  "release_date": "2024-03-14"
+  "release_date": "2024-03-14",
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/CodeLlama-34b-Instruct-hf-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "01-ai/Yi-34B-Chat",
@@ -9918,7 +10908,13 @@
   "architecture": "yi",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": null
+  "release_date": null,
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/Yi-34B-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "dphn/dolphin-2.9.1-yi-1.5-34b",
@@ -10162,7 +11158,13 @@
   "architecture": "falcon",
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": null
+  "release_date": null,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/falcon-40b-instruct-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "mistralai/Mixtral-8x7B-Instruct-v0.1",
@@ -10186,7 +11188,13 @@
   "is_moe": true,
   "num_experts": 8,
   "active_experts": 2,
-  "active_parameters": 12900000000
+  "active_parameters": 12900000000,
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/Mixtral-8x7B-v0.1-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "Salesforce/xLAM-8x7b-r",
@@ -10239,7 +11247,13 @@
   "is_moe": true,
   "num_experts": 8,
   "active_experts": 2,
-  "active_parameters": 12900000000
+  "active_parameters": 12900000000,
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/Nous-Hermes-2-Mixtral-8x7B-DPO-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "moonshotai/Kimi-Linear-48B-A3B-Instruct",
@@ -10258,7 +11272,13 @@
   "hf_downloads": 35486,
   "hf_likes": 546,
   "release_date": "2025-10-30",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/moonshotai_Kimi-Linear-48B-A3B-Instruct-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "nvidia/Llama-3_3-Nemotron-Super-49B-v1_5",
@@ -10353,7 +11373,13 @@
   "architecture": "llama",
   "hf_downloads": 801189,
   "hf_likes": 894,
-  "release_date": "2024-07-16"
+  "release_date": "2024-07-16",
+  "gguf_sources": [
+   {
+    "repo": "bartowski/Meta-Llama-3.1-70B-Instruct-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "meta-llama/Llama-3.3-70B-Instruct",
@@ -10486,7 +11512,13 @@
   "hf_downloads": 75498,
   "hf_likes": 408,
   "release_date": "2024-07-14",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "unsloth/Reflection-Llama-3.1-70B-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "meta-llama/Meta-Llama-3-70B-Instruct",
@@ -10661,7 +11693,13 @@
   "hf_downloads": 45193,
   "hf_likes": 89,
   "release_date": "2024-09-15",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/Homer-v1.0-Qwen2.5-72B-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2-72B-Instruct",
@@ -10705,7 +11743,13 @@
   "hf_downloads": 34455,
   "hf_likes": 200,
   "release_date": "2024-05-22",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/dolphin-2.9.2-qwen2-72b-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "huihui-ai/Qwen2.5-72B-Instruct-abliterated",
@@ -10726,7 +11770,13 @@
   "hf_downloads": 20754,
   "hf_likes": 35,
   "release_date": "2024-10-26",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Qwen2.5-72B-Instruct-abliterated-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen2.5-72B-Instruct-AWQ",
@@ -11158,7 +12208,13 @@
   "is_moe": true,
   "num_experts": 8,
   "active_experts": 2,
-  "active_parameters": 39100000000
+  "active_parameters": 39100000000,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/Mixtral-8x22B-v0.1-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "MaziyarPanahi/Mixtral-8x22B-Instruct-v0.1-AWQ",
@@ -11224,7 +12280,13 @@
   "architecture": "bloom",
   "hf_downloads": 4896,
   "hf_likes": 4986,
-  "release_date": "2022-05-19"
+  "release_date": "2022-05-19",
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/humour-gen-bloom-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "tiiuae/falcon-180B-chat",
@@ -11242,7 +12304,13 @@
   "architecture": "falcon",
   "hf_downloads": 65,
   "hf_likes": 545,
-  "release_date": "2023-09-04"
+  "release_date": "2023-09-04",
+  "gguf_sources": [
+   {
+    "repo": "TheBloke/Falcon-180B-Chat-GGUF",
+    "provider": "TheBloke"
+   }
+  ]
  },
  {
   "name": "stepfun-ai/Step-3.5-Flash",
@@ -11261,7 +12329,13 @@
   "hf_downloads": 327178,
   "hf_likes": 674,
   "release_date": "2026-02-01",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "bartowski/stepfun-ai_Step-3.5-Flash-GGUF",
+    "provider": "bartowski"
+   }
+  ]
  },
  {
   "name": "lmstudio-community/MiniMax-M2.5-MLX-8bit",
@@ -11688,7 +12762,13 @@
   "num_experts": 128,
   "active_experts": 8,
   "active_parameters": 25932776361,
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/K-EXAONE-236B-A23B-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "baidu/ERNIE-4.5-300B-A47B-Paddle",
@@ -11915,7 +12995,13 @@
   "is_moe": true,
   "num_experts": 16,
   "active_experts": 1,
-  "active_parameters": 17000000000
+  "active_parameters": 17000000000,
+  "gguf_sources": [
+   {
+    "repo": "unsloth/Llama-4-Maverick-17B-128E-Instruct-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "Qwen/Qwen3.5-397B-A17B",
@@ -11940,7 +13026,13 @@
   "is_moe": true,
   "num_experts": 256,
   "active_experts": 8,
-  "active_parameters": 17000000000
+  "active_parameters": 17000000000,
+  "gguf_sources": [
+   {
+    "repo": "unsloth/Qwen3.5-397B-A17B-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "meta-llama/Llama-3.1-405B-Instruct",
@@ -11960,7 +13052,13 @@
   "architecture": "llama",
   "hf_downloads": 173410,
   "hf_likes": 592,
-  "release_date": "2024-07-16"
+  "release_date": "2024-07-16",
+  "gguf_sources": [
+   {
+    "repo": "mradermacher/Meta-Llama-3.1-405B-Instruct-GGUF",
+    "provider": "mradermacher"
+   }
+  ]
  },
  {
   "name": "meta-llama/Llama-3.1-405B-Instruct-FP8",
@@ -12005,7 +13103,13 @@
   "is_moe": true,
   "num_experts": 160,
   "active_experts": 8,
-  "active_parameters": 35000000000
+  "active_parameters": 35000000000,
+  "gguf_sources": [
+   {
+    "repo": "unsloth/Qwen3-Coder-480B-A35B-Instruct-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "meituan-longcat/LongCat-Flash-Chat",
@@ -12079,7 +13183,13 @@
   "num_experts": 256,
   "active_experts": 8,
   "active_parameters": 54548594820,
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "unsloth/DeepSeek-R1-0528-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "deepseek-ai/DeepSeek-V3-0324",
@@ -12102,7 +13212,13 @@
   "num_experts": 256,
   "active_experts": 8,
   "active_parameters": 54548594820,
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "unsloth/DeepSeek-V3-0324-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "deepseek-ai/DeepSeek-V3",
@@ -12123,7 +13239,13 @@
   "active_parameters": 37000000000,
   "hf_downloads": 0,
   "hf_likes": 0,
-  "release_date": null
+  "release_date": null,
+  "gguf_sources": [
+   {
+    "repo": "unsloth/DeepSeek-V3-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "deepseek-ai/DeepSeek-V3.2-Speciale",
@@ -12182,7 +13304,13 @@
   "architecture": "deepseek_v32",
   "hf_downloads": 362520,
   "hf_likes": 1280,
-  "release_date": "2025-12-01"
+  "release_date": "2025-12-01",
+  "gguf_sources": [
+   {
+    "repo": "unsloth/DeepSeek-V3.2-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "zai-org/GLM-5",
@@ -12236,7 +13364,13 @@
   "architecture": "kimi_k2",
   "hf_downloads": 151155,
   "hf_likes": 2324,
-  "release_date": "2025-07-11"
+  "release_date": "2025-07-11",
+  "gguf_sources": [
+   {
+    "repo": "unsloth/Kimi-K2-Instruct-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "moonshotai/Kimi-K2-Instruct-0905",
@@ -12255,7 +13389,13 @@
   "hf_downloads": 28801,
   "hf_likes": 683,
   "release_date": "2025-09-03",
-  "_discovered": true
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "unsloth/Kimi-K2-Instruct-0905-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "moonshotai/Kimi-K2.5",
@@ -13312,7 +14452,12 @@
   "active_experts": 4,
   "active_parameters": null,
   "_discovered": true,
-  "gguf_sources": []
+  "gguf_sources": [
+   {
+    "repo": "unsloth/GLM-4.7-Flash-GGUF",
+    "provider": "unsloth"
+   }
+  ]
  },
  {
   "name": "cyankiwi/Qwen3.5-35B-A3B-AWQ-4bit",
