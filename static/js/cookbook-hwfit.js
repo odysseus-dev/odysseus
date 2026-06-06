@@ -153,14 +153,31 @@ export function _renderGpuToggles(system) {
   }
   const validCounts = _validTpCounts(poolSize);
   const maxGpu = validCounts.length ? validCounts[validCounts.length - 1] : 0;
+  // Commit the data layer to maxGpu on initial render so it matches the
+  // visual highlight. Before this, _activeCount stayed undefined → no
+  // gpu_count param sent → backend's fallback could rank against RAM on
+  // mixed-resource boxes ("tightest" sorted by RAM instead of GPU).
+  if (container._activeCount === undefined && validCounts.length) {
+    container._activeCount = maxGpu;
+  }
   html += '<button class="hwfit-gpu-btn" data-count="0" title="CPU / RAM only">RAM</button>';
   const hasExplicitCount = typeof container._activeCount === 'number';
   for (const n of validCounts) {
     const text = n === 1 ? 'GPU' : n + ' GPU';
-    const isActive = hasExplicitCount ? (n === container._activeCount) : (container._activeCount === undefined && n === maxGpu);
+    const isActive = hasExplicitCount && n === container._activeCount;
     html += `<button class="hwfit-gpu-btn${isActive ? ' active' : ''}" data-count="${n}" title="${n} GPU${n > 1 ? 's' : ''}">${text}</button>`;
   }
+  // Also mark the RAM button active when the user explicitly chose RAM (0)
+  // — the loop above only handles GPU buttons.
+  if (container._activeCount === 0) {
+    const ramBtn = container.querySelector('.hwfit-gpu-btn[data-count="0"]');
+    // (we just set innerHTML so we re-mark below after assignment)
+  }
   container.innerHTML = html;
+  if (container._activeCount === 0) {
+    const ramBtn = container.querySelector('.hwfit-gpu-btn[data-count="0"]');
+    if (ramBtn) ramBtn.classList.add('active');
+  }
 
   // Pool dropdown: switch pools, reset the count to the new pool's max, rebuild.
   const sel = container.querySelector('#hwfit-gpu-group');
@@ -188,9 +205,12 @@ export function _renderGpuToggles(system) {
       } else {
         btn.classList.add('active');
         container._activeCount = count;
-        // Auto-set quant based on hardware selection
+        // Auto-suggest a quant based on hardware selection — but ONLY when the
+        // user has already picked a specific quant. When they're on "All"
+        // (value === ""), leave them on All: toggling a GPU shouldn't silently
+        // yank them out of the All view they wanted to see.
         const quantSel = document.getElementById('hwfit-quant');
-        if (quantSel) {
+        if (quantSel && quantSel.value !== '') {
           if (count <= 1) {
             quantSel.value = 'Q4_K_M'; // RAM or 1 GPU -> Q4 sweet spot
           } else if (String(system?.backend || '').toLowerCase() === 'rocm') {
@@ -218,6 +238,9 @@ const _CTX_PRESETS = [8192, 16384, 32768, 50000, 131072, 0]; // 0 = model max
 const _SCAN_CACHE_MAX = 12;            // keep the newest N signatures
 const _SCAN_CACHE_TTL = 6 * 3600 * 1000; // 6 h — hardware rarely changes
 
+// Ctx slider helpers (ported from origin/main). The slider picks an INDEX into
+// _CTX_PRESETS; _ctxValue() resolves it to a token count (0 = "Max"). The label
+// next to the slider re-renders to "8k" / "16k" / … / "Max".
 function _ctxLabel(value) {
   const n = Number(value) || 0;
   if (!n) return 'Max';
@@ -449,7 +472,9 @@ export async function _hwfitFetch(fresh = false) {
     fetch(`/api/model/cached?${_cacheParams}`, { credentials: 'same-origin' })
       .then(r => r.json())
       .then(d => {
-        _cachedModelIds = new Set((d.models || []).map(m => m.repo_id));
+        // Exclude stalled (download-shell) entries — a 12 KB README-only
+        // folder shouldn't count as "downloaded" in the Scan/Download list.
+        _cachedModelIds = new Set((d.models || []).filter(m => m.status !== 'stalled').map(m => m.repo_id));
         // Re-mark rows if already rendered
         list.querySelectorAll('.hwfit-row[data-model]').forEach(row => {
           const name = row.dataset.model;
@@ -502,6 +527,9 @@ export async function _hwfitFetch(fresh = false) {
       if (useCase) params.set('use_case', useCase);
       if (quantPref) params.set('quant', quantPref);
       if (targetCtx) params.set('ctx', String(targetCtx));
+      // Fit-only filter — set by the dot in the Fit column header.
+      const _fitOnly = (() => { try { return localStorage.getItem('hwfit_fit_only_v1') === '1'; } catch { return false; } })();
+      if (_fitOnly) params.set('fit_only', '1');
     }
     const endpoint = isImageMode ? `/api/hwfit/image-models?${params}` : `/api/hwfit/models?${params}`;
     const res = await fetch(endpoint);
@@ -845,6 +873,13 @@ export function _hwfitRenderList(el, models) {
   const sortSel = document.getElementById('hwfit-sort');
   const currentSort = sortSel?.value || 'score';
   const isReversed = sortSel?.dataset.reverse === '1';
+  // Active budget for the Fit column label \u2014 make it obvious whether the
+  // ranking is against GPU or RAM so "tightest" can't be ambiguous on a
+  // mixed-resource box.
+  const tc = document.getElementById('hwfit-gpu-toggles');
+  const _budget = (tc && typeof tc._activeCount === 'number')
+    ? (tc._activeCount === 0 ? 'RAM' : (tc._activeCount === 1 ? 'GPU' : tc._activeCount + ' GPU'))
+    : null;
   let html = '<div class="hwfit-row hwfit-header">';
   for (const col of _hwfitColumns) {
     const sortable = col.key ? ' hwfit-sortable' : '';
@@ -856,7 +891,16 @@ export function _hwfitRenderList(el, models) {
       arrow = isReversed ? ' \u25B2' : ' \u25BC';
     }
     const dataAttr = col.key ? ` data-sort="${col.key}"` : '';
-    html += `<span class="hwfit-col ${col.cls}${sortable}${active}"${dataAttr}>${col.label}${arrow}</span>`;
+    // Fit column gets a small dot to its left that toggles "show only models
+    // that fit" — replaces the old Fits On/Off button next to the toolbar.
+    let label = col.label;
+    if (col.cls === 'hwfit-fit') {
+      const _fitOnly = (() => { try { return localStorage.getItem('hwfit_fit_only_v1') === '1'; } catch { return false; } })();
+      label = `<span class="hwfit-fit-dot${_fitOnly ? ' active' : ''}" title="${_fitOnly ? 'Showing only models that fit. Click to also show too-tight rows.' : 'Click to show only models that fit your hardware.'}" data-fit-dot>●</span>${col.label}`;
+      // (Budget tag removed — the GPU/RAM/N-GPU suffix next to "Fit" was noise;
+      // the toggle row already shows which budget is active.)
+    }
+    html += `<span class="hwfit-col ${col.cls}${sortable}${active}"${dataAttr}>${label}${arrow}</span>`;
   }
   html += '</div>';
   for (const m of models) {
@@ -875,9 +919,31 @@ export function _hwfitRenderList(el, models) {
     const dlDot = (_cachedModelIds && (_cachedModelIds.has(m.name) || [..._cachedModelIds].some(id => id === m.name?.split('/').pop()))) ? '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>' : '';
     html += `<div class="hwfit-row" data-model="${esc(m.name)}">`;
     html += `<span class="hwfit-col hwfit-fit" style="color:${fitColor}">${esc(fitLabel)}</span>`;
-    html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(m.name?.split('/').pop() || m.name)}${moeBadge}${imgBadge}${dlDot}</span>`;
+    // Append quant to the title when it's not already in the repo name. The
+    // suffix strips quant-parts the name already contains — e.g. for
+    // QuantTrio/MiniMax-M2-AWQ + quant=AWQ-4bit we just show "(4bit)", not
+    // "(AWQ-4bit)". DeepSeek-V4-Flash + FP4-MoE-Mixed keeps the full tag
+    // (none of those parts are in the repo id).
+    const _short = m.name?.split('/').pop() || m.name || '';
+    const _quantTag = (m.quant || '').trim();
+    const _lowerShort = _short.toLowerCase();
+    let _quantSuffix = '';
+    if (_quantTag) {
+      const _parts = _quantTag.split(/[-_]/).filter(Boolean);
+      const _remaining = _parts.filter(p => !_lowerShort.includes(p.toLowerCase()));
+      if (_remaining.length && _remaining.length < _parts.length + 1) {  // at least one part is new
+        let _display = _remaining.join('-');
+        if (_display.length > 9) _display = _display.slice(0, 9) + '…';
+        _quantSuffix = ` <span class="hwfit-name-quant" title="${esc(_quantTag)} — full storage format">(${esc(_display)})</span>`;
+      }
+    }
+    html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(_short)}${_quantSuffix}${moeBadge}${imgBadge}${dlDot}</span>`;
     html += `<span class="hwfit-col hwfit-c-params">${esc(pcount)}</span>`;
-    html += `<span class="hwfit-col hwfit-c-quant">${esc(m.quant || '?')}</span>`;
+    // Truncate the Quant cell to 9 chars + ellipsis so long tags like
+    // "FP4-MoE-Mixed" don't push neighboring columns. Full tag stays in title.
+    const _qRaw = m.quant || '?';
+    const _qShort = _qRaw.length > 9 ? _qRaw.slice(0, 9) + '…' : _qRaw;
+    html += `<span class="hwfit-col hwfit-c-quant" title="${esc(_qRaw)}">${esc(_qShort)}</span>`;
     html += `<span class="hwfit-col hwfit-c-vram">${vramLabel}</span>`;
     html += `<span class="hwfit-col hwfit-c-ctx">${m.is_image_gen ? '\u2014' : ctx}</span>`;
     html += `<span class="hwfit-col hwfit-c-speed">${m.is_image_gen ? '\u2014' : tps + ' t/s'}</span>`;
@@ -899,7 +965,26 @@ export function _hwfitRenderList(el, models) {
   });
   // Clickable header columns → sort (click again to toggle direction)
   el.querySelectorAll('.hwfit-header .hwfit-sortable').forEach(col => {
-    col.addEventListener('click', () => {
+    col.addEventListener('click', (e) => {
+      // The little dot inside the Fit header is its own toggle (fit-only
+      // filter), don't let it fall through to a sort click.
+      if (e.target.closest('[data-fit-dot]')) {
+        const on = !e.target.classList.contains('active');
+        try { localStorage.setItem('hwfit_fit_only_v1', on ? '1' : '0'); } catch {}
+        // Un-toggling the fit filter (off → showing too-tight rows again) is
+        // typically because the user wants to see the LARGE models they can't
+        // run yet — re-sort by VRAM descending so the biggest surface first.
+        if (!on) {
+          const sortSel = document.getElementById('hwfit-sort');
+          if (sortSel) {
+            sortSel.value = 'vram';
+            sortSel.dataset.reverse = '0';   // descending (biggest first)
+          }
+        }
+        _hwfitCache = null;
+        _hwfitFetch();
+        return;
+      }
       const sortKey = col.dataset.sort;
       if (!sortKey) return;
       const sel = document.getElementById('hwfit-sort');
@@ -983,7 +1068,16 @@ export function _expandModelRow(row, modelData) {
   if (modelData.is_image_gen) {
     html += `<div style="font-size:10px;opacity:0.5;margin-top:4px;">${esc((modelData.capabilities || []).join(' \u00B7 ') || '')}${modelData.description ? ' \u2014 ' + esc(modelData.description) : ''}</div>`;
   } else if (_requiresAcceleratorBackend(modelData)) {
-    html += `<div class="hwfit-panel-note">This is a safetensors GPU-serving format. Use vLLM/SGLang with a visible CUDA/ROCm accelerator, or pick a GGUF download for llama.cpp/Ollama.</div>`;
+    // Only show the "needs CUDA/ROCm" note when the host doesn't already have
+    // one. With a visible CUDA/ROCm accelerator the note is noise — the user
+    // can already serve the model and reading the warning on every row makes
+    // the panel feel like everything's broken.
+    const _sys = _hwfitCache?.system || {};
+    const _backend = (_sys.backend || '').toLowerCase();
+    const _hasGpuAccel = !!_sys.has_gpu && (_backend === 'cuda' || _backend === 'rocm');
+    if (!_hasGpuAccel) {
+      html += `<div class="hwfit-panel-note">This is a safetensors GPU-serving format. Use vLLM/SGLang with a visible CUDA/ROCm accelerator, or pick a GGUF download for llama.cpp/Ollama.</div>`;
+    }
   }
   html += `</div>`;
 
@@ -1207,11 +1301,15 @@ export function _hwfitInit() {
     ctx.addEventListener('change', () => {
       const targetCtx = _ctxValue();
       try { localStorage.setItem(_CTX_KEY, String(targetCtx)); } catch {}
+      // Ctx drag affects sort mode: a specific ctx target (anything < Max)
+      // implies "what runs at this context length" — sort by VRAM ascending
+      // so the cheapest-fitting models surface first. Dragging back to Max
+      // releases the constraint → go back to the default score ranking.
       const sortSel = document.getElementById('hwfit-sort');
       if (sortSel) {
         if (targetCtx) {
-          sortSel.value = 'fit';
-          sortSel.dataset.reverse = '1';
+          sortSel.value = 'vram';
+          sortSel.dataset.reverse = '1';   // ascending = smallest VRAM first
         } else {
           sortSel.value = 'score';
           sortSel.dataset.reverse = '';

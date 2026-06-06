@@ -8,7 +8,13 @@
 let _enabled = true;
 let _observer = null;
 const PREF_KEY = 'odysseus-sensitive-blur';
-const _prefEnabled = () => localStorage.getItem(PREF_KEY) === 'on';
+export const _prefEnabled = () => {
+  try {
+    return localStorage.getItem(PREF_KEY) === 'on';
+  } catch (_) {
+    return false;
+  }
+};
 
 // Patterns that indicate sensitive data
 const PATTERNS = [

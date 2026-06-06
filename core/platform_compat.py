@@ -171,6 +171,15 @@ def _windows_bash_fallbacks() -> List[str]:
     return paths
 
 
+def _is_windows_bash_stub(path: str) -> bool:
+    lowered = path.lower()
+    return (
+        "system32\\bash.exe" in lowered
+        or "sysnative\\bash.exe" in lowered
+        or "windowsapps\\bash.exe" in lowered
+    )
+
+
 def find_bash() -> Optional[str]:
     """Locate a real ``bash`` interpreter, or None.
 
@@ -184,6 +193,8 @@ def find_bash() -> Optional[str]:
         return _BASH_CACHE
     _BASH_PROBED = True
     found = which_tool("bash")
+    if found and IS_WINDOWS and _is_windows_bash_stub(found):
+        found = None
     if not found and IS_WINDOWS:
         for cand in _windows_bash_fallbacks():
             if os.path.exists(cand):

@@ -6,6 +6,7 @@
 
 import uiModule from './ui.js';
 import { splitTableRow } from './markdown/tableRow.js';
+import { replaceEmojiShortcodes, hasEmojiShortcode } from './emojiShortcodes.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -60,8 +61,20 @@ const _ALLOWED_HTML_BAD_TAGS = new Set([
   'SVG', 'MATH',
 ]);
 const _ALLOWED_HTML_URL_ATTRS = new Set([
-  'href', 'src', 'xlink:href', 'action', 'formaction', 'background', 'poster',
+  'href', 'src', 'srcset', 'xlink:href', 'action', 'formaction', 'background', 'poster',
 ]);
+
+function _compactUrlSchemeValue(value) {
+  return String(value || '').replace(/[\u0000-\u0020\u007f-\u009f]+/g, '').toLowerCase();
+}
+
+function _isDangerousUrl(value) {
+  return /^(javascript|vbscript|data):/.test(_compactUrlSchemeValue(value));
+}
+
+function _isDangerousSrcset(value) {
+  return String(value || '').split(',').some(candidate => _isDangerousUrl(candidate));
+}
 
 function _cleanAllowedHtmlOnce(htmlString) {
   const tpl = document.createElement('template');
@@ -82,11 +95,17 @@ function _cleanAllowedHtmlOnce(htmlString) {
         el.removeAttribute(attr.name);
         continue;
       }
+      if (name === 'style') {
+        const value = _compactUrlSchemeValue(attr.value);
+        if (/javascript:|vbscript:|data:|expression\(/.test(value)) {
+          el.removeAttribute(attr.name);
+        }
+        continue;
+      }
       // Neutralize javascript:/vbscript:/data: in URL-bearing attributes.
       // Strip control/space chars first so e.g. "java\tscript:" can't slip by.
       if (_ALLOWED_HTML_URL_ATTRS.has(name)) {
-        const value = (attr.value || '').replace(/[\x00-\x20]+/g, '').toLowerCase();
-        if (/^(javascript|vbscript|data):/.test(value)) {
+        if (name === 'srcset' ? _isDangerousSrcset(attr.value) : _isDangerousUrl(attr.value)) {
           el.removeAttribute(attr.name);
         }
       }
@@ -116,8 +135,13 @@ function sanitizeAllowedHtml(html) {
  * Check if text has unclosed think tag
  */
 export function hasUnclosedThinkTag(text) {
-  const openCount = (text.match(/<think(?:ing)?>/gi) || []).length;
-  const closeCount = (text.match(/<\/think(?:ing)?>/gi) || []).length;
+  text = text || '';
+  const openCount =
+    (text.match(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi) || []).length
+    + (text.match(/<\|channel>thought/gi) || []).length;
+  const closeCount =
+    (text.match(/<\/(?:think(?:ing)?|thought)>/gi) || []).length
+    + (text.match(/<channel\|>/gi) || []).length;
   return openCount > closeCount;
 }
 
@@ -125,8 +149,25 @@ export function startsWithReasoningPrefix(text) {
   return /^\s*(?:thinking(?:\s+process)?\s*:|the user |i need |i should |i will |they are |the question |i can )/i.test(text || '');
 }
 
+export function normalizeThinkingMarkup(text) {
+  if (!text) return text;
+  let normalized = text;
+  normalized = normalized.replace(/<thought(\s+[^>]*)?>/gi, (_m, attrs = '') => `<think${attrs || ''}>`);
+  normalized = normalized.replace(/<\/thought>/gi, '</think>');
+  normalized = normalized.replace(/<\|channel>thought\s*\n?([\s\S]*?)<channel\|>\s*/gi, (_m, content = '') => {
+    const thought = String(content || '').trim();
+    return thought ? `<think>${thought}</think>\n` : '';
+  });
+  normalized = normalized.replace(/<\|channel>response\s*\n?([\s\S]*?)<channel\|>/gi, (_m, content = '') => content || '');
+  normalized = normalized.replace(/<\|channel>response\s*\n?/gi, '');
+  normalized = normalized.replace(/<channel\|>/gi, '');
+  return normalized;
+}
+
 function normalizePlainThinking(text) {
-  if (!text || /<think/i.test(text)) return text;
+  if (!text) return text;
+  text = normalizeThinkingMarkup(text);
+  if (/<think/i.test(text)) return text;
 
   const trimmed = text.trimStart();
   if (!startsWithReasoningPrefix(trimmed)) return text;
@@ -220,11 +261,21 @@ export function extractThinkingBlocks(text) {
   // (b) Cut-off mid-generation — there's already real reply text before the
   //     opener. Drop from the tag onward as before (it's truncated thinking).
   if (hasUnclosedThinkTag(normalized)) {
-    const strayOpener = cleanContent.match(/^\s*<think(?:ing)?(?:\s+[^>]*)?>([\s\S]*)$/i);
-    if (strayOpener) {
-      cleanContent = strayOpener[1];
+    const gemmaThoughtStart = cleanContent.search(/<\|channel>thought/i);
+    if (gemmaThoughtStart >= 0) {
+      const leakedThought = cleanContent
+        .slice(gemmaThoughtStart)
+        .replace(/^<\|channel>thought\s*\n?/i, '')
+        .trim();
+      if (gemmaThoughtStart === 0 && leakedThought) thinkingBlocks.push(leakedThought);
+      cleanContent = cleanContent.slice(0, gemmaThoughtStart);
     } else {
-      cleanContent = cleanContent.replace(/<think(?:ing)?(?:\s+[^>]*)?>[\s\S]*$/gi, '');
+      const strayOpener = cleanContent.match(/^\s*<think(?:ing)?(?:\s+[^>]*)?>([\s\S]*)$/i);
+      if (strayOpener) {
+        cleanContent = strayOpener[1];
+      } else {
+        cleanContent = cleanContent.replace(/<think(?:ing)?(?:\s+[^>]*)?>[\s\S]*$/gi, '');
+      }
     }
   }
 
@@ -316,8 +367,19 @@ function _useSvgEmoji() {
   return typeof document === 'undefined' || !document.body?.classList.contains('text-emojis');
 }
 
-export function svgifyEmoji(html) {
-  if (!_useSvgEmoji() || !html || !_EMOJI_RE.test(html)) return html;
+// `opts.shortcodes` (default true) controls the issue-#345 `:name:` → emoji
+// expansion. Chat passes it through as true; document/email body renderers pass
+// false so author-typed `:shortcode:` text stays literal (see mdToHtml callers).
+// The Unicode-emoji → monochrome-SVG pass always runs regardless, so a real 😀
+// in a document still renders as the themed line icon as it always has.
+export function svgifyEmoji(html, opts) {
+  if (!_useSvgEmoji() || !html) return html;
+  const allowShortcodes = !opts || opts.shortcodes !== false;
+  // Two reasons to walk the HTML: real Unicode emoji to turn into SVG icons,
+  // or `:shortcode:` text the model emitted instead of an emoji (issue #345).
+  const hasUnicode = _EMOJI_RE.test(html);
+  const hasShortcode = allowShortcodes && hasEmojiShortcode(html);
+  if (!hasUnicode && !hasShortcode) return html;
   const parts = html.split(/(<[^>]*>)/);   // odd indices = tags
   let codeDepth = 0;
   for (let i = 0; i < parts.length; i++) {
@@ -327,7 +389,13 @@ export function svgifyEmoji(html) {
       else if (/^<\/(pre|code)\s*>/.test(t)) codeDepth = Math.max(0, codeDepth - 1);
       continue;
     }
-    if (codeDepth === 0 && _EMOJI_RE.test(parts[i])) parts[i] = _svgifyText(parts[i]);
+    if (codeDepth !== 0) continue;
+    let seg = parts[i];
+    // Expand shortcodes to Unicode first, then both they and any pre-existing
+    // Unicode emoji get rendered as the same monochrome line icons below.
+    if (hasShortcode) seg = replaceEmojiShortcodes(seg);
+    if (_EMOJI_RE.test(seg)) seg = _svgifyText(seg);
+    parts[i] = seg;
   }
   return parts.join('');
 }
@@ -371,10 +439,46 @@ export function processWithThinking(text) {
 /**
  * Convert markdown to HTML
  */
-export function mdToHtml(src) {
-  // CRITICAL: Extract allowed HTML blocks first (details/summary)
+export function mdToHtml(src, opts) {
   const allowedHtmlBlocks = [];
+  const codeBlocks = [];
+  const mermaidBlocks = [];
   let s = (src ?? '');
+
+  // Extract fenced code blocks before any markdown/HTML preservation passes.
+  // Otherwise placeholders from the allowed-HTML sanitizer (e.g.
+  // ___ALLOWED_HTML_0___) can leak into quoted HTML/JS samples, because the
+  // placeholder gets captured as literal code content and never restored inside
+  // the final <pre><code> block.
+  s = s.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
+    const cleaned = code
+      .replace(/\r\n/g, '\n')
+      .replace(/[ \t]+$/gm, '')
+      .replace(/^\s*\n+/, '')
+      .replace(/\n+\s*$/g, '');
+
+    // Mermaid diagrams: render as diagram instead of code block
+    if (lang && lang.toLowerCase() === 'mermaid') {
+      const mermaidId = 'mermaid-' + Date.now() + '-' + mermaidBlocks.length;
+      const raw = cleaned.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+      const placeholder = `___MERMAID_BLOCK_${mermaidBlocks.length}___`;
+      mermaidBlocks.push(`<div class="mermaid-container"><pre class="mermaid" id="${mermaidId}">${escapeHtml(raw)}</pre></div>`);
+      return placeholder;
+    }
+
+    const escaped = cleaned.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    const placeholder = `___CODE_BLOCK_${codeBlocks.length}___`;
+
+    const langClass = lang ? ` class="language-${lang}"` : '';
+    const runnableLangs = ['python','py','javascript','js','html','bash','sh','shell','zsh'];
+    const runBtn = (lang && runnableLangs.includes(lang.toLowerCase()))
+      ? `<button type="button" class="run-code" data-code="${escapeHtml(escaped)}" data-lang="${lang}" title="Run code"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>`
+      : '';
+    const editBtn = `<button type="button" class="edit-code" title="Edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>`;
+    codeBlocks.push(`<pre><code${langClass} data-lang="${lang || ''}">${escapeHtml(escaped)}</code>${runBtn}${editBtn}<button type="button" class="copy-code" data-code="${escapeHtml(escaped)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></pre>`);
+
+    return placeholder;
+  });
 
   // Repair common ways the agent mangles the entity-anchor convention
   // (`[Name](#kind-<id>)`). Models reliably get the single-link case
@@ -420,9 +524,11 @@ export function mdToHtml(src) {
   // allowlist keeps it from matching file names / versions ("package.json",
   // "node.js", "v1.2.3"); the required start/[\s(<] prefix means domains
   // already inside an http link (preceded by "//") or an email ("@") are
-  // skipped. Trailing sentence punctuation is kept outside the link.
+  // skipped. Require the TLD to end at a real domain boundary so dotted code
+  // identifiers like `sklearn.metrics` do not link `sklearn.me` and leave
+  // placeholder fragments in the remaining text.
   s = s.replace(
-    /(^|[\s(<])((?:www\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|ai|co|dev|app|gov|edu|news|info|tech|xyz|me)(?:\/[^\s<>"'`\])]*)?)/gi,
+    /(^|[\s(<])((?:www\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|ai|co|dev|app|gov|edu|news|info|tech|xyz|me)(?=$|[\/\s<>"'`\]).,;:!?])(?:\/[^\s<>"'`\])]*)?)/gi,
     (match, prefix, domain) => {
       const trail = (domain.match(/[.,;:!?)]+$/) || [''])[0];
       const core = trail ? domain.slice(0, -trail.length) : domain;
@@ -449,39 +555,6 @@ export function mdToHtml(src) {
   s = s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
   s = s.replace(/\n{3,}/g, '\n\n');
-
-  // CRITICAL: Extract code blocks and replace with placeholders
-  const codeBlocks = [];
-  const mermaidBlocks = [];
-  s = s.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
-    const cleaned = code
-      .replace(/\r\n/g, '\n')
-      .replace(/[ \t]+$/gm, '')
-      .replace(/^\s*\n+/, '')
-      .replace(/\n+\s*$/g, '');
-
-    // Mermaid diagrams: render as diagram instead of code block
-    if (lang && lang.toLowerCase() === 'mermaid') {
-      const mermaidId = 'mermaid-' + Date.now() + '-' + mermaidBlocks.length;
-      const raw = cleaned.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-      const placeholder = `___MERMAID_BLOCK_${mermaidBlocks.length}___`;
-      mermaidBlocks.push(`<div class="mermaid-container"><pre class="mermaid" id="${mermaidId}">${escapeHtml(raw)}</pre></div>`);
-      return placeholder;
-    }
-
-    const escaped = cleaned.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-    const placeholder = `___CODE_BLOCK_${codeBlocks.length}___`;
-
-    const langClass = lang ? ` class="language-${lang}"` : '';
-    const runnableLangs = ['python','py','javascript','js','html','bash','sh','shell','zsh'];
-    const runBtn = (lang && runnableLangs.includes(lang.toLowerCase()))
-      ? `<button type="button" class="run-code" data-code="${escapeHtml(escaped)}" data-lang="${lang}" title="Run code"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>`
-      : '';
-    const editBtn = `<button type="button" class="edit-code" title="Edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>`;
-    codeBlocks.push(`<pre><code${langClass} data-lang="${lang || ''}">${escapeHtml(escaped)}</code>${runBtn}${editBtn}<button type="button" class="copy-code" data-code="${escapeHtml(escaped)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></pre>`);
-
-    return placeholder;
-  });
 
   // KaTeX math rendering (after code blocks are extracted, so math in code is safe)
   const mathBlocks = [];
@@ -625,7 +698,7 @@ export function mdToHtml(src) {
     s = s.replace(`___CODE_BLOCK_${index}___`, block);
   });
 
-  return _useSvgEmoji() ? svgifyEmoji(s) : s;
+  return _useSvgEmoji() ? svgifyEmoji(s, opts) : s;
 }
 
 /**
@@ -683,6 +756,7 @@ const markdownModule = {
   createCollapsible,
   hasUnclosedThinkTag,
   extractThinkingBlocks,
+  normalizeThinkingMarkup,
   startsWithReasoningPrefix,
   renderMermaid
 };

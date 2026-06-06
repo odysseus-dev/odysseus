@@ -69,9 +69,12 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
         if not directory:
             raise HTTPException(400, "Directory path is required")
 
-        base_abs = os.path.abspath(PERSONAL_DIR)
+        # realpath (not abspath) so a symlink inside PERSONAL_DIR that points
+        # outside it is resolved before the commonpath confinement check below;
+        # abspath only normalises `..` and would let such a symlink escape.
+        base_abs = os.path.realpath(PERSONAL_DIR)
         candidate = directory if os.path.isabs(directory) else os.path.join(base_abs, directory)
-        resolved = os.path.abspath(candidate)
+        resolved = os.path.realpath(candidate)
         try:
             in_base = os.path.commonpath([resolved, base_abs]) == base_abs
         except ValueError:

@@ -33,8 +33,8 @@ The full license texts are kept in [`licenses/`](licenses/).
 - **[Tongyi DeepResearch](https://github.com/Alibaba-NLP/DeepResearch)** by
   **Alibaba-NLP / Tongyi Lab** — the multi-step deep-research agent pipeline.
   Copyright © Alibaba-NLP / Tongyi Lab. **Apache-2.0.** Adapted for Odysseus's
-  Deep Research feature (`api/research_*.py`, `routes/research_routes.py`,
-  `services/search/`). Full text in
+  Deep Research feature (`services/research/`, `src/research_handler.py`,
+  `routes/research_routes.py`, `services/search/`). Full text in
   [`licenses/DeepResearch-Apache-2.0.txt`](licenses/DeepResearch-Apache-2.0.txt).
 
 ---
@@ -47,7 +47,7 @@ just composed.
 
 | Service | Image | Purpose | License |
 |---|---|---|---|
-| [SearXNG](https://github.com/searxng/searxng) | `searxng/searxng:latest` | Default metasearch backend | AGPL-3.0 |
+| [SearXNG](https://github.com/searxng/searxng) | `searxng/searxng:2026.5.31-7159b8aed` (pinned tag; see compose) | Default metasearch backend | AGPL-3.0 |
 | [ChromaDB](https://github.com/chroma-core/chroma) | `chromadb/chroma:latest` | Vector store for memory / RAG | Apache-2.0 |
 | [ntfy](https://github.com/binwiederhier/ntfy) | `binwiederhier/ntfy` | Push notifications (self-hosted reminders) | Apache-2.0 / GPL-2.0 |
 

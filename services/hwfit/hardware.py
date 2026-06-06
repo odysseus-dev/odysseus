@@ -5,7 +5,9 @@ import shutil
 import subprocess
 import time
 
-CACHE_TTL = 1800  # 30 min — hardware rarely changes; use the Rescan button to force a re-probe
+CACHE_TTL = 24 * 3600  # 24 h — hardware probes are user-initiated via the Rescan button; bumped
+                       # from 30 min so changing filters doesn't keep re-probing the rig every
+                       # half-hour during a long session.
 
 
 _remote_host = None  # set by detect_system(host=...)
@@ -537,6 +539,7 @@ def _detect_windows():
             "backend": d.get("gpu_backend", "cpu_x86"),
             "homogeneous": True,
             "gpu_error": None,
+            "platform": "windows",
         }
         # PowerShell only reports aggregate GPU info, not per-card detail, so we
         # can't tell a mixed box from a uniform one here — assume one homogeneous

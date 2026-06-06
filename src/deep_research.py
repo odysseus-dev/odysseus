@@ -196,6 +196,8 @@ class DeepResearcher:
         max_content_chars: int = 15000,
         max_report_tokens: int = 8192,
         extraction_timeout: int = 90,
+        planning_timeout: int = 90,
+        query_timeout: int = 120,
         extraction_concurrency: int = 3,
         min_rounds: int = 2,
         max_empty_rounds: int = 2,
@@ -215,6 +217,8 @@ class DeepResearcher:
         self.max_content_chars = max_content_chars
         self.max_report_tokens = max_report_tokens
         self.extraction_timeout = min(3600, max(15, int(extraction_timeout or 90)))
+        self.planning_timeout = min(3600, max(15, int(planning_timeout or 90)))
+        self.query_timeout = min(3600, max(15, int(query_timeout or 120)))
         self.extraction_concurrency = min(12, max(1, int(extraction_concurrency or 3)))
         self.min_rounds = min_rounds
         self.max_empty_rounds = max_empty_rounds
@@ -395,7 +399,7 @@ class DeepResearcher:
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
                 max_tokens=1024,
-                timeout=30,
+                timeout=getattr(self, "planning_timeout", 90),
             )
             # Try to parse as JSON for structured plan
             parsed = self._parse_json_object(response)
@@ -478,6 +482,7 @@ class DeepResearcher:
                 [{"role": "user", "content": prompt}],
                 temperature=0.5,
                 max_tokens=4096,
+                timeout=getattr(self, "query_timeout", 120),
             )
             queries = self._parse_json_array(response)
             # Deduplicate
@@ -800,6 +805,17 @@ class DeepResearcher:
         except json.JSONDecodeError:
             pass
 
+        # Handle truncated arrays — e.g. '["query one", "query two", "query thr'
+        # Repair from the LAST array start so an echoed example array earlier
+        # in the reply is not harvested into the real query set.
+        last_start = text.rfind('[')
+        truncated = last_start != -1 and ']' not in text[last_start:]
+        if truncated:
+            complete_items = re.findall(r'"([^"]*)"', text[last_start:])
+            if complete_items:
+                logger.info(f"Repaired truncated JSON array: recovered {len(complete_items)} items")
+                return complete_items
+
         # Greedy match to capture the full outermost array
         match = re.search(r'\[[\s\S]*\]', text)
         if match:
@@ -810,8 +826,22 @@ class DeepResearcher:
             except json.JSONDecodeError:
                 pass
 
-        # Handle truncated arrays — e.g. '["query one", "query two", "query thr'
-        # Try to find the start of an array and repair it
+        # Multiple complete arrays in one reply (e.g. the model echoes the
+        # prompt's Example: [...] before the real array). The greedy match
+        # above spans them all and fails to parse, so scan non-greedily and
+        # keep the LAST parseable array, which is the model's actual answer.
+        last_parsed = None
+        for m in re.finditer(r'\[[\s\S]*?\]', text):
+            try:
+                parsed = json.loads(m.group())
+                if isinstance(parsed, list):
+                    last_parsed = parsed
+            except json.JSONDecodeError:
+                continue
+        if last_parsed is not None:
+            return [str(item) for item in last_parsed]
+
+        # Last resort: harvest quoted strings from the first array start
         arr_start = text.find('[')
         if arr_start != -1:
             fragment = text[arr_start:]

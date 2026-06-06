@@ -9,7 +9,9 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Form
 from pydantic import BaseModel, Field
 
-from core.database import SessionLocal, Webhook
+from core.database import SessionLocal, Webhook, ModelEndpoint
+from src.auth_helpers import owner_filter
+from src.url_security import validate_public_http_url
 from src.webhook_manager import WebhookManager, validate_webhook_url, validate_events
 
 logger = logging.getLogger(__name__)
@@ -26,23 +28,19 @@ MAX_MESSAGE_LEN = 32_000
 from core.middleware import require_admin as _require_admin
 
 
-def _first_enabled_endpoint(db, owner):
-    """First enabled ModelEndpoint VISIBLE to `owner` — their own rows plus
-    legacy null-owner ("shared") rows. Owner-scoped on purpose: ModelEndpoint
-    is per-user (core/database.py — "when non-null, the model picker only shows
-    the endpoint to that user"), and the sync-chat fallback uses the row's
-    decrypted `api_key`. An unscoped ``.first()`` would let a chat-scoped token
-    (e.g. a paired mobile device) fall back onto ANOTHER user's private
-    endpoint and silently spend that owner's API key / quota — and reach
-    whatever internal base_url they configured. Mirrors the owner_filter scoping
-    in routes/model_routes.py and companion/routes.py. A null/empty owner is a
-    no-op (single-user / legacy mode), preserving the original behaviour.
+def _select_api_chat_fallback_endpoint(db, token_owner: Optional[str]):
+    """First enabled ModelEndpoint visible to token_owner — their own rows plus
+    legacy null-owner ("shared") rows. Owner-scoped: an unscoped .first() would
+    let a chat-scoped token fall back onto another user's private endpoint and
+    silently spend that owner's API key/quota. Prefer owner rows before shared
+    rows. Fails closed to null-owner rows only when token_owner is absent.
+    Does not validate base_url — admin-configured local/LAN endpoints remain allowed.
     """
-    from core.database import ModelEndpoint
-    from src.auth_helpers import owner_filter
-    q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
-    q = owner_filter(q, ModelEndpoint, owner)
-    return q.first()
+    query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
+    if token_owner:
+        query = owner_filter(query, ModelEndpoint, token_owner)
+        return query.order_by(ModelEndpoint.owner.desc(), ModelEndpoint.created_at).first()
+    return query.filter(ModelEndpoint.owner == None).order_by(ModelEndpoint.created_at).first()  # noqa: E711
 
 
 def _caller_owns_session(sess_owner, caller) -> bool:
@@ -278,15 +276,21 @@ def setup_webhook_routes(
             api_key = body.api_key.strip()
             model = body.model or "deepseek-chat"
 
-            # Resolve base_url: explicit > provider name > model prefix auto-detect
-            base_url = body.base_url.strip().rstrip("/") if body.base_url else None
-            if not base_url:
+            # Validate only token-supplied direct base_url; auto-resolved known-provider
+            # URLs are not subject to extra local/LAN blocking beyond existing provider logic.
+            direct_base_url = body.base_url.strip().rstrip("/") if body.base_url else None
+            if direct_base_url:
+                try:
+                    base_url = validate_public_http_url(direct_base_url)
+                except ValueError as e:
+                    detail = str(e).replace("URL", "base_url", 1)
+                    raise HTTPException(400, detail)
+            else:
                 base_url = _resolve_base_url(model, body.provider)
             if not base_url:
                 raise HTTPException(400,
                     "Could not auto-detect provider. Pass base_url (e.g. 'https://api.deepseek.com/v1') "
                     "or provider ('deepseek', 'openai', 'groq', etc.)")
-
             base_url = normalize_base(base_url)
             endpoint_url = build_chat_url(base_url)
 
@@ -306,9 +310,7 @@ def setup_webhook_routes(
         if not sess:
             db = SessionLocal()
             try:
-                # Owner-scoped: only THIS token owner's endpoints + legacy
-                # shared rows, never another user's private endpoint/api_key.
-                ep = _first_enabled_endpoint(db, token_owner)
+                ep = _select_api_chat_fallback_endpoint(db, token_owner)
             finally:
                 db.close()
 

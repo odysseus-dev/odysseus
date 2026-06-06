@@ -2,6 +2,7 @@
 Extracted from cookbook_routes.py; the routes module imports the symbols it needs."""
 
 import logging
+import ntpath
 import os
 import posixpath
 import re
@@ -41,6 +42,15 @@ _GPU_LIST_RE = re.compile(r"^\d+(?:,\d+)*$")
 # only (no quotes, shell metacharacters, or spaces) since it lands in a shell
 # command. A leading ~ is expanded to $HOME at command-build time.
 _LOCAL_DIR_RE = re.compile(r"^~?/[A-Za-z0-9._/-]*$|^~$")
+_WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def _git_bash_path(path: str) -> str:
+    m = re.match(r"^([A-Za-z]):[\\/](.*)$", path)
+    if not m:
+        return path
+    drive, rest = m.groups()
+    return f"/{drive.lower()}/{rest.replace(chr(92), '/')}"
 
 
 def _validate_repo_id(v: str | None) -> str:
@@ -135,8 +145,11 @@ def _local_tooling_path_export(executable: str) -> str:
     # os.path.abspath("/opt/...") would incorrectly turn it into "D:\\opt\\...".
     if executable.startswith("/"):
         bin_dir = posixpath.dirname(executable)
+    elif _WINDOWS_DRIVE_PATH_RE.match(executable):
+        bin_dir = ntpath.dirname(executable)
     else:
         bin_dir = os.path.dirname(os.path.abspath(executable))
+    bin_dir = _git_bash_path(bin_dir)
     # Escape for a double-quoted context: $PATH must still expand, but spaces
     # and shell metacharacters in the path must be preserved literally.
     esc = (
@@ -146,6 +159,21 @@ def _local_tooling_path_export(executable: str) -> str:
         .replace("`", "\\`")
     )
     return f'export PATH="{esc}:$PATH"'
+
+
+def _pip_install_no_cache(cmd: str) -> str:
+    """Add ``--no-cache-dir`` to a pip install command.
+
+    Cookbook dependency installs (vLLM, llama-cpp-python, …) build large wheels;
+    pip's default cache lives under ``$HOME/.cache/pip`` and these builds can fill
+    a small home filesystem with ``[Errno 28] No space left on device`` mid-build
+    (issue #1219), leaving the dependency "installed" but unusable (#1459).
+    Disabling the cache for these one-off installs keeps them off the home disk
+    (the maintainer's suggested ``PIP_CACHE_DIR=`` workaround, made the default).
+    Idempotent; leaves non-pip-install commands untouched."""
+    if not cmd or "pip install" not in cmd or "--no-cache-dir" in cmd:
+        return cmd
+    return cmd.replace("pip install", "pip install --no-cache-dir", 1)
 
 
 def _pip_install_attempt(pip_cmd: str) -> str:
@@ -179,8 +207,13 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     pip output appear in the Cookbook log on failure.
     """
     upgrade_flag = " -U" if upgrade else ""
-    base = _pip_install_attempt(f"{python_cmd} install -q{upgrade_flag} {package}")
-    user = _pip_install_attempt(f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {package}")
+    # Shell-quote the package spec: an extras spec like ``llama-cpp-python[server]``
+    # contains brackets that bash would treat as a glob, so it must be quoted
+    # before being embedded in the install command. Plain names (e.g.
+    # ``huggingface_hub``) are returned unchanged by ``shlex.quote``.
+    pkg = shlex.quote(package)
+    base = _pip_install_attempt(f"{python_cmd} install -q{upgrade_flag} {pkg}")
+    user = _pip_install_attempt(f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {pkg}")
     # Derive the python executable for the venv detection check.
     # Must use the same interpreter that pip belongs to; hardcoding
     # python3 breaks when pip lives in a venv that only has "python".
@@ -228,6 +261,17 @@ def _venv_safe_local_pip_install_cmd(cmd: str, *, local: bool, in_venv: bool) ->
         if part not in {"--user", "--break-system-packages"}
     ]
     return shlex.join(stripped)
+
+
+def _user_shell_path_bootstrap() -> list[str]:
+    return [
+        'ODYSSEUS_USER_SHELL="${SHELL:-}"',
+        'if [ -n "$ODYSSEUS_USER_SHELL" ] && [ -x "$ODYSSEUS_USER_SHELL" ]; then',
+        '  ODYSSEUS_USER_PATH="$("$ODYSSEUS_USER_SHELL" -ic \'printf "__ODYSSEUS_PATH__%s\\n" "$PATH"\' 2>/dev/null | sed -n \'s/^__ODYSSEUS_PATH__//p\' | tail -n 1 || true)"',
+        '  if [ -n "$ODYSSEUS_USER_PATH" ]; then export PATH="$ODYSSEUS_USER_PATH:$PATH"; fi',
+        'fi',
+        'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }',
+    ]
 
 
 def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
@@ -502,17 +546,35 @@ def _append_serve_preflight_exit_lines(runner_lines: list[str], *, keep_shell_op
     runner_lines.append('if [ -n "$ODYSSEUS_PREFLIGHT_EXIT" ]; then')
     runner_lines.append('  echo ""; echo "=== Process exited with code $ODYSSEUS_PREFLIGHT_EXIT ==="')
     if keep_shell_open:
+        # Decouple the post-crash interactive shell from the persistent log
+        # file. fds 3/4 were saved BEFORE the tee redirect at the top of
+        # the runner; restoring them here means the neofetch banner the
+        # user's .zshrc prints lands on the tmux pane only, not in the
+        # log file the agent's tail_serve_output reads.
+        runner_lines.append('  exec 1>&3 2>&4 3>&- 4>&- 2>/dev/null || true')
+        runner_lines.append('  sleep 0.2  # let tee child flush + exit')
         runner_lines.append('  exec "${SHELL:-/bin/bash}"')
     else:
         runner_lines.append('  exit "$ODYSSEUS_PREFLIGHT_EXIT"')
     runner_lines.append('fi')
 
 
-def _append_serve_exit_code_lines(runner_lines: list[str], *, keep_shell_open: bool) -> None:
+def _append_serve_exit_code_lines(
+    runner_lines: list[str],
+    *,
+    keep_shell_open: bool,
+    is_pip_install: bool = False,
+) -> None:
     """Append serve-runner lines that preserve and report the command exit code."""
     runner_lines.append('ODYSSEUS_CMD_EXIT=$?')
+    if is_pip_install:
+        runner_lines.append('if [ $ODYSSEUS_CMD_EXIT -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; fi')
     if keep_shell_open:
-        runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="; exec "${SHELL:-/bin/bash}"')
+        runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="')
+        # See preflight branch above for the rationale on restoring fds 3/4.
+        runner_lines.append('exec 1>&3 2>&4 3>&- 4>&- 2>/dev/null || true')
+        runner_lines.append('sleep 0.2  # let tee child flush + exit')
+        runner_lines.append('exec "${SHELL:-/bin/bash}"')
     else:
         runner_lines.append('echo ""; echo "=== Process exited with code $ODYSSEUS_CMD_EXIT ==="')
         runner_lines.append('exit "$ODYSSEUS_CMD_EXIT"')
@@ -543,14 +605,56 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('      echo "[odysseus] ROCm/HIP detected — building llama-server with HIP support..."')
     runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
     runner_lines.append('    elif command -v nvcc &>/dev/null; then')
-    runner_lines.append('      echo "[odysseus] CUDA nvcc found — building llama-server with CUDA (GPU) support..."')
-    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    # nvcc alone is not sufficient — pip-installed CUDA wheels or incomplete
+    # tooling can expose nvcc without shipping libcudart, causing cmake to fail
+    # mid-build with "CUDA runtime library not found". Check cudart explicitly
+    # via a small helper so the guard stays readable.
+    runner_lines.append('      _odysseus_has_cudart() {')
+    runner_lines.append('        ldconfig -p 2>/dev/null | grep -q \'libcudart\\.so\' && return 0')
+    runner_lines.append('        local _cuh="${CUDA_HOME:-/usr/local/cuda}"')
+    runner_lines.append('        ls "$_cuh/lib64/libcudart.so"* &>/dev/null && return 0')
+    runner_lines.append('        ls "$_cuh/lib/libcudart.so"* &>/dev/null && return 0')
+    runner_lines.append('        ls /usr/local/cuda/lib64/libcudart.so* &>/dev/null && return 0')
+    runner_lines.append('        ls /usr/local/cuda/lib/libcudart.so* &>/dev/null && return 0')
+    runner_lines.append('        ls "${_cuh%/cuda_nvcc}/cuda_runtime/lib/libcudart.so"* &>/dev/null && return 0')
+    runner_lines.append('        return 1')
+    runner_lines.append('      }')
+    runner_lines.append('      if _odysseus_has_cudart; then')
+    runner_lines.append('        echo "[odysseus] CUDA nvcc + cudart found — building llama-server with CUDA (GPU) support..."')
+    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('      else')
+    runner_lines.append('        echo "[odysseus] WARNING: nvcc found but CUDA runtime (libcudart.so) is not visible — building llama-server for CPU only."')
+    runner_lines.append('        echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
+    runner_lines.append('        echo "[odysseus]   Ensure libcudart is installed (e.g. cuda-runtime package) and visible via ldconfig or CUDA_HOME."')
+    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('      fi')
     runner_lines.append('    else')
     runner_lines.append('      echo "[odysseus] WARNING: no HIP/CUDA toolchain found — building llama-server for CPU only."')
     runner_lines.append('      echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
     runner_lines.append('      echo "[odysseus]   Install ROCm for AMD GPUs or vLLM/CUDA tooling for NVIDIA, then re-launch this serve task."')
     runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
     runner_lines.append('    fi')
+
+
+def _llama_cpp_rebuild_cmd() -> str:
+    """Shell command that clears the Cookbook-managed llama.cpp build.
+
+    Removes the cached ``llama-server`` symlink and the ``~/llama.cpp/build``
+    directory so the next llama.cpp serve recompiles from source, picking up a
+    CUDA or HIP toolchain if one is now available. The serve bootstrap only
+    builds when ``llama-server`` is missing from PATH, so without this an
+    existing CPU-only build is reused forever. It deliberately installs and
+    downloads nothing; the rebuild itself happens on the next serve.
+    """
+    return (
+        'mkdir -p "$HOME/bin" && '
+        'rm -f "$HOME/bin/llama-server" && '
+        'rm -rf "$HOME/llama.cpp/build" && '
+        'echo "[odysseus] Cleared the cached llama.cpp build. '
+        'Re-launch the serve task to rebuild llama-server from source '
+        '(CUDA or HIP will be used if a toolchain is now available)."'
+    )
+
 
 class ModelDownloadRequest(BaseModel):
     repo_id: str

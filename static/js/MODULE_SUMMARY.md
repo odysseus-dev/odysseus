@@ -3,6 +3,14 @@
 ## Purpose
 This document describes what each JavaScript module is responsible for.
 
+> **Note:** This file is a partial, historical overview — not a complete authoritative
+> inventory. The authoritative module set is the current `static/js/` tree plus the
+> scripts loaded by `static/index.html`. As of this writing that tree holds **65 `.js`
+> files** across **8 subdirectories** (`calendar/`, `color/`, `compare/`, `editor/`,
+> `emailLibrary/`, `markdown/`, `research/`, `util/`), and `static/index.html` loads
+> **35** `/static…` script tags. The catalog below covers only the original core
+> modules and is not kept in sync with every module.
+
 ---
 
 ## Core Modules (in static/js/)
@@ -23,7 +31,7 @@ This document describes what each JavaScript module is responsible for.
 - Content rendering for message arrays
 - Text cleanup (`squashOutsideCode`)
 
-### 3. **session.js**
+### 3. **sessions.js**
 - Session/chat management
 - Create, load, delete, switch sessions
 - Session history loading
@@ -54,7 +62,7 @@ This document describes what each JavaScript module is responsible for.
 
 ### 7. **models.js**
 - Model scanning and display
-- Local model discovery (ports 8000-8010)
+- Local model discovery (ports 8000-8020)
 - Provider management (OpenAI)
 - Model selection UI
 

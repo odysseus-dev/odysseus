@@ -48,6 +48,30 @@ def _resolve_research_endpoint(sess) -> tuple:
     return url, model, headers
 
 
+def _owned_enabled_endpoint(db, owner, endpoint_id=None):
+    """An enabled ModelEndpoint VISIBLE to `owner` (their own rows + legacy
+    null-owner "shared" rows), optionally narrowed to a specific endpoint_id;
+    None if nothing visible matches.
+
+    Owner-scoped on purpose. ModelEndpoint is per-user (core/database.py: non-null
+    owner = private, "the model picker only shows the endpoint to that user") and
+    holds a decrypted `api_key`. /api/research/start feeds the resolved row's
+    api_key + base_url into research_handler.start_research(llm_endpoint=,
+    llm_headers=), so an UNSCOPED lookup — by the caller-supplied endpoint_id, or
+    via the bare first-enabled fallback — would let a research-privileged user
+    spend ANOTHER user's API key/quota and reach whatever internal base_url they
+    configured. Mirrors webhook_routes._first_enabled_endpoint and
+    session_routes._owned_endpoint. A null/empty owner is a no-op (single-user /
+    legacy mode).
+    """
+    from src.database import ModelEndpoint
+    from src.auth_helpers import owner_filter
+    q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
+    if endpoint_id:
+        q = q.filter(ModelEndpoint.id == endpoint_id)
+    return owner_filter(q, ModelEndpoint, owner).first()
+
+
 def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     router = APIRouter(tags=["research"])
 
@@ -344,14 +368,13 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
 
         if body.endpoint_id:
             from src.database import SessionLocal
-            from src.database import ModelEndpoint
             from src.endpoint_resolver import normalize_base, build_chat_url, build_headers
             db = SessionLocal()
             try:
-                ep = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.id == body.endpoint_id,
-                    ModelEndpoint.is_enabled == True,
-                ).first()
+                # Owner-scoped: never resolve another user's private endpoint
+                # (and its decrypted api_key / internal base_url). A scoped miss
+                # reads as 404 so the endpoint's existence isn't revealed.
+                ep = _owned_enabled_endpoint(db, user, body.endpoint_id)
                 if not ep:
                     raise HTTPException(404, "Endpoint not found or disabled")
                 base = normalize_base(ep.base_url)
@@ -382,13 +405,14 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                 ep_url, ep_model, ep_headers = resolve_endpoint("chat")
             if not ep_url:
                 from src.database import SessionLocal
-                from src.database import ModelEndpoint
                 from src.endpoint_resolver import normalize_base, build_chat_url, build_headers
                 db = SessionLocal()
                 try:
-                    ep = db.query(ModelEndpoint).filter(
-                        ModelEndpoint.is_enabled == True,
-                    ).first()
+                    # Owner-scoped first-enabled fallback: the caller's own rows
+                    # + legacy null-owner shared rows only — never borrow another
+                    # user's private endpoint/api_key. Same fix as the
+                    # /api/v1/chat fallback (webhook_routes._first_enabled_endpoint).
+                    ep = _owned_enabled_endpoint(db, user)
                     if ep:
                         base = normalize_base(ep.base_url)
                         ep_url = build_chat_url(base)

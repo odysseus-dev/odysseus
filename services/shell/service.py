@@ -125,10 +125,11 @@ class ShellService:
                 asyncio.create_task(_reader(proc.stderr, "stderr")),
             ]
 
+            loop = asyncio.get_running_loop()
             finished = 0
-            deadline = asyncio.get_event_loop().time() + timeout
+            deadline = loop.time() + timeout
             while finished < 2:
-                remaining = deadline - asyncio.get_event_loop().time()
+                remaining = deadline - loop.time()
                 if remaining <= 0:
                     raise asyncio.TimeoutError()
 

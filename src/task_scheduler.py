@@ -6,10 +6,15 @@ import logging
 import re
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow() -> datetime:
+    """Return naive UTC for task DB fields without using deprecated APIs."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # ── Shared TTL cache (singleflight) ────────────────────────────────────────
@@ -73,7 +78,6 @@ def compute_next_run(schedule: str, scheduled_time: str,
     the legacy behavior (`scheduled_time` interpreted as naive-UTC wall clock)
     is preserved so existing tasks don't shift.
     """
-    from datetime import timezone
     try:
         from zoneinfo import ZoneInfo
     except ImportError:
@@ -89,12 +93,12 @@ def compute_next_run(schedule: str, scheduled_time: str,
     # "now" used for comparisons. When tz is set we work entirely in local tz
     # and convert to UTC at the end. Otherwise we use naive UTC (legacy).
     if tz is not None:
-        now_utc = after or datetime.utcnow()
+        now_utc = after or _utcnow()
         if now_utc.tzinfo is None:
             now_utc = now_utc.replace(tzinfo=timezone.utc)
         now = now_utc.astimezone(tz)
     else:
-        now = after or datetime.utcnow()
+        now = after or _utcnow()
 
     def _to_utc_naive(dt: datetime) -> datetime:
         """Convert a tz-aware datetime to naive UTC for DB storage."""
@@ -122,9 +126,18 @@ def compute_next_run(schedule: str, scheduled_time: str,
     if not scheduled_time:
         return None
 
-    # Parse HH:MM
+    # Parse HH:MM — fail closed on malformed input (no colon, non-numeric,
+    # out-of-range) the same way an invalid cron expression does above, so a
+    # bad value like "9" or "9am" returns None instead of raising IndexError/
+    # ValueError out of the create route (a 500) or the scheduler loop.
     parts = scheduled_time.split(":")
-    hour, minute = int(parts[0]), int(parts[1])
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError("hour/minute out of range")
+    except (ValueError, IndexError):
+        logger.warning(f"Invalid scheduled_time '{scheduled_time}'")
+        return None
 
     if schedule == "daily":
         candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
@@ -146,7 +159,13 @@ def compute_next_run(schedule: str, scheduled_time: str,
         try:
             candidate = now.replace(day=day, hour=hour, minute=minute, second=0, microsecond=0)
         except ValueError:
-            candidate = now
+            # Short month: clamp to its last day (mirrors the next-month
+            # clamp below) instead of silently skipping the whole month.
+            if now.month == 12:
+                last = now.replace(year=now.year + 1, month=1, day=1) - timedelta(days=1)
+            else:
+                last = now.replace(month=now.month + 1, day=1) - timedelta(days=1)
+            candidate = last.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if candidate <= now:
             if now.month == 12:
                 next_month = now.replace(year=now.year + 1, month=1, day=1)
@@ -192,7 +211,6 @@ HOUSEKEEPING_DEFAULTS = {
     "draft_email_replies":  {"name": "Email AI Auto Reply",      "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Tidy Email (Replies)", "AI Auto Reply"]},
     "extract_email_events": {"name": "Email Calendar Events",    "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */1 * * *", "ship_paused": True, "legacy_names": ["Email → Calendar Events"]},
     "classify_events":      {"name": "Calendar Classify Events", "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 6,18 * * *", "ship_paused": True, "legacy_names": ["Classify Calendar Events"]},
-    "mark_email_boundaries": {"name": "Email Mark Boundaries",   "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Mark Email Boundaries"]},
     "check_email_urgency":   {"name": "Email Tags",               "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 * * * *", "ship_paused": True, "old_cron_expressions": ["*/15 * * * *"], "legacy_names": ["Email Triage", "Urgent Email"]},
     "audit_skills":          {"name": "Skills Audit",             "trigger_type": "event", "trigger_event": "skill_added", "trigger_count": 5, "schedule": None, "scheduled_time": None, "cron_expression": None, "legacy_names": ["Audit Skills"]},
 }
@@ -200,6 +218,7 @@ HOUSEKEEPING_DEFAULTS = {
 RETIRED_HOUSEKEEPING_ACTIONS = frozenset({
     "tidy_calendar",
     "tidy_email_inbox",
+    "mark_email_boundaries",
 })
 
 
@@ -275,7 +294,7 @@ class TaskScheduler:
                 run.status = "aborted"
                 run.error = message
                 run.result = run.result or message
-                run.finished_at = datetime.utcnow()
+                run.finished_at = _utcnow()
                 db.commit()
                 return True
             finally:
@@ -296,7 +315,7 @@ class TaskScheduler:
             "task_id": task_id,
             "owner": owner,
             "body": (body[:500] + "…") if body and len(body) > 500 else body,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": _utcnow().isoformat() + "Z",
         })
         # Cap at 50 to avoid unbounded growth
         if len(self._pending_notifications) > 50:
@@ -342,7 +361,7 @@ class TaskScheduler:
                     TaskRun.status.in_(("running", "queued"))
                 ).all()
                 if stale:
-                    now = datetime.utcnow()
+                    now = _utcnow()
                     for r in stale:
                         old_status = r.status or "running"
                         r.status = "aborted"
@@ -363,7 +382,7 @@ class TaskScheduler:
             from core.database import SessionLocal as _SL, ScheduledTask as _ST
             db = _SL()
             try:
-                now = datetime.utcnow()
+                now = _utcnow()
                 overdue = db.query(_ST).filter(
                     _ST.status == "active",
                     _ST.next_run.isnot(None),
@@ -565,7 +584,7 @@ class TaskScheduler:
                         _ST.next_run.isnot(None),
                     ).order_by(_ST.next_run.asc()).first()
                     if next_run and next_run[0]:
-                        delta = (next_run[0] - datetime.utcnow()).total_seconds()
+                        delta = (next_run[0] - _utcnow()).total_seconds()
                         sleep_for = max(1.0, min(60.0, delta))
                 finally:
                     _db.close()
@@ -577,7 +596,7 @@ class TaskScheduler:
         from core.database import SessionLocal, ScheduledTask
         db = SessionLocal()
         try:
-            now = datetime.utcnow()
+            now = _utcnow()
             async with self._executing_lock:
                 # Snapshot under the lock so we don't race with mid-iteration adds.
                 executing_snapshot = set(self._executing)
@@ -613,7 +632,7 @@ class TaskScheduler:
             run = TaskRun(
                 id=run_id,
                 task_id=task_id,
-                started_at=datetime.utcnow(),
+                started_at=_utcnow(),
                 status="queued",
                 result="Queued — waiting for a free slot…",
             )
@@ -656,7 +675,7 @@ class TaskScheduler:
                 stale = db.query(TaskRun).filter(TaskRun.id == run_id).first()
                 if stale and stale.status == "queued":
                     stale.status = "skipped"
-                    stale.finished_at = datetime.utcnow()
+                    stale.finished_at = _utcnow()
                     stale.error = f"Task no longer active (status={task.status if task else 'deleted'})"
                     db.commit()
                 return
@@ -667,7 +686,7 @@ class TaskScheduler:
             run = db.query(TaskRun).filter(TaskRun.id == run_id).first()
             if run:
                 run.status = "running"
-                run.started_at = datetime.utcnow()
+                run.started_at = _utcnow()
                 run.result = "Starting…"
                 db.commit()
             else:
@@ -676,7 +695,7 @@ class TaskScheduler:
                 run = TaskRun(
                     id=run_id,
                     task_id=task.id,
-                    started_at=datetime.utcnow(),
+                    started_at=_utcnow(),
                     status="running",
                     result="Starting…",
                 )
@@ -718,7 +737,7 @@ class TaskScheduler:
                 delay_seconds = int(getattr(defer, "delay_seconds", 20 * 60) or (20 * 60))
                 if count > 2:
                     delay_seconds = max(delay_seconds, 40 * 60)
-                when = datetime.utcnow() + timedelta(seconds=delay_seconds)
+                when = _utcnow() + timedelta(seconds=delay_seconds)
                 logger.info(
                     "Task '%s' deferred for %ss after %s quiet-window hit(s): %s",
                     task.name, delay_seconds, count, defer,
@@ -736,13 +755,13 @@ class TaskScheduler:
                     run_obj.status = "aborted"
                     run_obj.error = "Stopped by user"
                     run_obj.result = run_obj.result or "Stopped by user"
-                    run_obj.finished_at = datetime.utcnow()
-                task.last_run = datetime.utcnow()
+                    run_obj.finished_at = _utcnow()
+                task.last_run = _utcnow()
                 if (task.trigger_type or "schedule") == "schedule":
                     task.next_run = compute_next_run(
                         task.schedule, task.scheduled_time,
                         task.scheduled_day, task.scheduled_date,
-                        after=datetime.utcnow(),
+                        after=_utcnow(),
                         cron_expression=task.cron_expression,
                         tz_name=_resolve_task_timezone(db, task),
                     )
@@ -759,13 +778,13 @@ class TaskScheduler:
                 logger.info(f"Task '{task.name}' no-op: {noop}")
                 run.status = "skipped"
                 run.result = str(noop)
-                run.finished_at = datetime.utcnow()
-                task.last_run = datetime.utcnow()
+                run.finished_at = _utcnow()
+                task.last_run = _utcnow()
                 if (task.trigger_type or "schedule") == "schedule":
                     task.next_run = compute_next_run(
                         task.schedule, task.scheduled_time,
                         task.scheduled_day, task.scheduled_date,
-                        after=datetime.utcnow(),
+                        after=_utcnow(),
                         cron_expression=task.cron_expression,
                         tz_name=_resolve_task_timezone(db, task),
                     )
@@ -774,10 +793,10 @@ class TaskScheduler:
                 db.commit()
                 return
 
-            run.finished_at = datetime.utcnow()
+            run.finished_at = _utcnow()
 
             # Update task
-            task.last_run = datetime.utcnow()
+            task.last_run = _utcnow()
             task.run_count = (task.run_count or 0) + 1
             self._task_defer_counts.pop(task_id, None)
 
@@ -786,7 +805,7 @@ class TaskScheduler:
                 task.next_run = compute_next_run(
                     task.schedule, task.scheduled_time,
                     task.scheduled_day, task.scheduled_date,
-                    after=datetime.utcnow(),
+                    after=_utcnow(),
                     cron_expression=task.cron_expression,
                     tz_name=_resolve_task_timezone(db, task),
                 )
@@ -860,17 +879,17 @@ class TaskScheduler:
                 if run_obj and run_obj.status in ("running", "success"):
                     run_obj.status = "error"
                     run_obj.error = err_text[:2000]
-                    run_obj.finished_at = datetime.utcnow()
+                    run_obj.finished_at = _utcnow()
                 # Advance next_run even on failure so a broken task doesn't
                 # busy-loop the scheduler every tick with a stale past date.
                 task_obj = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
                 if task_obj and (task_obj.trigger_type or "schedule") == "schedule":
-                    task_obj.last_run = datetime.utcnow()
+                    task_obj.last_run = _utcnow()
                     try:
                         task_obj.next_run = compute_next_run(
                             task_obj.schedule, task_obj.scheduled_time,
                             task_obj.scheduled_day, task_obj.scheduled_date,
-                            after=datetime.utcnow(),
+                            after=_utcnow(),
                             cron_expression=task_obj.cron_expression,
                             tz_name=_resolve_task_timezone(db, task_obj),
                         )
@@ -895,13 +914,13 @@ class TaskScheduler:
                         if _r and _r.status in ("running", "queued"):
                             _r.status = "aborted"
                             _r.error = f"commit_failed: {type(commit_err).__name__}: {commit_err}"[:2000]
-                            _r.finished_at = datetime.utcnow()
+                            _r.finished_at = _utcnow()
                         _t = _recover_db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
                         if _t and (_t.trigger_type or "schedule") == "schedule":
                             # Push next_run forward 5min as a safe stall so the
                             # scheduler doesn't immediately re-dispatch.
-                            _t.next_run = datetime.utcnow() + _td(minutes=5)
-                            _t.last_run = datetime.utcnow()
+                            _t.next_run = _utcnow() + _td(minutes=5)
+                            _t.last_run = _utcnow()
                         _recover_db.commit()
                     except Exception as recover_err:
                         logger.error("Task %s recovery commit ALSO failed: %s", task_id, recover_err)
@@ -925,7 +944,6 @@ class TaskScheduler:
     # Activity log + reminder email already carry everything the user needs.
     _SILENT_ACTIONS = frozenset({
         "check_email_urgency",
-        "mark_email_boundaries",
         "learn_sender_signatures",
         "summarize_emails",
         "draft_email_replies",
@@ -944,7 +962,6 @@ class TaskScheduler:
         "draft_email_replies",
         "extract_email_events",
         "classify_events",
-        "mark_email_boundaries",
         "learn_sender_signatures",
         "check_email_urgency",
         "test_skills",
@@ -962,10 +979,10 @@ class TaskScheduler:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 return True
-            task_type = task.task_type or "llm"
+            task_type = getattr(task, "task_type", "") or "llm"
             if task_type != "action":
                 return True
-            return (task.action or "") in self._MODEL_BACKED_ACTIONS
+            return (getattr(task, "action", "") or "") in self._MODEL_BACKED_ACTIONS
         finally:
             db.close()
 
@@ -975,7 +992,7 @@ class TaskScheduler:
         if "check-in" in (task.name or "").lower():
             return
         # Built-in housekeeping noise stays out of the chat.
-        if (task.action or "") in self._SILENT_ACTIONS:
+        if (getattr(task, "action", "") or "") in self._SILENT_ACTIONS:
             return
         from src.assistant_log import log_to_assistant
         log_to_assistant(
@@ -1001,6 +1018,10 @@ class TaskScheduler:
             kwargs = {"owner": task.owner, "task_name": task.name, "progress_cb": _progress}
             if task.action in ("run_script", "run_local", "ssh_command") and task.prompt:
                 kwargs["script" if task.action in ("run_script", "run_local") else "command"] = task.prompt
+            # cookbook_serve carries its JSON config in task.prompt — feed it
+            # through as `command` so action_cookbook_serve can json.loads it.
+            elif task.action == "cookbook_serve" and task.prompt:
+                kwargs["command"] = task.prompt
             result, success = await action_fn(**kwargs)
             return result, success
         except TaskNoop:
@@ -1078,14 +1099,14 @@ class TaskScheduler:
             if tz_name:
                 from zoneinfo import ZoneInfo
                 from datetime import timezone, timedelta
-                now = datetime.utcnow().replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name))
+                now = _utcnow().replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name))
             else:
                 from datetime import timedelta
-                now = datetime.utcnow()
+                now = _utcnow()
             time_str = now.strftime("%A, %B %d %Y, %H:%M")
         except Exception:
             from datetime import timedelta
-            now = datetime.utcnow()
+            now = _utcnow()
             time_str = now.strftime("%H:%M UTC")
 
         raw = {}
@@ -1288,8 +1309,8 @@ class TaskScheduler:
                 endpoint_url=endpoint_url,
                 model=model,
                 owner=task.owner,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=_utcnow(),
+                updated_at=_utcnow(),
             )
             db.add(sess)
             task.session_id = session_id
@@ -1318,12 +1339,12 @@ class TaskScheduler:
             if tz_name:
                 from zoneinfo import ZoneInfo
                 from datetime import timezone
-                now_local = datetime.utcnow().replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name))
+                now_local = _utcnow().replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name))
                 time_str = now_local.strftime("%A, %B %d %Y, %H:%M %Z")
             else:
-                time_str = datetime.utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
+                time_str = _utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
         except Exception:
-            time_str = datetime.utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
+            time_str = _utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
         system_prompt = f"Current time: {time_str}\n\n{system_prompt}"
 
         # Compute tool filter from CrewMember.enabled_tools if set
@@ -1391,6 +1412,12 @@ class TaskScheduler:
         from core.database import Session as DbSession, ChatMessage, CrewMember
 
         output = task.output_target or "session"
+        if (
+            output == "session"
+            and (getattr(task, "task_type", "") or "") == "action"
+            and (getattr(task, "action", "") or "") in self._SILENT_ACTIONS
+        ):
+            return
         if output.startswith("mcp__"):
             await self._deliver_via_mcp(output, task, result)
             return
@@ -1430,8 +1457,8 @@ class TaskScheduler:
                 endpoint_url=endpoint_url or "",
                 model=model_name or "",
                 owner=task.owner,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=_utcnow(),
+                updated_at=_utcnow(),
             )
             db.add(sess)
             task.session_id = session_id
@@ -1454,7 +1481,7 @@ class TaskScheduler:
             session_id=session_id,
             role="user",
             content=user_content,
-            timestamp=datetime.utcnow(),
+            timestamp=_utcnow(),
             meta_data=msg_meta,
         )
         assistant_msg = ChatMessage(
@@ -1462,7 +1489,7 @@ class TaskScheduler:
             session_id=session_id,
             role="assistant",
             content=result or "",
-            timestamp=datetime.utcnow(),
+            timestamp=_utcnow(),
             meta_data=msg_meta,
         )
         db.add(user_msg)
@@ -1710,8 +1737,8 @@ class TaskScheduler:
                 endpoint_url=endpoint_url,
                 model=model,
                 owner=task.owner,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=_utcnow(),
+                updated_at=_utcnow(),
             )
             db.add(sess)
             task.session_id = session_id
@@ -1927,11 +1954,30 @@ class TaskScheduler:
                 task.task_type = "action"
                 task.action = action
 
+            from core.database import TaskRun
+            retired_ids = [
+                row[0] for row in db.query(ScheduledTask.id).filter(
+                    ScheduledTask.owner == owner,
+                    ScheduledTask.task_type == "action",
+                    ScheduledTask.action.in_(list(RETIRED_HOUSEKEEPING_ACTIONS)),
+                ).all()
+            ]
+            if retired_ids:
+                db.query(TaskRun).filter(TaskRun.task_id.in_(retired_ids)).delete(synchronize_session=False)
             retired_count = db.query(ScheduledTask).filter(
                 ScheduledTask.owner == owner,
                 ScheduledTask.task_type == "action",
                 ScheduledTask.action.in_(list(RETIRED_HOUSEKEEPING_ACTIONS)),
             ).delete(synchronize_session=False)
+            # Sweep orphan TaskRun rows (parent task deleted previously) so
+            # retired actions stop showing in Activity. Only runs when at least
+            # one live task exists — avoids wiping run history on a fresh DB.
+            try:
+                live_ids = {row[0] for row in db.query(ScheduledTask.id).all()}
+                if live_ids:
+                    db.query(TaskRun).filter(~TaskRun.task_id.in_(list(live_ids))).delete(synchronize_session=False)
+            except Exception:
+                pass
             existing_actions = {
                 row[0] for row in db.query(ScheduledTask.action).filter(
                     ScheduledTask.owner == owner,
@@ -1992,7 +2038,7 @@ class TaskScheduler:
                         task.cron_expression = defs["cron_expression"]
                         task.next_run = compute_next_run(
                             defs["schedule"], defs["scheduled_time"], None, None,
-                            after=datetime.utcnow(), cron_expression=defs["cron_expression"],
+                            after=_utcnow(), cron_expression=defs["cron_expression"],
                             tz_name=_resolve_task_timezone(db, task),
                         )
                         normalized = True
@@ -2027,12 +2073,14 @@ class TaskScheduler:
                             task.next_run = compute_next_run(
                                 task.schedule, task.scheduled_time,
                                 task.scheduled_day, task.scheduled_date,
-                                after=datetime.utcnow(), cron_expression=task.cron_expression,
+                                after=_utcnow(), cron_expression=task.cron_expression,
                                 tz_name=_resolve_task_timezone(db, task),
                             )
                 # Built-in housekeeping/action jobs should not create browser
                 # task notifications; user AI/research tasks still can.
                 task.notifications_enabled = False
+                if (task.output_target or "session") == "session":
+                    task.output_target = defs.get("output_target", "none")
             seeded = []
             for action, defs in HOUSEKEEPING_DEFAULTS.items():
                 if action in existing_actions:
@@ -2042,7 +2090,7 @@ class TaskScheduler:
                 if trigger_type == "schedule":
                     next_run = compute_next_run(
                         defs["schedule"], defs["scheduled_time"], None, None,
-                        after=datetime.utcnow(), cron_expression=defs["cron_expression"],
+                        after=_utcnow(), cron_expression=defs["cron_expression"],
                     )
                 ships_paused = bool(defs.get("ship_paused"))
                 task = ScheduledTask(
@@ -2063,17 +2111,19 @@ class TaskScheduler:
                     # AI/email/calendar tasks opt into a paused starting state
                     # via ship_paused so users can enable them deliberately.
                     status="paused" if ships_paused else "active",
-                    output_target="session",
+                    output_target=defs.get("output_target", "none"),
                     notifications_enabled=False,
                 )
                 db.add(task)
                 seeded.append(action)
             if seeded or renamed or removed_dupes or retired_count:
-                db.commit()
                 logger.info(
                     "Housekeeping defaults for %s: seeded=%s renamed=%s deduped=%s retired=%s",
                     owner, seeded, sorted(set(renamed)), sorted(set(removed_dupes)), retired_count,
                 )
+            # Always commit — the orphan-run sweep above may have produced
+            # pending deletes even when no defaults changed.
+            db.commit()
         except Exception as e:
             logger.warning(f"Failed to create default tasks: {e}")
         finally:
@@ -2179,8 +2229,8 @@ class TaskScheduler:
                 is_important=True,
                 mode="agent",
                 folder="Assistant",
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow(),
+                created_at=_utcnow(),
+                updated_at=_utcnow(),
             )
             db.add(sess)
             db.flush()

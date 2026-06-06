@@ -34,6 +34,7 @@ from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPExc
 from fastapi.responses import FileResponse
 
 from src.llm_core import llm_call_async
+from src.upload_limits import read_upload_limited
 
 from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
@@ -48,13 +49,14 @@ from routes.email_helpers import (
     _EMAIL_REPLY_SYS_PROMPT_BASE, _POOL_HOOKS,
     SendEmailRequest, ExtractStyleRequest,
     ATTACHMENTS_DIR, COMPOSE_UPLOADS_DIR, SCHEDULED_DB,
-    attachment_extract_dir,
+    attachment_extract_dir, _email_cache_owner_clause,
 )
 from routes.email_pollers import _start_poller
 
 logger = logging.getLogger(__name__)
 
 ODYSSEUS_MAIL_ORIGIN = "odysseus-ui"
+EMAIL_COMPOSE_UPLOAD_MAX_BYTES = 25 * 1024 * 1024
 
 
 def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[str]:
@@ -320,6 +322,20 @@ def _apply_odysseus_headers(msg, kind: str | None = None, ref_id: str | None = N
         msg["X-Odysseus-Kind"] = re.sub(r"[^A-Za-z0-9_.-]", "-", kind)[:64]
     if ref_id:
         msg["X-Odysseus-Ref"] = re.sub(r"[^A-Za-z0-9_.:-]", "-", ref_id)[:128]
+
+
+def _envelope_recipients(*fields: str) -> list:
+    """Extract bare SMTP envelope addresses from one or more To/Cc/Bcc header
+    strings. A naive `field.split(",")` corrupts display names that contain a
+    comma (e.g. `"Smith, John" <john@corp.com>`, the canonical Outlook form):
+    it splits into `"Smith` and `John" <john@corp.com>`, breaking delivery.
+    email.utils.getaddresses parses the address grammar correctly."""
+    out = []
+    for _name, addr in email.utils.getaddresses([f for f in fields if f]):
+        addr = (addr or "").strip()
+        if addr:
+            out.append(addr)
+    return out
 
 
 def _md_to_email_html(text: str) -> str:
@@ -918,9 +934,11 @@ def setup_email_routes():
                     import sqlite3 as _sql3
                     _c = _sql3.connect(SCHEDULED_DB)
                     placeholders = ",".join("?" * len(ids))
+                    owner_clause, owner_params = _email_cache_owner_clause(owner)
                     rows = _c.execute(
-                        f"SELECT message_id, summary FROM email_summaries WHERE message_id IN ({placeholders})",
-                        ids,
+                        f"SELECT message_id, summary FROM email_summaries "
+                        f"WHERE message_id IN ({placeholders}) AND {owner_clause}",
+                        (*ids, *owner_params),
                     ).fetchall()
                     _c.close()
                     by_id = {r[0]: r[1] for r in rows}
@@ -1203,15 +1221,16 @@ def setup_email_routes():
             try:
                 import sqlite3 as _sql3
                 _c = _sql3.connect(SCHEDULED_DB)
+                owner_clause, owner_params = _email_cache_owner_clause(owner)
                 _row = _c.execute(
-                    "SELECT summary FROM email_summaries WHERE message_id = ?",
-                    (message_id.strip(),),
+                    f"SELECT summary FROM email_summaries WHERE message_id = ? AND {owner_clause}",
+                    (message_id.strip(), *owner_params),
                 ).fetchone()
                 if _row:
                     cached_summary = _row[0]
                 _row2 = _c.execute(
-                    "SELECT reply FROM email_ai_replies WHERE message_id = ?",
-                    (message_id.strip(),),
+                    f"SELECT reply FROM email_ai_replies WHERE message_id = ? AND {owner_clause}",
+                    (message_id.strip(), *owner_params),
                 ).fetchone()
                 if _row2:
                     cached_ai_reply = _apply_email_style_mechanics(_extract_reply(_row2[0] or ""))
@@ -1866,16 +1885,12 @@ def setup_email_routes():
     @router.post("/compose-upload")
     async def compose_upload(file: UploadFile = File(...), owner: str = Depends(require_owner)):
         """Upload a file for attaching to a compose email. Returns a token."""
-        # 25MB cap (matches typical SMTP limits w/ base64 overhead)
-        MAX_BYTES = 25 * 1024 * 1024
         try:
             # Sanitize filename and generate a unique token
             safe_name = re.sub(r"[^\w\s\-.]", "_", file.filename or "file").strip()
             token = f"{uuid.uuid4().hex}_{safe_name}"
             filepath = COMPOSE_UPLOADS_DIR / token
-            content = await file.read()
-            if len(content) > MAX_BYTES:
-                raise HTTPException(413, f"Attachment exceeds {MAX_BYTES // (1024*1024)}MB limit")
+            content = await read_upload_limited(file, EMAIL_COMPOSE_UPLOAD_MAX_BYTES, "Attachment")
             with open(filepath, "wb") as f:
                 f.write(content)
             return {
@@ -1943,11 +1958,7 @@ def setup_email_routes():
             outer.attach(body_container)
             _attach_compose_uploads(outer, attachments)
 
-        recipients = [r.strip() for r in to.split(",") if r.strip()]
-        if cc:
-            recipients.extend([r.strip() for r in cc.split(",") if r.strip()])
-        if bcc:
-            recipients.extend([r.strip() for r in bcc.split(",") if r.strip()])
+        recipients = _envelope_recipients(to, cc, bcc)
 
         _send_smtp_message(cfg, cfg["from_address"], recipients, outer.as_string())
 
@@ -1979,6 +1990,15 @@ def setup_email_routes():
             # minute doesn't trip the past-time guard.
             if parsed_at < now_utc:
                 return {"success": False, "error": "send_at must be in the future"}
+            # Normalize to naive UTC before storing: the poller selects due
+            # rows with a lexicographic string compare against a naive
+            # datetime.utcnow().isoformat(), so storing the raw client string
+            # makes "+02:00" schedules fire hours late, negative offsets fire
+            # hours early, and a "Z" suffix compares after the fractional
+            # seconds of the poller timestamp.
+            if parsed_at.tzinfo:
+                parsed_at = parsed_at.astimezone(_tz.utc).replace(tzinfo=None)
+            send_at = parsed_at.isoformat()
 
             sid = _uuid.uuid4().hex[:16]
             conn = sqlite3.connect(SCHEDULED_DB)
@@ -2152,12 +2172,9 @@ def setup_email_routes():
             outer.attach(body_container)
             _attach_compose_uploads(outer, req.attachments)
 
-        # Build recipient list
-        recipients = [r.strip() for r in req.to.split(",") if r.strip()]
-        if req.cc:
-            recipients.extend([r.strip() for r in req.cc.split(",") if r.strip()])
-        if req.bcc:
-            recipients.extend([r.strip() for r in req.bcc.split(",") if r.strip()])
+        # Build recipient list (parse the address grammar so display names with
+        # commas don't get split into broken envelope addresses)
+        recipients = _envelope_recipients(req.to, req.cc, req.bcc)
 
         # Serialize what the background task needs so the request object can be GC'd
         outer_bytes = outer.as_bytes()
@@ -2535,10 +2552,10 @@ def setup_email_routes():
                     _c = _sql3.connect(SCHEDULED_DB)
                     _c.execute("""
                         INSERT OR REPLACE INTO email_summaries
-                        (message_id, uid, folder, subject, sender, summary, model_used, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        (message_id, owner, uid, folder, subject, sender, summary, model_used, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        mid, data.get("uid", ""), data.get("folder", ""),
+                        mid, owner, data.get("uid", ""), data.get("folder", ""),
                         subject, sender, content, model, datetime.utcnow().isoformat(),
                     ))
                     _c.commit()
@@ -2573,9 +2590,10 @@ def setup_email_routes():
             if message_id:
                 try:
                     _c = _sql3.connect(SCHEDULED_DB)
+                    owner_clause, owner_params = _email_cache_owner_clause(owner)
                     _row = _c.execute(
-                        "SELECT reply, model_used FROM email_ai_replies WHERE message_id = ?",
-                        (message_id,),
+                        f"SELECT reply, model_used FROM email_ai_replies WHERE message_id = ? AND {owner_clause}",
+                        (message_id, *owner_params),
                     ).fetchone()
                     _c.close()
                     if _row and _row[0]:
@@ -2777,9 +2795,9 @@ def setup_email_routes():
                     _c = _sql3.connect(SCHEDULED_DB)
                     _c.execute("""
                         INSERT OR REPLACE INTO email_ai_replies
-                        (message_id, uid, folder, reply, model_used, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (message_id, source_uid, source_folder, reply, model, datetime.utcnow().isoformat()))
+                        (message_id, owner, uid, folder, reply, model_used, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (message_id, owner, source_uid, source_folder, reply, model, datetime.utcnow().isoformat()))
                     _c.commit()
                     _c.close()
                 except Exception as e:

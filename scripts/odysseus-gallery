@@ -59,6 +59,14 @@ def _serialize_image(i: "GalleryImage") -> dict:
     }
 
 
+def _album_image_count(album) -> int:
+    images = getattr(album, "images", None)
+    try:
+        return len(images) if images is not None else 0
+    except TypeError:
+        return 0
+
+
 def cmd_list(args):
     db = SessionLocal()
     try:
@@ -100,7 +108,7 @@ def cmd_albums(args):
     try:
         rows = db.query(GalleryAlbum).order_by(GalleryAlbum.name.asc()).all()
         emit([
-            {"id": a.id, "name": a.name, "image_count": len(a.images)}
+            {"id": a.id, "name": a.name, "image_count": _album_image_count(a)}
             for a in rows
         ], args)
     finally:

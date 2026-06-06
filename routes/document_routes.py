@@ -15,6 +15,21 @@ from src.auth_helpers import get_current_user
 logger = logging.getLogger(__name__)
 
 
+def _aggregate_language_facets(lang_rows):
+    """Sum document counts per display language for the library facet.
+
+    NULL-language and explicit "text" rows share the "text" bucket (the
+    language filter treats them as one), so they must be ADDED. The old dict
+    comprehension keyed both to "text", silently overwriting one group and
+    undercounting the facet versus what the filter actually returns.
+    """
+    out = {}
+    for lang, cnt in lang_rows:
+        key = lang or "text"
+        out[key] = out.get(key, 0) + cnt
+    return out
+
+
 
 from routes.document_helpers import (
     DocumentCreate, DocumentUpdate, DocumentPatch,
@@ -138,7 +153,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         with a `pdf_source` marker so the viewer renders the pages without
         overlays.
         """
-        from src.constants import UPLOAD_DIR
         from src.pdf_forms import has_form_fields, extract_fields
         from src.pdf_form_doc import (
             save_field_sidecar,
@@ -258,7 +272,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             )
             lang_q = _owner_session_filter(lang_q, user)
             lang_rows = lang_q.group_by(Document.language).all()
-            languages = {lang or "text": cnt for lang, cnt in lang_rows}
+            languages = _aggregate_language_facets(lang_rows)
 
             # Session count (owner-filtered)
             sc_q = (
@@ -649,8 +663,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         try:
             # Verify ownership before listing versions
             doc = db.query(Document).filter(Document.id == doc_id).first()
-            if doc:
-                _verify_doc_owner(db, doc, user)
+            if not doc:
+                raise HTTPException(404, "Document not found")
+            _verify_doc_owner(db, doc, user)
             versions = db.query(DocumentVersion).filter(
                 DocumentVersion.document_id == doc_id
             ).order_by(DocumentVersion.version_number.desc()).all()
@@ -673,8 +688,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         try:
             # Verify ownership
             doc = db.query(Document).filter(Document.id == doc_id).first()
-            if doc:
-                _verify_doc_owner(db, doc, user)
+            if not doc:
+                raise HTTPException(404, "Document not found")
+            _verify_doc_owner(db, doc, user)
             ver = db.query(DocumentVersion).filter(
                 DocumentVersion.document_id == doc_id,
                 DocumentVersion.version_number == num,
@@ -935,7 +951,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         any wrong values before triggering the actual download.
         """
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, load_field_sidecar
-        from src.constants import UPLOAD_DIR
 
         user = get_current_user(request)
         db = SessionLocal()
@@ -1000,7 +1015,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         Frontend overlays HTML form controls at those positions.
         """
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, load_field_sidecar
-        from src.constants import UPLOAD_DIR
 
         user = get_current_user(request)
         db = SessionLocal()
@@ -1068,7 +1082,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         frontend overlays HTML form inputs on top)."""
         from fastapi.responses import Response
         from src.pdf_form_doc import find_source_upload_id
-        from src.constants import UPLOAD_DIR
 
         user = get_current_user(request)
         db = SessionLocal()
@@ -1117,7 +1130,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         import json
         import fitz
         from src.pdf_form_doc import find_source_upload_id
-        from src.constants import UPLOAD_DIR
         from src.document_processor import _resolve_vl_model, _load_vl_settings
         from src.llm_core import llm_call_async
 
@@ -1260,7 +1272,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from starlette.background import BackgroundTask
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, parse_markdown_annotations
         from src.pdf_forms import fill_fields, stamp_annotations
-        from src.constants import UPLOAD_DIR
         from core.database import Signature
 
         # Track temp files for this request so they get unlinked AFTER
@@ -1355,7 +1366,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from starlette.background import BackgroundTask
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, load_field_sidecar, parse_markdown_annotations
         from src.pdf_forms import fill_fields, stamp_signatures, stamp_annotations
-        from src.constants import UPLOAD_DIR
         from core.database import Signature
 
         _to_unlink: list[str] = []
@@ -1497,7 +1507,6 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             load_field_sidecar, parse_markdown_annotations,
         )
         from src.pdf_forms import fill_fields, stamp_signatures, stamp_annotations
-        from src.constants import UPLOAD_DIR
         from core.database import Signature
         # COMPOSE_UPLOADS_DIR lives in email_routes — re-derive here so we
         # don't import from a routes file (cycle-prone). Same env override

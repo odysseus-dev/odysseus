@@ -13,8 +13,9 @@ import re
 import time
 import logging
 from typing import AsyncGenerator, List, Dict, Optional, Set
+from urllib.parse import urlparse
 
-from src.llm_core import stream_llm, stream_llm_with_fallback
+from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
 from src.model_context import estimate_tokens
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
@@ -176,6 +177,7 @@ TOOL_SECTIONS = {
 <shell command>
 ```
 Run any shell command. Output is returned to you. Use for: installing packages, checking files, git, curl, system info, etc.
+NEVER use bash to create or change files — no `>`/`>>` redirects, no heredocs (`cat > f << 'EOF'`), no `tee`, `sed -i`, `awk -i`, no `python -c` that writes. To CREATE or fully rewrite a file use `write_file`; to change part of an existing file use `edit_file`. Those show a diff and are the ONLY allowed way to write files. (bash is for read-only inspection: `ls`, `cat` to READ, `grep`, `git status`/`git diff`, builds, installs.)
 For LONG-running commands (package installs, pip/npm, ffmpeg, model downloads, training, builds — anything that may take more than ~20s), make the FIRST line `#!bg` to run it in the BACKGROUND. You get a job id back immediately and are automatically re-invoked with the full output when it finishes — so you never block the chat waiting. Example:
 ```bash
 #!bg
@@ -219,6 +221,12 @@ Read a file and return its contents.""",
 ```
 Write content to a file. First line is the path, rest is the content.""",
 
+    "edit_file": """\
+```edit_file
+{"path": "<file path>", "old_string": "<exact text to replace>", "new_string": "<replacement>", "replace_all": false}
+```
+Edit an EXISTING file by exact string replacement. PREFER this over bash (sed/echo/redirects) for changing files — it shows a before/after diff. `old_string` must match the file exactly and be unique unless `replace_all` is true. Use write_file to create a new file.""",
+
     "create_document": """\
 ```create_document
 <title>
@@ -235,7 +243,7 @@ old text to find
 new replacement text
 <<<END>>>
 ```
-PREFERRED way to change an existing document. Find exact text and replace it. Multiple FIND/REPLACE blocks per call OK. Use this for any edit smaller than a full rewrite — adding a function, fixing a bug, tweaking a section, renaming things. **If a document is open in the editor, treat it as the user's current context: don't ask which file they mean, and don't create a new one — just edit_document the active one.** Do NOT re-send the whole file with update_document for small changes.""",
+Edit a document OPEN IN THE EDITOR PANEL — NOT a file on disk. For files on disk (home folder, project files, any real path like ~/sweden.txt) use `edit_file` instead. Find exact text and replace it. Multiple FIND/REPLACE blocks per call OK. Use for any edit smaller than a full rewrite. **If a document is open in the editor, treat it as the user's current context: don't ask which file they mean, and don't create a new one — just edit_document the active one.** Do NOT re-send the whole file with update_document for small changes.""",
 
     "update_document": """\
 ```update_document
@@ -329,6 +337,7 @@ If the user asks for a reminder/alarm before the event, pass `reminder_minutes` 
     "ui_control": "- ```ui_control``` — Control the UI: toggle tools on/off, OPEN PANELS, open email reply drafts, switch models, change themes. Commands: `toggle <name> on/off` (names: bash/shell, web/search, research, incognito, document_editor/documents), `open_panel <name>` (panels: documents, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook), `open_email_reply <uid> <folder> <reply|reply-all|ai-reply>` (opens an email compose document, does NOT send), `set_mode agent/chat`, `switch_model <name>`, `set_theme <preset>`, `create_theme <name> <bg> <fg> <panel> <border> <accent>` (optional key=val for advanced colors AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false). \"open documents\" / \"open library\" / \"show gallery\" / \"open inbox\" / \"open notes\" / \"open cookbook\" all map to `open_panel <name>`. Theme presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute.",
     "list_served_models": "- ```list_served_models``` — Show what the Cookbook (LLM-serving subsystem) is currently running. NO args. Use this for ANY 'what's running' / 'what's serving' / 'show my cookbook' / 'is anything up' query. DO NOT shell out (`ps aux`, `docker ps`, etc.) — this tool is the source of truth. Failed serve tasks include recent logs plus diagnosis/retry suggestions; use those suggestions to call `serve_model` again with an adjusted command when appropriate.",
     "stop_served_model": "- ```stop_served_model``` — Stop a running model server. Args (JSON): {\"session_id\": \"<from list_served_models>\"}. Use for 'kill my cookbook' / 'stop the model' / 'shut down vLLM'.",
+    "tail_serve_output": "- ```tail_serve_output``` — Read the actual tmux stderr/traceback of a CURRENTLY failing cookbook task. Args (JSON): {\"session_id\": \"<from list_served_models>\", \"tail\": 150?}. **Use ONLY after** you just launched something via `serve_model` AND `list_served_models` reports YOUR new task as `crashed`/`error`. DO NOT use it on old stopped/completed download tasks (they're historical noise — won't predict whether a new launch succeeds). DO NOT call it before launching a fresh attempt. When you do call it, bump `tail` to 400+ only if the visible error references 'see root cause above'.",
     "download_model": "- ```download_model``` — Download a HuggingFace model. Args (JSON): {\"repo_id\": \"Qwen/Qwen3-8B\", \"host\": \"user@gpu-box\"?, \"include\": \"*Q4_K_M*\"?}.",
     "serve_model": "- ```serve_model``` — Start serving a model with vLLM / SGLang / llama.cpp / Ollama / Diffusers. Args (JSON): {\"repo_id\": \"...\", \"cmd\": \"vllm serve ... --port 8000\" or \"python3 -m sglang.launch_server ... --port 30000\" or \"python3 scripts/diffusion_server.py --model diffusers/stable-diffusion-xl-1.0-inpainting-0.1 --port 8100\", \"host\": \"user@gpu-box\"?}. For image/inpaint/diffusion models, use the `scripts/diffusion_server.py` command exactly. After launch, call `list_served_models`; if it returns a diagnosis with an adjusted command, retry with that command.",
     "list_downloads": "- ```list_downloads``` — Show in-progress HuggingFace model downloads (filters Cookbook tasks/status to downloads only). NO args. Use for 'what's downloading' / 'show my downloads' / 'check download progress'.",
@@ -374,7 +383,8 @@ def get_builtin_overrides() -> dict:
         from src.settings import get_setting
         ov = get_setting("builtin_tool_overrides", {})
         return ov if isinstance(ov, dict) else {}
-    except Exception:
+    except Exception as e:
+        logger.warning('Failed to load builtin tool overrides: %s', e)
         return {}
 
 
@@ -459,13 +469,14 @@ _API_HOSTS = frozenset([
     "api.together.xyz", "api.fireworks.ai",
     "api.perplexity.ai", "api.x.ai",
     "ollama.com", "api.venice.ai",
+    "api.githubcopilot.com",
     # Local OpenAI-compatible endpoints (llama.cpp, vLLM, LM Studio, etc.).
     # Without these, `_is_api_model` falls back to keyword sniffing on the
     # model name, so well-behaved local servers don't get native tool
     # schemas and the agent silently degrades to fenced-block parsing.
     "localhost", "127.0.0.1", "host.docker.internal",
 ])
-_MCP_KEYWORDS = frozenset(["browse", "browser", "website", "calendar", "event", "email",
+_MCP_KEYWORDS = frozenset(["mcp", "browse", "browser", "website", "calendar", "event", "email",
                            "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed"])
 _ADMIN_SCHEMA_NAMES = frozenset([
     "manage_session", "manage_skills", "manage_tasks",
@@ -474,6 +485,45 @@ _ADMIN_SCHEMA_NAMES = frozenset([
     "ask_teacher", "list_models", "search_chats",
 ])
 _TOOL_SELECTION_TIMEOUT_SECONDS = 1.5
+
+
+def _is_ollama_openai_compat_url(endpoint_url: str) -> bool:
+    """Return True for local Ollama's OpenAI-compatible /v1 surface.
+
+    Ollama's /v1 endpoint accepts the OpenAI chat shape, but model-level tool
+    streaming is uneven. Some local models terminate after a token when schemas
+    are present. Keep native schemas opt-in via ModelEndpoint.supports_tools.
+    """
+    try:
+        parsed = urlparse(endpoint_url or "")
+    except Exception:
+        return False
+    path = (parsed.path or "").rstrip("/")
+    return parsed.port == 11434 and (path == "/v1" or path.startswith("/v1/"))
+
+
+def _endpoint_lookup_keys(endpoint_url: str) -> List[str]:
+    """Candidate ModelEndpoint.base_url keys for a runtime chat URL."""
+    raw = (endpoint_url or "").strip()
+    keys: List[str] = []
+
+    def add(value: str):
+        value = (value or "").strip()
+        if value and value not in keys:
+            keys.append(value)
+        trimmed = value.rstrip("/")
+        if trimmed and trimmed not in keys:
+            keys.append(trimmed)
+        if trimmed and f"{trimmed}/" not in keys:
+            keys.append(f"{trimmed}/")
+
+    add(raw)
+    try:
+        from src.endpoint_resolver import normalize_base
+        add(normalize_base(raw))
+    except Exception:
+        pass
+    return keys
 
 # Admin tool keywords — if the last user message contains any of these, include admin tools
 _ADMIN_KEYWORDS = [
@@ -571,8 +621,7 @@ def _build_system_prompt(
         # Skill index is user-editable (name + description), so it must never
         # live in the trusted system role and is NOT cached. Always recompute
         # when the cache hits.
-        from src.agent_loop import _build_base_prompt as _bbp_recompute
-        _, _skill_index_block = _bbp_recompute(
+        _, _skill_index_block = _build_base_prompt(
             disabled_tools, mcp_mgr, needs_admin, relevant_tools,
             mcp_disabled_map=mcp_disabled_map, compact=compact,
         )
@@ -596,28 +645,11 @@ def _build_system_prompt(
 
     set_active_model(model)
 
-    # Current date/time — every request. Models default to their
-    # training-cutoff date when "today" is asked otherwise (was
-    # rendering April 2026 dates as "today" when the actual date is
-    # May 19, 2026). System TZ-local so calendar/email date math
-    # matches what the user sees.
+    # Current date/time for every agent request. This is user-local when the
+    # browser provided timezone headers, with a server-local fallback.
     try:
-        from datetime import datetime as _dt, timezone as _tz
-        _now = _dt.now().astimezone()
-        _utc = _dt.now(_tz.utc)
-        _off = _now.strftime('%z')  # e.g. +0900
-        _off_fmt = (f"{_off[:3]}:{_off[3:]}" if _off else "+00:00")
-        agent_prompt = (
-            f"## Current date and time\n"
-            f"Today is {_now.strftime('%A, %B %-d, %Y')} ({_now.strftime('%Y-%m-%d')}). "
-            f"Local time is {_now.strftime('%-I:%M %p')} ({_now.strftime('%Z')}, UTC{_off_fmt}); "
-            f"current UTC time is {_utc.strftime('%H:%M')}. "
-            f"Use this for any 'today'/'tomorrow'/'this week' reasoning — do NOT "
-            f"infer the date from training data or from event timestamps.\n"
-            f"When scheduling a task (manage_tasks), scheduled_time is in UTC: "
-            f"subtract the offset above from the user's local time "
-            f"(local {_now.strftime('%H:%M')} = {_utc.strftime('%H:%M')} UTC right now).\n\n"
-        ) + agent_prompt
+        from src.user_time import current_datetime_prompt
+        agent_prompt = current_datetime_prompt() + agent_prompt
     except Exception:
         pass
 
@@ -1356,6 +1388,7 @@ async def stream_agent_loop(
     owner: Optional[str] = None,
     relevant_tools: Optional[Set[str]] = None,
     fallbacks: Optional[List[tuple]] = None,
+    workspace: Optional[str] = None,
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -1456,18 +1489,18 @@ async def stream_agent_loop(
     _model_lc = (model or "").lower()
     # Step 1: per-endpoint override (set at registration time from the
     # serve command — `--enable-auto-tool-choice` flips it on. UI can
-    # also toggle per endpoint). NULL = unknown, fall through to the
-    # keyword heuristic + host check.
+    # also toggle per endpoint). NULL = unknown; for local Ollama /v1 we
+    # default to fenced tools, otherwise fall through to keyword + host checks.
     _endpoint_supports: Optional[bool] = None
     try:
         from core.database import SessionLocal as _SL, ModelEndpoint as _ME
         _db = _SL()
         try:
-            _ep = _db.query(_ME).filter(_ME.base_url == endpoint_url).first()
-            if not _ep and endpoint_url:
-                _u = endpoint_url.rstrip("/")
-                _ep = _db.query(_ME).filter(_ME.base_url == _u).first() or \
-                      _db.query(_ME).filter(_ME.base_url == _u + "/").first()
+            _ep = None
+            for _key in _endpoint_lookup_keys(endpoint_url):
+                _ep = _db.query(_ME).filter(_ME.base_url == _key).first()
+                if _ep is not None:
+                    break
             if _ep is not None:
                 _endpoint_supports = _ep.supports_tools
         finally:
@@ -1494,9 +1527,24 @@ async def stream_agent_loop(
     _model_no_tools = any(kw in _model_lc for kw in (
         "deepseek-r1",
     ))
+    # Native Ollama endpoints (/api/chat) handle tool schemas differently from
+    # the OpenAI-compat path. Models like gemma4, qwen3.5, ministral respond to
+    # tool schemas by emitting a single native tool_call token then stopping,
+    # rather than writing a fenced block — the agent loop sees 1 token and no
+    # recognised tool, so the round terminates immediately (issue #1567).
+    # Unless the endpoint is explicitly marked supports_tools=True by the user
+    # (via the endpoint settings toggle), treat Ollama-native as text-only so
+    # the fenced-block path is used instead of native function calling.
+    _is_ollama_native = _is_ollama_native_url(endpoint_url or "")
+    _ollama_openai_compat = _is_ollama_openai_compat_url(endpoint_url or "")
     if _endpoint_supports is True:
         _is_api_model = True
-    elif _endpoint_supports is False or _model_no_tools:
+    elif (
+        _endpoint_supports is False
+        or _model_no_tools
+        or _is_ollama_native
+        or _ollama_openai_compat
+    ):
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
@@ -1507,6 +1555,27 @@ async def stream_agent_loop(
         compact=_is_api_model,
         owner=owner,
     )
+    if workspace:
+        # PREPEND (not append) so it dominates the large base prompt — appended
+        # at the end, small models ignored it and asked the user for code. The
+        # folder IS the project; the agent must explore it, not ask.
+        _ws_note = (
+            f"## ACTIVE WORKSPACE — READ FIRST\n"
+            f"The user is working in this folder: {workspace}\n"
+            f"It IS the project. bash/python run with cwd set here and "
+            f"read_file/write_file are confined to it (paths outside are rejected).\n"
+            f"When the user says \"the code\" / \"this project\" / \"the workspace\" "
+            f"or asks to review/find/edit something WITHOUT a path, they mean THIS "
+            f"folder. Do NOT ask the user for code or a path, and do NOT read a file "
+            f"literally named \"workspace\". ALWAYS start by exploring it yourself: "
+            f"run `bash` → `git ls-files` (or `ls -R`) to see the files, then "
+            f"read_file the relevant ones by path RELATIVE to the workspace."
+        )
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = _ws_note + "\n\n" + (messages[0].get("content") or "")
+        else:
+            messages.insert(0, {"role": "system", "content": _ws_note})
+        logger.info("[workspace] active for this turn: %s", workspace)
     prep_timings["prompt_build"] = time.time() - _t2
 
     _t3 = time.time()
@@ -1591,11 +1660,38 @@ async def stream_agent_loop(
     _tool_type_counts: collections.Counter = collections.Counter()
     _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
     _force_answer = False  # set by loop-breaker → next round runs with NO tools
+    # Supervisor: how many times we've nudged the model after it announced
+    # an action without emitting the tool call. Capped to prevent a model
+    # that *can't* call the tool from looping forever.
+    _intent_nudge_count = 0
+    _MAX_INTENT_NUDGES = 2
+
+    # "I said I would, then didn't" detector. The pattern that breaks debug
+    # loops on weak models (deepseek-v4-flash mid-2026): the model writes
+    # "Let me tail the output to see the error" and then ends the turn with
+    # no tool_calls. The intent is sincere but the function call gets dropped.
+    # Match the common phrasings + an action verb that maps to an available
+    # tool, so we don't nudge on harmless transitional text like "let me
+    # know what you think".
+    _INTENT_RE = re.compile(
+        r"(?:^|\n)\s*(?:let me|i'?ll|i will|going to|let's)\s+"
+        r"(?:tail|check|investigate|look at|see|tail|read|fetch|inspect|"
+        r"verify|diagnose|examine|debug|capture|grab|pull|view|run|call|"
+        r"trigger|launch|start|kick off|stop|kill|restart|adopt|serve|"
+        r"register|adopt|list|search|find|query|hit|ping|test)"
+        r"\b[^.\n]{0,140}",
+        re.IGNORECASE,
+    )
 
     # Document streaming state (persists across rounds)
     _doc_acc = ""          # accumulated tool-call JSON arguments
     _doc_opened = False    # whether doc_stream_open was sent
     _doc_last_len = 0      # last content length sent
+
+    # Set when the loop runs out of rounds while the agent was still actively
+    # using tools — i.e. it was cut off, not finished. Drives a "Continue" event
+    # so the user can resume instead of the turn silently stalling.
+    _exhausted_rounds = False
 
     for round_num in range(1, max_rounds + 1):
         round_response = ""
@@ -1937,6 +2033,46 @@ async def stream_agent_loop(
                     # never re-verify an unchanged state in a loop.
                     _effectful_used = False
                     continue
+            # ── Intent-without-action supervisor ─────────────────────
+            # Catch "Let me tail the output" / "I'll check the logs" /
+            # "Let me investigate" patterns where the model announces an
+            # action but emits no tool_call. The bug shows up most on
+            # smaller models trained to verbalize plans before acting.
+            # We inject one sharp nudge ("you said you would X — call the
+            # actual tool now") and loop again. Capped at
+            # _MAX_INTENT_NUDGES so a model that genuinely cannot use the
+            # tool doesn't pin us in a forever loop.
+            _intent_text = _THINK_RE.sub("", cleaned_round).strip()
+            _intent_match = _INTENT_RE.search(_intent_text) if _intent_text else None
+            # Only nudge when the round REALLY looks like an unfinished
+            # promise: short response (<400 chars), no fenced code/answer,
+            # and an action-intent phrase was matched. Long answers that
+            # happen to contain "let me know" are not stalls.
+            _looks_like_promise = (
+                _intent_match is not None
+                and len(_intent_text) < 400
+                and "```" not in _intent_text
+                and _intent_nudge_count < _MAX_INTENT_NUDGES
+            )
+            if _looks_like_promise:
+                _intent_nudge_count += 1
+                _matched_phrase = _intent_match.group(0).strip()
+                logger.info(f"[agent] intent-without-action nudge #{_intent_nudge_count} on round {round_num}: {_matched_phrase!r}")
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        f"You just wrote: \"{_matched_phrase}\" — but ended the "
+                        "turn without making the actual tool call. The user can "
+                        "see you announced the action but didn't run it, which "
+                        "is the most frustrating thing you can do. "
+                        "DO IT NOW: emit the actual function call this turn. "
+                        "If you decided not to do it after all, say so plainly in "
+                        "one sentence instead of restating the plan."
+                    ),
+                })
+                # Visible signal in the stream so the user knows we caught it.
+                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                continue
             break  # no tools — done
 
         # ── Loop-breaker (Terminus-style stall detector) ──────────────
@@ -2066,6 +2202,7 @@ async def stream_agent_loop(
                         disabled_tools=disabled_tools,
                         owner=owner,
                         progress_cb=_push_progress,
+                        workspace=workspace,
                     )
                 finally:
                     # Sentinel so the drainer knows to stop.
@@ -2181,6 +2318,9 @@ async def stream_agent_loop(
             if result.get("images"):
                 img = result["images"][0]
                 tool_output_data["screenshot"] = f"data:{img['mimeType']};base64,{img['data']}"
+            # Forward a file-write diff for inline before/after rendering
+            if "diff" in result:
+                tool_output_data["diff"] = result["diff"]
             yield f'data: {json.dumps(tool_output_data)}\n\n'
 
             # Native document tools open in the editor + carry the REAL doc id.
@@ -2208,6 +2348,19 @@ async def stream_agent_loop(
                 _anchor = f"\n\n[Open in Deep Research](#research-{_rsid})\n"
                 yield 'data: ' + json.dumps({"delta": _anchor}) + '\n\n'
 
+            # Same pattern for notes: when manage_notes creates a note
+            # and returns note_id, drop a `[View note](#note-<id>)` link
+            # into the stream so chatRenderer's click handler routes to
+            # the new openNote() in notes.js — opens the notes panel and
+            # scrolls/flashes the matching card. Without this, the agent
+            # would write "View note" as a phrase with no target.
+            _nid = result.get("note_id")
+            if _nid and block.tool_type == "manage_notes":
+                _title = (result.get("note_title") or "").strip()
+                _label = f"View note: {_title}" if _title else "View note"
+                _anchor = f"\n\n[{_label}](#note-{_nid})\n"
+                yield 'data: ' + json.dumps({"delta": _anchor}) + '\n\n'
+
             # Save for history persistence
             tool_event = {
                 "round": round_num,
@@ -2223,6 +2376,10 @@ async def stream_agent_loop(
             if result.get("doc_id"):
                 tool_event["doc_id"] = result["doc_id"]
                 tool_event["doc_title"] = result.get("title", "")
+            # Persist the file-write/edit diff so it re-renders on reload — without
+            # this the diff shows live but vanishes from saved history.
+            if result.get("diff"):
+                tool_event["diff"] = result["diff"]
             tool_events.append(tool_event)
             if block.tool_type in _VERIFIER_EFFECTFUL_TOOLS:
                 _effectful_used = True
@@ -2247,6 +2404,20 @@ async def stream_agent_loop(
 
         # Separator in accumulated response
         full_response += "\n\n"
+    else:
+        # The for-loop completed every allowed round WITHOUT an early `break`
+        # (a `break` fires on "done", budget, or error). Reaching this `else`
+        # means the agent kept working until it ran out of rounds — so offer
+        # Continue instead of stopping silently. This catches ALL exhaustion
+        # paths, including a verifier `continue` on the final round (the old
+        # bottom-of-loop flag missed those).
+        _exhausted_rounds = True
+
+    # If the loop hit the round cap while still working, tell the client so it
+    # can show a "Continue" affordance instead of the turn just stopping.
+    if _exhausted_rounds:
+        logger.info("[agent] round cap (%d) reached mid-task — emitting rounds_exhausted", max_rounds)
+        yield f'data: {json.dumps({"type": "rounds_exhausted", "rounds": max_rounds})}\n\n'
 
     # If the response is completely empty and no tools were executed,
     # yield a fallback message so the user is not left hanging.

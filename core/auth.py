@@ -241,6 +241,18 @@ class AuthManager:
                 revoked += 1
         if revoked:
             self._save_sessions()
+        # Also revoke API bearer tokens owned by this user. The bearer auth
+        # path authenticates straight against ApiToken rows and never
+        # re-checks that the owner still exists, so leaving the rows behind
+        # would let a deleted user keep full API access indefinitely.
+        try:
+            from core.database import get_db_session, ApiToken
+            with get_db_session() as db:
+                removed = db.query(ApiToken).filter(ApiToken.owner == username).delete()
+            if removed:
+                logger.info(f"Revoked {removed} API token(s) owned by deleted user '{username}'")
+        except Exception:
+            logger.warning(f"Failed to revoke API tokens for deleted user '{username}'")
         logger.info(f"Deleted user '{username}' (by {requesting_user}); revoked {revoked} active session(s)")
         return True
 

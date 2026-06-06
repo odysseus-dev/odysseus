@@ -492,12 +492,17 @@ def google_pse_search(query: str, count: int = 10, time_filter: Optional[str] = 
         if response.status_code == 429:
             raise RateLimitError("Google PSE rate limit hit")
         response.raise_for_status()
-        data = response.json()
     except httpx.RequestError as e:
         error_logger.error(f"Google PSE search failed: {e}")
         return []
     except RateLimitError as e:
         error_logger.error(str(e))
+        return []
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        error_logger.error(f"Google PSE returned invalid JSON: {e}")
         return []
 
     results = []
@@ -544,12 +549,17 @@ def tavily_search(query: str, count: int = 10, time_filter: Optional[str] = None
         if response.status_code == 429:
             raise RateLimitError("Tavily rate limit hit")
         response.raise_for_status()
-        data = response.json()
     except httpx.RequestError as e:
         error_logger.error(f"Tavily search failed: {e}")
         return []
     except RateLimitError as e:
         error_logger.error(str(e))
+        return []
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        error_logger.error(f"Tavily returned invalid JSON: {e}")
         return []
 
     results = []
@@ -599,12 +609,17 @@ def serper_search(query: str, count: int = 10, time_filter: Optional[str] = None
         if response.status_code == 429:
             raise RateLimitError("Serper rate limit hit")
         response.raise_for_status()
-        data = response.json()
     except httpx.RequestError as e:
         error_logger.error(f"Serper search failed: {e}")
         return []
     except RateLimitError as e:
         error_logger.error(str(e))
+        return []
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        error_logger.error(f"Serper returned invalid JSON: {e}")
         return []
 
     results = []

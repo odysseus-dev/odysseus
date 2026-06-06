@@ -59,3 +59,8 @@ def test_empty_and_nonstring_secret_values_untouched():
 def test_exact_name_matches():
     out = scrub_settings({"password": "p", "token": "t", "secret": "s", "apikey": "a", "key": "k"})
     assert all(v == "" for v in out.values()), out
+
+
+def test_non_object_settings_return_empty_mapping():
+    assert scrub_settings(["not", "settings"]) == {}
+    assert scrub_settings("not settings") == {}

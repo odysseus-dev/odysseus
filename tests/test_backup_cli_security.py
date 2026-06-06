@@ -30,6 +30,17 @@ def _verify_args(path: Path):
     return SimpleNamespace(path=str(path), pretty=False)
 
 
+def test_snapshot_rejects_output_inside_data_dir(tmp_path, monkeypatch):
+    backup = _load_backup_cli()
+    repo = tmp_path / "repo"
+    data = repo / "data"
+    data.mkdir(parents=True)
+    _patch_repo(backup, monkeypatch, repo)
+
+    with pytest.raises(SystemExit):
+        backup._reject_output_inside_data(data / "self.tar.gz")
+
+
 def test_restore_rejects_symlink_escape(tmp_path, monkeypatch):
     backup = _load_backup_cli()
     repo = tmp_path / "repo"

@@ -116,3 +116,10 @@ def test_push_unknown_calendar_reports_not_found():
     cal = FakeCalendar("https://different/")
     res = push_event([cal], CAL_ID, _ev())
     assert res["ok"] is False and "not found" in res["error"]
+
+
+def test_push_missing_uid_reports_input_error_before_remote_lookup():
+    cal = FakeCalendar(REMOTE_URL, existing=FakeEvent())
+    res = push_event([cal], CAL_ID, _ev(uid=""))
+    assert res["ok"] is False and "uid" in res["error"]
+    assert cal._existing.saved is False

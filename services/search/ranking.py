@@ -2,17 +2,59 @@
 
 import re
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+_AGE_FORMATS = ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S")
+
+
+def _utcnow_naive() -> datetime:
+    """Naive UTC 'now'. Matches the naive, UTC-style published dates parsed below,
+    and is safe on Python 3.14 where ``datetime.utcnow()`` is removed (#1116)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def recency_score(age_str: Optional[str], now: Optional[datetime] = None) -> float:
+    """Score how recent a result is: 1.0 for <=7 days old, 0.0 for >=30 days.
+
+    The age is measured against UTC, not local time. The previous code used
+    ``datetime.now()`` (local) against UTC-style published dates, so the age was
+    skewed by the host's UTC offset; it was also a latent crash once neighbouring
+    code moves to timezone-aware datetimes (#1116). ``now`` is injectable for tests.
+    """
+    if not age_str:
+        return 0.0
+    dt = None
+    for fmt in _AGE_FORMATS:
+        try:
+            dt = datetime.strptime(age_str, fmt)
+            break
+        except Exception:
+            dt = None
+    if not dt:
+        return 0.0
+    now = now or _utcnow_naive()
+    days_old = (now - dt).days
+    if days_old <= 7:
+        return 1.0
+    if days_old >= 30:
+        return 0.0
+    return (30 - days_old) / 23
+
 
 _NEWS_HINTS = {"news", "nyheter", "headlines", "breaking", "latest", "today", "idag"}
 _SPORTS_HINTS = {
     "sport", "sports", "soccer", "football", "hockey", "nba", "nfl", "mlb",
     "fifa", "world cup", "championship", "quarterfinal", "eliminates",
 }
+# Word-boundary match so "sport" does not fire inside "transport"/"passport"
+# and a domain like "transport.gov" is not mistaken for a sports site.
+_SPORTS_HINT_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(h) for h in _SPORTS_HINTS) + r")\b"
+)
 _LOW_VALUE_NEWS_DOMAINS = {
     "facebook.com", "www.facebook.com", "sports.yahoo.com", "yahoo.com",
     "www.yahoo.com", "msn.com", "www.msn.com",
@@ -39,7 +81,7 @@ def rank_search_results(query: str, results: List[dict]) -> List[dict]:
     query_terms = [t.lower() for t in re.findall(r"\b\w+\b", query)]
     query_lc = query.lower()
     is_news_query = any(term in _NEWS_HINTS for term in query_terms)
-    is_sports_query = any(hint in query_lc for hint in _SPORTS_HINTS)
+    is_sports_query = bool(_SPORTS_HINT_RE.search(query_lc))
 
     def title_score(title: str) -> float:
         if not title:
@@ -68,24 +110,6 @@ def rank_search_results(query: str, results: List[dict]) -> List[dict]:
             return 0.7
         return 0.4
 
-    def recency_score(age_str: Optional[str]) -> float:
-        if not age_str:
-            return 0.0
-        for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
-            try:
-                dt = datetime.strptime(age_str, fmt)
-                break
-            except Exception:
-                dt = None
-        if not dt:
-            return 0.0
-        days_old = (datetime.now() - dt).days
-        if days_old <= 7:
-            return 1.0
-        if days_old >= 30:
-            return 0.0
-        return (30 - days_old) / 23
-
     def news_quality_adjustment(title: str, snippet: str, url: str) -> float:
         if not is_news_query:
             return 0.0
@@ -98,7 +122,7 @@ def rank_search_results(query: str, results: List[dict]) -> List[dict]:
             adjustment += 0.4
         if netloc in _LOW_VALUE_NEWS_DOMAINS:
             adjustment -= 0.8
-        if not is_sports_query and any(hint in text or hint in netloc for hint in _SPORTS_HINTS):
+        if not is_sports_query and (_SPORTS_HINT_RE.search(text) or _SPORTS_HINT_RE.search(netloc)):
             adjustment -= 1.5
         # A country/news query should not rank a page whose title/snippet barely
         # mentions the country above actual news pages for that country.

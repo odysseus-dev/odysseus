@@ -15,6 +15,7 @@ import os
 import sys
 import types
 import asyncio
+import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -64,8 +65,13 @@ def _ensure_stub(name: str, **attrs):
     return mod
 
 
-_ensure_stub("core.database", SessionLocal=MagicMock())
-_ensure_stub("core.auth", AuthManager=MagicMock())
+@pytest.fixture(autouse=True)
+def _event_loop_stubs(monkeypatch):
+    db = _ensure_stub("core.database", SessionLocal=MagicMock())
+    auth = _ensure_stub("core.auth", AuthManager=MagicMock())
+    monkeypatch.setitem(sys.modules, "core.database", db)
+    monkeypatch.setitem(sys.modules, "core.auth", auth)
+
 
 from routes.auth_routes import setup_auth_routes, LoginRequest
 

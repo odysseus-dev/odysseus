@@ -1058,4 +1058,39 @@ def setup_shell_routes() -> APIRouter:
             return {"ok": True, "output": stdout.decode()[-200:]}
         return {"ok": False, "error": stderr.decode()[-300:]}
 
+    @router.post("/api/cookbook/rebuild-engine")
+    async def rebuild_engine(request: Request):
+        """Clear the cached llama.cpp build so the next serve recompiles.
+
+        Admin only — this removes the Cookbook-managed ``~/bin/llama-server``
+        symlink and ``~/llama.cpp/build`` directory, locally or on the selected
+        remote server. It installs and downloads nothing; the next llama.cpp
+        serve rebuilds from source and picks up CUDA/HIP if a toolchain is now
+        present. This is the missing "force a fresh GPU build" lever for hosts
+        stuck on a CPU-only llama-server.
+        """
+        _require_admin(request)
+        from routes.cookbook_helpers import _llama_cpp_rebuild_cmd
+        body = await request.json()
+        engine = str(body.get("engine") or "llamacpp").strip()
+        if engine != "llamacpp":
+            return {"ok": False, "error": f"Unsupported engine: {engine}"}
+        host = str(body.get("remote_host") or "").strip()
+        ssh_port = body.get("ssh_port")
+        cmd = _llama_cpp_rebuild_cmd()
+        try:
+            argv = (_ssh_base_argv(host, ssh_port) + [cmd]) if host else ["bash", "-lc", cmd]
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=30)
+        except asyncio.TimeoutError:
+            return {"ok": False, "error": "Rebuild-engine command timed out."}
+        if proc.returncode == 0:
+            return {"ok": True, "output": out.decode("utf-8", errors="replace")[-400:]}
+        return {"ok": False, "error": err.decode("utf-8", errors="replace")[-400:]}
+
     return router

@@ -19,14 +19,15 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants (kept here — sub-modules import from here)
 # ---------------------------------------------------------------------------
-MAX_AGENT_ROUNDS = 20
+MAX_AGENT_ROUNDS = 50
 SHELL_TIMEOUT = 60
 PYTHON_TIMEOUT = 30
 MAX_OUTPUT_CHARS = 10_000
 MAX_READ_CHARS = 20_000
 
 # Tool types that trigger execution
-TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file",
+TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file",
+             "grep", "glob", "ls",
              "create_document", "update_document", "edit_document",
              "search_chats",
              "chat_with_model", "create_session", "list_sessions",
@@ -80,6 +81,11 @@ def get_mcp_manager():
 # Helpers (kept here — used by sub-modules)
 # ---------------------------------------------------------------------------
 def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
+    # Callers treat the result as text, so always return a string: coerce a
+    # non-string (None -> "", otherwise str(...)) instead of returning it raw,
+    # which would just move the crash downstream.
+    if not isinstance(text, str):
+        text = "" if text is None else str(text)
     if len(text) > limit:
         return text[:limit] + f"\n... (truncated, {len(text)} chars total)"
     return text

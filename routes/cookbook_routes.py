@@ -38,7 +38,8 @@ from routes.cookbook_helpers import (
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
-    _ollama_bind_from_cmd, _pip_install_fallback_chain, _venv_safe_local_pip_install_cmd,
+    _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
+    _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -294,15 +295,6 @@ def setup_cookbook_routes() -> APIRouter:
         safe_chmod(key_path.with_suffix(".pub"), 0o644)
         return {"ok": True, "public_key": _read_cookbook_public_key()}
 
-    def _user_shell_path_bootstrap() -> list[str]:
-        return [
-            'ODYSSEUS_USER_SHELL="${SHELL:-}"',
-            'if [ -n "$ODYSSEUS_USER_SHELL" ] && [ -x "$ODYSSEUS_USER_SHELL" ]; then',
-            '  ODYSSEUS_USER_PATH="$("$ODYSSEUS_USER_SHELL" -ic \'printf "__ODYSSEUS_PATH__%s\\n" "$PATH"\' 2>/dev/null | sed -n \'s/^__ODYSSEUS_PATH__//p\' | tail -n 1 || true)"',
-            '  if [ -n "$ODYSSEUS_USER_PATH" ]; then export PATH="$ODYSSEUS_USER_PATH:$PATH"; fi',
-            'fi',
-        ]
-
     def _needs_binary(cmd: str, binary: str) -> bool:
         return bool(re.search(rf"(^|[\s;&|()]){re.escape(binary)}($|[\s;&|()])", cmd or ""))
 
@@ -443,8 +435,8 @@ def setup_cookbook_routes() -> APIRouter:
         lines.append('export PATH="$HOME/.local/bin:$PATH"')
         # When Odysseus runs from a venv (e.g. native macOS install), put its bin
         # on PATH so the tmux shell finds the bundled `hf`/`python3` without an
-        # activated venv. Local bash runs only — meaningless over SSH/Windows.
-        if not req.remote_host and req.platform != "windows":
+        # activated venv. Local bash runs only — meaningless over SSH.
+        if not req.remote_host:
             lines.append(_local_tooling_path_export(sys.executable))
         # Best-effort install hf CLI (always). hf_transfer (Rust parallel downloader)
         # is fast but flaky on large files — it tends to crash near the end at high
@@ -809,6 +801,145 @@ def setup_cookbook_routes() -> APIRouter:
         finally:
             db.close()
 
+    def _pick_free_port_for_ollama(
+        remote: str | None, ssh_port: str | None, start_port: int, max_offset: int
+    ) -> int | None:
+        """Return the first free port in [start_port, start_port+max_offset] on
+        the target host. Used to pick a real bind for `ollama serve` so we
+        don't reattach to an external systemd ollama (or other listener) the
+        Cookbook Stop button can't kill."""
+        import socket
+        if remote:
+            # Probe over SSH. Bash's /dev/tcp gives a portable "is anything
+            # listening" check without requiring ss/netstat/nmap.
+            ssh_base = ["ssh", "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=no"]
+            if ssh_port and str(ssh_port) != "22":
+                if not _SSH_PORT_RE.match(str(ssh_port)):
+                    return None
+                ssh_base.extend(["-p", str(ssh_port)])
+            host_arg = remote
+            if not _REMOTE_HOST_RE.match(host_arg):
+                return None
+            probe_ports = " ".join(str(start_port + i) for i in range(max_offset + 1))
+            script = (
+                f"for p in {probe_ports}; do "
+                "if ! (exec 3<>/dev/tcp/127.0.0.1/$p) 2>/dev/null; then "
+                "echo $p; exit 0; fi; exec 3<&-; exec 3>&-; done; exit 1"
+            )
+            try:
+                import subprocess
+                r = subprocess.run(
+                    ssh_base + [host_arg, script],
+                    capture_output=True, text=True, timeout=8,
+                )
+                if r.returncode == 0:
+                    out = (r.stdout or "").strip().splitlines()
+                    if out and out[0].isdigit():
+                        return int(out[0])
+            except Exception:
+                return None
+            return None
+        # Local: just try to connect.
+        for off in range(max_offset + 1):
+            p = start_port + off
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.25)
+                try:
+                    s.connect(("127.0.0.1", p))
+                except (ConnectionRefusedError, socket.timeout, OSError):
+                    return p
+        return None
+
+    def _auto_register_llm_endpoint(req: ServeRequest, remote: str | None) -> str | None:
+        """Register a freshly-served LLM as a model endpoint so it appears in the
+        model picker without a manual /setup step — the text-model sibling of
+        _auto_register_image_endpoint.
+
+        Cookbook serve commands launch an OpenAI-compatible server (llama.cpp's
+        llama-server, vLLM, SGLang, or Ollama) on a known port. We point an
+        endpoint at that server's /v1; the picker auto-discovers the model id by
+        probing /v1/models and dims the endpoint until the server is reachable,
+        so registering immediately (before the server finishes loading) is safe.
+        """
+        import re
+        from core.database import SessionLocal, ModelEndpoint
+
+        # Port: ordered fallbacks so we match whatever the user actually
+        # asked for, not a hardcoded default:
+        #   1. explicit `--port N`  (vllm / sglang / llama-server)
+        #   2. `OLLAMA_HOST=host:port`  (the way Ollama specifies its bind)
+        #   3. fallback by backend (11434 ollama / 8080 llama.cpp)
+        # Previously the OLLAMA_HOST form was silently ignored and we
+        # registered every Ollama endpoint at 11434 — even if the user
+        # set OLLAMA_HOST=0.0.0.0:11435 to avoid colliding with an
+        # existing systemd Ollama, the registered endpoint pointed at
+        # the OLD port and showed as offline.
+        port_match = re.search(r'--port\s+(\d+)', req.cmd)
+        ollama_host_match = re.search(r'OLLAMA_HOST=[^\s]*?:(\d+)', req.cmd)
+        if port_match:
+            port = int(port_match.group(1))
+        elif ollama_host_match:
+            port = int(ollama_host_match.group(1))
+        elif "ollama" in req.cmd:
+            port = 11434
+        else:
+            port = 8080  # llama.cpp's llama-server default — the Apple Silicon path
+
+        # Determine host (mirrors the image path: SSH alias for remote serves).
+        # For local serves while Odysseus runs inside Docker, "localhost"
+        # resolves to the container itself — useless. Use host.docker.internal
+        # which compose maps to the actual host, matching what /setup adds
+        # for Ollama by hand.
+        if remote:
+            host = remote.split("@")[-1] if "@" in remote else remote
+        else:
+            from routes.model_routes import _docker_host_gateway_reachable
+            host = "host.docker.internal" if _docker_host_gateway_reachable() else "localhost"
+
+        base_url = f"http://{host}:{port}/v1"
+
+        short_name = req.repo_id.split("/")[-1] if "/" in req.repo_id else req.repo_id
+        display_name = short_name or "Local model"
+
+        # If the serve command opts models into OpenAI tool-calling, record it so
+        # agent_loop trusts emitted tool_calls instead of the name heuristic.
+        supports_tools = True if "--enable-auto-tool-choice" in req.cmd else None
+
+        db = SessionLocal()
+        try:
+            # Reuse an endpoint already pointed at this URL instead of duplicating.
+            existing = db.query(ModelEndpoint).filter(ModelEndpoint.base_url == base_url).first()
+            if existing:
+                existing.is_enabled = True
+                existing.model_type = "llm"
+                existing.name = display_name
+                if supports_tools is not None:
+                    existing.supports_tools = supports_tools
+                db.commit()
+                logger.info(f"Updated existing local model endpoint: {base_url}")
+                return existing.id
+
+            ep_id = f"local-{uuid.uuid4().hex[:8]}"
+            ep = ModelEndpoint(
+                id=ep_id,
+                name=display_name,
+                base_url=base_url,
+                api_key=None,
+                is_enabled=True,
+                model_type="llm",
+                supports_tools=supports_tools,
+            )
+            db.add(ep)
+            db.commit()
+            logger.info(f"Auto-registered local model endpoint: {display_name} @ {base_url}")
+            return ep_id
+        except Exception as e:
+            logger.error(f"Failed to auto-register local model endpoint: {e}")
+            db.rollback()
+            return None
+        finally:
+            db.close()
+
     @router.post("/api/model/serve")
     async def model_serve(request: Request, req: ServeRequest):
         """Launch a model server in a tmux session (or PowerShell background process on Windows).
@@ -841,6 +972,10 @@ def setup_cookbook_routes() -> APIRouter:
         )
         is_pip_install = bool(req.cmd and "pip install" in req.cmd)
         if is_pip_install:
+            # Keep big dependency wheel builds (vLLM, …) off the home filesystem's
+            # pip cache so they don't fail mid-build with "No space left" (#1219)
+            # and leave the dep installed-but-unusable (#1459).
+            req.cmd = _pip_install_no_cache(req.cmd)
             # PEP-508-style package spec — letters, digits, `.-_` for the
             # name; `[` `]` for extras; `<>=!~,` for version specifiers.
             # v2 review HIGH-14: tightened from the previous regex which
@@ -857,6 +992,19 @@ def setup_cookbook_routes() -> APIRouter:
         session_id = f"serve-{uuid.uuid4().hex[:8]}"
         remote = req.remote_host
         is_windows = req.platform == "windows"
+
+        # Ollama: if the user didn't pin a port, resolve the actual port we'll
+        # bind to here (before runner construction) by probing the target host.
+        # Otherwise the runner script picks one at runtime and `_auto_register`
+        # below still registers the stale 11434 default — which on a host with
+        # a systemd ollama lands on the wrong (unreachable-from-docker) service.
+        if "ollama" in req.cmd and "OLLAMA_HOST=" not in req.cmd:
+            _ollama_bind_host = "0.0.0.0" if remote else "127.0.0.1"
+            _ollama_chosen_port = _pick_free_port_for_ollama(
+                remote, req.ssh_port, start_port=11434, max_offset=10,
+            )
+            if _ollama_chosen_port:
+                req.cmd = f"OLLAMA_HOST={_ollama_bind_host}:{_ollama_chosen_port} {req.cmd}"
         # LOCAL execution on a native-Windows host never uses tmux (detached
         # process path below), regardless of the UI-supplied platform.
         local_windows = IS_WINDOWS and not remote
@@ -904,6 +1052,8 @@ def setup_cookbook_routes() -> APIRouter:
                 ps_lines.append('Write-Host "ERROR: vLLM is not supported on Windows. Use Ollama or llama.cpp instead."')
                 ps_lines.append('exit 1')
             ps_lines.append(req.cmd)
+            if is_pip_install:
+                ps_lines.append('if ($LASTEXITCODE -eq 0) { Write-Host ""; Write-Host "DOWNLOAD_OK" }')
             ps_lines.append('Write-Host ""')
             ps_lines.append('Write-Host "=== Process exited with code $LASTEXITCODE ==="')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.ps1"
@@ -926,6 +1076,21 @@ def setup_cookbook_routes() -> APIRouter:
         else:
             # ── Linux/Termux: bash + tmux (existing flow) ──
             runner_lines = ["#!/bin/bash"]
+            # Mirror every line of stdout+stderr into a persistent log file
+            # on the host running the serve. This is the file tail_serve_output
+            # reads when the tmux pane has been overwritten by the post-crash
+            # bash prompt — without it, the agent's diagnostic tool sees the
+            # neofetch banner instead of the actual Python traceback.
+            # We save the original fds to 3/4 so we can RESTORE them before
+            # `exec ${SHELL}` at the end of the script. Without that restore,
+            # the post-crash interactive shell's neofetch banner ALSO gets
+            # teed into the log file and `tail -N` returns ONLY the banner —
+            # the actual traceback ends up earlier than the tail window.
+            runner_lines.append("mkdir -p /tmp/odysseus-tmux 2>/dev/null || true")
+            runner_lines.append("exec 3>&1 4>&2")
+            runner_lines.append(
+                f"exec > >(tee -a /tmp/odysseus-tmux/{session_id}.log) 2>&1"
+            )
             runner_lines.extend(_user_shell_path_bootstrap())
             runner_lines.append('ODYSSEUS_PREFLIGHT_EXIT=""')
             # Put Odysseus's own venv bin on PATH (local runs only) so the serve
@@ -961,7 +1126,7 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  if ! python3 -c "import llama_cpp" 2>/dev/null; then')
                 runner_lines.append('    pkg install -y cmake 2>/dev/null')
                 runner_lines.append('    pip install numpy diskcache jinja2 2>/dev/null')
-                runner_lines.append('    CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_LLAMAFILE=OFF" pip install llama-cpp-python --no-build-isolation --no-cache-dir 2>&1 || true')
+                runner_lines.append('    CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_LLAMAFILE=OFF" pip install \'llama-cpp-python[server]\' --no-build-isolation --no-cache-dir 2>&1 || true')
                 runner_lines.append('  fi')
                 runner_lines.append('elif ! command -v llama-server &>/dev/null; then')
                 runner_lines.append('  echo "Native llama-server not found — building from source (one-time, may take a few minutes)..."')
@@ -988,7 +1153,7 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  # If the native build failed, fall back to the Python bindings.')
                 runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
                 runner_lines.append('    echo "llama-server build failed — installing Python bindings as fallback..."')
-                runner_lines.append(f"    {_pip_install_fallback_chain('llama-cpp-python', python_cmd='pip')} || true")
+                runner_lines.append(f"    {_pip_install_fallback_chain('llama-cpp-python[server]', python_cmd='pip')} || true")
                 runner_lines.append('  fi')
                 runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
                 runner_lines.append('    echo "ERROR: llama.cpp serving is not available after install/build attempts."')
@@ -1002,38 +1167,24 @@ def setup_cookbook_routes() -> APIRouter:
                     req.cmd,
                     default_host=_ollama_default_host,
                 )
-                # Ollama can be a host binary, a system service, or a Docker
-                # container. If the HTTP API is already reachable, the model is
-                # already served and we should not require a host `ollama` CLI.
+                # Always launch a fresh ollama under tmux so Stop reliably
+                # kills it. If the requested port is busy (e.g. a systemd
+                # ollama on 11434), scan upward for a free one rather than
+                # silently reattaching to an external service that Stop
+                # can't reach.
                 runner_lines.append(f'ODYSSEUS_OLLAMA_HOST={_bash_squote(_ollama_host)}')
                 runner_lines.append(f'ODYSSEUS_OLLAMA_PORT="{_ollama_port}"')
-                runner_lines.append('ODYSSEUS_OLLAMA_URL=""')
-                runner_lines.append('for _ody_ollama_try in $(seq 1 20); do')
-                runner_lines.append('  for _ody_ollama_port in "$ODYSSEUS_OLLAMA_PORT" 11434; do')
-                runner_lines.append('    [ -z "$_ody_ollama_port" ] && continue')
-                runner_lines.append('    for _ody_ollama_host in 127.0.0.1 localhost host.docker.internal; do')
-                runner_lines.append('      _ody_ollama_url="http://${_ody_ollama_host}:${_ody_ollama_port}"')
-                runner_lines.append('      if curl -sf "$_ody_ollama_url/api/tags" >/dev/null 2>&1; then')
-                runner_lines.append('        ODYSSEUS_OLLAMA_URL="$_ody_ollama_url"')
-                runner_lines.append('        ODYSSEUS_OLLAMA_PORT="$_ody_ollama_port"')
-                runner_lines.append('        break 3')
-                runner_lines.append('      fi')
-                runner_lines.append('    done')
-                runner_lines.append('  done')
-                runner_lines.append('  [ "$_ody_ollama_try" -eq 1 ] && echo "[odysseus] Waiting for an existing Ollama API on ports ${ODYSSEUS_OLLAMA_PORT}/11434..."')
-                runner_lines.append('  sleep 1')
-                runner_lines.append('done')
-                runner_lines.append('if [ -n "$ODYSSEUS_OLLAMA_URL" ]; then')
-                runner_lines.append('  if [ "$ODYSSEUS_OLLAMA_PORT" != "' + _ollama_port + '" ]; then')
-                runner_lines.append('    echo "[odysseus] Selected Ollama port ' + _ollama_port + ' was not reachable; using running Ollama on port ${ODYSSEUS_OLLAMA_PORT}."')
+                runner_lines.append('for _ody_off in 0 1 2 3 4 5 6 7 8 9; do')
+                runner_lines.append('  _ody_try_port=$((ODYSSEUS_OLLAMA_PORT + _ody_off))')
+                runner_lines.append('  if ! (exec 3<>/dev/tcp/127.0.0.1/$_ody_try_port) 2>/dev/null; then')
+                runner_lines.append('    exec 3<&-; exec 3>&-')
+                runner_lines.append('    ODYSSEUS_OLLAMA_PORT="$_ody_try_port"')
+                runner_lines.append('    break')
                 runner_lines.append('  fi')
-                runner_lines.append('  echo "[odysseus] Ollama API ready on port ${ODYSSEUS_OLLAMA_PORT}: ${ODYSSEUS_OLLAMA_URL}"')
-                runner_lines.append('  echo "[odysseus] This task is monitoring an existing Ollama server; stopping it here will not stop an external Docker/system service."')
-                runner_lines.append('  exec bash -i')
-                runner_lines.append('fi')
+                runner_lines.append('  exec 3<&-; exec 3>&-')
+                runner_lines.append('done')
                 runner_lines.append('if ! command -v ollama &>/dev/null; then')
-                runner_lines.append('  echo "ERROR: Ollama not found and no Ollama API is reachable on 127.0.0.1, localhost, or host.docker.internal (ports ${ODYSSEUS_OLLAMA_PORT}/11434)."')
-                runner_lines.append('  echo "Install Ollama, start an Ollama service/container on this server, or pick the port where it is already listening."')
+                runner_lines.append('  echo "ERROR: Ollama not found on this server. Install it from https://ollama.com/download or `curl -fsSL https://ollama.com/install.sh | sh`."')
                 runner_lines.append('  echo')
                 runner_lines.append('  echo "=== Process exited with code 127 ==="')
                 runner_lines.append('  exec bash -i')
@@ -1089,10 +1240,18 @@ def setup_cookbook_routes() -> APIRouter:
                 if local_windows:
                     # Detached background process — no interactive shell to keep open.
                     # Print the exit marker the status poller looks for, then stop.
-                    _append_serve_exit_code_lines(runner_lines, keep_shell_open=False)
+                    _append_serve_exit_code_lines(
+                        runner_lines,
+                        keep_shell_open=False,
+                        is_pip_install=is_pip_install,
+                    )
                 else:
                     # Keep shell open after exit so user can see errors
-                    _append_serve_exit_code_lines(runner_lines, keep_shell_open=True)
+                    _append_serve_exit_code_lines(
+                        runner_lines,
+                        keep_shell_open=True,
+                        is_pip_install=is_pip_install,
+                    )
 
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
             runner_path.write_text("\n".join(runner_lines) + "\n", encoding="utf-8")
@@ -1148,11 +1307,16 @@ def setup_cookbook_routes() -> APIRouter:
                 stderr = (await proc.stderr.read()).decode(errors="replace")
                 return {"ok": False, "error": stderr, "session_id": session_id}
 
-        # Auto-register as model endpoint if serving a diffusion model
+        # Auto-register a model endpoint so the served model shows up in the model
+        # picker with no manual /setup step. Diffusion models get an image
+        # endpoint; any other real model serve (i.e. not a pip-install task) gets
+        # a local LLM endpoint pointed at its /v1.
         endpoint_id = None
         is_diffusion = "diffusion_server.py" in req.cmd
         if is_diffusion:
             endpoint_id = _auto_register_image_endpoint(req, remote)
+        elif not is_pip_install:
+            endpoint_id = _auto_register_llm_endpoint(req, remote)
 
         # Log to assistant
         try:
@@ -1686,6 +1850,33 @@ def setup_cookbook_routes() -> APIRouter:
 
             disk_tasks = on_disk.get("tasks") or [] if isinstance(on_disk, dict) else []
             incoming_tasks = data.get("tasks") if isinstance(data.get("tasks"), list) else []
+            # Anti-poisoning guard: a stale browser tab can keep POSTing a
+            # download task as status='done' from before the strict-finish
+            # fix landed, undoing any server-side correction. For each
+            # incoming "done" download, override to "running" if the last
+            # shard pattern says N<total AND no DOWNLOAD_OK/DOWNLOAD_FAILED/
+            # /snapshots/ sentinel is in the output.
+            import re as _re_dl
+            for _it in incoming_tasks:
+                if (not isinstance(_it, dict)) or _it.get("type") != "download" or _it.get("status") != "done":
+                    continue
+                _out = _it.get("output") or ""
+                if ("DOWNLOAD_OK" in _out) or ("DOWNLOAD_FAILED" in _out) or ("/snapshots/" in _out):
+                    continue
+                _shards = _re_dl.findall(r"model-(\d+)-of-(\d+)\.safetensors", _out)
+                if _shards:
+                    _n, _tot = _shards[-1]
+                    if int(_n) < int(_tot):
+                        logger.info(f"cookbook state POST: rejecting stale done for {_it.get('sessionId')} "
+                                    f"(last shard {_n}/{_tot}, no DOWNLOAD_OK)")
+                        _it["status"] = "running"
+                else:
+                    _completed = _out.count("Download complete")
+                    _starts = _out.count("Downloading '")
+                    if _starts > _completed:
+                        logger.info(f"cookbook state POST: rejecting stale done for {_it.get('sessionId')} "
+                                    f"({_completed}/{_starts} files complete, no DOWNLOAD_OK)")
+                        _it["status"] = "running"
             incoming_ids = {t.get("sessionId") for t in incoming_tasks if isinstance(t, dict) and t.get("sessionId")}
             import time as _t
             now_ms = int(_t.time() * 1000)
@@ -1804,10 +1995,14 @@ def setup_cookbook_routes() -> APIRouter:
 
             if vram_gb > 0 and needed_vram is not None and needed_vram > vram_gb:
                 continue
-            # Skip if no size info — without a size we can't tell if it's a real
-            # full-weight model or a tiny adapter, so we'd rather drop it
-            if est_vram is None:
-                continue
+            # Unknown-size models (e.g. MiniMax-M2.7, DeepSeek-V4-Flash) have no
+            # "NB" in the repo id, so the regex above can't extract their
+            # param count. Previously we dropped them entirely, which made
+            # brand-new flagship releases silently vanish from this list even
+            # on rigs with hundreds of GB of VRAM. Adapters/LoRAs are already
+            # filtered by _is_excluded(), so what falls through here is
+            # overwhelmingly full models — keep them, just without a size
+            # badge (the frontend handles needed_vram_gb=null gracefully).
 
             out.append({
                 "repo_id": repo_id,
@@ -1823,6 +2018,153 @@ def setup_cookbook_routes() -> APIRouter:
                 break
 
         return {"models": out}
+
+    # Rate-limit for the orphan-tmux adoption sweep. The UI polls
+    # tasks/status every ~3s; we don't want to SSH every host on every
+    # poll. 20s is fast enough that a model the agent launched in the
+    # background shows up "almost immediately" in the UI without being
+    # wasteful.
+    _last_orphan_sweep_ts = [0.0]
+    _ORPHAN_SWEEP_MIN_INTERVAL_S = 20.0
+
+    def _maybe_sweep_orphans(tasks: list, state: dict) -> None:
+        """Scan each configured cookbook server for `serve-*` tmux sessions
+        the cookbook doesn't know about and adopt them into state.tasks.
+
+        Writes are conditional: if no orphans are found, nothing is touched.
+        Rate-limited so polling UIs don't trigger SSH on every refresh.
+        """
+        import time as _time
+        import subprocess
+        logger.info(f"_maybe_sweep_orphans: entered, last_ts={_last_orphan_sweep_ts[0]}")
+        now = _time.monotonic()
+        if now - _last_orphan_sweep_ts[0] < _ORPHAN_SWEEP_MIN_INTERVAL_S:
+            logger.info(f"_maybe_sweep_orphans: rate-limited, {now - _last_orphan_sweep_ts[0]:.1f}s since last")
+            return
+        _last_orphan_sweep_ts[0] = now
+
+        env = state.get("env") if isinstance(state, dict) else {}
+        servers = env.get("servers") if isinstance(env, dict) else []
+        logger.info(f"orphan sweep starting: {len(servers) if isinstance(servers, list) else 0} server(s), known_sids={len([t for t in tasks if isinstance(t, dict) and t.get('sessionId')])}")
+        if not isinstance(servers, list):
+            return
+
+        known_sids = {
+            t.get("sessionId") for t in tasks
+            if isinstance(t, dict) and t.get("sessionId")
+        }
+
+        adopted_any = False
+        for srv in servers:
+            if not isinstance(srv, dict):
+                continue
+            host = (srv.get("host") or "").strip()
+            if not host:
+                continue  # local-only entry; the /proc scan handles it
+            if not _REMOTE_HOST_RE.match(host):
+                continue
+            sport = str(srv.get("port") or "").strip()
+            ssh_base = ["ssh", "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=no"]
+            if sport and sport != "22":
+                if not _SSH_PORT_RE.match(sport):
+                    continue
+                ssh_base.extend(["-p", sport])
+
+            try:
+                ls = subprocess.run(
+                    ssh_base + [host, "tmux ls 2>/dev/null"],
+                    timeout=6, capture_output=True, text=True,
+                )
+            except Exception:
+                continue
+            for line in (ls.stdout or "").splitlines():
+                sid = line.split(":", 1)[0].strip()
+                if not sid or not _SESSION_ID_RE.match(sid):
+                    continue
+                if sid in known_sids:
+                    continue
+                # Adopt any session whose pane is currently running a
+                # known model-server process (checked below). The earlier
+                # prefix gate (serve-/cookbook-) dropped legitimate
+                # serves whenever tmux fell back to numeric IDs, leaving
+                # them invisible in the Cookbook UI — so the user could
+                # neither see nor stop them.
+                # Skip zombie / idle-shell sessions. A tmux session left
+                # over from a crashed vllm just shows a bash prompt —
+                # adopting it would pollute the UI with "running" tasks
+                # that aren't actually serving anything. pane_current_command
+                # is the foreground process in the pane right now; only
+                # real model serves leave a python/vllm/etc. process there.
+                try:
+                    pc = subprocess.run(
+                        ssh_base + [host, "tmux", "list-panes", "-t", sid,
+                                    "-F", "#{pane_current_command}"],
+                        timeout=4, capture_output=True, text=True,
+                    )
+                    cur = (pc.stdout or "").strip().splitlines()
+                except Exception:
+                    cur = []
+                LIVE_PROCS = {"python", "python3", "vllm", "llama-server",
+                              "llama_cpp_main", "sglang", "lmdeploy",
+                              "ollama", "node", "uvicorn"}
+                if not any(c in LIVE_PROCS for c in cur):
+                    continue
+                # Try to recover a plausible repo_id + port from the
+                # pane buffer. Cheap heuristic — if we can't, register
+                # with placeholder fields; the UI still shows it.
+                try:
+                    cap = subprocess.run(
+                        ssh_base + [host, "tmux", "capture-pane", "-t", sid, "-p", "-S", "-300"],
+                        timeout=6, capture_output=True, text=True,
+                    )
+                    pane = cap.stdout or ""
+                except Exception:
+                    pane = ""
+                import re as _re_orphan
+                # vLLM banner: "model   /path/...". Falls back to the
+                # raw vllm-serve command if the banner already scrolled.
+                m_model = _re_orphan.search(r"model\s+(\S+)", pane)
+                model = m_model.group(1) if m_model else ""
+                if not model:
+                    m_serve = _re_orphan.search(r"vllm\s+serve\s+(\S+)", pane)
+                    model = m_serve.group(1) if m_serve else f"adopted:{sid}"
+                m_port = _re_orphan.search(r"--port\s+(\d+)", pane)
+                port = int(m_port.group(1)) if m_port else 0
+
+                import time as _t2
+                tasks.append({
+                    "id": sid,
+                    "sessionId": sid,
+                    "name": model.split("/")[-1] if "/" in model else model,
+                    "type": "serve",
+                    "status": "running",
+                    "output": f"Auto-adopted from orphan tmux session on {host}. "
+                              "Open the task to see live output.",
+                    "ts": int(_t2.time() * 1000),
+                    "payload": {
+                        "repo_id": model,
+                        "remote_host": host,
+                        "_cmd": "(orphan tmux session — original launch cmd unknown)",
+                        "port": port,
+                    },
+                    "remoteHost": host,
+                    "sshPort": sport,
+                    "platform": "linux",
+                    "_serveReady": False,
+                    "_endpointAdded": False,
+                    "_adoptedExternally": True,
+                })
+                known_sids.add(sid)
+                adopted_any = True
+                logger.info(f"auto-adopted orphan tmux session {sid!r} on {host}")
+
+        if adopted_any:
+            try:
+                from core.atomic_io import atomic_write_json
+                state["tasks"] = tasks
+                atomic_write_json(_cookbook_state_path, state)
+            except Exception as e:
+                logger.warning(f"orphan sweep: state write failed: {e}")
 
     @router.get("/api/cookbook/tasks/status")
     async def cookbook_tasks_status(request: Request):
@@ -1877,6 +2219,7 @@ def setup_cookbook_routes() -> APIRouter:
 
         # Load saved tasks from cookbook state
         tasks = []
+        state = {}
         if _cookbook_state_path.exists():
             try:
                 state = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
@@ -1887,6 +2230,21 @@ def setup_cookbook_routes() -> APIRouter:
                     tasks = list(saved_tasks.values())
             except Exception:
                 pass
+
+        # Orphan-tmux auto-adoption sweep. When the agent (or anyone)
+        # SSH-launches a `serve-*` tmux session — usually because
+        # serve_model rejected `source ... && vllm ...` or because of a
+        # manual relaunch via tmux send-keys — that session is invisible
+        # to the cookbook UI even though it's a live model server. The
+        # sweep finds those orphans on each configured remote host and
+        # writes them into state.tasks with _adoptedExternally=True, so
+        # they show up in the UI on the next poll without anyone having
+        # to remember to call adopt_served_model. Rate-limited via the
+        # module-level _last_orphan_sweep so we don't SSH every 3s.
+        try:
+            _maybe_sweep_orphans(tasks, state)
+        except Exception as _sweep_e:
+            logger.warning(f"orphan sweep failed (non-fatal): {_sweep_e!r}")
 
         results = []
         for task in tasks:
@@ -1947,7 +2305,12 @@ def setup_cookbook_routes() -> APIRouter:
                 if _tport and _tport != "22":
                     ssh_base.extend(["-p", str(_tport)])
                 check_cmd = ssh_base + [remote, "tmux", "has-session", "-t", session_id]
-                capture_cmd = ssh_base + [remote, "tmux", "capture-pane", "-t", session_id, "-p", "-S", "-50"]
+                # Capture 500 lines (was 50) so a Python traceback survives
+                # the post-crash neofetch banner + bash prompt that otherwise
+                # fills the visible tail. Without this, output_tail ends up
+                # as just "Locale: C / Ubuntu_Odysseus ❯" and the agent
+                # can't diagnose the actual error.
+                capture_cmd = ssh_base + [remote, "tmux", "capture-pane", "-t", session_id, "-p", "-S", "-500"]
             elif IS_WINDOWS:
                 # LOCAL Windows task: launched as a detached process (no tmux).
                 # Liveness comes from the <session>.pid file, output from the
@@ -1956,7 +2319,7 @@ def setup_cookbook_routes() -> APIRouter:
                 capture_cmd = None
             else:
                 check_cmd = ["tmux", "has-session", "-t", session_id]
-                capture_cmd = ["tmux", "capture-pane", "-t", session_id, "-p", "-S", "-50"]
+                capture_cmd = ["tmux", "capture-pane", "-t", session_id, "-p", "-S", "-500"]
 
             local_win_task = (not remote) and IS_WINDOWS
 

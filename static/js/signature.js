@@ -14,6 +14,20 @@
 
 const API_BASE = window.location.origin;
 
+function _esc(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function _safeSignatureDataUrl(raw) {
+  const value = String(raw || '').trim();
+  return /^data:image\/(?:png|jpe?g);base64,[a-z0-9+/=\s]+$/i.test(value) ? value : '';
+}
+
 // Last signature the user picked or created in this session. Lets the export
 // modal pre-fill subsequent signature fields with the same one — sign once,
 // applies everywhere.
@@ -446,13 +460,17 @@ export function capture(opts = {}) {
 export function pick(opts = {}) {
   return new Promise(async (resolve) => {
     const sigs = await _listSignatures();
-    const tiles = sigs.map((s) => `
-      <div class="sig-tile" data-id="${s.id}">
-        <img src="${s.data_url}"/>
-        <div style="margin-top:4px;font-size:0.72rem;color:var(--fg);opacity:0.85;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(s.name || '').replace(/[<>&]/g, '')}</div>
-        <button class="sig-tile-del" data-id="${s.id}" title="Delete">×</button>
+    const tiles = sigs.map((s) => {
+      const dataUrl = _safeSignatureDataUrl(s.data_url);
+      if (!dataUrl) return '';
+      return `
+      <div class="sig-tile" data-id="${_esc(s.id)}">
+        <img src="${_esc(dataUrl)}"/>
+        <div style="margin-top:4px;font-size:0.72rem;color:var(--fg);opacity:0.85;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(s.name || '')}</div>
+        <button class="sig-tile-del" data-id="${_esc(s.id)}" title="Delete">×</button>
       </div>
-    `).join('');
+    `;
+    }).join('');
 
     const overlay = _modal(`
       <div class="modal-content" style="width:min(560px,94vw);">
@@ -477,7 +495,9 @@ export function pick(opts = {}) {
         const id = tile.dataset.id;
         const s = sigs.find((x) => x.id === id);
         if (s) {
-          const out = { id: s.id, dataUrl: s.data_url, width: s.width, height: s.height, name: s.name };
+          const dataUrl = _safeSignatureDataUrl(s.data_url);
+          if (!dataUrl) return;
+          const out = { id: s.id, dataUrl, width: s.width, height: s.height, name: s.name };
           setLastUsed(out);
           close(out);
         }

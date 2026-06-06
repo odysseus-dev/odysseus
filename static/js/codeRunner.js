@@ -362,6 +362,7 @@ export function runHTML(code, panel) {
     addCloseBtn(panel);
     return;
   }
+  try { win.opener = null; } catch (_) {}
   win.document.open();
   win.document.write(code);
   win.document.close();

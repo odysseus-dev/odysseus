@@ -57,6 +57,7 @@ class DocsService:
                 metadata=r.get("metadata"),
             )
             for r in results
+            if isinstance(r, dict)
         ]
 
     async def index(self, directory: str) -> IndexResult:

@@ -111,7 +111,7 @@ def setup_upload_routes(upload_handler):
         if os.path.exists(uploads_db):
             with open(uploads_db, encoding="utf-8") as f:
                 db = json.load(f)
-            info = next((fi for fi in db.values() if fi["id"] == file_id), None)
+            info = next((fi for fi in db.values() if fi.get("id") == file_id), None)
             if info:
                 original_name = info.get("name", file_id)
         auth_mgr = getattr(request.app.state, "auth_manager", None)
@@ -159,7 +159,7 @@ def setup_upload_routes(upload_handler):
         if os.path.exists(uploads_db):
             with open(uploads_db, encoding="utf-8") as f:
                 db = json.load(f)
-            info = next((fi for fi in db.values() if fi["id"] == file_id), None)
+            info = next((fi for fi in db.values() if fi.get("id") == file_id), None)
         return info
 
     def _vision_cache_path(file_id: str) -> str:

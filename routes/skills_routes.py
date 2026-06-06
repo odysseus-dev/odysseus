@@ -79,6 +79,8 @@ def _skill_test_task(skill: dict) -> str:
     an email); if we just hand over the 'when to use' text the agent has nothing
     to work on and stalls asking for input. So we tell it to create its own
     realistic fixture first, then apply the skill end-to-end."""
+    if not isinstance(skill, dict):
+        skill = {}
     ctx = (skill.get("when_to_use") or skill.get("description") or skill.get("name") or "").strip()
     return (
         "Test this skill end-to-end. FIRST, set up a small realistic scenario it "
@@ -310,6 +312,8 @@ def _should_check_retrieval_precision(skill: dict) -> bool:
         "installation", "install", "system", "ssh", "document", "documents",
         "search", "email", "calendar", "gpu", "server", "python",
     }
+    if not isinstance(skill, dict):
+        return False
     tags = {str(t or "").strip().lower() for t in (skill.get("tags") or [])}
     if tags & broad:
         return True

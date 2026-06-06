@@ -139,6 +139,15 @@ echo "▶ Installing Python packages (first run downloads a few — can take a f
 # Not --quiet: this is the slow step, so show progress (and any real errors).
 "$VENV_PY" -m pip install -r requirements.txt
 
+# chromadb-client (HTTP-only) conflicts with the full chromadb package. If
+# it got installed (e.g., from an older requirements-optional.txt), remove
+# it to prevent ChromaDB from silently failing in HTTP-only mode.
+if "$VENV_PY" -m pip show chromadb-client >/dev/null 2>&1; then
+  echo "▶ Cleaning up conflicting chromadb-client package…"
+  "$VENV_PY" -m pip uninstall -y chromadb-client
+  "$VENV_PY" -m pip install --force-reinstall chromadb
+fi
+
 # 4. First-run setup: creates data dirs and prints an initial admin password
 #    the first time (idempotent — does nothing if already set up). Suppress its
 #    manual run hint — we launch the server ourselves just below.
