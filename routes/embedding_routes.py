@@ -316,6 +316,16 @@ def setup_embedding_routes():
             reset_http_embed_state()
         except Exception:
             pass
+        try:
+            from src.embedding_lanes import reset_embedding_lane_state
+            reset_embedding_lane_state()
+        except Exception:
+            pass
+        try:
+            from src.tool_index import reset_tool_index
+            reset_tool_index()
+        except Exception:
+            pass
 
         # Reset ChromaDB client (collections will be recreated with new embeddings)
         try:
@@ -345,6 +355,16 @@ def setup_embedding_routes():
         try:
             from src.embeddings import reset_http_embed_state
             reset_http_embed_state()
+        except Exception:
+            pass
+        try:
+            from src.embedding_lanes import reset_embedding_lane_state
+            reset_embedding_lane_state()
+        except Exception:
+            pass
+        try:
+            from src.tool_index import reset_tool_index
+            reset_tool_index()
         except Exception:
             pass
 

@@ -12,6 +12,14 @@ import re
 import time
 from typing import Dict, List, Optional, Set
 
+from src.embedding_lanes import (
+    LANE_CUSTOM,
+    LANE_FASTEMBED,
+    build_embedding_lanes,
+    dedupe_results,
+    migrate_legacy_collection,
+)
+
 try:
     import numpy as np
 except ImportError:
@@ -155,32 +163,30 @@ class ToolIndex:
     """ChromaDB-backed tool index for RAG-based tool selection."""
 
     def __init__(self):
-        from src.chroma_client import get_chroma_client
-        from src.embeddings import get_embedding_client
-
-        self._embedder = get_embedding_client()
-        if not self._embedder:
-            raise RuntimeError("No embedding client available")
-
-        client = get_chroma_client()
-        self._collection = client.get_or_create_collection(
-            name=COLLECTION_NAME,
-            metadata={"hnsw:space": "cosine"},
+        self._lanes = build_embedding_lanes(COLLECTION_NAME)
+        if not self._lanes:
+            raise RuntimeError("No embedding lanes available")
+        self._embedder = self._lanes[0].client
+        self._collection = next(
+            (lane.collection for lane in self._lanes if lane.name == LANE_FASTEMBED),
+            self._lanes[0].collection,
         )
+        migrate_legacy_collection(COLLECTION_NAME, self._lanes)
         self._fingerprint = ""
         self._mcp_generation = -1
         self._healthy = True
-        logger.info("ToolIndex initialized")
+        logger.info("ToolIndex initialized (lanes=%s)", [lane.name for lane in self._lanes])
 
     @property
     def healthy(self):
         return self._healthy
 
     def _embed(self, texts: List[str]) -> List[List[float]]:
-        vecs = self._embedder.encode(texts, normalize_embeddings=True)
+        if not self._lanes:
+            return []
+        vecs = self._lanes[0].encode(texts)
         if np is not None:
             return np.array(vecs, dtype=np.float32).tolist()
-        # Fallback without numpy
         return [list(v) for v in vecs]
 
     def index_builtin_tools(self):
@@ -201,23 +207,31 @@ class ToolIndex:
         # registry (e.g. removed tools like the old vault_* set).
         # Without this, upsert leaves them in place and RAG keeps
         # surfacing tools that no longer exist.
-        try:
-            existing = self._collection.get(where={"tool_type": "builtin"})
-            existing_ids = (existing or {}).get("ids") or []
-            stale = [i for i in existing_ids if i not in set(ids)]
-            if stale:
-                self._collection.delete(ids=stale)
-                logger.info(f"Pruned {len(stale)} stale builtin tool entries from index")
-        except Exception as e:
-            logger.debug(f"Stale-pruning skipped: {e}")
+        indexed = False
+        for lane in self._lanes:
+            try:
+                existing = lane.collection.get(where={"tool_type": "builtin"})
+                existing_ids = (existing or {}).get("ids") or []
+                stale = [i for i in existing_ids if i not in set(ids)]
+                if stale:
+                    lane.collection.delete(ids=stale)
+                    logger.info(f"Pruned {len(stale)} stale builtin tool entries from {lane.name} index")
+            except Exception as e:
+                logger.debug(f"Stale-pruning skipped for {lane.name}: {e}")
 
-        embeddings = self._embed(docs)
-        self._collection.upsert(
-            ids=ids,
-            documents=docs,
-            embeddings=embeddings,
-            metadatas=metadatas,
-        )
+            try:
+                lane.collection.upsert(
+                    ids=ids,
+                    documents=docs,
+                    embeddings=lane.encode(docs),
+                    metadatas=metadatas,
+                )
+                indexed = True
+            except Exception as e:
+                logger.warning("Builtin tool indexing failed in %s lane: %s", lane.name, e)
+        if not indexed:
+            self._healthy = False
+            raise RuntimeError("Builtin tool indexing failed in all embedding lanes")
         self._fingerprint = hashlib.sha256(
             ",".join(sorted(BUILTIN_TOOL_DESCRIPTIONS.keys())).encode()
         ).hexdigest()
@@ -232,15 +246,15 @@ class ToolIndex:
         gen = getattr(mcp_mgr, '_generation', 0)
         if gen == self._mcp_generation:
             return
-        self._mcp_generation = gen
 
         # Remove old MCP entries
-        try:
-            existing = self._collection.get(where={"tool_type": "mcp"})
-            if existing and existing["ids"]:
-                self._collection.delete(ids=existing["ids"])
-        except Exception:
-            pass
+        for lane in self._lanes:
+            try:
+                existing = lane.collection.get(where={"tool_type": "mcp"})
+                if existing and existing["ids"]:
+                    lane.collection.delete(ids=existing["ids"])
+            except Exception:
+                pass
 
         # Get current MCP tools
         try:
@@ -249,6 +263,7 @@ class ToolIndex:
             all_tools = ""
 
         if not all_tools:
+            self._mcp_generation = gen
             return
 
         # Parse MCP tool descriptions from the prompt text
@@ -276,39 +291,59 @@ class ToolIndex:
                     metadatas.append({"tool_name": name, "tool_type": "mcp"})
 
         if not docs:
+            self._mcp_generation = gen
             return
 
-        embeddings = self._embed(docs)
-        self._collection.upsert(
-            ids=ids,
-            documents=docs,
-            embeddings=embeddings,
-            metadatas=metadatas,
-        )
+        indexed = False
+        for lane in self._lanes:
+            try:
+                lane.collection.upsert(
+                    ids=ids,
+                    documents=docs,
+                    embeddings=lane.encode(docs),
+                    metadatas=metadatas,
+                )
+                indexed = True
+            except Exception as e:
+                logger.warning("MCP tool indexing failed in %s lane: %s", lane.name, e)
+        if not indexed:
+            logger.warning("MCP tool indexing failed in all embedding lanes")
+            return
+        self._mcp_generation = gen
         logger.info(f"Indexed {len(docs)} MCP tools")
 
     def retrieve(self, query: str, k: int = 8) -> List[str]:
         """Retrieve the top-K most relevant tool names for a query."""
-        try:
-            query_embedding = self._embed([query])
-            results = self._collection.query(
-                query_embeddings=query_embedding,
-                n_results=min(k, self._collection.count() or k),
-                include=["metadatas", "distances"],
-            )
-            if not results or not results.get("metadatas"):
-                return []
-
-            tool_names = []
-            for meta_list in results["metadatas"]:
-                for meta in meta_list:
-                    name = meta.get("tool_name", "")
-                    if name and name not in tool_names:
-                        tool_names.append(name)
-            return tool_names
-        except Exception as e:
-            logger.warning(f"Tool retrieval failed: {e}")
-            return []
+        rows = []
+        lane_priority = {LANE_CUSTOM: 0, LANE_FASTEMBED: 1}
+        for lane in self._lanes:
+            try:
+                count = lane.count()
+                if count == 0:
+                    continue
+                results = lane.collection.query(
+                    query_embeddings=lane.encode([query]),
+                    n_results=min(k, count),
+                    include=["metadatas", "distances"],
+                )
+                if not results or not results.get("metadatas"):
+                    continue
+                distances = results.get("distances") or []
+                for list_idx, meta_list in enumerate(results["metadatas"]):
+                    distance_list = distances[list_idx] if list_idx < len(distances) else []
+                    for idx, meta in enumerate(meta_list):
+                        name = meta.get("tool_name", "")
+                        if name:
+                            distance = distance_list[idx] if idx < len(distance_list) else 1.0
+                            rows.append({
+                                "tool_name": name,
+                                "score": round(1.0 - distance, 4),
+                                "embedding_lane": lane.name,
+                            })
+            except Exception as e:
+                logger.warning("Tool retrieval failed in %s lane: %s", lane.name, e)
+        rows.sort(key=lambda row: (-row["score"], lane_priority.get(row["embedding_lane"], 99)))
+        return [row["tool_name"] for row in dedupe_results(rows, id_key="tool_name", limit=k)]
 
     # Structural recurring-schedule intent. Typo-resilient (matches "every dya"
     # via "every <word>"), and catches bare clock times ("at 7:30 am", "7am").
@@ -511,3 +546,10 @@ def get_tool_index() -> Optional[ToolIndex]:
         logger.warning(f"ToolIndex init failed (will retry in {_RETRY_INTERVAL}s): {e}")
         _tool_index = None
         return None
+
+
+def reset_tool_index() -> None:
+    """Clear the singleton so embedding endpoint changes rebuild tool lanes."""
+    global _tool_index, _last_attempt
+    _tool_index = None
+    _last_attempt = 0.0
