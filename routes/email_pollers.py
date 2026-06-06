@@ -40,6 +40,7 @@ from routes.email_helpers import (
     _pre_retrieve_context,
     _attach_compose_uploads, _cleanup_compose_uploads, _q,
     SCHEDULED_DB, _EMAIL_REPLY_SYS_PROMPT_BASE, _email_cache_owner_clause,
+    encrypt_cache_field, email_ai_local_only_error, sweep_expired_snoozes,
 )
 
 logger = logging.getLogger(__name__)
@@ -290,6 +291,9 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
             url, model, headers = resolve_endpoint("default", owner=account_owner)
         if not url or not model:
             return "No model configured"
+        _local_err = email_ai_local_only_error(url)
+        if _local_err:
+            return _local_err
 
         writing_style = settings.get("email_writing_style", "")
         processed = 0
@@ -430,7 +434,12 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                     INSERT OR REPLACE INTO email_summaries
                                     (message_id, owner, uid, folder, subject, sender, summary, model_used, created_at)
                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                """, (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid), _folder, subject, sender, summary, model, datetime.utcnow().isoformat()))
+                                """, (
+                                    message_id, account_owner or "",
+                                    uid.decode() if isinstance(uid, bytes) else str(uid),
+                                    _folder, subject, sender, encrypt_cache_field(summary),
+                                    model, datetime.utcnow().isoformat(),
+                                ))
                                 _c.commit()
                                 _c.close()
                                 _sum_existing.add(message_id)
@@ -473,7 +482,12 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                 INSERT OR REPLACE INTO email_ai_replies
                                 (message_id, owner, uid, folder, reply, model_used, created_at)
                                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                            """, (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid), _folder, reply, model, datetime.utcnow().isoformat()))
+                            """, (
+                                message_id, account_owner or "",
+                                uid.decode() if isinstance(uid, bytes) else str(uid),
+                                _folder, encrypt_cache_field(reply), model,
+                                datetime.utcnow().isoformat(),
+                            ))
                             _c.commit()
                             _c.close()
                             _reply_existing.add(message_id)
@@ -907,9 +921,15 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                     (message_id, owner, uid, folder, subject, sender, tags, spam_verdict,
                                      spam_reason, moved_to, model_used, created_at)
                                     VALUES (?, ?, ?, 'INBOX', ?, ?, ?, ?, ?, ?, ?, ?)
-                                """, (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid), subject, sender,
-                                      json.dumps(tags), 1 if is_spam else 0,
-                                      spam_reason, moved_to, model, datetime.utcnow().isoformat()))
+                                """, (
+                                    message_id, account_owner or "",
+                                    uid.decode() if isinstance(uid, bytes) else str(uid),
+                                    subject, sender,
+                                    encrypt_cache_field(json.dumps(tags)),
+                                    1 if is_spam else 0,
+                                    encrypt_cache_field(spam_reason), moved_to, model,
+                                    datetime.utcnow().isoformat(),
+                                ))
                                 _c.commit()
                                 _c.close()
                                 _tag_existing.add(message_id)
@@ -988,6 +1008,7 @@ def _scheduled_poll_once() -> dict:
     sent = []
     failed = []
     try:
+        sweep_expired_snoozes()
         now_iso = datetime.utcnow().isoformat()
         conn = sqlite3.connect(SCHEDULED_DB)
         cols = [row[1] for row in conn.execute("PRAGMA table_info(scheduled_emails)").fetchall()]
