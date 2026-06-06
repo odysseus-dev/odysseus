@@ -176,9 +176,22 @@ export async function fsAttach(conn: Connection, path: string): Promise<Attachme
   return (await resp.json()) as Attachment;
 }
 
+export interface MsgAttachment {
+  id: string;
+  name: string;
+  mime: string;
+}
+
 export interface ChatMsg {
   role: 'user' | 'assistant';
   content: string;
+  attachments?: MsgAttachment[];
+}
+
+/** URL for an attachment's bytes. Needs the bearer header, so callers fetch it
+ *  rather than dropping it straight into an <img src> (see AuthImage). */
+export function attachmentUrl(conn: Connection, id: string, thumb = true): string {
+  return `${conn.baseUrl}/api/companion/upload/${encodeURIComponent(id)}${thumb ? '?thumb=1' : ''}`;
 }
 
 export interface SessionHistory {

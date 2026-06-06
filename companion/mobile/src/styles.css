@@ -530,6 +530,22 @@ button {
   height: 100%;
   object-fit: cover;
 }
+.att-loading {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--panel), var(--border), var(--panel));
+  background-size: 200% 100%;
+  animation: att-shimmer 1.1s ease-in-out infinite;
+}
+@keyframes att-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
 .thumb-file {
   display: flex;
   flex-direction: column;

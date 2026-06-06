@@ -1,4 +1,6 @@
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { Connection } from '../lib/connection';
+import { attachmentUrl } from '../lib/api';
 import { FileIcon, MonitorIcon, PaperclipIcon, XIcon } from './icons';
 
 // A queued attachment, either a local file from the phone (uploaded on send) or
@@ -63,6 +65,41 @@ export function PcFilesButton({ onClick, disabled }: { onClick: () => void; disa
       <MonitorIcon size={22} />
     </button>
   );
+}
+
+// An <img> for a server-stored attachment. EventSource-style problem: an <img
+// src> can't carry the bearer header, so we fetch the bytes with auth and show
+// the result as a blob URL (revoked on unmount). Falls back to a file chip.
+export function AuthImage({ conn, id, alt }: { conn: Connection; id: string; alt: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    fetch(attachmentUrl(conn, id, true), { headers: { Authorization: `Bearer ${conn.token}` } })
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(String(r.status)))))
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      })
+      .catch(() => !cancelled && setFailed(true));
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [conn, id]);
+
+  if (failed) {
+    return (
+      <span className="thumb-file">
+        <FileIcon size={18} />
+        <span className="thumb-name">{alt}</span>
+      </span>
+    );
+  }
+  if (!url) return <span className="att-loading" aria-label="Loading" />;
+  return <img src={url} alt={alt} />;
 }
 
 // Thumbnails for the queued attachments, each with a remove button. Local images

@@ -16,9 +16,11 @@ import ToolToggles from '../components/ToolToggles';
 import {
   AttachButton,
   AttachPreviews,
+  AuthImage,
   PcFilesButton,
   type Pending,
 } from '../components/Attachments';
+import { FileIcon } from '../components/icons';
 import FsBrowser from '../components/FsBrowser';
 
 // A chat message plus, for the optimistic bubble of a just-sent turn, local
@@ -277,6 +279,22 @@ export default function SessionScreen({
               <div className="msg-images">
                 {m.images.map((src, j) => (
                   <img key={j} src={src} alt="attachment" />
+                ))}
+              </div>
+            )}
+            {m.attachments && m.attachments.length > 0 && (
+              <div className="attach-previews">
+                {m.attachments.map((a) => (
+                  <div className="thumb" key={a.id}>
+                    {a.mime.startsWith('image/') ? (
+                      <AuthImage conn={conn} id={a.id} alt={a.name} />
+                    ) : (
+                      <span className="thumb-file">
+                        <FileIcon size={18} />
+                        <span className="thumb-name">{a.name}</span>
+                      </span>
+                    )}
+                  </div>
                 ))}
               </div>
             )}

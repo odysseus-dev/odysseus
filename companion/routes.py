@@ -353,6 +353,57 @@ def setup_companion_routes(session_manager=None, upload_handler=None) -> APIRout
             raise HTTPException(500, "All file uploads failed")
         return {"files": out}
 
+    @router.get("/upload/{file_id}")
+    def download_attachment(request: Request, file_id: str, thumb: int = 0):
+        """Serve an attachment owner-checked for the token's REAL owner.
+
+        The stock /api/upload/{id} resolves the caller via get_current_user,
+        which for a bearer token is the sandbox "api" user -- so the owner check
+        there 404s a phone request. Here we resolve with token_owner and reuse
+        upload_handler.resolve_upload (the same owner-aware lookup the chat path
+        uses). `?thumb=1` returns a small cached JPEG for images so the chat
+        history isn't pulling full-resolution photos to show them tiny.
+        """
+        import os
+
+        from fastapi.responses import FileResponse
+
+        owner = token_owner(request)
+        if not owner:
+            raise HTTPException(401, "Could not resolve an owner for this token")
+        if upload_handler is None:
+            raise HTTPException(503, "Uploads are not available on this server")
+
+        info = upload_handler.resolve_upload(file_id, owner=owner)
+        if not info:
+            raise HTTPException(404, "File not found")
+        path = info["path"]
+        mime = info.get("mime") or "application/octet-stream"
+        headers = {"X-Content-Type-Options": "nosniff"}
+
+        if thumb and mime.startswith("image/"):
+            try:
+                from PIL import Image, ImageOps
+
+                root = os.path.dirname(path)
+                thumb_dir = os.path.join(getattr(upload_handler, "upload_dir", root), ".thumbs")
+                os.makedirs(thumb_dir, exist_ok=True)
+                thumb_path = os.path.join(thumb_dir, file_id + ".jpg")
+                if (not os.path.exists(thumb_path)
+                        or os.path.getmtime(thumb_path) < os.path.getmtime(path)):
+                    im = ImageOps.exif_transpose(Image.open(path))
+                    im.thumbnail((320, 320))
+                    if im.mode not in ("RGB", "L"):
+                        im = im.convert("RGB")
+                    im.save(thumb_path, "JPEG", quality=80)
+                return FileResponse(thumb_path, media_type="image/jpeg", headers=headers)
+            except Exception:
+                pass  # fall back to the full image
+
+        return FileResponse(
+            path, media_type=mime, filename=info.get("name") or file_id, headers=headers
+        )
+
     @router.get("/fs/browse")
     def fs_browse(request: Request, path: str = ""):
         """Browse the PC filesystem so the phone can pick a file to attach.
@@ -571,7 +622,19 @@ def setup_companion_routes(session_manager=None, upload_handler=None) -> APIRout
             content = getattr(m, "content", "")
             if not isinstance(content, str):
                 content = _content_to_text(content)
-            out.append({"role": role, "content": content})
+            row = {"role": role, "content": content}
+            # Surface attachments saved on the user turn so the phone can render
+            # the actual thumbnails (via GET /api/companion/upload/{id}) instead
+            # of the "[Image: name]" text the model sees.
+            meta = getattr(m, "metadata", None) or {}
+            atts = meta.get("attachments")
+            if isinstance(atts, list) and atts:
+                row["attachments"] = [
+                    {"id": a.get("id"), "name": a.get("name") or a.get("id"), "mime": a.get("mime", "")}
+                    for a in atts
+                    if isinstance(a, dict) and a.get("id")
+                ]
+            out.append(row)
         # model/name let the phone default its in-chat model picker and title
         # without a second round-trip to the sessions list.
         return {"messages": out, "model": getattr(sess, "model", "") or "", "name": sess.name}
