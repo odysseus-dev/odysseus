@@ -518,9 +518,12 @@ const IMAGE_PRICING = {
   'gpt-image-1-mini': { 'low': { '1024x1024': 0.005, '1024x1536': 0.006, '1536x1024': 0.006 }, 'medium': { '1024x1024': 0.011, '1024x1536': 0.015, '1536x1024': 0.015 }, 'high': { '1024x1024': 0.036, '1024x1536': 0.052, '1536x1024': 0.052 } },
 };
 
+const LOCAL_LLM_ROUTER_AUTO_MODEL_ID = '__auto_stack__';
+
 export function shortModel(name) {
   if (!name) return '...';
   if (typeof name !== 'string') name = String(name);
+  if (name === LOCAL_LLM_ROUTER_AUTO_MODEL_ID) return 'Auto (Local LLMs)';
   let short = name.split('/').pop();
   // Strip .gguf extension
   short = short.replace(/\.gguf$/i, '');
