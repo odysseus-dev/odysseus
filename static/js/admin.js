@@ -675,6 +675,7 @@ function initEndpointForm() {
   const provider = el('adm-epProvider');
   const urlInput = el('adm-epUrl');
   const kindSel = el('adm-epKind');
+  const protoSel = el('adm-epProto');
 
   // Custom provider picker — mirrors the (now hidden) <select id="adm-epProvider">
   // so the rest of this function (which reads provider.value and dispatches
@@ -829,6 +830,7 @@ function initEndpointForm() {
         const fd = new FormData();
         fd.append('base_url', url);
         fd.append('endpoint_kind', _apiEndpointKind());
+        if (protoSel && protoSel.value && protoSel.value !== 'auto') fd.append('provider_type', protoSel.value);
         fd.append('model_refresh_timeout', '30');
         if (apiKey) fd.append('api_key', apiKey);
         const res = await fetch('/api/model-endpoints/test', {
@@ -877,6 +879,7 @@ function initEndpointForm() {
       const endpointKind = _apiEndpointKind();
       fd.append('endpoint_kind', endpointKind);
       fd.append('model_refresh_mode', endpointKind === 'proxy' ? 'manual' : 'auto');
+      if (protoSel && protoSel.value && protoSel.value !== 'auto') fd.append('provider_type', protoSel.value);
       fd.append('model_refresh_timeout', '30');
       if (apiKey) fd.append('api_key', apiKey);
       if (provider.value && provider.selectedOptions && provider.selectedOptions[0]) {

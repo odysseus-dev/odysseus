@@ -73,6 +73,13 @@ def _endpoint_enabled_models(ep) -> list:
 # Cache for Tailscale hostname → IP resolution
 _tailscale_cache: Dict[str, Optional[str]] = {}
 
+# Cache: normalized base_url → explicit provider_type for endpoints with overrides.
+# Populated by resolve_endpoint / resolve_endpoint_by_id so that callers which
+# invoke build_chat_url(base) directly (session_routes, chat_helpers, etc.)
+# automatically pick up the correct protocol without needing to thread the
+# provider kwarg through every callsite.
+_provider_type_cache: Dict[str, str] = {}
+
 
 def _resolve_tailscale_host(hostname: str) -> Optional[str]:
     """Try to resolve a hostname via 'tailscale status' if DNS fails."""
@@ -163,46 +170,52 @@ def _ollama_api_root(base: str) -> str:
     return base
 
 
-def build_chat_url(base: str) -> str:
+def build_chat_url(base: str, provider: str = None) -> str:
     """Return the correct chat endpoint URL for a given base."""
     base = resolve_url(base)
-    provider = _detect_provider(base)
-    if provider == "anthropic":
+    p = provider or _provider_type_cache.get(base) or _detect_provider(base)
+    if p == "anthropic":
         return _anthropic_api_root(base) + "/v1/messages"
-    if provider == "ollama":
+    if p == "ollama":
         return _ollama_api_root(base) + "/chat"
     return base + "/chat/completions"
 
 
-def build_models_url(base: str) -> str:
+def build_models_url(base: str, provider: str = None) -> str:
     """Return the provider-specific model-list endpoint URL for a base."""
     base = resolve_url(base)
-    provider = _detect_provider(base)
-    if provider == "anthropic":
+    p = provider or _provider_type_cache.get(base) or _detect_provider(base)
+    if p == "anthropic":
         return _anthropic_api_root(base) + "/v1/models"
-    if provider == "ollama":
+    if p == "ollama":
         return _ollama_api_root(base) + "/tags"
     return base + "/models"
 
 
-def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
+def build_headers(api_key: Optional[str], base: str, provider: str = None) -> Dict[str, str]:
     """Build auth headers for an endpoint."""
-    provider = _detect_provider(base)
+    p = provider or _provider_type_cache.get(base) or _detect_provider(base)
     headers: Dict[str, str] = {}
-    if provider == "anthropic":
+    if p == "anthropic":
         if api_key:
             headers["x-api-key"] = api_key
         headers["anthropic-version"] = "2023-06-01"
         return headers
-    if provider == "copilot":
+    if p == "copilot":
         from src.copilot import copilot_headers
         return copilot_headers(api_key)
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    if provider == "openrouter":
+    if p == "openrouter":
         headers.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
         headers.setdefault("X-OpenRouter-Title", "Odysseus")
     return headers
+
+
+def _effective_provider_type(ep) -> Optional[str]:
+    """Return the provider override from an endpoint, or None for auto-detect."""
+    pt = getattr(ep, "provider_type", None) or ""
+    return pt.strip().lower() if pt.strip().lower() not in ("", "auto") else None
 
 
 def resolve_endpoint(
@@ -276,8 +289,11 @@ def resolve_endpoint(
             return fallback_url, fallback_model, fallback_headers
 
         base = normalize_base(ep.base_url)
-        chat_url = build_chat_url(base)
-        headers = build_headers(ep.api_key, base)
+        pt = _effective_provider_type(ep)
+        if pt:
+            _provider_type_cache[base] = pt
+        chat_url = build_chat_url(base, provider=pt)
+        headers = build_headers(ep.api_key, base, provider=pt)
 
         # Discard a configured model the user has since disabled on the
         # endpoint (e.g. a stale `default_model` left pointing at a now-hidden
@@ -322,8 +338,11 @@ def resolve_endpoint_by_id(
         if not ep:
             return None
         base = normalize_base(ep.base_url)
-        chat_url = build_chat_url(base)
-        headers = build_headers(ep.api_key, base)
+        pt = _effective_provider_type(ep)
+        if pt:
+            _provider_type_cache[base] = pt
+        chat_url = build_chat_url(base, provider=pt)
+        headers = build_headers(ep.api_key, base, provider=pt)
         m = (model or "").strip()
         # Drop a model the user disabled on the endpoint, then pick the first
         # enabled chat model rather than a hidden one.

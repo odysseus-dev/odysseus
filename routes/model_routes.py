@@ -613,14 +613,15 @@ def _effective_endpoint_kind(ep: Any, base_url: str) -> str:
 
 
 
-def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
+def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5, provider_type: str = None) -> List[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
     For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
-    if _detect_provider(base) == "anthropic":
+    provider = provider_type or _detect_provider(base)
+    if provider == "anthropic":
         # Try Anthropic's /v1/models endpoint first
-        url = build_models_url(base)
+        url = build_models_url(base, provider=provider_type)
         headers = {"anthropic-version": "2023-06-01"}
         if api_key:
             headers["x-api-key"] = api_key
@@ -643,8 +644,8 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
                 return []
             logger.warning(f"Anthropic /v1/models failed, using hardcoded list: {e}")
         return list(ANTHROPIC_MODELS)
-    url = build_models_url(base)
-    headers = build_headers(api_key, base)
+    url = build_models_url(base, provider=provider_type)
+    headers = build_headers(api_key, base, provider=provider_type)
     try:
         r = httpx.get(url, headers=headers, timeout=timeout, verify=llm_verify())
         r.raise_for_status()
@@ -1406,6 +1407,7 @@ def setup_model_routes(model_discovery):
                     "ping_error": (ping or {}).get("error") if ping else None,
                     "model_type": getattr(r, "model_type", None) or "llm",
                     "supports_tools": getattr(r, "supports_tools", None),
+                    "provider_type": getattr(r, "provider_type", None),
                     "endpoint_kind": kind,
                     "category": _classify_endpoint(base, kind),
                     "model_refresh_mode": _endpoint_refresh_mode(r, kind),
@@ -1430,6 +1432,7 @@ def setup_model_routes(model_discovery):
         model_refresh_interval: str = Form(""),
         model_refresh_timeout: str = Form(""),
         supports_tools: str = Form(""),  # "true"/"false"/"" (unknown)
+        provider_type: str = Form(""),  # "anthropic"/"" (auto-detect)
         pinned_models: str = Form(""),  # admin-pinned IDs: list/JSON/comma/newline
         container_local: str = Form("false"),
         # Default `shared=true` → endpoints are visible to all users (the
@@ -1462,6 +1465,8 @@ def setup_model_routes(model_discovery):
             require_model_list or requested_kind in ("api", "proxy") or not _truthy(skip_probe)
         )
         explicit_timeout = _explicit_model_list_timeout(base_url, requested_kind, refresh_timeout)
+        _pt_raw = (provider_type or "").strip().lower()
+        _pt = _pt_raw if _pt_raw and _pt_raw != "auto" else None
 
         # Dedupe: if an endpoint with the same base_url already exists and
         # is reachable by the caller (shared or owned by them), return it
@@ -1507,10 +1512,13 @@ def setup_model_routes(model_discovery):
                     existing.api_key = api_key.strip()
                     changed = True
                 if should_probe:
+                    _dedup_pt_raw = (provider_type or "").strip().lower()
+                    _dedup_pt = _dedup_pt_raw if _dedup_pt_raw and _dedup_pt_raw != "auto" else getattr(existing, "provider_type", None)
                     probed_models = _probe_endpoint(
                         base_url,
                         (api_key.strip() or existing.api_key or None),
                         timeout=_explicit_model_list_timeout(base_url, existing_kind_for_probe, refresh_timeout),
+                        provider_type=_dedup_pt,
                     )
                     if probed_models:
                         existing.cached_models = json.dumps(probed_models)
@@ -1541,7 +1549,7 @@ def setup_model_routes(model_discovery):
         finally:
             _db_dedup.close()
 
-        model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=explicit_timeout) if should_probe else []
+        model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=explicit_timeout, provider_type=_pt) if should_probe else []
         ping = {"reachable": False, "error": None}
         if (should_probe or requested_kind in ("api", "proxy")) and not model_ids:
             ping = _ping_endpoint(base_url, api_key.strip() or None, timeout=min(explicit_timeout, 2.0))
@@ -1575,6 +1583,7 @@ def setup_model_routes(model_discovery):
                 cached_models=json.dumps(model_ids) if model_ids else None,
                 pinned_models=json.dumps(_pinned) if _pinned else None,
                 supports_tools=_st,
+                provider_type=_pt,
                 owner=_owner_val,
             )
             db.add(ep)
@@ -1615,6 +1624,7 @@ def setup_model_routes(model_discovery):
         api_key: str = Form(""),
         endpoint_kind: str = Form("auto"),
         model_refresh_timeout: str = Form(""),
+        provider_type: str = Form(""),
     ):
         require_admin(request)
         base_url = _normalize_base(base_url)
@@ -1624,9 +1634,11 @@ def setup_model_routes(model_discovery):
         base_url = resolve_url(base_url)
         base_url = _rewrite_loopback_for_docker(base_url)
         requested_kind = _normalize_endpoint_kind(endpoint_kind)
+        _pt_raw = (provider_type or "").strip().lower()
+        _pt = _pt_raw if _pt_raw and _pt_raw != "auto" else None
         configured_timeout = _parse_positive_int(model_refresh_timeout, minimum=1, maximum=60)
         probe_timeout = _explicit_model_list_timeout(base_url, requested_kind, configured_timeout)
-        models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
+        models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout, provider_type=_pt)
         ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=min(probe_timeout, 2.0))
         return {
             "base_url": base_url,
@@ -1648,12 +1660,12 @@ def setup_model_routes(model_discovery):
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
             if not ep:
                 raise HTTPException(404, "Endpoint not found")
-            ep_data = {"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": ep.api_key}
+            ep_data = {"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": ep.api_key, "provider_type": getattr(ep, "provider_type", None)}
         finally:
             db.close()
 
         base = _normalize_base(ep_data["base_url"])
-        all_models = _probe_endpoint(base, ep_data["api_key"])
+        all_models = _probe_endpoint(base, ep_data["api_key"], provider_type=ep_data.get("provider_type"))
         chat_models = [m for m in all_models if _is_chat_model(m)]
         skipped = len(all_models) - len(chat_models)
 
@@ -1712,7 +1724,7 @@ def setup_model_routes(model_discovery):
                 category = _classify_endpoint(base, kind)
                 timeout = _manual_refresh_timeout(ep, category, refresh_timeout)
                 try:
-                    probed = _probe_endpoint(base, ep.api_key, timeout=timeout)
+                    probed = _probe_endpoint(base, ep.api_key, timeout=timeout, provider_type=getattr(ep, "provider_type", None))
                 except Exception as exc:
                     logger.warning("Manual model refresh failed for endpoint %s at %s: %s", ep_id, base, exc)
                     probed = []

@@ -356,6 +356,10 @@ class ModelEndpoint(TimestampMixin, Base):
     # can be toggled per-endpoint in the UI. NULL = unknown, falls
     # back to the model-name keyword heuristic in agent_loop.py.
     supports_tools = Column(Boolean, nullable=True, default=None)
+    # Explicit API protocol override. NULL/"auto" = detect from hostname
+    # (the historical behaviour). Set to "anthropic" to force Anthropic
+    # Messages API format regardless of hostname (e.g. for a local proxy).
+    provider_type = Column(String, nullable=True, default=None)
     # Per-user ownership. NULL = legacy/shared (visible to every user) — this
     # is the historical default. When non-null, the model picker only shows
     # the endpoint to that user (admins always see everything).
@@ -873,6 +877,10 @@ def _migrate_add_supports_tools_column():
             conn.execute("ALTER TABLE model_endpoints ADD COLUMN supports_tools BOOLEAN")
             conn.commit()
             logging.getLogger(__name__).info("Migrated: added 'supports_tools' column to model_endpoints")
+        if columns and "provider_type" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN provider_type TEXT")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'provider_type' column to model_endpoints")
         conn.close()
     except Exception as e:
         logging.getLogger(__name__).warning(f"supports_tools migration failed: {e}")

@@ -313,6 +313,15 @@ def _detect_provider(url: str) -> str:
         return "ollama"
     if _host_match(url, "anthropic.com"):
         return "anthropic"
+    # Path-based detection: if build_chat_url already resolved to /v1/messages
+    # (e.g. for a local proxy with provider_type="anthropic"), recognise it here
+    # so downstream callers (stream_llm, call_llm) use the Anthropic format.
+    try:
+        path = (urlparse(url).path or "").rstrip("/")
+        if path.endswith("/v1/messages"):
+            return "anthropic"
+    except Exception:
+        pass
     if _host_match(url, "openrouter.ai"):
         return "openrouter"
     if _host_match(url, "groq.com"):
