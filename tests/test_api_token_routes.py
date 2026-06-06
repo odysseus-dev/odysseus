@@ -274,6 +274,20 @@ def test_delete_token_deletes_and_invalidates_cache(monkeypatch, token_routes_mo
 # ---------------------------------------------------------------------------
 
 
+def test_normalize_scopes_accepts_cookbook_scopes(token_routes_mod):
+    mod = token_routes_mod
+    assert mod._normalize_scopes(["cookbook:read"]) == ["cookbook:read"]
+    assert mod._normalize_scopes(["cookbook:launch"]) == ["cookbook:read", "cookbook:launch"]
+
+
+def test_normalize_scopes_rejects_unknown_cookbook_typo(token_routes_mod):
+    mod = token_routes_mod
+    with pytest.raises(HTTPException) as exc:
+        mod._normalize_scopes(["cookbook:write"])
+    assert exc.value.status_code == 400
+    assert "Unknown token scope" in exc.value.detail
+
+
 def test_delete_missing_token_returns_404_without_invalidating_cache(monkeypatch, token_routes_mod):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     mod = token_routes_mod
