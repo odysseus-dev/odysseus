@@ -3,6 +3,8 @@
 import os
 
 APP_VERSION = "0.9.1"
+# Bump when local/dev behavior changes so you can confirm reload (shown in UI + /api/version).
+BUILD_STAMP = "auto-route-mode-v1"
 
 # Base paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/"
