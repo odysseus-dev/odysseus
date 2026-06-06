@@ -2056,7 +2056,8 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_calendar tool calls: list/create/update/delete calendar events (local SQLite)."""
     from datetime import datetime, timedelta
     from core.database import SessionLocal, CalendarCal, CalendarEvent, Note
-    from routes.calendar_routes import _ensure_default_calendar, _parse_dt, _parse_dt_pair, parse_due_for_user, _resolve_base_uid
+    from routes.calendar_routes import _ensure_default_calendar, _parse_dt, _parse_dt_pair, parse_due_for_user, _resolve_base_uid, _expand_rrule
+    from sqlalchemy import or_ as _or, and_ as _and
     import uuid as _uuid
 
     try:
@@ -2205,10 +2206,30 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             except ValueError as e:
                 return {"error": f"Invalid date format: {e}", "exit_code": 1}
 
+            # Models routinely pass end == start for a single-day query ("tomorrow").
+            # The window end is EXCLUSIVE (dtstart < end_dt), so end == start yields an
+            # empty range and zero events. Treat any non-positive window as that full day.
+            if end_dt <= start_dt:
+                end_dt = start_dt + timedelta(days=1)
+
+            # Mirror /api/calendar/events: non-recurring events must overlap the
+            # window; recurring events (RRULE) whose base dtstart is before the
+            # window end are fetched so their occurrences can be expanded. Without
+            # this, a weekly event based months ago never shows for "tomorrow".
             q = _event_query().filter(
-                CalendarEvent.dtstart < end_dt,
-                CalendarEvent.dtend > start_dt,
                 CalendarEvent.status != "cancelled",
+                _or(
+                    _and(
+                        _or(CalendarEvent.rrule == "", CalendarEvent.rrule.is_(None)),
+                        CalendarEvent.dtstart < end_dt,
+                        CalendarEvent.dtend > start_dt,
+                    ),
+                    _and(
+                        CalendarEvent.rrule.isnot(None),
+                        CalendarEvent.rrule != "",
+                        CalendarEvent.dtstart < end_dt,
+                    ),
+                ),
             )
             calendar_filter = args.get("calendar")
             if calendar_filter:
@@ -2219,20 +2240,24 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             rows = q.order_by(CalendarEvent.dtstart).all()
             events = []
             for ev in rows:
-                if ev.all_day:
-                    s, e = ev.dtstart.strftime("%Y-%m-%d"), ev.dtend.strftime("%Y-%m-%d")
-                else:
-                    suffix = "Z" if getattr(ev, "is_utc", False) else ""
-                    s, e = ev.dtstart.isoformat() + suffix, ev.dtend.isoformat() + suffix
-                events.append({
-                    "uid": ev.uid, "summary": ev.summary or "", "dtstart": s, "dtend": e,
-                    "all_day": ev.all_day, "description": ev.description or "",
-                    "location": ev.location or "",
-                    "calendar": ev.calendar.name if ev.calendar else "",
-                    "calendar_href": ev.calendar_id,
-                    "event_type": ev.event_type or "",
-                    "importance": ev.importance or "normal",
-                })
+                # Expand recurrences into concrete occurrences within the window
+                # (same as the UI endpoint) so weekly/daily events appear on every
+                # repeat date, not just their DTSTART.
+                for occ in _expand_rrule(ev, start_dt, end_dt):
+                    events.append({
+                        "uid": occ.get("uid", ev.uid),
+                        "summary": occ.get("summary", ev.summary or ""),
+                        "dtstart": occ.get("dtstart"),
+                        "dtend": occ.get("dtend"),
+                        "all_day": occ.get("all_day", ev.all_day),
+                        "description": ev.description or "",
+                        "location": ev.location or "",
+                        "calendar": ev.calendar.name if ev.calendar else "",
+                        "calendar_href": ev.calendar_id,
+                        "event_type": ev.event_type or "",
+                        "importance": ev.importance or "normal",
+                    })
+            events.sort(key=lambda x: str(x.get("dtstart") or ""))
             if not events:
                 response_text = f"No events between {start_dt.date().isoformat()} and {end_dt.date().isoformat()}."
             else:
