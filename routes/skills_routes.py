@@ -11,6 +11,8 @@ import logging
 import re
 from typing import List, Optional
 
+import httpx
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -49,6 +51,10 @@ class SkillAddRequest(BaseModel):
     problem: Optional[str] = Field(None, max_length=2000)
     solution: Optional[str] = Field(None, max_length=5000)
     steps: List[str] = Field(default_factory=list)
+
+
+class SkillImportUrlRequest(BaseModel):
+    url: str = Field(..., min_length=8, max_length=2000)
 
 
 class SkillUpdateRequest(BaseModel):
@@ -1202,6 +1208,36 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             settings["builtin_tool_overrides"] = ov
             save_settings(settings)
         return {"ok": True, "name": name, "is_overridden": False}
+
+    @router.post("/import-from-url")
+    async def import_skill_from_url(request: Request, body: SkillImportUrlRequest):
+        """Install a SKILL.md bundle from a public GitHub URL (skills.sh links supported)."""
+        require_admin(request)
+        user = _owner(request)
+        from services.memory.skill_importer import (
+            SkillImportError,
+            fetch_skill_bundle,
+        )
+
+        try:
+            files, _src = fetch_skill_bundle(body.url.strip())
+            entry = skills_manager.import_bundle_from_files(
+                files,
+                owner=user,
+                source_url=body.url.strip(),
+            )
+        except SkillImportError as e:
+            raise HTTPException(400, str(e)) from e
+        except httpx.HTTPError as e:
+            logger.warning("skill import fetch failed: %s", e)
+            detail = str(e).strip() or "Could not download skill from URL"
+            raise HTTPException(502, detail) from e
+        except Exception as e:
+            logger.error("skill import failed: %s", e)
+            raise HTTPException(500, "Skill import failed") from e
+
+        _fire_skill_added(user)
+        return {"ok": True, "skill": entry, "files": len(files)}
 
     @router.post("/add")
     async def add_skill(request: Request, body: SkillAddRequest):

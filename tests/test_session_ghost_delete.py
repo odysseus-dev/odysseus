@@ -109,7 +109,7 @@ def test_unauthenticated_still_403(monkeypatch):
     sm = SimpleNamespace(sessions={"ghost": SimpleNamespace(owner=None)})
     with pytest.raises(HTTPException) as exc:
         SR._verify_session_owner(_req(api_token=False, current_user=None), "ghost", sm)
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 401
 
 
 # --- manager layer: delete_session clears memory-only ghosts ---------------

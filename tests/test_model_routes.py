@@ -37,6 +37,7 @@ from routes.model_routes import (
     _curate_models,
     _visible_models,
     _normalize_model_ids,
+    _api_key_fingerprint,
     _is_chat_model,
     _classify_endpoint,
     _effective_endpoint_kind,
@@ -754,6 +755,16 @@ def test_visible_models_handles_malformed_strings():
     assert _visible_models("only-cached", None, None) == ["only-cached"]
 
 
+def test_api_key_fingerprint_is_stable_and_non_secret():
+    fp_one = _api_key_fingerprint("key-one")
+
+    assert _api_key_fingerprint("") == ""
+    assert fp_one == _api_key_fingerprint(" key-one ")
+    assert fp_one != _api_key_fingerprint("key-two")
+    assert len(fp_one) == 8
+    assert "key-one" not in fp_one
+
+
 def _create_form_kwargs(**overrides):
     """Defaults for every Form() param create_model_endpoint reads directly.
 
@@ -789,6 +800,29 @@ def _patch_create_deps(monkeypatch, db):
     monkeypatch.setattr(model_routes, "_load_settings", lambda: {"default_endpoint_id": "exists"})
     monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda u: u)
     monkeypatch.setattr(auth_helpers, "get_current_user", lambda req: None)
+
+
+def test_list_model_endpoints_returns_key_fingerprint(monkeypatch):
+    endpoint_with_key = _make_endpoint(
+        api_key="key-one",
+        cached_models=json.dumps(["m1"]),
+    )
+    endpoint_without_key = _make_endpoint(
+        id="ep2",
+        api_key=None,
+        cached_models=json.dumps(["m2"]),
+    )
+    db = _PinnedFakeDb([endpoint_with_key, endpoint_without_key])
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+    endpoint = _get_route("/api/model-endpoints", "GET")
+
+    result = endpoint(_PinnedFakeRequest())
+
+    assert result[0]["has_key"] is True
+    assert result[0]["api_key_fingerprint"] == _api_key_fingerprint("key-one")
+    assert result[1]["has_key"] is False
+    assert result[1]["api_key_fingerprint"] == ""
 
 
 def test_post_creates_endpoint_with_pinned_models(monkeypatch):
@@ -856,6 +890,53 @@ def test_post_dedupe_existing_does_not_clobber_pinned_when_omitted(monkeypatch):
     assert json.loads(existing.pinned_models) == ["keep-me"]
     assert result["pinned_models"] == ["keep-me"]
     assert db.committed == 0  # nothing to persist
+
+
+def test_post_same_base_url_different_api_key_creates_distinct_endpoint(monkeypatch):
+    existing = _make_endpoint(
+        base_url="https://api.example.test/v1",
+        api_key="key-one",
+    )
+    db = _PinnedFakeDb([existing])
+    _patch_create_deps(monkeypatch, db)
+    create = _get_route("/api/model-endpoints", "POST")
+
+    result = create(
+        _PinnedFakeRequest(),
+        base_url="https://api.example.test/v1",
+        **_create_form_kwargs(api_key="key-two"),
+    )
+
+    assert result.get("existing") is not True
+    assert result["has_key"] is True
+    assert result["api_key_fingerprint"] == _api_key_fingerprint("key-two")
+    assert len(db.added) == 1
+    assert db.added[0].base_url == "https://api.example.test/v1"
+    assert db.added[0].api_key == "key-two"
+
+
+def test_post_same_base_url_same_api_key_still_dedupes(monkeypatch):
+    existing = _make_endpoint(
+        base_url="https://api.example.test/v1",
+        api_key="key-one",
+    )
+    db = _PinnedFakeDb([existing])
+    _patch_create_deps(monkeypatch, db)
+    create = _get_route("/api/model-endpoints", "POST")
+
+    result = create(
+        _PinnedFakeRequest(),
+        base_url="https://api.example.test/v1",
+        **_create_form_kwargs(api_key="key-one"),
+    )
+
+    assert result["existing"] is True
+    assert result["id"] == existing.id
+    assert result["has_key"] is True
+    assert result["api_key_fingerprint"] == _api_key_fingerprint("key-one")
+    assert db.added == []
+
+
 class _RouteQuery:
     def __init__(self, rows):
         self.rows = list(rows)

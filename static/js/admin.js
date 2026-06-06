@@ -87,8 +87,11 @@ async function loadUsers() {
           <input type="number" min="0" value="${maxMsg}" data-priv="max_messages_per_day" data-user="${esc(u.username)}" style="width:70px;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:12px;text-align:center;">
         </div>`;
         // Allowed models — checkbox list
-        const allowedSet = new Set((u.privileges && u.privileges.allowed_models) || []);
-        const allEmpty = allowedSet.size === 0;
+        const allowedModels = Array.isArray(u.privileges && u.privileges.allowed_models)
+          ? u.privileges.allowed_models
+          : [];
+        const allowedSet = new Set(allowedModels);
+        const modelsRestricted = !!(u.privileges && u.privileges.allowed_models_restricted);
         html += `<div style="padding:4px 0;">
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <span style="font-size:12px;">Allowed models</span>
@@ -97,7 +100,7 @@ async function loadUsers() {
               <a href="#" class="priv-models-none" data-user="${esc(u.username)}" style="font-size:10px;opacity:0.5;">None</a>
             </div>
           </div>
-          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${allEmpty ? 'All models allowed (no restrictions)' : allowedSet.size + ' model(s) allowed'}</div>
+          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${!modelsRestricted ? 'All models allowed (no restrictions)' : (allowedSet.size === 0 ? 'No models allowed' : allowedSet.size + ' model(s) allowed')}</div>
           <div class="priv-models-list" data-user="${esc(u.username)}">
             <span style="opacity:0.4;font-size:11px;">Loading models...</span>
           </div>
@@ -119,7 +122,7 @@ async function loadUsers() {
           // Load models list on first expand
           if (!_modelsLoaded && !privPanel.classList.contains('hidden')) {
             _modelsLoaded = true;
-            _loadModelsForUser(u.username, allowedSet, privPanel);
+            _loadModelsForUser(u.username, allowedSet, modelsRestricted, privPanel);
           }
         });
 
@@ -199,7 +202,7 @@ async function loadUsers() {
   } catch (e) { list.innerHTML = '<div class="admin-error">Failed to load users</div>'; }
 }
 
-async function _loadModelsForUser(username, allowedSet, privPanel) {
+async function _loadModelsForUser(username, allowedSet, modelsRestricted, privPanel) {
   const listEl = privPanel.querySelector(`.priv-models-list[data-user="${username}"]`);
   if (!listEl) return;
   try {
@@ -216,9 +219,9 @@ async function _loadModelsForUser(username, allowedSet, privPanel) {
       listEl.innerHTML = '<span style="opacity:0.4;font-size:11px;">No models available</span>';
       return;
     }
-    const allEmpty = allowedSet.size === 0;
+    let restricted = modelsRestricted;
     listEl.innerHTML = sortModelObjects(allModels).map(m => {
-      const checked = allEmpty || allowedSet.has(m.mid) ? 'checked' : '';
+      const checked = !restricted || allowedSet.has(m.mid) ? 'checked' : '';
       return `<label>
         <input type="checkbox" class="priv-model-cb" data-mid="${esc(m.mid)}" ${checked}>
         <span>${esc(m.display)}</span>
@@ -232,14 +235,15 @@ async function _loadModelsForUser(username, allowedSet, privPanel) {
       listEl.querySelectorAll('.priv-model-cb').forEach(cb => {
         if (cb.checked) checked.push(cb.dataset.mid);
       });
-      // If all are checked, send empty array (= no restrictions)
-      const value = checked.length === allModels.length ? [] : checked;
+      // All checked means unrestricted; zero checked means explicitly no models.
+      restricted = checked.length !== allModels.length;
+      const value = restricted ? checked : [];
       const hint = privPanel.querySelector('.priv-models-list[data-user]')?.previousElementSibling?.querySelector('div[style*="opacity"]');
-      if (hint) hint.textContent = value.length === 0 ? 'All models allowed (no restrictions)' : value.length + ' model(s) allowed';
+      if (hint) hint.textContent = !restricted ? 'All models allowed (no restrictions)' : (value.length === 0 ? 'No models allowed' : value.length + ' model(s) allowed');
       fetch(`/api/auth/users/${encodeURIComponent(username)}/privileges`, {
         method: 'PUT', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ allowed_models: value }),
+        body: JSON.stringify({ allowed_models: value, allowed_models_restricted: restricted }),
       }).catch(() => {});
     }
     listEl.querySelectorAll('.priv-model-cb').forEach(cb => cb.addEventListener('change', _saveModels));
@@ -413,6 +417,9 @@ async function loadEndpoints() {
       const justAddedClass = (_recentlyAddedEpId && String(ep.id) === _recentlyAddedEpId) ? ' adm-ep-just-added' : '';
       const category = ep.category || (_isLocalEndpoint(ep.base_url) ? 'local' : 'api');
       const kindLabel = ep.endpoint_kind && ep.endpoint_kind !== 'auto' ? ep.endpoint_kind.toUpperCase() : '';
+      const keyLabel = ep.has_key
+        ? (ep.api_key_fingerprint ? ` (key ${esc(ep.api_key_fingerprint)})` : ' (key set)')
+        : '';
       return `
         <div class="admin-user-row${ep.is_enabled ? '' : ' admin-ep-disabled'}${justAddedClass}" data-adm-ep-id="${ep.id}">
           <div style="display:flex;align-items:center;justify-content:space-between;${hasModels ? 'cursor:pointer;' : ''}padding:4px 0;" data-adm-ep-header="${ep.id}">
@@ -430,7 +437,7 @@ async function loadEndpoints() {
               ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
             </div>
           </div>
-          <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${ep.has_key ? ' (key set)' : ''}</div>
+          <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${keyLabel}</div>
           ${hasModels ? `<div class="mcp-tools-panel hidden" data-adm-ep-models-panel="${ep.id}"></div>` : ''}
         </div>`;
     });
