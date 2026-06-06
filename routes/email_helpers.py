@@ -53,7 +53,7 @@ def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message
     host = cfg["smtp_host"]
     port = int(cfg.get("smtp_port") or 465)
     user = cfg.get("smtp_user") or ""
-    password = cfg.get("smtp_password") or ""
+    password = (cfg.get("smtp_password") or "").replace(" ", "")
     security = _smtp_security_mode(cfg)
 
     if security == "ssl":
@@ -738,7 +738,7 @@ def _imap_connect(account_id: str | None = None, owner: str = ""):
         starttls=bool(cfg.get("imap_starttls")),
         timeout=_IMAP_TIMEOUT_SECONDS,
     )
-    conn.login(cfg["imap_user"], cfg["imap_password"])
+    conn.login(cfg["imap_user"], cfg["imap_password"].replace(" ", ""))
     return conn
 
 
