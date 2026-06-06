@@ -40,6 +40,16 @@ from routes.chat_helpers import (
     _enforce_chat_privileges,
 )
 from src.action_intents import classify_tool_intent as _classify_tool_intent
+from src.local_llm_router_routing import (
+    LocalLlmRouterNotReady,
+    check_local_llm_router_ready,
+    is_local_llm_router_active,
+    is_local_llm_router_auto_model,
+    resolve_local_llm_router,
+    local_llm_router_fallback_candidates,
+)
+from src.local_llm_router_runtime import LOCAL_LLM_ROUTER_MISSING, local_llm_router_available
+from src.constants import AUTO_SELECT_LABEL
 
 logger = logging.getLogger(__name__)
 
@@ -461,7 +471,8 @@ def setup_chat_routes(
             # the first cached model off the matching endpoint so the
             # upstream isn't called with model="" (which surfaces as a
             # generic 401/503).
-            _recover_empty_session_model(sess, session, owner=owner)
+            if not is_local_llm_router_auto_model(getattr(sess, "model", None)):
+                _recover_empty_session_model(sess, session, owner=owner)
             if not getattr(sess, "model", "").strip():
                 raise HTTPException(
                     400,
@@ -481,6 +492,15 @@ def setup_chat_routes(
         # Admins always have full privileges via get_privileges (returns
         # ADMIN_PRIVILEGES wholesale) so this is a no-op for them.
         _enforce_chat_privileges(request, sess)
+
+        if is_local_llm_router_active(sess) and not local_llm_router_available():
+            raise HTTPException(503, LOCAL_LLM_ROUTER_MISSING)
+
+        if is_local_llm_router_active(sess):
+            try:
+                check_local_llm_router_ready(sess.endpoint_url or "", owner=owner)
+            except LocalLlmRouterNotReady as exc:
+                raise HTTPException(400, str(exc)) from exc
 
         # Ensure session has auth headers
         resolve_session_auth(sess, session, owner=get_current_user(request))
@@ -838,6 +858,13 @@ def setup_chat_routes(
 
             full_response = ""
             last_metrics = None
+            _local_llm_router = (
+                is_local_llm_router_active(sess)
+                and not do_research
+                and not compare_mode
+                and chat_mode in ("chat", "agent")
+            )
+            _llr_res = None
 
             # Configured fallback chain for the default chat model. Tried in
             # order if the session's primary model fails before producing
@@ -848,9 +875,37 @@ def setup_chat_routes(
             except Exception:
                 _fallback_candidates = []
 
+            if _local_llm_router:
+                try:
+                    _llr_res = resolve_local_llm_router(
+                        prompt=message or "",
+                        endpoint_url=sess.endpoint_url,
+                        headers=sess.headers,
+                        owner=_user,
+                        mode=chat_mode if chat_mode in ("chat", "agent") else "chat",
+                    )
+                except Exception as exc:
+                    yield f'data: {json.dumps({"delta": f"Auto (Local LLMs): {exc}"})}\n\n'
+                    yield "data: [DONE]\n\n"
+                    _active_streams.pop(session, None)
+                    return
+
             # Send model name early so the frontend can show it during streaming
             _model_suffix = "Research" if do_research else None
-            _model_info = {"type": "model_info", "model": sess.model}
+            if _llr_res:
+                _display_model = _llr_res.model
+                _model_info = {
+                    "type": "model_info",
+                    "model": _display_model,
+                    "requested_model": sess.model,
+                    "local_llm_router": True,
+                    "tier": _llr_res.tier,
+                    "mode_label": AUTO_SELECT_LABEL,
+                    "route_reasons": list(_llr_res.route_reasons),
+                }
+            else:
+                _display_model = sess.model
+                _model_info = {"type": "model_info", "model": _display_model}
             if _model_suffix:
                 _model_info["suffix"] = _model_suffix
             if ctx.preset.character_name:
@@ -897,7 +952,17 @@ def setup_chat_routes(
                 _actual_model = None
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
                 try:
-                    _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
+                    if _llr_res:
+                        _chat_candidates = [
+                            (_llr_res.endpoint_url, _llr_res.model, _llr_res.headers),
+                        ] + local_llm_router_fallback_candidates(
+                            _llr_res,
+                            endpoint_url=sess.endpoint_url,
+                            headers=sess.headers,
+                            owner=_user,
+                        )
+                    else:
+                        _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
                     async for chunk in stream_llm_with_fallback(
                         _chat_candidates,
                         messages,
@@ -938,7 +1003,10 @@ def setup_chat_routes(
                                     last_metrics = data.get("data", {})
                                     _reported_model = last_metrics.get("model")
                                     last_metrics["requested_model"] = _requested_model
-                                    last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model
+                                    _resolved = _reported_model or _actual_model or _answered_by
+                                    last_metrics["model"] = _resolved or _display_model or _requested_model
+                                    if _llr_res and _resolved:
+                                        last_metrics["resolved_model"] = _resolved
                                     if ctx.context_length and last_metrics.get("input_tokens"):
                                         pct = min(round((last_metrics["input_tokens"] / ctx.context_length) * 100, 1), 100.0)
                                         last_metrics["context_percent"] = pct
@@ -1053,10 +1121,12 @@ def setup_chat_routes(
                         session_id=session,
                         disabled_tools=disabled_tools if disabled_tools else None,
                         owner=_user,
-                        fallbacks=_fallback_candidates,
+                        fallbacks=[] if _local_llm_router else _fallback_candidates,
                         workspace=workspace or None,
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
+                        local_llm_router_active=_local_llm_router,
+                        local_llm_router_anchor_url=sess.endpoint_url,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -1079,6 +1149,8 @@ def setup_chat_routes(
                                     "rounds_exhausted",
                                     "ask_user",
                                     "plan_update",
+                                    "model_info",
+                                    "model_resolved",
                                 ):
                                     if data.get("type") == "agent_step":
                                         _agent_rounds = max(_agent_rounds, data.get("round", 1))
@@ -1102,7 +1174,10 @@ def setup_chat_routes(
                                     last_metrics = data.get("data", {})
                                     _reported_model = last_metrics.get("model")
                                     last_metrics["requested_model"] = last_metrics.get("requested_model") or _requested_model
-                                    last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model
+                                    _resolved = _reported_model or _actual_model or _answered_by
+                                    last_metrics["model"] = _resolved or _display_model or _requested_model
+                                    if _llr_res and _resolved:
+                                        last_metrics["resolved_model"] = _resolved
                                     yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
                             except json.JSONDecodeError:
                                 yield chunk

@@ -441,6 +441,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         name: str = Form(None), folder: str = Form(None),
         model: str = Form(None), endpoint_url: str = Form(None),
         endpoint_id: str = Form(None),
+        skip_validation: str = Form(None),
     ):
         _verify_session_owner(request, sid)
         try:
@@ -464,19 +465,23 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             finally:
                 db.close()
         # Switch model/endpoint mid-session
-        if model is not None and endpoint_url is not None:
+        if model is not None:
+            from src.local_llm_router_routing import is_local_llm_router_auto_model
+
             user = get_current_user(request)
-            _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
+            ep_id = (endpoint_id or "").strip() if endpoint_id is not None else ""
+            resolved_url = (endpoint_url or "").strip() if endpoint_url is not None else ""
             endpoint_api_key = ""
             endpoint_base_url = ""
-            if endpoint_id:
+
+            if ep_id:
                 from core.database import ModelEndpoint
                 from src.auth_helpers import owner_filter
                 from src.endpoint_resolver import build_chat_url, normalize_base
                 _db = SessionLocal()
                 try:
                     q = _db.query(ModelEndpoint).filter(
-                        ModelEndpoint.id == endpoint_id,
+                        ModelEndpoint.id == ep_id,
                         ModelEndpoint.is_enabled == True,
                     )
                     if user:
@@ -486,11 +491,30 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                         raise HTTPException(400, "Model endpoint no longer exists")
                     endpoint_base_url = ep.base_url or ""
                     endpoint_api_key = ep.api_key or ""
-                    endpoint_url = build_chat_url(normalize_base(endpoint_base_url))
+                    resolved_url = build_chat_url(normalize_base(endpoint_base_url))
                 finally:
                     _db.close()
+            elif resolved_url:
+                _reject_raw_endpoint_url_for_non_admin(
+                    request, user, ep_id, resolved_url
+                )
+            elif is_local_llm_router_auto_model(model):
+                raise HTTPException(
+                    400,
+                    "Auto (Local LLMs) needs a registered local endpoint. "
+                    "Refresh endpoints in Settings, then pick Auto again.",
+                )
+            else:
+                raise HTTPException(
+                    400,
+                    "endpoint_id is required to switch models on this account.",
+                )
+
+            if not resolved_url:
+                raise HTTPException(400, "Could not resolve endpoint URL for model switch")
+
             session.model = model
-            session.endpoint_url = endpoint_url
+            session.endpoint_url = resolved_url
             # Update auth headers from the endpoint's stored API key
             if endpoint_api_key:
                 from src.endpoint_resolver import build_headers
@@ -503,14 +527,16 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db_session = db.query(DbSession).filter(DbSession.id == sid).first()
                 if db_session:
                     db_session.model = model
-                    db_session.endpoint_url = endpoint_url
+                    db_session.endpoint_url = resolved_url
                     db_session.headers = session.headers or {}
                     db_session.updated_at = datetime.utcnow()
                     db.commit()
             finally:
                 db.close()
             result["model"] = model
-            result["endpoint_url"] = endpoint_url
+            result["endpoint_url"] = resolved_url
+            if ep_id:
+                result["endpoint_id"] = ep_id
         return result
     
     @router.post("/session/{sid}/inject_messages")

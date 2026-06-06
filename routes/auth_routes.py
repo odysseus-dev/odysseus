@@ -17,6 +17,7 @@ from src.settings import (
     save_features as _save_features,
     DEFAULT_SETTINGS,
 )
+from src.local_llm_router_runtime import local_llm_router_available
 from src.integrations import (
     load_integrations,
     add_integration,
@@ -427,8 +428,11 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         settings = _load_settings()
         if user and auth_manager.is_admin(user):
-            return settings
-        return scrub_settings(settings)
+            out = dict(settings)
+        else:
+            out = dict(scrub_settings(settings))
+        out["local_llm_router_available"] = local_llm_router_available()
+        return out
 
     @router.post("/settings")
     async def set_settings(request: Request):

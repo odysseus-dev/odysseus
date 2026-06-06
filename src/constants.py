@@ -30,6 +30,11 @@ MAX_CONTEXT_MESSAGES = 90
 REQUEST_TIMEOUT = 20
 OPENAI_COMPAT_PATH = "/v1/chat/completions"
 
+# Session sentinel for Auto (Local LLMs). Stored value must stay stable.
+LOCAL_LLM_ROUTER_AUTO_MODEL_ID = "__auto_stack__"
+LOCAL_LLM_ROUTER_NAME = "Local-LLM-Router"
+AUTO_SELECT_LABEL = "Auto (Local LLMs)"
+
 # Environment variables with defaults
 DEFAULT_HOST = os.getenv("LLM_HOST", "localhost")
 LLM_HOSTS = [h.strip() for h in os.getenv("LLM_HOSTS", "").split(",") if h.strip()]
