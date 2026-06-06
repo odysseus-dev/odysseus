@@ -910,6 +910,7 @@ import { createStreamRenderer } from './streamingRenderer.js';
       holder._researchQuery = msg; // Store query for notification text
       
       const modelName = sessionModule.getCurrentModel() || null;
+      const _isAutoStack = modelName === LOCAL_LLM_ROUTER_AUTO_MODEL_ID;
 
       let loadingText = 'Initializing...';
 
@@ -922,7 +923,6 @@ import { createStreamRenderer } from './streamingRenderer.js';
       } else if (el('research-toggle').checked) {
         loadingText = 'Deep research mode active...';
       } else {
-        const _isAutoStack = modelName === LOCAL_LLM_ROUTER_AUTO_MODEL_ID;
         loadingText = _isAutoStack ? 'Selecting model...' : 'Processing request...';
       }
 

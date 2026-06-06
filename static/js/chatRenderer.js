@@ -562,15 +562,25 @@ export function modelRouteLabel(requestedModel, actualModel) {
 
 export function replyModelPair(modelName, metadata) {
   const meta = metadata || {};
+  const resolvedFromMeta = modelValue(meta.resolved_model);
   const actualFromMeta = modelValue(meta.model || meta.actual_model);
   const requestedFromMeta = modelValue(meta.requested_model || meta.selected_model);
-  if (actualFromMeta || requestedFromMeta) {
-    const actual = actualFromMeta || requestedFromMeta || modelValue(modelName);
-    const requested = requestedFromMeta || actual;
+  if (actualFromMeta || requestedFromMeta || resolvedFromMeta) {
+    const requested = requestedFromMeta || actualFromMeta || modelValue(modelName);
+    let actual = actualFromMeta || requested;
+    if (resolvedFromMeta && !isLocalLlmRouterAutoModel(resolvedFromMeta)) {
+      actual = resolvedFromMeta;
+    } else if (isLocalLlmRouterAutoModel(actual) && resolvedFromMeta) {
+      actual = resolvedFromMeta;
+    }
     return { requestedModel: requested, actualModel: actual };
   }
   const fallback = modelValue(modelName);
   return { requestedModel: fallback, actualModel: fallback };
+}
+
+function isLocalLlmRouterAutoModel(name) {
+  return modelValue(name) === LOCAL_LLM_ROUTER_AUTO_MODEL_ID;
 }
 
 /**
@@ -639,7 +649,7 @@ export function applyModelColor(roleEl, modelName) {
       let html = '<div style="font-weight:600;margin-bottom:6px;color:var(--fg);display:flex;align-items:center;gap:6px;">';
       if (logoHtml) html += '<span class="role-provider-logo" style="opacity:0.7">' + logoHtml + '</span>';
       html += short + '</div>';
-      html += '<div><span class="ctx-label">Model</span> ' + modelName.split('/').pop() + '</div>';
+      html += '<div><span class="ctx-label">Model</span> ' + shortModel(modelName) + '</div>';
       // Provider = the serving endpoint, distinct from the model vendor/logo
       // (e.g. the same model via OpenRouter vs Copilot vs Anthropic direct).
       const _epUrl = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
