@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""odysseus-run — start the Odysseus server.
+
+Safe to re-run — skips venv creation, pip install, and setup if already done.
+"""
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_DIR = Path(__file__).resolve().parent.parent
+
+os.chdir(REPO_DIR)
+
+PORT = os.environ.get("ODYSSEUS_PORT") or os.environ.get("APP_PORT") or "7000"
+HOST = os.environ.get("ODYSSEUS_HOST") or os.environ.get("APP_BIND") or "127.0.0.1"
+
+env = os.environ.copy()
+
+def step(msg):
+    print(f"▶ {msg}")
+
+if not (REPO_DIR / ".env").exists():
+    step("Creating .env from .env.example")
+    (REPO_DIR / ".env.example").rename(REPO_DIR / ".env")
+
+venv_py = REPO_DIR / "venv" / "bin" / "python3"
+if not venv_py.exists():
+    step("Creating Python virtual environment")
+    subprocess.run([sys.executable, "-m", "venv", "venv"], check=True)
+
+req_hash = subprocess.run(
+    ["md5sum", "requirements.txt"], capture_output=True, text=True
+).stdout.split()[0]
+req_hash_file = REPO_DIR / "venv" / ".requirements_hash"
+
+if not req_hash_file.exists() or req_hash_file.read_text().strip() != req_hash:
+    step("Installing Python packages (first run takes a few minutes)")
+    subprocess.run([str(venv_py), "-m", "pip", "install", "--quiet", "--upgrade", "pip"], check=True)
+    subprocess.run([str(venv_py), "-m", "pip", "install", "-r", "requirements.txt"], check=True)
+    req_hash_file.write_text(req_hash)
+else:
+    step("Python packages up to date")
+
+result = subprocess.run(
+    [str(venv_py), "-m", "pip", "show", "chromadb-client"],
+    capture_output=True, text=True
+)
+if result.returncode == 0:
+    step("Cleaning up conflicting chromadb-client package")
+    subprocess.run([str(venv_py), "-m", "pip", "uninstall", "-y", "chromadb-client"], check=True)
+    subprocess.run([str(venv_py), "-m", "pip", "install", "--force-reinstall", "chromadb"], check=True)
+
+step("Running first-time setup")
+env["ODYSSEUS_SKIP_RUN_HINT"] = "1"
+subprocess.run([str(venv_py), "setup.py"], env=env, check=True)
+
+probe_host = HOST
+if probe_host in ("0.0.0.0", "::"):
+    probe_host = "127.0.0.1"
+url = f"http://{probe_host}:{PORT}"
+
+print()
+step(f"Starting Odysseus at {url}")
+print("  (press Ctrl+C to stop)")
+print()
+
+os.execvpe(str(venv_py), [str(venv_py), "-m", "uvicorn", "app:app", "--host", HOST, "--port", PORT], env)

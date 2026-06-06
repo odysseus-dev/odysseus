@@ -36,6 +36,7 @@ function _toggleSynapseMinimized() {
 
 let _open = false;
 let _onDocKeydown = null;
+let _onModelClickOutside = null;
 let _apiBase = '';
 let _endpoints = [];
 let _expandedJobId = null;
@@ -313,6 +314,10 @@ export function closePanel() {
     document.removeEventListener('keydown', _onDocKeydown);
     _onDocKeydown = null;
   }
+  if (_onModelClickOutside) {
+    document.removeEventListener('click', _onModelClickOutside, true);
+    _onModelClickOutside = null;
+  }
 
   document.body.classList.remove('research-panel-view');
   const btn = document.getElementById('tool-research-btn');
@@ -378,10 +383,21 @@ function _buildPanelHTML() {
             <span class="research-setting-label">Endpoint</span>
             <select id="research-endpoint"><option value="">Default</option></select>
           </label>
-          <label class="research-setting">
+          <label class="research-setting research-model-setting" style="position:relative;">
             <span class="research-setting-label">Model</span>
-            <select id="research-model"><option value="">Default</option></select>
+            <div class="research-model-trigger" id="research-model-trigger" tabindex="0">
+              <span class="research-model-label" id="research-model-label">Default</span>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="research-model-dropdown hidden" id="research-model-dropdown">
+              <div class="model-picker-search-row research-model-search-row">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                <input type="text" class="research-model-search" id="research-model-search" placeholder="Search models&hellip;">
+              </div>
+              <div class="model-picker-list research-model-list" id="research-model-list"></div>
+            </div>
           </label>
+          <input type="hidden" id="research-model" value="">
         </div>
         <div class="research-controls-row">
           <button id="research-add-btn" class="research-add-btn"><span class="research-add-plus">+</span> Queue</button>
@@ -461,6 +477,59 @@ function _wireEvents(pane) {
   const endpointSelect = pane.querySelector('#research-endpoint');
   endpointSelect.addEventListener('change', () => _populateModels(endpointSelect.value));
 
+  // Model picker: toggle dropdown on trigger click
+  const modelTrigger = pane.querySelector('#research-model-trigger');
+  const modelDropdown = pane.querySelector('#research-model-dropdown');
+  const modelSearch = pane.querySelector('#research-model-search');
+  const modelList = pane.querySelector('#research-model-list');
+
+  modelTrigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    modelDropdown.classList.toggle('hidden');
+    if (!modelDropdown.classList.contains('hidden')) {
+      _renderModelDropdown('');
+      setTimeout(() => { try { modelSearch.focus(); } catch {} }, 10);
+    }
+  });
+
+  modelSearch.addEventListener('input', () => _renderModelDropdown(modelSearch.value));
+  modelSearch.addEventListener('click', (e) => e.stopPropagation());
+  modelSearch.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      modelDropdown.classList.add('hidden');
+      modelTrigger.focus();
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const active = modelList.querySelector('.research-model-item.kb-active')
+        || modelList.querySelector('.research-model-item:not(.research-model-default)');
+      if (active) active.click();
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const items = [...modelList.querySelectorAll('.research-model-item')].filter(el => el.style.display !== 'none');
+      if (!items.length) return;
+      const cur = items.findIndex(el => el.classList.contains('kb-active'));
+      items.forEach(el => el.classList.remove('kb-active'));
+      const next = e.key === 'ArrowDown'
+        ? (cur < items.length - 1 ? cur + 1 : 0)
+        : (cur > 0 ? cur - 1 : items.length - 1);
+      items[next].classList.add('kb-active');
+      items[next].scrollIntoView({ block: 'nearest' });
+    }
+  });
+
+  // Close model dropdown on click outside
+  if (_onModelClickOutside) document.removeEventListener('click', _onModelClickOutside, true);
+  _onModelClickOutside = (e) => {
+    if (modelDropdown.classList.contains('hidden')) return;
+    if (!modelTrigger.contains(e.target) && !modelDropdown.contains(e.target)) {
+      modelDropdown.classList.add('hidden');
+    }
+  };
+  document.addEventListener('click', _onModelClickOutside, true);
+
   _renderJobs();
 }
 
@@ -515,9 +584,11 @@ function _editJob(job) {
   const spEl = document.getElementById('research-search-provider');
   if (spEl && s.search_provider) spEl.value = s.search_provider;
   const epEl = document.getElementById('research-endpoint');
-  if (epEl && s.endpoint_id) epEl.value = s.endpoint_id;
-  const mEl = document.getElementById('research-model');
-  if (mEl && s.model) mEl.value = s.model;
+  if (epEl && s.endpoint_id) {
+    epEl.value = s.endpoint_id;
+    _populateModels(s.endpoint_id);
+    if (s.model) _selectModel(s.model, s.model);
+  }
   // Remove the old job so clicking Start/Queue makes a fresh one
   jobs.removeJob(job.id);
   // Scroll the form into view
@@ -607,10 +678,7 @@ function _restoreSavedSettings() {
     ep.value = saved.endpoint_id;
     _populateModels(saved.endpoint_id);
     if (saved.model) {
-      setTimeout(() => {
-        const model = document.getElementById('research-model');
-        if (model) model.value = saved.model;
-      }, 50);
+      setTimeout(() => _selectModel(saved.model), 50);
     }
   }
 }
@@ -632,18 +700,113 @@ async function _loadEndpoints() {
 }
 
 function _populateModels(endpointId) {
-  const sel = document.getElementById('research-model');
-  if (!sel) return;
-  sel.innerHTML = '<option value="">Default</option>';
+  const list = document.getElementById('research-model-list');
+  const dropdown = document.getElementById('research-model-dropdown');
+  const hidden = document.getElementById('research-model');
+  const label = document.getElementById('research-model-label');
+  if (hidden) hidden.value = '';
+  if (label) label.textContent = 'Default';
+  if (dropdown) dropdown.classList.add('hidden');
+  if (!list) return;
+  list.innerHTML = '';
   if (!endpointId) return;
-  const ep = _endpoints.find(e => e.id === endpointId);
-  if (!ep || !ep.models) return;
-  sortModelIds(ep.models).forEach(m => {
-    const opt = document.createElement('option');
-    opt.value = m;
-    opt.textContent = m;
-    sel.appendChild(opt);
+
+  let modelsToRender = [];
+  if (window.modelsModule && window.modelsModule.getCachedItems) {
+    const items = window.modelsModule.getCachedItems();
+    const item = items.find(i => i.endpoint_id === endpointId);
+    if (item) {
+      const allIds = (item.models || []).concat(item.models_extra || []);
+      const allDisp = (item.models_display || []).concat(item.models_extra_display || item.models_extra || []);
+      allIds.forEach((mid, idx) => {
+        modelsToRender.push({ mid, display: allDisp[idx] || mid });
+      });
+    }
+  }
+  if (modelsToRender.length === 0) {
+    const ep = _endpoints.find(e => e.id === endpointId);
+    if (!ep || !ep.models) return;
+    sortModelIds(ep.models).forEach(mid => {
+      modelsToRender.push({ mid, display: mid.split('/').pop() });
+    });
+  }
+
+  // Default item
+  const defaultItem = document.createElement('div');
+  defaultItem.className = 'model-switch-item research-model-item research-model-default';
+  defaultItem.innerHTML = `<span class="mp-model-name" style="opacity:0.6;font-style:italic;">Default</span>`;
+  defaultItem.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _selectModel('', 'Default');
   });
+  list.appendChild(defaultItem);
+
+  modelsToRender.forEach(m => {
+    const item = document.createElement('div');
+    item.className = 'model-switch-item research-model-item';
+    item.dataset.mid = m.mid;
+    item.dataset.search = (m.display + ' ' + m.mid).toLowerCase();
+    
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'mp-model-name';
+    nameSpan.textContent = m.display;
+    item.appendChild(nameSpan);
+
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _selectModel(m.mid, m.display);
+    });
+    list.appendChild(item);
+  });
+}
+
+function _selectModel(value, label) {
+  const hidden = document.getElementById('research-model');
+  const labelEl = document.getElementById('research-model-label');
+  const dropdown = document.getElementById('research-model-dropdown');
+  const trigger = document.getElementById('research-model-trigger');
+  if (hidden) hidden.value = value;
+  let displayLabel = label;
+  if (!displayLabel && value) {
+    const list = document.getElementById('research-model-list');
+    if (list) {
+      const item = list.querySelector(`.research-model-item[data-mid="${value}"]`);
+      if (item) displayLabel = item.querySelector('.mp-model-name')?.textContent;
+    }
+  }
+  if (labelEl) labelEl.textContent = displayLabel || value.split('/').pop() || 'Default';
+  if (dropdown) dropdown.classList.add('hidden');
+  if (trigger) trigger.focus();
+}
+
+function _renderModelDropdown(filter) {
+  const list = document.getElementById('research-model-list');
+  if (!list) return;
+  const items = [...list.querySelectorAll('.research-model-item')];
+  const q = (filter || '').trim().toLowerCase();
+  if (!q) {
+    items.forEach(el => { el.style.display = ''; });
+    return;
+  }
+  let visible = 0;
+  items.forEach(el => {
+    const matches = el.dataset.search ? el.dataset.search.includes(q) : el.textContent.toLowerCase().includes(q);
+    el.style.display = matches ? '' : 'none';
+    if (matches) visible++;
+  });
+  const existing = list.querySelector('.research-model-empty');
+  if (visible === 0) {
+    if (!existing) {
+      const e = document.createElement('div');
+      e.className = 'model-switch-empty research-model-empty';
+      e.textContent = 'No matching models';
+      list.appendChild(e);
+    } else {
+      existing.style.display = '';
+    }
+  } else if (existing) {
+    existing.style.display = 'none';
+  }
 }
 
 // ── Job rendering ──
