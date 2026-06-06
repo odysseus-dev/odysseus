@@ -133,6 +133,156 @@ export async function startSession(
   return (await resp.json()) as { session_id: string; name: string };
 }
 
+// ------------------------------------------------------------------ //
+// Tools (email / calendar / notes / tasks). These hit the companion's
+// owner-impersonating proxies over the desktop's existing routes.
+// ------------------------------------------------------------------ //
+async function postJSON<T>(conn: Connection, path: string, body: unknown): Promise<T> {
+  const resp = await fetch(conn.baseUrl + path, {
+    method: 'POST',
+    headers: { ...authHeaders(conn), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!resp.ok) {
+    let detail = `HTTP ${resp.status}`;
+    try {
+      detail = ((await resp.json()) as { detail?: string }).detail || detail;
+    } catch {
+      /* keep status */
+    }
+    throw new Error(detail);
+  }
+  return (await resp.json().catch(() => ({}))) as T;
+}
+
+function qs(params: Record<string, string | number | undefined>): string {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') p.set(k, String(v));
+  const s = p.toString();
+  return s ? `?${s}` : '';
+}
+
+export interface EmailAccount {
+  id: string;
+  email?: string;
+  address?: string;
+  name?: string;
+  is_default?: boolean;
+}
+export interface EmailItem {
+  uid: string | number;
+  subject: string;
+  from_name?: string;
+  from_address?: string;
+  date?: string;
+  date_display?: string;
+  is_read?: boolean;
+  has_attachments?: boolean;
+}
+export interface EmailRead {
+  uid: string | number;
+  subject?: string;
+  from_name?: string;
+  from_address?: string;
+  to?: string;
+  date?: string;
+  date_display?: string;
+  body_text?: string;
+  body_html?: string;
+  body?: string;
+}
+
+export async function listEmailAccounts(conn: Connection): Promise<EmailAccount[]> {
+  const { accounts } = await getJSON<{ accounts: EmailAccount[] }>(conn, '/api/companion/email/accounts');
+  return accounts || [];
+}
+export function listEmails(
+  conn: Connection,
+  opts: { folder?: string; limit?: number; filter?: string; accountId?: string } = {},
+): Promise<{ emails: EmailItem[]; total?: number; error?: string }> {
+  return getJSON(
+    conn,
+    '/api/companion/email/list' +
+      qs({ folder: opts.folder, limit: opts.limit ?? 40, filter: opts.filter, account_id: opts.accountId }),
+  );
+}
+export function readEmail(
+  conn: Connection,
+  uid: string | number,
+  opts: { folder?: string; accountId?: string } = {},
+): Promise<EmailRead> {
+  return getJSON(
+    conn,
+    `/api/companion/email/read/${encodeURIComponent(String(uid))}` +
+      qs({ folder: opts.folder, account_id: opts.accountId }),
+  );
+}
+export function flagEmail(
+  conn: Connection,
+  uid: string | number,
+  action: 'mark-read' | 'mark-unread' | 'archive',
+  opts: { folder?: string; accountId?: string } = {},
+): Promise<unknown> {
+  return postJSON(
+    conn,
+    `/api/companion/email/${encodeURIComponent(String(uid))}/flag` +
+      qs({ action, folder: opts.folder, account_id: opts.accountId }),
+    {},
+  );
+}
+export function sendEmail(conn: Connection, body: Record<string, unknown>): Promise<unknown> {
+  return postJSON(conn, '/api/companion/email/send', body);
+}
+
+export interface CalEvent {
+  title?: string;
+  summary?: string;
+  dtstart?: string;
+  dtend?: string;
+  all_day?: boolean;
+  location?: string;
+}
+export function listEvents(conn: Connection, startISO: string, endISO: string): Promise<{ events: CalEvent[] }> {
+  return getJSON(conn, '/api/companion/calendar/events' + qs({ start: startISO, end: endISO }));
+}
+
+export interface Note {
+  id: string;
+  title?: string;
+  content?: string;
+  items?: { text: string; checked?: boolean }[] | null;
+  note_type?: string;
+  pinned?: boolean;
+  label?: string;
+  updated_at?: string;
+}
+export async function listNotes(conn: Connection): Promise<Note[]> {
+  const { notes } = await getJSON<{ notes: Note[] }>(conn, '/api/companion/notes');
+  return notes || [];
+}
+export function createNote(conn: Connection, body: { title?: string; content?: string }): Promise<unknown> {
+  return postJSON(conn, '/api/companion/notes', body);
+}
+
+export interface TaskRow {
+  id: string;
+  name?: string;
+  status?: string;
+  task_type?: string;
+  action?: string;
+  schedule?: string | null;
+  next_run?: string | null;
+  last_run?: string | null;
+  trigger_type?: string | null;
+}
+export async function listTasks(conn: Connection): Promise<TaskRow[]> {
+  const { tasks } = await getJSON<{ tasks: TaskRow[] }>(conn, '/api/companion/tasks');
+  return tasks || [];
+}
+export function taskAction(conn: Connection, id: string, action: 'pause' | 'resume' | 'run'): Promise<unknown> {
+  return postJSON(conn, `/api/companion/tasks/${encodeURIComponent(id)}/${action}`, {});
+}
+
 export interface FsDir {
   name: string;
   path: string;

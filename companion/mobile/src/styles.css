@@ -694,6 +694,149 @@ button {
   opacity: 0.45;
 }
 
+/* --- Tools: email / calendar / notes / tasks --- */
+.email-row .row-main {
+  gap: 2px;
+}
+.email-subj {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.email-when {
+  font-size: 11px;
+  color: var(--muted);
+  flex: none;
+  align-self: flex-start;
+}
+.email-subject {
+  font-size: 18px;
+  margin: 0 0 6px;
+}
+.email-from {
+  color: var(--fg);
+  font-size: 14px;
+}
+.email-date {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 14px;
+}
+.email-body {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.email-reply {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+}
+.note-input {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 16px;
+}
+.note-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.note-card,
+.task-card {
+  margin: 8px 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+}
+.note-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.note-body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.note-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.note-items li.done {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.task-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.task-name {
+  flex: 1;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-status {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.task-meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 6px 0 10px;
+}
+.task-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Agenda (calendar) */
+.agenda-day {
+  margin: 6px 0 14px;
+}
+.agenda-date {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.agenda-event {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.agenda-time {
+  font-size: 12px;
+  color: var(--muted);
+}
+.agenda-title {
+  font-size: 14px;
+}
+.agenda-loc {
+  grid-column: 2;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* --- Bottom nav --- */
 .bottom-nav {
   display: flex;

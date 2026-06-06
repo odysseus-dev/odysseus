@@ -6,6 +6,11 @@ import SessionsScreen from './screens/SessionsScreen';
 import SessionScreen from './screens/SessionScreen';
 import NewSessionScreen from './screens/NewSessionScreen';
 import SettingsScreen from './screens/SettingsScreen';
+import ToolsScreen, { type ToolName } from './screens/ToolsScreen';
+import EmailScreen from './screens/EmailScreen';
+import CalendarScreen from './screens/CalendarScreen';
+import NotesScreen from './screens/NotesScreen';
+import TasksScreen from './screens/TasksScreen';
 import BottomNav, { type Tab } from './components/BottomNav';
 
 // Top-level state machine. Intentionally tiny -- no router dependency for a
@@ -18,6 +23,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('sessions');
   const [openSessionId, setOpenSessionId] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
+  const [openTool, setOpenTool] = useState<ToolName | null>(null);
 
   useEffect(() => {
     loadConnection().then((c) => {
@@ -57,12 +63,22 @@ export default function App() {
     );
   }
 
+  if (openTool) {
+    const back = () => setOpenTool(null);
+    if (openTool === 'email') return <EmailScreen conn={conn} onBack={back} />;
+    if (openTool === 'calendar') return <CalendarScreen conn={conn} onBack={back} />;
+    if (openTool === 'notes') return <NotesScreen conn={conn} onBack={back} />;
+    if (openTool === 'tasks') return <TasksScreen conn={conn} onBack={back} />;
+  }
+
   return (
     <div className="app">
       <main className="app-body">
-        {tab === 'sessions' ? (
+        {tab === 'sessions' && (
           <SessionsScreen conn={conn} onOpen={setOpenSessionId} onNew={() => setComposing(true)} />
-        ) : (
+        )}
+        {tab === 'tools' && <ToolsScreen onOpen={setOpenTool} />}
+        {tab === 'settings' && (
           <SettingsScreen
             conn={conn}
             onDisconnect={() => {

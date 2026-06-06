@@ -18,7 +18,7 @@ on a GET would be unsafe (Lax cookies ride top-level GET navigations), so GET
 
 import html
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 from core.middleware import require_admin
@@ -38,6 +38,15 @@ def token_owner(request: Request) -> str | None:
     if getattr(request.state, "api_token", False):
         return getattr(request.state, "api_token_owner", None)
     return get_current_user(request)
+
+
+def _require_owner(request: Request) -> str:
+    """Resolve the token's real owner or 401. Shared by the tool-proxy endpoints
+    (email/calendar/notes/tasks)."""
+    owner = token_owner(request)
+    if not owner:
+        raise HTTPException(401, "Could not resolve an owner for this token")
+    return owner
 
 
 def owner_can_see(row_owner, owner) -> bool:
@@ -156,6 +165,38 @@ async def _fire_chat_run(
         raise
     except Exception as e:
         raise HTTPException(502, f"could not start the run: {e}")
+
+
+async def _proxy_internal(request: Request, owner: str, method: str, path: str,
+                          *, params=None, json_body=None) -> Response:
+    """Call an existing in-app route AS `owner` and pass its response straight
+    back to the phone.
+
+    Loopback to 127.0.0.1 with the internal-tool header + X-Odysseus-Owner --
+    the SAME owner-impersonation the agent tool layer uses (app.py AuthMiddleware
+    maps it to request.state.current_user "for notes/calendar/etc."). This lets
+    the companion reuse the desktop's owner-scoped email/calendar/notes/tasks
+    routes without re-implementing them or widening the chat-scoped bearer
+    token. The phone never gets a generic proxy: each companion endpoint pins a
+    fixed internal path, so only the intended actions are reachable.
+    """
+    import httpx
+
+    from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
+
+    port = request.url.port or _pairing.default_port()
+    url = f"http://127.0.0.1:{port}{path}"
+    headers = {INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN, "X-Odysseus-Owner": owner}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0)) as client:
+            resp = await client.request(method, url, params=params, json=json_body, headers=headers)
+    except Exception as e:
+        raise HTTPException(502, f"internal request failed: {e}")
+    return Response(
+        content=resp.content,
+        status_code=resp.status_code,
+        media_type=resp.headers.get("content-type", "application/json"),
+    )
 
 
 def _resolve_endpoint_url(owner, endpoint_id: str):
@@ -717,6 +758,112 @@ def setup_companion_routes(session_manager=None, upload_handler=None) -> APIRout
 
         _verify_session_owner(request, session_id, _resolve_session_manager(session_manager))
         return {"stopped": agent_runs.stop(session_id)}
+
+    # ---------------------------------------------------------------- #
+    # Tools: thin owner-impersonating proxies over the desktop's existing
+    # owner-scoped routes (see _proxy_internal). Each pins a fixed path.
+    # ---------------------------------------------------------------- #
+    @router.get("/email/accounts")
+    async def email_accounts(request: Request):
+        return await _proxy_internal(request, _require_owner(request), "GET", "/api/email/accounts")
+
+    @router.get("/email/list")
+    async def email_list(
+        request: Request,
+        folder: str = "INBOX",
+        limit: int = 50,
+        offset: int = 0,
+        filter: str = "all",
+        account_id: str | None = None,
+    ):
+        params = {"folder": folder, "limit": limit, "offset": offset, "filter": filter}
+        if account_id:
+            params["account_id"] = account_id
+        return await _proxy_internal(request, _require_owner(request), "GET", "/api/email/list", params=params)
+
+    @router.get("/email/read/{uid}")
+    async def email_read(request: Request, uid: str, folder: str = "INBOX", account_id: str | None = None):
+        params = {"folder": folder}
+        if account_id:
+            params["account_id"] = account_id
+        return await _proxy_internal(
+            request, _require_owner(request), "GET", f"/api/email/read/{uid}", params=params
+        )
+
+    @router.post("/email/{uid}/flag")
+    async def email_flag(request: Request, uid: str, action: str, folder: str = "INBOX", account_id: str | None = None):
+        """Mark read/unread or archive. `action` is mark-read|mark-unread|archive."""
+        if action not in ("mark-read", "mark-unread", "archive"):
+            raise HTTPException(400, "unknown action")
+        params = {"folder": folder}
+        if account_id:
+            params["account_id"] = account_id
+        return await _proxy_internal(
+            request, _require_owner(request), "POST", f"/api/email/{action}/{uid}", params=params
+        )
+
+    @router.post("/email/send")
+    async def email_send(request: Request):
+        owner = _require_owner(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        return await _proxy_internal(request, owner, "POST", "/api/email/send", json_body=body)
+
+    @router.post("/email/ai-reply")
+    async def email_ai_reply(request: Request):
+        owner = _require_owner(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        return await _proxy_internal(request, owner, "POST", "/api/email/ai-reply", json_body=body)
+
+    @router.get("/calendar/calendars")
+    async def calendar_calendars(request: Request):
+        return await _proxy_internal(request, _require_owner(request), "GET", "/api/calendar/calendars")
+
+    @router.get("/calendar/events")
+    async def calendar_events(request: Request, start: str, end: str, calendar: str = ""):
+        params = {"start": start, "end": end}
+        if calendar:
+            params["calendar"] = calendar
+        return await _proxy_internal(request, _require_owner(request), "GET", "/api/calendar/events", params=params)
+
+    @router.get("/notes")
+    async def notes_list(request: Request, archived: bool | None = None, label: str | None = None):
+        params = {}
+        if archived is not None:
+            params["archived"] = str(archived).lower()
+        if label:
+            params["label"] = label
+        return await _proxy_internal(request, _require_owner(request), "GET", "/api/notes", params=params)
+
+    @router.post("/notes")
+    async def notes_create(request: Request):
+        owner = _require_owner(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        return await _proxy_internal(request, owner, "POST", "/api/notes", json_body=body)
+
+    @router.get("/tasks")
+    async def tasks_list(request: Request, status: str | None = None):
+        params = {}
+        if status:
+            params["status"] = status
+        return await _proxy_internal(request, _require_owner(request), "GET", "/api/tasks", params=params)
+
+    @router.post("/tasks/{task_id}/{action}")
+    async def tasks_action(request: Request, task_id: str, action: str):
+        """Pause, resume, or run a scheduled task."""
+        if action not in ("pause", "resume", "run"):
+            raise HTTPException(400, "unknown action")
+        return await _proxy_internal(
+            request, _require_owner(request), "POST", f"/api/tasks/{task_id}/{action}"
+        )
 
     @router.get("/pair")
     def pair_page(request: Request):

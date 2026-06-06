@@ -1,10 +1,11 @@
 import type { ComponentType } from 'react';
-import { SessionsIcon, SettingsIcon } from './icons';
+import { SessionsIcon, SettingsIcon, ToolsIcon } from './icons';
 
-export type Tab = 'sessions' | 'settings';
+export type Tab = 'sessions' | 'tools' | 'settings';
 
 const TABS: { id: Tab; label: string; Icon: ComponentType<{ size?: number }> }[] = [
   { id: 'sessions', label: 'Sessions', Icon: SessionsIcon },
+  { id: 'tools', label: 'Tools', Icon: ToolsIcon },
   { id: 'settings', label: 'Settings', Icon: SettingsIcon },
 ];
 
