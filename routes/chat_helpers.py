@@ -774,7 +774,19 @@ def save_assistant_response(
 ):
     """Add assistant response to session history. In incognito mode, keeps in-memory context but skips DB persistence."""
     md = dict(last_metrics) if last_metrics else {}
-    md["model"] = sess.model
+    def _model_value(value) -> str:
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            value = str(value)
+        return value.strip()
+
+    requested_model = _model_value(md.get("requested_model") or md.get("selected_model") or getattr(sess, "model", ""))
+    actual_model = _model_value(md.get("model") or md.get("actual_model") or requested_model)
+    if requested_model:
+        md["requested_model"] = requested_model
+    if actual_model:
+        md["model"] = actual_model
     if character_name:
         md["character_name"] = character_name
     if web_sources:
