@@ -25,6 +25,8 @@ ALLOWED_SCOPES = {
     "calendar:write",
     "memory:read",
     "memory:write",
+    "cookbook:read",
+    "cookbook:launch",
 }
 TOKEN_PROFILES = {
     "chat": ["chat"],
@@ -65,6 +67,7 @@ def _normalize_scopes(scopes: str | list[str] | None = None, profile: str | None
     ensure_before("calendar:write", "calendar:read")
     ensure_before("memory:write", "memory:read")
     ensure_before("email:draft", "email:read")
+    ensure_before("cookbook:launch", "cookbook:read")
 
     return normalized or [DEFAULT_SCOPES]
 
