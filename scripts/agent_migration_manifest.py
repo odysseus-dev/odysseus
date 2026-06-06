@@ -164,6 +164,8 @@ def parse_skill_frontmatter(text: str) -> dict[str, Any]:
 
 def collect_skill_dir(path: Path, source_name: str) -> tuple[list[dict[str, Any]], list[InputWarning]]:
     warnings: list[InputWarning] = []
+    if path.is_symlink():
+        return [], [InputWarning(str(path), "skills path is a symlink; skipped")]
     if not path.exists():
         return [], [InputWarning(str(path), "skills directory does not exist")]
     if not path.is_dir():
@@ -171,6 +173,9 @@ def collect_skill_dir(path: Path, source_name: str) -> tuple[list[dict[str, Any]
 
     items: list[dict[str, Any]] = []
     for skill_path in sorted(path.rglob("SKILL.md")):
+        if skill_path.is_symlink():
+            warnings.append(InputWarning(str(skill_path), "skipped symlinked skill file"))
+            continue
         try:
             text = skill_path.read_text(encoding="utf-8")
         except Exception as exc:
@@ -204,14 +209,23 @@ def looks_textual(path: Path) -> bool:
     return bool(guessed and (guessed.startswith("text/") or guessed in {"application/json"}))
 
 
-def iter_archive_files(paths: Iterable[Path]) -> Iterable[Path]:
+def iter_archive_files(paths: Iterable[Path]) -> tuple[list[Path], list[InputWarning]]:
+    files: list[Path] = []
+    warnings: list[InputWarning] = []
     for path in paths:
+        if path.is_symlink():
+            warnings.append(InputWarning(str(path), "skipped symlinked archive path"))
+            continue
         if path.is_file():
-            yield path
+            files.append(path)
         elif path.is_dir():
             for child in sorted(path.rglob("*")):
+                if child.is_symlink():
+                    warnings.append(InputWarning(str(child), "skipped symlinked archive path"))
+                    continue
                 if child.is_file():
-                    yield child
+                    files.append(child)
+    return files, warnings
 
 
 def collect_archive_paths(
@@ -225,6 +239,9 @@ def collect_archive_paths(
     items: list[dict[str, Any]] = []
     existing_paths: list[Path] = []
     for path in paths:
+        if path.is_symlink():
+            warnings.append(InputWarning(str(path), "archive path is a symlink; skipped"))
+            continue
         if not path.exists():
             warnings.append(InputWarning(str(path), "archive path does not exist"))
             continue
@@ -233,7 +250,10 @@ def collect_archive_paths(
             continue
         existing_paths.append(path)
 
-    for path in iter_archive_files(existing_paths):
+    archive_files, traversal_warnings = iter_archive_files(existing_paths)
+    warnings.extend(traversal_warnings)
+
+    for path in archive_files:
         if not looks_textual(path):
             warnings.append(InputWarning(str(path), "skipped non-text archive file"))
             continue

@@ -77,6 +77,33 @@ Use for focused git checks.
     assert "## When to Use" in items[0]["content"]
 
 
+def test_collect_skill_dir_skips_symlinked_skill_markdown(tmp_path):
+    migration = load_module()
+    outside = tmp_path / "outside.md"
+    outside.write_text("private skill content", encoding="utf-8")
+    skill_path = tmp_path / "skills" / "bad" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.symlink_to(outside)
+
+    items, warnings = migration.collect_skill_dir(tmp_path / "skills", "example-agent")
+
+    assert items == []
+    assert warnings[0].message == "skipped symlinked skill file"
+
+
+def test_collect_skill_dir_skips_symlinked_root(tmp_path):
+    migration = load_module()
+    real_skills = tmp_path / "real-skills"
+    real_skills.mkdir()
+    linked_skills = tmp_path / "skills"
+    linked_skills.symlink_to(real_skills, target_is_directory=True)
+
+    items, warnings = migration.collect_skill_dir(linked_skills, "example-agent")
+
+    assert items == []
+    assert warnings[0].message == "skills path is a symlink; skipped"
+
+
 def test_archive_content_is_optional(tmp_path):
     migration = load_module()
     archive = tmp_path / "notes.md"
@@ -88,6 +115,34 @@ def test_archive_content_is_optional(tmp_path):
     assert metadata_only[0]["kind"] == "archive_document"
     assert "content" not in metadata_only[0]
     assert with_content[0]["content"].startswith("# Notes")
+
+
+def test_archive_skips_symlinked_file(tmp_path):
+    migration = load_module()
+    outside = tmp_path / "outside.md"
+    outside.write_text("private archive content", encoding="utf-8")
+    archive_dir = tmp_path / "archive"
+    archive_dir.mkdir()
+    linked_file = archive_dir / "leak.md"
+    linked_file.symlink_to(outside)
+
+    items, warnings = migration.collect_archive_paths([archive_dir], "example-agent", include_content=True)
+
+    assert items == []
+    assert warnings[0].message == "skipped symlinked archive path"
+
+
+def test_archive_skips_symlinked_root(tmp_path):
+    migration = load_module()
+    archive = tmp_path / "notes.md"
+    archive.write_text("# Notes\n\nUseful context.", encoding="utf-8")
+    linked_archive = tmp_path / "linked-notes.md"
+    linked_archive.symlink_to(archive)
+
+    items, warnings = migration.collect_archive_paths([linked_archive], "example-agent", include_content=True)
+
+    assert items == []
+    assert warnings[0].message == "archive path is a symlink; skipped"
 
 
 def test_archive_missing_path_warns(tmp_path):
