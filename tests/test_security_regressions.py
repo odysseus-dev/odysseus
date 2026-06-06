@@ -38,6 +38,8 @@ def test_untrusted_context_policy_marks_sources_as_data():
 
     assert "not instructions" in UNTRUSTED_CONTEXT_POLICY
     assert "overrides" in UNTRUSTED_CONTEXT_POLICY
+    assert "Do not quote" in UNTRUSTED_CONTEXT_POLICY
+    assert "acknowledge untrusted-source wrapper labels" in UNTRUSTED_CONTEXT_POLICY
 
 
 # ── secret_storage ─────────────────────────────────────────────

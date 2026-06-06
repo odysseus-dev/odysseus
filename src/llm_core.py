@@ -817,6 +817,25 @@ def _as_content_blocks(content) -> List[Dict]:
     return []
 
 
+def _is_untrusted_context_content(content) -> bool:
+    if isinstance(content, str):
+        return (
+            content.startswith("UNTRUSTED SOURCE DATA\n")
+            or "<<<UNTRUSTED_SOURCE_DATA>>>" in content
+        )
+    if isinstance(content, list):
+        return any(
+            isinstance(block, dict)
+            and block.get("type") == "text"
+            and _is_untrusted_context_content(block.get("text") or "")
+            for block in content
+        )
+    return False
+
+
+_REFERENCE_CONTEXT_BOUNDARY = "Reference context received."
+
+
 def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
     """Strip Odysseus-only metadata before sending messages to providers.
 
@@ -929,6 +948,10 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
 
         last = merged[-1]
         if last.get("role") == "user" and item.get("role") == "user":
+            if _is_untrusted_context_content(last.get("content")):
+                merged.append({"role": "assistant", "content": _REFERENCE_CONTEXT_BOUNDARY})
+                merged.append(item)
+                continue
             last_copy = dict(last)
             lc = last_copy.get("content")
             ic = item.get("content")
