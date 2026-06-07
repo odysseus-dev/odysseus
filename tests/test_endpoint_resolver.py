@@ -61,7 +61,11 @@ def _detect_provider(url: str) -> str:
     parsed = urlparse(url or "")
     host = parsed.hostname or ""
     path = (parsed.path or "").rstrip("/")
-    if host.endswith("ollama.com") or (parsed.port == 11434 and (path == "/api" or path.startswith("/api/"))):
+    if host.endswith("ollama.com"):
+        return "ollama"
+    if path.startswith("/v1"):
+        pass # OpenAI compat
+    elif (parsed.port == 11434 or host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}) and (path == "" or path == "/api" or path.startswith("/api/")):
         return "ollama"
     if "anthropic.com" in (url or ""):
         return "anthropic"
@@ -75,6 +79,8 @@ def _ollama_api_root(base: str) -> str:
     path = (parsed.path or "").rstrip("/")
     if path.endswith("/api"):
         return base
+    if path == "":
+        return base + "/api"
     if host.endswith("ollama.com"):
         return f"{parsed.scheme}://{parsed.netloc}/api"
     return base
@@ -155,6 +161,12 @@ class TestBuildChatUrl:
 
     def test_ollama_cloud_root_adds_api(self):
         assert build_chat_url("https://ollama.com") == "https://ollama.com/api/chat"
+
+    def test_ollama_bare_url_adds_api(self):
+        assert build_chat_url("http://nas:11434") == "http://nas:11434/api/chat"
+
+    def test_ollama_v1_preserves_openai_compat(self):
+        assert build_chat_url("http://nas:11434/v1") == "http://nas:11434/v1/chat/completions"
 
 
 class TestBuildModelsUrl:
