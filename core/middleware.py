@@ -17,6 +17,15 @@ INTERNAL_TOOL_TOKEN = os.environ.get("ODYSSEUS_INTERNAL_TOKEN") or secrets.token
 INTERNAL_TOOL_HEADER = "X-Odysseus-Internal-Token"
 
 
+def is_cors_preflight(method: str, headers) -> bool:
+    """True for a genuine CORS preflight: an OPTIONS request carrying the
+    Access-Control-Request-Method header. Such requests are credential-less by
+    design and must reach CORSMiddleware to be answered -- gating them on auth
+    401s the preflight and breaks every cross-origin browser/WebView client.
+    Pure so it can be unit-tested without standing up the app."""
+    return method == "OPTIONS" and "access-control-request-method" in headers
+
+
 def require_admin(request: Request):
     """Raise 403 if the current user isn't an admin.
     Allows access when auth is explicitly disabled, or when the request carries
