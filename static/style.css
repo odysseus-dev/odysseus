@@ -14244,6 +14244,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 .admin-ep-actions {
   display: flex;
   gap: 4px;
+  align-items: center;
   flex-shrink: 0;
 }
 
