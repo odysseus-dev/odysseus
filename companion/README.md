@@ -51,3 +51,43 @@ works on the next request without a restart.
 The pairing/scoping rules live in small, tested units (`token_owner`,
 `owner_can_see`, `mint_pairing_token`, `pairing.*`) — see
 `tests/test_companion_readonly.py` and `tests/test_companion_pairing.py`.
+
+## What this bridge depends on (coupling points)
+
+This layer is deliberately thin, so it leans on a handful of existing internals.
+If you change any of these, the matching companion endpoint is what will need a
+look (the rest of the app is unaffected). Most imports are lazy (inside
+handlers), so a rename surfaces at call time, not at import; the mobile client
+renders missing/renamed response fields as blanks rather than crashing.
+
+- **Owner-impersonation loopback.** The tool proxies (`/api/companion/email|
+  calendar|notes|tasks|search|stt|...`) reach the existing owner-scoped routes
+  by an in-process loopback carrying `X-Odysseus-Internal-Token` +
+  `X-Odysseus-Owner` -- the same impersonation the agent tool layer uses
+  (`app.py` `AuthMiddleware`). They do not reimplement those routes; they proxy
+  them as the resolved owner.
+- **`/api/chat_stream` form fields.** Starting a chat / follow-up posts
+  `message`, `session`, and the toggle fields `mode`, `allow_bash`,
+  `allow_web_search`, `use_web`, `use_research`, `attachments` -- the same
+  fields the desktop `static/js/chat.js` sends. See `_chat_run_options`
+  (unit-tested in `tests/test_companion_chat_options.py`).
+- **Proxied route shapes.** The tool endpoints expect today's request/response
+  shapes of `/api/email/*`, `/api/calendar/{calendars,events}`, `/api/notes`,
+  `/api/tasks/*`, `/api/search`, `/api/stt/transcribe`, and `/api/upload`. Path
+  or field renames there are the most likely source of drift.
+- **Detached-run + session APIs.** `agent_runs.{start,subscribe,is_active,
+  get_status,stop}` and `session_manager.{get_sessions_for_user,create_session,
+  get_session}`.
+- **Internal helpers** imported from the rest of the app:
+  `routes.session_routes._verify_session_owner` / `_content_to_text` /
+  `_public_model` / `_HIDDEN_SYSTEM_SESSION_NAMES`,
+  `src.endpoint_resolver.{build_chat_url,normalize_base,build_headers}`,
+  `src.tool_security.owner_is_admin_or_single_user`,
+  `src.upload_handler.count_recent_uploads`, and
+  `src.auth_helpers.{effective_user,get_current_user}`.
+- **Pairing host/QR** (`companion/pairing.py`): `lan_ip_candidates`,
+  `pairing_payload`, `pairing_qr_png_data_uri` (optional `qrcode` dep).
+
+The CORS-preflight bypass the app relies on for cross-origin clients is the pure
+`core.middleware.is_cors_preflight` (regression-tested in
+`tests/test_companion_cors_preflight.py`).
