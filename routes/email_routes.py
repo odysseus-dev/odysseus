@@ -511,24 +511,24 @@ def setup_email_routes():
                         # Pop it out of the pool while we use it (serialize)
                         del _IMAP_POOL[pool_key]
                         return conn, True  # reused
-                    except Exception:
-                        try: conn.logout()
-                        except Exception: pass
-                        del _IMAP_POOL[pool_key]
-                else:
-                    try: conn.logout()
-                    except Exception: pass
-                    del _IMAP_POOL[pool_key]
+                     except Exception:
+                         try: conn.logout()
+                         except Exception as e: logger.debug(f"Failed to logout from IMAP: {e}")
+                         del _IMAP_POOL[pool_key]
+                 else:
+                     try: conn.logout()
+                     except Exception as e: logger.debug(f"Failed to logout from IMAP: {e}")
+                     del _IMAP_POOL[pool_key]
         # Fresh connection
         return _imap_connect(account_id, owner=owner), False
 
     def _pooled_release(account_id, conn, ok=True, owner=""):
         # SECURITY: match the (account_id, owner) key used by _pooled_connect
         # so a pooled handle is returned to the same per-user slot.
-        if not ok:
-            try: conn.logout()
-            except Exception: pass
-            return
+         if not ok:
+             try: conn.logout()
+             except Exception as e: logger.debug(f"Failed to logout from IMAP: {e}")
+             return
         with _pool_lock:
             _IMAP_POOL[(account_id, owner)] = (conn, _time.monotonic())
 
@@ -3158,10 +3158,10 @@ def setup_email_routes():
                 try:
                     conn.login(imap_user, imap_pass)
                     imap_result = {"ok": True}
-                finally:
-                    try: conn.logout()
-                    except Exception: pass
-            except Exception as e:
+                 finally:
+                     try: conn.logout()
+                     except Exception as e: logger.debug(f"Failed to logout from IMAP: {e}")
+             except Exception as e:
                 imap_result = {"ok": False, "error": str(e)[:200]}
 
         smtp_host = (body.get("smtp_host") or "").strip()
@@ -3180,10 +3180,10 @@ def setup_email_routes():
                 try:
                     smtp.login(smtp_user, smtp_pass)
                     smtp_result = {"ok": True}
-                finally:
-                    try: smtp.quit()
-                    except Exception: pass
-            except Exception as e:
+                 finally:
+                     try: smtp.quit()
+                     except Exception as e: logger.debug(f"Failed to quit SMTP: {e}")
+             except Exception as e:
                 smtp_result = {"ok": False, "error": str(e)[:200]}
 
         return {
