@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 from fastapi import APIRouter, FastAPI
@@ -55,6 +56,12 @@ class _FakeSessionManager:
         self.session = session
         self.saved = False
         self.replaced_messages = None
+        self._locks = {}
+
+    def session_lock(self, session_id):
+        if session_id not in self._locks:
+            self._locks[session_id] = asyncio.Lock()
+        return self._locks[session_id]
 
     def get_session(self, session_id):
         if session_id != self.session.id:

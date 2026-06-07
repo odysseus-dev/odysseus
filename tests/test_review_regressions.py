@@ -1,5 +1,6 @@
 """Regression tests for issues found during code review."""
 
+import asyncio
 import importlib
 import json
 import sys
@@ -375,7 +376,7 @@ async def test_build_chat_context_incognito_does_not_duplicate_current_user_mess
             character_name=None,
         )
 
-    def fake_add_user_message(sess, chat_handler, preprocessed, incognito=False):
+    async def fake_add_user_message(sess, chat_handler, preprocessed, session_manager, session_id, incognito=False):
         sess.messages.append({"role": "user", "content": preprocessed.user_content})
 
     async def fake_maybe_compact(sess, endpoint_url, model, messages, headers, owner=None):
@@ -402,12 +403,14 @@ async def test_build_chat_context_incognito_does_not_duplicate_current_user_mess
     chat_processor = SimpleNamespace(
         build_context_preface=lambda **kwargs: ([], [], []),
     )
+    session_manager = SimpleNamespace(session_lock=lambda session_id: asyncio.Lock())
 
     ctx = await chat_helpers.build_chat_context(
         sess=sess,
         request=request,
         chat_handler=chat_handler,
         chat_processor=chat_processor,
+        session_manager=session_manager,
         message="hello",
         session_id="s1",
         incognito=True,
