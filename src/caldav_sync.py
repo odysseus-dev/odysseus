@@ -86,10 +86,12 @@ def validate_caldav_url(raw_url: str) -> str:
     return urlunparse(parsed._replace(fragment="")).rstrip("/")
 
 
-def _stable_cal_id(remote_url: str) -> str:
+def _stable_cal_id(remote_url: str, owner: str = "") -> str:
     """Deterministic local id for a remote CalDAV calendar — same URL
-    always maps to the same local row across restarts and re-syncs."""
-    h = hashlib.sha256(remote_url.encode("utf-8")).hexdigest()[:24]
+    always maps to the same local row across restarts and re-syncs.
+    Owner is included in the hash to prevent PK collisions when multiple
+    users sync the same CalDAV endpoint."""
+    h = hashlib.sha256(f"{owner}:{remote_url}".encode("utf-8")).hexdigest()[:24]
     return f"caldav-{h}"
 
 
@@ -170,7 +172,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
         for remote_cal in calendars:
             try:
                 remote_url = str(remote_cal.url)
-                cal_id = _stable_cal_id(remote_url)
+                cal_id = _stable_cal_id(remote_url, owner)
                 display_name = (remote_cal.name or "").strip() or "CalDAV"
 
                 local_cal = db.query(CalendarCal).filter(
