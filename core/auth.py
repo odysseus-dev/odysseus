@@ -456,6 +456,22 @@ class AuthManager:
         self._save_sessions()
         return token
 
+    def create_session_for_user(self, username: str) -> Optional[str]:
+        """Issue a session token for an already-authenticated user without
+        re-checking the password. Use this when the caller has already
+        verified credentials (e.g. login route after verify_password + TOTP)."""
+        username = username.strip().lower()
+        if username not in self.users:
+            return None
+        token = secrets.token_hex(32)
+        with self._sessions_lock:
+            self._sessions[token] = {
+                "username": username,
+                "expiry": time.time() + TOKEN_TTL,
+            }
+        self._save_sessions()
+        return token
+
     def validate_token(self, token: Optional[str]) -> bool:
         if not token:
             return False
