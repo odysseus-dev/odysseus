@@ -1019,9 +1019,7 @@ def setup_shell_routes() -> APIRouter:
                     importlib.import_module(pkg["name"])
                     importlib_metadata.version(_pip_dist_name(pkg))
                     pkg["installed"] = True
-                except ImportError:
-                    pkg["installed"] = False
-                except importlib_metadata.PackageNotFoundError:
+                except Exception:
                     pkg["installed"] = False
 
             if pkg.get("installed"):
