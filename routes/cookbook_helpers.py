@@ -213,7 +213,10 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     # before being embedded in the install command. Plain names (e.g.
     # ``huggingface_hub``) are returned unchanged by ``shlex.quote``.
     pkg = shlex.quote(package)
-    if IS_WINDOWS and "llama-cpp-python" in package:
+    # llama-cpp-python source builds are brittle on older distro pip/packaging
+    # stacks (common on WSL images). Prefer the prebuilt wheel index whenever
+    # this package is requested so dependency-install tasks are reliable.
+    if "llama-cpp-python" in package:
         pkg += " --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
 
     base = _pip_install_attempt(f"{python_cmd} install -q{upgrade_flag} {pkg}")

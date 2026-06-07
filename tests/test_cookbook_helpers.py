@@ -170,6 +170,8 @@ def test_pip_install_fallback_chain_quotes_extras_spec():
     chain = _pip_install_fallback_chain("llama-cpp-python[server]", python_cmd="pip")
     # Quoted in both the plain and the --user attempt.
     assert chain.count("'llama-cpp-python[server]'") == 2
+    # llama-cpp installs must prefer prebuilt wheels to avoid fragile source builds.
+    assert "--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu" in chain
     # Never the unquoted form (bracket-glob risk).
     assert "install -q llama-cpp-python[server]" not in chain
     # A plain package name is still passed through unquoted (no regression).
@@ -192,6 +194,17 @@ def test_serve_runner_installs_llama_cpp_server_extra():
     # The [server] extra is requested in the build/fallback paths.
     assert "'llama-cpp-python[server]'" in src
     assert "_pip_install_fallback_chain('llama-cpp-python[server]'" in src
+
+
+def test_serve_pip_install_normalizes_llama_cpp_alias_and_adds_wheel_index():
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parent.parent
+        / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+
+    assert "re.sub(r\"(?<![A-Za-z0-9_.-])llama_cpp(?![A-Za-z0-9_.-])\", \"llama-cpp-python[server]\", req.cmd)" in src
+    assert "if \"llama-cpp-python\" in req.cmd and \"--extra-index-url\" not in req.cmd:" in src
+    assert "https://abetlen.github.io/llama-cpp-python/whl/cpu" in src
 
 
 def test_vllm_preflight_reports_cli_and_version():
@@ -289,6 +302,7 @@ def test_local_tooling_path_export_converts_windows_paths_for_bash():
 def test_user_shell_path_bootstrap_falls_back_to_python_on_windows_bash():
     script = "\n".join(_user_shell_path_bootstrap())
     assert 'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }' in script
+    assert 'command -v python >/dev/null 2>&1 || python() { python3 "$@"; }' in script
 
 
 def test_serve_preflight_failure_keeps_tmux_pane_visible():

@@ -889,6 +889,12 @@ def setup_cookbook_routes() -> APIRouter:
             # pip cache so they don't fail mid-build with "No space left" (#1219)
             # and leave the dep installed-but-unusable (#1459).
             req.cmd = _pip_install_no_cache(req.cmd)
+            # Accept common aliases and enforce server extras for llama-cpp so
+            # `python -m llama_cpp.server` has all runtime dependencies.
+            req.cmd = re.sub(r"(?<![A-Za-z0-9_.-])llama_cpp(?![A-Za-z0-9_.-])", "llama-cpp-python[server]", req.cmd)
+            req.cmd = re.sub(r"(?<![A-Za-z0-9_.-])llama-cpp-python(?!\[)", "llama-cpp-python[server]", req.cmd)
+            if "llama-cpp-python" in req.cmd and "--extra-index-url" not in req.cmd:
+                req.cmd += " --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
             # PEP-508-style package spec — letters, digits, `.-_` for the
             # name; `[` `]` for extras; `<>=!~,` for version specifiers.
             # v2 review HIGH-14: tightened from the previous regex which
