@@ -612,7 +612,10 @@ def setup_chat_routes(
         finally:
             _doc_db.close()
 
-        # Build disabled-tools set from frontend toggles + user privileges
+        # Build disabled-tools set from frontend toggles + user privileges.
+        # allow_bash/allow_web_search come from the frontend toggle; when not
+        # explicitly set (None), default based on the user's privilege so
+        # admin/single-user installs aren't silently blocked.
         disabled_tools = set()
         if str(allow_bash).lower() != "true":
             disabled_tools.add("bash")
@@ -635,6 +638,10 @@ def setup_chat_routes(
         if _user and hasattr(request.app.state, 'auth_manager') and request.app.state.auth_manager:
             _privs = request.app.state.auth_manager.get_privileges(_user)
         if _privs:
+            # If the frontend didn't explicitly set allow_bash (None), default
+            # to the user's can_use_bash privilege instead of always blocking.
+            if allow_bash is None and _privs.get("can_use_bash", False):
+                disabled_tools.discard("bash")
             if not _privs.get("can_use_bash", True):
                 disabled_tools.update({"bash", "python", "read_file", "write_file"})
             if not _privs.get("can_use_browser", True):
