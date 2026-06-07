@@ -131,8 +131,10 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 return {"ok": False, "requires_totp": True, "username": username}
             if not auth_manager.totp_verify(username, body.totp_code):
                 raise HTTPException(401, "Invalid 2FA code")
-        # All checks passed — create session
-        token = await asyncio.to_thread(auth_manager.create_session, username, body.password)
+        # All checks passed — issue token without re-verifying the password.
+        # create_session_for_user skips the bcrypt re-check; the password was
+        # already verified above (and TOTP checked if enabled).
+        token = await asyncio.to_thread(auth_manager.create_session_for_user, username)
         if not token:
             raise HTTPException(401, "Invalid credentials")
         cookie_kwargs = dict(

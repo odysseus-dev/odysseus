@@ -447,6 +447,13 @@ class AuthManager:
         username = username.strip().lower()
         if not self.verify_password(username, password):
             return None
+        return self.create_session_for_user(username)
+
+    def create_session_for_user(self, username: str) -> str:
+        """Issue a session token for a user whose credentials have already been
+        verified by the caller.  Skips the bcrypt re-check so the login route
+        does not hash the password twice (verify_password + create_session)."""
+        username = username.strip().lower()
         token = secrets.token_hex(32)
         with self._sessions_lock:
             self._sessions[token] = {
