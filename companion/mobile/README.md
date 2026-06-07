@@ -58,15 +58,17 @@ first Gradle build:
 1. **SDK level** - `android/variables.gradle`: set `compileSdkVersion` and
    `targetSdkVersion` to a platform you actually have installed (e.g. `35`).
    Capacitor 6 defaults to `34`.
-2. **Camera permission** for the QR scanner - add to
+2. **Camera + microphone permissions** (QR scanner + voice dictation) - add to
    `android/app/src/main/AndroidManifest.xml`:
    ```xml
    <uses-permission android:name="android.permission.CAMERA" />
    <uses-feature android:name="android.hardware.camera" android:required="false" />
+   <uses-permission android:name="android.permission.RECORD_AUDIO" />
+   <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
    ```
 
 Build the APK (point Gradle at a JDK 17/21 if your system default is newer -
-Android Studio ships one under `…/Android Studio/jbr`):
+Android Studio ships one under `.../Android Studio/jbr`):
 
 ```bash
 cd android

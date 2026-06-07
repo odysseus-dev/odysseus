@@ -452,6 +452,23 @@ button {
 .composer .stop {
   flex: none;
 }
+/* Voice dictation mic: pulses red while recording, dims while transcribing. */
+.voice-recording {
+  color: var(--red);
+  animation: voice-pulse 1.1s ease-in-out infinite;
+}
+.voice-working {
+  opacity: 0.5;
+}
+@keyframes voice-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
 .stream-text {
   white-space: pre-wrap;
   word-break: break-word;

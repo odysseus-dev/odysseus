@@ -22,6 +22,7 @@ import {
 } from '../components/Attachments';
 import { FileIcon } from '../components/icons';
 import FsBrowser from '../components/FsBrowser';
+import VoiceButton from '../components/VoiceButton';
 
 // A chat message plus, for the optimistic bubble of a just-sent turn, local
 // preview URLs for any images attached (server history is text-only).
@@ -349,6 +350,12 @@ export default function SessionScreen({
           disabled={isLive}
         />
         <PcFilesButton onClick={() => setShowBrowser(true)} disabled={isLive} />
+        <VoiceButton
+          conn={conn}
+          disabled={isLive}
+          onText={(t) => setDraft((d) => (d ? d + ' ' + t : t))}
+          onError={setSendError}
+        />
         <textarea
           className="composer-input"
           value={draft}

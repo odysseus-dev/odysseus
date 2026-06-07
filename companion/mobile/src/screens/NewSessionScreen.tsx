@@ -11,6 +11,7 @@ import {
   type Pending,
 } from '../components/Attachments';
 import FsBrowser from '../components/FsBrowser';
+import VoiceButton from '../components/VoiceButton';
 
 // Compose + start a new chat from the phone. Pick a model (flattened from the
 // server's endpoints), type a first message, send -> the server starts the run
@@ -141,6 +142,12 @@ export default function NewSessionScreen({
             disabled={busy}
           />
           <PcFilesButton onClick={() => setShowBrowser(true)} disabled={busy} />
+          <VoiceButton
+            conn={conn}
+            disabled={busy}
+            onText={(t) => setMessage((m) => (m ? m + ' ' + t : t))}
+            onError={setError}
+          />
           <ToolToggles value={options} onChange={setOptions} disabled={busy} />
         </div>
         <AttachPreviews pending={pending} onRemove={removeAttachment} disabled={busy} />

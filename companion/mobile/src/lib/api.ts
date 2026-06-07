@@ -305,6 +305,34 @@ export function taskAction(conn: Connection, id: string, action: 'pause' | 'resu
   return postJSON(conn, `/api/companion/tasks/${encodeURIComponent(id)}/${action}`, {});
 }
 
+/** Transcribe a voice recording via the PC's STT service. Throws a friendly
+ *  message when STT isn't enabled on the server (503). */
+export async function transcribeAudio(conn: Connection, blob: Blob): Promise<string> {
+  const fd = new FormData();
+  fd.append('file', blob, 'audio.webm');
+  const resp = await fetch(`${conn.baseUrl}/api/companion/stt/transcribe`, {
+    method: 'POST',
+    headers: authHeaders(conn),
+    body: fd,
+  });
+  if (!resp.ok) {
+    if (resp.status === 503) {
+      throw new Error('Voice isn\'t enabled on your PC yet (Settings -> Speech).');
+    }
+    let msg = `HTTP ${resp.status}`;
+    try {
+      const j = (await resp.json()) as { detail?: { message?: string } | string; message?: string };
+      const d = j.detail;
+      msg = (typeof d === 'object' ? d?.message : d) || j.message || msg;
+    } catch {
+      /* keep status */
+    }
+    throw new Error(msg);
+  }
+  const { text } = (await resp.json()) as { text?: string };
+  return text || '';
+}
+
 export interface SearchHit {
   session_id: string;
   session_name: string;

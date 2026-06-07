@@ -778,6 +778,33 @@ def setup_companion_routes(session_manager=None, upload_handler=None) -> APIRout
             request, owner, "GET", "/api/search", params={"q": q, "limit": limit}
         )
 
+    @router.post("/stt/transcribe")
+    async def stt_transcribe(request: Request, file: UploadFile = File(...)):
+        """Transcribe a voice recording to text (phone dictation). Stateless --
+        no owner data -- so it just loopbacks the audio to the desktop's STT
+        service via the internal-tool header. Returns the server's {text} (or its
+        503 when STT is in browser mode / not configured)."""
+        import httpx
+
+        from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
+
+        _require_owner(request)
+        audio = await file.read()
+        port = request.url.port or _pairing.default_port()
+        url = f"http://127.0.0.1:{port}/api/stt/transcribe"
+        headers = {INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN}
+        files = {"file": (file.filename or "audio.webm", audio, file.content_type or "audio/webm")}
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
+                resp = await client.post(url, files=files, headers=headers)
+        except Exception as e:
+            raise HTTPException(502, f"transcription request failed: {e}")
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            media_type=resp.headers.get("content-type", "application/json"),
+        )
+
     # ---------------------------------------------------------------- #
     # Tools: thin owner-impersonating proxies over the desktop's existing
     # owner-scoped routes (see _proxy_internal). Each pins a fixed path.
