@@ -104,6 +104,8 @@ Don't hardcode values that the project already exposes through a constant or a h
 
 If you need a value that has no constant or helper yet, add one in the appropriate module (usually `core/constants.py` or `src/constants.py`) and import it, rather than repeating a literal across files.
 
+**Commits:** use [Conventional Commits](https://www.conventionalcommits.org), `type(scope): summary` (e.g. `fix(search): ...`, `feat(notes): ...`, `docs(contributing): ...`). Common types: `fix`, `feat`, `refactor`, `docs`, `test`, `chore`, `ci`. Keep the subject short and imperative; put the "why" in the body when it isn't obvious.
+
 ## Issue Reports
 
 For bugs, include:
