@@ -51,6 +51,13 @@ def setup_history_routes(session_manager) -> APIRouter:
         except KeyError:
             raise HTTPException(404, f"Session '{session_id}' not found")
 
+        try:
+            from routes.chat_routes import _recover_empty_session_model
+            from src.auth_helpers import get_current_user
+            _recover_empty_session_model(session, session_id, owner=get_current_user(request))
+        except Exception as e:
+            logger.debug("Session model repair skipped for %s: %s", session_id, e)
+
         history_dict = []
         for msg in session.history:
             if isinstance(msg, ChatMessage):

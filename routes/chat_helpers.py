@@ -349,6 +349,7 @@ def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
         return sess_url in {
             base,
             base + "/chat/completions",
+            base + "/responses",
             build_chat_url(base).rstrip("/"),
         }
     except Exception:

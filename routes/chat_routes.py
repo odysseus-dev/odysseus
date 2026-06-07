@@ -5,7 +5,6 @@ import json
 import os
 import time
 import logging
-from datetime import datetime
 from typing import Dict, Any, AsyncGenerator, List
 
 from fastapi import APIRouter, Request, HTTPException, Form, Query
@@ -17,6 +16,7 @@ from src.request_models import ChatRequest
 from src.llm_core import llm_call_async, stream_llm, stream_llm_with_fallback
 from src.agent_loop import stream_agent_loop
 from src import agent_runs
+from src.model_capabilities import is_openai_responses_required_model
 from src.model_context import estimate_tokens
 from src.chat_helpers import coerce_message_and_session
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
@@ -26,11 +26,11 @@ from core.exceptions import SessionNotFoundError
 from src.auth_helpers import get_current_user
 from routes.session_routes import _verify_session_owner
 from routes.document_helpers import _owner_session_filter
-from core.database import SessionLocal, get_session_mode, set_session_mode
+from core.database import SessionLocal, get_session_mode, set_session_mode, utcnow_naive
 from core.database import Session as DBSession, ChatMessage as DBChatMessage
 from core.database import Document as DBDocument, ModelEndpoint
 from routes.research_routes import _resolve_research_endpoint
-from routes.model_routes import _visible_models
+from routes.model_routes import _is_chat_model, _visible_models
 from routes.chat_helpers import (
     resolve_session_auth,
     build_chat_context,
@@ -47,6 +47,29 @@ logger = logging.getLogger(__name__)
 # Track active streams for partial-save safety net
 _active_streams: Dict[str, dict] = {}
 _IMAGE_MODEL_PREFIXES = ("gpt-image", "dall-e", "chatgpt-image")
+_CHAT_MODE_FORWARD_ONLY_TYPES = frozenset({"model_waiting"})
+_AGENT_MODE_FORWARD_ONLY_TYPES = frozenset({
+    "model_waiting",
+    "tool_start",
+    "tool_output",
+    "agent_step",
+    "doc_stream_open",
+    "doc_stream_delta",
+    "doc_update",
+    "doc_suggestions",
+    "ui_control",
+    "rounds_exhausted",
+    "ask_user",
+    "plan_update",
+})
+
+
+def _is_chat_mode_forward_only_event(data: Dict[str, Any]) -> bool:
+    return isinstance(data, dict) and data.get("type") in _CHAT_MODE_FORWARD_ONLY_TYPES
+
+
+def _is_agent_mode_forward_only_event(data: Dict[str, Any]) -> bool:
+    return isinstance(data, dict) and data.get("type") in _AGENT_MODE_FORWARD_ONLY_TYPES
 
 
 def _stream_set(session_id: str, **fields) -> None:
@@ -70,6 +93,7 @@ def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
     variants = {
         base,
         base + "/chat/completions",
+        base + "/responses",
         build_chat_url(base).rstrip("/"),
     }
     return sess in variants or sess.startswith(base + "/")
@@ -93,7 +117,7 @@ def _clear_orphaned_session_endpoint(sess, owner: str | None = None) -> bool:
         if db_session:
             db_session.endpoint_url = ""
             db_session.model = ""
-            db_session.updated_at = datetime.utcnow()
+            db_session.updated_at = utcnow_naive()
             db.commit()
         sess.endpoint_url = ""
         sess.model = ""
@@ -163,25 +187,59 @@ def _is_image_generation_session(sess, owner: str | None = None) -> bool:
     return False
 
 
+def _session_model_needs_chat_repair(model: str) -> bool:
+    model_id = (model or "").strip()
+    if not model_id:
+        return True
+    if any(model_id.lower().startswith(prefix) for prefix in _IMAGE_MODEL_PREFIXES):
+        return False
+    if is_openai_responses_required_model(model_id):
+        return False
+    return not _is_chat_model(model_id)
+
+
+def _pick_recovered_chat_model(models: list, session_name: str = "") -> str:
+    candidates = []
+    for model in models or []:
+        if not isinstance(model, str):
+            continue
+        model_id = model.strip()
+        if model_id and _is_chat_model(model_id):
+            candidates.append(model_id)
+    if not candidates:
+        return ""
+
+    name = (session_name or "").lower()
+    named = [model for model in candidates if model.lower() in name]
+    if named:
+        return sorted(named, key=len, reverse=True)[0]
+    return candidates[0]
+
+
 def _recover_empty_session_model(sess, session_id: str, owner: str | None = None) -> bool:
-    """Re-populate sess.model from the matching endpoint's cached models.
+    """Re-populate missing or unusable chat models from the endpoint cache.
 
     Covers the window between endpoint setup and the first chat send: the
     picker showed a model in the dropdown but the session record never got
     written (Issue #587 — UI uses the cached endpoint list, not s.model).
+    It also repairs older OpenAI sessions that accidentally saved embedding,
+    TTS, Whisper, or moderation model IDs as their chat model.
     For ChatGPT Subscription, also repairs stale OpenAI API model names such as
     ``gpt-5`` that are not accepted by the Codex-backed ChatGPT account route.
+
+    Returns True iff sess.model was repaired.
     """
     current_model = (getattr(sess, "model", "") or "").strip()
     endpoint_url = (getattr(sess, "endpoint_url", "") or "").strip()
+    needs_chat_repair = _session_model_needs_chat_repair(current_model)
     is_chatgpt_subscription = False
     if current_model:
         try:
             from src.chatgpt_subscription import is_chatgpt_subscription_base
             is_chatgpt_subscription = is_chatgpt_subscription_base(endpoint_url)
-            if not is_chatgpt_subscription:
-                return False
         except Exception:
+            is_chatgpt_subscription = False
+        if not needs_chat_repair and not is_chatgpt_subscription:
             return False
     db = SessionLocal()
     try:
@@ -218,7 +276,11 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
                 visible = _visible_models(cached, getattr(ep, "hidden_models", None))
             except Exception:
                 visible = cached
-        if current_model and current_model in {str(item).strip() for item in visible}:
+        if (
+            current_model
+            and current_model in {str(item).strip() for item in visible}
+            and not needs_chat_repair
+        ):
             return False
         if is_chatgpt_subscription:
             live_models = []
@@ -248,10 +310,9 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
                 return False
         if not visible:
             return False
-        model = visible[0]
-        if not isinstance(model, str) or not model.strip():
+        model = _pick_recovered_chat_model(visible, getattr(sess, "name", ""))
+        if not model:
             return False
-        model = model.strip()
         # Persist so the next request, websocket reconnect, or page reload
         # picks up the same model (we'd otherwise re-pick on every send
         # and silently switch on the user if the cached order shifts).
@@ -261,17 +322,17 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
         db_session = db_session_q.first()
         if db_session:
             db_session.model = model
-            db_session.updated_at = datetime.utcnow()
+            db_session.updated_at = utcnow_naive()
             db.commit()
         sess.model = model
         logger.info(
-            "Recovered session model for %s — picked %r from endpoint %s",
+            "Recovered session chat model for %s — picked %r from endpoint %s",
             session_id, model, ep.id,
         )
         return True
     except Exception as e:
         db.rollback()
-        logger.warning("Failed to recover empty session model for %s: %s", session_id, e)
+        logger.warning("Failed to recover session chat model for %s: %s", session_id, e)
         return False
     finally:
         db.close()
@@ -1016,6 +1077,8 @@ def setup_chat_routes(
                                     _actual_model = data.get("model") or _actual_model
                                     data["requested_model"] = _requested_model
                                     yield f'data: {json.dumps(data)}\n\n'
+                                elif _is_chat_mode_forward_only_event(data):
+                                    yield chunk
                                 elif data.get("type") == "usage":
                                     last_metrics = data.get("data", {})
                                     _reported_model = last_metrics.get("model")
@@ -1156,14 +1219,7 @@ def setup_chat_routes(
                                 elif data.get("type") == "web_sources":
                                     web_sources = data.get("data", [])
                                     yield chunk
-                                elif data.get("type") in (
-                                    "tool_start", "tool_output", "agent_step",
-                                    "doc_stream_open", "doc_stream_delta",
-                                    "doc_update", "doc_suggestions", "ui_control",
-                                    "rounds_exhausted",
-                                    "ask_user",
-                                    "plan_update",
-                                ):
+                                elif _is_agent_mode_forward_only_event(data):
                                     if data.get("type") == "agent_step":
                                         _agent_rounds = max(_agent_rounds, data.get("round", 1))
                                     elif data.get("type") == "tool_start":

@@ -1427,7 +1427,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 typewriterInto(roundHolder.querySelector('.body'), errMsg);
                 break;
               }
-              if (json.delta || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
+              if (json.delta || json.type === 'model_waiting' || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
                 clearResponseTimeout();
                 clearProcessingProbe();
               }
@@ -2022,6 +2022,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 // can be edited/deleted immediately, without reloading the chat.
                 if (_isBg) continue;
                 if (currentHolder && json.id) currentHolder.dataset.dbId = json.id;
+
+              } else if (json.type === 'model_waiting') {
+                if (_isBg) continue;
+                if (spinner && spinner.element) {
+                  spinner.updateMessage(json.message || `Still waiting for ${json.model || 'model'}`);
+                }
 
               } else if (json.type === 'tool_start') {
                 if (_isBg) continue;
@@ -3502,6 +3508,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
             if (documentModule && json.delta) documentModule.streamDocDelta(json.delta);
           } else if (json.type === 'metrics') {
             metricsData = json.data || metricsData;
+          } else if (json.type === 'model_waiting') {
+            rich = true;
           } else if (json.type === 'tool_start' || json.type === 'tool_output' ||
                      json.type === 'tool_progress' || json.type === 'agent_step' ||
                      json.type === 'web_sources' || json.type === 'rag_sources' ||

@@ -2149,6 +2149,7 @@ def setup_model_routes(model_discovery):
         variants = {
             base,
             base + "/chat/completions",
+            base + "/responses",
             build_chat_url(base).rstrip("/"),
         }
         return sess in variants or sess.startswith(base + "/")
