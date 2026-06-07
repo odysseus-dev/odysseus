@@ -1,8 +1,9 @@
 # Pull Request Review Template
 
-Use this shape for substantive PR reviews. Omit sections that do not add useful
-signal. Lead with confirmed findings; keep speculative notes out of the public
-review unless they are framed as a concrete open question.
+Use this shape as a copyable reference for substantive PR reviews; GitHub does
+not auto-apply this file to review comments. Omit sections that do not add
+useful signal. Lead with confirmed findings; keep speculative notes out of the
+public review unless they are framed as a concrete open question.
 
 ## Findings
 
@@ -50,7 +51,9 @@ none confirmed
 
 - **Findings:** Verified, author-actionable issues that should be fixed or
   consciously accepted before merge.
-- **Priority badges:** Use these exact badge URLs when adding priority badges.
+- **Priority badges:** The shields.io badges below are optional formatting for
+  priority labels. Plain `P0`, `P1`, `P2`, or `P3` text is also acceptable when
+  an external image dependency is undesirable or may not render.
   - **P0:** `![P0 Badge](https://img.shields.io/badge/P0-red?style=flat)` -
     release-blocking or actively dangerous.
   - **P1:** `![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)` -
