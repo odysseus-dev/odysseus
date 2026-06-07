@@ -25,7 +25,7 @@
     --radius: 8px;
   }
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; scroll-snap-type: y proximity; scroll-padding-top: 60px; }
+  html { scroll-behavior: smooth; scroll-snap-type: y proximity; scroll-padding-top: 0px; }
   /* Each section is a full-viewport "page" with its content centered, so only
      one shows at a time and the snap is obvious. */
   .hero, section {
@@ -88,14 +88,23 @@
   a { color: var(--accent); text-decoration: none; }
   .wrap { max-width: 1080px; margin: 0 auto; padding: 0 22px; }
 
-  /* Nav */
+  /* Nav — Dynamic Island glass */
   nav {
-    position: sticky; top: 0; z-index: 50;
-    backdrop-filter: blur(10px);
-    background: rgba(17,17,17,0.88);
-    border-bottom: 1px solid #9cdef2;
+    position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+    background: transparent;
+    pointer-events: none;
+    padding: 12px 12px 0;
   }
-  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  nav .wrap {
+    max-width: 780px; margin: 0 auto;
+    border-radius: 999px; pointer-events: auto;
+    display: flex; align-items: center; justify-content: space-between; height: 52px; padding: 0 20px;
+    backdrop-filter: blur(24px) saturate(1.4);
+    -webkit-backdrop-filter: blur(24px) saturate(1.4);
+    background: rgba(17,17,17,0.55);
+    border: 1px solid rgba(156,222,242,0.20);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
   .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 17px; letter-spacing: 0.2px; color: var(--heading); }
   .brand .boat { color: var(--accent); flex-shrink: 0; }
   .nav-links { display: flex; align-items: center; gap: 22px; }
@@ -115,7 +124,7 @@
   .btn.primary:hover { filter: brightness(1.07); }
 
   /* Hero */
-  .hero { padding: 86px 0 40px; text-align: center; position: relative; overflow: hidden; }
+  .hero { padding: 70px 0 40px; text-align: center; position: relative; overflow: hidden; }
   #hero-flow { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; opacity: 0.9; }
   .hero .wrap { position: relative; z-index: 2; }
   .hero h1, .hero .lede, .hero .wordmark { text-shadow: 0 2px 20px rgba(0,0,0,0.45); }
@@ -380,6 +389,11 @@
     .codeblock { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; overflow-wrap: anywhere; }
     .codeblock > span { flex: 1 1 auto; min-width: 0; }
     .codeblock .copy-btn { margin-left: auto; }
+  }
+  @media (max-width: 600px) {
+    nav { padding: 0; }
+    nav .wrap { max-width: 100%; border-radius: 0; border-left: none; border-right: none; height: 48px; }
+    .hero { padding: 60px 0 40px; }
   }
   @media (max-width: 520px) {
     .grid { grid-template-columns: 1fr; }
