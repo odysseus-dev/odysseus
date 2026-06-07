@@ -672,6 +672,8 @@ async function _fetchDependencies() {
       _pkgParams.set('host', _depHost);
       if (_depPort) _pkgParams.set('ssh_port', _depPort);
       if (_depVenv) _pkgParams.set('venv', _depVenv);
+      const _depIsWin = _depSrv ? _isWindows(_depSrv) : _isWindows(_envState.remoteHost);
+      if (_depIsWin) _pkgParams.set('windows', 'true');
     }
     const resp = await fetch('/api/cookbook/packages' + (_pkgParams.toString() ? '?' + _pkgParams.toString() : ''));
     const data = await resp.json();

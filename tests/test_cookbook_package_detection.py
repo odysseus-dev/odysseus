@@ -48,3 +48,13 @@ def test_route_uses_dist_name_helper_not_munged_import_name():
     src = (Path(__file__).resolve().parents[1] / "routes" / "shell_routes.py").read_text(encoding="utf-8")
     assert "importlib_metadata.version(_pip_dist_name(pkg))" in src
     assert 'importlib_metadata.version(pkg["name"].replace("_", "-"))' not in src
+
+
+def test_windows_probe_uses_python_not_python3():
+    """On Windows SSH sessions `python3` hits the Microsoft Store stub alias and
+    exits 1 before running any code.  The packages endpoint accepts ?windows=true
+    and uses `python` instead so the probe reaches a real interpreter."""
+    src = (Path(__file__).resolve().parents[1] / "routes" / "shell_routes.py").read_text(encoding="utf-8")
+    assert 'windows: bool = False' in src
+    assert 'py_cmd = "python" if windows else "python3"' in src
+    assert 'f"{src}{py_cmd} -c' in src

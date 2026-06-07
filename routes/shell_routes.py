@@ -960,6 +960,7 @@ def setup_shell_routes() -> APIRouter:
         host: str | None = None,
         ssh_port: str | None = None,
         venv: str | None = None,
+        windows: bool = False,
     ):
         """Check which optional packages are installed.
 
@@ -1106,7 +1107,10 @@ def setup_shell_routes() -> APIRouter:
                 # `venv` is validated but left unquoted so leading ~ expands on
                 # the remote; quoting it breaks ~/venv activation.
                 src = _venv_activate_prefix(venv)
-                inner = f"{src}python3 -c {shlex.quote(py)}"
+                # Windows SSH sessions expose `python`, not `python3` (the
+                # `python3` name hits the Microsoft Store stub alias there).
+                py_cmd = "python" if windows else "python3"
+                inner = f"{src}{py_cmd} -c {shlex.quote(py)}"
                 argv = _ssh_base_argv(host, ssh_port) + [inner]
                 proc = await asyncio.create_subprocess_exec(
                     *argv,
