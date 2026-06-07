@@ -488,6 +488,7 @@ async def execute_tool_block(
     owner: Optional[str] = None,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     workspace: Optional[str] = None,
+    tool_policy: Optional[Any] = None,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -547,6 +548,15 @@ async def execute_tool_block(
         desc = f"{tool}: BLOCKED"
         result = {"error": f"Tool '{tool}' is disabled by user.", "exit_code": 1}
         logger.info(f"Tool blocked by user: {tool}")
+        return desc, result
+
+    if tool_policy and tool_policy.blocks(tool):
+        desc = f"{tool}: BLOCKED"
+        result = {
+            "error": f"Execution of tool '{tool}' is forbade by the active guide-only policy.",
+            "exit_code": 1,
+        }
+        logger.warning("Tool policy blocked tool=%s", tool)
         return desc, result
 
     if tool in _ADMIN_TOOLS and not _owner_is_admin(owner):
