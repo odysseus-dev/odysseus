@@ -180,6 +180,20 @@
   .toggle { text-align: center; margin-top: calc(1rem + 4px); font-size: 0.85rem; color: color-mix(in srgb, var(--fg) 50%, transparent); }
   .toggle a { color: var(--red); cursor: pointer; text-decoration: none; }
   .toggle a:hover { text-decoration: underline; }
+  /* OIDC / SSO button */
+  .oidc-divider { display:flex; align-items:center; margin:1.15rem 0 1rem; }
+  .oidc-divider::before, .oidc-divider::after { content:''; flex:1; border-top:1px solid var(--border); }
+  .oidc-divider span { padding:0 0.75rem; color:color-mix(in srgb, var(--fg) 40%, transparent); font-size:0.75rem; text-transform:uppercase; }
+  .oidc-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+    width: 100%; padding: 0.65rem 0;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--panel); color: var(--fg);
+    font-size: 0.95rem; font-weight: 500; text-decoration: none; cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .oidc-btn:hover { background: color-mix(in srgb, var(--panel) 90%, var(--fg)); border-color: color-mix(in srgb, var(--border) 60%, var(--fg)); }
+  .oidc-btn svg { flex-shrink: 0; }
   .pw-wrapper { position: relative; margin-bottom: 1rem; }
   .pw-wrapper input:not(.remember-check) { padding-right: 2.5rem; margin-bottom: 0; }
   .pw-toggle {
@@ -287,6 +301,14 @@
     <button type="submit" id="submitBtn">Sign In</button>
   </form>
 
+  <div id="oidcSection" style="display:none">
+    <div class="oidc-divider" aria-hidden="true"><span>or</span></div>
+    <a class="oidc-btn" id="oidcBtn" href="/api/auth/oidc/login">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+      <span id="oidcLabel">Sign in with SSO</span>
+    </a>
+  </div>
+
   <div class="toggle" id="toggleArea" style="display:none">
     <span id="toggleText">Don't have an account? </span>
     <a id="toggleLink" href="#">Sign up</a>
@@ -303,6 +325,20 @@
     if (vr.ok) {
       const vd = await vr.json();
       document.getElementById('version-label').textContent = 'v' + vd.version;
+    }
+  } catch(e) {}
+
+  // OIDC / SSO button — fetch config and show if enabled
+  try {
+    const oc = await fetch('/api/auth/oidc/config');
+    if (oc.ok) {
+      const od = await oc.json();
+      if (od.enabled) {
+        const section = document.getElementById('oidcSection');
+        const label = document.getElementById('oidcLabel');
+        if (section) section.style.display = 'block';
+        if (label) label.textContent = 'Sign in with ' + (od.provider_name || 'SSO');
+      }
     }
   } catch(e) {}
 
