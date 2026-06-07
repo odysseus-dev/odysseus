@@ -167,6 +167,9 @@ def _stream_delta_event(text: str, *, thinking: bool = False) -> str:
 def _model_activity_key(url: str, model: str) -> str:
     return f"{(url or '').strip()}|{(model or '').strip()}"
 
+def _same_model_identity(left: str, right: str) -> bool:
+    return (left or "").strip().lower() == (right or "").strip().lower()
+
 def note_model_activity(url: str, model: str):
     """Record that a real upstream request used this endpoint/model."""
     if not url or not model:
@@ -267,8 +270,10 @@ def _is_ollama_native_url(url: str) -> bool:
     path = (parsed.path or "").rstrip("/")
     if _host_match(url, "ollama.com"):
         return True
+    if path.startswith("/v1"):
+        return False
     local_ollama_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or parsed.port == 11434
-    return local_ollama_host and (path == "/api" or path.startswith("/api/"))
+    return local_ollama_host and (path == "" or path == "/api" or path.startswith("/api/"))
 
 
 def _ollama_api_root(url: str) -> str:
@@ -284,6 +289,8 @@ def _ollama_api_root(url: str) -> str:
         return url[: -len("/generate")]
     if path.endswith("/api"):
         return url
+    if path == "":
+        return url + "/api"
     if _host_match(url, "ollama.com"):
         root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
         return root.rstrip("/") + "/api"
@@ -411,6 +418,10 @@ def _detect_provider(url: str) -> str:
         return "ollama"
     if _host_match(url, "anthropic.com"):
         return "anthropic"
+    if _host_match(url, "opencode.ai/zen/go"):
+        return "opencode-go"
+    if _host_match(url, "opencode.ai/zen"):
+        return "opencode-zen"
     if _host_match(url, "openrouter.ai"):
         return "openrouter"
     if _host_match(url, "groq.com"):
@@ -448,6 +459,8 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "x.ai"): return "xAI"
     if _host_match(url, "openai.com"): return "OpenAI"
     if _host_match(url, "openrouter.ai"): return "OpenRouter"
+    if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
+    if _host_match(url, "opencode.ai/zen"): return "OpenCode Zen"
     if _host_match(url, "groq.com"): return "Groq"
     from src.copilot import is_copilot_base
     if is_copilot_base(url): return "GitHub Copilot"
@@ -1493,6 +1506,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     _think_open_stripped = False  # opening <think> tag already removed
     _harmony_router = _HarmonyStreamRouter()
     _harmony_active = False       # sticky: gpt-oss harmony <|channel|> stream detected
+    _actual_model = ""
+    _actual_model_announced = False
 
     def _emit_tool_calls():
         """Build the tool_calls event string if any were accumulated."""
@@ -1549,6 +1564,15 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                         if data.strip():
                             if data.startswith("{"):
                                 j = json.loads(data)
+                                chunk_model = j.get("model")
+                                if isinstance(chunk_model, str) and chunk_model.strip():
+                                    _actual_model = chunk_model.strip()
+                                    if (
+                                        not _actual_model_announced
+                                        and not _same_model_identity(_actual_model, model)
+                                    ):
+                                        _actual_model_announced = True
+                                        yield f'data: {json.dumps({"type": "model_actual", "requested_model": model, "model": _actual_model})}\n\n'
                                 # Usage chunk (from stream_options)
                                 _choices = j.get("choices") or []
                                 _delta0 = _choices[0].get("delta") if (_choices and _choices[0] is not None) else None
@@ -1579,6 +1603,10 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                             _usage_data["gen_tps"] = round(_tm["predicted_per_second"], 2)
                                         if _tm.get("prompt_per_second"):
                                             _usage_data["prefill_tps"] = round(_tm["prompt_per_second"], 2)
+                                    if _actual_model:
+                                        _usage_data["model"] = _actual_model
+                                        if not _same_model_identity(_actual_model, model):
+                                            _usage_data["requested_model"] = model
                                     yield f'data: {json.dumps({"type": "usage", "data": _usage_data})}\n\n'
                                 elif "choices" in j:
                                     _c0 = (j["choices"] or [None])[0]
@@ -1690,7 +1718,12 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                             if func.get("name"):
                                                 _tc_acc[idx]["name"] = func["name"]
                                             if "arguments" in func:
-                                                _tc_acc[idx]["arguments"] += func["arguments"]
+                                                # Guard against a null arguments delta: `func` can be
+                                                # {"arguments": None} (JSON null), and a raw `+= None`
+                                                # raises TypeError that the broad except swallows,
+                                                # silently dropping the rest of the chunk. Matches the
+                                                # Anthropic accumulator (`partial = ... or ""`) above.
+                                                _tc_acc[idx]["arguments"] += func["arguments"] or ""
                                                 # Stream tool arg deltas for doc tools
                                                 if func["arguments"] and _tc_acc[idx].get("name") in ("create_document", "update_document", "edit_document"):
                                                     yield f'data: {json.dumps({"type": "tool_call_delta", "index": idx, "name": _tc_acc[idx]["name"], "arg_delta": func["arguments"]})}\n\n'
@@ -1786,6 +1819,13 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                 continue
             # Any data chunk other than the terminal [DONE] means real output.
             if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
+                try:
+                    event_data = json.loads(chunk[6:])
+                except Exception:
+                    event_data = {}
+                if event_data.get("type") == "model_actual":
+                    yield chunk
+                    continue
                 # First real output from a NON-primary candidate: tell the client
                 # the selected model failed and another answered. Without this the
                 # fallback is invisible — a misconfigured provider looks like it

@@ -2497,7 +2497,7 @@ function initializeEventListeners() {
   };
 
   // Keys hidden by default on first run (no localStorage yet)
-  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn']);
+  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn', 'text-emojis']);
 
   // Keys that need admin to toggle off (reserved for future use)
   const UI_VIS_ADMIN_ONLY = new Set([]);
@@ -2525,11 +2525,9 @@ function initializeEventListeners() {
     document.querySelectorAll('.section[draggable]').forEach(el => {
       el.setAttribute('draggable', dragEnabled ? 'true' : 'false');
     });
-    // Text-only emojis toggle. Default is ON (the checkbox defaults to
-    // checked because text-emojis isn't in UI_VIS_DEFAULT_OFF), so treat
-    // an absent value as enabled — otherwise the toggle looked on at
-    // startup but the effect only activated after the user flipped it.
-    applyTextEmojis(state['text-emojis'] !== false);
+    // Text-only emojis toggle. Default is OFF so model-emitted shortcodes
+    // like `:blush:` render through the normal monochrome emoji path.
+    applyTextEmojis(state['text-emojis'] === true);
     // Hide thinking sections toggle (show-thinking: checked=show, unchecked=hide)
     document.body.classList.toggle('hide-thinking', state['show-thinking'] === false);
   }

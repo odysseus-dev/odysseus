@@ -30,10 +30,12 @@ DEFAULT_PRIVILEGES = {
     "can_manage_memory": True,
     "max_messages_per_day": 0,
     "allowed_models": [],
+    "allowed_models_restricted": False,
 }
 
 # Admins get everything
 ADMIN_PRIVILEGES = {k: (True if isinstance(v, bool) else (0 if isinstance(v, int) else [])) for k, v in DEFAULT_PRIVILEGES.items()}
+ADMIN_PRIVILEGES["allowed_models_restricted"] = False
 
 DEFAULT_AUTH_PATH = os.path.join(
     Path(__file__).parent.parent, "data", "auth.json"
@@ -445,6 +447,12 @@ class AuthManager:
         username = username.strip().lower()
         if not self.verify_password(username, password):
             return None
+        return self.create_session_trusted(username)
+
+    def create_session_trusted(self, username: str) -> str:
+        """Issue a session token for an already-verified user.
+        Call only after verify_password (and TOTP if enabled) have passed."""
+        username = username.strip().lower()
         token = secrets.token_hex(32)
         with self._sessions_lock:
             self._sessions[token] = {

@@ -522,6 +522,8 @@ def setup_history_routes(session_manager) -> APIRouter:
     async def compact_session(request: Request, session_id: str):
         """Manually trigger context compaction for a session."""
         _verify_session_owner(request, session_id)
+        from src.auth_helpers import effective_user
+        owner = effective_user(request)
         try:
             session = session_manager.get_session(session_id)
         except KeyError:
@@ -555,7 +557,7 @@ def setup_history_routes(session_manager) -> APIRouter:
             )
 
             # Use utility model if available
-            util_url, util_model, util_headers = resolve_endpoint("utility")
+            util_url, util_model, util_headers = resolve_endpoint("utility", owner=owner or None)
             compact_url = util_url or session.endpoint_url
             compact_model = util_model or session.model
             compact_headers = util_headers if util_url else session.headers

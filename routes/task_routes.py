@@ -291,20 +291,24 @@ def setup_task_routes(task_scheduler) -> APIRouter:
     def _owner(request: Request):
         return get_current_user(request)
 
-    async def _generate_task_name(prompt: str) -> str:
+    async def _generate_task_name(prompt: str, owner: Optional[str] = None) -> str:
         """Use LLM to generate a short task name from the prompt."""
         try:
             from src.llm_core import llm_call_async
             from core.database import Session as DbSession
             db = SessionLocal()
             try:
-                recent = db.query(DbSession).filter(
+                q = db.query(DbSession).filter(
                     DbSession.endpoint_url.isnot(None),
                     DbSession.model.isnot(None),
-                ).order_by(DbSession.created_at.desc()).first()
+                )
+                if owner:
+                    q = q.filter(DbSession.owner == owner)
+                recent = q.order_by(DbSession.created_at.desc()).first()
                 if not recent:
                     return prompt[:50].strip()
                 url, model = recent.endpoint_url, recent.model
+                headers = recent.headers or {}
             finally:
                 db.close()
 
@@ -315,6 +319,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                     {"role": "user", "content": prompt[:500]},
                 ],
                 max_tokens=20,
+                headers=headers,
                 timeout=15,
             )
             title = result.strip().strip('"\'').strip()
@@ -429,6 +434,20 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         except Exception:
             return False
 
+    def _validate_then_task_id(db, then_task_id: Optional[str], user: Optional[str], current_task_id: Optional[str] = None) -> Optional[str]:
+        target_id = (then_task_id or "").strip()
+        if not target_id:
+            return None
+        if current_task_id and target_id == current_task_id:
+            raise HTTPException(400, "Task cannot chain to itself")
+        q = db.query(ScheduledTask).filter(ScheduledTask.id == target_id)
+        if user:
+            q = q.filter(ScheduledTask.owner == user)
+        target = q.first()
+        if not target:
+            raise HTTPException(404, "Chained task not found")
+        return target.id
+
     @router.post("")
     async def create_task(request: Request, req: TaskCreate):
         user = _owner(request)
@@ -465,7 +484,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 from src.builtin_actions import BUILTIN_ACTION_INFO
                 name = BUILTIN_ACTION_INFO.get(req.action, req.action or "Action Task")
             elif req.prompt:
-                name = await _generate_task_name(req.prompt)
+                name = await _generate_task_name(req.prompt, owner=user)
             else:
                 name = "Untitled Task"
 
@@ -492,6 +511,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         task_id = str(uuid.uuid4())
         db = SessionLocal()
         try:
+            then_task_id = _validate_then_task_id(db, req.then_task_id, user)
             notifications_enabled = (
                 False if req.task_type == "action" and req.notifications_enabled is None
                 else bool(req.notifications_enabled) if req.notifications_enabled is not None
@@ -518,7 +538,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 output_target=req.output_target,
                 model=req.model or None,
                 endpoint_url=req.endpoint_url or None,
-                then_task_id=req.then_task_id or None,
+                then_task_id=then_task_id,
                 webhook_token=webhook_token,
                 notifications_enabled=notifications_enabled,
             )
@@ -671,7 +691,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             if req.trigger_count is not None:
                 task.trigger_count = req.trigger_count
             if req.then_task_id is not None:
-                task.then_task_id = req.then_task_id or None
+                task.then_task_id = _validate_then_task_id(db, req.then_task_id, user, current_task_id=task.id)
             if req.notifications_enabled is not None:
                 task.notifications_enabled = bool(req.notifications_enabled)
             if req.cron_expression is not None:
@@ -1047,6 +1067,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         desc = (body.get("description") or "").strip()
         if not desc:
             return {"success": False, "message": "Nothing to parse"}
+        user = _owner(request)
 
         now = _dt.now()
         # Give the model the current date/time + weekday so relative phrasing
@@ -1073,9 +1094,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             "use cron '0 H * * 1-5'. Keep the prompt actionable and self-contained."
         )
         try:
-            url, model, headers = resolve_endpoint("utility")
+            url, model, headers = resolve_endpoint("utility", owner=user or None)
             if not url:
-                url, model, headers = resolve_endpoint("default")
+                url, model, headers = resolve_endpoint("default", owner=user or None)
             if not (url and model):
                 return {"success": False, "message": "No model endpoint configured"}
             raw = await llm_call_async(

@@ -37,6 +37,7 @@ from routes.model_routes import (
     _curate_models,
     _visible_models,
     _normalize_model_ids,
+    _api_key_fingerprint,
     _is_chat_model,
     _classify_endpoint,
     _effective_endpoint_kind,
@@ -358,6 +359,48 @@ class TestClassifyEndpoint:
         assert result["status_code"] == 200
         assert seen == [("GET", "http://100.117.136.97:34521/v1")]
         assert all(not url.endswith("/models") for _, url in seen)
+
+    def test_ping_endpoint_falls_back_to_models_on_404(self, monkeypatch):
+        """llama-swap returns 404 on /v1 but 200 on /v1/models."""
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        seen = []
+
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
+            seen.append(url)
+            request = httpx.Request("GET", url)
+            if url.endswith("/models"):
+                return httpx.Response(200, request=request)
+            return httpx.Response(404, request=request)
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+
+        result = _ping_endpoint("http://172.17.0.1:8081/v1", timeout=1)
+
+        assert result["reachable"] is True
+        assert result["status_code"] == 200
+        assert seen == [
+            "http://172.17.0.1:8081/v1",
+            "http://172.17.0.1:8081/v1/models",
+        ]
+
+    def test_ping_endpoint_no_models_fallback_on_auth_failure(self, monkeypatch):
+        """401/403 are definitive — don't probe /models."""
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        seen = []
+
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
+            seen.append(url)
+            request = httpx.Request("GET", url)
+            return httpx.Response(401, request=request)
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+
+        result = _ping_endpoint("http://10.0.0.1:8080/v1", "bad-key", timeout=1)
+
+        assert result["reachable"] is False
+        assert result["status_code"] == 401
+        # Should NOT have tried /models — 401 is definitive
+        assert len(seen) == 1
 
 
 # ── setup probing ──
@@ -754,6 +797,16 @@ def test_visible_models_handles_malformed_strings():
     assert _visible_models("only-cached", None, None) == ["only-cached"]
 
 
+def test_api_key_fingerprint_is_stable_and_non_secret():
+    fp_one = _api_key_fingerprint("key-one")
+
+    assert _api_key_fingerprint("") == ""
+    assert fp_one == _api_key_fingerprint(" key-one ")
+    assert fp_one != _api_key_fingerprint("key-two")
+    assert len(fp_one) == 8
+    assert "key-one" not in fp_one
+
+
 def _create_form_kwargs(**overrides):
     """Defaults for every Form() param create_model_endpoint reads directly.
 
@@ -789,6 +842,29 @@ def _patch_create_deps(monkeypatch, db):
     monkeypatch.setattr(model_routes, "_load_settings", lambda: {"default_endpoint_id": "exists"})
     monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda u: u)
     monkeypatch.setattr(auth_helpers, "get_current_user", lambda req: None)
+
+
+def test_list_model_endpoints_returns_key_fingerprint(monkeypatch):
+    endpoint_with_key = _make_endpoint(
+        api_key="key-one",
+        cached_models=json.dumps(["m1"]),
+    )
+    endpoint_without_key = _make_endpoint(
+        id="ep2",
+        api_key=None,
+        cached_models=json.dumps(["m2"]),
+    )
+    db = _PinnedFakeDb([endpoint_with_key, endpoint_without_key])
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+    endpoint = _get_route("/api/model-endpoints", "GET")
+
+    result = endpoint(_PinnedFakeRequest())
+
+    assert result[0]["has_key"] is True
+    assert result[0]["api_key_fingerprint"] == _api_key_fingerprint("key-one")
+    assert result[1]["has_key"] is False
+    assert result[1]["api_key_fingerprint"] == ""
 
 
 def test_post_creates_endpoint_with_pinned_models(monkeypatch):
@@ -856,6 +932,53 @@ def test_post_dedupe_existing_does_not_clobber_pinned_when_omitted(monkeypatch):
     assert json.loads(existing.pinned_models) == ["keep-me"]
     assert result["pinned_models"] == ["keep-me"]
     assert db.committed == 0  # nothing to persist
+
+
+def test_post_same_base_url_different_api_key_creates_distinct_endpoint(monkeypatch):
+    existing = _make_endpoint(
+        base_url="https://api.example.test/v1",
+        api_key="key-one",
+    )
+    db = _PinnedFakeDb([existing])
+    _patch_create_deps(monkeypatch, db)
+    create = _get_route("/api/model-endpoints", "POST")
+
+    result = create(
+        _PinnedFakeRequest(),
+        base_url="https://api.example.test/v1",
+        **_create_form_kwargs(api_key="key-two"),
+    )
+
+    assert result.get("existing") is not True
+    assert result["has_key"] is True
+    assert result["api_key_fingerprint"] == _api_key_fingerprint("key-two")
+    assert len(db.added) == 1
+    assert db.added[0].base_url == "https://api.example.test/v1"
+    assert db.added[0].api_key == "key-two"
+
+
+def test_post_same_base_url_same_api_key_still_dedupes(monkeypatch):
+    existing = _make_endpoint(
+        base_url="https://api.example.test/v1",
+        api_key="key-one",
+    )
+    db = _PinnedFakeDb([existing])
+    _patch_create_deps(monkeypatch, db)
+    create = _get_route("/api/model-endpoints", "POST")
+
+    result = create(
+        _PinnedFakeRequest(),
+        base_url="https://api.example.test/v1",
+        **_create_form_kwargs(api_key="key-one"),
+    )
+
+    assert result["existing"] is True
+    assert result["id"] == existing.id
+    assert result["has_key"] is True
+    assert result["api_key_fingerprint"] == _api_key_fingerprint("key-one")
+    assert db.added == []
+
+
 class _RouteQuery:
     def __init__(self, rows):
         self.rows = list(rows)
