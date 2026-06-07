@@ -2,6 +2,8 @@
 // Connects to /ws/notifications and shows browser notifications + toasts.
 
 let _ws = null;
+let _seenIds = new Set();
+const _SEEN_MAX = 200; // cap to avoid unbounded growth
 let _reconnectTimer = null;
 let _reconnectDelay = 1000;
 const _MAX_RECONNECT_DELAY = 10000;
@@ -25,6 +27,21 @@ export function initNotifications(apiBase) {
   _apiBase = apiBase || '';
   _enabled = true;
   _connect();
+}
+
+function _markSeen(n) {
+  const key = (n.task_id || '') + '|' + (n.timestamp || '');
+  _seenIds.add(key);
+  if (_seenIds.size > _SEEN_MAX) {
+    const iter = _seenIds.values();
+    for (let i = 0; i < 50; i++) _seenIds.delete(iter.next().value);
+  }
+  return key;
+}
+
+export function wasNotificationSeen(n) {
+  const key = (n.task_id || '') + '|' + (n.timestamp || '');
+  return key ? _seenIds.has(key) : false;
 }
 
 export function stopNotifications() {
@@ -60,6 +77,7 @@ function _connect() {
   _ws.onmessage = (e) => {
     try {
       const n = JSON.parse(e.data);
+      _markSeen(n);
       _showNotification(n);
     } catch (_) {}
   };

@@ -10,7 +10,7 @@ import { topPortalZ } from './toolWindowZOrder.js';
 import { sortModelIds } from './modelSort.js';
 import { ordinalSuffix } from './util/ordinal.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
-import { initNotifications, stopNotifications as _wsStop } from './notifications.js';
+import { initNotifications, stopNotifications as _wsStop, wasNotificationSeen } from './notifications.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -2902,6 +2902,7 @@ async function _pollTaskNotifications() {
     const data = await res.json();
     const notes = data.notifications || [];
     for (const n of notes) {
+      if (wasNotificationSeen(n)) continue; // already pushed via WS
       _displayNotification(n);
     }
   } catch (_) {}
