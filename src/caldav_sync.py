@@ -216,18 +216,43 @@ def _open_url_as_calendar(client, url: str):
     return client.calendar(url=target)
 
 
+def _build_dav_client(url: str, username: str, password: str):
+    """Construct a CalDAV client with automatic redirects disabled.
+
+    ``validate_caldav_url`` resolves and vets the *initial* host, but caldav's
+    underlying HTTP session follows 3xx redirects by default. So a URL that
+    passes validation can still be redirected — at request time — to
+    loopback / link-local / private space, re-opening the SSRF the host check
+    closes. Pin the session to zero redirects: any 3xx then raises instead of
+    silently following an attacker-chosen ``Location``. This mirrors the
+    test-connection path in ``routes/calendar_routes.py``, which already sets
+    ``follow_redirects=False``.
+
+    DAVClient exposes no per-request redirect flag, so we set it on the session
+    after construction (the session is created in ``__init__``).
+    """
+    import caldav
+
+    client = caldav.DAVClient(url=url, username=username, password=password)
+    # Unconditional: a redirect-disable that only sometimes applies is not a
+    # control. The session exists right after __init__ on every real client;
+    # test_build_dav_client_disables_redirects asserts it against installed
+    # caldav in CI.
+    client.session.max_redirects = 0
+    return client
+
+
 def _sync_blocking(owner: str, url: str, username: str, password: str, account_id: str = "") -> dict:
     """The actual sync — synchronous, intended to run in a threadpool.
     Returns counts: {calendars, events, deleted, errors}."""
     # Lazy imports so a missing `caldav` dep doesn't break app startup —
     # the integrations form still works, sync just no-ops with an error.
-    import caldav
     from caldav.lib.error import AuthorizationError, NotFoundError
     from core.database import CalendarCal, CalendarEvent, SessionLocal
 
     result = {"calendars": 0, "events": 0, "deleted": 0, "errors": []}
 
-    client = caldav.DAVClient(url=url, username=username, password=password)
+    client = _build_dav_client(url, username, password)
 
     # Discovery: try principal → calendars first; if the server doesn't
     # support discovery (or the URL points directly at a calendar), fall
