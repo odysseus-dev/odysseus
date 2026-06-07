@@ -112,6 +112,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             # Migrating to nonce-only requires templating the HTML files +
             # auditing every JS-set style attribute. Since inline styles
             # don't execute script, the residual risk is visual-only.
+            # Dynamic WebSocket CSP — matches the request's host/port so HTTPS
+            # (wss://), custom ports, and reverse-proxies all work.
+            ws_scheme = "wss" if request.url.scheme == "https" else "ws"
+            ws_origin = f"{ws_scheme}://{request.url.hostname}"
+            if request.url.port:
+                ws_origin += f":{request.url.port}"
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; "
                 f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
@@ -119,7 +125,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "font-src 'self' https://cdn.jsdelivr.net; "
                 "img-src 'self' data: blob: https:; "
                 "media-src 'self' blob:; "
-                "connect-src 'self' ws://*:7000 ws://*:7860; "
+                f"connect-src 'self' {ws_origin}; "
                 "frame-src 'self'; "
                 "frame-ancestors 'none'"
             )
