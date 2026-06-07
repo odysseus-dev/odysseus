@@ -1111,7 +1111,7 @@ def _build_base_prompt(
 
 
 
-def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num: int):
+def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num: int, is_api_model: bool = False):
     """Choose native function calls or fenced code block parsing. Returns (tool_blocks, used_native)."""
     used_native = False
     if native_tool_calls:
@@ -1128,7 +1128,17 @@ def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num
         if tool_blocks:
             used_native = True
     if not used_native:
-        tool_blocks = parse_tool_blocks(round_response)
+        # Native function-calling models (GPT/Claude/Grok/Qwen3/DeepSeek-V, etc.)
+        # have a reliable structured channel for real tool invocations. When such
+        # a model emits no native tool_calls, any ```bash/```python/```json fence
+        # in its prose is virtually always an illustrative example for the user
+        # (e.g. "here's the command you'd run"), not an attempted tool call.
+        # Falling back to the textual fenced-block parser for these models causes
+        # accidental execution of guide-only examples and clarification loops
+        # (issue #3222). Only non-native models — which rely entirely on the
+        # fenced-block convention as their *only* tool channel — need the
+        # textual fallback to invoke tools at all.
+        tool_blocks = [] if is_api_model else parse_tool_blocks(round_response)
         if tool_blocks:
             logger.info(f"Agent round {round_num}: {len(tool_blocks)} fenced tool block(s) detected")
 
@@ -2053,7 +2063,7 @@ async def stream_agent_loop(
                 yield chunk
             # Intercept [DONE] — don't forward until all rounds finish
 
-        tool_blocks, used_native = _resolve_tool_blocks(round_response, native_tool_calls, round_num)
+        tool_blocks, used_native = _resolve_tool_blocks(round_response, native_tool_calls, round_num, is_api_model=_is_api_model)
 
         # Force-answer round: we told the model to STOP calling tools and
         # answer. If it ignored that and emitted a (possibly DSML) tool
