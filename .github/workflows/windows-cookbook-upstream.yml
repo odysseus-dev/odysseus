@@ -1,0 +1,43 @@
+name: Windows Cookbook upstream compatibility
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  trial-rebase:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream dev
+        run: |
+          git remote add upstream https://github.com/pewdiepie-archdaemon/odysseus.git
+          git fetch upstream dev
+          echo "Fork-only commits: $(git rev-list --count upstream/dev..HEAD)"
+          echo "Upstream commits pending: $(git rev-list --count HEAD..upstream/dev)"
+
+      - name: Trial rebase
+        run: git rebase upstream/dev
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test dependencies
+        run: pip install -r requirements.txt pytest pytest-asyncio
+
+      - name: Run Windows Cookbook regression tests
+        run: >-
+          pytest -q
+          tests/test_windows_remote.py
+          tests/test_hwfit_windows.py
+          tests/test_cookbook_helpers.py
+          tests/test_cookbook_dependency_completion_regression.py

@@ -43,6 +43,7 @@ _GPU_LIST_RE = re.compile(r"^\d+(?:,\d+)*$")
 # command. A leading ~ is expanded to $HOME at command-build time.
 _LOCAL_DIR_RE = re.compile(r"^~?/[A-Za-z0-9._/-]*$|^~$")
 _WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
+_WINDOWS_LOCAL_DIR_RE = re.compile(r"^[A-Za-z]:[\\/][A-Za-z0-9._ \\/-]*$")
 
 
 def _git_bash_path(path: str) -> str:
@@ -94,8 +95,15 @@ def _validate_token(v: str | None) -> str | None:
 def _validate_local_dir(v: str | None) -> str | None:
     if v is None or v == "":
         return None
+    if _WINDOWS_DRIVE_PATH_RE.match(v):
+        v = v.rstrip("/\\")
+        if len(v) == 2:
+            v += "\\"
+        if not _WINDOWS_LOCAL_DIR_RE.fullmatch(v):
+            raise HTTPException(400, "Invalid local_dir — Windows paths may not contain shell metacharacters")
+        return v
     v = v.rstrip("/") or "/"
-    if not _LOCAL_DIR_RE.match(v):
+    if not _LOCAL_DIR_RE.fullmatch(v):
         raise HTTPException(400, "Invalid local_dir — must be an absolute or ~ path with no spaces or shell metacharacters")
     return v
 

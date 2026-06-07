@@ -5,6 +5,8 @@ import shutil
 import subprocess
 import time
 
+from src.windows_remote import powershell_ssh_argv
+
 CACHE_TTL = 24 * 3600  # 24 h — hardware probes are user-initiated via the Rescan button; bumped
                        # from 30 min so changing filters doesn't keep re-probing the rig every
                        # half-hour during a long session.
@@ -34,6 +36,26 @@ def _run(cmd):
             )
         else:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            return r.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+def _run_remote_powershell(script):
+    try:
+        r = subprocess.run(
+            powershell_ssh_argv(
+                _remote_host,
+                script,
+                _remote_port,
+                connect_timeout=5,
+            ),
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
         if r.returncode == 0:
             return r.stdout.strip()
     except Exception:
@@ -527,9 +549,10 @@ def _detect_windows():
     """
     )
     if _remote_host:
-        # Remote: ship a single command string over SSH. The remote shell parses
-        # the quoting; PowerShell on the far side runs the -Command payload.
-        out = _run(f'powershell -Command "{ps_cmd}"')
+        # PowerShell scripts contain nested quotes, braces, and newlines. Send
+        # them as UTF-16LE EncodedCommand so neither the local nor remote shell
+        # reparses the script.
+        out = _run_remote_powershell(ps_cmd)
     else:
         # Local: pass a LIST argv straight to subprocess so the OS hands ps_cmd
         # to PowerShell verbatim — no fragile string-level quote escaping. Prefer

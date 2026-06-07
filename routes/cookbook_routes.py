@@ -1,6 +1,7 @@
 """Cookbook routes — model download, serve, cache scanning, and cookbook state sync."""
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -18,6 +19,7 @@ from src.auth_helpers import require_user
 from pydantic import BaseModel
 
 from core.middleware import require_admin
+from src.windows_remote import background_powershell_launch_script, powershell_ssh_argv, scp_argv
 from core.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
@@ -197,13 +199,21 @@ def setup_cookbook_routes() -> APIRouter:
         _port = ssh_port or ""
         _pf = ["-p", _port] if _port and _port != "22" else []
         if windows:
-            check = f"powershell -NoProfile -Command \"if (Get-Command {binary} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 127 }}\""
+            argv = powershell_ssh_argv(
+                remote,
+                f"if (Get-Command '{_ps_squote(binary)}' -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 127 }}",
+                _port,
+                connect_timeout=6,
+            )
         else:
             check = f"command -v {shlex.quote(binary)} >/dev/null 2>&1"
-        try:
-            proc = await asyncio.create_subprocess_exec(
+            argv = [
                 "ssh", "-o", "ConnectTimeout=6", "-o", "StrictHostKeyChecking=no",
                 *_pf, remote, check,
+            ]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -335,6 +345,7 @@ def setup_cookbook_routes() -> APIRouter:
             lines.append("export HF_HUB_DOWNLOAD_MAX_WORKERS=8")
 
         remote = req.remote_host  # None for local
+        remote_setup_commands = None
         is_windows = req.platform == "windows"
         # LOCAL execution on a native-Windows host never uses tmux (it uses the
         # detached-process path below), regardless of the UI-supplied platform.
@@ -354,6 +365,8 @@ def setup_cookbook_routes() -> APIRouter:
             ps_lines = []
             ps_lines.append('$sessionDir = "$env:TEMP\\odysseus-sessions"')
             ps_lines.append('New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null')
+            ps_lines.append(f'$PID | Set-Content -Encoding ascii (Join-Path $sessionDir "{session_id}.pid")')
+            ps_lines.append(f'Start-Transcript -Path (Join-Path $sessionDir "{session_id}.log") -Force')
             ps_lines.append('$env:PYTHONIOENCODING = "utf-8"')
             ps_lines.append('$env:PYTHONUTF8 = "1"')
             if req.hf_token:
@@ -361,50 +374,46 @@ def setup_cookbook_routes() -> APIRouter:
             if req.env_prefix:
                 ps_lines.append(_safe_env_prefix(req.env_prefix))
             # Try hf CLI, fall back to Python huggingface_hub, then auto-install
-            ps_lines.append('try {{')
+            ps_lines.append('try {')
             ps_lines.append('  $hfPath = Get-Command hf -ErrorAction SilentlyContinue')
-            ps_lines.append('  if ($hfPath) {{')
+            ps_lines.append('  if ($hfPath) {')
             # Pipe $null to stdin to suppress interactive "update available? [Y/n]" prompt
             ps_lines.append(f'    $null | {hf_cmd}')
-            ps_lines.append('  }} else {{')
+            ps_lines.append('  } else {')
             ps_lines.append('    python -c "import huggingface_hub" 2>$null')
-            ps_lines.append('    if ($LASTEXITCODE -eq 0) {{')
+            ps_lines.append('    if ($LASTEXITCODE -eq 0) {')
             ps_lines.append('      Write-Host "hf CLI not found, using Python huggingface_hub..."')
             ps_lines.append('      python -m pip install -q hf_transfer 2>$null')
             ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
             ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
-            ps_lines.append('    }} else {{')
+            ps_lines.append('    } else {')
             ps_lines.append('      Write-Host "Installing huggingface-hub..."')
             ps_lines.append('      python -m pip install -q huggingface-hub hf_transfer')
             ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
             ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
-            ps_lines.append('    }}')
-            ps_lines.append('  }}')
-            ps_lines.append('  if ($LASTEXITCODE -eq 0) {{ Write-Host ""; Write-Host "DOWNLOAD_OK" }}')
-            ps_lines.append('  else {{ Write-Host ""; Write-Host "DOWNLOAD_FAILED (exit $LASTEXITCODE)" }}')
-            ps_lines.append('}} catch {{')
+            ps_lines.append('    }')
+            ps_lines.append('  }')
+            ps_lines.append('  if ($LASTEXITCODE -eq 0) { Write-Host ""; Write-Host "DOWNLOAD_OK" }')
+            ps_lines.append('  else { Write-Host ""; Write-Host "DOWNLOAD_FAILED (exit $LASTEXITCODE)"; exit $LASTEXITCODE }')
+            ps_lines.append('} catch {')
+            ps_lines.append(f'  $_ | Out-String | Add-Content (Join-Path $sessionDir "{session_id}.err.log")')
             ps_lines.append('  Write-Host ""; Write-Host "DOWNLOAD_FAILED ($_)"')
-            ps_lines.append('}}')
+            ps_lines.append('  exit 1')
+            ps_lines.append('}')
+            ps_lines.append('try { Stop-Transcript | Out-Null } catch {}')
             ps_lines.append(f'Remove-Item -Force "$HOME\\{remote_runner}" -ErrorAction SilentlyContinue')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.ps1"
             runner_path.write_text("\r\n".join(ps_lines) + "\r\n", encoding="utf-8")
 
-            # scp the .ps1 script, then launch it as a detached process with log + pid files
-            _port = req.ssh_port
-            _Pf = f"-P {_port} " if _port and _port != "22" else ""
-            _pf = f"-p {_port} " if _port and _port != "22" else ""
-            # Start-Process creates a fully detached process that survives SSH disconnect
-            launch_ps = (
-                "$sd = \\\"$env:TEMP\\odysseus-sessions\\\"; "
-                f"Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','$HOME\\{remote_runner}' "
-                f"-RedirectStandardOutput \\\"$sd\\{session_id}.log\\\" "
-                f"-RedirectStandardError \\\"$sd\\{session_id}.err.log\\\" "
-                f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \\\"$sd\\{session_id}.pid\\\" }}"
-            )
-            setup_cmd = (
-                f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                f'ssh {_pf}{remote} "powershell -Command \\"{launch_ps}\\""'
-            )
+            # Start-Process creates a fully detached process that survives SSH disconnect.
+            # All values below are server-generated safe identifiers; the complete
+            # script is transported with EncodedCommand rather than nested quoting.
+            launch_ps = background_powershell_launch_script(remote_runner)
+            remote_setup_commands = [
+                scp_argv(str(runner_path), remote, remote_runner, req.ssh_port),
+                powershell_ssh_argv(remote, launch_ps, req.ssh_port),
+            ]
+            setup_cmd = "<remote Windows copy + encoded PowerShell launch>"
 
         elif remote:
             # ── Linux/Termux remote: create tmux session ON the remote host ──
@@ -505,7 +514,19 @@ def setup_cookbook_routes() -> APIRouter:
         logger.info(f"Model download: {req.repo_id} (include={req.include}, session={session_id}, remote={remote})")
         logger.info(f"Download setup_cmd: {setup_cmd}")
 
-        if setup_cmd is None:
+        if remote_setup_commands:
+            for argv in remote_setup_commands:
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await proc.communicate()
+                if proc.returncode != 0:
+                    detail = (stderr or stdout).decode(errors="replace").strip()
+                    logger.error("Remote Windows download setup failed (rc=%s): %s", proc.returncode, detail)
+                    return {"ok": False, "error": detail or "Remote Windows launch failed", "session_id": session_id}
+        elif setup_cmd is None:
             # LOCAL Windows: launch the bash wrapper detached; no tmux setup_cmd.
             try:
                 _launch_local_detached(session_id, lines)
@@ -861,6 +882,7 @@ def setup_cookbook_routes() -> APIRouter:
         is_pip_install = bool(req.cmd and "pip install" in req.cmd)
         remote = req.remote_host
         is_windows = req.platform == "windows"
+        remote_setup_commands = None
         local_windows = IS_WINDOWS and not remote
         if is_windows or local_windows:
             if req.cmd.startswith("python3 "):
@@ -926,6 +948,8 @@ def setup_cookbook_routes() -> APIRouter:
             ps_lines = []
             ps_lines.append('$sessionDir = "$env:TEMP\\odysseus-sessions"')
             ps_lines.append('New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null')
+            ps_lines.append(f'$PID | Set-Content -Encoding ascii (Join-Path $sessionDir "{session_id}.pid")')
+            ps_lines.append(f'Start-Transcript -Path (Join-Path $sessionDir "{session_id}.log") -Force')
             ps_lines.append('$env:PYTHONIOENCODING = "utf-8"')
             ps_lines.append('$env:PYTHONUTF8 = "1"')
             if req.hf_token:
@@ -956,23 +980,16 @@ def setup_cookbook_routes() -> APIRouter:
                 ps_lines.append('if ($LASTEXITCODE -eq 0) { Write-Host ""; Write-Host "DOWNLOAD_OK" }')
             ps_lines.append('Write-Host ""')
             ps_lines.append('Write-Host "=== Process exited with code $LASTEXITCODE ==="')
+            ps_lines.append('try { Stop-Transcript | Out-Null } catch {}')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.ps1"
             runner_path.write_text("\r\n".join(ps_lines) + "\r\n", encoding="utf-8")
 
-            _port = req.ssh_port
-            _Pf = f"-P {_port} " if _port and _port != "22" else ""
-            _pf = f"-p {_port} " if _port and _port != "22" else ""
-            launch_ps = (
-                "$sd = \\\"$env:TEMP\\odysseus-sessions\\\"; "
-                f"Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','$HOME\\{remote_runner}' "
-                f"-RedirectStandardOutput \\\"$sd\\{session_id}.log\\\" "
-                f"-RedirectStandardError \\\"$sd\\{session_id}.err.log\\\" "
-                f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \\\"$sd\\{session_id}.pid\\\" }}"
-            )
-            setup_cmd = (
-                f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                f'ssh {_pf}{remote} "powershell -Command \\"{launch_ps}\\""'
-            )
+            launch_ps = background_powershell_launch_script(remote_runner)
+            remote_setup_commands = [
+                scp_argv(str(runner_path), remote, remote_runner, req.ssh_port),
+                powershell_ssh_argv(remote, launch_ps, req.ssh_port),
+            ]
+            setup_cmd = "<remote Windows copy + encoded PowerShell launch>"
         else:
             # ── Linux/Termux: bash + tmux (existing flow) ──
             runner_lines = ["#!/bin/bash"]
@@ -1206,7 +1223,19 @@ def setup_cookbook_routes() -> APIRouter:
             else:
                 setup_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(runner_path))}"
 
-        if setup_cmd is None:
+        if remote_setup_commands:
+            for argv in remote_setup_commands:
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await proc.communicate()
+                if proc.returncode != 0:
+                    detail = (stderr or stdout).decode(errors="replace").strip()
+                    logger.error("Remote Windows serve setup failed (rc=%s): %s", proc.returncode, detail)
+                    return {"ok": False, "error": detail or "Remote Windows launch failed", "session_id": session_id}
+        elif setup_cmd is None:
             # LOCAL Windows: launch the bash runner detached; no tmux setup_cmd.
             try:
                 _launch_local_detached(session_id, runner_lines)
@@ -1297,14 +1326,12 @@ def setup_cookbook_routes() -> APIRouter:
             # Windows setup: ensure Python + pip + huggingface-hub via PowerShell
             # Also create the session directory for background tasks
             setup_script = (
-                'powershell -Command "'
-                "New-Item -ItemType Directory -Force -Path $env:TEMP\\odysseus-sessions | Out-Null; "
+                "New-Item -ItemType Directory -Force -Path (Join-Path $env:TEMP 'odysseus-sessions') | Out-Null; "
                 "try { python --version } catch { Write-Host 'ERROR: Python not found — install from python.org'; exit 1 }; "
                 "python -m pip install -q huggingface-hub 2>$null; "
-                "python -c \\\"from huggingface_hub import snapshot_download; print('OK')\\\""
-                '"'
+                "python -c \"from huggingface_hub import snapshot_download; print('OK')\""
             )
-            cmd = f'ssh {pf}{host} {setup_script}'
+            setup_argv = powershell_ssh_argv(host, setup_script, port)
         elif platform == "termux":
             setup_script = (
                 "pkg install -y python tmux 2>/dev/null; "
@@ -1313,6 +1340,7 @@ def setup_cookbook_routes() -> APIRouter:
                 "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
             )
             cmd = f"ssh {pf}{host} '{setup_script}'"
+            setup_argv = None
         else:
             # Linux: auto-install tmux (via whichever package manager is available)
             # and huggingface_hub + hf_transfer (falling back to --user/--break-system-packages
@@ -1335,11 +1363,17 @@ def setup_cookbook_routes() -> APIRouter:
                 "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
             )
             cmd = f"ssh {pf}{host} '{setup_script}'"
+            setup_argv = None
 
         try:
-            proc = await asyncio.create_subprocess_shell(
-                cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
+            if setup_argv:
+                proc = await asyncio.create_subprocess_exec(
+                    *setup_argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+            else:
+                proc = await asyncio.create_subprocess_shell(
+                    cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
             output = stdout.decode() + stderr.decode()
             ok = "OK" in output
@@ -2095,10 +2129,53 @@ def setup_cookbook_routes() -> APIRouter:
         require_admin(request)
         return await asyncio.to_thread(_cookbook_tasks_status_sync)
 
+    @router.post("/api/cookbook/tasks/{session_id}/stop")
+    async def stop_cookbook_task(request: Request, session_id: str):
+        """Stop a persisted remote-Windows Cookbook task without browser-built shell code."""
+        require_admin(request)
+        if not _SESSION_ID_RE.fullmatch(session_id):
+            raise HTTPException(400, "Invalid session id")
+        try:
+            state = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
+        except Exception:
+            state = {}
+        saved = state.get("tasks", []) if isinstance(state, dict) else []
+        tasks = list(saved.values()) if isinstance(saved, dict) else saved
+        task = next((t for t in tasks if isinstance(t, dict) and t.get("sessionId") == session_id), None)
+        if not task:
+            raise HTTPException(404, "Cookbook task not found")
+        remote = _validate_remote_host(task.get("remoteHost"))
+        port = _validate_ssh_port(str(task.get("sshPort") or ""))
+        if task.get("platform") != "windows" or not remote:
+            raise HTTPException(400, "This endpoint currently handles remote Windows tasks only")
+        script = (
+            "$sd = Join-Path $env:TEMP 'odysseus-sessions'; "
+            f"$processId = Get-Content (Join-Path $sd '{session_id}.pid') -ErrorAction SilentlyContinue; "
+            "if ($processId) { & taskkill.exe /PID $processId /T /F 2>$null | Out-Null }; "
+            f"Remove-Item (Join-Path $sd '{session_id}.*') -Force -ErrorAction SilentlyContinue; "
+            "exit 0"
+        )
+        proc = await asyncio.create_subprocess_exec(
+            *powershell_ssh_argv(remote, script, port),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            detail = (stderr or stdout).decode(errors="replace").strip()
+            raise HTTPException(502, detail or "Remote Windows stop failed")
+        return {"ok": True, "session_id": session_id}
+
     def _cookbook_tasks_status_sync():
         import subprocess
 
-        def _download_cache_complete(repo_id: str, remote_host: str = "", ssh_port: str = "") -> bool:
+        def _download_cache_complete(
+            repo_id: str,
+            remote_host: str = "",
+            ssh_port: str = "",
+            platform: str = "",
+            local_dir: str = "",
+        ) -> bool:
             """Best-effort check for a completed HF cache entry.
 
             tmux output can stop at a stale progress line if the pane/session
@@ -2112,6 +2189,10 @@ def setup_cookbook_routes() -> APIRouter:
             py = (
                 "import os,sys;"
                 "repo=sys.argv[1];"
+                "local=sys.argv[2] if len(sys.argv)>2 else '';"
+                "target=os.path.join(local,repo.rsplit('/',1)[-1]) if local else '';"
+                "local_ok=bool(target) and os.path.isdir(target) and any(os.path.isfile(os.path.join(r,n)) for r,ds,fs in os.walk(target) for n in fs if not n.endswith('.incomplete'));"
+                "local_inc=bool(target) and any(n.endswith('.incomplete') for r,ds,fs in os.walk(target) for n in fs);"
                 "base=os.environ.get('HUGGINGFACE_HUB_CACHE') or os.path.join(os.environ.get('HF_HOME', os.path.expanduser('~/.cache/huggingface')), 'hub');"
                 "d=os.path.join(base,'models--'+repo.replace('/','--'));"
                 "snap=os.path.join(d,'snapshots');"
@@ -2119,10 +2200,10 @@ def setup_cookbook_routes() -> APIRouter:
                 "inc=False;"
                 "blobs=os.path.join(d,'blobs');"
                 "inc=os.path.isdir(blobs) and any(x.endswith('.incomplete') for x in os.listdir(blobs));"
-                "sys.exit(0 if ok and not inc else 1)"
+                "sys.exit(0 if (local_ok and not local_inc) or (ok and not inc) else 1)"
             )
             if remote_host:
-                cmd = ["python3", "-c", py, repo_id]
+                cmd = ["python" if platform == "windows" else "python3", "-c", py, repo_id, local_dir]
             else:
                 # Local Windows: python3 can hit the Microsoft Store stub. Use the
                 # real Python Odysseus is running under (guaranteed to exist).
@@ -2130,11 +2211,23 @@ def setup_cookbook_routes() -> APIRouter:
                 cmd = [_sys_local.executable, "-c", py, repo_id]
             try:
                 if remote_host:
-                    ssh_base = ["ssh"]
-                    if ssh_port and ssh_port != "22":
-                        ssh_base.extend(["-p", str(ssh_port)])
-                    shell_cmd = " ".join(shlex.quote(x) for x in cmd)
-                    proc = subprocess.run(ssh_base + [remote_host, shell_cmd], timeout=12, capture_output=True)
+                    if platform == "windows":
+                        py_b64 = base64.b64encode(py.encode("utf-8")).decode("ascii")
+                        ps = (
+                            f"python -c \"import base64;exec(base64.b64decode('{py_b64}'))\" "
+                            f"'{_ps_squote(repo_id)}' '{_ps_squote(local_dir)}'"
+                        )
+                        proc = subprocess.run(
+                            powershell_ssh_argv(remote_host, ps, ssh_port),
+                            timeout=12,
+                            capture_output=True,
+                        )
+                    else:
+                        ssh_base = ["ssh"]
+                        if ssh_port and ssh_port != "22":
+                            ssh_base.extend(["-p", str(ssh_port)])
+                        shell_cmd = " ".join(shlex.quote(x) for x in cmd)
+                        proc = subprocess.run(ssh_base + [remote_host, shell_cmd], timeout=12, capture_output=True)
                 else:
                     proc = subprocess.run(cmd, timeout=12, capture_output=True)
                 return proc.returncode == 0
@@ -2207,23 +2300,18 @@ def setup_cookbook_routes() -> APIRouter:
                 continue
             if task_platform == "windows" and remote:
                 # Windows: check PID file + Get-Process, read log tail
-                sd = "$env:TEMP\\odysseus-sessions"
-                ssh_base = ["ssh"]
-                if _tport and _tport != "22":
-                    ssh_base.extend(["-p", str(_tport)])
-                check_cmd = ssh_base + [
-                    remote,
-                    "powershell",
-                    "-Command",
-                    f"$pid = Get-Content \"{sd}\\{session_id}.pid\" -ErrorAction SilentlyContinue; "
-                    "if ($pid) {{ Get-Process -Id $pid -ErrorAction SilentlyContinue | Out-Null; if ($?) {{ exit 0 }} else {{ exit 1 }} }} else {{ exit 1 }}"
-                ]
-                capture_cmd = ssh_base + [
-                    remote,
-                    "powershell",
-                    "-Command",
-                    f"Get-Content \"{sd}\\{session_id}.log\" -Tail 10 -ErrorAction SilentlyContinue",
-                ]
+                check_script = (
+                    "$sd = Join-Path $env:TEMP 'odysseus-sessions'; "
+                    f"$processId = Get-Content (Join-Path $sd '{session_id}.pid') -ErrorAction SilentlyContinue; "
+                    "if ($processId -and (Get-Process -Id $processId -ErrorAction SilentlyContinue)) { exit 0 } else { exit 1 }"
+                )
+                capture_script = (
+                    "$sd = Join-Path $env:TEMP 'odysseus-sessions'; "
+                    f"Get-Content (Join-Path $sd '{session_id}.log') -Tail 250 -ErrorAction SilentlyContinue; "
+                    f"Get-Content (Join-Path $sd '{session_id}.err.log') -Tail 250 -ErrorAction SilentlyContinue"
+                )
+                check_cmd = powershell_ssh_argv(remote, check_script, str(_tport or ""))
+                capture_cmd = powershell_ssh_argv(remote, capture_script, str(_tport or ""))
             elif remote:
                 ssh_base = ["ssh"]
                 if _tport and _tport != "22":
@@ -2246,6 +2334,7 @@ def setup_cookbook_routes() -> APIRouter:
                 capture_cmd = ["tmux", "capture-pane", "-t", session_id, "-p", "-S", "-500"]
 
             local_win_task = (not remote) and IS_WINDOWS
+            remote_win_task = bool(remote) and task_platform == "windows"
 
             progress_text = ""
             full_snapshot = ""
@@ -2283,9 +2372,16 @@ def setup_cookbook_routes() -> APIRouter:
                 # Capture last lines for progress. Prefer the "Downloading" line
                 # (real aggregate bytes) over "Fetching N files" (whole-file count that
                 # lags with hf_transfer). Falls back to the true last line otherwise.
-                if is_alive:
+                if is_alive or remote_win_task:
                     try:
-                        cap = subprocess.run(capture_cmd, timeout=10, capture_output=True, text=True)
+                        cap = subprocess.run(
+                            capture_cmd,
+                            timeout=10,
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
+                        )
                         if cap.returncode == 0:
                             full_snapshot = cap.stdout.strip()
                             lines = [l.strip() for l in full_snapshot.split('\n') if l.strip()]
@@ -2303,7 +2399,7 @@ def setup_cookbook_routes() -> APIRouter:
             # when the PID is gone instead of blindly reporting "stopped".
             download_zero_files = False
             status = "unknown"
-            if is_alive or (local_win_task and full_snapshot):
+            if is_alive or ((local_win_task or remote_win_task) and full_snapshot):
                 lower = full_snapshot.lower()
                 exit_match = re.search(r"=== process exited with code\s+(-?\d+)", full_snapshot, re.I)
                 has_exit = exit_match is not None
@@ -2332,13 +2428,20 @@ def setup_cookbook_routes() -> APIRouter:
                 elif "application startup complete" in lower:
                     status = "ready"
                 elif not is_alive:
-                    # local-Windows: process gone, log has no success/ready marker.
+                    # Detached Windows process is gone and its persisted log has
+                    # no success/ready marker.
                     status = "stopped"
                 else:
                     status = "running"
             else:
                 # Session is dead — check if it completed or crashed
-                if task_type == "download" and _download_cache_complete(_payload.get("repo_id") or model, remote, str(_tport or "")):
+                if task_type == "download" and _download_cache_complete(
+                    _payload.get("repo_id") or model,
+                    remote,
+                    str(_tport or ""),
+                    task_platform,
+                    _payload.get("local_dir") or "",
+                ):
                     status = "completed"
                     if not progress_text:
                         progress_text = "Download complete"

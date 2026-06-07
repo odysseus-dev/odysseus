@@ -822,6 +822,19 @@ function _tmuxGracefulKill(task) {
   return `tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null`;
 }
 
+async function _stopTask(task) {
+  if (_isWindows(task) && task.remoteHost) {
+    return fetch(`/api/cookbook/tasks/${encodeURIComponent(task.sessionId)}/stop`, {
+      method: 'POST', credentials: 'same-origin',
+    });
+  }
+  return fetch('/api/shell/exec', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
+  });
+}
+
 function _shQuote(value) {
   return "'" + String(value ?? '').replace(/'/g, "'\\''") + "'";
 }
@@ -2021,13 +2034,7 @@ export function _renderRunningTab() {
         }
         // Otherwise: real clear. Kill the tmux session as belt-and-suspenders,
         // then animate out + remove the row.
-        try {
-          fetch('/api/shell/exec', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${task.sessionId}`) }),
-          }).catch(() => {});
-        } catch {}
+        try { _stopTask(task).catch(() => {}); } catch {}
         _animateOutThenRemove(el, task.sessionId);
       });
     }
@@ -2366,11 +2373,7 @@ export function _renderRunningTab() {
       }
       // Gracefully stop (C-c, then kill the session) so it's fully down...
       try {
-        await fetch('/api/shell/exec', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
-        });
+        await _stopTask(task);
       } catch {}
       // ...then smoothly fade/slide the card out and auto-remove it — no manual
       // ⋮ → Remove needed.
@@ -2397,16 +2400,12 @@ export function _renderRunningTab() {
       }
       let killOk = true;
       try {
-        const r = await fetch('/api/shell/exec', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
-        });
+        const r = await _stopTask(task);
         if (r.ok) {
           const out = await r.json();
           // Don't trust exit_code alone — tmux kill returns 0 even when
           // there was nothing to kill. Verify the session is actually gone.
-          if (task.sessionId && isLive) {
+          if (task.sessionId && isLive && !(_isWindows(task) && task.remoteHost)) {
             try {
               const probe = await fetch('/api/shell/exec', {
                 method: 'POST', credentials: 'same-origin',
