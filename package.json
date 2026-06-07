@@ -3,8 +3,15 @@
     "type": "git",
     "url": "https://github.com/pewdiepie-archdaemon/odysseus.git"
   },
+  "main": "electron/main.js",
+  "scripts": {
+    "electron": "electron electron/main.js",
+    "electron:dev": "cross-env ODYSSEUS_DEV=1 electron electron/main.js"
+  },
   "devDependencies": {
-    "@antithesishq/bombadil": "^0.3.2"
+    "@antithesishq/bombadil": "^0.3.2",
+    "cross-env": "^7.0.3",
+    "electron": "^34.0.0"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0"
