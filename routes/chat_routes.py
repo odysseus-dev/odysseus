@@ -389,7 +389,7 @@ def setup_chat_routes(
 
         # Build shared context (preset, preprocess, preface, compact)
         ctx = await build_chat_context(
-            sess, request, chat_handler, chat_processor,
+            sess, request, chat_handler, chat_processor, session_manager,
             message=message,
             session_id=session,
             preset_id=preset_id,
@@ -597,7 +597,7 @@ def setup_chat_routes(
 
         # Build shared context (stream path uses enhanced_message for context preface)
         ctx = await build_chat_context(
-            sess, request, chat_handler, chat_processor,
+            sess, request, chat_handler, chat_processor, session_manager,
             message=message,
             session_id=session,
             preset_id=preset_id,
