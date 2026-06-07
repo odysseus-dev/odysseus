@@ -408,27 +408,39 @@ function _initModelPickerDropdown() {
       return;
     }
 
-    // ── Browse mode: Recent (auto) + Favorites (manual). No flat "All" dump. ──
+    // ── Browse mode: sections in order: Favorites → Recent (big catalogs only) → All / Providers ──
+    //   1. Never list the same model twice in the dropdown. Favorites
+    //      win over Recent (if you favorited it, that's where it
+    //      belongs — Recent shouldn't show it again as duplicate).
+    //   2. Small catalogs (≤ BROWSE_ALL_LIMIT total) skip the Recent
+    //      section entirely — when there's only ~10 models, the whole
+    //      list fits below as "All models" and a separate Recent
+    //      section just duplicates rows.
     const shown = new Set();
-    const recentModels = _loadRecent()
-      .map(id => byId.get(id))
-      .filter(Boolean)
-      .slice(0, RECENT_MAX);
     const favModels = favs.map(id => byId.get(id)).filter(Boolean);
-
-    if (recentModels.length) {
-      _addSection('Recent');
-      recentModels.forEach(m => {
-        shown.add(m.mid);
-        _addRow(m, () => {
-          _removeRecent(m.mid);
-          _populate('');
-        });
-      });
-    }
     if (favModels.length) {
       _addSection('Favorites');
       favModels.forEach(m => { shown.add(m.mid); _addRow(m); });
+    }
+    // Recent: only render when the catalog is big enough that surfacing
+    // a recency shortlist is actually useful, AND only models that
+    // aren't already in Favorites (dedupe).
+    if (all.length > BROWSE_ALL_LIMIT) {
+      const recentModels = _loadRecent()
+        .map(id => byId.get(id))
+        .filter(Boolean)
+        .filter(m => !shown.has(m.mid))
+        .slice(0, RECENT_MAX);
+      if (recentModels.length) {
+        _addSection('Recent');
+        recentModels.forEach(m => {
+          shown.add(m.mid);
+          _addRow(m, () => {
+            _removeRecent(m.mid);
+            _populate('');
+          });
+        });
+      }
     }
 
     // Small catalogs: still list everything so users aren't forced to search.
