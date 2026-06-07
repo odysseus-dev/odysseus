@@ -37,7 +37,7 @@ python-dateutil
 caldav
 cryptography
 bcrypt
-mcp
+mcp @ git+https://github.com/modelcontextprotocol/python-sdk.git
 pyotp
 qrcode[pil]
 croniter
