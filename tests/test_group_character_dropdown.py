@@ -48,5 +48,13 @@ def test_presets_optimistic_update_on_save():
 
 
 def test_presets_getUserTemplates_returns_array():
-    """getUserTemplates should return the userTemplates array directly."""
-    assert "return userTemplates" in PRESETS_JS
+    """getUserTemplates should return a shallow copy of userTemplates."""
+    assert "return [...userTemplates]" in PRESETS_JS
+
+
+def test_presets_optimistic_id_not_empty():
+    """Optimistic update must generate a client-side id for new characters (not empty string)."""
+    # The id generation uses 'user-' prefix matching server's uuid convention
+    assert "user-' + Math.random" in PRESETS_JS
+    # Must NOT use empty string as fallback (that was the bug)
+    assert "(_existing && _existing.id) || ''" not in PRESETS_JS
