@@ -144,6 +144,7 @@ KNOWN_CONTEXT_WINDOWS = {
     'mixtral': 32000,
     'codestral': 32000,
     'pixtral': 128000,
+    'minicpm-v-4.6-thinking': 32768,
     'minicpm-v-4': 32768,
 
     # --- xAI ---
