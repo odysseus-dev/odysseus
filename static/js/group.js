@@ -6,7 +6,7 @@ import markdownModule from './markdown.js';
 import chatRenderer from './chatRenderer.js';
 import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
-import { PROMPT_TEMPLATES, getAllPresets } from './presets.js';
+import { PROMPT_TEMPLATES, getAllPresets, getUserTemplates } from './presets.js';
 import { sortModelObjects } from './modelSort.js';
 import Storage from './storage.js';
 
@@ -311,6 +311,18 @@ async function _getCharacterList() {
         chars.push({ id: t.id, name: t.name, prompt: t.system_prompt || t.prompt || '' });
       }
     });
+  } catch (e) {}
+  // Also merge in-memory templates from presets.js — these may include
+  // newly created characters whose async save-to-API hasn't completed yet.
+  try {
+    const memTemplates = getUserTemplates();
+    if (Array.isArray(memTemplates)) {
+      memTemplates.forEach(t => {
+        if (t.id && t.name && !chars.find(c => c.id === t.id)) {
+          chars.push({ id: t.id, name: t.name, prompt: t.system_prompt || t.prompt || '' });
+        }
+      });
+    }
   } catch (e) {}
   return chars;
 }
