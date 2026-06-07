@@ -276,6 +276,16 @@ def _is_ollama_native_url(url: str) -> bool:
     return local_ollama_host and (path == "" or path == "/api" or path.startswith("/api/"))
 
 
+def _is_ollama_openai_compat_url(url: str) -> bool:
+    """Return True for local Ollama's OpenAI-compatible /v1 surface (port 11434, path /v1...)."""
+    try:
+        parsed = urlparse(url or "")
+    except Exception:
+        return False
+    path = (parsed.path or "").rstrip("/")
+    return parsed.port == 11434 and (path == "/v1" or path.startswith("/v1/"))
+
+
 def _ollama_api_root(url: str) -> str:
     """Return a native Ollama API root such as https://ollama.com/api."""
     url = (url or "").strip().rstrip("/")
@@ -1342,6 +1352,9 @@ async def llm_call_async(
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
+        # Suppress thinking for qwen3/gemma4 on Ollama /v1 — same as stream_llm.
+        if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
+            payload["think"] = False
 
     if _is_host_dead(target_url):
         raise HTTPException(503, f"Upstream {_host_key(target_url)} marked unreachable (cooldown active)")
@@ -1459,6 +1472,11 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             payload[tok_key] = max_tokens
         if tools:
             payload["tools"] = tools
+        # For Ollama's OpenAI-compat /v1 endpoint with thinking models (qwen3,
+        # gemma4, etc.), suppress thinking so tool calls aren't swallowed inside
+        # <think> blocks. Ollama /v1 accepts "think": false as a top-level param.
+        if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
+            payload["think"] = False
         h = _provider_headers(provider, headers)
         if provider == "copilot":
             from src.copilot import apply_request_headers
