@@ -23,11 +23,10 @@ from datetime import timezone
 logger = logging.getLogger(__name__)
 
 
-def _stable_cal_id(remote_url: str) -> str:
-    # Reuse the sync module's hashing so a local CalDAV calendar id maps back to
-    # the same remote URL it was pulled from.
+def _stable_cal_id(remote_url: str, owner: str = "", account_id: str = "") -> str:
+    # Reuse the sync module's hashing so owner+account_id scoping stays consistent.
     from src.caldav_sync import _stable_cal_id as _sync_id
-    return _sync_id(remote_url)
+    return _sync_id(remote_url, owner=owner, account_id=account_id)
 
 
 def build_event_ical(ev: dict) -> str:
@@ -76,28 +75,34 @@ def build_event_ical(ev: dict) -> str:
     return cal.to_ical().decode("utf-8")
 
 
-def find_remote_calendar(calendars, local_cal_id: str):
-    """Find the remote calendar whose URL hashes to ``local_cal_id``, or None."""
+def find_remote_calendar(calendars, local_cal_id: str, owner: str = "", account_id: str = ""):
+    """Find the remote calendar whose URL hashes to ``local_cal_id``, or None.
+
+    ``owner`` and ``account_id`` must match what was used when the local calendar
+    id was originally computed in ``_sync_blocking`` so the hash round-trips."""
     for cal in calendars:
         try:
-            if _stable_cal_id(str(cal.url)) == local_cal_id:
+            if _stable_cal_id(str(cal.url), owner=owner, account_id=account_id) == local_cal_id:
                 return cal
         except Exception:
             continue
     return None
 
 
-def push_event(calendars, local_cal_id: str, ev: dict, *, delete: bool = False) -> dict:
+def push_event(calendars, local_cal_id: str, ev: dict, *, delete: bool = False,
+               owner: str = "", account_id: str = "") -> dict:
     """Create/update (or delete) ``ev`` on the matching remote calendar.
 
     Returns ``{"ok": bool, ...}``. ``calendars`` is the discovered caldav
     calendar list (injected so this is unit-testable with fakes).
+    ``owner`` and ``account_id`` are forwarded to ``find_remote_calendar``
+    so the URL hash round-trips correctly (#2765).
     """
     uid = (ev or {}).get("uid") if isinstance(ev, dict) else None
     if not uid:
         return {"ok": False, "error": "event uid is required"}
 
-    remote = find_remote_calendar(calendars, local_cal_id)
+    remote = find_remote_calendar(calendars, local_cal_id, owner=owner, account_id=account_id)
     if remote is None:
         return {"ok": False, "error": "remote calendar not found"}
 
@@ -136,13 +141,15 @@ def _discover_calendars(client):
             return []
 
 
-def _writeback_blocking(local_cal_id, ev, delete, url, username, password) -> dict:
+def _writeback_blocking(local_cal_id, ev, delete, url, username, password,
+                        owner="", account_id="") -> dict:
     import caldav
     client = caldav.DAVClient(url=url, username=username, password=password)
     calendars = _discover_calendars(client)
     if not calendars:
         return {"ok": False, "error": "no remote calendars discovered"}
-    return push_event(calendars, local_cal_id, ev, delete=delete)
+    return push_event(calendars, local_cal_id, ev, delete=delete,
+                      owner=owner, account_id=account_id)
 
 
 async def writeback_event(owner: str, calendar_source: str, calendar_id: str,
@@ -156,24 +163,45 @@ async def writeback_event(owner: str, calendar_source: str, calendar_id: str,
     if calendar_source != "caldav":
         return {"skipped": "not a caldav calendar"}
     try:
-        from routes.prefs_routes import _load_for_user
+        from src.caldav_sync import _load_caldav_accounts
         from src.secret_storage import decrypt
-        cfg = (_load_for_user(owner) or {}).get("caldav", {}) or {}
-        url = (cfg.get("url") or "").strip()
-        user = (cfg.get("username") or "").strip()
-        # Stored encrypted by routes/calendar_routes; decrypt before use so
-        # the remote sees the real password (decrypt is a no-op on legacy
-        # plaintext). The pull path src/caldav_sync.py already does this.
-        pw = decrypt(cfg.get("password") or "")
-        if not (url and user and pw):
+        from core.database import CalendarCal, SessionLocal
+
+        accounts = _load_caldav_accounts(owner)
+        if not accounts:
             return {"skipped": "caldav not configured"}
+
+        # Find which account owns this calendar.
+        acc = None
+        if len(accounts) > 1:
+            db = SessionLocal()
+            try:
+                cal_row = db.query(CalendarCal).filter(CalendarCal.id == calendar_id).first()
+                cal_account_id = cal_row.account_id if cal_row else None
+            finally:
+                db.close()
+            if cal_account_id:
+                acc = next((a for a in accounts if a.get("id") == cal_account_id), None)
+        # Fall back to first account (covers single-account and legacy rows with
+        # no account_id stamped).
+        if acc is None:
+            acc = accounts[0]
+
+        url = (acc.get("url") or "").strip()
+        user = (acc.get("username") or "").strip()
+        pw = decrypt(acc.get("password") or "")
+        if not (url and user and pw):
+            return {"skipped": "caldav account credentials incomplete"}
         from src.caldav_sync import validate_caldav_url
         try:
             url = validate_caldav_url(url)
         except ValueError as e:
             logger.warning("CalDAV write-back URL rejected: %s", e)
             return {"ok": False, "error": str(e)[:200]}
-        result = await asyncio.to_thread(_writeback_blocking, calendar_id, ev, delete, url, user, pw)
+        acc_id = acc.get("id") or ""
+        result = await asyncio.to_thread(
+            _writeback_blocking, calendar_id, ev, delete, url, user, pw, owner, acc_id
+        )
         if not result.get("ok"):
             logger.warning("CalDAV write-back did not apply: %s", result.get("error") or result)
         return result

@@ -10126,6 +10126,15 @@ details a:hover {
   height: 32px;
 }
 
+/* Skill Import beside URL field — match input height; cancel modal-body button margin. */
+.memory-add-row .theme-io-btn {
+  flex: none;
+  height: 28px;
+  box-sizing: border-box;
+  margin-top: 0;
+  padding: 5px 10px;
+}
+
 .memory-add-input {
   flex: 1;
   height: 28px;

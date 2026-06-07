@@ -1902,6 +1902,8 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     delivered = bool(dispatch_result.get("email_sent"))
                 elif channel == "ntfy":
                     delivered = bool(dispatch_result.get("ntfy_sent"))
+                elif channel == "webhook":
+                    delivered = bool(dispatch_result.get("webhook_sent"))
                 if delivered:
                     newly_notified.update(new_urgent)
                 else:

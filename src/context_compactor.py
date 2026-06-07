@@ -5,6 +5,7 @@ Auto-compacts conversation history when approaching context window limits.
 Summarizes older messages via the same LLM, preserving key context.
 """
 
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -146,15 +147,53 @@ def _truncate_text_to_token_budget(text: str, token_budget: int) -> str:
     return text[:head_len].rstrip() + notice + "\n\n" + text[-tail_len:].lstrip()
 
 
+def _truncate_tool_call_args(msg: Dict[str, Any], token_budget: int) -> Dict[str, Any]:
+    """Shrink oversized assistant ``tool_calls`` arguments to fit ``token_budget``.
+
+    A tool-only turn persists ``content=None`` with its whole payload in
+    ``tool_calls[].function.arguments`` (e.g. a large create_document body), which
+    the text-content truncation can't reach — so the message could stay over
+    budget and the upstream call would 400. Replace each argument string that
+    overflows its share of the budget with a small valid-JSON placeholder,
+    preserving ``id``/``type``/``function.name`` so tool/result pairing and
+    provider validation are unaffected. Returns msg unchanged when there is
+    nothing oversized.
+    """
+    tool_calls = msg.get("tool_calls")
+    if not isinstance(tool_calls, list) or not tool_calls:
+        return msg
+    # Budget left after whatever content survived (estimate_tokens counts tool
+    # arguments too, so measure content alone here).
+    content_tokens = estimate_tokens([{"role": msg.get("role", "assistant"), "content": msg.get("content")}])
+    per_call = max(16, (max(0, token_budget - content_tokens)) // len(tool_calls))
+    new_calls = []
+    changed = False
+    for tc in tool_calls:
+        fn = tc.get("function") if isinstance(tc, dict) else None
+        args = fn.get("arguments") if isinstance(fn, dict) else None
+        if isinstance(args, str) and int(len(args) * 0.3) > per_call:
+            new_fn = dict(fn)
+            new_fn["arguments"] = json.dumps({"_truncated_for_context": len(args)})
+            new_tc = dict(tc)
+            new_tc["function"] = new_fn
+            new_calls.append(new_tc)
+            changed = True
+        else:
+            new_calls.append(tc)
+    if not changed:
+        return msg
+    out = dict(msg)
+    out["tool_calls"] = new_calls
+    return out
+
+
 def _truncate_message_to_token_budget(msg: Dict[str, Any], token_budget: int) -> Dict[str, Any]:
-    """Return a copy of msg whose text content fits inside token_budget."""
+    """Return a copy of msg whose text content (and tool-call args) fit token_budget."""
     out = dict(msg)
     content = out.get("content", "")
     if isinstance(content, str):
         out["content"] = _truncate_text_to_token_budget(content, token_budget)
-        return out
-
-    if isinstance(content, list):
+    elif isinstance(content, list):
         remaining = token_budget
         new_content = []
         for item in content:
@@ -168,7 +207,9 @@ def _truncate_message_to_token_budget(msg: Dict[str, Any], token_budget: int) ->
             new_content.append(cloned)
             remaining -= _message_text_token_estimate(truncated)
         out["content"] = new_content
-    return out
+    # A tool-only turn (content=None) carries its payload in tool_calls args,
+    # which the branches above can't shrink — handle it so the message can fit.
+    return _truncate_tool_call_args(out, token_budget)
 
 
 def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: int = 512) -> List[Dict]:

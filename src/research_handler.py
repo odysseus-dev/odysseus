@@ -777,7 +777,7 @@ class ResearchHandler:
                 llm_model=llm_model,
                 llm_headers=llm_headers,
                 max_rounds=max_rounds,
-                min_rounds=min(3, max_rounds),
+                min_rounds=max(2, max_rounds - 2),
                 max_time=max_time,
                 max_report_tokens=_max_report_tokens,
                 extraction_timeout=_extraction_timeout,

@@ -136,4 +136,4 @@ def test_unauthenticated_caller_rejected(monkeypatch):
     req = _req(api_token=False, current_user=None)
     with pytest.raises(HTTPException) as exc:
         SR._verify_session_owner(req, "sid")
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 401

@@ -354,14 +354,15 @@ def parse_tool_blocks(text: str) -> List[ToolBlock]:
         # If a code block's content is an <invoke> XML call (some models wrap
         # tool calls in ```python or ```xml fences), parse the invoke instead.
         if '<invoke' in content:
-            invoked = False
             for inv in _XML_INVOKE_RE.finditer(content):
                 block = _parse_xml_invoke(inv)
                 if block:
                     blocks.append(block)
-                    invoked = True
-            if invoked:
-                continue
+            # This fenced block is <invoke> markup, not literal code. Whether or
+            # not any call converted, never fall through to append the raw XML as
+            # a python/bash block — e.g. a hyphenated/namespaced tool name that
+            # _XML_INVOKE_RE's \w+ can't match would otherwise be executed as code.
+            continue
         blocks.append(ToolBlock(tag, content))
 
     # Pattern 2: [TOOL_CALL] blocks (only if no fenced blocks found)
