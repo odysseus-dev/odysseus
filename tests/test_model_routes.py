@@ -227,6 +227,17 @@ class TestCurateModels:
         assert "deepseek-reasoner" in curated
         assert "deepseek-coder" in extra
 
+    def test_fireworks_firepass_router_is_curated_first(self):
+        router = "accounts/fireworks/routers/kimi-k2p6-turbo"
+        models = [
+            "accounts/fireworks/models/deepseek-r1",
+            router,
+            "accounts/example/models/custom",
+        ]
+        curated, extra = _curate_models(models, "fireworks")
+        assert curated == [router, "accounts/fireworks/models/deepseek-r1"]
+        assert extra == ["accounts/example/models/custom"]
+
     def test_xai_curated(self):
         models = ["grok-4", "grok-3-fast", "grok-2"]
         curated, extra = _curate_models(models, "xai")

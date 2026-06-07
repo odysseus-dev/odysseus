@@ -254,6 +254,7 @@ _PROVIDER_CURATED = {
         "Qwen/Qwen2.5-72B-Instruct-Turbo",
     ],
     "fireworks": [
+        "accounts/fireworks/routers/kimi-k2p6-turbo",
         "accounts/fireworks/models/llama4-scout-instruct-basic",
         "accounts/fireworks/models/llama4-maverick-instruct-basic",
         "accounts/fireworks/models/deepseek-r1",
