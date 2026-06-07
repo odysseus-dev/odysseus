@@ -6481,12 +6481,13 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
         align-items: flex-end;
         background: rgba(0,0,0,0.4);
         pointer-events: auto;
-        /* Anchor the bottom sheet to the DYNAMIC viewport. The base overlay is
-           position:fixed; height:100% = the layout viewport, whose bottom sits
-           UNDER Firefox Android's bottom URL bar — so flex-end parked the sheet
-           (and its footer / Start button) beneath the bar. dvh excludes the bar
-           so the footer lands above it. Extra safe-area pad for iOS home bar. */
+        /*
+          iOS PWA fix:
+          viewport-fit=cover lets content enter the notch/status-bar area.
+          Reserve both top and bottom safe areas on the overlay itself.
+        */
         height: 100dvh;
+        padding-top: calc(env(safe-area-inset-top, 0px) + 8px);
         padding-bottom: env(safe-area-inset-bottom, 0px);
       }
       /* Confirm dialog stays centered, not a bottom sheet */
@@ -6567,14 +6568,16 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #memory-modal .memory-modal-content,
       #settings-modal .settings-modal-content,
       #email-lib-modal .modal-content,
-      #doclib-modal .doclib-modal-content {
-        max-height: 100vh !important;
-        max-height: 100dvh !important;
-        height: 100vh !important;
-        height: 100dvh !important;
-        /* Reserve the iOS home-indicator / bottom-bar strip so an expanded
-           skill card's footer (Delete / Edit / Run) isn't hidden under it.
-           dvh already excludes the URL bar; this handles the safe area. */
+      #doclib-modal .doclib-modal-content,
+      #gallery-modal .modal-content {
+        max-height: calc(
+          100dvh - env(safe-area-inset-top, 0px) - 8px
+        ) !important;
+
+        height: calc(
+          100dvh - env(safe-area-inset-top, 0px) - 8px
+        ) !important;
+
         padding-bottom: env(safe-area-inset-bottom, 0px) !important;
       }
       /* Grab handle pill on the non-standard content classes too. Memory's
@@ -6618,15 +6621,13 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #doclib-modal .modal-content,
       #gallery-modal .modal-content,
       #tasks-modal .modal-content {
-        /* vh-first as fallback for very old browsers, then dvh wins so
-           the modal shrinks/grows with the mobile URL bar. Wrong order
-           previously made the expanded chat preview extend below the
-           visible viewport on Chrome/Safari mobile (URL bar covered the
-           action buttons row). */
-        max-height: 100vh !important;
-        max-height: 100dvh !important;
-        height: 100vh !important;
-        height: 100dvh !important;
+        max-height: calc(
+          100dvh - env(safe-area-inset-top, 0px) - 8px
+        ) !important;
+
+        height: calc(
+          100dvh - env(safe-area-inset-top, 0px) - 8px
+        ) !important;
       }
       /* Anchor those modals to the top so the full height is usable */
       #cookbook-modal,
@@ -6634,8 +6635,10 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #email-lib-modal,
       #doclib-modal,
       #gallery-modal,
-      #tasks-modal {
-        padding-top: 0 !important;
+      #tasks-modal,
+      #memory-modal,
+      #settings-modal {
+        padding-top: calc(env(safe-area-inset-top, 0px) + 8px) !important;
         align-items: stretch !important;
       }
       /* Deep Research already gets the swipe grab-handle pill from the
@@ -36606,3 +36609,41 @@ body.theme-frosted .modal {
    the input beside it (.confirm-btn won't stretch on its own). */
 .ask-user-other-send { flex-shrink: 0; white-space: nowrap; min-height: 39px; }
 .ask-user-other-send:disabled { opacity: 0.5; cursor: default; }
+
+/* iOS standalone/PWA safe-area repair */
+@supports (padding-top: env(safe-area-inset-top)) and (-webkit-touch-callout: none) {
+  @media (display-mode: standalone) {
+    :root {
+      --safe-top: env(safe-area-inset-top, 0px);
+    }
+
+    /*
+      The status bar area is translucent in iOS standalone mode.
+      Paint behind it, but push interactive top UI below it.
+    */
+    body::before {
+      content: "";
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: var(--safe-top);
+      background: var(--bg);
+      z-index: 99998;
+      pointer-events: none;
+    }
+
+    #mobile-menu-btn,
+    #hamburger-btn,
+    .hamburger-btn {
+      top: calc(8px + var(--safe-top)) !important;
+    }
+
+    #icon-rail,
+    .icon-rail,
+    #sidebar,
+    .sidebar {
+      padding-top: var(--safe-top);
+    }
+  }
+}
