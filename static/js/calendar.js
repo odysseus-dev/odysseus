@@ -3480,6 +3480,29 @@ window.addEventListener('focus', () => {
 // Calendar reminders are stored as Notes. The Notes reminder loop owns
 // notification dispatch so calendar reminders do not fire twice.
 
+// Listen for the integration-changed signal that Settings already emits
+// after a user saves or deletes a CalDAV/Google Calendar account
+// (see `notifyIntegrationsChanged` in static/js/settings.js). Calendar only
+// did its background CalDAV pull once per page load via `_caldavSyncedOnce`,
+// so without this hook a user could successfully save/test a CalDAV account
+// in Settings and still see a stale Calendar view until a full page reload.
+// Fixes #3160.
+window.addEventListener('odysseus-integrations-changed', () => {
+  // Drop in-memory event caches and the persistent localStorage copy so
+  // the next fetch hits the server instead of returning cached events.
+  _allEvents = {};
+  _fetchedRanges = [];
+  try { localStorage.removeItem(LS_KEY); } catch (_) {}
+  // Allow the next _fetchCalendars() call to fire the background CalDAV
+  // pull — without resetting this guard, the event would no-op because
+  // the first-open sync only runs once per page load.
+  _caldavSyncedOnce = false;
+  // Refetch calendars and re-render if the view is currently visible. If
+  // the calendar is closed/minimized the openCalendar() path will pick up
+  // the fresh state on the next open.
+  _fetchCalendars().then(() => { if (_open) _render(); });
+});
+
 const calendarModule = { openCalendar, closeCalendar, isCalendarOpen };
 export { openCalendar, openCalendarTo, closeCalendar, isCalendarOpen };
 export default calendarModule;
