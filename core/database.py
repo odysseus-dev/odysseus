@@ -375,6 +375,7 @@ class McpServer(TimestampMixin, Base):
     is_enabled = Column(Boolean, default=True)
     oauth_config = Column(Text, nullable=True)   # JSON: provider, keys_file, token_file, scopes
     disabled_tools = Column(Text, nullable=True)  # JSON array of tool names to hide from LLM
+    oauth_tokens = Column(EncryptedText, nullable=True)  # JSON {tokens, client_info} for generic MCP OAuth, encrypted at rest
 
 
 class Comparison(TimestampMixin, Base):
@@ -1311,6 +1312,23 @@ def _migrate_add_disabled_tools():
     except Exception as e:
         logging.getLogger(__name__).warning(f"disabled_tools migration: {e}")
 
+def _migrate_add_mcp_oauth_tokens_column():
+    """Add oauth_tokens column to mcp_servers table if missing.
+
+    The model declares this column as EncryptedText, but the SQL type is plain
+    TEXT on purpose: EncryptedText is a SQLAlchemy TypeDecorator that encrypts at
+    the Python layer and stores the ciphertext as TEXT, so the DB column type is
+    TEXT. This matches the existing encrypted columns (see _migrate_encrypt_*)."""
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(mcp_servers)"))]
+            if "oauth_tokens" not in cols:
+                conn.execute(text("ALTER TABLE mcp_servers ADD COLUMN oauth_tokens TEXT"))
+                conn.commit()
+                logging.getLogger(__name__).info("Added oauth_tokens column to mcp_servers")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"oauth_tokens migration: {e}")
+
 def _migrate_add_task_v2_columns():
     """Add cron_expression, then_task_id, webhook_token to scheduled_tasks."""
     new_cols = {
@@ -1467,6 +1485,10 @@ class CalendarEvent(TimestampMixin, Base):
     importance  = Column(String, default="normal")    # low | normal | high | critical
     event_type  = Column(String, nullable=True)        # work | personal | health | travel | meal | social | admin | other
     last_pinged = Column(DateTime, nullable=True)      # last time the assistant pinged about this event
+    # "caldav" = pulled from a CalDAV server (so the sync may prune it when it
+    # vanishes upstream). NULL/local = created locally (agent, email triage, or
+    # a UI event whose write-back failed) and must NOT be pruned by the sync.
+    origin      = Column(String, nullable=True, index=True)
 
     calendar = relationship("CalendarCal", back_populates="events")
 
@@ -1589,6 +1611,7 @@ def init_db():
     _migrate_add_oauth_config()
     _migrate_add_task_automation_columns()
     _migrate_add_disabled_tools()
+    _migrate_add_mcp_oauth_tokens_column()
     _migrate_add_task_v2_columns()
     _migrate_add_notifications_enabled()
     _migrate_drop_ping_notes_tasks()
@@ -1598,6 +1621,7 @@ def init_db():
     _migrate_seed_email_account()
     _migrate_add_calendar_metadata()
     _migrate_add_calendar_is_utc()
+    _migrate_add_calendar_origin()
     _migrate_encrypt_email_passwords()
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
@@ -1738,6 +1762,28 @@ def _migrate_add_calendar_is_utc():
         conn.close()
     except Exception as e:
         logging.getLogger(__name__).warning(f"is_utc migration failed: {e}")
+
+
+def _migrate_add_calendar_origin():
+    """Add `origin` to calendar_events so the CalDAV sync can tell server-pulled
+    rows (prunable when they vanish upstream) from locally-created ones (agent /
+    email triage / failed write-back), which must never be pruned. Idempotent."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(calendar_events)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "origin" not in columns:
+            conn.execute("ALTER TABLE calendar_events ADD COLUMN origin TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS ix_calendar_events_origin ON calendar_events(origin)")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'origin' column to calendar_events")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"calendar_events.origin migration failed: {e}")
 
 
 def _migrate_add_calendar_metadata():

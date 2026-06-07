@@ -5,6 +5,7 @@ Extracted tool implementation functions (do_* and helpers) from agent_tools.py.
 These handle the actual execution logic for each tool type.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -1956,7 +1957,19 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             )
             db.add(note)
             db.commit()
-            return {"response": f"Note created: \"{title or '(untitled)'}\" (id: {note.id[:8]})", "exit_code": 0}
+            # Return note_id so the chat-side renderer can build a real
+            # "View note" button that opens the notes modal at this id.
+            # Previously the create response only included a prose
+            # confirmation; the model would type "View note" as a markdown
+            # link with no target, leaving the user with a click that
+            # did nothing and uncertainty about whether the note was made.
+            return {
+                "response": f"Note created: \"{title or '(untitled)'}\" (id: {note.id[:8]})",
+                "note_id": note.id,
+                "note_title": title or "",
+                "open_url": f"/#open=notes&note={note.id}",
+                "exit_code": 0,
+            }
 
         elif action == "update":
             note_id = args.get("id", "")
@@ -2603,6 +2616,8 @@ async def _cookbook_env_for_host(host: str) -> Dict[str, Any]:
 
     return {
         "env_prefix": env_prefix,
+        "env_type": env_kind,
+        "env_path": env_path,
         "gpus": env_root.get("gpus") or "",
         "platform": platform,
         "hf_token": env_root.get("hfToken") or "",
@@ -3041,6 +3056,31 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
     # the UI uses. Without env_prefix, `vllm serve …` lands in a shell
     # without the user's venv and fails 'command not found'.
     env_cfg = await _cookbook_env_for_host(host)
+    # Rewrite bare `vllm` / `python3` leading tokens to the venv's absolute
+    # binary path when the target host has a venv configured. SSH non-
+    # interactive shells often leave ~/.local/bin ahead of the venv bin on
+    # PATH even with the venv activated, so `vllm serve` finds the wrong
+    # binary and crashes early (e.g. compute_89 torch ABI errors on an old
+    # user-site torch). This mirrors what static/js/cookbook.js does in
+    # _buildServeCmd for the UI launch path.
+    env_path = (env_cfg.get("env_path") or "").rstrip("/")
+    env_type = (env_cfg.get("env_type") or env_cfg.get("env") or "").lower()
+    if env_type == "venv" and env_path:
+        venv_bin = f"{env_path}/bin"
+        # Match the FIRST shell-token: skip leading KEY=VAL env-var prefixes
+        # (CUDA_VISIBLE_DEVICES=… VLLM_USE_FLASHINFER_SAMPLER=…) before the binary.
+        import re as _re3
+        tokens = cmd.split()
+        idx = 0
+        env_re = _re3.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+        while idx < len(tokens) and env_re.match(tokens[idx]):
+            idx += 1
+        if idx < len(tokens):
+            head = tokens[idx]
+            if head in ("vllm", "python3", "python"):
+                tokens[idx] = f"{venv_bin}/{head}"
+                cmd = " ".join(tokens)
+                payload["cmd"] = cmd
     if env_cfg.get("env_prefix"): payload["env_prefix"] = env_cfg["env_prefix"]
     if env_cfg.get("gpus"):       payload["gpus"]       = env_cfg["gpus"]
     if env_cfg.get("hf_token"):   payload["hf_token"]   = env_cfg["hf_token"]
@@ -3059,7 +3099,19 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
             )
             note = "" if registered else " (state-write failed — task may not show in UI)"
             return {"output": f"Serving {repo_id} (session: {sid}){note}", "session_id": sid, "exit_code": 0}
-        return {"error": data.get("error", "Serve failed"), "exit_code": 1}
+        # FastAPI HTTPException puts the message under `detail`, not `error`.
+        # Surface BOTH so the agent sees "Invalid characters in cmd" (from
+        # _validate_serve_cmd rejecting `&&`/`source`/`cd`) instead of
+        # the generic "Serve failed", which leaves it with nothing to act on.
+        err_msg = data.get("error") or data.get("detail") or "Serve failed"
+        hint = ""
+        if isinstance(err_msg, str) and "cmd" in err_msg.lower():
+            hint = (" — the cmd must START with an allowlisted binary "
+                    "(vllm, python3, llama-server, ollama, sglang, lmdeploy, node, npx). "
+                    "Do NOT prefix with `cd …`, `source …`, or chain with `&&`. "
+                    "env_prefix (e.g. `source ~/qwen35-env/bin/activate`) is added "
+                    "automatically from the host's saved venv settings.")
+        return {"error": f"{err_msg}{hint}", "exit_code": 1}
     except Exception as e:
         return {"error": str(e), "exit_code": 1}
 
@@ -3103,13 +3155,31 @@ async def do_list_served_models(content: str, owner: Optional[str] = None) -> Di
             "exit_code": 0,
         }
 
+    # Sort so the agent sees what's actually LIVE first. Stopped/error/
+    # completed tasks are mostly historical noise — they shouldn't lead
+    # the list when something is genuinely serving.
+    _ORDER = {
+        "ready": 0, "running": 1, "loading": 1, "warming": 1,
+        "queued": 2, "starting": 2,
+        "error": 5, "crashed": 5, "failed": 5,
+        "stopped": 6, "killed": 6, "cancelled": 6, "canceled": 6,
+        "done": 7, "completed": 7, "finished": 7,
+    }
+    def _rank(t: Dict[str, Any]) -> int:
+        phase = (t.get("phase") or t.get("status") or "unknown").lower()
+        return _ORDER.get(phase, 3)
+    merged.sort(key=_rank)
+
     cb_n = len(cookbook_tasks)
     ext_n = len(external)
+    live_n = sum(1 for t in merged if _rank(t) <= 2)
     header = []
     if cb_n:
         header.append(f"{cb_n} cookbook-tracked")
     if ext_n:
         header.append(f"{ext_n} external")
+    if live_n:
+        header.insert(0, f"{live_n} LIVE")
     lines = [f"Running: {', '.join(header)}."]
     for t in merged:
         phase = t.get("phase") or t.get("status", "unknown")
@@ -3136,8 +3206,20 @@ async def do_list_served_models(content: str, owner: Optional[str] = None) -> Di
         if t.get("status") == "error" and t.get("output_tail"):
             tail = str(t.get("output_tail") or "").strip()
             if tail:
+                # Prefer a window around a Python traceback if one exists,
+                # falling back to the last 30 lines. The previous 6-line
+                # tail showed only the post-crash bash prompt / neofetch
+                # banner ("Locale: C / Ubuntu_Odysseus ❯") — useless for
+                # diagnosis. The traceback we want is usually 50-200 lines
+                # earlier in the buffer.
+                _tail_lines = tail.splitlines()
+                _shown = _tail_lines[-30:]
+                for _i, _ln in enumerate(_tail_lines):
+                    if "Traceback (most recent call last)" in _ln or "ERROR" in _ln or "Error:" in _ln:
+                        _shown = _tail_lines[_i:_i + 40]
+                        break
                 lines.append("    recent log:")
-                for line in tail.splitlines()[-6:]:
+                for line in _shown:
                     lines.append(f"      {line[:220]}")
         if t.get("external") and t.get("cmdline_preview"):
             lines.append(f"    cmd: {t['cmdline_preview']}")
@@ -3241,6 +3323,125 @@ async def do_stop_served_model(content: str, owner: Optional[str] = None) -> Dic
         ssh_port=args.get("ssh_port") or "",
         verb="Stopped server",
     )
+
+
+async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dict:
+    """Capture the last N lines of a cookbook task's tmux pane — remote-aware.
+
+    Used by the agent to debug a failed/stuck serve: list_served_models tells
+    you the task is `crashed`, this tool returns the actual stderr/traceback
+    so the agent can match it against a known fix (compute_89 nvcc mismatch,
+    flashinfer version mismatch, OOM, missing kernels, etc.) and decide
+    whether to relaunch via serve_model with new flags.
+    """
+    import httpx
+    import shlex
+    try:
+        args = _parse_tool_args(content)
+    except ValueError:
+        return {"error": "Invalid JSON arguments", "exit_code": 1}
+    session_id = (args.get("session_id") or "").strip()
+    if not session_id:
+        return {"error": "session_id is required (from list_served_models)", "exit_code": 1}
+    import re as _re
+    if not _re.fullmatch(r"[a-zA-Z0-9_-]+", session_id):
+        return {"error": "Invalid session_id format", "exit_code": 1}
+    try:
+        tail = int(args.get("tail") or 400)
+    except (TypeError, ValueError):
+        tail = 400
+    tail = max(20, min(tail, 4000))
+    headers = _internal_headers()
+    remote = (args.get("remote_host") or args.get("host") or "").strip()
+    sport = (args.get("ssh_port") or "").strip()
+    # Resolve host from cookbook state if caller didn't pass one — same
+    # lookup _cookbook_kill_session uses.
+    if not remote:
+        state: Dict[str, Any] = {}
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state", headers=headers)
+                state = resp.json() or {}
+        except Exception as e:
+            logger.debug(f"cookbook state lookup failed for {session_id}: {e}")
+        if isinstance(state, dict):
+            for t in (state.get("tasks") or []):
+                if isinstance(t, dict) and (t.get("sessionId") == session_id or t.get("id") == session_id):
+                    remote = t.get("remoteHost") or ""
+                    if not sport:
+                        sport = t.get("sshPort") or ""
+                    break
+    # Prefer the persisted /tmp/odysseus-tmux/SESSION.log file over the
+    # live tmux pane. The pane is what the user would see scrolling on
+    # their screen — including the post-crash neofetch banner and the
+    # idle bash prompt that overwrites the actual traceback the moment
+    # vllm exits. The log file is the raw stdout/stderr of the wrapped
+    # process and survives the crash unchanged. We only fall back to
+    # the pane when the log file doesn't exist (older sessions launched
+    # before the tmux+tee wrapper was added).
+    log_path = f"/tmp/odysseus-tmux/{session_id}.log"
+    pane_inner = f"tmux capture-pane -t {shlex.quote(session_id)} -p -S -{tail} 2>/dev/null"
+    file_inner = f"tail -n {tail} {shlex.quote(log_path)} 2>/dev/null"
+    inner = (
+        f"if [ -s {shlex.quote(log_path)} ]; then {file_inner}; "
+        f"else {pane_inner}; fi"
+    )
+    if remote:
+        _pf = f"-p {shlex.quote(str(sport))} " if sport and str(sport) != "22" else ""
+        cmd = (
+            f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
+            f"{_pf}{shlex.quote(remote)} {shlex.quote(inner)}"
+        )
+        host_label = remote
+    else:
+        cmd = inner
+        host_label = "local"
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(f"{_COOKBOOK_BASE}/api/shell/exec",
+                                     json={"command": cmd}, headers=headers)
+        if resp.status_code >= 400:
+            return {"error": f"shell/exec returned HTTP {resp.status_code}: {resp.text[:200]}", "exit_code": 1}
+        data = resp.json() if resp.content else {}
+        output_text = (data.get("stdout") or "").strip()
+        stderr_text = (data.get("stderr") or "").strip()
+        rc = data.get("exit_code")
+        if rc not in (None, 0) and not output_text:
+            already_gone = any(s in (stderr_text or "").lower() for s in ("no server running", "can't find session", "session not found"))
+            if already_gone:
+                return {"output": f"Tmux session {session_id} on {host_label} is gone (task already exited).", "exit_code": 0, "session_id": session_id, "host": host_label}
+            return {"error": f"capture-pane failed on {host_label}: {stderr_text or f'exit {rc}'}", "exit_code": 1}
+        # Dedupe download-progress noise. A 100-shard HF download produces
+        # tens of thousands of `model-NN-of-MM.safetensors: 91%|...` lines
+        # that all look the same to the agent and drown the actual error.
+        # Keep only one sample per (file, decile-percent) bucket.
+        import re as _re2
+        lines = output_text.splitlines()
+        dedup_lines = []
+        seen_progress = set()
+        progress_re = _re2.compile(r"^([\w./\-]+):\s+(\d+)%")
+        for ln in lines:
+            m = progress_re.match(ln.strip())
+            if m:
+                key = (m.group(1), int(m.group(2)) // 10)  # bucket by 10%
+                if key in seen_progress:
+                    continue
+                seen_progress.add(key)
+            dedup_lines.append(ln)
+        output_text = "\n".join(dedup_lines)
+        # Hard cap so the agent doesn't blow its token budget.
+        MAX_CHARS = 8000
+        if len(output_text) > MAX_CHARS:
+            output_text = "…(earlier output truncated)…\n" + output_text[-MAX_CHARS:]
+        return {
+            "output": output_text or "(empty pane)",
+            "session_id": session_id,
+            "host": host_label,
+            "tail_lines": tail,
+            "exit_code": 0,
+        }
+    except Exception as e:
+        return {"error": str(e), "exit_code": 1}
 
 
 async def do_list_downloads(content: str, owner: Optional[str] = None) -> Dict:
@@ -3615,38 +3816,133 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
 
 
 async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Dict:
-    """List models already cached locally (or on a remote host)."""
+    """List models already cached locally and/or on remote hosts.
+
+    With no `host` arg, scans EVERY configured Cookbook server (and local)
+    and aggregates — so the agent sees the full inventory in one call
+    instead of having to query each server individually.
+    """
     import httpx
     try:
         args = _parse_tool_args(content) if content.strip() else {}
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
-    params: Dict[str, str] = {}
     raw_host = (args.get("host") or "").strip()
-    host = await _resolve_cookbook_host(raw_host) if raw_host else ""
-    if host:
-        params["host"] = host
-    if args.get("model_dir"):
-        params["model_dir"] = args["model_dir"]
-    if args.get("ssh_port"):
-        params["ssh_port"] = str(args["ssh_port"])
-    if args.get("platform"):
-        params["platform"] = args["platform"]
+    headers = _internal_headers()
+
+    async def _scan_one(host_label: str, host_val: str, ssh_port: str = "",
+                        platform: str = "", model_dir: str = "") -> list:
+        """Hit /api/model/cached for one host; tag each returned model with its source."""
+        p: Dict[str, str] = {}
+        if host_val:
+            p["host"] = host_val
+        # Caller-provided override beats per-server config beats nothing.
+        if args.get("model_dir"):
+            p["model_dir"] = args["model_dir"]
+        elif model_dir:
+            p["model_dir"] = model_dir
+        if ssh_port:
+            p["ssh_port"] = ssh_port
+        elif args.get("ssh_port"):
+            p["ssh_port"] = str(args["ssh_port"])
+        if platform:
+            p["platform"] = platform
+        elif args.get("platform"):
+            p["platform"] = args["platform"]
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.get(f"{_COOKBOOK_BASE}/api/model/cached",
+                                        params=p, headers=headers)
+                data = resp.json()
+            ms = data.get("models", []) if isinstance(data, dict) else (data or [])
+            for m in ms:
+                m["host"] = host_label or "local"
+            return ms or []
+        except Exception as e:
+            logger.debug(f"list_cached_models scan({host_label}) failed: {e}")
+            return []
+
+    # When the caller specifies a host explicitly, scan only that one (old behaviour).
+    # Otherwise iterate every configured server + local so the agent doesn't
+    # have to repeat the call per server.
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.get(f"{_COOKBOOK_BASE}/api/model/cached",
-                                    params=params, headers=_internal_headers())
-            data = resp.json()
-        models = data.get("models", []) if isinstance(data, dict) else data
+        # Pull configured servers from cookbook state (used for resolving
+        # modelDirs both when caller specifies a host and when we scan all).
+        servers: list = []
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                st = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state", headers=headers)
+                st_data = st.json() if st.headers.get("content-type", "").startswith("application/json") else {}
+            servers = (st_data.get("env", {}) or {}).get("servers") or []
+        except Exception as e:
+            logger.debug(f"server list fetch failed: {e}")
+            st_data = {}
+
+        def _dirs_for(server_record: Dict[str, Any]) -> str:
+            """Comma-joined modelDirs from a saved server record (Settings).
+
+            Filters out the HF cache (~/.cache/huggingface/hub) — the backend
+            scan script always scans it by default, so re-passing it as an
+            extra model_dir is redundant AND confuses some path-handling
+            edge cases where the extra dir suppresses the deeper scan.
+            We only need to forward the NON-default dirs (e.g. /mnt/HADES/models).
+            """
+            mds = server_record.get("modelDirs") if isinstance(server_record, dict) else None
+            HF_DEFAULTS = {"~/.cache/huggingface/hub", "~/.cache/huggingface"}
+            if isinstance(mds, list):
+                extras = [d for d in mds if isinstance(d, str) and d.strip() and d.strip() not in HF_DEFAULTS]
+                return ",".join(extras)
+            if isinstance(mds, str) and mds.strip() not in HF_DEFAULTS:
+                return mds
+            return ""
+
+        if raw_host:
+            host = await _resolve_cookbook_host(raw_host)
+            # Find this host's saved record so its modelDirs apply too.
+            srv = next(
+                (s for s in servers if isinstance(s, dict)
+                 and (s.get("name") == raw_host or s.get("host") == host or s.get("host") == raw_host)),
+                {},
+            )
+            models = await _scan_one(raw_host, host, model_dir=_dirs_for(srv))
+        else:
+            # Always include local. Local's saved record is the one with no host.
+            local_srv = next((s for s in servers if isinstance(s, dict) and not (s.get("host") or "").strip()), {})
+            scans: list = [_scan_one("local", "", model_dir=_dirs_for(local_srv))]
+            for s in servers:
+                if not isinstance(s, dict):
+                    continue
+                name = s.get("name") or s.get("host")
+                host_val = s.get("host") or ""
+                if not host_val:
+                    continue
+                scans.append(_scan_one(
+                    name,
+                    host_val,
+                    ssh_port=str(s.get("port") or ""),
+                    platform=s.get("platform") or "",
+                    model_dir=_dirs_for(s),
+                ))
+            results = await asyncio.gather(*scans, return_exceptions=False)
+            # Dedupe by (host, repo_id) — same model could appear in both HF cache + Ollama list.
+            seen = set()
+            models: list = []
+            for batch in results:
+                for m in batch:
+                    key = (m.get("host", ""), m.get("repo_id", ""))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    models.append(m)
         if not models:
-            # Filesystem cache scans can miss models downloaded into the HF
-            # default cache when the server has no explicit model_dir configured.
-            # Still surface completed Cookbook downloads so the agent doesn't
-            # incorrectly assume a model is absent and re-download it.
+            # Cache scans can miss models downloaded into the HF default cache
+            # when the server has no explicit model_dir configured. Surface
+            # completed Cookbook download tasks so the agent doesn't conclude
+            # a model is absent and re-download it.
             downloaded = []
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
-                    st = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state", headers=_internal_headers())
+                    st = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state", headers=headers)
                     state = st.json() if st.headers.get("content-type", "").startswith("application/json") else {}
                 for t in (state.get("tasks") or []):
                     if not isinstance(t, dict) or t.get("type") != "download":
@@ -3654,27 +3950,44 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
                     if (t.get("status") or "").lower() not in {"done", "completed"}:
                         continue
                     task_host = t.get("remoteHost") or (t.get("payload") or {}).get("remote_host") or ""
-                    if host and task_host != host:
+                    if raw_host and task_host != raw_host:
                         continue
                     repo = t.get("modelId") or t.get("repoId") or (t.get("payload") or {}).get("repo_id") or t.get("name")
                     if repo and repo not in downloaded:
                         downloaded.append(repo)
             except Exception:
                 downloaded = []
+            host_str = f" on {raw_host}" if raw_host else ""
             if downloaded:
-                host_str = f" on {raw_host or host}" if (raw_host or host) else ""
                 lines = [f"No cache paths were detected{host_str}, but Cookbook has completed download task(s):"]
                 lines.extend(f"- {repo} — downloaded via Cookbook task" for repo in downloaded)
                 return {"output": "\n".join(lines), "models": [{"repo_id": repo, "source": "cookbook_task"} for repo in downloaded], "exit_code": 0}
-            host_str = f" on {raw_host or host}" if (raw_host or host) else ""
             return {"output": f"No cached models found{host_str}.", "exit_code": 0}
-        lines = [f"{len(models)} cached model(s):"]
-        for m in models:
-            name = m.get("repo_id", "?")
-            sz = m.get("size") or (f"{m.get('size_bytes', 0) / (1024**3):.1f}GB" if m.get("size_bytes") else "")
-            inc = " (incomplete)" if m.get("has_incomplete") else ""
-            kind = " [diffusion]" if m.get("is_diffusion") else ""
-            lines.append(f"- {name}{kind} — {sz}{inc}")
+        # Multi-host scan: group by host so the agent sees inventory per server.
+        # Single-host scan: flat list (matches old output shape).
+        if raw_host:
+            lines = [f"{len(models)} cached model(s) on {raw_host}:"]
+            for m in models:
+                name = m.get("repo_id", "?")
+                sz = m.get("size") or (f"{m.get('size_bytes', 0) / (1024**3):.1f}GB" if m.get("size_bytes") else "")
+                inc = " (incomplete)" if m.get("has_incomplete") else ""
+                kind = " [diffusion]" if m.get("is_diffusion") else ""
+                lines.append(f"- {name}{kind} — {sz}{inc}")
+        else:
+            from collections import defaultdict as _dd
+            by_host = _dd(list)
+            for m in models:
+                by_host[m.get("host", "local")].append(m)
+            lines = [f"{len(models)} cached model(s) across {len(by_host)} server(s):"]
+            for host_name in sorted(by_host.keys()):
+                lines.append(f"\n[{host_name}]")
+                for m in by_host[host_name]:
+                    name = m.get("repo_id", "?")
+                    sz = m.get("size") or (f"{m.get('size_bytes', 0) / (1024**3):.1f}GB" if m.get("size_bytes") else "")
+                    inc = " (incomplete)" if m.get("has_incomplete") else ""
+                    kind = " [diffusion]" if m.get("is_diffusion") else ""
+                    backend = f" ({m.get('backend')})" if m.get("backend") else ""
+                    lines.append(f"- {name}{kind}{backend} — {sz}{inc}")
         return {"output": "\n".join(lines), "models": models, "exit_code": 0}
     except Exception as e:
         return {"error": str(e), "exit_code": 1}

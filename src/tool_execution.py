@@ -1119,6 +1119,7 @@ async def execute_tool_block(
         do_manage_documents, do_manage_settings, do_manage_notes,
         do_manage_calendar,
         do_download_model, do_serve_model, do_list_served_models, do_stop_served_model,
+        do_tail_serve_output,
         do_list_downloads, do_cancel_download, do_search_hf_models, do_list_cached_models,
         do_list_serve_presets, do_serve_preset, do_adopt_served_model,
         do_list_cookbook_servers,
@@ -1290,6 +1291,9 @@ async def execute_tool_block(
     elif tool == "stop_served_model":
         desc = "stop_served_model"
         result = await do_stop_served_model(content, owner=owner)
+    elif tool == "tail_serve_output":
+        desc = "tail_serve_output"
+        result = await do_tail_serve_output(content, owner=owner)
     elif tool == "list_downloads":
         desc = "list_downloads"
         result = await do_list_downloads(content, owner=owner)

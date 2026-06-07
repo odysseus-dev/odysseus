@@ -731,14 +731,14 @@ function initEndpointForm() {
   urlInput.addEventListener('input', () => {
     if (provider.value && urlInput.value.trim() !== provider.value) {
       provider.value = '';
-      if (kindSel) kindSel.value = 'proxy';
+      if (kindSel) kindSel.value = 'api';
       _renderPickerMenu();
       _syncPickerCurrent();
     }
   });
-  if (kindSel) kindSel.value = provider.value ? 'api' : (kindSel.value || 'proxy');
+  if (kindSel) kindSel.value = kindSel.value || 'api';
   function _apiEndpointKind() {
-    return (kindSel && kindSel.value) ? kindSel.value : (provider.value ? 'api' : 'proxy');
+    return (kindSel && kindSel.value) ? kindSel.value : 'api';
   }
   function _normalizeBaseUrl(raw) {
     let u = raw.trim();

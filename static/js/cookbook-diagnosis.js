@@ -378,16 +378,12 @@ export const ERROR_PATTERNS = [
     message: 'Model architecture too new for installed vLLM/transformers.',
     fixes: [
       { label: 'Try --trust-remote-code', action: (panel) => _serveAutoRetry(panel, '--trust-remote-code'), autofix: true },
-      { label: 'Update vLLM on server', action: (panel) => {
-        const taskEl = panel.closest('.cookbook-task');
-        const task = taskEl ? _loadTasks().find(t => t.sessionId === taskEl.dataset.taskId) : null;
-        const host = task?.remoteHost || '';
-        const prefix = _buildEnvPrefix();
-        const pipCmd = prefix ? prefix + ' pip install -U vllm transformers' : 'pip install -U vllm transformers';
-        const cmd = host ? _sshCmd(host, pipCmd) : pipCmd;
-        // Run in tmux so it doesn't timeout
-        const name = 'update-vllm';
-        _launchServeTask(name, 'pip-update', cmd);
+      { label: 'Update vLLM on server', action: () => {
+        // Use the venv's python3 by absolute path when configured (SSH non-
+        // interactive sessions often pick user-site Python over the venv).
+        const _vp = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
+        _launchServeTask('update-vllm', 'pip-update', `${_vp} -m pip install -U vllm transformers`);
       }},
     ],
   },
@@ -395,16 +391,10 @@ export const ERROR_PATTERNS = [
     pattern: /Either a revision or a version must be specified|transformers\.integrations\.hub_kernels|kernels\/layer/i,
     message: 'Transformers/kernels package mismatch.',
     fixes: [
-      { label: 'Repair kernel package', action: (panel) => {
-        const taskEl = panel.closest('.cookbook-task');
-        const task = taskEl ? _loadTasks().find(t => t.sessionId === taskEl.dataset.taskId) : null;
-        const host = task?.remoteHost || '';
-        const prefix = _buildEnvPrefix();
-        const pipCmd = prefix
-          ? prefix + ' python3 -m pip install --user --break-system-packages "kernels<0.15"'
-          : 'python3 -m pip install --user --break-system-packages "kernels<0.15"';
-        const cmd = host ? _sshCmd(host, pipCmd) : pipCmd;
-        _launchServeTask('repair-kernels', 'pip-update', cmd);
+      { label: 'Repair kernel package', action: () => {
+        const _vp = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
+        _launchServeTask('repair-kernels', 'pip-update', `${_vp} -m pip install --user --break-system-packages kernels<0.15`);
       }},
       { label: 'Open Dependencies', action: () => _openCookbookDependencies('sglang') },
     ],
@@ -445,14 +435,10 @@ export const ERROR_PATTERNS = [
     pattern: /Triton kernels.*Failed to import|cannot import name '\w+' from 'triton_kernels/i,
     message: 'Triton kernels version mismatch. Non-fatal warning — model will still run, just without optimized MoE kernels.',
     fixes: [
-      { label: 'Update triton on server', action: (panel) => {
-        const taskEl = panel.closest('.cookbook-task');
-        const task = taskEl ? _loadTasks().find(t => t.sessionId === taskEl.dataset.taskId) : null;
-        const host = task?.remoteHost || '';
-        const prefix = _buildEnvPrefix();
-        const pipCmd = prefix ? prefix + ' pip install -U triton triton-kernels' : 'pip install -U triton triton-kernels';
-        const cmd = host ? _sshCmd(host, pipCmd) : pipCmd;
-        _launchServeTask('update-triton', 'pip-update', cmd);
+      { label: 'Update triton on server', action: () => {
+        const _vp = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
+        _launchServeTask('update-triton', 'pip-update', `${_vp} -m pip install -U triton triton-kernels`);
       }},
     ],
   },
@@ -474,14 +460,56 @@ export const ERROR_PATTERNS = [
     pattern: /attention_sink|sliding.window.*not supported|sliding_window.*incompatible/i,
     message: 'Model uses attention features unsupported in this vLLM version.',
     fixes: [
-      { label: 'Update vLLM on server', action: (panel) => {
-        const taskEl = panel.closest('.cookbook-task');
-        const task = taskEl ? _loadTasks().find(t => t.sessionId === taskEl.dataset.taskId) : null;
-        const host = task?.remoteHost || '';
-        const prefix = _buildEnvPrefix();
-        const pipCmd = prefix ? prefix + ' pip install -U vllm' : 'pip install -U vllm';
-        const cmd = host ? _sshCmd(host, pipCmd) : pipCmd;
-        _launchServeTask('update-vllm', 'pip-update', cmd);
+      { label: 'Update vLLM on server', action: () => {
+        const _vp = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
+        _launchServeTask('update-vllm', 'pip-update', `${_vp} -m pip install -U vllm`);
+      }},
+    ],
+  },
+  {
+    // FlashInfer JIT-compiles attention kernels for the host GPU on first
+    // use. If the system /usr/bin/nvcc is older than CUDA 11.8 it can't
+    // target sm_89/sm_90 (Ada/Hopper), and the engine workers die before
+    // they can report a useful traceback. Two quick paths out: pick a
+    // non-flashinfer attention backend, or set CUDACXX to a newer nvcc
+    // (vLLM installs nvidia-cuda-nvcc into the venv — point at that).
+    pattern: /nvcc fatal\s+:\s+Unsupported gpu architecture 'compute_\d+'/i,
+    message: 'FlashInfer is JIT-compiling sampling kernels with an nvcc too old for this GPU (no sm_89 / sm_90 support — pre-CUDA 11.8). Changing the attention backend does not help — flashinfer JITs the SAMPLER too. The clean fix is to set VLLM_USE_FLASHINFER_SAMPLER=0 so vLLM uses its native sampler instead.',
+    suggestion: 'Suggested action: relaunch with VLLM_USE_FLASHINFER_SAMPLER=0 prepended. (Confirmed on the QuantTrio/Qwen3.5 model card as the canonical workaround.)',
+    fixes: [
+      { label: 'Retry with VLLM_USE_FLASHINFER_SAMPLER=0', action: (panel) => _serveAutoRetryReplace(panel, '', 'VLLM_USE_FLASHINFER_SAMPLER=0 ', { prepend: true }) },
+      { label: 'Uninstall flashinfer-python', action: () => {
+        // Hard fallback: vLLM 0.22 reaches into flashinfer for sampling kernels
+        // even with VLLM_USE_FLASHINFER_SAMPLER=0 in some configs. Removing
+        // the package forces it onto the native sampler.
+        const _vp = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
+        _launchServeTask('uninstall-flashinfer', 'pip-update', `${_vp} -m pip uninstall flashinfer-python -y`);
+      }},
+      { label: 'Edit serve', action: (panel) => _openServeEditFromDiagnosis(panel) },
+    ],
+  },
+  {
+    // vLLM <-> torch ABI mismatch: vLLM imports torch.library helpers
+    // (`infer_schema`, `register_fake`, etc.) that only exist on newer torch
+    // versions. When the installed torch is older, the import fails before
+    // any server code runs. Fix is to reinstall vllm (which pulls a matching
+    // torch) or upgrade torch directly.
+    pattern: /ImportError: cannot import name '[^']+' from 'torch(\.\w+)+'/i,
+    message: 'vLLM was built against a newer torch than what is installed. Reinstall vLLM so pip pulls a compatible torch (or upgrade torch directly).',
+    fixes: [
+      { label: 'Reinstall vLLM (pulls matching torch)', action: () => {
+        // Absolute path to the venv's python3 — bare `python3` lands in the
+        // wrong site-packages over SSH when ~/.local/bin precedes the venv.
+        const _vp = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
+        _launchServeTask('reinstall-vllm', 'pip-reinstall', `${_vp} -m pip install --force-reinstall vllm`);
+      }},
+      { label: 'Upgrade torch only', action: () => {
+        const _vp = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
+        _launchServeTask('upgrade-torch', 'pip-update', `${_vp} -m pip install -U torch`);
       }},
     ],
   },
@@ -607,59 +635,24 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
   };
 
   if (fixes.length) {
+    // Always render fixes as inline buttons. The old "Actions ▾" dropdown
+    // (for >3 fixes) was broken — the menu wouldn't open in some panels and
+    // hid useful actions behind a non-working affordance. Inline buttons wrap
+    // naturally in `.cookbook-diag-fixes` (flex-wrap) so a long list reflows
+    // onto multiple rows instead of getting collapsed.
     const row = document.createElement('div');
     row.className = 'cookbook-diag-fixes';
-
-    if (fixes.length <= 3) {
-      for (const fix of fixes) {
-        const btn = document.createElement('button');
-        btn.className = 'cookbook-btn cookbook-diag-btn';
-        btn.type = 'button';
-        btn.innerHTML = _diagFixIcon(fix.label) + '<span class="cookbook-diag-btn-label">' + _diagEsc(fix.label) + '</span>';
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          runFix(fix, btn);
-        });
-        row.appendChild(btn);
-      }
-      body.appendChild(row);
-      return;
-    }
-
-    const wrap = document.createElement('div');
-    wrap.className = 'cookbook-diag-actions';
-
-    const trigger = document.createElement('button');
-    trigger.className = 'cookbook-btn cookbook-diag-action-trigger';
-    trigger.type = 'button';
-    trigger.textContent = 'Actions';
-    trigger.appendChild(document.createTextNode(' ▾'));
-    wrap.appendChild(trigger);
-
-    const menu = document.createElement('div');
-    menu.className = 'dropdown cookbook-diag-menu hidden';
     for (const fix of fixes) {
-      const item = document.createElement('button');
-      item.type = 'button';
-      item.innerHTML = _diagFixIcon(fix.label) + '<span class="cookbook-diag-btn-label">' + _diagEsc(fix.label) + '</span>';
-      item.addEventListener('click', async (e) => {
+      const btn = document.createElement('button');
+      btn.className = 'cookbook-btn cookbook-diag-btn';
+      btn.type = 'button';
+      btn.innerHTML = _diagFixIcon(fix.label) + '<span class="cookbook-diag-btn-label">' + _diagEsc(fix.label) + '</span>';
+      btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (item.dataset.busy || trigger.dataset.busy) return;
-        item.dataset.busy = '1';
-        await runFix(fix, trigger, fix.label, () => menu.classList.add('hidden'), () => delete item.dataset.busy);
+        runFix(fix, btn);
       });
-      menu.appendChild(item);
+      row.appendChild(btn);
     }
-    wrap.appendChild(menu);
-    trigger.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (trigger.dataset.busy) return;
-      document.querySelectorAll('.cookbook-diag-menu').forEach(m => {
-        if (m !== menu) m.classList.add('hidden');
-      });
-      menu.classList.toggle('hidden');
-    });
-    row.appendChild(wrap);
     body.appendChild(row);
   }
 }

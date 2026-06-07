@@ -294,19 +294,23 @@ function _rerenderCachedModels() {
     }
     const ggufCount = _runnableGgufFiles(m).length;
     if (ggufCount > 1) metaParts.push(`${ggufCount} GGUFs`);
-    if (m.status === 'downloading') {
-      const _active = _isActivelyDownloading(m.repo_id);
-      metaParts.push(`<span class="cookbook-dl-status" style="color:var(--accent,var(--red));">${_active ? 'downloading' : 'download stalled'}</span>`);
-    }
+    // "downloading" status now renders as a title-row pill instead of
+    // a meta-row text label, matching the "running" pill style and
+    // living on the same line as the model name.
+    const _isDownloading = m.status === 'downloading';
+    const _isDlActive = _isDownloading ? _isActivelyDownloading(m.repo_id) : false;
     const isSelectMode = document.getElementById('hwfit-cache-select')?.classList.contains('active');
     html += `<div class="doclib-card memory-item" data-repo="${esc(m.repo_id)}" data-tag="${m._tag || ''}" data-family="${m._family || ''}" style="cursor:pointer;">`;
     html += `<span class="serve-select-cb memory-select-dot" style="display:${isSelectMode ? 'inline-block' : 'none'};cursor:pointer;"></span>`;
     html += `<div style="flex:1;min-width:0;">`;
     const _mc = modelColor(m.repo_id) || '';
     const _runningPill = _isActivelyServing(m.repo_id)
-      ? ' <span class="cookbook-serve-running-pill" title="This model is currently being served">running</span>'
+      ? ` <span class="cookbook-serve-running-pill is-clickable" title="This model is currently being served — click to open in Running" data-repo="${esc(m.repo_id)}" role="button" tabindex="0">running</span>`
       : '';
-    html += `<div class="memory-item-title"${_mc ? ` style="color:${_mc}"` : ''}>${modelLogo(m.repo_id)}${esc(shortName)}${hfLink ? ` <a href="${esc(hfLink)}" target="_blank" rel="noopener" class="cookbook-hf-link">HF ↗</a>` : ''}${_runningPill}</div>`;
+    const _downloadingPill = _isDownloading
+      ? ` <span class="cookbook-serve-downloading-pill${_isDlActive ? '' : ' is-stalled'}" title="${_isDlActive ? 'Download in progress' : 'Download stalled — retry to resume'}">${_isDlActive ? 'downloading' : 'stalled'}</span>`
+      : '';
+    html += `<div class="memory-item-title"${_mc ? ` style="color:${_mc}"` : ''}>${modelLogo(m.repo_id)}${esc(shortName)}${hfLink ? ` <a href="${esc(hfLink)}" target="_blank" rel="noopener" class="cookbook-hf-link">HF ↗</a>` : ''}${_runningPill}${_downloadingPill}</div>`;
     html += `<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">${metaParts.join(' \u00b7 ')}</div>`;
     html += `</div>`;
     const _bk = _detectBackend(m).backend;
@@ -388,9 +392,11 @@ function _rerenderCachedModels() {
       const _retryIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>';
       const _deleteIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
       const _selectIco = '<span style="font-size:16px;line-height:1;position:relative;top:-2px;">●</span>';
+      const _schedIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>';
       const items = [];
       if (m && m.status === 'ready') items.push({ label: 'Serve', icon: _serveIco, action: 'serve' });
       if (m && m.status === 'downloading') items.push({ label: 'Retry', icon: _retryIco, action: 'retry' });
+      if (m && m.status === 'ready') items.push({ label: 'Schedule…', icon: _schedIco, action: 'schedule' });
       items.push({ label: 'Select', icon: _selectIco, action: 'select' });
       items.push({ label: 'Delete', icon: _deleteIco, action: 'delete', danger: true });
       for (const opt of items) {
@@ -402,6 +408,16 @@ function _rerenderCachedModels() {
           if (opt.action === 'serve') item.click();
           else if (opt.action === 'delete') _deleteCachedModel(repo, item, false, m);
           else if (opt.action === 'retry') _retryCachedModel(repo, m);
+          else if (opt.action === 'schedule') {
+            // Same entry point as the ^ button next to Launch — let
+            // cookbookSchedule.js handle it. Expand the panel first
+            // so the form has somewhere to mount.
+            if (!item.querySelector('.hwfit-serve-panel')) item.click();
+            setTimeout(() => {
+              const arrow = item.querySelector('.hwfit-serve-schedule-arrow');
+              if (arrow) arrow.click();
+            }, 120);
+          }
           else if (opt.action === 'select') {
             const selectBtn = document.getElementById('hwfit-cache-select');
             const bulkBar = document.getElementById('serve-bulk-bar');
@@ -613,6 +629,20 @@ function _rerenderCachedModels() {
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('Max Seqs','Maximum concurrent requests. Lower = less memory. Default 4 — prosumer GPUs often OOM on vLLM default 256 during CUDA graph capture.')}<input type="text" class="hwfit-sf" data-field="max_seqs" value="${esc(sv('max_seqs', '4'))}" placeholder="4" /></label>`;
       panelHtml += `<label>${_l('Dtype','Data type for weights. auto picks best for GPU')}<select class="hwfit-sf" data-field="dtype">${dtypeOpts}</select></label>`;
       panelHtml += `<label class="hwfit-backend-vllm">${_l('KV Cache','vLLM --kv-cache-dtype. auto uses the model/runtime default; fp8 reduces KV memory for long context.')}<select class="hwfit-sf" data-field="vllm_kv_cache_dtype" style="height:32px;">${vllmKvCacheOpts}</select></label>`;
+      // Attention backend selector — pin the kernel impl. Default `auto` lets
+      // vLLM pick FlashInfer (which JITs on first use and breaks on older
+      // system nvcc) → FlashAttention → xformers. Forcing FLASH_ATTN skips
+      // the JIT entirely, fixing the `nvcc fatal: Unsupported gpu
+      // architecture 'compute_89'` failure mode on Ada / Hopper hosts.
+      const vllmAttnBackendOpts = ['auto', 'FLASH_ATTN', 'XFORMERS', 'FLASHINFER', 'TORCH_SDPA']
+        .map(b => `<option value="${b === 'auto' ? '' : b}"${(sv('vllm_attn_backend','') === (b === 'auto' ? '' : b)) ? ' selected' : ''}>${b}</option>`).join('');
+      panelHtml += `<label class="hwfit-backend-vllm">${_l('Attention','vLLM VLLM_ATTENTION_BACKEND. auto = vLLM picks (often FLASHINFER, which JITs and can fail on old nvcc). FLASH_ATTN skips the JIT entirely.')}<select class="hwfit-sf" data-field="vllm_attn_backend" style="height:32px;">${vllmAttnBackendOpts}</select></label>`;
+      // Free-text env-vars field. Anything pasted here is prepended to the
+      // launch command verbatim. Use for CUDACXX, PATH overrides, NCCL_*
+      // tuning, or any other KEY=VALUE pair that doesn't have a dedicated
+      // field. After the venv activate runs, $VIRTUAL_ENV / $PATH / etc. are
+      // already exported so they expand correctly here.
+      panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang" style="flex:1 1 100%;">${_l('Env','Extra KEY=VALUE env-var pairs prepended to the launch (space-separated). Example: CUDACXX=$VIRTUAL_ENV/lib/python3.10/site-packages/nvidia/cuda_nvcc/bin/nvcc — points flashinfer at the venv-bundled nvcc when the system one is too old for your GPU.')}<input type="text" class="hwfit-sf" data-field="extra_env" value="${esc(sv('extra_env',''))}" placeholder="CUDACXX=/path/to/nvcc NCCL_P2P_DISABLE=1" style="width:100%;" /></label>`;
       panelHtml += `</div>`;
       // Row 2b: Diffusers settings
       const diffDtypeOpts = ['bfloat16','float16','float32'].map(d => `<option value="${d}"${sv('diff_dtype','bfloat16')===d?' selected':''}>${d}</option>`).join('');
@@ -729,8 +759,16 @@ function _rerenderCachedModels() {
       // Copy moved inside the command textarea (top-right). Spacer then
       // pushes Cancel + Launch to the right.
       panelHtml += `<span class="hwfit-serve-actions-spacer"></span>`;
-      panelHtml += `<button class="cookbook-btn hwfit-serve-cancel" type="button" title="Close this configuration panel">Cancel</button>`;
+      panelHtml += `<button class="cookbook-btn hwfit-serve-cancel" type="button" title="Close this configuration panel"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;flex-shrink:0;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Cancel</button>`;
+      // Launch + a small ^ that opens an inline schedule form. The form
+      // creates a ScheduledTask (action=cookbook_serve), so the schedule
+      // ends up in the existing Tasks UI for edit/delete/pause.
+      panelHtml += `<span class="hwfit-serve-launch-group">`;
       panelHtml += `<button class="cookbook-btn hwfit-serve-launch"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;flex-shrink:0;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Launch</button>`;
+      // Chevron points DOWN because the schedule form opens beneath the
+      // panel — the arrow signals the direction of motion, not menu state.
+      panelHtml += `<button class="cookbook-btn hwfit-serve-schedule-arrow" type="button" aria-haspopup="true" aria-label="Schedule this serve on a recurring window" title="Schedule this serve as a recurring task"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>`;
+      panelHtml += `</span>`;
       panelHtml += `</div>`;
       panelHtml += `</div>`;
 
@@ -1643,6 +1681,35 @@ function _rerenderCachedModels() {
       // Launch button
       panel.querySelector('.hwfit-serve-launch').addEventListener('click', async (ev) => {
         const _launchBtn = ev.currentTarget;
+        // Immediate visual feedback. The GPU probe + backend-warning prompt
+        // below can take ~1-2s before the task UI shows up, leaving the
+        // button looking dead. Drop in the same whirlpool spinner the rest of
+        // the cookbook uses (Probe GPUs, dependency installs, etc.) right
+        // away; restored on any early-return / failure path below.
+        const _origBtnHtml = _launchBtn.innerHTML;
+        const _origBtnDisabled = _launchBtn.disabled;
+        let _launchingWp = null;
+        const _restoreLaunchBtn = () => {
+          try { _launchingWp?.destroy?.(); } catch {}
+          _launchingWp = null;
+          _launchBtn.innerHTML = _origBtnHtml;
+          _launchBtn.disabled = _origBtnDisabled;
+        };
+        _launchBtn.disabled = true;
+        _launchBtn.innerHTML = '';
+        const _launchingWrap = document.createElement('span');
+        _launchingWrap.className = 'hwfit-serve-launching';
+        _launchingWrap.style.cssText = 'display:inline-flex;align-items:center;gap:6px;';
+        _launchingWp = spinnerModule.createWhirlpool(18);
+        if (_launchingWp?.element) {
+          _launchingWp.element.style.margin = '0';
+          _launchingWp.element.style.transform = 'translateY(-2px)';
+          _launchingWrap.appendChild(_launchingWp.element);
+        }
+        const _launchingLabel = document.createElement('span');
+        _launchingLabel.textContent = 'Launching…';
+        _launchingWrap.appendChild(_launchingLabel);
+        _launchBtn.appendChild(_launchingWrap);
         // Final safety net: never launch with ctx beyond the model's trained
         // limit (or the absolute sanity ceiling when the limit is unknown). A
         // stale preset or typo (e.g. 16000000) overflows and, with a quantized
@@ -1650,7 +1717,14 @@ function _rerenderCachedModels() {
         // command (then we respect their literal text).
         if (!_cmdManuallyEdited) _clampCtx(true);
         if (!_cmdManuallyEdited) updateCmd();
-        const launchCmd = _cmdTextarea ? _cmdTextarea.value.trim() : panel._cmd;
+        // Pasted commands often carry hidden newlines / CRs / tabs from copies
+        // out of model cards or wrapped help text. The backend cmd allowlist
+        // rejects \n / \r outright (`Invalid characters in cmd`), so collapse
+        // all whitespace to single spaces before launch — same effect as the
+        // user manually re-flowing the textarea, no behavior change.
+        const _rawLaunchCmd = _cmdTextarea ? _cmdTextarea.value : panel._cmd;
+        const launchCmd = String(_rawLaunchCmd || '').replace(/\s+/g, ' ').trim();
+        if (_cmdTextarea && _cmdTextarea.value !== launchCmd) _cmdTextarea.value = launchCmd;
         const serveState = {};
         panel.querySelectorAll('.hwfit-sf').forEach(el => {
           if (el.type === 'checkbox') serveState[el.dataset.field] = el.checked;
@@ -1659,6 +1733,7 @@ function _rerenderCachedModels() {
         serveState.backend = serveState.backend || (_detectBackend(m).backend) || 'vllm';
         const backendWarning = _serveBackendWarning(m, repo, serveState.backend, serveState);
         if (backendWarning) {
+          _restoreLaunchBtn();
           await window.styledConfirm(backendWarning.body, {
             title: backendWarning.title,
             confirmText: 'Edit settings',
@@ -1689,13 +1764,63 @@ function _rerenderCachedModels() {
                 `No GPU detected on ${_probeHost ? _probeHost : 'this host'}. ${serveState.backend.toUpperCase()} needs a visible CUDA/ROCm accelerator to start — launching now will most likely crash early.\n\nLaunch anyway?`,
                 { title: 'No GPU detected', confirmText: 'Launch anyway', cancelText: 'Cancel', danger: true },
               );
-              if (!_proceed) return;
+              if (!_proceed) { _restoreLaunchBtn(); return; }
             }
           } catch {
             // Network / probe failure — don't block. Better to let the launch
             // proceed than to silently refuse because the probe endpoint
             // hiccuped (the user can read the real error in the task output).
           }
+        }
+
+        // Pre-launch PORT probe — second most common failure pattern is
+        // collision with an already-running server (vllm crashing with
+        // "Address already in use" because Ollama owns 11434, or a
+        // previous vllm on the same port wasn't killed). The post-mortem
+        // "Suggested action: Kill existing vLLM" came AFTER the failed
+        // launch — user wants to know BEFORE clicking Launch. Parse the
+        // port out of the cmd, ssh-check who owns it on the target host,
+        // and offer to abort or proceed.
+        try {
+          const _portMatch = launchCmd.match(/(?:^|\s)(?:--port|-p|--host\s+\S+\s+--port)\s+(\d{2,5})\b/)
+            || launchCmd.match(/(?:^|\s)--port=(\d{2,5})\b/)
+            || launchCmd.match(/OLLAMA_HOST=[^:\s]+:(\d{2,5})\b/);
+          const _port = _portMatch ? _portMatch[1] : '';
+          if (_port) {
+            const _portHost = (_envState.remoteHost || '').trim();
+            const _checkInner = `ss -tlnp 2>/dev/null | awk '$4 ~ /:${_port}$/ {print; exit}' || netstat -tlnp 2>/dev/null | awk '$4 ~ /:${_port}$/ {print; exit}'`;
+            const _cmd = _portHost
+              ? `ss h ${_portHost} <<<"" 2>/dev/null; ssh -o ConnectTimeout=4 -o StrictHostKeyChecking=no ${_portHost} ${JSON.stringify(_checkInner)}`
+              : _checkInner;
+            const _res = await fetch('/api/shell/exec', {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ command: _cmd }),
+            });
+            const _data = await _res.json().catch(() => ({}));
+            const _stdout = (_data.stdout || '').trim();
+            if (_stdout) {
+              // Try to surface the process name from `users:(("name",pid=...,...))`.
+              const _procMatch = _stdout.match(/users:\(\("([^"]+)",pid=(\d+)/);
+              const _procDesc = _procMatch
+                ? `${_procMatch[1]} (PID ${_procMatch[2]})`
+                : 'another process';
+              const _hostLabel = _portHost ? _portHost : 'this host';
+              const _proceed = await window.styledConfirm(
+                `Port ${_port} on ${_hostLabel} is already in use by ${_procDesc}. Launching ${serveState.backend.toUpperCase()} now will fail with "Address already in use".\n\nStop the existing process first, OR change the --port in the command above, OR launch anyway and watch it crash.`,
+                {
+                  title: `Port ${_port} taken`,
+                  confirmText: 'Launch anyway',
+                  cancelText: 'Cancel',
+                  danger: true,
+                },
+              );
+              if (!_proceed) { _restoreLaunchBtn(); return; }
+            }
+          }
+        } catch {
+          // Probe failure — don't block. If the port check can't run we'd
+          // rather let the launch try than silently refuse.
         }
         // Save in the { _byRepo, _lastUsed } schema — no legacy flat keys at
         // the root so per-model state doesn't leak between models.
@@ -1750,7 +1875,12 @@ function _rerenderCachedModels() {
 
       // Copy button — now icon-only, so flash a green checkmark on success
       // instead of swapping to text (which would also break the width).
-      panel.querySelector('.hwfit-serve-copy').addEventListener('click', () => {
+      panel.querySelector('.hwfit-serve-copy').addEventListener('click', (e) => {
+        // Without stopPropagation the click bubbles up to the
+        // .doclib-card click handler that toggles the expand state →
+        // copying collapses the whole serve panel mid-flight.
+        e.preventDefault();
+        e.stopPropagation();
         const cmd = panel.querySelector('.hwfit-serve-cmd').value;
         _copyText(cmd).then(() => {
           const btn = panel.querySelector('.hwfit-serve-copy');
@@ -2126,3 +2256,39 @@ export function initServe(shared) {
 }
 
 export { _cachedAllModels, _filterCachedList, _rerenderCachedModels, _deleteCachedModel };
+
+// Click the "running" pill on a serve-card → switch to Cookbook → Running
+// tab and scroll the matching task into view, with a brief flash so the
+// user can find it among a long list. Tracks the click via event
+// delegation so it survives every _rerenderCachedModels() pass.
+function _openRunningTabForRepo(repo) {
+  const body = document.querySelector('#cookbook-modal .cookbook-body');
+  if (!body) return;
+  const runTab = body.querySelector('.cookbook-tab[data-backend="Running"]');
+  if (runTab) runTab.click();
+  // The Running tab needs a tick to mount/render before we can find
+  // task cards inside it.
+  setTimeout(() => {
+    const candidates = Array.from(body.querySelectorAll('.cookbook-task'));
+    const match = candidates.find(c => {
+      // task cards expose modelId or name via dataset / inner title
+      const dsRepo = c.dataset?.modelId || c.dataset?.repoId || '';
+      if (dsRepo === repo) return true;
+      const title = c.querySelector('.cookbook-task-title, .memory-item-title')?.textContent?.trim() || '';
+      return title === repo || title === (repo.split('/').pop() || '');
+    });
+    if (match) {
+      try { match.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+      match.classList.add('cookbook-task-flash');
+      setTimeout(() => match.classList.remove('cookbook-task-flash'), 1600);
+    }
+  }, 180);
+}
+document.addEventListener('click', (e) => {
+  const pill = e.target.closest && e.target.closest('.cookbook-serve-running-pill.is-clickable');
+  if (!pill) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const repo = pill.dataset.repo || '';
+  if (repo) _openRunningTabForRepo(repo);
+});

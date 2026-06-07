@@ -663,8 +663,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         try:
             # Verify ownership before listing versions
             doc = db.query(Document).filter(Document.id == doc_id).first()
-            if doc:
-                _verify_doc_owner(db, doc, user)
+            if not doc:
+                raise HTTPException(404, "Document not found")
+            _verify_doc_owner(db, doc, user)
             versions = db.query(DocumentVersion).filter(
                 DocumentVersion.document_id == doc_id
             ).order_by(DocumentVersion.version_number.desc()).all()
@@ -687,8 +688,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         try:
             # Verify ownership
             doc = db.query(Document).filter(Document.id == doc_id).first()
-            if doc:
-                _verify_doc_owner(db, doc, user)
+            if not doc:
+                raise HTTPException(404, "Document not found")
+            _verify_doc_owner(db, doc, user)
             ver = db.query(DocumentVersion).filter(
                 DocumentVersion.document_id == doc_id,
                 DocumentVersion.version_number == num,

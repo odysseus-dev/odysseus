@@ -141,6 +141,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
                     "disabled_tool_count": len(disabled_list),
                     "enabled_tool_count": max(0, total_tools - len(disabled_list)),
                     "error": status.get("error"),
+                    "auth_url": status.get("auth_url"),
                     "has_oauth": oauth_cfg is not None,
                     "needs_oauth": needs_oauth,
                 })
@@ -171,6 +172,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
             raise HTTPException(400, "command is required for stdio transport")
         if transport == "sse" and not url:
             raise HTTPException(400, "url is required for SSE transport")
+        if transport == "http" and not url:
+            raise HTTPException(400, "url is required for HTTP transport")
 
         # Parse JSON fields
         try:
@@ -262,6 +265,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
             )
 
         status = mcp_manager.get_server_status(server_id)
+        needs_auth = status.get("status") == "needs_auth"
         return {
             "id": server_id,
             "name": name,
@@ -270,6 +274,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
             "tool_count": status.get("tool_count", 0),
             "error": "OAuth authorization required" if needs_oauth else status.get("error"),
             "needs_oauth": needs_oauth,
+            "needs_auth": needs_auth,
+            "auth_url": status.get("auth_url"),
         }
 
     @router.post("/servers/{server_id}/reconnect")
@@ -302,6 +308,8 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 "status": status.get("status", "disconnected"),
                 "tool_count": status.get("tool_count", 0),
                 "error": status.get("error"),
+                "auth_url": status.get("auth_url"),
+                "needs_auth": status.get("status") == "needs_auth",
             }
         finally:
             db.close()
@@ -467,10 +475,18 @@ def setup_mcp_routes(mcp_manager: McpManager):
 
     @router.get("/oauth/callback")
     async def oauth_callback(code: str, state: str, request: Request):
-        """Handle OAuth callback from Google — exchange code for tokens."""
+        """Handle OAuth callback. Generic MCP OAuth flows resolve via the
+        pending-state registry; Google flows fall through to the legacy path."""
         require_admin(request)
-        server_id = state
-        return await _exchange_and_connect(server_id, code, request)
+        from src.mcp_oauth import resolve_pending
+        if resolve_pending(state, code):
+            return HTMLResponse(_oauth_result_page(
+                "Authorization Successful",
+                "The MCP server is connecting. You can close this window and return to Odysseus.",
+                success=True,
+            ))
+        # Legacy Google path: state is the server_id
+        return await _exchange_and_connect(state, code, request)
 
     @router.post("/oauth/exchange/{server_id}")
     async def oauth_exchange(server_id: str, request: Request, callback_url: str = Form(...)):
@@ -484,6 +500,17 @@ def setup_mcp_routes(mcp_manager: McpManager):
                 return HTMLResponse(_oauth_result_page("Error", "No authorization code found in the URL. Make sure you copied the full URL from your browser."), status_code=400)
         except Exception:
             return HTMLResponse(_oauth_result_page("Error", "Invalid URL format."), status_code=400)
+
+        # Generic MCP OAuth: if the pasted URL carries a state we are waiting on,
+        # resolve it directly (the background connect finishes the handshake).
+        state = params.get("state", [None])[0]
+        from src.mcp_oauth import resolve_pending
+        if state and resolve_pending(state, code):
+            return HTMLResponse(_oauth_result_page(
+                "Authorization Successful",
+                "The MCP server is connecting. You can close this window and return to Odysseus.",
+                success=True,
+            ))
 
         return await _exchange_and_connect(server_id, code, request)
 

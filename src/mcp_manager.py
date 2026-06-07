@@ -8,6 +8,7 @@ Each server exposes tools that are made available to the agent loop.
 import json
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,28 @@ def _format_mcp_connection_error(name: str, command: str = "", args: Optional[Li
     return raw_error
 
 
+# Caps for rendering untrusted MCP tool schemas into the agent prompt (issue #2660).
+# MCP servers are third-party/user-added, so field names and parameter counts are
+# untrusted input — bound them so an odd or hostile schema cannot distort the prompt.
+_MCP_PARAM_MAX = 12   # max params rendered per tool
+_MCP_TOKEN_MAX = 40   # max chars per rendered name / type token
+_MCP_HINT_MAX = 300   # total-length backstop for the whole hint
+
+
+def _sanitize_schema_token(value: Any, limit: int = _MCP_TOKEN_MAX) -> str:
+    """Make an untrusted JSON-Schema token safe to splice into the prompt.
+
+    Replaces control chars / newlines with a space, collapses whitespace, and
+    length-caps the result, so a weird field name or type cannot inject newlines
+    or run on. Normal short identifiers pass through unchanged.
+    """
+    text = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value))
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > limit:
+        text = text[:limit].rstrip() + "…"
+    return text
+
+
 def _format_mcp_params(input_schema: Any) -> str:
     """Render an MCP tool's JSON-Schema inputs as a compact prompt hint.
 
@@ -38,6 +61,9 @@ def _format_mcp_params(input_schema: Any) -> str:
     ` Args (JSON): {"path": string (required), "limit": integer}` — names,
     coarse types, and required-ness, kept short so it stays prompt-friendly.
     Returns "" when there are no parameters.
+
+    MCP servers are third-party, so names/types are sanitized and the parameter
+    count + total length are capped (issue #2660); normal schemas are unaffected.
     """
     if not isinstance(input_schema, dict):
         return ""
@@ -46,16 +72,22 @@ def _format_mcp_params(input_schema: Any) -> str:
         return ""
     required = set(input_schema.get("required") or [])
     parts = []
-    for pname, pinfo in props.items():
+    for pname, pinfo in list(props.items())[:_MCP_PARAM_MAX]:
         pinfo = pinfo if isinstance(pinfo, dict) else {}
         ptype = pinfo.get("type") or "any"
         if isinstance(ptype, list):
             ptype = "|".join(str(x) for x in ptype)
-        tag = f'"{pname}": {ptype}'
+        tag = f'"{_sanitize_schema_token(pname)}": {_sanitize_schema_token(ptype)}'
         if pname in required:
             tag += " (required)"
         parts.append(tag)
-    return " Args (JSON): {" + ", ".join(parts) + "}"
+    extra = len(props) - len(parts)
+    if extra > 0:
+        parts.append(f"…+{extra} more")
+    hint = " Args (JSON): {" + ", ".join(parts) + "}"
+    if len(hint) > _MCP_HINT_MAX:
+        hint = hint[:_MCP_HINT_MAX - 1].rstrip() + "…"
+    return hint
 
 
 class McpManager:
@@ -70,7 +102,9 @@ class McpManager:
         self._sessions: Dict[str, Any] = {}
         # server_id -> exit stack (for cleanup)
         self._stacks: Dict[str, Any] = {}
-        # Tracking updates to tools/connections for RAG indexing
+        # server_id -> background connect task (HTTP transport / OAuth)
+        self._connect_tasks: Dict[str, Any] = {}
+        # Tracking updates to tools/connections for RAG indexing / prompt cache
         self._generation = 0
 
     async def connect_server(
@@ -83,12 +117,14 @@ class McpManager:
         env: Optional[Dict[str, str]] = None,
         url: Optional[str] = None,
     ) -> bool:
-        """Connect to an MCP server via stdio or SSE transport."""
+        """Connect to an MCP server via stdio, SSE, or Streamable HTTP transport."""
         try:
             if transport == "stdio":
                 res = await self._connect_stdio(server_id, name, command, args or [], env or {})
             elif transport == "sse":
                 res = await self._connect_sse(server_id, name, url)
+            elif transport == "http":
+                res = await self._start_http_connect(server_id, name, url)
             else:
                 logger.error(f"Unknown MCP transport: {transport}")
                 res = False
@@ -211,8 +247,101 @@ class McpManager:
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
 
+    async def _start_http_connect(self, server_id: str, name: str, url: str, wait: float = 8.0) -> bool:
+        """Begin a Streamable HTTP connect in the background. Returns within
+        `wait` seconds: True if it connected (cached-token path), otherwise the
+        flow is awaiting browser authorization and status becomes 'needs_auth'."""
+        import asyncio
+        self._connections[server_id] = {"status": "connecting", "name": name, "transport": "http"}
+        task = asyncio.create_task(self._connect_http(server_id, name, url))
+        self._connect_tasks[server_id] = task
+        done, _ = await asyncio.wait({task}, timeout=wait)
+        if task in done:
+            try:
+                return task.result()
+            except Exception as e:
+                self._connections[server_id] = {"status": "error", "error": str(e), "name": name}
+                return False
+        # Still running → either awaiting authorization, or discovery/DCR is
+        # still in flight. If _on_redirect already published needs_auth+auth_url,
+        # leave it; otherwise mark needs_auth (auth_url filled in once it fires).
+        from src.mcp_oauth import pop_auth_url
+        cur = self._connections.get(server_id, {})
+        if cur.get("status") != "needs_auth":
+            self._connections[server_id] = {
+                "status": "needs_auth", "name": name, "transport": "http",
+                "auth_url": pop_auth_url(server_id),
+            }
+        return False
+
+    async def _connect_http(self, server_id: str, name: str, url: str) -> bool:
+        """Connect to a Streamable HTTP MCP server (with automatic OAuth)."""
+        try:
+            from mcp import ClientSession
+            from mcp.client.streamable_http import streamablehttp_client
+            from contextlib import AsyncExitStack
+            from src.mcp_oauth import build_provider, clear_auth_url
+
+            def _on_redirect(auth_url):
+                # Publish needs_auth the moment the URL is known, independent of
+                # how long discovery/DCR took (may exceed the bounded start wait).
+                self._connections[server_id] = {
+                    "status": "needs_auth", "name": name, "transport": "http",
+                    "auth_url": auth_url,
+                }
+
+            provider = build_provider(server_id, url, on_redirect=_on_redirect)
+            stack = AsyncExitStack()
+            transport = await stack.enter_async_context(streamablehttp_client(url, auth=provider))
+            read_stream, write_stream, _get_session_id = transport
+            session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
+            await session.initialize()
+
+            tools_result = await session.list_tools()
+            tools = []
+            for tool in tools_result.tools:
+                tools.append({
+                    "name": tool.name,
+                    "description": tool.description or "",
+                    "input_schema": tool.inputSchema if hasattr(tool, "inputSchema") else {},
+                })
+
+            self._sessions[server_id] = session
+            self._stacks[server_id] = stack
+            self._tools[server_id] = tools
+            self._connections[server_id] = {
+                "status": "connected", "name": name, "transport": "http",
+                "tool_count": len(tools),
+            }
+            clear_auth_url(server_id)
+            # Tools changed (this can complete after connect_server already
+            # returned, via the background OAuth flow), so bump the generation
+            # to invalidate the tool-prompt cache.
+            self._generation += 1
+            logger.info(f"MCP server connected: {name} ({server_id}) - {len(tools)} tools via http")
+            return True
+        except ImportError:
+            logger.warning("MCP package not installed. Install with: pip install mcp")
+            self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
+            return False
+        except Exception as e:
+            logger.error(f"Failed to connect HTTP MCP server {name} ({server_id}): {e}")
+            self._connections[server_id] = {"status": "error", "error": str(e), "name": name}
+            return False
+
     async def disconnect_server(self, server_id: str):
         """Disconnect from an MCP server."""
+        # Cancel any in-flight HTTP/OAuth background connect so it stops
+        # publishing status for a server that may be getting deleted.
+        task = self._connect_tasks.pop(server_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+        try:
+            from src.mcp_oauth import clear_auth_url
+            clear_auth_url(server_id)
+        except Exception:
+            pass
+
         stack = self._stacks.pop(server_id, None)
         if stack:
             try:

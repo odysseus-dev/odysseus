@@ -7,7 +7,7 @@ Provides token estimation for context usage tracking.
 
 import logging
 import sys
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from urllib.parse import urlparse
 
@@ -208,27 +208,32 @@ KNOWN_CONTEXT_WINDOWS = {
 # ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
-_context_cache: Dict[str, int] = {}
+_context_cache: Dict[Tuple[str, str], int] = {}
 
 
 def get_context_length(endpoint_url: str, model: str) -> int:
     """Get the context window size for a model.
 
     Queries /v1/models on the endpoint and looks for context_length
-    or context_window fields. Caches result per model ID.
+    or context_window fields. Caches result per (endpoint, model).
     Falls back to DEFAULT_CONTEXT if unavailable.
     """
     configured_kind = _configured_endpoint_kind(endpoint_url)
     is_local = _is_local_endpoint(endpoint_url)
-    if not is_local and model in _context_cache:
-        return _context_cache[model]
+    # Key on (endpoint_url, model): the same model id can be served by two
+    # different remote endpoints with different real context windows (e.g. a
+    # capped proxy vs. the full provider), so caching by model id alone would
+    # serve one endpoint's window for the other (issue #2603).
+    cache_key = (endpoint_url, model)
+    if not is_local and cache_key in _context_cache:
+        return _context_cache[cache_key]
 
     ctx = _query_context_length(endpoint_url, model)
     # Only cache non-default values to allow retry on next request.
     # Local endpoints can restart with a different --max-model-len while keeping
     # the same model id, so always re-query them instead of serving stale cache.
     if not is_local and (ctx != DEFAULT_CONTEXT or configured_kind in ("api", "proxy")):
-        _context_cache[model] = ctx
+        _context_cache[cache_key] = ctx
     logger.info(f"Context length for {model}: {ctx}")
     return ctx
 

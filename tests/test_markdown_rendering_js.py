@@ -27,6 +27,15 @@ def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)"):
         globalThis.document = {
           readyState: 'loading',
           addEventListener() {},
+          createElement(tag) {
+            if (tag !== 'template') throw new Error(`unsupported element: ${tag}`);
+            return {
+              _html: '',
+              content: { querySelectorAll() { return []; } },
+              set innerHTML(value) { this._html = value; },
+              get innerHTML() { return this._html; },
+            };
+          },
         };
         globalThis.MutationObserver = class { observe() {} };
 
@@ -159,3 +168,20 @@ def test_extract_thinking_blocks_handles_thought_tag(node_available):
 
     assert result["thinkingBlocks"] == ["internal reasoning"]
     assert result["content"] == "Final answer."
+
+
+def test_dotted_python_import_paths_are_not_autolinked(node_available):
+    html = _run_markdown_case(
+        "from imblearn.combine import SMOTETomek\n"
+        "from sklearn.metrics import f1_score\n"
+        "from sklearn.compose import ColumnTransformer\n\n"
+        "See example.com/docs for normal domain autolinking."
+    )
+
+    assert "___ALLOWED_HTML_" not in html
+    assert "imblearn.combine" in html
+    assert "sklearn.metrics" in html
+    assert "sklearn.compose" in html
+    assert 'href="https://imblearn.com' not in html
+    assert 'href="https://sklearn.me' not in html
+    assert 'href="https://example.com/docs"' in html

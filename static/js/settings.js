@@ -4448,6 +4448,68 @@ async function initUnifiedIntegrations() {
 
   // ── MCP form — full management view ──
   async function showMcpForm(editId) {
+    // Toggle an in-flight loading state on a button (disabled + dimmed + label).
+    function _setBtnLoading(btn, loading, label) {
+      if (!btn) return;
+      btn.disabled = loading;
+      btn.style.opacity = loading ? '0.6' : '';
+      btn.style.cursor = loading ? 'progress' : '';
+      if (label != null) btn.textContent = label;
+    }
+    function _showMcpPasteback(id) {
+      const msg = el('uf-mcp-msg'); if (!msg) return;
+      if (el('uf-mcp-pasteback')) return;  // already shown
+      msg.innerHTML =
+        'Authorize in the opened tab. If the redirect fails (remote access), paste the resulting URL here: ' +
+        '<input id="uf-mcp-pasteback" class="settings-input" placeholder="http://localhost:7000/api/mcp/oauth/callback?code=..." style="margin-top:4px">' +
+        '<button class="admin-btn-sm" id="uf-mcp-paste-go" style="margin-top:4px">Submit</button>';
+      const pasteGo = el('uf-mcp-paste-go');
+      if (pasteGo) pasteGo.addEventListener('click', async () => {
+        const cb = el('uf-mcp-pasteback').value.trim();
+        if (!cb) return;
+        const pf = new FormData(); pf.append('callback_url', cb);
+        _setBtnLoading(pasteGo, true, 'Submitting…');
+        try {
+          await fetch(`/api/mcp/oauth/exchange/${id}`, { method: 'POST', credentials: 'same-origin', body: pf });
+        } finally {
+          _setBtnLoading(pasteGo, false, 'Submit');
+        }
+      });
+    }
+
+    // Drives the OAuth flow: waits for the auth_url (discovery+DCR may lag),
+    // opens it once, then resolves on connected/error.
+    async function _handleMcpAuth(id, initialAuthUrl, tries = 90) {
+      let opened = false;
+      const openAuth = (u) => { if (!opened && u) { opened = true; window.open(u, '_blank', 'noopener'); _showMcpPasteback(id); } };
+      openAuth(initialAuthUrl);
+      const msg = el('uf-mcp-msg');
+      let fails = 0;
+      for (let i = 0; i < tries; i++) {
+        await new Promise(res => setTimeout(res, 2000));
+        try {
+          const r = await fetch('/api/mcp/servers', { credentials: 'same-origin' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          const list = await r.json();
+          fails = 0;
+          const s = Array.isArray(list) ? list.find(x => x.id === id) : null;
+          if (!s) continue;
+          if (s.auth_url) openAuth(s.auth_url);
+          if (s.status === 'connected') {
+            if (msg) msg.textContent = `Connected (${s.tool_count || 0} tools)`;
+            await renderList(); return;
+          }
+          if (s.status === 'error') {
+            if (msg) msg.textContent = `Failed: ${s.error || 'unknown'}`; return;
+          }
+        } catch (e) {
+          // Tolerate a single blip, but surface persistent failures instead of
+          // silently polling until timeout.
+          if (++fails >= 5 && msg) msg.textContent = `Status check failing (${e.message || 'network error'}) — still retrying…`;
+        }
+      }
+      if (msg) msg.textContent = 'Authorization timed out. Reconnect from the server list to retry.';
+    }
     if (editId && editId !== 'new') {
       // Show management view for existing server
       formEl.innerHTML = '<div class="admin-card" style="margin-top:8px"><span style="opacity:0.5;font-size:11px">Loading...</span></div>';
@@ -4525,7 +4587,7 @@ async function initUnifiedIntegrations() {
           <h2 style="font-size:13px">Add MCP Server</h2>
           <div class="settings-col">
             <div class="settings-row"><label class="settings-label">Name</label><input id="uf-mcp-name" class="settings-input" placeholder="Server name"></div>
-            <div class="settings-row"><label class="settings-label">Transport</label><select id="uf-mcp-transport" class="settings-input"><option value="stdio">stdio</option><option value="sse">SSE</option></select></div>
+            <div class="settings-row"><label class="settings-label">Transport</label><select id="uf-mcp-transport" class="settings-input"><option value="stdio">stdio</option><option value="sse">SSE</option><option value="http">Streamable HTTP</option></select></div>
             <div id="uf-mcp-stdio-fields" style="display:flex;flex-direction:column;gap:6px;">
               <div class="settings-row"><label class="settings-label">Command</label><input id="uf-mcp-cmd" class="settings-input" placeholder="npx"></div>
               <div class="settings-row"><label class="settings-label">Args</label><input id="uf-mcp-args" class="settings-input" placeholder='["-y", "@modelcontextprotocol/server-filesystem"]'></div>
@@ -4538,9 +4600,12 @@ async function initUnifiedIntegrations() {
           </div>
         </div>`;
       el('uf-mcp-transport').addEventListener('change', () => {
-        const sse = el('uf-mcp-transport').value === 'sse';
-        el('uf-mcp-stdio-fields').style.display = sse ? 'none' : 'flex';
-        el('uf-mcp-sse-fields').style.display = sse ? 'flex' : 'none';
+        const v = el('uf-mcp-transport').value;
+        const isUrl = (v === 'sse' || v === 'http');
+        el('uf-mcp-stdio-fields').style.display = isUrl ? 'none' : 'flex';
+        el('uf-mcp-sse-fields').style.display = isUrl ? 'flex' : 'none';
+        const urlInput = el('uf-mcp-url');
+        if (urlInput) urlInput.placeholder = (v === 'http') ? 'https://mcp.example.com/mcp' : 'http://localhost:3001/sse';
       });
       el('uf-mcp-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
       el('uf-mcp-save').addEventListener('click', async () => {
@@ -4558,14 +4623,25 @@ async function initUnifiedIntegrations() {
         } else {
           fd.append('url', el('uf-mcp-url').value);
         }
+        const saveBtn = el('uf-mcp-save'), cancelBtn = el('uf-mcp-cancel');
+        const _origLabel = saveBtn.textContent;
+        _setBtnLoading(saveBtn, true, 'Saving…'); if (cancelBtn) cancelBtn.disabled = true;
         try {
           const r = await fetch('/api/mcp/servers', { method: 'POST', credentials: 'same-origin', body: fd });
-          if (r.ok) {
+          const data = await r.json().catch(() => ({}));
+          if (r.ok && data.needs_auth) {
+            el('uf-mcp-msg').textContent = 'Preparing authorization…';
+            _handleMcpAuth(data.id, data.auth_url);
+          } else if (r.ok && (data.connected || data.status === 'connected')) {
+            el('uf-mcp-msg').textContent = `Connected (${data.tool_count || 0} tools)`;
+            formEl.style.display = 'none'; await renderList();
+          } else if (r.ok) {
             el('uf-mcp-msg').textContent = 'Saved'; formEl.style.display = 'none'; await renderList();
           } else {
             el('uf-mcp-msg').textContent = `Failed (${r.status})`;
           }
         } catch (_) { el('uf-mcp-msg').textContent = 'Failed'; }
+        finally { _setBtnLoading(saveBtn, false, _origLabel); if (cancelBtn) cancelBtn.disabled = false; }
       });
     }
   }
@@ -4590,6 +4666,8 @@ async function initUnifiedIntegrations() {
       { key: 'calendar:write', label: 'Calendar write', detail: 'Create and update calendar events' },
       { key: 'memory:read', label: 'Memory', detail: 'Read memory when enabled' },
       { key: 'memory:write', label: 'Memory write', detail: 'Write memory when enabled' },
+      { key: 'cookbook:read', label: 'Cookbook', detail: 'List cookbook tasks + tail their tmux output (debug a model serve from outside the UI)' },
+      { key: 'cookbook:launch', label: 'Cookbook launch', detail: 'Launch and stop cookbook serve tasks. Powerful: runs SSH commands on your configured servers, bounded by the same allowlist the UI uses (vllm/python3/sglang/llama-server/...)' },
     ];
     // Strict name-prefix match keeps Codex and Claude tokens in their own forms.
     const agentTokens = (Array.isArray(tokens) ? tokens : []).filter(tok =>
@@ -4602,6 +4680,7 @@ async function initUnifiedIntegrations() {
       email: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2 6 12 13 22 6"/></svg>',
       calendar: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
       memory: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2a2.5 2.5 0 0 0-2.5 2.5 2.5 2.5 0 0 0-2.5 2.5A2.5 2.5 0 0 0 2 9.5v3A2.5 2.5 0 0 0 4.5 15a2.5 2.5 0 0 0 2.5 2.5A2.5 2.5 0 0 0 9.5 20H10V2z"/><path d="M14.5 2a2.5 2.5 0 0 1 2.5 2.5 2.5 2.5 0 0 1 2.5 2.5A2.5 2.5 0 0 1 22 9.5v3A2.5 2.5 0 0 1 19.5 15a2.5 2.5 0 0 1-2.5 2.5A2.5 2.5 0 0 1 14.5 20H14V2z"/></svg>',
+      cookbook: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
     };
     const _scopeNiceLabel = (label) => label.replace(/\s+(write|drafts?|send)$/i, '');
     const _scopeAction = (key) => (key.split(':')[1] || '').toLowerCase();
