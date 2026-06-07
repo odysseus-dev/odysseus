@@ -36088,6 +36088,104 @@ body.theme-frosted .modal {
   color: var(--accent, var(--red));
 }
 
+/* ── Metrics dashboard (/metrics command) ─────────────────────────── */
+.metrics-dashboard {
+  display: grid;
+  gap: 14px;
+  padding: 2px 0;
+}
+.metrics-dashboard-title {
+  font-size: 1em;
+  font-weight: 600;
+  color: var(--fg);
+  letter-spacing: 0.2px;
+}
+.metrics-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+.metrics-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 8px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 5%, var(--bg));
+  border: 1px solid var(--border);
+  text-align: center;
+}
+.metrics-card-value {
+  font-size: 1.4em;
+  font-weight: 600;
+  font-family: 'Fira Code', ui-monospace, monospace;
+  color: var(--fg);
+  line-height: 1.2;
+}
+.metrics-card-label {
+  font-size: 0.75em;
+  color: var(--color-muted-alt, #6b7280);
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+}
+.metrics-section {
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 4%, var(--bg));
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+}
+.metrics-section-header {
+  font-size: 0.85em;
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 8px;
+}
+.metrics-bar-chart {
+  display: grid;
+  gap: 6px;
+}
+.metrics-bar-row {
+  display: grid;
+  grid-template-columns: minmax(80px, 1.2fr) minmax(60px, 2fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+.metrics-bar-label {
+  font-size: 0.8em;
+  font-family: 'Fira Code', ui-monospace, monospace;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.metrics-bar-track {
+  height: 18px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  overflow: hidden;
+}
+.metrics-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent, #61afef);
+  transition: width 0.3s ease;
+  min-width: 3px;
+}
+.metrics-bar-count {
+  font-size: 0.8em;
+  font-weight: 600;
+  font-family: 'Fira Code', ui-monospace, monospace;
+  color: var(--fg);
+  text-align: right;
+  min-width: 28px;
+}
+.metrics-empty {
+  font-size: 0.82em;
+  color: var(--color-muted-alt, #6b7280);
+  padding: 6px 0;
+}
+
 /* ══ iOS focus-zoom fix — touch devices only; desktop sizes untouched ══
    16px is the threshold below which iOS Safari auto-zooms on focus.
    Selects and date/time inputs are excluded on purpose — they open native

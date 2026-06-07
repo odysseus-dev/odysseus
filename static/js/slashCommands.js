@@ -1799,6 +1799,85 @@ Uploads:   ${d.uploads || '?'}</pre>`);
   return true;
 }
 
+// ── Metrics dashboard ──
+
+async function _cmdMetrics(args, ctx) {
+  const res = await fetch(`${API_BASE}/api/metrics`, { credentials: 'same-origin' });
+  if (!res.ok) { slashReply('Failed to fetch metrics'); return true; }
+  const d = await res.json();
+  if (d.error) { slashReply(`Error: ${ctx.esc(d.error)}`); return true; }
+
+  // ── Summary row ──
+  const summaryCard = (label, value) =>
+    `<div class="metrics-card">` +
+      `<div class="metrics-card-value">${value}</div>` +
+      `<div class="metrics-card-label">${label}</div>` +
+    `</div>`;
+
+  const summary =
+    `<div class="metrics-summary">` +
+      summaryCard('Active Sessions', d.active_sessions ?? 0) +
+      summaryCard('Total Messages', d.chat_messages_total ?? 0) +
+      summaryCard('DB Operations', d.database_operations_total ?? 0) +
+    `</div>`;
+
+  // ── Messages by model ──
+  let modelRows = '';
+  const models = d.chat_messages_by_model || [];
+  if (models.length) {
+    const maxCount = Math.max(...models.map(m => m.count), 1);
+    modelRows = models.map(m => {
+      const pct = Math.round((m.count / maxCount) * 100);
+      return `<div class="metrics-bar-row">` +
+        `<span class="metrics-bar-label">${ctx.esc(m.model)}</span>` +
+        `<div class="metrics-bar-track"><div class="metrics-bar-fill" style="width:${pct}%"></div></div>` +
+        `<span class="metrics-bar-count">${m.count}</span>` +
+      `</div>`;
+    }).join('');
+  } else {
+    modelRows = '<div class="metrics-empty">No message data available</div>';
+  }
+
+  const modelSection =
+    `<div class="metrics-section">` +
+      `<div class="metrics-section-header">Messages by Model</div>` +
+      `<div class="metrics-bar-chart">${modelRows}</div>` +
+    `</div>`;
+
+  // ── Database operations ──
+  const ops = d.database_operations || [];
+  let opsRows = '';
+  if (ops.length) {
+    const maxOps = Math.max(...ops.map(o => o.count), 1);
+    opsRows = ops.map(o => {
+      const pct = Math.round((o.count / maxOps) * 100);
+      return `<div class="metrics-bar-row">` +
+        `<span class="metrics-bar-label">${ctx.esc(o.operation)}</span>` +
+        `<div class="metrics-bar-track"><div class="metrics-bar-fill" style="width:${pct}%"></div></div>` +
+        `<span class="metrics-bar-count">${o.count}</span>` +
+      `</div>`;
+    }).join('');
+  }
+
+  const opsSection =
+    `<div class="metrics-section">` +
+      `<div class="metrics-section-header">Database Operations</div>` +
+      `<div class="metrics-bar-chart">${opsRows}</div>` +
+    `</div>`;
+
+  // Assemble full dashboard
+  const dashboard =
+    `<div class="metrics-dashboard">` +
+      `<div class="metrics-dashboard-title">System Metrics</div>` +
+      summary +
+      modelSection +
+      opsSection +
+    `</div>`;
+
+  slashReply(dashboard);
+  return true;
+}
+
 // ── Context compaction ──
 
 async function _cmdCompact(args, ctx) {
@@ -5790,6 +5869,13 @@ const COMMANDS = {
     help: 'Search all conversations',
     handler: _cmdSearch,
     usage: '/find query'
+  },
+  metrics: {
+    alias: ['telemetry', 'dash'],
+    category: 'Utility',
+    help: 'System metrics dashboard',
+    handler: _cmdMetrics,
+    usage: '/metrics'
   },
   stats: {
     alias: ['df'],

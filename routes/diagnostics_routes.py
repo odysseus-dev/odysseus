@@ -1,4 +1,4 @@
-"""Diagnostics routes — /api/db/stats, /api/rag/stats, /api/test/youtube, /api/test-research."""
+"""Diagnostics routes — /api/db/stats, /api/rag/stats, /api/metrics, /api/test/youtube, /api/test-research."""
 
 import logging
 from typing import Dict, Any
@@ -18,6 +18,12 @@ def setup_diagnostics_routes(
     research_handler,
 ) -> APIRouter:
     router = APIRouter(tags=["diagnostics"])
+
+    @router.get("/api/metrics")
+    async def get_metrics(request: Request) -> Dict[str, Any]:
+        """Return structured telemetry metrics for the /metrics slash command."""
+        from core.telemetry import compile_metrics
+        return compile_metrics()
 
     @router.get("/api/db/stats")
     async def get_database_stats(request: Request) -> Dict[str, Any]:
