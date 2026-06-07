@@ -420,6 +420,8 @@ def _detect_provider(url: str) -> str:
         return "opencode-zen"
     if _host_match(url, "openrouter.ai"):
         return "openrouter"
+    if _host_match(url, "perplexity.ai"):
+        return "perplexity"
     if _host_match(url, "groq.com"):
         return "groq"
     from src.copilot import is_copilot_base
@@ -457,6 +459,7 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "openrouter.ai"): return "OpenRouter"
     if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
     if _host_match(url, "opencode.ai/zen"): return "OpenCode Zen"
+    if _host_match(url, "perplexity.ai"): return "Perplexity"
     if _host_match(url, "groq.com"): return "Groq"
     from src.copilot import is_copilot_base
     if is_copilot_base(url): return "GitHub Copilot"
@@ -1178,6 +1181,13 @@ async def llm_call_async(
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+    elif provider == "perplexity":
+        from src.openai_responses import build_responses_payload
+        target_url = url
+        h = _provider_headers(provider, headers)
+        payload = build_responses_payload(
+            model, messages_copy, temperature, max_tokens, stream=False, max_steps=1,
+        )
     else:
         target_url = url
         h = _provider_headers(provider, headers)
@@ -1226,6 +1236,9 @@ async def llm_call_async(
                     response = _parse_anthropic_response(data)
                 elif provider == "ollama":
                     response = _parse_ollama_response(data)
+                elif provider == "perplexity":
+                    from src.openai_responses import parse_responses_output
+                    response = parse_responses_output(data)
                 else:
                     msg = data["choices"][0]["message"]
                     response = msg.get("content") or msg.get("reasoning_content") or ""
@@ -1289,6 +1302,14 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
             stream=True, tools=tools, num_ctx=get_context_length(url, model),
+        )
+    elif provider == "perplexity":
+        from src.openai_responses import build_responses_payload
+        target_url = url
+        h = _provider_headers(provider, headers)
+        payload = build_responses_payload(
+            model, messages_copy, temperature, max_tokens,
+            stream=True, tools=tools, max_steps=1,
         )
     else:
         target_url = url
@@ -1487,6 +1508,57 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
         except Exception as e:
             logger.error(f"Anthropic stream error: {e}")
+            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+        return
+
+    # ── Perplexity / OpenAI Responses API streaming ──
+    if provider == "perplexity":
+        from src.openai_responses import ResponsesStreamTranslator
+        translator = ResponsesStreamTranslator()
+        try:
+            client = _get_http_client()
+            async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
+                _clear_host_dead(target_url)
+                if r.status_code != 200:
+                    raw = (await r.aread()).decode(errors="replace")
+                    friendly = _format_upstream_error(r.status_code, raw, target_url)
+                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    return
+                async for line in r.aiter_lines():
+                    # JSON payload carries its own `type`; the `event:` line is redundant.
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data:
+                        continue
+                    if data == "[DONE]":
+                        for chunk in translator.flush():
+                            yield chunk
+                        return
+                    if not data.startswith("{"):
+                        continue
+                    try:
+                        ev = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    for chunk in translator.feed(ev):
+                        yield chunk
+                        if chunk == "data: [DONE]\n\n" or chunk.startswith("event: error"):
+                            return
+                # Stream closed with no terminal event.
+                for chunk in translator.flush():
+                    yield chunk
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            _cooled = _mark_host_dead(target_url)
+            _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
+            logger.warning(f"Perplexity stream connect to {target_url} failed: {e}{_tail}")
+            yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
+        except httpx.ReadTimeout:
+            yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
+        except httpx.NetworkError:
+            yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
+        except Exception as e:
+            logger.error(f"Perplexity stream error: {e}")
             yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
         return
 

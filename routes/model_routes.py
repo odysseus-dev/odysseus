@@ -284,6 +284,7 @@ _HOST_TO_CURATED = (
     ("googleapis.com", "google"),
     ("x.ai", "xai"),
     ("openrouter.ai", "openrouter"),
+    ("perplexity.ai", "openrouter"),  # multi-model gateway: show full catalog
     ("ollama.com", "ollama"),
     ("opencode.ai/zen/go", "opencode-go"),
     ("opencode.ai/zen", "opencode-zen"),

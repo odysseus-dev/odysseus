@@ -171,6 +171,8 @@ def build_chat_url(base: str) -> str:
         return _anthropic_api_root(base) + "/v1/messages"
     if provider == "ollama":
         return _ollama_api_root(base) + "/chat"
+    if provider == "perplexity":
+        return base + "/responses"
     return base + "/chat/completions"
 
 

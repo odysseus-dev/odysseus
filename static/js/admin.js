@@ -891,7 +891,7 @@ function initEndpointForm() {
       }
       const epType = el('adm-epType');
       if (epType) fd.append('model_type', epType.value);
-      if (provider.value && /openrouter\.ai|ollama\.com/i.test(provider.value)) fd.append('require_models', 'true');
+      if (provider.value && /openrouter\.ai|ollama\.com|perplexity\.ai/i.test(provider.value)) fd.append('require_models', 'true');
       else fd.append('skip_probe', 'false');
       const res = await fetch('/api/model-endpoints', { method: 'POST', body: fd, credentials: 'same-origin' });
       const d = await res.json();

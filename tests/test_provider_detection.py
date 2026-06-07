@@ -48,6 +48,9 @@ class TestDetectProviderRealHosts:
     def test_openrouter(self):
         assert llm_core._detect_provider("https://openrouter.ai/api/v1") == "openrouter"
 
+    def test_perplexity(self):
+        assert llm_core._detect_provider("https://api.perplexity.ai/v1") == "perplexity"
+
     def test_groq_openai_compat_path(self):
         # Groq's base carries an /openai/v1 path; detection must still see the host.
         assert llm_core._detect_provider("https://api.groq.com/openai/v1") == "groq"
@@ -70,6 +73,9 @@ class TestDetectProviderRejectsSubstringFalsePositives:
 
     def test_lookalike_host(self):
         assert llm_core._detect_provider("https://anthropic.com.example/v1") == "openai"
+
+    def test_perplexity_lookalike_host(self):
+        assert llm_core._detect_provider("https://perplexity.ai.evil.com/v1") == "openai"
 
     def test_none_safe(self):
         assert llm_core._detect_provider(None) == "openai"

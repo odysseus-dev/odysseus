@@ -47,6 +47,10 @@ PROVIDER_CASES = [
     ("openrouter", "https://openrouter.ai/api/v1",
      "https://openrouter.ai/api/v1/chat/completions",
      "https://openrouter.ai/api/v1/models"),
+    # Perplexity Agent API = OpenAI Responses API: chat → /responses, list → /models.
+    ("perplexity", "https://api.perplexity.ai/v1",
+     "https://api.perplexity.ai/v1/responses",
+     "https://api.perplexity.ai/v1/models"),
     ("groq", "https://api.groq.com/openai/v1",
      "https://api.groq.com/openai/v1/chat/completions",
      "https://api.groq.com/openai/v1/models"),
@@ -113,6 +117,8 @@ def test_headers_anthropic_without_key_still_sends_version():
     "https://api.deepseek.com",
     "https://api.groq.com/openai/v1",
     "https://generativelanguage.googleapis.com/v1beta/openai",
+    # Perplexity is plain Bearer — no attribution headers.
+    "https://api.perplexity.ai/v1",
 ])
 def test_headers_openai_style_use_bearer(base):
     h = er.build_headers("secret", base)
