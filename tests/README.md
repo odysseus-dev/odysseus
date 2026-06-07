@@ -4,9 +4,14 @@
 
 This file documents the shared test helpers and the review expectations that go
 with them. The suite is being refactored incrementally, so this is a working
-reference for that effort — not a claim that the suite is already fully
+reference for that effort - not a claim that the suite is already fully
 organized. Read it before adding a new helper or before reviewing a PR that
 touches `tests/helpers/`.
+
+For the broader rules - test taxonomy, determinism/isolation rules, the
+behavioral-vs-source-text policy, and helper/factory extraction rules - see
+[`TESTING_STANDARD.md`](./TESTING_STANDARD.md). This file is the concrete helper
+reference; that file is the standard the refactor works toward.
 
 ## Core principles
 
@@ -30,7 +35,7 @@ Use when a test needs to import a script under `scripts/` without repeating
 `SourceFileLoader` / `importlib.util` boilerplate.
 
 - Intended for script/CLI tests that load a single file from `scripts/`.
-- Not for arbitrary package imports — use a normal `import` for those.
+- Not for arbitrary package imports - use a normal `import` for those.
 - When migrating an existing test to it, keep the existing stubs and assertions
   unchanged. Any `sys.modules` stubs the script needs at import time must still
   be injected (e.g. via `monkeypatch`) before calling `load_script`.
@@ -96,8 +101,8 @@ helpers:
 
 Run validation locally before opening or approving a PR. Practical checks:
 
-- `git diff --check` — catch whitespace and conflict-marker errors.
-- `python3 -m py_compile <changed files>` — confirm changed files compile.
+- `git diff --check` - catch whitespace and conflict-marker errors.
+- `python3 -m py_compile <changed files>` - confirm changed files compile.
 - Focused `pytest` on the changed test files.
 - `pytest` on neighboring or order-sensitive test groups that share import
   state with the changed files.
@@ -108,7 +113,7 @@ Run validation locally before opening or approving a PR. Practical checks:
 
 ## Current roadmap
 
-1. Import-state cleanup — complete.
+1. Import-state cleanup - complete.
 2. Document helper conventions (this file).
 3. Audit fake DB / `SessionLocal` / route setup duplication.
 4. Add tiny helpers only when the repeated semantics are clear.
