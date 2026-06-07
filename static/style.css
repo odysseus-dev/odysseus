@@ -36141,3 +36141,124 @@ body.theme-frosted .modal {
   0%   { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
   100% { box-shadow: 0 0 0 2px transparent; }
 }
+
+
+/* ── Document Library Folders ── */
+
+.doclib-folder-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 0 2px;
+  min-height: 30px;
+  flex-wrap: wrap;
+}
+
+.doclib-folder-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.doclib-folder-crumb {
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  opacity: 0.72;
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doclib-folder-crumb:hover,
+.doclib-folder-crumb.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+.doclib-folder-sep {
+  opacity: 0.35;
+  font-size: 11px;
+}
+
+.doclib-folder-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.doclib-folder-card {
+  cursor: pointer;
+  min-height: 72px;
+  align-items: center;
+  gap: 10px;
+}
+
+.doclib-folder-card:hover {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 45%, var(--border));
+}
+
+.doclib-folder-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  color: var(--accent, var(--red));
+  flex-shrink: 0;
+}
+
+.doclib-folder-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.doclib-folder-body {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .doclib-folder-nav {
+    align-items: stretch;
+  }
+  .doclib-folder-breadcrumbs {
+    width: 100%;
+    flex-basis: 100%;
+  }
+  .doclib-folder-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .doclib-folder-crumb {
+    max-width: 110px;
+  }
+}
+
+
+.doclib-dragging {
+  opacity: 0.48;
+}
+
+.doclib-drag-over {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 65%, var(--border)) !important;
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent) !important;
+}
+
+.doclib-folder-crumb.doclib-drag-over {
+  outline: 1px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+  outline-offset: 1px;
+}

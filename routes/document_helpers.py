@@ -24,6 +24,8 @@ class DocumentCreate(BaseModel):
     title: str = "Untitled"
     language: Optional[str] = None
     content: str = ""
+    folder_path: Optional[str] = None
+    source_relative_path: Optional[str] = None
 
 class DocumentUpdate(BaseModel):
     content: str
@@ -33,9 +35,37 @@ class DocumentPatch(BaseModel):
     title: Optional[str] = None
     language: Optional[str] = None
     session_id: Optional[str] = None  # link/unlink document to a session
+    folder_path: Optional[str] = None
 
 
 # ---- Helpers ----
+
+def _normalize_folder_path(path: Optional[str]) -> Optional[str]:
+    """Normalize a user-visible virtual folder path."""
+    if path is None:
+        return None
+    s = str(path).replace("\\", "/").strip().strip("/")
+    if not s:
+        return None
+    parts = []
+    for part in s.split("/"):
+        part = part.strip()
+        if not part or part in (".", ".."):
+            continue
+        parts.append(part[:120])
+    out = "/".join(parts)
+    return out[:500] if out else None
+
+
+def _split_folder_title(title: str):
+    """Return (folder_path, display_title) for legacy path-shaped titles."""
+    raw = (title or "").replace("\\", "/").strip("/")
+    if "/" not in raw:
+        return None, title or "Untitled"
+    folder, name = raw.rsplit("/", 1)
+    return _normalize_folder_path(folder), (name or "Untitled")
+
+
 
 def _doc_to_dict(doc: Document) -> Dict[str, Any]:
     return {
@@ -43,6 +73,9 @@ def _doc_to_dict(doc: Document) -> Dict[str, Any]:
         "session_id": doc.session_id,
         "title": doc.title,
         "language": doc.language,
+        "folder_path": getattr(doc, "folder_path", None),
+        "source_relative_path": getattr(doc, "source_relative_path", None),
+        "display_title": doc.title,
         "current_content": doc.current_content,
         "version_count": doc.version_count,
         "is_active": doc.is_active,

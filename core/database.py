@@ -187,6 +187,22 @@ class ChatMessage(Base):
         Index('ix_messages_session_time', 'session_id', 'timestamp'),  # Composite for efficient message retrieval
     )
 
+class DocumentFolder(TimestampMixin, Base):
+    """Virtual folder for documents."""
+    __tablename__ = "document_folders"
+
+    id          = Column(String, primary_key=True, index=True)
+    name        = Column(String, nullable=False)
+    path        = Column(String, nullable=False, index=True)
+    parent_path = Column(String, nullable=True, index=True)
+    owner       = Column(String, nullable=True, index=True)
+
+    __table_args__ = (
+        Index('ix_document_folders_owner_parent', 'owner', 'parent_path'),
+        Index('ix_document_folders_owner_path', 'owner', 'path'),
+    )
+
+
 class Document(TimestampMixin, Base):
     """Living document that the AI can create and edit in-place."""
     __tablename__ = "documents"
@@ -206,6 +222,8 @@ class Document(TimestampMixin, Base):
     # SET NULL), orphaning the doc and making it vanish from the owner's
     # Library + search. Owning the row directly is robust against that.
     owner           = Column(String, nullable=True, index=True)
+    folder_path     = Column(String, nullable=True, index=True)
+    source_relative_path = Column(String, nullable=True)
     tidy_verdict    = Column(String, nullable=True)        # "keep", "junk", or None (not yet reviewed)
     # Provenance: if this document was created by opening an email attachment,
     # these point back to the source email so the "Sign and reply" flow can
@@ -700,7 +718,7 @@ def _migrate_add_last_message_at_column():
         logging.getLogger(__name__).warning(f"last_message_at migration failed: {e}")
 
 def _migrate_add_document_archived_column():
-    """Add `archived` to documents (soft-archive flag). Guarded + idempotent."""
+    """Add archived column to documents table if it doesn't exist."""
     import sqlite3
     db_path = DATABASE_URL.replace("sqlite:///", "")
     if not os.path.exists(db_path):
@@ -716,6 +734,34 @@ def _migrate_add_document_archived_column():
         conn.close()
     except Exception as e:
         logging.getLogger(__name__).warning(f"documents.archived migration failed: {e}")
+
+
+def _migrate_add_document_folder_columns():
+    """Add document folder metadata columns if they don't exist."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(documents)")
+        columns = [row[1] for row in cursor.fetchall()]
+        changed = False
+        if "folder_path" not in columns:
+            conn.execute("ALTER TABLE documents ADD COLUMN folder_path TEXT")
+            changed = True
+        if "source_relative_path" not in columns:
+            conn.execute("ALTER TABLE documents ADD COLUMN source_relative_path TEXT")
+            changed = True
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_documents_folder_path ON documents(folder_path)")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_documents_owner_folder_active ON documents(owner, folder_path, is_active, archived)")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_documents_source_relative_path ON documents(source_relative_path)")
+        if changed:
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added document folder metadata columns")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"documents.folder metadata migration failed: {e}")
 
 
 def _migrate_add_owner_column():
@@ -1598,6 +1644,7 @@ def init_db():
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()
     _migrate_add_document_archived_column()
+    _migrate_add_document_folder_columns()
     _migrate_add_last_message_at_column()
     _migrate_add_folder_column()
     _migrate_add_token_columns()

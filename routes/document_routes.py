@@ -8,7 +8,7 @@ from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form
 
 from sqlalchemy import func
-from core.database import SessionLocal, Document, DocumentVersion
+from core.database import SessionLocal, Document, DocumentVersion, DocumentFolder
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user
 
@@ -36,6 +36,7 @@ from routes.document_helpers import (
     _doc_to_dict, _version_to_dict,
     _verify_doc_owner, _owner_session_filter,
     _slug, _resolve_user_upload_path, _assert_pdf_marker_upload_owned, _derive_title,
+    _normalize_folder_path, _split_folder_title,
     _PDF_RENDER_SCALE,
 )
 
@@ -56,6 +57,42 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             return load_pymupdf_for_pdf_viewer()
         except RuntimeError as exc:
             raise HTTPException(503, str(exc)) from exc
+
+    def _folder_name_from_path(path: Optional[str]) -> str:
+        norm = _normalize_folder_path(path)
+        if not norm:
+            return ""
+        return norm.rsplit("/", 1)[-1]
+
+    def _folder_parent_from_path(path: Optional[str]) -> Optional[str]:
+        norm = _normalize_folder_path(path)
+        if not norm or "/" not in norm:
+            return None
+        return norm.rsplit("/", 1)[0]
+
+    def _ensure_document_folder(db, path: Optional[str], user: Optional[str]) -> None:
+        norm = _normalize_folder_path(path)
+        if not norm:
+            return
+        parts = norm.split("/")
+        acc = []
+        for part in parts:
+            acc.append(part)
+            cur_path = "/".join(acc)
+            parent = "/".join(acc[:-1]) or None
+            exists = db.query(DocumentFolder).filter(
+                DocumentFolder.path == cur_path,
+                DocumentFolder.owner == user,
+            ).first()
+            if not exists:
+                db.add(DocumentFolder(
+                    id=str(uuid.uuid4()),
+                    name=part,
+                    path=cur_path,
+                    parent_path=parent,
+                    owner=user,
+                ))
+
 
     # ---- POST /api/document ----
     @router.post("/api/document")
@@ -99,6 +136,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
             _assert_pdf_marker_upload_owned(request, req.content, user, upload_handler)
 
+            folder_path = _normalize_folder_path(req.folder_path)
+            if folder_path:
+                _ensure_document_folder(db, folder_path, user)
+
             doc = Document(
                 id=doc_id,
                 session_id=req.session_id,
@@ -107,6 +148,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 current_content=req.content,
                 version_count=1,
                 is_active=True,
+                folder_path=folder_path,
+                source_relative_path=_normalize_folder_path(req.source_relative_path),
                 # Stamp ownership directly so the doc survives its session
                 # being deleted. Fall back to the session's owner when the
                 # request is unauthenticated (single-user / localhost bypass).
@@ -145,6 +188,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         request: Request,
         file: UploadFile = File(...),
         session_id: Optional[str] = Form(None),
+        folder_path: Optional[str] = Form(None),
+        source_relative_path: Optional[str] = Form(None),
     ) -> Dict[str, Any]:
         """Upload a PDF and create the matching Document.
 
@@ -237,8 +282,21 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # The PDF doc creators stamp owner from the session only; a
             # session-less library import leaves owner NULL, which the Library's
             # owner filter then hides. Stamp the requesting user so it shows.
+            changed = False
+            norm_folder = _normalize_folder_path(folder_path)
+            norm_source = _normalize_folder_path(source_relative_path)
             if not doc.owner and user:
                 doc.owner = user
+                changed = True
+            if norm_folder:
+                _ensure_document_folder(db, norm_folder, user)
+            if norm_folder != getattr(doc, "folder_path", None):
+                doc.folder_path = norm_folder
+                changed = True
+            if norm_source and norm_source != getattr(doc, "source_relative_path", None):
+                doc.source_relative_path = norm_source
+                changed = True
+            if changed:
                 db.commit()
                 db.refresh(doc)
             return _doc_to_dict(doc)
@@ -253,6 +311,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         files: List[UploadFile] = File(...),
         relative_paths: Optional[List[str]] = Form(None),
         session_id: Optional[str] = Form(None),
+        target_folder_path: Optional[str] = Form(None),
     ) -> Dict[str, Any]:
         import os
         import posixpath
@@ -298,6 +357,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         }
         max_text_bytes = 10 * 1024 * 1024
         rels = list(relative_paths or [])
+        target_folder = _normalize_folder_path(target_folder_path)
 
         def _clean_relative_path(idx: int, file: UploadFile) -> str:
             raw = rels[idx] if idx < len(rels) else ""
@@ -308,16 +368,21 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             parts = [p for p in raw.split("/") if p and p not in (".", "..")]
             return "/".join(parts) or (file.filename or f"file-{idx + 1}")
 
-        def _title_from_path(path: str) -> str:
+        def _folder_and_title_from_path(path: str):
             folder, filename = posixpath.split(path)
             stem, _ext = os.path.splitext(filename)
-            name = stem or filename or "Untitled"
-            return f"{folder}/{name}" if folder else name
+            title = stem or filename or "Untitled"
+            norm_folder = _normalize_folder_path(folder)
+            if target_folder and norm_folder:
+                norm_folder = f"{target_folder}/{norm_folder}"
+            elif target_folder:
+                norm_folder = target_folder
+            return norm_folder, title
 
         def _error(path: str, reason: str) -> Dict[str, Any]:
             return {"path": path, "error": reason}
 
-        def _retitle_pdf_doc(doc_id: Optional[str], title: str) -> Optional[Dict[str, Any]]:
+        def _update_imported_doc(doc_id: Optional[str], title: str, folder_path: Optional[str], source_path: str) -> Optional[Dict[str, Any]]:
             if not doc_id:
                 return None
             db = SessionLocal()
@@ -326,8 +391,20 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 if not doc:
                     return None
                 _verify_doc_owner(db, doc, user)
+                changed = False
                 if title and doc.title != title:
                     doc.title = title
+                    changed = True
+                if folder_path:
+                    _ensure_document_folder(db, folder_path, user)
+                if getattr(doc, "folder_path", None) != folder_path:
+                    doc.folder_path = folder_path
+                    changed = True
+                norm_source = _normalize_folder_path(source_path)
+                if norm_source and getattr(doc, "source_relative_path", None) != norm_source:
+                    doc.source_relative_path = norm_source
+                    changed = True
+                if changed:
                     db.commit()
                     db.refresh(doc)
                 return _doc_to_dict(doc)
@@ -340,7 +417,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         def _attr_escape(value: str) -> str:
             return (value or '').replace('&', '&amp;').replace('\"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
 
-        async def _create_image_document(file: UploadFile, rel_path: str, title: str) -> Dict[str, Any]:
+        async def _create_image_document(file: UploadFile, rel_path: str, title: str, folder_path: Optional[str]) -> Dict[str, Any]:
             if upload_handler is None:
                 raise HTTPException(500, 'Upload handler not configured')
             client_ip = request.client.host if request.client else 'unknown'
@@ -363,6 +440,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 title=title,
                 language='image',
                 content=content,
+                folder_path=folder_path,
+                source_relative_path=rel_path,
             )
             created = await create_document(request, req)
             created['relative_path'] = rel_path
@@ -378,7 +457,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
         for idx, file in enumerate(files):
             rel_path = _clean_relative_path(idx, file)
-            title = _title_from_path(rel_path)
+            folder_path, title = _folder_and_title_from_path(rel_path)
             ext = os.path.splitext(rel_path)[1].lower()
 
             try:
@@ -386,7 +465,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     errors.append(_error(rel_path, "Spreadsheet folder import is not supported yet"))
                     continue
                 if ext in image_exts:
-                    documents.append(await _create_image_document(file, rel_path, title))
+                    documents.append(await _create_image_document(file, rel_path, title, folder_path))
                     continue
                 if ext in binary_exts:
                     errors.append(_error(rel_path, "Unsupported binary file type"))
@@ -397,9 +476,15 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                         await file.seek(0)
                     except Exception:
                         pass
-                    imported = await import_pdf(request, file=file, session_id=session_id)
+                    imported = await import_pdf(
+                        request,
+                        file=file,
+                        session_id=session_id,
+                        folder_path=folder_path,
+                        source_relative_path=rel_path,
+                    )
                     doc_id = imported.get("id") or imported.get("doc_id")
-                    doc_payload = _retitle_pdf_doc(doc_id, title) or imported
+                    doc_payload = _update_imported_doc(doc_id, title, folder_path, rel_path) or imported
                     doc_payload["relative_path"] = rel_path
                     documents.append(doc_payload)
                     continue
@@ -433,6 +518,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     title=title,
                     language=ext_to_lang.get(ext) or None,
                     content=content,
+                    folder_path=folder_path,
+                    source_relative_path=rel_path,
                 )
                 created = await create_document(request, req)
                 created["relative_path"] = rel_path
@@ -444,13 +531,401 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 logger.exception("Folder document import failed for %s", rel_path)
                 errors.append(_error(rel_path, str(exc)))
 
+        root_paths = sorted({d.get("folder_path") for d in documents if d.get("folder_path")})
+        root_path = None
+        if root_paths:
+            root_path = root_paths[0].split("/")[0]
+
         return {
             "ok": bool(documents),
+            "root_path": root_path,
             "documents": documents,
             "errors": errors,
             "imported": len(documents),
             "failed": len(errors),
         }
+
+
+    # ---- GET /api/documents/folders ----
+    @router.get("/api/documents/folders")
+    async def documents_folders(
+        request: Request,
+        path: Optional[str] = Query(None),
+        sort: str = Query("recent"),
+        offset: int = Query(0, ge=0),
+        limit: int = Query(50, ge=1, le=50),
+        archived: bool = Query(False),
+    ) -> Dict[str, Any]:
+        user = get_current_user(request)
+        current_path = _normalize_folder_path(path)
+        db = SessionLocal()
+        try:
+            from sqlalchemy import or_
+            _arch_cond = (Document.archived == True) if archived else or_(
+                Document.archived == False, Document.archived.is_(None)
+            )
+            base = (
+                db.query(Document)
+                .filter(Document.is_active == True)
+                .filter(_arch_cond)
+            )
+            base = _owner_session_filter(base, user)
+
+            docs_q = base.filter(Document.folder_path == current_path)
+            if sort == "oldest":
+                docs_q = docs_q.order_by(Document.created_at.asc())
+            elif sort == "edits":
+                docs_q = docs_q.order_by(Document.version_count.desc())
+            elif sort == "alpha":
+                docs_q = docs_q.order_by(Document.title.asc())
+            else:
+                docs_q = docs_q.order_by(Document.updated_at.desc())
+
+            total_docs = docs_q.count()
+            docs = docs_q.offset(offset).limit(limit).all()
+
+            folder_map: Dict[str, Dict[str, Any]] = {}
+
+            explicit_q = db.query(DocumentFolder).filter(DocumentFolder.parent_path == current_path)
+            if user is not None:
+                explicit_q = explicit_q.filter(DocumentFolder.owner == user)
+            for folder in explicit_q.all():
+                path_val = _normalize_folder_path(folder.path)
+                if not path_val:
+                    continue
+                folder_map[path_val] = {
+                    "name": folder.name or _folder_name_from_path(path_val),
+                    "path": path_val,
+                    "doc_count": 0,
+                    "updated_at": folder.updated_at,
+                }
+
+            desc_q = base.filter(Document.folder_path != None)
+            if current_path:
+                prefix = current_path + "/"
+                desc_q = desc_q.filter(Document.folder_path.like(prefix + "%"))
+                prefix_len = len(prefix)
+            else:
+                prefix_len = 0
+
+            for folder_path, updated_at in desc_q.with_entities(Document.folder_path, Document.updated_at).all():
+                folder_path = _normalize_folder_path(folder_path)
+                if not folder_path:
+                    continue
+                remainder = folder_path[prefix_len:] if prefix_len else folder_path
+                if not remainder:
+                    continue
+                child_name = remainder.split("/", 1)[0]
+                child_path = f"{current_path}/{child_name}" if current_path else child_name
+                item = folder_map.setdefault(child_path, {
+                    "name": child_name,
+                    "path": child_path,
+                    "doc_count": 0,
+                    "updated_at": None,
+                })
+                item["doc_count"] += 1
+                if updated_at and (item["updated_at"] is None or updated_at > item["updated_at"]):
+                    item["updated_at"] = updated_at
+
+            direct_counts = {}
+            direct_child_q = base.filter(Document.folder_path != None)
+            for folder_path, updated_at in direct_child_q.with_entities(Document.folder_path, Document.updated_at).all():
+                folder_path = _normalize_folder_path(folder_path)
+                if not folder_path:
+                    continue
+                if current_path:
+                    prefix = current_path + "/"
+                    if not folder_path.startswith(prefix):
+                        continue
+                    remainder = folder_path[len(prefix):]
+                else:
+                    remainder = folder_path
+                if "/" in remainder:
+                    continue
+                direct_counts[folder_path] = direct_counts.get(folder_path, 0) + 1
+
+            for path_val, count in direct_counts.items():
+                if path_val in folder_map:
+                    folder_map[path_val]["doc_count"] = max(folder_map[path_val]["doc_count"], count)
+
+            folders = []
+            for item in folder_map.values():
+                updated_at = item.get("updated_at")
+                folders.append({
+                    "name": item["name"],
+                    "path": item["path"],
+                    "doc_count": item.get("doc_count") or 0,
+                    "updated_at": (updated_at.isoformat() + "Z") if updated_at else None,
+                })
+            folders.sort(key=lambda f: (f["name"] or "").lower())
+
+            breadcrumbs = []
+            parts = current_path.split("/") if current_path else []
+            acc = []
+            for part in parts:
+                acc.append(part)
+                breadcrumbs.append({"name": part, "path": "/".join(acc)})
+
+            return {
+                "path": current_path or "",
+                "breadcrumbs": breadcrumbs,
+                "folders": folders,
+                "documents": [_doc_to_dict(d) for d in docs],
+                "total": total_docs,
+                "offset": offset,
+                "limit": limit,
+            }
+        except Exception as e:
+            logger.error(f"Failed to fetch document folders: {e}")
+            raise HTTPException(500, f"Failed to fetch document folders: {e}")
+        finally:
+            db.close()
+
+    # ---- POST /api/documents/folders ----
+    @router.post("/api/documents/folders")
+    async def create_document_folder(request: Request) -> Dict[str, Any]:
+        user = get_current_user(request)
+        data = await request.json()
+        parent = _normalize_folder_path(data.get("parent_path"))
+        name = (data.get("name") or "").strip()
+        if not name or "/" in name or "\\" in name or name in (".", ".."):
+            raise HTTPException(400, "Folder name cannot be empty or contain slashes")
+        path = f"{parent}/{name}" if parent else name
+        db = SessionLocal()
+        try:
+            exists = db.query(DocumentFolder).filter(
+                DocumentFolder.path == path,
+                DocumentFolder.owner == user,
+            ).first()
+            if exists:
+                return {"ok": True, "path": path, "name": name}
+            _ensure_document_folder(db, path, user)
+            db.commit()
+            return {"ok": True, "path": path, "name": name}
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(500, f"Create folder failed: {e}")
+        finally:
+            db.close()
+
+    # ---- POST /api/documents/move ----
+    @router.post("/api/documents/move")
+    async def move_documents(request: Request) -> Dict[str, Any]:
+        user = get_current_user(request)
+        data = await request.json()
+        ids = data.get("document_ids") or data.get("ids") or []
+        target = _normalize_folder_path(data.get("target_folder_path"))
+        if not isinstance(ids, list) or not ids:
+            raise HTTPException(400, "No documents specified")
+
+        db = SessionLocal()
+        try:
+            if target:
+                _ensure_document_folder(db, target, user)
+            moved = 0
+            for doc_id in ids:
+                doc = db.query(Document).filter(Document.id == str(doc_id)).first()
+                if not doc:
+                    continue
+                _verify_doc_owner(db, doc, user)
+                doc.folder_path = target
+                moved += 1
+            db.commit()
+            return {"ok": True, "moved": moved, "target_folder_path": target}
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(500, f"Move failed: {e}")
+        finally:
+            db.close()
+
+    # ---- POST /api/documents/folders/move ----
+    @router.post("/api/documents/folders/move")
+    async def move_document_folder(request: Request) -> Dict[str, Any]:
+        user = get_current_user(request)
+        data = await request.json()
+        from_path = _normalize_folder_path(data.get("from_path"))
+        target_parent = _normalize_folder_path(data.get("target_parent_path"))
+        if not from_path:
+            raise HTTPException(400, "from_path is required")
+        if target_parent == from_path or (target_parent and target_parent.startswith(from_path + "/")):
+            raise HTTPException(400, "Cannot move a folder into itself")
+
+        name = _folder_name_from_path(from_path)
+        to_path = f"{target_parent}/{name}" if target_parent else name
+        if to_path == from_path:
+            return {"ok": True, "from_path": from_path, "to_path": to_path, "updated_documents": 0}
+
+        db = SessionLocal()
+        try:
+            from sqlalchemy import or_
+            if target_parent:
+                _ensure_document_folder(db, target_parent, user)
+
+            conflict_q = db.query(DocumentFolder).filter(DocumentFolder.path == to_path)
+            if user is not None:
+                conflict_q = conflict_q.filter(DocumentFolder.owner == user)
+            if conflict_q.first():
+                raise HTTPException(409, "A folder with that name already exists in the target folder")
+
+            q = db.query(Document).filter(
+                or_(Document.folder_path == from_path, Document.folder_path.like(from_path + "/%"))
+            )
+            q = _owner_session_filter(q, user)
+            updated = 0
+            for doc in q.all():
+                old = doc.folder_path or ""
+                suffix = old[len(from_path):].lstrip("/")
+                doc.folder_path = f"{to_path}/{suffix}" if suffix else to_path
+                updated += 1
+
+            folder_q = db.query(DocumentFolder).filter(
+                or_(DocumentFolder.path == from_path, DocumentFolder.path.like(from_path + "/%"))
+            )
+            if user is not None:
+                folder_q = folder_q.filter(DocumentFolder.owner == user)
+            moved_folders = 0
+            for folder in folder_q.all():
+                old = folder.path or ""
+                suffix = old[len(from_path):].lstrip("/")
+                folder.path = f"{to_path}/{suffix}" if suffix else to_path
+                folder.name = _folder_name_from_path(folder.path)
+                folder.parent_path = _folder_parent_from_path(folder.path)
+                moved_folders += 1
+
+            if moved_folders == 0:
+                _ensure_document_folder(db, to_path, user)
+            db.commit()
+            return {
+                "ok": True,
+                "from_path": from_path,
+                "to_path": to_path,
+                "updated_documents": updated,
+                "moved_folders": moved_folders,
+            }
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(500, f"Move folder failed: {e}")
+        finally:
+            db.close()
+
+    # ---- POST /api/documents/folders/rename ----
+    @router.post("/api/documents/folders/rename")
+    async def rename_document_folder(request: Request) -> Dict[str, Any]:
+        user = get_current_user(request)
+        data = await request.json()
+        from_path = _normalize_folder_path(data.get("from_path"))
+        to_name = (data.get("to_name") or data.get("name") or "").strip()
+        if not from_path:
+            raise HTTPException(400, "from_path is required")
+        if not to_name or "/" in to_name or "\\" in to_name or to_name in (".", ".."):
+            raise HTTPException(400, "Folder name cannot be empty or contain slashes")
+
+        parent = _folder_parent_from_path(from_path)
+        to_path = f"{parent}/{to_name}" if parent else to_name
+
+        db = SessionLocal()
+        try:
+            from sqlalchemy import or_
+            q = db.query(Document).filter(
+                or_(Document.folder_path == from_path, Document.folder_path.like(from_path + "/%"))
+            )
+            q = _owner_session_filter(q, user)
+            updated = 0
+            for doc in q.all():
+                old = doc.folder_path or ""
+                suffix = old[len(from_path):].lstrip("/")
+                doc.folder_path = f"{to_path}/{suffix}" if suffix else to_path
+                updated += 1
+
+            folder_q = db.query(DocumentFolder).filter(
+                or_(DocumentFolder.path == from_path, DocumentFolder.path.like(from_path + "/%"))
+            )
+            if user is not None:
+                folder_q = folder_q.filter(DocumentFolder.owner == user)
+            for folder in folder_q.all():
+                old = folder.path or ""
+                suffix = old[len(from_path):].lstrip("/")
+                folder.path = f"{to_path}/{suffix}" if suffix else to_path
+                folder.name = _folder_name_from_path(folder.path)
+                folder.parent_path = _folder_parent_from_path(folder.path)
+
+            _ensure_document_folder(db, to_path, user)
+            db.commit()
+            return {"ok": True, "from_path": from_path, "to_path": to_path, "updated_documents": updated}
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(500, f"Rename failed: {e}")
+        finally:
+            db.close()
+
+    # ---- DELETE /api/documents/folders ----
+    @router.delete("/api/documents/folders")
+    async def delete_document_folder(
+        request: Request,
+        path: str = Query(...),
+        force: bool = Query(False),
+    ) -> Dict[str, Any]:
+        user = get_current_user(request)
+        folder_path = _normalize_folder_path(path)
+        if not folder_path:
+            raise HTTPException(400, "path is required")
+
+        db = SessionLocal()
+        try:
+            from sqlalchemy import or_
+            q = db.query(Document).filter(
+                or_(Document.folder_path == folder_path, Document.folder_path.like(folder_path + "/%"))
+            )
+            q = _owner_session_filter(q, user)
+            docs = q.all()
+            child_q = db.query(DocumentFolder).filter(
+                or_(DocumentFolder.path == folder_path, DocumentFolder.path.like(folder_path + "/%"))
+            )
+            if user is not None:
+                child_q = child_q.filter(DocumentFolder.owner == user)
+            folders = child_q.all()
+            if (docs or folders) and not force:
+                raise HTTPException(400, "Folder is not empty")
+
+            deleted_docs = 0
+            if force:
+                for doc in docs:
+                    _verify_doc_owner(db, doc, user)
+                    doc.is_active = False
+                    deleted_docs += 1
+                    try:
+                        from src.tool_implementations import clear_active_document
+                        clear_active_document(doc.id)
+                    except Exception:
+                        pass
+
+            deleted_folders = 0
+            for folder in folders:
+                db.delete(folder)
+                deleted_folders += 1
+            db.commit()
+            return {
+                "ok": True,
+                "path": folder_path,
+                "deleted": deleted_folders,
+                "deleted_folders": deleted_folders,
+                "deleted_documents": deleted_docs,
+            }
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(500, f"Delete folder failed: {e}")
+        finally:
+            db.close()
+
 
     # ---- GET /api/documents/library ----
     @router.get("/api/documents/library")
@@ -539,6 +1014,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     "session_id": doc.session_id,
                     "session_name": session_name,
                     "title": doc.title,
+                    "display_title": doc.title,
+                    "folder_path": getattr(doc, "folder_path", None),
+                    "source_relative_path": getattr(doc, "source_relative_path", None),
                     "language": doc.language or "text",
                     "preview": (doc.current_content or "")[:500],
                     "version_count": doc.version_count,
@@ -811,6 +1289,11 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 doc.title = req.title
             if req.language is not None:
                 doc.language = req.language
+            if req.folder_path is not None:
+                target_folder = _normalize_folder_path(req.folder_path)
+                if target_folder:
+                    _ensure_document_folder(db, target_folder, user)
+                doc.folder_path = target_folder
             if req.session_id is not None:
                 # Empty string = unlink from session
                 doc.session_id = req.session_id if req.session_id else None

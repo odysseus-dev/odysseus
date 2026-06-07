@@ -152,10 +152,9 @@ import * as Modals from './modalManager.js';
       openPanel,
       addDocToTabs,
       syncDocIndicator: _syncDocIndicator,
-      importFromDevice: () => _importFromDevice(),
-      importFolderFromDevice: () => _importFromDevice({ directory: true }),
+      importFromDevice: (opts) => _importFromDevice(opts),
+      importFolderFromDevice: (opts) => _importFromDevice({ ...(opts || {}), directory: true }),
     });
-    _ensureFolderUploadLibraryUi();
     _maybeOpenDocFromHash();
     window.addEventListener('hashchange', _maybeOpenDocFromHash);
   }
@@ -8408,6 +8407,8 @@ import * as Modals from './modalManager.js';
       const fd = new FormData();
       const sid = currentSessionId();
       if (sid) fd.append('session_id', sid);
+      const targetFolderPath = _targetFolderPath();
+      if (targetFolderPath) fd.append('target_folder_path', targetFolderPath);
       for (const file of files) {
         fd.append('files', file, file.name || 'file');
         fd.append('relative_paths', (file.webkitRelativePath || file.name || '').replace(/\\/g, '/'));
@@ -8560,6 +8561,7 @@ import * as Modals from './modalManager.js';
       || _lastSessionId
       || ''
     );
+    const _targetFolderPath = () => options.folderPath || options.targetFolderPath || '';
     const _fetchAndOpenImportedDoc = async (docId, fallbackTitle) => {
       const sid = _currentSessionId();
       try {
@@ -8603,6 +8605,11 @@ import * as Modals from './modalManager.js';
         fd.append('file', file);
         const sid = _currentSessionId();
         if (sid) fd.append('session_id', sid);
+        const targetFolderPath = _targetFolderPath();
+        if (targetFolderPath) {
+          fd.append('folder_path', targetFolderPath);
+          fd.append('source_relative_path', file.name || title);
+        }
         const r = await fetch(`${API_BASE}/api/documents/import-pdf`, {
           method: 'POST',
           body: fd,
@@ -8616,6 +8623,11 @@ import * as Modals from './modalManager.js';
         const lang = EXT_TO_LANG[ext] !== undefined ? EXT_TO_LANG[ext] : null;
         const sid = _currentSessionId();
         const body = { title, language: lang, content };
+        const targetFolderPath = _targetFolderPath();
+        if (targetFolderPath) {
+          body.folder_path = targetFolderPath;
+          body.source_relative_path = file.name || title;
+        }
         if (sid) body.session_id = sid;
         const r = await fetch(`${API_BASE}/api/document`, {
           method: 'POST',
@@ -8753,12 +8765,12 @@ import * as Modals from './modalManager.js';
     fi.click();
   }
 
-  export function importFromDevice() {
-    return _importFromDevice();
+  export function importFromDevice(opts) {
+    return _importFromDevice(opts);
   }
 
-  export function importFolderFromDevice() {
-    return _importFromDevice({ directory: true });
+  export function importFolderFromDevice(opts) {
+    return _importFromDevice({ ...(opts || {}), directory: true });
   }
 
   function showExportMenu(e, anchorRect) {

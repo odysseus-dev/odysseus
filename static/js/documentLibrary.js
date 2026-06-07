@@ -23,6 +23,8 @@ let _switchToDoc;
 let _openPanel;
 let _addDocToTabs;
 let _syncDocIndicator;
+let _importFromDevice;
+let _importFolderFromDevice;
 
 export function initLibrary(config) {
   API_BASE        = config.apiBase;
@@ -35,6 +37,8 @@ export function initLibrary(config) {
   _openPanel      = config.openPanel;
   _addDocToTabs   = config.addDocToTabs;
   _syncDocIndicator = config.syncDocIndicator;
+  _importFromDevice = config.importFromDevice;
+  _importFolderFromDevice = config.importFolderFromDevice;
 }
 
 // ── Library state ──
@@ -59,6 +63,11 @@ let _libraryActiveLanguage = null;
 let _librarySort = 'recent';
 let _librarySearch = '';
 let _librarySearchDebounce = null;
+let _libraryFolderMode = true;
+let _libraryCurrentFolderPath = '';
+let _libraryFolders = [];
+let _libraryFolderBreadcrumbs = [];
+let _libraryDragPayload = null;
 
 // Highlight the active search terms inside a plain string. Escapes first,
 // then wraps each whitespace-separated term in <mark>. Multi-term, matching
@@ -190,6 +199,8 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     delete: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>',
     clone: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
     copy: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+    file: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 18v-6"/><path d="M9 15l3 3 3-3"/></svg>',
+    folder: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5V18a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-7.3L9.8 5.1A2 2 0 0 0 8.4 4H5a2 2 0 0 0-2 2v1.5z"/></svg>',
   };
 
   function _showLibDropdown(anchor, items, opts) {
@@ -310,7 +321,372 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     return new Date(isoString).toLocaleDateString();
   }
 
+  function _folderViewActive() {
+    return _libraryFolderMode && !_librarySearch && !_libraryActiveLanguage && !_libraryArchivedView;
+  }
+
+  function _folderDisplayPath(path) {
+    return path || '';
+  }
+
+  function _setFolderMode(active, path) {
+    _libraryFolderMode = !!active;
+    if (typeof path === 'string') _libraryCurrentFolderPath = path;
+    const btn = document.getElementById('doclib-folder-mode-btn');
+    if (btn) btn.classList.toggle('active', _libraryFolderMode);
+  }
+
+  async function libraryFetchFolder(path, append) {
+    if (!append) _libraryOffset = 0;
+    _libraryCurrentFolderPath = _folderDisplayPath(path || '');
+    const params = new URLSearchParams({
+      sort: _librarySort,
+      offset: String(_libraryOffset),
+      limit: '50',
+    });
+    if (_libraryCurrentFolderPath) params.set('path', _libraryCurrentFolderPath);
+    if (_libraryArchivedView) params.set('archived', 'true');
+
+    try {
+      const res = await fetch(`${API_BASE}/api/documents/folders?${params}`, { credentials: 'same-origin' });
+      if (!res.ok) throw new Error(res.statusText);
+      const data = await res.json();
+
+      _libraryFolders = data.folders || [];
+      _libraryFolderBreadcrumbs = data.breadcrumbs || [];
+      if (append) _libraryDocs = _libraryDocs.concat(data.documents || []);
+      else {
+        _libraryDocs = data.documents || [];
+        _docsVisibleLimit = 20;
+      }
+      _libraryTotal = data.total || _libraryDocs.length;
+      _libraryLanguages = {};
+      _librarySessionCount = 0;
+
+      libraryRenderStats();
+      libraryRenderLangChips();
+      libraryRenderFolderNav();
+      libraryRenderGrid();
+      libraryRenderLoadMore();
+    } catch (e) {
+      console.error('Folder fetch error:', e);
+      if (uiModule && uiModule.showError) uiModule.showError('Failed to load document folder');
+    }
+  }
+
+  function libraryRenderFolderNav() {
+    const nav = document.getElementById('doclib-folder-nav');
+    if (!nav) return;
+    if (!_folderViewActive()) {
+      nav.style.display = 'none';
+      nav.innerHTML = '';
+      return;
+    }
+    nav.style.display = '';
+    const crumbs = _libraryFolderBreadcrumbs || [];
+    const parts = [
+      `<button class="doclib-folder-crumb${!_libraryCurrentFolderPath ? ' active' : ''}" data-folder-path="">Documents</button>`,
+      ...crumbs.map(c => `<button class="doclib-folder-crumb${c.path === _libraryCurrentFolderPath ? ' active' : ''}" data-folder-path="${_esc(c.path || '')}">${_esc(c.name || 'Folder')}</button>`),
+    ];
+    nav.innerHTML = `
+      <div class="doclib-folder-breadcrumbs">${parts.join('<span class="doclib-folder-sep">/</span>')}</div>
+      <div class="doclib-folder-actions">
+        <button class="memory-toolbar-btn" id="doclib-new-folder-btn">New folder</button>
+        ${_libraryCurrentFolderPath ? '<button class="memory-toolbar-btn" id="doclib-folder-up-btn">Up</button>' : ''}
+      </div>
+    `;
+    nav.querySelectorAll('[data-folder-path]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        _libraryCurrentFolderPath = btn.dataset.folderPath || '';
+        libraryFetch(false);
+      });
+      _wireFolderDropTarget(btn, btn.dataset.folderPath || '');
+    });
+    nav.querySelector('#doclib-folder-up-btn')?.addEventListener('click', () => {
+      _libraryCurrentFolderPath = _libraryCurrentFolderPath.split('/').slice(0, -1).join('/');
+      libraryFetch(false);
+    });
+    nav.querySelector('#doclib-new-folder-btn')?.addEventListener('click', libraryCreateFolder);
+  }
+
+  function _doclibSetDragData(e, payload) {
+    _libraryDragPayload = payload;
+    try {
+      e.dataTransfer.effectAllowed = 'move';
+      const encoded = JSON.stringify(payload);
+      e.dataTransfer.setData('application/x-odysseus-doclib', encoded);
+      e.dataTransfer.setData('text/plain', encoded);
+    } catch (_) {}
+  }
+
+  function _doclibGetDragData(e) {
+    try {
+      const raw = e.dataTransfer.getData('application/x-odysseus-doclib') || e.dataTransfer.getData('text/plain');
+      if (raw) return JSON.parse(raw);
+    } catch (_) {}
+    return _libraryDragPayload;
+  }
+
+  function _doclibClearDragState() {
+    _libraryDragPayload = null;
+    document.querySelectorAll('.doclib-dragging,.doclib-drag-over').forEach(el => {
+      el.classList.remove('doclib-dragging', 'doclib-drag-over');
+    });
+  }
+
+  function _wireFolderDropTarget(el, targetPath) {
+    if (!el) return;
+    const normTarget = targetPath || '';
+    const canAccept = (payload) => {
+      if (!payload) return false;
+      if (payload.type === 'documents') return Array.isArray(payload.ids) && payload.ids.length > 0;
+      if (payload.type === 'folder') {
+        const source = payload.path || '';
+        return source && source !== normTarget && !normTarget.startsWith(source + '/');
+      }
+      return false;
+    };
+    el.addEventListener('dragover', (e) => {
+      const payload = _libraryDragPayload || _doclibGetDragData(e);
+      if (!canAccept(payload)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      el.classList.add('doclib-drag-over');
+    });
+    el.addEventListener('dragleave', (e) => {
+      if (!el.contains(e.relatedTarget)) el.classList.remove('doclib-drag-over');
+    });
+    el.addEventListener('drop', async (e) => {
+      const payload = _doclibGetDragData(e);
+      if (!canAccept(payload)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      el.classList.remove('doclib-drag-over');
+      if (payload.type === 'documents') {
+        await libraryMoveDocumentsToFolder(payload.ids, normTarget);
+      } else if (payload.type === 'folder') {
+        await libraryMoveFolder(payload.path, normTarget);
+      }
+      _doclibClearDragState();
+    });
+  }
+
+  function libraryCreateFolderCard(folder) {
+    const card = document.createElement('div');
+    card.className = 'doclib-folder-card memory-item';
+    card.dataset.folderPath = folder.path || '';
+    card.setAttribute('role', 'button');
+    card.tabIndex = 0;
+    card.draggable = true;
+
+    const icon = document.createElement('div');
+    icon.className = 'doclib-folder-icon';
+    icon.innerHTML = _LIB_DD_ICONS.folder;
+    card.appendChild(icon);
+
+    const body = document.createElement('div');
+    body.className = 'doclib-folder-body';
+    body.innerHTML = `
+      <div class="memory-item-title">${_esc(folder.name || 'Folder')}</div>
+      <div class="memory-item-meta">${folder.doc_count || 0} document${(folder.doc_count || 0) === 1 ? '' : 's'}</div>
+    `;
+    card.appendChild(body);
+
+    const menuBtn = document.createElement('button');
+    menuBtn.className = 'doclib-card-menu';
+    menuBtn.title = 'Folder actions';
+    menuBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
+    menuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _showLibDropdown(menuBtn, [
+        { label: 'Rename', icon: 'clone', action: () => libraryRenameFolder(folder) },
+        { label: 'Delete', icon: 'delete', danger: true, action: () => libraryDeleteFolder(folder) },
+      ]);
+    });
+    card.appendChild(menuBtn);
+
+    const open = () => {
+      _libraryCurrentFolderPath = folder.path || '';
+      libraryFetch(false);
+    };
+    card.addEventListener('click', open);
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        open();
+      }
+    });
+    card.addEventListener('dragstart', (e) => {
+      e.stopPropagation();
+      card.classList.add('doclib-dragging');
+      _doclibSetDragData(e, { type: 'folder', path: folder.path || '', name: folder.name || 'Folder' });
+    });
+    card.addEventListener('dragend', _doclibClearDragState);
+    _wireFolderDropTarget(card, folder.path || '');
+    return card;
+  }
+
+  function libraryRenderFolderGrid() {
+    const grid = document.getElementById('doclib-grid');
+    if (!grid) return;
+    document.querySelectorAll('.doclib-card-dropdown').forEach(dismissOrRemove);
+    grid.innerHTML = '';
+    if (grid.parentElement) grid.parentElement.querySelectorAll(':scope > .doclib-inline-load-more').forEach(b => b.remove());
+
+    if (!_libraryFolders.length && !_libraryDocs.length) {
+      grid.innerHTML = `
+        <div class="doclib-empty">
+          ${_libraryCurrentFolderPath ? 'This folder is empty.' : 'No documents yet.'}
+        </div>
+      `;
+      return;
+    }
+
+    _maybeCascadeGrid(grid, 'documents-folders-' + (_libraryCurrentFolderPath || 'root'));
+    _wireFolderDropTarget(grid, _libraryCurrentFolderPath || '');
+
+    for (const folder of _libraryFolders) grid.appendChild(libraryCreateFolderCard(folder));
+
+    const shown = _libraryDocs.slice(0, _docsVisibleLimit);
+    for (const doc of shown) grid.appendChild(libraryCreateCard(doc));
+
+    const shownCount = shown.length;
+    if (shownCount < _libraryTotal) {
+      const btn = document.createElement('button');
+      btn.className = 'doclib-load-more doclib-inline-load-more';
+      btn.textContent = `Load more (${shownCount} of ${_libraryTotal})`;
+      btn.addEventListener('click', async () => {
+        _docsVisibleLimit += 20;
+        if (_docsVisibleLimit > _libraryDocs.length && _libraryDocs.length < _libraryTotal) {
+          _libraryOffset = _libraryDocs.length;
+          await libraryFetch(true);
+        } else {
+          libraryRenderGrid();
+        }
+      });
+      grid.parentElement.appendChild(btn);
+    }
+  }
+
+  async function libraryCreateFolder() {
+    const name = prompt('Folder name');
+    if (!name || !name.trim()) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/documents/folders`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parent_path: _libraryCurrentFolderPath || null, name: name.trim() }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      await libraryFetch(false);
+    } catch (e) {
+      if (uiModule && uiModule.showError) uiModule.showError('Failed to create folder');
+    }
+  }
+
+  async function libraryRenameFolder(folder) {
+    const name = prompt('Rename folder', folder.name || '');
+    if (!name || !name.trim() || name.trim() === folder.name) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/documents/folders/rename`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from_path: folder.path, to_name: name.trim() }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      await libraryFetch(false);
+    } catch (e) {
+      if (uiModule && uiModule.showError) uiModule.showError('Failed to rename folder');
+    }
+  }
+
+  async function libraryDeleteFolder(folder) {
+    const msg = (folder.doc_count || 0) > 0
+      ? `Delete "${folder.name || 'Folder'}" and everything inside it? This will delete contained documents and subfolders.`
+      : `Delete "${folder.name || 'Folder'}"?`;
+    const ok = uiModule && uiModule.styledConfirm
+      ? await uiModule.styledConfirm(msg, { confirmText: 'Delete', danger: true })
+      : confirm(msg);
+    if (!ok) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/documents/folders?path=${encodeURIComponent(folder.path || '')}&force=true`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json().catch(() => ({}));
+      if (uiModule && uiModule.showToast) {
+        const docs = data.deleted_documents || 0;
+        uiModule.showToast(docs ? `Deleted folder and ${docs} document${docs === 1 ? '' : 's'}` : 'Folder deleted');
+      }
+      await libraryFetch(false);
+    } catch (e) {
+      if (uiModule && uiModule.showError) uiModule.showError('Failed to delete folder');
+    }
+  }
+
+  async function libraryMoveDocumentsToFolder(ids, targetPath) {
+    const docIds = Array.isArray(ids) ? ids.filter(Boolean) : [];
+    if (!docIds.length) return;
+    const target = _folderDisplayPath(targetPath || '');
+    try {
+      const res = await fetch(`${API_BASE}/api/documents/move`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_ids: docIds, target_folder_path: target || null }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      _librarySelectedIds.clear();
+      _libraryFolderMode = true;
+      _libraryCurrentFolderPath = target;
+      if (uiModule && uiModule.showToast) uiModule.showToast('Moved document' + (docIds.length === 1 ? '' : 's'));
+      await libraryFetch(false);
+    } catch (e) {
+      if (uiModule && uiModule.showError) uiModule.showError('Failed to move documents');
+    }
+  }
+
+  async function libraryMoveFolder(fromPath, targetParentPath) {
+    const from = _folderDisplayPath(fromPath || '');
+    const target = _folderDisplayPath(targetParentPath || '');
+    if (!from || from === target || target.startsWith(from + '/')) {
+      if (uiModule && uiModule.showError) uiModule.showError('Cannot move a folder into itself');
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/documents/folders/move`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from_path: from, target_parent_path: target || null }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json().catch(() => ({}));
+      _libraryFolderMode = true;
+      _libraryCurrentFolderPath = data.to_path || target;
+      if (uiModule && uiModule.showToast) uiModule.showToast('Moved folder');
+      await libraryFetch(false);
+    } catch (e) {
+      if (uiModule && uiModule.showError) uiModule.showError('Failed to move folder');
+    }
+  }
+
+  async function libraryMoveSelectedToFolder() {
+    if (_librarySelectedIds.size === 0) return;
+    const target = prompt('Move selected documents to folder path', _libraryCurrentFolderPath || '');
+    if (target === null) return;
+    await libraryMoveDocumentsToFolder([..._librarySelectedIds], target.trim() || '');
+    libraryExitSelectMode();
+  }
+
+
   async function libraryFetch(append) {
+    if (_folderViewActive()) {
+      return libraryFetchFolder(_libraryCurrentFolderPath, append);
+    }
     if (!append) _libraryOffset = 0;
     // Bump page size to the backend max (50) so fullscreen doesn't leave
     // empty space below the loaded rows — same idea as emailLibrary's
@@ -352,6 +728,15 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
   function libraryRenderStats() {
     const el = document.getElementById('doclib-stats');
     if (!el) return;
+    if (_folderViewActive()) {
+      const folderCount = _libraryFolders.length;
+      const docCount = _libraryTotal;
+      const parts = [];
+      if (folderCount) parts.push(`${folderCount} folder${folderCount !== 1 ? 's' : ''}`);
+      parts.push(`${docCount} document${docCount !== 1 ? 's' : ''}`);
+      el.textContent = parts.join(' · ');
+      return;
+    }
     const totalAll = Object.values(_libraryLanguages).reduce((a, b) => a + b, 0);
     if (_librarySearch || _libraryActiveLanguage) {
       el.textContent = `${_libraryTotal} of ${totalAll} document${totalAll !== 1 ? 's' : ''}`;
@@ -363,6 +748,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
   function libraryRenderLangChips() {
     const wrap = document.getElementById('doclib-chips');
     if (!wrap) return;
+    if (_folderViewActive()) {
+      wrap.querySelectorAll('.memory-cat-chip').forEach(c => c.remove());
+      return;
+    }
     // Remove only language chip buttons, keep sort/select elements
     wrap.querySelectorAll('.memory-cat-chip').forEach(c => c.remove());
     const totalAll = Object.values(_libraryLanguages).reduce((a, b) => a + b, 0);
@@ -422,6 +811,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
   }
 
   function libraryRenderGrid() {
+    if (_folderViewActive()) {
+      libraryRenderFolderNav();
+      libraryRenderFolderGrid();
+      return;
+    }
+    libraryRenderFolderNav();
     const grid = document.getElementById('doclib-grid');
     if (!grid) return;
     // An open card menu is mounted on <body> (to escape overflow clipping), so
@@ -517,6 +912,13 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     const card = document.createElement('div');
     card.className = 'doclib-card memory-item';
     card.dataset.docId = doc.id;
+    card.draggable = true;
+    card.addEventListener('dragstart', (e) => {
+      const ids = (_librarySelectMode && _librarySelectedIds.has(doc.id)) ? [..._librarySelectedIds] : [doc.id];
+      card.classList.add('doclib-dragging');
+      _doclibSetDragData(e, { type: 'documents', ids, source_folder_path: doc.folder_path || '' });
+    });
+    card.addEventListener('dragend', _doclibClearDragState);
     if (_librarySelectMode && _librarySelectedIds.has(doc.id)) {
       card.classList.add('selected');
     }
@@ -1590,6 +1992,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     _librarySort = 'recent';
     _libraryOffset = 0;
     _libraryDocs = [];
+    _libraryFolders = [];
+    _libraryFolderBreadcrumbs = [];
+    _libraryFolderMode = true;
+    _libraryCurrentFolderPath = '';
 
     // Create modal
     const modal = document.createElement('div');
@@ -1700,7 +2106,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
               <button class="memory-toolbar-btn" id="doclib-import-file-btn" title="Import files from disk" style="margin-left:auto;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:2px;"><polyline points="7 10 12 5 17 10"/><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="21" x2="19" y2="21"/></svg> Import</button>
               <button class="memory-toolbar-btn" id="doclib-create-btn" title="Create new blank document"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> Create</button>
             </div>
-            <p class="memory-desc doclib-desc">Open documents in a session, clone to a new or import new files.</p>
+            <p class="memory-desc doclib-desc">Browse documents by folder, open in a session, or import new files.</p>
             <div class="memory-toolbar">
               <div class="memory-category-filters">
                 <select class="memory-sort-select" id="doclib-sort">
@@ -1715,6 +2121,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
               <input type="text" id="doclib-search" placeholder="Search titles &amp; content\u2026" class="memory-search-input" />
               <div id="doclib-chips" class="doclib-lang-chips"></div>
             </div>
+            <div id="doclib-folder-nav" class="doclib-folder-nav" style="display:none"></div>
             <input type="file" id="doclib-file-input" multiple style="display:none" />
             <div id="doclib-bulk-bar" class="memory-bulk-bar hidden" style="margin-bottom:5px;">
               <label class="memory-bulk-check-all" style="position:relative;top:0px;left:1px;"><input type="checkbox" id="doclib-select-all" /> All</label>
@@ -3173,6 +3580,18 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       libraryFetch(false);
     });
 
+    const folderModeBtn = document.getElementById('doclib-folder-mode-btn');
+    if (folderModeBtn) {
+      folderModeBtn.addEventListener('click', () => {
+        _librarySearch = '';
+        _libraryActiveLanguage = null;
+        _setFolderMode(true, _libraryCurrentFolderPath || '');
+        const searchEl = document.getElementById('doclib-search');
+        if (searchEl) searchEl.value = '';
+        libraryFetch(false);
+      });
+    }
+
     document.getElementById('doclib-load-more').addEventListener('click', () => {
       _libraryOffset = _libraryDocs.length;
       libraryFetch(true);
@@ -3190,32 +3609,60 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }
     }
 
-    // Wire file import button
+    // Wire document import button
     const importFileBtn = document.getElementById('doclib-import-file-btn');
     const fileInput = document.getElementById('doclib-file-input');
-    if (importFileBtn && fileInput) {
-      importFileBtn.addEventListener('click', () => fileInput.click());
+    const runImportFiles = () => {
+      if (typeof _importFromDevice === 'function') {
+        _importFromDevice({ folderPath: _libraryCurrentFolderPath || '' });
+        setTimeout(() => { if (_libraryOpen) libraryFetch(false); }, 1200);
+      } else if (fileInput) {
+        fileInput.click();
+      }
+    };
+    const runImportFolder = () => {
+      if (typeof _importFolderFromDevice === 'function') {
+        _importFolderFromDevice({ folderPath: _libraryCurrentFolderPath || '' });
+        setTimeout(() => { if (_libraryOpen) libraryFetch(false); }, 1500);
+      } else if (uiModule && uiModule.showError) {
+        uiModule.showError('Folder import is unavailable in this build');
+      }
+    };
+    if (importFileBtn) {
+      importFileBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        _showLibDropdown(importFileBtn, [
+          { label: 'Import files', icon: 'file', action: runImportFiles },
+          { label: 'Import folder', icon: 'folder', action: runImportFolder },
+        ]);
+      });
+    }
+    if (fileInput) {
       fileInput.addEventListener('change', async () => {
         if (fileInput.files.length === 0) return;
         const files = Array.from(fileInput.files);
         fileInput.value = '';
-        // Swap the import icon for a whirlpool while files upload.
-        const _orig = importFileBtn.innerHTML;
-        importFileBtn.disabled = true;
+        const _orig = importFileBtn ? importFileBtn.innerHTML : '';
+        if (importFileBtn) importFileBtn.disabled = true;
         let _sp = null;
         try {
-          _sp = spinnerModule.createWhirlpool(12);
-          _sp.element.style.cssText = 'width:12px;height:12px;margin:0 4px 0 0;display:inline-block;vertical-align:middle;position:relative;top:-2px;';
-          importFileBtn.innerHTML = '';
-          importFileBtn.appendChild(_sp.element);
-          importFileBtn.appendChild(document.createTextNode('Import'));
+          if (importFileBtn) {
+            _sp = spinnerModule.createWhirlpool(12);
+            _sp.element.style.cssText = 'width:12px;height:12px;margin:0 4px 0 0;display:inline-block;vertical-align:middle;position:relative;top:-2px;';
+            importFileBtn.innerHTML = '';
+            importFileBtn.appendChild(_sp.element);
+            importFileBtn.appendChild(document.createTextNode('Import'));
+          }
         } catch {}
         try {
           await libraryImportFiles(files);
         } finally {
           try { _sp && _sp.stop(); } catch {}
-          importFileBtn.innerHTML = _orig;
-          importFileBtn.disabled = false;
+          if (importFileBtn) {
+            importFileBtn.innerHTML = _orig;
+            importFileBtn.disabled = false;
+          }
         }
       });
     }
@@ -3348,6 +3795,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         return;
       }
       _showLibDropdown(e.currentTarget, [
+        { label: 'Move to folder', icon: 'folder', action: libraryMoveSelectedToFolder },
         { label: _libraryArchivedView ? 'Restore' : 'Archive', icon: _libraryArchivedView ? 'restore' : 'archive', action: libraryBulkArchive },
         { label: 'Clone', icon: 'clone', action: libraryBulkClone },
         { label: 'Export', icon: 'open', action: libraryBulkExport },
