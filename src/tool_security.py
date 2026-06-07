@@ -162,14 +162,21 @@ def is_public_blocked_tool(tool_name: Optional[str]) -> bool:
 
 
 def owner_is_admin_or_single_user(owner: Optional[str]) -> bool:
-    """Return True for admins, or when auth is not configured yet."""
+    """Return True for admins, or when there is exactly one user (single-user
+    mode). When auth is not configured at all (no users yet), return False so
+    dangerous tools like bash/python are not accessible without authentication."""
     try:
         from core.auth import AuthManager
 
         auth = AuthManager()
         if not auth.is_configured:
+            return False
+        if auth.is_admin(owner):
             return True
-        return bool(owner and auth.is_admin(owner))
+        # Single-user mode: if there's only one user, treat them as admin
+        if owner and len(auth.users) == 1:
+            return True
+        return False
     except Exception as exc:
         logger.warning("Unable to evaluate owner admin status: %s", exc)
         return False
