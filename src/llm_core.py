@@ -9,6 +9,7 @@ import threading
 import re
 from fastapi import HTTPException
 from typing import Optional, Dict, List, Tuple
+from src.model_capabilities import requires_openai_responses_api
 from src.model_context import get_context_length, DEFAULT_CONTEXT
 from urllib.parse import urlparse
 
@@ -22,6 +23,9 @@ class LLMConfig:
     MAX_RETRIES = 3
     RETRY_DELAY = 0.5
     STREAM_TIMEOUT = 300
+
+
+RESPONSES_WAIT_EVENT_INTERVAL = 5.0
 
 
 # Cache for LLM responses
@@ -467,6 +471,236 @@ def _provider_label(url: str) -> str:
     if host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
         return "local endpoint"
     return host or "provider"
+
+
+def _responses_url_from_chat_url(url: str) -> str:
+    base = (url or "").strip().rstrip("/")
+    if base.endswith("/responses"):
+        return base
+    for suffix in ("/chat/completions", "/completions", "/models"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    if not base.endswith("/v1"):
+        base = base.rstrip("/")
+    return base + "/responses"
+
+
+def _responses_content_from_chat_content(content):
+    """Convert OpenAI chat content blocks into Responses input content blocks."""
+    if not isinstance(content, list):
+        return content if content is not None else ""
+
+    converted = []
+    for block in content:
+        if not isinstance(block, dict):
+            converted.append({"type": "input_text", "text": str(block)})
+            continue
+
+        block_type = block.get("type")
+        if block_type in {"text", "input_text"}:
+            converted.append({"type": "input_text", "text": block.get("text") or ""})
+        elif block_type in {"image_url", "input_image"}:
+            image = block.get("image_url") if block_type == "image_url" else block
+            image_url = image.get("url") if isinstance(image, dict) else image
+            if image_url:
+                item = {"type": "input_image", "image_url": image_url}
+                detail = block.get("detail") or (image.get("detail") if isinstance(image, dict) else None)
+                if detail:
+                    item["detail"] = detail
+                converted.append(item)
+        elif block_type in {"file", "input_file"}:
+            item = {"type": "input_file"}
+            for key in ("file_id", "file_data", "file_url", "filename"):
+                if block.get(key):
+                    item[key] = block[key]
+            if len(item) > 1:
+                converted.append(item)
+        elif "text" in block:
+            converted.append({"type": "input_text", "text": block.get("text") or ""})
+
+    return converted or ""
+
+
+def _responses_input_from_messages(messages: List[Dict]) -> List[Dict]:
+    items: List[Dict] = []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role")
+        content = _responses_content_from_chat_content(m.get("content"))
+
+        if role == "tool":
+            call_id = m.get("tool_call_id")
+            if call_id:
+                items.append({
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": content if isinstance(content, str) else json.dumps(content),
+                })
+            continue
+
+        if role in {"user", "assistant", "system", "developer"} and content not in (None, ""):
+            items.append({"type": "message", "role": role, "content": content})
+
+        if role == "assistant":
+            for tc in m.get("tool_calls") or []:
+                fn = tc.get("function") or {}
+                name = fn.get("name")
+                if not name:
+                    continue
+                items.append({
+                    "type": "function_call",
+                    "call_id": tc.get("id") or f"call_{len(items)}",
+                    "name": name,
+                    "arguments": fn.get("arguments") or "{}",
+                    "status": "completed",
+                })
+
+    return items
+
+
+def _responses_tools_from_chat_tools(tools: Optional[List[Dict]]) -> Optional[List[Dict]]:
+    converted = []
+    for tool in tools or []:
+        if not isinstance(tool, dict):
+            continue
+        if tool.get("type") != "function" or not isinstance(tool.get("function"), dict):
+            converted.append(tool)
+            continue
+        fn = tool["function"]
+        if not fn.get("name"):
+            continue
+        converted.append({
+            "type": "function",
+            "name": fn["name"],
+            "description": fn.get("description") or "",
+            "parameters": fn.get("parameters") or {"type": "object", "properties": {}},
+            "strict": False,
+        })
+    return converted or None
+
+
+def _build_responses_payload(
+    model: str,
+    messages: List[Dict],
+    temperature: float,
+    max_tokens: int,
+    tools: Optional[List[Dict]] = None,
+    stream: bool = False,
+) -> Dict:
+    payload: Dict = {
+        "model": model,
+        "input": _responses_input_from_messages(messages),
+    }
+    if stream:
+        payload["stream"] = True
+    if temperature is not None and not _restricts_temperature(model):
+        payload["temperature"] = temperature
+    if max_tokens and max_tokens > 0:
+        payload["max_output_tokens"] = max_tokens
+    response_tools = _responses_tools_from_chat_tools(tools)
+    if response_tools:
+        payload["tools"] = response_tools
+        payload["parallel_tool_calls"] = True
+    return payload
+
+
+def _parse_responses_response(data: Dict) -> tuple[str, List[Dict], Dict]:
+    text_parts: List[str] = []
+    calls: List[Dict] = []
+
+    output_text = data.get("output_text")
+    if isinstance(output_text, str) and output_text:
+        text_parts.append(output_text)
+
+    for item in data.get("output") or []:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        if item_type == "message":
+            for content in item.get("content") or []:
+                if not isinstance(content, dict):
+                    continue
+                if content.get("type") in {"output_text", "text"} and content.get("text"):
+                    text_parts.append(content["text"])
+        elif item_type == "function_call":
+            if item.get("name"):
+                calls.append({
+                    "id": item.get("call_id") or item.get("id") or f"call_{len(calls)}",
+                    "name": item.get("name") or "",
+                    "arguments": item.get("arguments") or "{}",
+                })
+        elif item_type == "custom_tool_call":
+            if item.get("name"):
+                calls.append({
+                    "id": item.get("call_id") or item.get("id") or f"call_{len(calls)}",
+                    "name": item.get("name") or "",
+                    "arguments": item.get("input") or "{}",
+                })
+
+    usage = data.get("usage") or {}
+    usage_data = {
+        "input_tokens": usage.get("input_tokens", 0),
+        "output_tokens": usage.get("output_tokens", 0),
+    }
+    return "".join(text_parts), calls, usage_data
+
+
+def _responses_call_from_item(item: Dict, fallback_id: str = "") -> Optional[Dict]:
+    if not isinstance(item, dict):
+        return None
+    if item.get("type") not in {"function_call", "custom_tool_call"}:
+        return None
+    name = item.get("name") or ""
+    if not name:
+        return None
+    arguments = item.get("arguments") if item.get("type") == "function_call" else item.get("input")
+    return {
+        "id": item.get("call_id") or item.get("id") or fallback_id,
+        "name": name,
+        "arguments": arguments or "{}",
+    }
+
+
+def _responses_stream_call_key(event: Dict) -> str:
+    if event.get("output_index") is not None:
+        return f"index:{event.get('output_index')}"
+    if event.get("item_id"):
+        return f"item:{event.get('item_id')}"
+    return "index:0"
+
+
+def _responses_stream_calls(call_acc: Dict[str, Dict]) -> List[Dict]:
+    def _sort_key(key: str):
+        if key.startswith("index:"):
+            try:
+                return (0, int(key.split(":", 1)[1]))
+            except Exception:
+                return (0, 0)
+        return (1, key)
+
+    calls = []
+    for key in sorted(call_acc, key=_sort_key):
+        call = call_acc[key]
+        if call.get("name"):
+            calls.append({
+                "id": call.get("id") or f"call_{len(calls)}",
+                "name": call.get("name") or "",
+                "arguments": call.get("arguments") or "{}",
+            })
+    return calls
+
+
+def _record_responses_stream_call(call_acc: Dict[str, Dict], event: Dict) -> Optional[Dict]:
+    item = event.get("item") if isinstance(event.get("item"), dict) else event
+    parsed = _responses_call_from_item(item, fallback_id=f"call_{len(call_acc)}")
+    if not parsed:
+        return None
+    key = _responses_stream_call_key(event)
+    existing = call_acc.setdefault(key, {"id": "", "name": "", "arguments": ""})
+    existing.update({k: v for k, v in parsed.items() if v not in (None, "")})
+    return existing
 
 
 def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:
@@ -1023,6 +1257,9 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+    elif requires_openai_responses_api(url, model):
+        target_url = _responses_url_from_chat_url(url)
+        payload = _build_responses_payload(model, messages_copy, temperature, max_tokens)
     else:
         target_url = url
         if provider == "copilot":
@@ -1051,6 +1288,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             response = _parse_anthropic_response(data)
         elif provider == "ollama":
             response = _parse_ollama_response(data)
+        elif requires_openai_responses_api(url, model):
+            response, _, _ = _parse_responses_response(data)
         else:
             msg = data["choices"][0]["message"]
             response = msg.get("content") or msg.get("reasoning_content") or ""
@@ -1138,6 +1377,7 @@ async def llm_call_async(
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
+    use_responses_api = requires_openai_responses_api(url, model)
     messages_copy = _sanitize_llm_messages(messages)
 
     # Consolidate multiple system messages into one at the start.
@@ -1172,6 +1412,10 @@ async def llm_call_async(
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+    elif use_responses_api:
+        target_url = _responses_url_from_chat_url(url)
+        h = _provider_headers(provider, headers)
+        payload = _build_responses_payload(model, messages_copy, temperature, max_tokens)
     else:
         target_url = url
         h = _provider_headers(provider, headers)
@@ -1220,6 +1464,8 @@ async def llm_call_async(
                     response = _parse_anthropic_response(data)
                 elif provider == "ollama":
                     response = _parse_ollama_response(data)
+                elif use_responses_api:
+                    response, _, _ = _parse_responses_response(data)
                 else:
                     msg = data["choices"][0]["message"]
                     response = msg.get("content") or msg.get("reasoning_content") or ""
@@ -1255,6 +1501,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
       - data: [DONE]                       — end of stream
     """
     provider = _detect_provider(url)
+    use_responses_api = requires_openai_responses_api(url, model)
     messages_copy = _sanitize_llm_messages(messages)
 
     # Consolidate multiple system messages into one at the start.
@@ -1284,6 +1531,10 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             model, messages_copy, temperature, max_tokens,
             stream=True, tools=tools, num_ctx=get_context_length(url, model),
         )
+    elif use_responses_api:
+        target_url = _responses_url_from_chat_url(url)
+        payload = _build_responses_payload(model, messages_copy, temperature, max_tokens, tools=tools, stream=True)
+        h = _provider_headers(provider, headers)
     else:
         target_url = url
         payload = {
@@ -1314,6 +1565,124 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         yield f'event: error\ndata: {json.dumps({"error": f"Upstream {_host_key(target_url)} unreachable (cooldown active)", "status": 503})}\n\n'
         return
     note_model_activity(target_url, model)
+
+    if use_responses_api:
+        response_timeout = httpx.Timeout(
+            connect=3.0,
+            read=max(float(timeout), 900.0),
+            write=30.0,
+            pool=5.0,
+        )
+        next_line_task = None
+        try:
+            client = _get_http_client()
+            started = time.monotonic()
+            streamed_text = False
+            completed_calls: List[Dict] = []
+            call_acc: Dict[str, Dict] = {}
+
+            async with client.stream('POST', target_url, json=payload, headers=h, timeout=response_timeout) as r:
+                _clear_host_dead(target_url)
+                status_code = getattr(r, "status_code", 200)
+                if status_code != 200:
+                    raw = (await r.aread()).decode(errors="replace")
+                    friendly = _format_upstream_error(status_code, raw, target_url)
+                    yield f'event: error\ndata: {json.dumps({"status": status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    return
+
+                line_iter = r.aiter_lines().__aiter__()
+                while True:
+                    if next_line_task is None:
+                        next_line_task = asyncio.create_task(line_iter.__anext__())
+                    try:
+                        line = await asyncio.wait_for(
+                            asyncio.shield(next_line_task),
+                            timeout=RESPONSES_WAIT_EVENT_INTERVAL,
+                        )
+                        next_line_task = None
+                    except asyncio.TimeoutError:
+                        elapsed = int(time.monotonic() - started)
+                        yield f'data: {json.dumps({"type": "model_waiting", "model": model, "elapsed": elapsed, "message": f"Still waiting for {model} ({elapsed}s)"})}\n\n'
+                        continue
+                    except StopAsyncIteration:
+                        break
+
+                    if not line or line.startswith("event:"):
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+
+                    raw_data = line[5:].strip()
+                    if raw_data == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(raw_data)
+                    except Exception:
+                        continue
+                    if not isinstance(event, dict):
+                        continue
+
+                    event_type = event.get("type")
+                    if event_type == "response.output_text.delta":
+                        delta = event.get("delta") or ""
+                        if delta:
+                            streamed_text = True
+                            yield f'data: {json.dumps({"delta": delta})}\n\n'
+                    elif event_type == "response.output_item.added":
+                        _record_responses_stream_call(call_acc, event)
+                    elif event_type == "response.output_item.done":
+                        _record_responses_stream_call(call_acc, event)
+                    elif event_type == "response.function_call_arguments.delta":
+                        key = _responses_stream_call_key(event)
+                        call = call_acc.setdefault(key, {"id": "", "name": "", "arguments": ""})
+                        arg_delta = event.get("delta") or ""
+                        call["arguments"] += arg_delta
+                        if arg_delta and call.get("name") in ("create_document", "update_document", "edit_document"):
+                            yield f'data: {json.dumps({"type": "tool_call_delta", "index": event.get("output_index", 0), "name": call["name"], "arg_delta": arg_delta})}\n\n'
+                    elif event_type == "response.function_call_arguments.done":
+                        key = _responses_stream_call_key(event)
+                        call = call_acc.setdefault(key, {"id": "", "name": "", "arguments": ""})
+                        if event.get("call_id"):
+                            call["id"] = event["call_id"]
+                        if event.get("name"):
+                            call["name"] = event["name"]
+                        if event.get("arguments") is not None:
+                            call["arguments"] = event.get("arguments") or "{}"
+                    elif event_type == "response.completed":
+                        response_data = event.get("response") if isinstance(event.get("response"), dict) else {}
+                        text, parsed_calls, usage = _parse_responses_response(response_data)
+                        if text and not streamed_text:
+                            yield f'data: {json.dumps({"delta": text})}\n\n'
+                        completed_calls = parsed_calls
+                        if usage.get("input_tokens") or usage.get("output_tokens"):
+                            yield f'data: {json.dumps({"type": "usage", "data": usage})}\n\n'
+                        break
+                    elif event_type in {"response.failed", "error"}:
+                        err = event.get("error") or (event.get("response") or {}).get("error") or {}
+                        err_msg = err.get("message") if isinstance(err, dict) else str(err or "Responses stream failed")
+                        yield f'event: error\ndata: {json.dumps({"error": err_msg, "status": 502})}\n\n'
+                        return
+
+            calls = _responses_stream_calls(call_acc) or completed_calls
+            if calls:
+                yield f'data: {json.dumps({"type": "tool_calls", "calls": calls})}\n\n'
+            yield "data: [DONE]\n\n"
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            _cooled = _mark_host_dead(target_url)
+            _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
+            logger.warning(f"Responses stream connect to {target_url} failed: {e}{_tail}")
+            yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
+        except httpx.ReadTimeout:
+            yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
+        except httpx.NetworkError:
+            yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
+        except Exception as e:
+            logger.error(f"Responses stream error: {e}")
+            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+        finally:
+            if next_line_task is not None and not next_line_task.done():
+                next_line_task.cancel()
+        return
 
     # ── Native Ollama streaming ──
     if provider == "ollama":
@@ -1769,6 +2138,16 @@ def _summarize_stream_error(err_chunk: Optional[str]) -> str:
     return "primary model failed"
 
 
+def _stream_chunk_counts_as_output(chunk: str) -> bool:
+    if not chunk.startswith("data: ") or chunk.startswith("data: [DONE]"):
+        return False
+    try:
+        data = json.loads(chunk[6:])
+    except Exception:
+        return True
+    return data.get("type") not in {"model_actual", "model_waiting"}
+
+
 async def stream_llm_with_fallback(candidates, messages, **kwargs):
     """Wrap stream_llm with an ordered fallback chain.
 
@@ -1807,15 +2186,7 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                     break
                 yield chunk
                 continue
-            # Any data chunk other than the terminal [DONE] means real output.
-            if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
-                try:
-                    event_data = json.loads(chunk[6:])
-                except Exception:
-                    event_data = {}
-                if event_data.get("type") == "model_actual":
-                    yield chunk
-                    continue
+            if _stream_chunk_counts_as_output(chunk):
                 # First real output from a NON-primary candidate: tell the client
                 # the selected model failed and another answered. Without this the
                 # fallback is invisible — a misconfigured provider looks like it

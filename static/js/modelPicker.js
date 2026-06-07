@@ -78,15 +78,50 @@ function _handlePickerKeydown(e, listEl, itemSelector, closeFn) {
 let _deps = null;
 let _autoSelectingDefault = false;
 
+function _canonicalModelEndpointUrl(url) {
+  let out = (url || '').replace(/\/+$/, '');
+  for (const suffix of ['/chat/completions', '/responses', '/completions', '/models']) {
+    if (out.endsWith(suffix)) {
+      out = out.slice(0, -suffix.length).replace(/\/+$/, '');
+      break;
+    }
+  }
+  return out;
+}
+
+function _isNonChatModel(modelId) {
+  const mid = String(modelId || '').toLowerCase();
+  if (!mid) return true;
+  return (
+    mid.startsWith('text-embedding') ||
+    mid.startsWith('embedding') ||
+    mid.startsWith('tts-') ||
+    mid.startsWith('whisper') ||
+    mid.startsWith('text-moderation') ||
+    mid.startsWith('moderation-') ||
+    mid.startsWith('omni-moderation') ||
+    mid.includes('-realtime') ||
+    mid.includes('-transcribe') ||
+    mid.includes('-tts')
+  );
+}
+
+function _chatModelsForItem(item) {
+  return ((item && item.models) || [])
+    .concat((item && item.models_extra) || [])
+    .filter(m => !_isNonChatModel(m));
+}
+
 function _modelExists(modelId, url) {
+  if (_isNonChatModel(modelId)) return false;
   if (!modelId || !window.modelsModule || !window.modelsModule.getCachedItems) return false;
   const items = window.modelsModule.getCachedItems() || [];
   if (!items.length) return true;
-  const targetUrl = (url || '').replace(/\/+$/, '');
+  const targetUrl = _canonicalModelEndpointUrl(url);
   return items.some(item => {
     if (item.offline) return false;
-    const itemUrl = (item.url || '').replace(/\/+$/, '');
-    const models = (item.models || []).concat(item.models_extra || []);
+    const itemUrl = _canonicalModelEndpointUrl(item.url || '');
+    const models = _chatModelsForItem(item);
     return models.includes(modelId) && (!targetUrl || itemUrl === targetUrl);
   });
 }
@@ -677,36 +712,24 @@ export function updateModelPicker() {
     const allAvailable = [];
     items.forEach(item => {
       if (item.offline) return;
-      (item.models || []).concat(item.models_extra || []).forEach(m => allAvailable.push(m));
+      _chatModelsForItem(item).forEach(m => allAvailable.push(m));
     });
     if (allAvailable.length > 0 && !allAvailable.includes(modelId)) {
       // Model no longer available — switch to first available
-      const fallback = items.find(item => !item.offline && (item.models || []).length > 0);
+      const fallback = items.find(item => !item.offline && _chatModelsForItem(item).length > 0);
       if (fallback) {
-        modelId = fallback.models[0];
+        modelId = _chatModelsForItem(fallback)[0];
         _deps.setPendingChat({ url: fallback.url, modelId, endpointId: fallback.endpoint_id });
       }
     }
   }
-  if (!modelId && !_autoSelectingDefault && window.modelsModule && window.modelsModule.getCachedItems) {
+  if (!modelId && !currentSessionId && !_autoSelectingDefault && window.modelsModule && window.modelsModule.getCachedItems) {
     const items = window.modelsModule.getCachedItems();
-    const first = items.find(item => !item.offline && ((item.models || []).length || (item.models_extra || []).length));
+    const first = items.find(item => !item.offline && _chatModelsForItem(item).length > 0);
     if (first) {
-      const models = (first.models || []).concat(first.models_extra || []);
+      const models = _chatModelsForItem(first);
       modelId = models[0];
-      if (!currentSessionId) {
-        _deps.setPendingChat({ url: first.url, modelId, endpointId: first.endpoint_id });
-      } else {
-        if (s) { s.model = modelId; s.endpoint_url = first.url; }
-        _autoSelectingDefault = true;
-        const fd = new FormData();
-        fd.append('model', modelId);
-        fd.append('endpoint_url', first.url || '');
-        if (first.endpoint_id) fd.append('endpoint_id', first.endpoint_id);
-        fetch(`${API_BASE}/api/session/${currentSessionId}`, { method: 'PATCH', body: fd })
-          .catch(() => {})
-          .finally(() => { _autoSelectingDefault = false; });
-      }
+      _deps.setPendingChat({ url: first.url, modelId, endpointId: first.endpoint_id });
     }
   }
 

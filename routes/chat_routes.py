@@ -5,7 +5,6 @@ import json
 import os
 import time
 import logging
-from datetime import datetime
 from typing import Dict, Any, AsyncGenerator, List
 
 from fastapi import APIRouter, Request, HTTPException, Form, Query
@@ -17,6 +16,7 @@ from src.request_models import ChatRequest
 from src.llm_core import llm_call_async, stream_llm, stream_llm_with_fallback
 from src.agent_loop import stream_agent_loop
 from src import agent_runs
+from src.model_capabilities import is_openai_responses_required_model
 from src.model_context import estimate_tokens
 from src.chat_helpers import coerce_message_and_session
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
@@ -26,11 +26,11 @@ from core.exceptions import SessionNotFoundError
 from src.auth_helpers import get_current_user
 from routes.session_routes import _verify_session_owner
 from routes.document_helpers import _owner_session_filter
-from core.database import SessionLocal, get_session_mode, set_session_mode
+from core.database import SessionLocal, get_session_mode, set_session_mode, utcnow_naive
 from core.database import Session as DBSession, ChatMessage as DBChatMessage
 from core.database import Document as DBDocument, ModelEndpoint
 from routes.research_routes import _resolve_research_endpoint
-from routes.model_routes import _visible_models
+from routes.model_routes import _is_chat_model, _visible_models
 from routes.chat_helpers import (
     resolve_session_auth,
     build_chat_context,
@@ -70,6 +70,7 @@ def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
     variants = {
         base,
         base + "/chat/completions",
+        base + "/responses",
         build_chat_url(base).rstrip("/"),
     }
     return sess in variants or sess.startswith(base + "/")
@@ -93,7 +94,7 @@ def _clear_orphaned_session_endpoint(sess, owner: str | None = None) -> bool:
         if db_session:
             db_session.endpoint_url = ""
             db_session.model = ""
-            db_session.updated_at = datetime.utcnow()
+            db_session.updated_at = utcnow_naive()
             db.commit()
         sess.endpoint_url = ""
         sess.model = ""
@@ -163,18 +164,47 @@ def _is_image_generation_session(sess, owner: str | None = None) -> bool:
     return False
 
 
+def _session_model_needs_chat_repair(model: str) -> bool:
+    model_id = (model or "").strip()
+    if not model_id:
+        return True
+    if any(model_id.lower().startswith(prefix) for prefix in _IMAGE_MODEL_PREFIXES):
+        return False
+    if is_openai_responses_required_model(model_id):
+        return False
+    return not _is_chat_model(model_id)
+
+
+def _pick_recovered_chat_model(models: list, session_name: str = "") -> str:
+    candidates = []
+    for model in models or []:
+        if not isinstance(model, str):
+            continue
+        model_id = model.strip()
+        if model_id and _is_chat_model(model_id):
+            candidates.append(model_id)
+    if not candidates:
+        return ""
+
+    name = (session_name or "").lower()
+    named = [model for model in candidates if model.lower() in name]
+    if named:
+        return sorted(named, key=len, reverse=True)[0]
+    return candidates[0]
+
+
 def _recover_empty_session_model(sess, session_id: str, owner: str | None = None) -> bool:
-    """Re-populate sess.model from the matching endpoint's cached models.
+    """Re-populate missing or unusable chat models from the endpoint cache.
 
     Covers the window between endpoint setup and the first chat send: the
     picker showed a model in the dropdown but the session record never got
     written (Issue #587 — UI uses the cached endpoint list, not s.model).
-    Without this, we'd POST the upstream with model="" and get a generic
-    401/503 instead of using the model the user already picked.
+    It also repairs older OpenAI sessions that accidentally saved embedding,
+    TTS, Whisper, or moderation model IDs as their chat model.
 
     Returns True iff sess.model was repaired.
     """
-    if getattr(sess, "model", None):
+    if not _session_model_needs_chat_repair(getattr(sess, "model", "")):
         return False
     db = SessionLocal()
     try:
@@ -206,27 +236,26 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
             visible = cached
         if not visible:
             return False
-        model = visible[0]
-        if not isinstance(model, str) or not model.strip():
+        model = _pick_recovered_chat_model(visible, getattr(sess, "name", ""))
+        if not model:
             return False
-        model = model.strip()
         # Persist so the next request, websocket reconnect, or page reload
         # picks up the same model (we'd otherwise re-pick on every send
         # and silently switch on the user if the cached order shifts).
         db_session = db.query(DBSession).filter(DBSession.id == session_id).first()
         if db_session:
             db_session.model = model
-            db_session.updated_at = datetime.utcnow()
+            db_session.updated_at = utcnow_naive()
             db.commit()
         sess.model = model
         logger.info(
-            "Recovered empty session model for %s — picked %r from endpoint %s",
+            "Recovered session chat model for %s — picked %r from endpoint %s",
             session_id, model, ep.id,
         )
         return True
     except Exception as e:
         db.rollback()
-        logger.warning("Failed to recover empty session model for %s: %s", session_id, e)
+        logger.warning("Failed to recover session chat model for %s: %s", session_id, e)
         return False
     finally:
         db.close()
