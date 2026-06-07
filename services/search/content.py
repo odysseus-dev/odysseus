@@ -89,18 +89,57 @@ def _public_http_url(url: str) -> bool:
         return False
 
 
+def _resolve_and_validate_ip(url: str) -> str:
+    """Resolve the hostname to an IP, validate it is public, and return
+    the IP. Raises if the URL is private/invalid. This is the single
+    DNS resolution point — the returned IP is pinned for the actual
+    HTTP connection to prevent DNS rebinding."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").strip()
+    if not host:
+        raise httpx.RequestError("No hostname in URL", request=httpx.Request("GET", url))
+    addrs = _resolve_hostname_ips(host)
+    if not addrs:
+        raise httpx.RequestError(f"DNS resolution failed for {host}", request=httpx.Request("GET", url))
+    # All resolved addresses must be public
+    for addr in addrs:
+        if _is_private_address(addr):
+            raise httpx.RequestError(f"Blocked private/internal IP for {host}: {addr}", request=httpx.Request("GET", url))
+    return str(addrs[0])
+
+
 def _get_public_url(url: str, headers: dict, timeout: int, max_redirects: int = 5) -> httpx.Response:
     current = url
     for _ in range(max_redirects + 1):
         if not _public_http_url(current):
             raise httpx.RequestError("Blocked private/internal URL", request=httpx.Request("GET", current))
-        response = httpx.get(current, headers=headers, timeout=timeout, follow_redirects=False)
+        # Pin the IP before connecting to prevent DNS rebinding.
+        # Resolve once, validate, then connect directly to the IP with
+        # the original Host header so the server still sees the right name.
+        pinned_ip = _resolve_and_validate_ip(current)
+        parsed = urlparse(current)
+        host = parsed.hostname or ""
+        port = parsed.port
+        scheme = parsed.scheme or "http"
+        # Build URL with pinned IP
+        netloc = f"{pinned_ip}:{port}" if port else pinned_ip
+        pinned_url = f"{scheme}://{netloc}{parsed.path or '/'}"
+        if parsed.query:
+            pinned_url += f"?{parsed.query}"
+        response = httpx.get(
+            pinned_url,
+            headers={**headers, "Host": host},
+            timeout=timeout,
+            follow_redirects=False,
+        )
         if response.status_code not in (301, 302, 303, 307, 308):
             return response
         location = response.headers.get("location")
         if not location:
             return response
-        current = urljoin(str(response.url), location)
+        # Use the original (pre-IP) URL as the base for resolving relative
+        # redirects, so the next iteration's hostname resolution works.
+        current = urljoin(current, location)
     raise httpx.RequestError("Too many redirects", request=httpx.Request("GET", current))
 
 # PDF extraction (optional dependency)
