@@ -74,11 +74,20 @@ def test_ipv6_zone_id_is_redacted():
 
 
 def test_ipv4_mapped_ipv6_is_scrubbed():
-    # ::ffff:192.168.0.1 — the v4 pass removes the dotted quad and the v6 pass
-    # the remnant. Neither the address nor "::" may survive.
-    out = sanitize_error("to ::ffff:192.168.0.1 closed")
-    assert "192.168" not in out and "::" not in out
-    assert "[redacted" in out
+    # ::ffff:192.168.0.1 must be redacted as a single unit (one [redacted]), not
+    # split into "[redacted][redacted]" by the v6 and v4 passes.
+    assert sanitize_error("to ::ffff:192.168.0.1 closed") == "to [redacted] closed"
+
+
+def test_bracketed_scoped_ipv6_with_port_is_one_redaction():
+    # [fe80::1%eth0]:8080 — the whole bracketed authority (zone + port) goes,
+    # with no leftover brackets/port and no nested [redacted].
+    assert sanitize_error("dial [fe80::1%eth0]:8080 timeout") == "dial [redacted] timeout"
+
+
+def test_bracketed_ipv4_mapped_with_port_is_one_redaction():
+    # [::ffff:192.168.0.1]:8080 — same, for an IPv4-mapped literal in brackets.
+    assert sanitize_error("dial [::ffff:192.168.0.1]:8080 timeout") == "dial [redacted] timeout"
 
 
 def test_invalid_ipv6_is_not_partially_mangled():
