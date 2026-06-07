@@ -924,7 +924,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
 
-        url, model, headers = resolve_endpoint("utility", owner=get_current_user(request))
+        owner = getattr(session, "owner", None) or effective_user(request)
+        url, model, headers = resolve_endpoint("utility", owner=owner)
         if not url or not model:
             url, model, headers = session.endpoint_url, session.model, session.headers
         if not url or not model:
