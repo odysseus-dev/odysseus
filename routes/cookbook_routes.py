@@ -2682,7 +2682,16 @@ def setup_cookbook_routes() -> APIRouter:
                     status = "completed" if exit_code == 0 else "error"
                 elif has_exit and "unrecognized arguments" in lower:
                     status = "error"
-                elif has_error and not ("application startup complete" in lower):
+                elif has_error and task_type != "download" and not ("application startup complete" in lower):
+                    # Generic "error/failed/traceback" substring detection is for
+                    # SERVE tasks (a Python traceback means the server crashed).
+                    # Downloads are EXCLUDED: hf logs transient, recoverable errors
+                    # during normal operation — e.g. "Error while downloading … the
+                    # read operation timed out. Trying to resume download…" — which
+                    # must NOT flip a live, resuming download to "stopped". Downloads
+                    # are classified by explicit signals instead: cache-complete /
+                    # DOWNLOAD_OK / 100% (done), a non-zero exit marker (error), or
+                    # process liveness (running vs stopped) below.
                     status = "error"
                 elif task_type == "download" and ("100%" in full_snapshot or "DOWNLOAD_OK" in full_snapshot):
                     # Only download tasks treat 100% as "completed".
