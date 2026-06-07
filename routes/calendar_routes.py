@@ -258,6 +258,17 @@ def parse_due_for_user(s: str) -> str:
         if t is not None:
             return base.replace(hour=t[0], minute=t[1]).isoformat()
 
+    # Time-first: "3pm today", "11pm today", "9am tomorrow"
+    m = _re.match(r'^(.+?)\s+(today|tonight|tomorrow|tmrw|yesterday)$', lower)
+    if m:
+        time_part, word = m.group(1).strip(), m.group(2)
+        base = today
+        if word in ("tomorrow", "tmrw"): base = today + _td(days=1)
+        elif word == "yesterday":        base = today - _td(days=1)
+        t = _parse_time(time_part)
+        if t is not None:
+            return base.replace(hour=t[0], minute=t[1]).isoformat()
+
     m = _re.match(r'^in\s+(\d+)\s*(hour|hr|minute|min|day)s?\s*$', lower)
     if m:
         n = int(m.group(1)); unit = m.group(2)
@@ -1368,7 +1379,7 @@ def setup_calendar_routes() -> APIRouter:
         "tomorrow", "next Tuesday", "in 30 minutes" resolve correctly.
         Uses the "utility" endpoint (small / fast model) to keep latency low.
         """
-        _require_user(request)
+        owner = _require_user(request)
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
         from src.text_helpers import strip_think
@@ -1394,9 +1405,9 @@ def setup_calendar_routes() -> APIRouter:
         if tz_hint:
             set_user_tz_name(tz_hint)
 
-        url, model, headers = resolve_endpoint("utility")
+        url, model, headers = resolve_endpoint("utility", owner=owner or None)
         if not url:
-            url, model, headers = resolve_endpoint("default")
+            url, model, headers = resolve_endpoint("default", owner=owner or None)
         if not url or not model:
             return {"ok": False, "error": "No LLM endpoint configured"}
 

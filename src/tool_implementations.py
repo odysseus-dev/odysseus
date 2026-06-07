@@ -12,8 +12,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-MAX_OUTPUT_CHARS = 10_000
-MAX_READ_CHARS = 20_000
+from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS
 
 
 def get_mcp_manager():
@@ -549,7 +548,7 @@ async def do_suggest_document(content: str, doc_id: str = None, owner: Optional[
 # ---------------------------------------------------------------------------
 
 async def do_search_chats(query: str, limit: int = 20, owner: str | None = None) -> Dict:
-    """Search past chat messages for the calling user's sessions only.
+    """Search past session transcripts for the calling user's sessions only.
 
     Without an owner filter this used to leak EVERY user's chat history
     into the agent's `search_chats` results (v2 review HIGH-11). The
@@ -557,63 +556,36 @@ async def do_search_chats(query: str, limit: int = 20, owner: str | None = None)
     through; legacy callers without owner pass through as before but
     will only see legacy/null-owner rows.
     """
-    from src.database import SessionLocal, ChatMessage as DBChatMessage, Session as DBSession
-    # Escape LIKE wildcards in the user-supplied query so a stray % or _
-    # doesn't widen the match (and to keep the response deterministic).
-    safe_q = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    db = SessionLocal()
     try:
-        q = (
-            db.query(DBChatMessage, DBSession.id, DBSession.name)
-            .join(DBSession, DBChatMessage.session_id == DBSession.id)
-            .filter(
-                DBSession.archived == False,
-                DBChatMessage.content.ilike(f"%{safe_q}%", escape="\\"),
-                DBChatMessage.role.in_(["user", "assistant"]),
-            )
-        )
-        if owner is not None:
-            # Restrict to this user's sessions plus legacy null-owner
-            # rows (so single-user upgrades keep seeing their own data).
-            q = q.filter((DBSession.owner == owner) | (DBSession.owner.is_(None)))
-        rows = q.order_by(DBChatMessage.timestamp.desc()).limit(limit).all()
+        from src.session_search import search_session_messages
 
-        if not rows:
+        results = search_session_messages(query, limit=limit, owner=owner)
+        if not results:
             return {"results": f"No chats found matching \"{query}\"."}
 
         # Group by session to avoid duplicate links
         seen_sessions = {}
-        for msg, session_id, session_name in rows:
-            if session_id not in seen_sessions:
-                content = msg.content or ""
-                lower_content = content.lower()
-                idx = lower_content.find(query.lower())
-                if idx == -1:
-                    snippet = content[:150]
-                else:
-                    start = max(0, idx - 60)
-                    end = min(len(content), idx + len(query) + 60)
-                    snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
-                seen_sessions[session_id] = {
-                    "name": session_name or "Untitled",
-                    "snippet": snippet,
-                    "role": msg.role,
-                    "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
-                }
+        for result in results:
+            if result.session_id not in seen_sessions:
+                seen_sessions[result.session_id] = result
 
         lines = [f"Found {len(seen_sessions)} session(s) matching \"{query}\":\n"]
-        for sid, info in seen_sessions.items():
-            lines.append(f"- **{info['name']}** (#{sid})")
+        for sid, result in seen_sessions.items():
+            lines.append(f"- **{result.session_name}** (#{sid})")
             lines.append(f"  Link: [Open chat](#{sid})")
-            lines.append(f"  > {info['snippet']}")
+            lines.append(f"  Match ({result.role}): {result.content_snippet}")
+            if result.context_before:
+                before = result.context_before[-1]
+                lines.append(f"  Before ({before['role']}): {before['content'][:180]}")
+            if result.context_after:
+                after = result.context_after[0]
+                lines.append(f"  After ({after['role']}): {after['content'][:180]}")
             lines.append("")
 
         return {"results": "\n".join(lines)}
     except Exception as e:
         logger.error(f"search_chats failed: {e}")
         return {"error": str(e), "exit_code": 1}
-    finally:
-        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1566,6 +1538,8 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             "image gen": "image_gen_enabled", "image generation": "image_gen_enabled",
             "reminder channel": "reminder_channel", "reminders": "reminder_channel",
             "ntfy topic": "reminder_ntfy_topic",
+            "webhook integration": "reminder_webhook_integration_id",
+            "webhook template": "reminder_webhook_payload_template", "webhook payload": "reminder_webhook_payload_template",
             "agent tool calls": "agent_max_tool_calls", "max tool calls": "agent_max_tool_calls",
             "agent timeout": "agent_stream_timeout_seconds", "stream timeout": "agent_stream_timeout_seconds",
             "token budget": "agent_input_token_budget", "input budget": "agent_input_token_budget",
@@ -1581,7 +1555,7 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
 
         _ENUMS = {
             "image_quality": ["low", "medium", "high"],
-            "reminder_channel": ["browser", "email", "ntfy"],
+            "reminder_channel": ["browser", "email", "ntfy", "webhook"],
         }
         def _coerce(value, default):
             if isinstance(default, bool):
@@ -1854,6 +1828,22 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
         text = re.sub(r"^\s*reminder\s*:\s*", "", text)
         return re.sub(r"\s+", " ", text)
 
+    def _note_visible_to_owner(note, owner_value: Optional[str]) -> bool:
+        # Empty owner_value is single-user / auth-disabled mode. A real
+        # authenticated owner must match exactly; null/empty legacy rows are not
+        # shared between accounts.
+        if not owner_value:
+            return True
+        return getattr(note, "owner", None) == owner_value
+
+    def _note_by_prefix(note_id: str):
+        if not note_id:
+            return None
+        q = db.query(Note).filter(Note.id.startswith(note_id))
+        if owner:
+            q = q.filter(Note.owner == owner)
+        return q.first()
+
     try:
         if action == "list":
             q = db.query(Note)
@@ -1973,10 +1963,10 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
 
         elif action == "update":
             note_id = args.get("id", "")
-            note = db.query(Note).filter(Note.id.startswith(note_id)).first() if note_id else None
+            note = _note_by_prefix(note_id)
             if not note:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
-            if owner is not None and note.owner and note.owner != owner:
+            if not _note_visible_to_owner(note, owner):
                 return {"error": "Note not found", "exit_code": 1}
             for field in ("title", "content", "note_type", "color", "label"):
                 if field in args and args[field] is not None:
@@ -2009,10 +1999,10 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
 
         elif action == "delete":
             note_id = args.get("id", "")
-            note = db.query(Note).filter(Note.id.startswith(note_id)).first() if note_id else None
+            note = _note_by_prefix(note_id)
             if not note:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
-            if owner is not None and note.owner and note.owner != owner:
+            if not _note_visible_to_owner(note, owner):
                 return {"error": "Note not found", "exit_code": 1}
             title = note.title
             db.delete(note)
@@ -2022,10 +2012,10 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
         elif action == "toggle_item":
             note_id = args.get("id", "")
             index = args.get("index", 0)
-            note = db.query(Note).filter(Note.id.startswith(note_id)).first() if note_id else None
+            note = _note_by_prefix(note_id)
             if not note:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
-            if owner is not None and note.owner and note.owner != owner:
+            if not _note_visible_to_owner(note, owner):
                 return {"error": "Note not found", "exit_code": 1}
             if not note.items:
                 return {"error": "Note has no checklist items", "exit_code": 1}
@@ -2137,6 +2127,13 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         """Parse agent event datetimes in the user's timezone when available."""
         return _parse_dt_pair(parse_due_for_user(raw))
 
+    def _first_nonempty_arg(*names: str):
+        for name in names:
+            value = args.get(name)
+            if value not in (None, ""):
+                return value
+        return None
+
     def _create_calendar_reminder(summary: str, location: str, dtstart: datetime,
                                   all_day: bool, minutes_before: int,
                                   is_utc: bool = False) -> tuple[Optional[str], Optional[str]]:
@@ -2194,12 +2191,18 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
 
         elif action == "list_events":
             try:
-                if args.get("start"):
-                    start_dt = _parse_dt(args["start"])
+                start_raw = _first_nonempty_arg(
+                    "start", "start_date", "range_start", "from", "dtstart", "since"
+                )
+                end_raw = _first_nonempty_arg(
+                    "end", "end_date", "range_end", "to", "dtend", "until"
+                )
+                if start_raw:
+                    start_dt = _parse_dt(start_raw)
                 else:
                     start_dt = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-                if args.get("end"):
-                    end_dt = _parse_dt(args["end"])
+                if end_raw:
+                    end_dt = _parse_dt(end_raw)
                 else:
                     end_dt = start_dt + timedelta(days=14)
             except ValueError as e:
@@ -2492,7 +2495,21 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
 # Cookbook routes loopback. The agent's tool calls run in-process but
 # need to reach admin-gated cookbook routes; we ride the per-process
 # internal token so require_admin lets us through. See core/middleware.py.
-_COOKBOOK_BASE = "http://localhost:7000"
+#
+# Resolution order:
+#   1. ODYSSEUS_INTERNAL_BASE — explicit override (e.g. behind a TLS proxy).
+#   2. APP_PORT — derive http://127.0.0.1:$APP_PORT (matches docker-compose).
+#   3. Fallback http://127.0.0.1:7000 — preserves legacy default.
+#
+# 127.0.0.1 (not "localhost") avoids IPv6/DNS ambiguity for a strictly-local
+# call. Without this, tools that loop back (app_api, trigger_research,
+# cookbook state read/write) fail with "All connection attempts failed"
+# whenever the running uvicorn isn't on 7000 — which is most non-default
+# deployments and any side-by-side multi-instance setup.
+_COOKBOOK_BASE = os.environ.get(
+    "ODYSSEUS_INTERNAL_BASE",
+    f"http://127.0.0.1:{os.environ.get('APP_PORT', '7000')}",
+)
 
 
 def _internal_headers(owner: Optional[str] = None) -> Dict[str, str]:
@@ -2659,7 +2676,7 @@ async def _cookbook_register_task(session_id: str, model: str, host: str,
     placeholder = (
         f"Launched via agent — waiting for tmux output…\n"
         f"  session: {session_id}\n"
-        f"  target:  {target}{cmd.split()[0] if cmd else ''}\n"
+        f"  target:  {target}{(cmd.split() or [''])[0] if cmd else ''}\n"
         f"  cmd:     {cmd[:200]}{'…' if len(cmd) > 200 else ''}"
     )
     tasks.append({
@@ -2690,26 +2707,32 @@ async def _cookbook_register_task(session_id: str, model: str, host: str,
 
 
 # Paths the generic `app_api` tool will refuse to call. Auth/token/user
-# administration is too risky to route through an agent surface even
-# when the agent is admin-context — accidental "delete account"
-# style mistakes have permanent blast radius.
+# administration and host shell execution are too risky to route through an
+# agent surface even when the agent is admin-context; accidental account or
+# command mistakes have permanent blast radius.
 _APP_API_BLOCKLIST_PREFIXES = (
     "/api/auth",           # login/logout/password
     "/api/users",          # user CRUD (bare /api/users list+create+delete must also block)
     "/api/tokens",         # api token mgmt (bare /api/tokens list+create must also block)
     "/api/admin",          # admin one-shots (wipe etc.)
+    "/api/shell",          # host shell execution must stay behind named command tooling
     "/api/backup/restore", # destructive restore
 )
 
 # (method, prefix) pairs to refuse specifically. Used for endpoints
-# where GET is fine but writes are destructive — saw the agent wipe
-# cookbook_state.json (presets + tasks) by POSTing {"tasks": []} to
-# /api/cookbook/state, which overwrote the whole file. Use the
-# dedicated preset/task tools instead.
+# where GET is fine but writes are destructive or host-control shaped.
+# Saw the agent wipe cookbook_state.json (presets + tasks) by POSTing
+# {"tasks": []} to /api/cookbook/state, which overwrote the whole file.
+# Use dedicated tools or UI flows instead.
 _APP_API_BLOCKLIST_METHOD_PATH = (
     ("GET",    "/api/email/accounts"),  # owner-filtered in tool context; use list_email_accounts MCP tool
     ("POST",   "/api/cookbook/state"),   # whole-file overwrite — agent must use serve_preset/serve_model instead
     ("DELETE", "/api/cookbook/state"),
+    # Host-control routes: package install, engine rebuild, and process
+    # signalling should not be reachable through the generic API bridge.
+    ("POST",   "/api/cookbook/packages/install"),
+    ("POST",   "/api/cookbook/rebuild-engine"),
+    ("POST",   "/api/cookbook/kill-pid"),
     # Use the named tools (download_model / serve_model) — they handle
     # host-name resolution, per-host env_prefix, AND register the task
     # in cookbook state so it shows in the UI + list_downloads. Hitting
@@ -2734,7 +2757,7 @@ _APP_API_BLOCKLIST_METHOD_PATH = (
 
 
 async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
-    """Generic loopback to any internal Odysseus API endpoint. Lets the
+    """Generic loopback to allowed internal Odysseus API endpoints. Lets the
     agent reach the full UI-button surface (cookbook, email, notes,
     calendar, skills, sessions, gallery, research, etc.) without us
     landing a named tool wrapper for every one.
@@ -2748,7 +2771,8 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
 
     The `endpoints` action returns the OpenAPI surface (method + path +
     summary) so the agent can discover what's reachable. A blocklist
-    refuses auth/user/admin paths to keep blast radius bounded.
+    refuses sensitive auth/user/admin/shell paths and method-specific
+    host-control routes to keep blast radius bounded.
     """
     import httpx
     try:
@@ -2808,7 +2832,7 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     if not path.startswith("/"):
         path = "/" + path
     if any(path.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES):
-        return {"error": f"Path blocked for safety: {path}. Auth/user/admin endpoints are off-limits via app_api.", "exit_code": 1}
+        return {"error": f"Path blocked for safety: {path}. Sensitive endpoints are off-limits via app_api.", "exit_code": 1}
 
     method = (args.get("method") or "GET").upper()
     if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
@@ -2816,6 +2840,12 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     if any(method == m and path.startswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_PATH):
         if "/api/email/accounts" in path:
             return {"error": "Don't use /api/email/accounts via app_api — it is owner-filtered in tool context and may return empty. Use the `list_email_accounts` email tool, then pass `account` to list_emails/read_email.", "exit_code": 1}
+        if "/api/cookbook/packages/install" in path:
+            return {"error": "Don't POST /api/cookbook/packages/install via app_api — package installation is host code execution. Use the dedicated Cookbook dependency UI/flow instead.", "exit_code": 1}
+        if "/api/cookbook/rebuild-engine" in path:
+            return {"error": "Don't POST /api/cookbook/rebuild-engine via app_api — engine rebuild mutates local or remote host state. Use the dedicated Cookbook UI/flow instead.", "exit_code": 1}
+        if "/api/cookbook/kill-pid" in path:
+            return {"error": "Don't POST /api/cookbook/kill-pid via app_api — process signalling is host control. Use the dedicated Cookbook stop/diagnostic flow instead.", "exit_code": 1}
         if "/api/model/download" in path:
             return {"error": "Don't POST /api/model/download directly — use the `download_model` tool (it resolves the server name, sets the venv env_prefix, and registers the task so it shows in the UI).", "exit_code": 1}
         if "/api/model/serve" in path:

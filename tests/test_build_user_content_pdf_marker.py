@@ -35,7 +35,7 @@ def test_pdf_body_marker_stripped_without_eating_text(monkeypatch, tmp_path):
 
     # Shape _process_pdf actually returns: marker, then a page-text marker, then body.
     raw = "\n\n[PDF content]:\n\n[Page 1 text]:\nto the board, the agenda is set"
-    monkeypatch.setattr(dp, "_process_pdf", lambda path: raw)
+    monkeypatch.setattr(dp, "_process_pdf", lambda path, owner=None: raw)
     monkeypatch.setattr(pdf_forms, "has_form_fields", lambda path: False)
     monkeypatch.setattr(pdf_form_doc, "create_plain_pdf_document", lambda **kw: "doc-123")
 

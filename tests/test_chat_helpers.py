@@ -1,7 +1,12 @@
 import pytest
 from fastapi import HTTPException
 
-from routes.chat_helpers import _enforce_chat_privileges, clean_thinking_for_save, needs_auto_name
+from routes.chat_helpers import (
+    _enforce_chat_privileges,
+    clean_thinking_for_save,
+    needs_auto_name,
+    save_assistant_response,
+)
 
 
 class _AuthManager:
@@ -62,6 +67,15 @@ def test_allowed_models_nonempty_list_still_restricts_without_new_flag(monkeypat
             _Request({"allowed_models": ["provider/model-a"], "max_messages_per_day": 0}),
             _Session("provider/model-b"),
         )
+
+
+class _FakeSession:
+    def __init__(self, model="selected-model"):
+        self.model = model
+        self.history = []
+
+    def add_message(self, message):
+        self.history.append(message)
 
 
 @pytest.mark.parametrize("name,expected", [
@@ -130,3 +144,19 @@ def test_clean_thinking_for_save_extracts_thought_tag():
 
     assert content == "Final answer."
     assert metadata["thinking"] == "internal reasoning"
+
+
+def test_save_assistant_response_preserves_actual_and_requested_model():
+    sess = _FakeSession("selected-model")
+
+    save_assistant_response(
+        sess,
+        session_manager=None,
+        session_id="s1",
+        full_response="hello",
+        last_metrics={"model": "actual-model", "input_tokens": 1, "output_tokens": 2},
+        incognito=True,
+    )
+
+    assert sess.history[-1].metadata["requested_model"] == "selected-model"
+    assert sess.history[-1].metadata["model"] == "actual-model"

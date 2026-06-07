@@ -105,12 +105,6 @@ async def _handle_event(event_name: str, owner: Optional[str] = None):
                 db.commit()
                 # Fire the task
                 if _task_scheduler:
-                    if task.next_run and task.next_run > datetime.utcnow():
-                        logger.info(
-                            f"Event '{event_name}' reached task '{task.name}', "
-                            f"but it is already deferred until {task.next_run}"
-                        )
-                        continue
                     logger.info(f"Event '{event_name}' triggered task '{task.name}' (every {threshold})")
                     await _task_scheduler.run_task_now(task.id)
                 else:

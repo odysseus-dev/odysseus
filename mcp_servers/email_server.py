@@ -423,68 +423,71 @@ def _list_emails(folder="INBOX", max_results=20, unresponded_only=False,
     Pass unread_only=True and/or unresponded_only=True for attention scans.
     account selects mailbox (None = default).
     """
-    conn = _imap_connect(account)
-    select_status, _ = conn.select(_q(folder), readonly=True)
-    if select_status != "OK":
-        conn.logout()
-        raise ValueError(f"IMAP folder not found: {folder}")
+    conn = None
+    try:
+        conn = _imap_connect(account)
+        select_status, _ = conn.select(_q(folder), readonly=True)
+        if select_status != "OK":
+            raise ValueError(f"IMAP folder not found: {folder}")
 
-    if unread_only and unresponded_only:
-        status, data = conn.uid("SEARCH", None, "(UNSEEN UNANSWERED)")
-    elif unread_only:
-        status, data = conn.uid("SEARCH", None, "(UNSEEN)")
-    elif unresponded_only:
-        # Was missing — unresponded_only=True (without unread_only) fell through
-        # to "ALL" and returned answered mail too, despite the documented
-        # "emails without replies" behaviour.
-        status, data = conn.uid("SEARCH", None, "(UNANSWERED)")
-    else:
-        # Include read too — IMAP search "ALL" returns the entire folder
-        status, data = conn.uid("SEARCH", None, "ALL")
+        if unread_only and unresponded_only:
+            status, data = conn.uid("SEARCH", None, "(UNSEEN UNANSWERED)")
+        elif unread_only:
+            status, data = conn.uid("SEARCH", None, "(UNSEEN)")
+        elif unresponded_only:
+            # Was missing — unresponded_only=True (without unread_only) fell through
+            # to "ALL" and returned answered mail too, despite the documented
+            # "emails without replies" behaviour.
+            status, data = conn.uid("SEARCH", None, "(UNANSWERED)")
+        else:
+            # Include read too — IMAP search "ALL" returns the entire folder
+            status, data = conn.uid("SEARCH", None, "ALL")
 
-    if status != "OK" or not data[0]:
-        conn.logout()
-        return []
+        if status != "OK" or not data[0]:
+            return []
 
-    uid_list = list(reversed(data[0].split()))[:max_results]
-    cache = _get_cached_summaries()
-    results = []
+        uid_list = list(reversed(data[0].split()))[:max_results]
+        cache = _get_cached_summaries()
+        results = []
 
-    for uid in uid_list:
-        try:
-            status, msg_data = conn.uid("FETCH", uid, "(RFC822.HEADER)")
-            if status != "OK":
+        for uid in uid_list:
+            try:
+                status, msg_data = conn.uid("FETCH", uid, "(RFC822.HEADER)")
+                if status != "OK":
+                    continue
+                raw_header = msg_data[0][1]
+                msg = email.message_from_bytes(raw_header)
+
+                subject = _decode_header(msg.get("Subject", "(no subject)"))
+                sender = _decode_header(msg.get("From", "unknown"))
+                date_str = msg.get("Date", "")
+                message_id = msg.get("Message-ID", "")
+
+                # Parse sender name
+                sender_name, sender_addr = email.utils.parseaddr(sender)
+                sender_display = sender_name or sender_addr
+
+                # Check cache for summary
+                cached = cache.get(subject, {})
+                summary = cached.get("summary", "")
+
+                results.append({
+                    "uid": uid.decode(),
+                    "message_id": message_id,
+                    "subject": subject,
+                    "from": sender_display,
+                    "from_address": sender_addr,
+                    "date": date_str,
+                    "summary": summary,
+                })
+            except Exception:
                 continue
-            raw_header = msg_data[0][1]
-            msg = email.message_from_bytes(raw_header)
 
-            subject = _decode_header(msg.get("Subject", "(no subject)"))
-            sender = _decode_header(msg.get("From", "unknown"))
-            date_str = msg.get("Date", "")
-            message_id = msg.get("Message-ID", "")
-
-            # Parse sender name
-            sender_name, sender_addr = email.utils.parseaddr(sender)
-            sender_display = sender_name or sender_addr
-
-            # Check cache for summary
-            cached = cache.get(subject, {})
-            summary = cached.get("summary", "")
-
-            results.append({
-                "uid": uid.decode(),
-                "message_id": message_id,
-                "subject": subject,
-                "from": sender_display,
-                "from_address": sender_addr,
-                "date": date_str,
-                "summary": summary,
-            })
-        except Exception:
-            continue
-
-    conn.logout()
-    return results
+        return results
+    finally:
+        if conn:
+            try: conn.logout()
+            except Exception: pass
 
 
 def _result_sort_time(result: dict) -> datetime:
@@ -657,54 +660,55 @@ def _extract_attachment_to_disk(msg, index, target_dir):
 def _read_email(uid=None, message_id=None, folder="INBOX", account=None):
     """Read full email content by UID or message-ID. account = mailbox selector."""
     cfg = _load_config(account)
-    conn = _imap_connect(account)
-    conn.select(_q(folder), readonly=True)
+    conn = None
+    try:
+        conn = _imap_connect(account)
+        conn.select(_q(folder), readonly=True)
 
-    if message_id and not uid:
-        status, data = conn.uid("SEARCH", None, f'(HEADER Message-ID "{message_id}")')
-        if status != "OK" or not data[0]:
-            conn.logout()
-            return {"error": f"Email not found with Message-ID: {message_id}"}
-        uid = data[0].split()[-1]
+        if message_id and not uid:
+            status, data = conn.uid("SEARCH", None, f'(HEADER Message-ID "{message_id}")')
+            if status != "OK" or not data[0]:
+                return {"error": f"Email not found with Message-ID: {message_id}"}
+            uid = data[0].split()[-1]
 
-    if not uid:
-        conn.logout()
-        return {"error": "No UID or Message-ID provided"}
+        if not uid:
+            return {"error": "No UID or Message-ID provided"}
 
-    status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
-    if status != "OK":
-        conn.logout()
-        return {"error": f"Failed to fetch email UID {uid}"}
-    if not msg_data or not msg_data[0] or not isinstance(msg_data[0], tuple) or len(msg_data[0]) < 2:
-        conn.logout()
-        return {"error": f"Email not found with UID {uid}"}
+        status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
+        if status != "OK":
+            return {"error": f"Failed to fetch email UID {uid}"}
+        if not msg_data or not msg_data[0] or not isinstance(msg_data[0], tuple) or len(msg_data[0]) < 2:
+            return {"error": f"Email not found with UID {uid}"}
 
-    raw = msg_data[0][1]
-    msg = email.message_from_bytes(raw)
+        raw = msg_data[0][1]
+        msg = email.message_from_bytes(raw)
 
-    subject = _decode_header(msg.get("Subject", "(no subject)"))
-    sender = _decode_header(msg.get("From", "unknown"))
-    date_str = msg.get("Date", "")
-    message_id_header = msg.get("Message-ID", "")
-    body = _extract_text(msg)
-    attachments = _list_attachments_from_msg(msg)
+        subject = _decode_header(msg.get("Subject", "(no subject)"))
+        sender = _decode_header(msg.get("From", "unknown"))
+        date_str = msg.get("Date", "")
+        message_id_header = msg.get("Message-ID", "")
+        body = _extract_text(msg)
+        attachments = _list_attachments_from_msg(msg)
 
-    sender_name, sender_addr = email.utils.parseaddr(sender)
+        sender_name, sender_addr = email.utils.parseaddr(sender)
 
-    conn.logout()
-    return {
-        "uid": uid.decode() if isinstance(uid, bytes) else str(uid),
-        "account": cfg.get("account_name") or cfg.get("imap_user") or "default",
-        "account_email": cfg.get("imap_user") or cfg.get("from_address") or "",
-        "account_id": cfg.get("account_id"),
-        "message_id": message_id_header,
-        "subject": subject,
-        "from": sender_name or sender_addr,
-        "from_address": sender_addr,
-        "date": date_str,
-        "body": body[:8000],
-        "attachments": attachments,
-    }
+        return {
+            "uid": uid.decode() if isinstance(uid, bytes) else str(uid),
+            "account": cfg.get("account_name") or cfg.get("imap_user") or "default",
+            "account_email": cfg.get("imap_user") or cfg.get("from_address") or "",
+            "account_id": cfg.get("account_id"),
+            "message_id": message_id_header,
+            "subject": subject,
+            "from": sender_name or sender_addr,
+            "from_address": sender_addr,
+            "date": date_str,
+            "body": body[:8000],
+            "attachments": attachments,
+        }
+    finally:
+        if conn:
+            try: conn.logout()
+            except Exception: pass
 
 
 def _read_email_across_accounts(uid=None, message_id=None, folder="INBOX"):
@@ -858,10 +862,15 @@ def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, b
 
 def _reply_to_email(uid, body, folder="INBOX", reply_all=False, account=None):
     """Reply to an existing email by UID. Threads via In-Reply-To/References."""
-    conn = _imap_connect(account)
-    conn.select(_q(folder), readonly=True)
-    status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
-    conn.logout()
+    conn = None
+    try:
+        conn = _imap_connect(account)
+        conn.select(_q(folder), readonly=True)
+        status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
+    finally:
+        if conn:
+            try: conn.logout()
+            except Exception: pass
     if status != "OK" or not msg_data or not msg_data[0]:
         return {"error": f"Failed to fetch email UID {uid}"}
     raw = msg_data[0][1]
@@ -1038,10 +1047,15 @@ def _archive_email(uid, folder="INBOX", account=None):
 
 def _download_attachment(uid, index, folder="INBOX", account=None):
     """Extract a specific attachment to disk and return its local path."""
-    conn = _imap_connect(account)
-    conn.select(_q(folder), readonly=True)
-    status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
-    conn.logout()
+    conn = None
+    try:
+        conn = _imap_connect(account)
+        conn.select(_q(folder), readonly=True)
+        status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
+    finally:
+        if conn:
+            try: conn.logout()
+            except Exception: pass
     if status != "OK":
         return {"error": f"Failed to fetch email UID {uid}"}
     raw = msg_data[0][1]

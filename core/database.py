@@ -1627,9 +1627,104 @@ def init_db():
     _migrate_add_calendar_is_utc()
     _migrate_add_calendar_origin()
     _migrate_add_calendar_account_id()
+    _migrate_chat_messages_fts()
     _migrate_encrypt_email_passwords()
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
+    _migrate_backfill_task_folders()
+
+
+def _migrate_backfill_task_folders():
+    """Backfill folder='Tasks' on pre-existing task/research sessions.
+
+    Sessions created by the task scheduler (LLM tasks, action tasks, research
+    runs) now set folder='Tasks' at creation time.  This migration tags any
+    older sessions that predate that assignment.  Idempotent — only touches
+    rows where folder is NULL or empty and the title matches known prefixes.
+    """
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(sessions)"))]
+            if "folder" not in cols:
+                return
+            res = conn.execute(text(
+                "UPDATE sessions SET folder = 'Tasks' "
+                "WHERE (folder IS NULL OR folder = '') "
+                "AND (name LIKE '[Task] %' OR name LIKE '[Research] %')"
+            ))
+            conn.commit()
+            if res.rowcount:
+                logging.getLogger(__name__).info(
+                    f"Backfilled folder='Tasks' on {res.rowcount} task/research sessions")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"task folder backfill: {e}")
+
+
+def _migrate_chat_messages_fts():
+    """Create and backfill the session transcript FTS index for SQLite."""
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if db_path == ":memory:":
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS temp._odysseus_fts5_probe USING fts5(content)")
+            conn.execute("DROP TABLE IF EXISTS temp._odysseus_fts5_probe")
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"chat_messages FTS migration skipped; FTS5 unavailable: {e}")
+            return
+
+        conn.executescript(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS chat_messages_fts USING fts5(
+                content,
+                message_id UNINDEXED,
+                session_id UNINDEXED,
+                role UNINDEXED
+            );
+
+            CREATE TRIGGER IF NOT EXISTS chat_messages_fts_ai
+            AFTER INSERT ON chat_messages BEGIN
+                INSERT INTO chat_messages_fts(content, message_id, session_id, role)
+                VALUES (COALESCE(new.content, ''), new.id, new.session_id, new.role);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS chat_messages_fts_ad
+            AFTER DELETE ON chat_messages BEGIN
+                DELETE FROM chat_messages_fts WHERE message_id = old.id;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS chat_messages_fts_au
+            AFTER UPDATE ON chat_messages BEGIN
+                DELETE FROM chat_messages_fts WHERE message_id = old.id;
+                INSERT INTO chat_messages_fts(content, message_id, session_id, role)
+                VALUES (COALESCE(new.content, ''), new.id, new.session_id, new.role);
+            END;
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO chat_messages_fts(content, message_id, session_id, role)
+            SELECT COALESCE(cm.content, ''), cm.id, cm.session_id, cm.role
+            FROM chat_messages cm
+            WHERE NOT EXISTS (
+                SELECT 1 FROM chat_messages_fts fts
+                WHERE fts.message_id = cm.id
+            )
+            """
+        )
+        conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"chat_messages FTS migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def _migrate_add_email_smtp_security():
