@@ -9,6 +9,7 @@ import { providerLogo } from './providers.js';
 import { initModelPicker, updateModelPicker } from './modelPicker.js';
 import themeModule from './theme.js';
 import spinnerModule from './spinner.js';
+import { NEW_DRAFT_ID, hasComposerDraft } from './composerDrafts.js';
 
 const API_BASE = window.location.origin;
 
@@ -26,6 +27,10 @@ let _autoCreateInProgress = false; // guard against recursive auto-create
 const _INCOGNITO_SESSIONS_KEY = 'ody-incognito-sessions'; // sessionStorage key for incognito session IDs
 const _isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 const _mod = _isMac ? '⌘' : 'Ctrl';
+
+function _hasNewChatDraft() {
+  return hasComposerDraft(NEW_DRAFT_ID);
+}
 
 function _getIncognitoIds() {
   try { return JSON.parse(sessionStorage.getItem(_INCOGNITO_SESSIONS_KEY) || '[]'); } catch { return []; }
@@ -1385,6 +1390,7 @@ export async function loadSessions() {
       }
     }
     const hasPendingChat = !!_pendingChat;
+    const hasNewChatDraft = _hasNewChatDraft();
     let targetId = null;
     if (hasPendingChat) {
       // A model was picked and the UI is showing a fresh New Chat, but the
@@ -1401,6 +1407,10 @@ export async function loadSessions() {
       targetId = currentSessionId;
     } else if (savedId && activeSessions.some(s => s.id === savedId)) {
       targetId = savedId;
+    } else if (hasNewChatDraft) {
+      // A full page refresh loses _pendingChat, but the scoped New Chat draft
+      // still means the user was composing before a real session existed.
+      targetId = null;
     } else if (!_skipAutoSelect && _realSessions.length > 0) {
       // Most-recent NON-transient session — skip Assistant / Tasks so the
       // auto-firing assistant doesn't become the apparent default chat.
@@ -1424,7 +1434,7 @@ export async function loadSessions() {
     const _isFirstLoad = !sessionStorage.getItem('ody-session-active');
     if (_isFirstLoad) {
       sessionStorage.setItem('ody-session-active', '1');
-      if (!targetId) {
+      if (!targetId && !hasNewChatDraft) {
         try {
           const dcRes = await fetch(`${API_BASE}/api/default-chat`);
           const dc = await dcRes.json();
@@ -1456,6 +1466,9 @@ export async function loadSessions() {
       const s = sessions.find(x => x.id === targetId);
       const metaEl = document.getElementById('current-meta');
       if (metaEl && s) metaEl.textContent = s.name;
+      if (window.chatModule && window.chatModule.restoreComposerDraft) {
+        window.chatModule.restoreComposerDraft(targetId);
+      }
     }
 
     // No session selected — still enable input so slash commands (e.g. /setup) work
@@ -1470,7 +1483,7 @@ export async function loadSessions() {
       }
       updateModelPicker();
       // Only auto-create if there are truly zero sessions (not just unselected)
-      if (activeSessions.length === 0 && !_autoCreateInProgress) {
+      if (activeSessions.length === 0 && !hasNewChatDraft && !_autoCreateInProgress) {
         _autoCreateInProgress = true;
         try {
           const dcRes = await fetch(`${API_BASE}/api/default-chat`);
@@ -1671,6 +1684,9 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
       document.querySelectorAll('.list-item.active-session').forEach(el => el.classList.remove('active-session'));
     }
     uiModule.scrollHistoryInstant();
+    if (window.chatModule && window.chatModule.restoreComposerDraft) {
+      window.chatModule.restoreComposerDraft(id);
+    }
 
     // Fade in and re-enable message animations
     if (chatHistory) {
@@ -1815,6 +1831,9 @@ export function createDirectChat(url, modelId, endpointId) {
   // Enable input
   const msgInput = document.getElementById('message');
   if (msgInput) { msgInput.disabled = false; msgInput.value = ''; msgInput.focus(); }
+  if (window.chatModule && window.chatModule.restoreComposerDraft) {
+    window.chatModule.restoreComposerDraft();
+  }
 }
 
 /** Actually create the session in the DB. Called on first message send. */
