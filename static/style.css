@@ -36505,3 +36505,55 @@ body.theme-frosted .modal {
   font-size: 12px;
   cursor: pointer;
 }
+.companion-seg {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 14px;
+  background: var(--bg, #282c34);
+  border: 1px solid var(--border, #355a66);
+  border-radius: 10px;
+}
+.companion-seg-btn {
+  flex: 1;
+  background: none;
+  border: none;
+  border-radius: 7px;
+  padding: 8px 10px;
+  color: var(--muted, #888);
+  font-size: 13px;
+  cursor: pointer;
+}
+.companion-seg-btn.active {
+  background: var(--accent, #00aaff);
+  color: #00121f;
+  font-weight: 600;
+}
+.companion-risk {
+  text-align: left;
+}
+.companion-risk-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--warn, #f0ad4e);
+}
+.companion-risk-list {
+  margin: 0 0 14px;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--fg, #9cdef2);
+}
+.companion-risk-list li { margin-bottom: 7px; }
+.companion-continue {
+  width: 100%;
+  background: var(--accent, #00aaff);
+  color: #00121f;
+  border: none;
+  border-radius: 8px;
+  padding: 11px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}

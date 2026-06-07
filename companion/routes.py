@@ -967,6 +967,34 @@ def setup_companion_routes(session_manager=None, upload_handler=None) -> APIRout
         qr_ok = bool(qr and qr.startswith("data:image/png;base64,"))
 
         if (request.query_params.get("format") or "").lower() == "json":
+            import ipaddress
+
+            def _host_kind(ip: str) -> str:
+                """local = private LAN; tailscale = the 100.64.0.0/10 tailnet
+                range (reachable from anywhere); other = anything else."""
+                try:
+                    addr = ipaddress.ip_address(ip)
+                except ValueError:
+                    return "other"
+                if addr in ipaddress.ip_network("100.64.0.0/10"):
+                    return "tailscale"
+                if addr.is_private:
+                    return "local"
+                return "other"
+
+            # One QR per candidate address (all carry the SAME minted token), so
+            # the desktop can offer "this network" vs "anywhere (tunnel)".
+            options = []
+            for h in hosts:
+                pl = _pairing.pairing_payload(h, port, raw_token)
+                q = _pairing.pairing_qr_png_data_uri(pl)
+                options.append({
+                    "kind": _host_kind(h),
+                    "host": h,
+                    "port": port,
+                    "payload": pl,
+                    "qr": q if (q and q.startswith("data:image/png;base64,")) else None,
+                })
             return {
                 "host": host,
                 "port": port,
@@ -975,6 +1003,7 @@ def setup_companion_routes(session_manager=None, upload_handler=None) -> APIRout
                 "hosts": hosts,
                 "payload": payload,
                 "qr": qr if qr_ok else None,
+                "options": options,
             }
 
         import json as _json
