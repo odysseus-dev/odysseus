@@ -536,8 +536,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         body = await request.json()
         messages = body.get("messages", [])
         from core.models import ChatMessage
-        for m in messages:
-            sess.add_message(ChatMessage(m["role"], m["content"], metadata=m.get("metadata")))
+        async with session_manager.session_lock(sid):
+            for m in messages:
+                sess.add_message(ChatMessage(m["role"], m["content"], metadata=m.get("metadata")))
         session_manager.save_sessions()
         return {"ok": True, "count": len(messages)}
 

@@ -578,8 +578,9 @@ async def do_send_to_session(content: str, session_id: Optional[str] = None, own
         )
 
         # Save both messages to session
-        sess.add_message(ChatMessage("user", message))
-        sess.add_message(ChatMessage("assistant", response))
+        async with _session_manager.session_lock(target_sid):
+            sess.add_message(ChatMessage("user", message))
+            sess.add_message(ChatMessage("assistant", response))
 
         # Truncate for tool output
         if len(response) > 10000:

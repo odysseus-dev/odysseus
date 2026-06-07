@@ -312,13 +312,15 @@ class ResearchHandler:
 
         _completed = False
 
-        def _guarded_complete(*args, **kwargs):
+        async def _guarded_complete(*args, **kwargs):
             nonlocal _completed
             if _completed:
                 return
             _completed = True
             if on_complete:
-                on_complete(*args, **kwargs)
+                result = on_complete(*args, **kwargs)
+                if asyncio.iscoroutine(result):
+                    await result
 
         async def _run():
             # Hard wall-clock timeout — saves partial results if an LLM call hangs
@@ -350,7 +352,7 @@ class ResearchHandler:
                     sources = entry.get("sources", [])
                     researcher = entry.get("researcher")
                     findings = self._extract_raw_findings(researcher.findings) if researcher and researcher.findings else []
-                    _guarded_complete(session_id, result, sources, findings)
+                    await _guarded_complete(session_id, result, sources, findings)
                 except Exception as cb_err:
                     logger.error(f"on_complete callback failed: {cb_err}")
             except asyncio.TimeoutError:
@@ -368,7 +370,7 @@ class ResearchHandler:
                     try:
                         sources = self._extract_sources(researcher.findings) if researcher.findings else []
                         findings = self._extract_raw_findings(researcher.findings) if researcher.findings else []
-                        _guarded_complete(session_id, entry["result"], sources, findings)
+                        await _guarded_complete(session_id, entry["result"], sources, findings)
                     except Exception as e:
                         logger.warning(f"on_complete callback failed in timeout branch: {e}")
                 else:
@@ -392,7 +394,7 @@ class ResearchHandler:
                     try:
                         sources = self._extract_sources(researcher.findings) if researcher.findings else []
                         findings = self._extract_raw_findings(researcher.findings) if researcher.findings else []
-                        _guarded_complete(session_id, entry["result"], sources, findings)
+                        await _guarded_complete(session_id, entry["result"], sources, findings)
                     except Exception as cb_err:
                         logger.warning(f"on_complete callback failed in error branch: {cb_err}")
                     on_progress({"phase": "warning", "message": f"Research finished with errors — partial results saved ({_elapsed:.0f}s elapsed)"})

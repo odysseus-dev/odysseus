@@ -370,7 +370,8 @@ def setup_webhook_routes(
             session_id = sid
 
         # --- Send message and get response ---
-        sess.add_message(ChatMessage("user", message))
+        async with session_manager.session_lock(session_id):
+            sess.add_message(ChatMessage("user", message))
 
         messages = [{"role": m.role, "content": m.content} for m in sess.history]
 
@@ -378,7 +379,8 @@ def setup_webhook_routes(
             sess.endpoint_url, sess.model, messages,
             headers=sess.headers, timeout=120,
         )
-        sess.add_message(ChatMessage("assistant", reply))
+        async with session_manager.session_lock(session_id):
+            sess.add_message(ChatMessage("assistant", reply))
         session_manager.save_sessions()
 
         asyncio.create_task(webhook_manager.fire("chat.completed", {

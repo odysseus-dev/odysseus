@@ -1490,25 +1490,28 @@ class TaskScheduler:
         if crew and crew.is_default_assistant:
             meta.update({"source": "cron", "task_id": task.id, "task_name": task.name})
 
-        # Use SessionManager for persistence so in-memory cache stays in sync
+        # Use SessionManager for persistence so in-memory cache stays in sync.
+        # Hold session_lock for the full append window so concurrent
+        # compact_session reads don't race the in-memory history list.
         if self._session_manager and session_id:
             try:
-                self._session_manager.add_message(
-                    session_id,
-                    MemChatMessage(
-                        "user",
-                        task.prompt or f"[Task] {task.name}",
-                        metadata=dict(meta),
-                    ),
-                )
-                self._session_manager.add_message(
-                    session_id,
-                    MemChatMessage(
-                        "assistant",
-                        result or "",
-                        metadata=dict(meta),
-                    ),
-                )
+                async with self._session_manager.session_lock(session_id):
+                    self._session_manager.add_message(
+                        session_id,
+                        MemChatMessage(
+                            "user",
+                            task.prompt or f"[Task] {task.name}",
+                            metadata=dict(meta),
+                        ),
+                    )
+                    self._session_manager.add_message(
+                        session_id,
+                        MemChatMessage(
+                            "assistant",
+                            result or "",
+                            metadata=dict(meta),
+                        ),
+                    )
             except Exception:
                 logger.exception("Failed to deliver task %s through SessionManager", task.id)
         else:

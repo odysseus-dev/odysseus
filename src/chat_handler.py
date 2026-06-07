@@ -306,10 +306,11 @@ class ChatHandler:
                 mem.append(new_entry)
                 self.memory_manager.save(mem)
 
-            session.add_message(ChatMessage("user", message))
-            session.add_message(
-                ChatMessage("assistant", f"Saved to memory: {memory_text}")
-            )
+            async with self.session_manager.session_lock(session.id):
+                session.add_message(ChatMessage("user", message))
+                session.add_message(
+                    ChatMessage("assistant", f"Saved to memory: {memory_text}")
+                )
 
             from src.database import update_session_last_accessed
 

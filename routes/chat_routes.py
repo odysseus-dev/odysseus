@@ -858,8 +858,14 @@ def setup_chat_routes(
 
                 if not _skip_research:
                     # Phase 2: Start actual research
-                    def _on_research_done(_sid, _result, _sources, _findings):
-                        """Persist research to DB when background task finishes."""
+                    async def _on_research_done(_sid, _result, _sources, _findings):
+                        """Persist research to DB when background task finishes.
+
+                        Acquires the same per-session lock compact_session uses —
+                        this append races with manual compaction the same way the
+                        live stream's add_message does (#2654), just on a much
+                        longer timescale (research can run for minutes).
+                        """
                         if incognito:
                             return
                         try:
@@ -873,7 +879,8 @@ def setup_chat_routes(
                             if _findings:
                                 _md["research_findings"] = _findings
                             _clean_res, _md = clean_thinking_for_save(_result, _md)
-                            _s.add_message(ChatMessage("assistant", _clean_res, metadata=_md))
+                            async with session_manager.session_lock(_sid):
+                                _s.add_message(ChatMessage("assistant", _clean_res, metadata=_md))
                             session_manager.save_sessions()
                             logger.info(f"Research result persisted to DB for session {_sid}")
                         except Exception as _e:

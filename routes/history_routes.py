@@ -146,7 +146,8 @@ def setup_history_routes(session_manager) -> APIRouter:
             if not content:
                 raise HTTPException(400, "content is required")
             msg = ChatMessage(role=role, content=content, metadata=body.get("metadata"))
-            session_manager.add_message(session_id, msg)
+            async with session_manager.session_lock(session_id):
+                session_manager.add_message(session_id, msg)
             return {"status": "ok"}
         except KeyError:
             raise HTTPException(404, "Session not found")

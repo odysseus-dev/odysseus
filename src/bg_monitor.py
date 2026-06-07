@@ -115,15 +115,16 @@ async def _run_followup(rec: dict) -> bool:
     # rebuilds into the usual agent-thread tool cards (chatRenderer:1494). The
     # trigger isn't saved as its own message (it'd be an out-of-place bubble);
     # the raw job output is stashed in metadata for traceability instead.
-    sm.add_message(sess.id, ChatMessage(
-        "assistant", full,
-        metadata={
-            "tool_events": tool_events,
-            "model": sess.model,
-            "bg_job_id": rec["id"],
-            "bg_result": bg_jobs.result_text(rec)[:4000],
-        },
-    ))
+    async with sm.session_lock(sess.id):
+        sm.add_message(sess.id, ChatMessage(
+            "assistant", full,
+            metadata={
+                "tool_events": tool_events,
+                "model": sess.model,
+                "bg_job_id": rec["id"],
+                "bg_result": bg_jobs.result_text(rec)[:4000],
+            },
+        ))
     sm.save_sessions()
     logger.info("bg-followup: auto-continued session %s for job %s (%d chars, %d tools)",
                 sess.id, rec["id"], len(full), len(tool_events))
