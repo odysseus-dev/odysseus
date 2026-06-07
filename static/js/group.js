@@ -88,7 +88,7 @@ function _initGroupTab() {
     picker.style.cssText = 'display:flex;gap:4px;align-items:center;';
 
     const charSel = document.createElement('select');
-    charSel.className = 'preset-input';
+    charSel.className = 'preset-input char-sel';
     charSel.style.cssText = 'font-size:11px;flex:1;height:26px;';
     charSel.innerHTML = '<option value="">Empty...</option>' +
       characters.map(c => '<option value="' + c.id + '">' + uiModule.esc(c.name) + '</option>').join('');
@@ -100,12 +100,16 @@ function _initGroupTab() {
       models.map(m => '<option value="' + m.mid + '">' + uiModule.esc(m.display) + '</option>').join('');
 
     // Auto-add when model is selected
-    modelSel.addEventListener('change', () => {
+    modelSel.addEventListener('change', async () => {
       if (!modelSel.value) return;
       if (_groupParticipants.length >= 8) { uiModule.showToast('Max 8'); return; }
       const entry = { character: null, model: null };
       entry.model = models.find(m => m.mid === modelSel.value) || null;
-      if (charSel.value) entry.character = characters.find(c => c.id === charSel.value) || null;
+      if (charSel.value) {
+        // Fetch fresh characters list just in case one was added or edited in the background
+        const freshCharacters = await _getCharacterList();
+        entry.character = freshCharacters.find(c => c.id === charSel.value) || null;
+      }
       _groupParticipants.push(entry);
       picker.remove();
       _render();
@@ -196,10 +200,23 @@ function _initGroupTab() {
   });
 
   const groupTab = document.querySelector('.preset-tab[data-chartab="group"]');
-  if (groupTab) groupTab.addEventListener('click', () => {
+  if (groupTab) groupTab.addEventListener('click', async () => {
     _modelsCache = null;
     if (startBtn) startBtn.textContent = 'Start Group';
     _loadGroupPresets();
+    
+    // Refresh all character dropdowns to include newly created characters
+    const characters = await _getCharacterList();
+    const charSels = participantsEl.querySelectorAll('select.char-sel');
+    charSels.forEach(sel => {
+      const currentVal = sel.value;
+      sel.innerHTML = '<option value="">Empty...</option>' +
+        characters.map(c => '<option value="' + c.id + '">' + uiModule.esc(c.name) + '</option>').join('');
+      if (characters.find(c => c.id === currentVal)) {
+        sel.value = currentVal;
+      }
+    });
+
     if (_groupParticipants.length === 0) {
       setTimeout(() => addBtn.click(), 100);
     }
