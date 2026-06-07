@@ -652,8 +652,8 @@ class ResearchHandler:
             logger.info(f"Visual report generated for {session_id}")
             return html_content
         except Exception as e:
-            logger.error(f"Failed to generate visual report: {e}")
-            return None
+            logger.error(f"Failed to generate visual report: {e}", exc_info=True)
+            raise
 
     def hide_image(self, session_id: str, image_url: str) -> bool:
         """Add image_url to the persisted hidden_images list for a research."""
@@ -790,12 +790,15 @@ class ResearchHandler:
                 maximum=3600,
             )
 
+            effective_max_rounds = max_rounds if max_rounds and max_rounds > 0 else 20
+            effective_min_rounds = min(2, effective_max_rounds)
+
             researcher = DeepResearcher(
                 llm_endpoint=llm_endpoint,
                 llm_model=llm_model,
                 llm_headers=llm_headers,
-                max_rounds=max_rounds,
-                min_rounds=max(2, max_rounds - 2),
+                max_rounds=effective_max_rounds,
+                min_rounds=effective_min_rounds,
                 max_time=max_time,
                 max_report_tokens=_max_report_tokens,
                 extraction_timeout=_extraction_timeout,

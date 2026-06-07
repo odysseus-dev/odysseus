@@ -59,6 +59,27 @@ def test_handler_disk_read_methods_reject_invalid_ids(tmp_path, monkeypatch):
     assert handler.get_report_html("../escape") is None
 
 
+def test_get_report_html_propagates_generation_errors(tmp_path, monkeypatch):
+    data_dir = tmp_path / "deep_research"
+    data_dir.mkdir()
+    (data_dir / "rp-abc123.json").write_text(
+        json.dumps({"query": "q", "result": "## Report", "owner": "alice"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(research_handler, "RESEARCH_DATA_DIR", data_dir)
+
+    import src.visual_report as visual_report
+
+    def fail_generate_visual_report(**_kwargs):
+        raise RuntimeError("renderer missing dependency")
+
+    monkeypatch.setattr(visual_report, "generate_visual_report", fail_generate_visual_report)
+    handler = _handler()
+
+    with pytest.raises(RuntimeError, match="renderer missing dependency"):
+        handler.get_report_html("rp-abc123")
+
+
 def test_handler_mutations_reject_invalid_ids_without_touching_outside_files(tmp_path, monkeypatch):
     outside = tmp_path / "escape.json"
     outside.write_text(json.dumps({"result": "secret", "hidden_images": ["x"]}), encoding="utf-8")

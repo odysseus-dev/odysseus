@@ -22,6 +22,28 @@ from src.prompt_security import untrusted_context_message
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_provider_diagnostic(value) -> str:
+    text = str(value or "")
+    replacements = [
+        (r"(?i)([?&]key=)[^&\s,;]+", r"\1[redacted]"),
+        (r"(?i)(api[_-]?key=)[^&\s,;]+", r"\1[redacted]"),
+        (r"(?i)(token=)[^&\s,;]+", r"\1[redacted]"),
+        (r"(?i)(secret=)[^&\s,;]+", r"\1[redacted]"),
+        (r"(?i)(authorization:\s*(?:bearer|basic)\s+)[^\s,;]+", r"\1[redacted]"),
+        (r"(?i)(x-api-key:\s*)[^\s,;]+", r"\1[redacted]"),
+        (r"\bsk-[A-Za-z0-9._-]+\b", "[redacted]"),
+    ]
+    for pattern, replacement in replacements:
+        text = re.sub(pattern, replacement, text)
+    return text
+
+
+def _default_provider_empty_reason(provider: str) -> str:
+    if provider == "duckduckgo":
+        return "duckduckgo returned no results after retry and HTML fallback"
+    return f"{provider} returned no results"
+
+
 def current_date_context() -> str:
     """Preamble that grounds query-generation/planning LLMs in the real current
     date. Without it the model falls back to its training-cutoff year and emits
@@ -108,16 +130,18 @@ You are deciding whether a research report is comprehensive enough.
 **Current report:**
 {report}
 
-**Rounds completed:** {round_num} of {max_rounds}
+**Rounds completed:** {round_num}
+**Round safety cap:** {max_rounds}
 
 Based on the report so far, do we have enough information to answer the question \
 comprehensively?  Consider:
 - Are the key aspects of the question addressed?
 - Are there obvious gaps or unanswered sub-questions?
 - Is the evidence sufficient and from multiple sources?
+- Would another round likely add important new evidence, or mostly repeat what we know?
 
-If rounds completed is well below the target, prefer continuing unless the \
-report is already exhaustive.
+Treat the safety cap as an upper bound, not a target. Stop when the report is \
+comprehensive enough; continue only when there are specific important gaps.
 
 Reply with ONLY "YES" or "NO" followed by a brief one-sentence reason.
 Example: "YES — The report covers all major aspects with evidence from multiple sources."
@@ -232,7 +256,11 @@ class DeepResearcher:
         self._start_time: float = 0
         self.queries_used: Set[str] = set()
         self.urls_fetched: Set[str] = set()
+        self.url_candidates_seen: Set[str] = set()
+        self.fetch_attempt_count: int = 0
+        self.successful_extractions: int = 0
         self.round_count: int = 0
+        self.stop_reason: Optional[str] = None
         # Track which search providers actually returned results during the
         # run, in arrival order — surfaced in the visual report so users can
         # see whether searxng / brave / tavily etc. carried the work.
@@ -240,6 +268,7 @@ class DeepResearcher:
         self.findings: List[Dict] = []
         self.evolving_report: str = ""
         self.research_plan: str = ""
+        self._provider_fallback_semaphores: Dict[str, asyncio.Semaphore] = {}
 
     def cancel(self):
         """Request cooperative cancellation of the research loop."""
@@ -264,7 +293,17 @@ class DeepResearcher:
             prior_urls: URLs already visited (won't be re-fetched).
         """
         self._start_time = time.time()
+        self.round_count = 0
+        self.stop_reason = None
+        self.queries_used.clear()
+        self.urls_fetched.clear()
+        self.url_candidates_seen.clear()
+        self.fetch_attempt_count = 0
+        self.providers_used.clear()
+        self._provider_fallback_semaphores.clear()
+        self._last_search_error = None
         findings: List[Dict] = list(prior_findings) if prior_findings else []
+        self.successful_extractions = len(findings)
         report = prior_report or ""
 
         # PLAN: Analyze the question and create a research strategy
@@ -284,15 +323,17 @@ class DeepResearcher:
 
         if prior_urls:
             self.urls_fetched.update(prior_urls)
+            self.url_candidates_seen.update(prior_urls)
         self.findings = findings  # expose for handler
         consecutive_empty_rounds = 0
 
         for round_num in range(1, self.max_rounds + 1):
-            self.round_count = round_num
             if self._cancelled:
+                self.stop_reason = "cancelled"
                 logger.info(f"Research cancelled after {round_num - 1} rounds")
                 break
-            if self._time_exceeded():
+            if not self._has_round_budget():
+                self.stop_reason = "time_budget"
                 logger.info(f"Time limit reached after {round_num - 1} rounds")
                 break
 
@@ -302,9 +343,15 @@ class DeepResearcher:
             # THINK: generate queries
             queries = await self._generate_queries(question, report, round_num)
             if not queries:
+                self.stop_reason = "no_queries"
                 logger.warning(f"Round {round_num}: no queries generated, stopping")
                 break
+            if self._remaining_time() < self._minimum_phase_budget():
+                self.stop_reason = "time_budget"
+                logger.info(f"Time budget too low to search round {round_num}")
+                break
 
+            self.round_count = round_num
             self._emit(phase="searching", round=round_num, queries=len(queries),
                        query_preview=queries[0] if queries else "",
                        total_sources=len(self.urls_fetched))
@@ -323,8 +370,9 @@ class DeepResearcher:
                 consecutive_empty_rounds += 1
                 logger.info(f"Round {round_num}: no new findings ({consecutive_empty_rounds} consecutive empty)")
                 if consecutive_empty_rounds >= self.max_empty_rounds:
+                    self.stop_reason = "search_unavailable"
                     logger.warning(f"Search appears to be down — {self.max_empty_rounds} consecutive rounds with no results")
-                    err_detail = getattr(self, '_last_search_error', 'unknown error')
+                    err_detail = getattr(self, '_last_search_error', None) or 'unknown error'
                     self._emit(phase="error", message=f"Search engine unavailable: {err_detail}")
                     if not findings:
                         return (
@@ -336,6 +384,10 @@ class DeepResearcher:
 
             # SYNTHESIZE
             if findings:
+                if self._remaining_time() < self._minimum_phase_budget():
+                    self.stop_reason = "time_budget"
+                    logger.info(f"Time budget too low to synthesize after round {round_num}")
+                    break
                 self._emit(phase="analyzing", round=round_num,
                            total_sources=len(self.urls_fetched),
                            total_findings=len(findings))
@@ -345,8 +397,14 @@ class DeepResearcher:
             if round_num >= self.min_rounds:
                 should_stop = await self._should_stop(question, report, round_num)
                 if should_stop:
+                    self.stop_reason = "llm_stop"
                     logger.info(f"LLM decided to stop after round {round_num}")
                     break
+        else:
+            self.stop_reason = "max_rounds"
+
+        if self.stop_reason is None:
+            self.stop_reason = "max_rounds" if self.round_count >= self.max_rounds else "time_budget"
 
         # FINAL REPORT
         self._emit(phase="writing", total_sources=len(self.urls_fetched),
@@ -365,11 +423,17 @@ class DeepResearcher:
             return "No information could be gathered for this question."
 
         self.evolving_report = report  # preserve pre-synthesis report
-        final = await self._final_report(question, report)
+        if self._remaining_time() < self._minimum_final_report_budget():
+            if self.stop_reason is None:
+                self.stop_reason = "time_budget"
+            logger.info("Time budget too low for final report generation; returning evolving report")
+            final = report
+        else:
+            final = await self._final_report(question, report)
         elapsed = time.time() - self._start_time
         logger.info(
             f"Research complete: {self.round_count} rounds, "
-            f"{len(findings)} findings, {len(self.urls_fetched)} URLs, "
+            f"{len(findings)} findings, {self.successful_extractions} analyzed URLs, "
             f"{elapsed:.1f}s"
         )
         return final
@@ -508,12 +572,23 @@ class DeepResearcher:
         """Search each query and extract relevant info from top results."""
         all_findings: List[Dict] = []
 
-        # Search all queries in parallel
-        search_tasks = [self._search(q) for q in queries]
-        search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
+        if self._should_search_queries_sequentially():
+            search_results = []
+            for query in queries:
+                if self._cancelled or self._time_exceeded():
+                    break
+                try:
+                    search_results.append(await self._search(query))
+                except Exception as e:
+                    search_results.append(e)
+        else:
+            # Search all queries in parallel
+            search_tasks = [self._search(q) for q in queries]
+            search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
 
         # Collect URLs to fetch from all search results
         urls_to_fetch = []
+        round_url_cap = max(0, self.max_urls_per_round * len(queries))
         for result in search_results:
             if isinstance(result, Exception):
                 logger.warning(f"Search error: {result}")
@@ -522,11 +597,15 @@ class DeepResearcher:
                 continue
             for r in result:
                 url = r.get("url", "")
-                if url and url not in self.urls_fetched:
-                    urls_to_fetch.append(r)
-                    self.urls_fetched.add(url)
-                if len(urls_to_fetch) >= self.max_urls_per_round * len(queries):
-                    break
+                if not url:
+                    continue
+                self.url_candidates_seen.add(url)
+                if url in self.urls_fetched:
+                    continue
+                if len(urls_to_fetch) >= round_url_cap:
+                    continue
+                urls_to_fetch.append(r)
+                self.urls_fetched.add(url)
 
         if self._cancelled or self._time_exceeded():
             return all_findings
@@ -541,6 +620,7 @@ class DeepResearcher:
                 return await self._fetch_and_extract(result["url"], question, result.get("title", ""))
 
         extract_tasks = [_bounded_extract(r) for r in urls_to_fetch]
+        self.fetch_attempt_count += len(urls_to_fetch)
         results_gathered = await asyncio.gather(*extract_tasks, return_exceptions=True)
 
         for result in results_gathered:
@@ -549,8 +629,82 @@ class DeepResearcher:
                 continue
             if result:
                 all_findings.append(result)
+                self.successful_extractions += 1
 
         return all_findings
+
+    def _search_provider_chain(self) -> List[str]:
+        try:
+            from src.search.providers import _get_search_settings
+            from src.search.core import _build_provider_chain
+
+            settings = _get_search_settings()
+            provider = (self.search_provider_override or "").strip()
+            if not provider:
+                provider = (settings.get("research_search_provider") or "").strip()
+            if not provider:
+                provider = settings.get("search_provider", "searxng")
+            if provider == "disabled":
+                return ["disabled"]
+            return _build_provider_chain(provider)
+        except Exception as e:
+            logger.debug(f"Could not resolve research search provider chain: {e}")
+            return []
+
+    def _should_search_queries_sequentially(self) -> bool:
+        chain = self._search_provider_chain()
+        if not chain:
+            return False
+        try:
+            from src.search.providers import (
+                get_provider_availability,
+                get_provider_policy,
+            )
+
+            effective_provider = chain[0]
+            for provider in chain:
+                availability = get_provider_availability(provider)
+                if availability.ok:
+                    effective_provider = provider
+                    break
+            return get_provider_policy(effective_provider).query_concurrency == "sequential"
+        except Exception as e:
+            logger.debug(f"Could not resolve research search concurrency policy: {e}")
+            return chain == ["duckduckgo"]
+
+    def _provider_fallback_semaphore(self, provider: str, limit: int) -> asyncio.Semaphore:
+        semaphores = getattr(self, "_provider_fallback_semaphores", None)
+        if semaphores is None:
+            semaphores = {}
+            self._provider_fallback_semaphores = semaphores
+        key = f"{provider}:{max(1, int(limit or 1))}"
+        if key not in semaphores:
+            semaphores[key] = asyncio.Semaphore(max(1, int(limit or 1)))
+        return semaphores[key]
+
+    async def _call_search_provider(
+        self,
+        call_provider,
+        provider: str,
+        query: str,
+        count: int,
+        *,
+        is_fallback: bool,
+    ) -> List[Dict]:
+        if not is_fallback:
+            return await asyncio.to_thread(call_provider, provider, query, count)
+
+        try:
+            from src.search.providers import get_provider_policy
+
+            policy = get_provider_policy(provider)
+            limit = max(1, int(policy.fallback_concurrency or 1))
+        except Exception:
+            limit = 1 if provider == "duckduckgo" else 4
+
+        semaphore = self._provider_fallback_semaphore(provider, limit)
+        async with semaphore:
+            return await asyncio.to_thread(call_provider, provider, query, count)
 
     async def _search(self, query: str) -> List[Dict]:
         """Run a search query using the configured research search provider."""
@@ -572,18 +726,47 @@ class DeepResearcher:
             # Try primary provider, then fallbacks
             chain = _build_provider_chain(provider)
             raised = False
-            for prov in chain:
+            attempts = []
+            for idx, prov in enumerate(chain):
                 try:
-                    results = await asyncio.to_thread(_call_provider, prov, query, 10)
+                    from src.search.providers import get_provider_availability
+
+                    availability = get_provider_availability(prov)
+                    if not availability.ok:
+                        attempts.append(
+                            f"{prov}: {availability.reason}"
+                            + (f" ({availability.detail})" if availability.detail else "")
+                        )
+                        self._last_search_error = attempts[-1]
+                        continue
+                except Exception:
+                    pass
+
+                try:
+                    results = await self._call_search_provider(
+                        _call_provider,
+                        prov,
+                        query,
+                        10,
+                        is_fallback=idx > 0,
+                    )
                     if results:
                         logger.info(f"Research search: {prov} returned {len(results)} results")
                         if prov not in self.providers_used:
                             self.providers_used.append(prov)
                         return results
+                    try:
+                        from src.search.providers import get_provider_policy
+
+                        empty_reason = get_provider_policy(prov).status_when_empty
+                    except Exception:
+                        empty_reason = _default_provider_empty_reason(prov)
+                    attempts.append(empty_reason if len(chain) == 1 else f"{prov}: {empty_reason}")
                 except Exception as e:
                     raised = True
-                    logger.warning(f"Research search: {prov} failed: {e}")
-                    self._last_search_error = f"{prov}: {e}"
+                    safe_error = _sanitize_provider_diagnostic(e)
+                    logger.warning(f"Research search: {prov} failed: {safe_error}")
+                    self._last_search_error = f"{prov}: {safe_error}"
             # Every provider ran but none returned results. If none of them
             # raised, record an actionable reason here — otherwise this empty
             # path leaves `_last_search_error` unset and the caller surfaces a
@@ -591,10 +774,13 @@ class DeepResearcher:
             # case where the service is reachable but all its engines fail, so
             # each provider returns [] without throwing.
             if not raised:
-                self._last_search_error = (
-                    f"no results from search provider(s): "
-                    f"{', '.join(chain) if chain else provider}"
-                )
+                if attempts:
+                    self._last_search_error = "; ".join(attempts)
+                else:
+                    provider_names = ", ".join(chain) if chain else provider
+                    self._last_search_error = (
+                        f"no results from search provider(s): {provider_names}"
+                    )
             return []
         except Exception as e:
             logger.error(f"Search failed for '{query}': {e}")
@@ -791,6 +977,31 @@ class DeepResearcher:
     def _time_exceeded(self) -> bool:
         return (time.time() - self._start_time) > self.max_time
 
+    def _remaining_time(self) -> float:
+        if not self._start_time:
+            return float(self.max_time)
+        return max(0.0, float(self.max_time) - (time.time() - self._start_time))
+
+    def _time_budget_reserve(self, cap_seconds: float) -> float:
+        max_time = max(0.0, float(self.max_time or 0))
+        if max_time <= 0:
+            return 0.0
+        return min(float(cap_seconds), max_time / 2.0)
+
+    def _minimum_phase_budget(self) -> float:
+        return self._time_budget_reserve(15.0)
+
+    def _minimum_round_budget(self) -> float:
+        return self._time_budget_reserve(30.0)
+
+    def _minimum_final_report_budget(self) -> float:
+        return self._time_budget_reserve(30.0)
+
+    def _has_round_budget(self) -> bool:
+        if self._time_exceeded():
+            return False
+        return self._remaining_time() >= self._minimum_round_budget()
+
     # _strip_think_tags removed — use research_utils.strip_thinking()
 
     @staticmethod
@@ -914,8 +1125,11 @@ class DeepResearcher:
             "Duration": f"{elapsed:.1f}s",
             "Rounds": self.round_count,
             "Queries": len(self.queries_used),
-            "URLs": len(self.urls_fetched),
+            "URLs": self.successful_extractions,
             "Model": self.llm_model,
+            "Stop Reason": self.stop_reason or "max_rounds",
+            "URL Candidates": len(self.url_candidates_seen),
+            "Fetch Attempts": self.fetch_attempt_count,
         }
         if self.providers_used:
             stats["Search"] = ", ".join(self.providers_used)

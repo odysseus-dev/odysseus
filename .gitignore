@@ -87,5 +87,7 @@ docs/windows-port/
 
 # Local config
 compound.config.json
+config/local_model_router.json
+.tools/gitleaks/gitleaks
 *.error.log
 _scratch/

@@ -91,6 +91,24 @@ def test_report_rejects_null_owner_before_generating_html(tmp_path, monkeypatch)
     handler.get_report_html.assert_not_called()
 
 
+def test_report_generation_error_returns_500(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    data_dir = tmp_path / "data" / "deep_research"
+    _write_research(data_dir, "alice-report", owner="alice", result="alice report")
+
+    handler = _research_handler()
+    handler.get_report_html.side_effect = RuntimeError("renderer missing dependency")
+    router = setup_research_routes(handler)
+    target = _route(router, "/api/research/report/{session_id}", "GET")
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(target(session_id="alice-report", request=_request("alice")))
+
+    assert exc.value.status_code == 500
+    assert "Report generation failed: renderer missing dependency" == exc.value.detail
+    handler.get_report_html.assert_called_once_with("alice-report")
+
+
 def test_archive_rejects_cross_owner_without_mutating_report(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     data_dir = tmp_path / "data" / "deep_research"

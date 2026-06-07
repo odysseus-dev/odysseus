@@ -3,6 +3,9 @@
 import json
 import logging
 import os
+import time
+import warnings
+from dataclasses import dataclass
 from typing import List, Optional
 from urllib.parse import urljoin, urlparse, parse_qs
 
@@ -16,6 +19,7 @@ from .query import build_enhanced_query
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = 20
+DDG_RETRY_DELAY_SECONDS = 0.35
 
 # Provider registry — maps setting value to (label, needs_key, needs_url)
 PROVIDER_INFO = {
@@ -27,6 +31,119 @@ PROVIDER_INFO = {
     "serper":   ("Serper",            True,  False),
     "disabled": ("Disabled",          False, False),
 }
+
+
+@dataclass(frozen=True)
+class ProviderPolicy:
+    name: str
+    label: str
+    required_settings: tuple[str, ...] = ()
+    query_concurrency: str = "parallel"
+    fallback_concurrency: int = 4
+    status_when_empty: str = "empty"
+
+
+@dataclass(frozen=True)
+class ProviderAvailability:
+    provider: str
+    ok: bool
+    reason: str = "ok"
+    detail: str = ""
+
+
+_PROVIDER_POLICIES = {
+    "searxng": ProviderPolicy(
+        name="searxng",
+        label="SearXNG",
+        query_concurrency="parallel",
+        fallback_concurrency=2,
+        status_when_empty="searxng returned no results",
+    ),
+    "brave": ProviderPolicy(
+        name="brave",
+        label="Brave Search",
+        required_settings=("brave_api_key",),
+        query_concurrency="parallel",
+        fallback_concurrency=4,
+        status_when_empty="brave returned no results",
+    ),
+    "duckduckgo": ProviderPolicy(
+        name="duckduckgo",
+        label="DuckDuckGo",
+        query_concurrency="sequential",
+        fallback_concurrency=1,
+        status_when_empty="duckduckgo returned no results after retry and HTML fallback",
+    ),
+    "google_pse": ProviderPolicy(
+        name="google_pse",
+        label="Google PSE",
+        required_settings=("google_pse_key", "google_pse_cx"),
+        query_concurrency="parallel",
+        fallback_concurrency=4,
+        status_when_empty="google_pse returned no results",
+    ),
+    "tavily": ProviderPolicy(
+        name="tavily",
+        label="Tavily",
+        required_settings=("tavily_api_key",),
+        query_concurrency="parallel",
+        fallback_concurrency=4,
+        status_when_empty="tavily returned no results",
+    ),
+    "serper": ProviderPolicy(
+        name="serper",
+        label="Serper",
+        required_settings=("serper_api_key",),
+        query_concurrency="parallel",
+        fallback_concurrency=4,
+        status_when_empty="serper returned no results",
+    ),
+}
+
+
+def get_provider_policy(provider: str) -> ProviderPolicy:
+    """Return provider capability metadata for research/search orchestration."""
+    if provider in _PROVIDER_POLICIES:
+        return _PROVIDER_POLICIES[provider]
+    label, needs_key, _needs_url = PROVIDER_INFO.get(provider, (provider or "unknown", False, False))
+    required = (f"{provider}_api_key",) if needs_key and provider else ()
+    return ProviderPolicy(
+        name=provider,
+        label=label,
+        required_settings=required,
+        status_when_empty=f"{provider} returned no results" if provider else "provider returned no results",
+    )
+
+
+def _provider_config_value(provider: str, field: str) -> str:
+    settings = _get_search_settings()
+    if field.endswith("_api_key") or field.endswith("_key"):
+        return _get_provider_key(provider)
+    if field == "google_pse_cx":
+        return (settings.get("google_pse_cx") or "").strip() or os.environ.get("GOOGLE_PSE_CX", "").strip()
+    if field == "search_url":
+        return _get_search_instance()
+    return (settings.get(field) or "").strip()
+
+
+def get_provider_availability(provider: str) -> ProviderAvailability:
+    """Return whether provider has required local config, without exposing secrets."""
+    if provider == "disabled":
+        return ProviderAvailability(provider=provider, ok=False, reason="disabled", detail="search provider is disabled")
+
+    policy = get_provider_policy(provider)
+    missing = [
+        field for field in policy.required_settings
+        if not _provider_config_value(provider, field)
+    ]
+    if missing:
+        return ProviderAvailability(
+            provider=provider,
+            ok=False,
+            reason="missing_config",
+            detail="missing required setting(s): " + ", ".join(missing),
+        )
+    return ProviderAvailability(provider=provider, ok=True)
 
 
 # ── Settings helpers ──
@@ -381,34 +498,106 @@ def _resolve_ddg_redirect(raw: str) -> str:
     return resolved
 
 
+def _is_duckduckgo_rename_warning(warning: warnings.WarningMessage) -> bool:
+    message = str(warning.message)
+    return (
+        issubclass(warning.category, RuntimeWarning)
+        and "duckduckgo_search" in message
+        and "ddgs" in message
+    )
+
+
+def _build_ddgs_client(DDGS):
+    with warnings.catch_warnings(record=True) as caught:
+        ddgs = DDGS()
+    for warning in caught:
+        if _is_duckduckgo_rename_warning(warning):
+            continue
+        warnings.warn(
+            warning.message,
+            warning.category,
+            stacklevel=2,
+        )
+    return ddgs
+
+
 def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
     """Search using DuckDuckGo via the duckduckgo-search library. No API key needed."""
 
     def _html_fallback() -> List[dict]:
-        try:
-            response = httpx.get(
-                "https://html.duckduckgo.com/html/",
-                params={"q": query, "kp": _safesearch_for("duckduckgo_html")},
-                headers={"User-Agent": "Mozilla/5.0"},
-                timeout=REQUEST_TIMEOUT,
-            )
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, "html.parser")
+        def _link_result(link, snippet: str = "") -> Optional[dict]:
+            url = _resolve_ddg_redirect(link.get("href", ""))
+            if not url:
+                return None
+            parsed = urlparse(url)
+            if parsed.scheme not in {"http", "https"}:
+                return None
+            title = link.get_text(" ", strip=True)
+            if not title:
+                return None
+            return {"title": title, "url": url, "snippet": snippet}
+
+        def _parse_html_results(html: str) -> List[dict]:
+            soup = BeautifulSoup(html, "html.parser")
             parsed = []
             for result in soup.select(".result")[:count]:
                 link = result.select_one(".result__a")
                 if not link:
                     continue
-                url = _resolve_ddg_redirect(link.get("href", ""))
-                if not url:
-                    continue
                 snippet_el = result.select_one(".result__snippet")
-                parsed.append({
-                    "title": link.get_text(" ", strip=True),
-                    "url": url,
-                    "snippet": snippet_el.get_text(" ", strip=True) if snippet_el else "",
-                })
-            logger.info(f"DuckDuckGo HTML search returned {len(parsed)} results")
+                item = _link_result(
+                    link,
+                    snippet_el.get_text(" ", strip=True) if snippet_el else "",
+                )
+                if item:
+                    parsed.append(item)
+            return parsed
+
+        def _parse_lite_results(html: str) -> List[dict]:
+            soup = BeautifulSoup(html, "html.parser")
+            parsed = []
+            seen = set()
+            for link in soup.select("a"):
+                item = _link_result(link)
+                if not item or item["url"] in seen:
+                    continue
+                seen.add(item["url"])
+                parsed.append(item)
+                if len(parsed) >= count:
+                    break
+            return parsed
+
+        try:
+            data = {"q": query, "kp": _safesearch_for("duckduckgo_html")}
+            response = httpx.post(
+                "https://html.duckduckgo.com/html/",
+                data=data,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=REQUEST_TIMEOUT,
+                follow_redirects=True,
+            )
+            response.raise_for_status()
+            parsed = _parse_html_results(response.text)
+            logger.info(
+                f"DuckDuckGo HTML search returned {len(parsed)} results "
+                f"(status {getattr(response, 'status_code', 'unknown')})"
+            )
+            if parsed:
+                return parsed
+
+            lite_response = httpx.post(
+                "https://lite.duckduckgo.com/lite/",
+                data=data,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=REQUEST_TIMEOUT,
+                follow_redirects=True,
+            )
+            lite_response.raise_for_status()
+            parsed = _parse_lite_results(lite_response.text)
+            logger.info(
+                f"DuckDuckGo Lite search returned {len(parsed)} results "
+                f"(status {getattr(lite_response, 'status_code', 'unknown')})"
+            )
             return parsed
         except Exception as e:
             logger.warning(f"DuckDuckGo HTML search failed: {e}")
@@ -425,8 +614,8 @@ def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = 
         time_map = {"day": "d", "week": "w", "month": "m", "year": "y"}
         timelimit = time_map.get(time_filter)
 
-    try:
-        ddgs = DDGS()
+    def _library_search_once() -> List[dict]:
+        ddgs = _build_ddgs_client(DDGS)
         raw = ddgs.text(
             query,
             max_results=count,
@@ -443,8 +632,23 @@ def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = 
                 "url": url,
                 "snippet": item.get("body", ""),
             })
-        logger.info(f"DuckDuckGo search returned {len(results)} results")
-        return results or _html_fallback()
+        return results
+
+    try:
+        for attempt in range(2):
+            results = _library_search_once()
+            logger.info(
+                f"DuckDuckGo search returned {len(results)} results "
+                f"(attempt {attempt + 1})"
+            )
+            if results:
+                return results
+            if attempt == 0:
+                logger.info("DuckDuckGo returned 0 results; retrying once before HTML fallback")
+                if DDG_RETRY_DELAY_SECONDS > 0:
+                    time.sleep(DDG_RETRY_DELAY_SECONDS)
+        logger.warning("DuckDuckGo returned 0 results after retry; using HTML fallback")
+        return _html_fallback()
     except Exception as e:
         logger.warning(f"DuckDuckGo search failed: {e}")
         return _html_fallback()

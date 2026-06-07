@@ -15,6 +15,27 @@ import asyncio
 import sys
 import types
 
+import pytest
+
+
+@pytest.mark.parametrize(
+    ("raw", "secret"),
+    [
+        ("api_key=sk-live-secret", "sk-live-secret"),
+        ("https://api.example.test/search?key=AIzaSySecretValue&cx=test", "AIzaSySecretValue"),
+        ("Authorization: Bearer bearer-secret", "bearer-secret"),
+        ("Authorization: Basic basic-secret", "basic-secret"),
+        ("x-api-key: header-secret", "header-secret"),
+    ],
+)
+def test_sanitize_provider_diagnostic_redacts_common_secret_shapes(raw, secret):
+    from src.deep_research import _sanitize_provider_diagnostic
+
+    sanitized = _sanitize_provider_diagnostic(raw)
+
+    assert secret not in sanitized
+    assert "[redacted]" in sanitized
+
 
 def _make_researcher():
     # Build the object without running the heavy __init__ (which wires up an
@@ -55,6 +76,20 @@ def test_empty_results_without_exception_record_reason(monkeypatch):
     assert "searxng" in err
 
 
+def test_duckduckgo_empty_results_report_retry_and_html_fallback(monkeypatch):
+    _install_search_fakes(
+        monkeypatch,
+        chain=["duckduckgo"],
+        call_provider=lambda prov, query, n: [],
+    )
+    r = _make_researcher()
+    results = asyncio.run(r._search("anything"))
+
+    assert results == []
+    err = getattr(r, "_last_search_error", None)
+    assert err == "duckduckgo returned no results after retry and HTML fallback"
+
+
 def test_provider_exception_is_still_surfaced(monkeypatch):
     # A provider that raises must keep surfacing its own error unchanged.
     def _boom(prov, query, n):
@@ -69,6 +104,40 @@ def test_provider_exception_is_still_surfaced(monkeypatch):
     assert err and "connection refused" in err
     # The raise path, not the empty-results path.
     assert "no results" not in err
+
+
+def test_provider_exception_diagnostic_redacts_key_like_values(monkeypatch):
+    def _boom(prov, query, n):
+        raise RuntimeError("provider rejected api_key=sk-live-secret for request")
+
+    _install_search_fakes(monkeypatch, chain=["brave"], call_provider=_boom)
+    r = _make_researcher()
+    results = asyncio.run(r._search("anything"))
+
+    assert results == []
+    err = getattr(r, "_last_search_error", None)
+    assert err
+    assert "provider rejected" in err
+    assert "sk-live-secret" not in err
+    assert "[redacted]" in err
+
+
+def test_provider_exception_diagnostic_redacts_url_key_parameters(monkeypatch):
+    def _boom(prov, query, n):
+        raise RuntimeError(
+            "Google PSE failed for https://www.googleapis.com/customsearch/v1"
+            "?key=AIzaSySecretValue&cx=test-cx"
+        )
+
+    _install_search_fakes(monkeypatch, chain=["google_pse"], call_provider=_boom)
+    r = _make_researcher()
+    results = asyncio.run(r._search("anything"))
+
+    assert results == []
+    err = getattr(r, "_last_search_error", None)
+    assert err
+    assert "key=[redacted]" in err
+    assert "AIzaSySecretValue" not in err
 
 
 def test_results_are_returned_and_provider_recorded(monkeypatch):
