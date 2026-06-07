@@ -54,7 +54,7 @@ from core.constants import (
     REQUEST_TIMEOUT, OPENAI_API_KEY,
 )
 from core.database import SessionLocal, ApiToken
-from core.middleware import SecurityHeadersMiddleware
+from core.middleware import SecurityHeadersMiddleware, is_cors_preflight
 from core.auth import AuthManager
 from core.exceptions import (
     SessionNotFoundError, InvalidFileUploadError,
@@ -258,7 +258,7 @@ if AUTH_ENABLED:
             # answered. Gating it on auth would 401 the preflight, so every
             # cross-origin request from a browser/WebView client (e.g. the
             # companion app) fails before the real request is ever sent.
-            if request.method == "OPTIONS" and "access-control-request-method" in request.headers:
+            if is_cors_preflight(request.method, request.headers):
                 return await call_next(request)
             if _is_auth_exempt(path):
                 return await call_next(request)
