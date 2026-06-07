@@ -2677,14 +2677,15 @@ async def _cookbook_register_task(session_id: str, model: str, host: str,
 
 
 # Paths the generic `app_api` tool will refuse to call. Auth/token/user
-# administration is too risky to route through an agent surface even
-# when the agent is admin-context — accidental "delete account"
-# style mistakes have permanent blast radius.
+# administration and host shell execution are too risky to route through an
+# agent surface even when the agent is admin-context; accidental account or
+# command mistakes have permanent blast radius.
 _APP_API_BLOCKLIST_PREFIXES = (
     "/api/auth",           # login/logout/password
     "/api/users",          # user CRUD (bare /api/users list+create+delete must also block)
     "/api/tokens",         # api token mgmt (bare /api/tokens list+create must also block)
     "/api/admin",          # admin one-shots (wipe etc.)
+    "/api/shell",          # host shell execution must stay behind named command tooling
     "/api/backup/restore", # destructive restore
 )
 
@@ -2721,7 +2722,7 @@ _APP_API_BLOCKLIST_METHOD_PATH = (
 
 
 async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
-    """Generic loopback to any internal Odysseus API endpoint. Lets the
+    """Generic loopback to allowed internal Odysseus API endpoints. Lets the
     agent reach the full UI-button surface (cookbook, email, notes,
     calendar, skills, sessions, gallery, research, etc.) without us
     landing a named tool wrapper for every one.
@@ -2735,7 +2736,8 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
 
     The `endpoints` action returns the OpenAPI surface (method + path +
     summary) so the agent can discover what's reachable. A blocklist
-    refuses auth/user/admin paths to keep blast radius bounded.
+    refuses sensitive auth/user/admin/shell paths to keep blast radius
+    bounded.
     """
     import httpx
     try:
@@ -2795,7 +2797,7 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     if not path.startswith("/"):
         path = "/" + path
     if any(path.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES):
-        return {"error": f"Path blocked for safety: {path}. Auth/user/admin endpoints are off-limits via app_api.", "exit_code": 1}
+        return {"error": f"Path blocked for safety: {path}. Sensitive endpoints are off-limits via app_api.", "exit_code": 1}
 
     method = (args.get("method") or "GET").upper()
     if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
