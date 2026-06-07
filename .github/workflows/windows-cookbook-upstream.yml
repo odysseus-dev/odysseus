@@ -24,7 +24,10 @@ jobs:
           echo "Upstream commits pending: $(git rev-list --count HEAD..upstream/dev)"
 
       - name: Trial rebase
-        run: git rebase upstream/dev
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rebase upstream/dev
 
       - uses: actions/setup-python@v5
         with:
