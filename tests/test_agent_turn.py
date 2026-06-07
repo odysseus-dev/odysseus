@@ -3,12 +3,15 @@ import json
 
 from src.agent_tools import ToolBlock
 from src.agent_turn import (
+    DocumentStream,
     ModelTurn,
     ModelTurnRequest,
     ToolTurn,
     ToolTurnRequest,
     add_auto_document_tool,
+    prestream_document_tool,
     select_turn_tool_schemas,
+    tool_output_event,
 )
 
 
@@ -149,3 +152,106 @@ def test_auto_document_tool_wraps_large_code_block():
         {"type": "doc_stream_open", "title": "Code (text)", "language": "text"},
         {"type": "doc_stream_delta", "content": code},
     ]
+
+
+def test_document_stream_decodes_native_document_delta():
+    stream = DocumentStream()
+
+    events = stream.handle_native_delta({
+        "arg_delta": '{"title":"Draft","language":"markdown","content":"Hello',
+    })
+    assert events == [
+        {"type": "doc_stream_open", "title": "Draft", "language": "markdown"},
+        {"type": "doc_stream_delta", "content": "Hello"},
+    ]
+
+    events = stream.handle_native_delta({"arg_delta": '\\nworld"}'})
+    assert events == [
+        {"type": "doc_stream_delta", "content": "Hello\nworld"},
+    ]
+    assert stream.started is True
+
+
+def test_document_stream_tracks_multiple_fenced_document_blocks():
+    stream = DocumentStream()
+
+    first = "```create_document\nOne\nmarkdown\nAlpha\n```"
+    events = stream.handle_fenced_delta(first)
+    assert events == [
+        {"type": "doc_stream_open", "title": "One", "language": "markdown"},
+        {"type": "doc_stream_delta", "content": "Alpha"},
+    ]
+
+    second = first + "\ntext\n```create_document\nTwo\nmarkdown\nBeta\n```"
+    events = stream.handle_fenced_delta(second)
+    assert events == [
+        {"type": "doc_stream_open", "title": "Two", "language": "markdown"},
+        {"type": "doc_stream_delta", "content": "Beta"},
+    ]
+
+
+def test_prestream_document_tool_emits_update_document_content():
+    events = prestream_document_tool(
+        [ToolBlock("update_document", "replacement body")],
+        round_num=2,
+        doc_stream_started=False,
+        tool_policy=None,
+    )
+    assert events == [
+        {"type": "doc_stream_open", "title": "", "language": ""},
+        {"type": "doc_stream_delta", "content": "replacement body"},
+    ]
+
+
+def test_tool_turn_stops_before_executing_when_budget_is_exhausted():
+    called = False
+
+    async def execute_tool(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        return "bash", {"output": "ran", "exit_code": 0}
+
+    turn = ToolTurn(ToolTurnRequest(
+        tool_blocks=[ToolBlock("bash", "echo hi")],
+        round_num=3,
+        total_tool_calls=1,
+        max_tool_calls=1,
+        session_id="s",
+        disabled_tools=set(),
+        tool_policy=None,
+        owner=None,
+        workspace=None,
+        full_response_so_far="",
+        effectful_tools={"bash"},
+        doc_stream_started=False,
+        execute_tool=execute_tool,
+        format_tool_result=lambda desc, result: desc,
+    ))
+
+    events = _events(_collect(turn.stream()))
+    assert called is False
+    assert events == [{"type": "budget_exceeded", "limit": 1, "used": 1}]
+    assert turn.result.budget_hit is True
+    assert turn.result.total_tool_calls == 1
+
+
+def test_tool_output_event_forwards_images_screenshots_and_diff():
+    event = tool_output_event(
+        ToolBlock("generate_image", "prompt"),
+        {
+            "output": "done",
+            "exit_code": 0,
+            "image_url": "/generated/x.png",
+            "image_prompt": "prompt",
+            "images": [{"mimeType": "image/png", "data": "abc"}],
+            "diff": "--- before\n+++ after",
+        },
+        "prompt",
+    )
+    assert event["type"] == "tool_output"
+    assert event["tool"] == "generate_image"
+    assert event["output"] == "done"
+    assert event["image_url"] == "/generated/x.png"
+    assert event["image_prompt"] == "prompt"
+    assert event["screenshot"] == "data:image/png;base64,abc"
+    assert event["diff"] == "--- before\n+++ after"

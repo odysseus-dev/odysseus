@@ -1095,13 +1095,10 @@ def _build_base_prompt(
 
     # Inject integration descriptions
     if not suppress_local_context:
-        try:
-            from src.integrations import get_integrations_prompt
-            integ_prompt = get_integrations_prompt()
-            if integ_prompt:
-                agent_prompt += "\n\n" + integ_prompt
-        except Exception as _e:
-            logger.debug(f"Integration prompt injection skipped: {_e}")
+        from src.integrations import get_integrations_prompt
+        integ_prompt = get_integrations_prompt()
+        if integ_prompt:
+            agent_prompt += "\n\n" + integ_prompt
 
     # Inject MCP tool descriptions
     if mcp_mgr:

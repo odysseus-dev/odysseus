@@ -35,6 +35,8 @@ def _patch_common(monkeypatch):
     monkeypatch.setattr(al, "get_setting", lambda key, default=None: default, raising=False)
     monkeypatch.setattr(al, "get_mcp_manager", lambda: None, raising=False)
     monkeypatch.setattr(al, "estimate_tokens", lambda *a, **k: 10, raising=False)
+    monkeypatch.setattr(al, "_build_base_prompt", lambda *a, **k: ("BASE PROMPT", ""), raising=False)
+    monkeypatch.setattr(al, "set_active_model", lambda model: None, raising=False)
 
     async def _fake_exec(block, *a, **k):
         return ("bash", {"output": "ok", "exit_code": 0})
