@@ -147,9 +147,10 @@ def create_env():
             print("  [ok] .env created from .env.example")
             print("        ** Edit .env with your LLM host and API keys **")
         except OSError:
-            # Source dir is read-only (e.g. Nix store). Use ODYSSEUS_DATA_DIR
-            # or an environmentFile in the systemd service instead.
-            print("  [skip] .env is in a read-only location — configure via environment")
+            # Source dir is read-only (e.g. Nix store). Never put .env in a
+            # store path — it is world-readable and would expose tokens.
+            # Use ODYSSEUS_DATA_DIR or an environmentFile (e.g. sops-nix) instead.
+            print("  [skip] .env is in a read-only location — configure via environment or environmentFile")
     else:
         print("  [warn] .env.example not found — create .env manually")
 

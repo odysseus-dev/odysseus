@@ -27,7 +27,7 @@ from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES
 # (/app/data) and the local data directory for manual installs.
 # Using this as cwd and HOME prevents the agent from silently creating files
 # in ephemeral container layers that are lost on the next rebuild.
-_AGENT_WORKDIR = str(pathlib.Path(__file__).parent.parent / "data")
+_AGENT_WORKDIR = os.environ.get("ODYSSEUS_DATA_DIR", str(pathlib.Path(__file__).parent.parent / "data"))
 
 
 def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:

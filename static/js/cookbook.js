@@ -583,7 +583,7 @@ export const esc = uiModule.esc;
 // ── Clipboard ──
 
 export function _copyText(text) {
-  if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
     return navigator.clipboard.writeText(text).catch(() => _fallbackCopy(text));
   }
   return _fallbackCopy(text);
