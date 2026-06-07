@@ -1219,14 +1219,14 @@ def _fetch_sender_thread_context(sender_addr: str,
                 blocks.append("\n".join(lines))
     except Exception as e:
         logger.warning(f"sender-thread-context: imap failed: {e}")
-    finally:
-        if conn:
-            try: conn.close()
-            except Exception: pass
-            try: conn.logout()
-            except Exception: pass
+     finally:
+         if conn:
+             try: conn.close()
+             except Exception as e: logger.debug(f"Failed to close IMAP connection: {e}")
+             try: conn.logout()
+             except Exception as e: logger.debug(f"Failed to logout from IMAP: {e}")
 
-    if not blocks:
+     if not blocks:
         return ""
     return "\n\n=====\n\n".join(blocks)
 
@@ -1366,12 +1366,12 @@ def _pre_retrieve_context(
                         continue
         except Exception as _e:
             logger.warning(f"IMAP context search failed: {_e}")
-        finally:
-            if ctx_conn:
-                try: ctx_conn.logout()
-                except Exception: pass
+         finally:
+             if ctx_conn:
+                 try: ctx_conn.logout()
+                 except Exception as e: logger.debug(f"Failed to logout from IMAP: {e}")
 
-        try:
+         try:
             from routes.contacts_routes import _fetch_contacts
             all_contacts = _fetch_contacts() if contacts_allowed else []
             for term in terms_list:
