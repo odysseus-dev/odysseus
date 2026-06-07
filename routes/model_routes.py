@@ -216,6 +216,7 @@ def _rewrite_loopback_for_docker(base_url: str, *, container_local: bool = False
 # For cloud providers that return 100+ models, only show these by default.
 # A model ID matches if it starts with or equals a curated entry.
 _FIREPASS_MODEL = "accounts/fireworks/routers/kimi-k2p6-turbo"
+_FIREWORKS_MODELS_URL = "https://api.fireworks.ai/v1/accounts/fireworks/models"
 
 
 def _is_firepass_setup(base_url: str, name: str = "", api_key: str = "") -> bool:
@@ -223,6 +224,39 @@ def _is_firepass_setup(base_url: str, name: str = "", api_key: str = "") -> bool
         return False
     label = re.sub(r"[\s_-]+", "", (name or "").lower())
     return "firepass" in label or (api_key or "").strip().startswith("fpk_")
+
+
+def _probe_fireworks_serverless_models(api_key: str = None, timeout: int = 5) -> List[str]:
+    if not api_key:
+        return []
+    models = []
+    page_token = ""
+    for _ in range(20):
+        params = {"filter": "supports_serverless=true", "pageSize": "200"}
+        if page_token:
+            params["pageToken"] = page_token
+        try:
+            r = httpx.get(
+                _FIREWORKS_MODELS_URL,
+                headers={"Authorization": f"Bearer {api_key}"},
+                params=params,
+                timeout=timeout,
+                verify=llm_verify(),
+            )
+            r.raise_for_status()
+            data = r.json()
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code if e.response is not None else "unknown"
+            logger.warning(f"Fireworks model list failed with API key: HTTP {status}")
+            return []
+        except Exception as e:
+            logger.warning(f"Fireworks model list failed with API key: {e}")
+            return []
+        models.extend(m.get("name") for m in (data.get("models") or []) if m.get("name"))
+        page_token = (data.get("nextPageToken") or "").strip()
+        if not page_token:
+            break
+    return _merge_model_ids(models, [])
 
 
 _PROVIDER_CURATED = {
@@ -655,6 +689,12 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
                 return []
             logger.warning(f"Anthropic /v1/models failed, using hardcoded list: {e}")
         return list(ANTHROPIC_MODELS)
+    if _is_firepass_setup(base, api_key=api_key):
+        return [_FIREPASS_MODEL]
+    if _host_match(base, "fireworks.ai"):
+        models = _probe_fireworks_serverless_models(api_key, timeout)
+        if models or api_key:
+            return models
     url = build_models_url(base)
     headers = build_headers(api_key, base)
     try:

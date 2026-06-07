@@ -50,6 +50,7 @@ from routes.model_routes import (
     _classify_endpoint,
     _rewrite_loopback_for_docker,
     _PROVIDER_CURATED,
+    _FIREWORKS_MODELS_URL,
 )
 
 
@@ -116,6 +117,44 @@ class TestProbeEndpointParsing:
             lambda url, headers=None, timeout=None, verify=None, **kwargs: _resp(200, json={"data": []}),
         )
         assert _probe_endpoint("https://api.example.com/v1") == []
+
+    def test_fireworks_uses_documented_serverless_models_api(self, monkeypatch):
+        _patch_resolve(monkeypatch)
+        seen = []
+
+        def fake_get(url, headers=None, params=None, timeout=None, verify=None, **kwargs):
+            seen.append((url, headers, params))
+            if params.get("pageToken") == "next":
+                return _resp(200, json={"models": [{"name": "accounts/fireworks/models/qwen3-235b-a22b-instruct-2507"}]})
+            return _resp(
+                200,
+                json={
+                    "models": [{"name": "accounts/fireworks/models/deepseek-v3p1"}],
+                    "nextPageToken": "next",
+                },
+            )
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+
+        assert _probe_endpoint("https://api.fireworks.ai/inference/v1", "fw-key") == [
+            "accounts/fireworks/models/deepseek-v3p1",
+            "accounts/fireworks/models/qwen3-235b-a22b-instruct-2507",
+        ]
+        assert [row[0] for row in seen] == [_FIREWORKS_MODELS_URL, _FIREWORKS_MODELS_URL]
+        assert seen[0][1]["Authorization"] == "Bearer fw-key"
+        assert seen[0][2] == {"filter": "supports_serverless=true", "pageSize": "200"}
+        assert seen[1][2]["pageToken"] == "next"
+
+    def test_firepass_key_uses_router_without_model_list(self, monkeypatch):
+        _patch_resolve(monkeypatch)
+        monkeypatch.setattr(
+            model_routes.httpx,
+            "get",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("Fire Pass key must not list models")),
+        )
+        assert _probe_endpoint("https://api.fireworks.ai/inference/v1", "fpk_test") == [
+            "accounts/fireworks/routers/kimi-k2p6-turbo"
+        ]
 
 
 # ── _ping_endpoint: reachability classification ──
