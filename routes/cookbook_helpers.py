@@ -275,11 +275,14 @@ def _user_shell_path_bootstrap() -> list[str]:
         '  if [ -n "$ODYSSEUS_USER_PATH" ]; then export PATH="$ODYSSEUS_USER_PATH:$PATH"; fi',
         'fi',
         'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }',
+        'command -v python >/dev/null 2>&1 || python() { python3 "$@"; }',
     ]
 
 
-def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
-    """Build the standalone Python scanner used by /api/model/cached."""
+def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache: str | None = None) -> str:
+    """Build the standalone Python scanner used by /api/model/cached.
+    Allows for an additional HuggingFace cache path to be scanned (i.e. Windows HF cache for local WSL envs.)
+    """
     lines = [
         "import json, os, re, shutil, subprocess, urllib.request",
         "models = []",
@@ -372,6 +375,7 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
         "    # Docker images mount ./data/huggingface at /app/.cache/huggingface.",
         "    # When HOME is /root, expanduser() misses that persisted cache.",
         "    add('/app/.cache/huggingface/hub')",
+        f"    add({add_hf_cache!r})" if add_hf_cache else "",
         "    return candidates",
         "def scan_dir(p):",
         "    if not os.path.isdir(p) or not safe_path(p): return",

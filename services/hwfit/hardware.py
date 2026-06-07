@@ -590,6 +590,19 @@ def _detect_windows():
 _cache_by_host = {}  # host -> (timestamp, result)
 
 
+def _cache_key(host: str, ssh_port: str, platform_name: str):
+    """Build a stable cache key that isolates remote SSH context.
+
+    Same host aliases can have different hardware due to visibility, forwarding etc.
+    To avoid using the wrong cached hardware info, include the SSH port and platform in the cache key.
+    """
+    return (
+        host or "_local",
+        str(ssh_port or ""),
+        str(platform_name or "").lower(),
+    )
+
+
 def detect_system(host="", ssh_port="", platform="", fresh=False):
     """Detect system hardware: RAM, CPU, GPU. Cached per host (hardware rarely
     changes, and probing a remote host over SSH is slow). Pass fresh=True to
@@ -599,7 +612,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
     """
     global _remote_host, _remote_port, _remote_platform
 
-    cache_key = host or "_local"
+    cache_key = _cache_key(host, ssh_port, platform)
     now = time.time()
     if not fresh and cache_key in _cache_by_host:
         ts, cached = _cache_by_host[cache_key]

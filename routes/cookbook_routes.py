@@ -27,6 +27,8 @@ from core.platform_compat import (
     pid_alive,
     safe_chmod,
     which_tool,
+    translate_path,
+    get_wsl_windows_user_profile,
 )
 from routes.shell_routes import TMUX_LOG_DIR
 
@@ -557,8 +559,14 @@ def setup_cookbook_routes() -> APIRouter:
             for d in model_dir.split(','):
                 d = d.strip()
                 if d:
-                    model_dirs.append(d)
-        paths_code = _cached_model_scan_script(model_dirs)
+                    translated_d = translate_path(d) if not host else d
+                    model_dirs.append(translated_d)
+        win_hf_hub = None
+        if not host:
+            win_profile = get_wsl_windows_user_profile()
+            win_hf_hub = os.path.join(win_profile, ".cache", "huggingface", "hub") if win_profile else None
+            
+        paths_code = _cached_model_scan_script(model_dirs, win_hf_hub)
 
         scan_py = TMUX_LOG_DIR / "scan_cache.py"
         scan_py.write_text(paths_code, encoding="utf-8")
@@ -569,7 +577,14 @@ def setup_cookbook_routes() -> APIRouter:
                 # Windows: use 'python' and pipe via stdin with double-quote wrapping
                 cmd = f'ssh {_pf}{host} "python -" < \'{scan_py}\''
             else:
-                cmd = f"ssh {_pf}{host} 'python3 -' < '{scan_py}'"
+                # POSIX: use 'python3' if available, fall back to 'python'; throw if neither is found.
+                cmd = (
+                    f"ssh {_pf}{host} "
+                    "'if command -v python3 >/dev/null 2>&1; then python3 -; "
+                    "elif command -v python >/dev/null 2>&1; then python -; "
+                    "else echo \"python3/python not found\" >&2; exit 127; fi' "
+                    f"< '{scan_py}'"
+                )
             proc = await asyncio.create_subprocess_shell(
                 cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -1355,10 +1370,42 @@ def setup_cookbook_routes() -> APIRouter:
         """Run nvidia-smi locally or over SSH. Returns (stdout, error_or_None)."""
         if host:
             pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
-            cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} '{query}'"
-            proc = await asyncio.create_subprocess_shell(
-                cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
+            candidates = [query]
+            stripped = query.strip()
+            if stripped.startswith("nvidia-smi "):
+                args = stripped[len("nvidia-smi "):]
+                candidates.append(
+                    "bash -lc "
+                    + shlex.quote(
+                        "export PATH=\"$PATH:/usr/bin:/usr/local/bin:/usr/local/cuda/bin:/usr/lib/wsl/lib\"; "
+                        f"nvidia-smi {args}"
+                    )
+                )
+                for nvidia_path in (
+                    "/usr/bin/nvidia-smi",
+                    "/usr/local/bin/nvidia-smi",
+                    "/usr/local/cuda/bin/nvidia-smi",
+                    "/usr/lib/wsl/lib/nvidia-smi",
+                ):
+                    candidates.append(f"{nvidia_path} {args}")
+
+            last_err = "nvidia-smi failed"
+            for candidate in candidates:
+                cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} {shlex.quote(candidate)}"
+                proc = await asyncio.create_subprocess_shell(
+                    cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+                try:
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    return None, "nvidia-smi timed out"
+                if proc.returncode == 0:
+                    return stdout.decode("utf-8", errors="replace"), None
+                err = (stderr.decode("utf-8", errors="replace") or "").strip()[:200]
+                if err:
+                    last_err = err
+            return None, last_err
         else:
             proc = await asyncio.create_subprocess_exec(
                 *shlex.split(query),

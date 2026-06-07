@@ -268,3 +268,70 @@ def run_script_argv(script_path) -> List[str]:
         comspec = os.environ.get("ComSpec", "cmd.exe")
         return [comspec, "/c", str(script_path)]
     return ["sh", str(script_path)]
+
+
+def is_wsl() -> bool:
+    """True if running inside Windows Subsystem for Linux (WSL)."""
+    import sys
+    if sys.platform.startswith("linux") or os.name == "posix":
+        try:
+            with open("/proc/version", "r") as f:
+                if "microsoft" in f.read().lower():
+                    return True
+        except Exception:
+            pass
+    return False
+
+
+def translate_path(path_str: str) -> str:
+    """Translate a path (possibly a Windows path) to the current OS format.
+
+    Particularly handles Windows paths (e.g. C:\\foo or C:/foo) when running
+    under WSL, translating them to /mnt/c/foo.
+    Also handles standard path normalization to avoid string breakages.
+    """
+    if not path_str:
+        return path_str
+
+    if is_wsl():
+        path_str = path_str.replace("\\", "/")
+        import re
+        m = re.match(r"^([a-zA-Z]):(.*)", path_str)
+        if m:
+            drive = m.group(1).lower()
+            rest = m.group(2)
+            if not rest.startswith("/"):
+                rest = "/" + rest
+            return f"/mnt/{drive}{rest}"
+
+    try:
+        return str(Path(path_str).resolve())
+    except Exception:
+        return path_str
+
+
+def get_wsl_windows_user_profile() -> Optional[str]:
+    """Retrieve the Windows host User Profile path from inside WSL."""
+    if not is_wsl():
+        return None
+    try:
+        r = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "Write-Output $env:USERPROFILE"],
+            capture_output=True, text=True, timeout=5
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return translate_path(r.stdout.strip())
+    except Exception:
+        pass
+
+    try:
+        users_dir = "/mnt/c/Users"
+        if os.path.isdir(users_dir):
+            for entry in os.listdir(users_dir):
+                if entry not in ("All Users", "Default", "Default User", "desktop.ini", "Public"):
+                    path = os.path.join(users_dir, entry)
+                    if os.path.isdir(path):
+                        return path
+    except Exception:
+        pass
+    return None

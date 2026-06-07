@@ -606,3 +606,35 @@ def test_pip_install_no_cache_is_idempotent_and_scoped():
     # not a pip install -> unchanged
     assert _pip_install_no_cache("vllm serve --model x") == "vllm serve --model x"
     assert _pip_install_no_cache("") == ""
+
+
+def test_cached_model_scan_runs_additional_hf_cache(tmp_path):
+    extra_cache = tmp_path / "extra_hf_cache"
+    model_dir = extra_cache / "models--acme--sample-7b"
+    snap = model_dir / "snapshots" / "rev-1"
+    snap.mkdir(parents=True)
+    weights = snap / "model.safetensors"
+    weights.write_bytes(b"abc123")
+
+    scan_py = tmp_path / "scan_cache.py"
+    scan_py.write_text(
+        _cached_model_scan_script(add_hf_cache=str(extra_cache)),
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [sys.executable, str(scan_py)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    models = json.loads(proc.stdout)
+    by_repo = {m["repo_id"]: m for m in models}
+
+    assert "acme/sample-7b" in by_repo
+    rec = by_repo["acme/sample-7b"]
+    assert rec["path"] == str(extra_cache)
+    assert rec["nb_files"] == 1
+    assert rec["size_bytes"] == len(b"abc123")
+    assert rec["has_incomplete"] is False
+    assert rec["is_diffusion"] is False
