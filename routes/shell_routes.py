@@ -1209,6 +1209,12 @@ def setup_shell_routes() -> APIRouter:
                     pkg["installed"] = False
                 except importlib_metadata.PackageNotFoundError:
                     pkg["installed"] = False
+                except Exception:
+                    # Installed but crashes on import — e.g. a CUDA build of
+                    # llama-cpp-python raising FileNotFoundError when the CUDA
+                    # toolkit dir is absent. One broken optional package must not
+                    # 500 the entire packages panel; report it as not usable.
+                    pkg["installed"] = False
 
             if pkg.get("installed"):
                 update_status = _package_pip_update_status(pkg, probe)

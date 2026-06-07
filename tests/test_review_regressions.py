@@ -471,6 +471,52 @@ async def test_app_api_blocks_shell_routes_before_loopback(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_app_api_blocks_cookbook_host_control_routes_before_loopback(monkeypatch):
+    import httpx
+    from src.tool_implementations import do_app_api
+
+    class UnexpectedAsyncClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("app_api should block host-control routes before loopback")
+
+    monkeypatch.setattr(httpx, "AsyncClient", UnexpectedAsyncClient)
+
+    blocked_calls = (
+        (
+            "api/cookbook/packages/install",
+            {"pip": "hf_transfer"},
+            "package installation is host code execution",
+        ),
+        (
+            "/api/cookbook/rebuild-engine",
+            {"engine": "llamacpp"},
+            "engine rebuild mutates local or remote host state",
+        ),
+        (
+            "/api/cookbook/kill-pid",
+            {"pid": 12345, "signal": "TERM"},
+            "process signalling is host control",
+        ),
+    )
+
+    for path, body, error_text in blocked_calls:
+        result = await do_app_api(
+            json.dumps(
+                {
+                    "action": "call",
+                    "method": "POST",
+                    "path": path,
+                    "body": body,
+                }
+            ),
+            owner="admin",
+        )
+
+        assert result["exit_code"] == 1
+        assert error_text in result["error"]
+
+
+@pytest.mark.asyncio
 async def test_app_api_endpoint_discovery_hides_shell_routes(monkeypatch):
     _install_core_middleware_stub(monkeypatch)
     import httpx
@@ -511,6 +557,50 @@ async def test_app_api_endpoint_discovery_hides_shell_routes(monkeypatch):
     assert ("POST", "/api/shell/stream") not in paths
     assert ("GET", "/api/auth/settings") not in paths
     assert all(not endpoint["path"].startswith("/api/shell") for endpoint in result["endpoints"])
+
+
+@pytest.mark.asyncio
+async def test_app_api_endpoint_discovery_hides_cookbook_host_control_routes(monkeypatch):
+    _install_core_middleware_stub(monkeypatch)
+    import httpx
+    from src.tool_implementations import do_app_api
+
+    class FakeResponse:
+        def json(self):
+            return {
+                "paths": {
+                    "/api/cookbook/packages": {"get": {"summary": "List Cookbook Packages"}},
+                    "/api/cookbook/packages/install": {"post": {"summary": "Install Package"}},
+                    "/api/cookbook/rebuild-engine": {"post": {"summary": "Rebuild Engine"}},
+                    "/api/cookbook/kill-pid": {"post": {"summary": "Kill Process"}},
+                    "/api/cookbook/gpus": {"get": {"summary": "List GPUs"}},
+                }
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    result = await do_app_api(json.dumps({"action": "endpoints", "filter": "cookbook"}), owner="admin")
+
+    assert result["exit_code"] == 0
+    paths = {(endpoint["method"], endpoint["path"]) for endpoint in result["endpoints"]}
+    assert ("GET", "/api/cookbook/packages") in paths
+    assert ("GET", "/api/cookbook/gpus") in paths
+    assert ("POST", "/api/cookbook/packages/install") not in paths
+    assert ("POST", "/api/cookbook/rebuild-engine") not in paths
+    assert ("POST", "/api/cookbook/kill-pid") not in paths
 
 
 @pytest.mark.asyncio

@@ -76,9 +76,10 @@ def _detect_nvidia():
     global _last_gpu_error
     _last_gpu_error = None
     out = _run(["nvidia-smi", "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
-    # Remote fallback: a non-interactive SSH shell often has a minimal PATH
-    # that omits where nvidia-smi lives (/usr/bin, /usr/local/cuda/bin), so the
-    # first call silently returns nothing → "No GPU" on hosts that DO have GPUs.
+    # Fallback: a non-interactive shell (or WSL) often has a minimal PATH
+    # that omits where nvidia-smi lives (/usr/bin, /usr/local/cuda/bin,
+    # /usr/lib/wsl/lib), so the first call silently returns nothing →
+    # "No GPU" on machines that DO have GPUs.
     # Retry through a login shell with the common CUDA bin dirs on PATH.
     if not out and _remote_host:
         out = _run(
@@ -88,9 +89,16 @@ def _detect_nvidia():
     # Last resort: call nvidia-smi by absolute path. Some hosts have a login
     # shell that isn't bash (or a profile that errors), so the bash -lc retry
     # above still comes back empty even though the binary is right there.
-    if not out and _remote_host:
+    # Also handles WSL where nvidia-smi lives at /usr/lib/wsl/lib/ — a path
+    # that may not be in the server process's PATH.
+    if not out:
         for _p in ("/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi", "/usr/local/cuda/bin/nvidia-smi", "/usr/lib/wsl/lib/nvidia-smi"):
-            out = _run(f"{_p} --query-gpu=memory.total,name --format=csv,noheader,nounits")
+            # Use list form so subprocess.run (local) resolves the absolute path
+            # correctly instead of treating the whole string as an executable name.
+            if _remote_host:
+                out = _run(f"{_p} --query-gpu=memory.total,name --format=csv,noheader,nounits")
+            else:
+                out = _run([_p, "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
             if out:
                 break
     if not out:

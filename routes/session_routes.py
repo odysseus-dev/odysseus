@@ -262,7 +262,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             last_msg_map = {}
             mode_map = {}
             msg_count_map = {}
-            rows = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count).filter(DbSession.archived == False).all()
+            rows = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count).filter(DbSession.archived == False, DbSession.owner == user).all()
             for row in rows:
                 folder_map[row.id] = row.folder
                 token_map[row.id] = (row.total_input_tokens or 0) + (row.total_output_tokens or 0)
@@ -284,12 +284,14 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 r[0] for r in db.query(Document.session_id)
                 .filter(Document.is_active == True,
                         Document.current_content != None,
-                        func.trim(Document.current_content) != "")
+                        func.trim(Document.current_content) != "",
+                        Document.owner == user)
                 .distinct().all()
             )
             img_session_ids = set(
                 r[0] for r in db.query(GalleryImage.session_id)
-                .filter(GalleryImage.session_id != None)
+                .filter(GalleryImage.session_id != None,
+                        GalleryImage.owner == user)
                 .distinct().all()
             )
         finally:
@@ -1010,7 +1012,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         }
         _THROWAWAY_MAX_MESSAGES = 4  # only delete if <= this many messages
         try:
-            rows = db.query(DbSession).filter(DbSession.archived == False, DbSession.owner == user).all()
+            rows = db.query(DbSession).filter(DbSession.archived == False, DbSession.owner == user).limit(2000).all()
             folder_map = {r.id: r.folder for r in rows}
             # Precompute per-session message counts in TWO aggregate queries
             # instead of 1–3 queries PER session — with many chats the per-row

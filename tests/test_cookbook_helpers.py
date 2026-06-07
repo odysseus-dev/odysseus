@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 
@@ -555,6 +556,36 @@ def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):
     assert ggufs[1]["size_bytes"] == len(b"part1part2part3")
     assert ggufs[2]["quant"] == "Q6_K_XL"
     assert ggufs[3]["quant"] == "BF16"
+
+
+def test_cached_model_scan_uses_huggingface_cache_env(tmp_path):
+    """Docker recreates can leave the persisted HF cache outside HOME.
+    The Serve scanner should honor the cache env path instead of only ~/.cache.
+    """
+    hf_cache = tmp_path / "app-cache" / "hub"
+    model = hf_cache / "models--Qwen--Qwen3.6-35B"
+    (model / "blobs").mkdir(parents=True)
+    (model / "blobs" / "weights.safetensors").write_bytes(b"weights")
+    (model / "snapshots" / "abc").mkdir(parents=True)
+    (model / "snapshots" / "abc" / "config.json").write_text("{}", encoding="utf-8")
+
+    empty_home = tmp_path / "home"
+    empty_home.mkdir()
+    scan_py = tmp_path / "scan_cache_env.py"
+    scan_py.write_text(_cached_model_scan_script(), encoding="utf-8")
+    env = dict(os.environ)
+    env["HOME"] = str(empty_home)
+    env["HUGGINGFACE_HUB_CACHE"] = str(hf_cache)
+    proc = subprocess.run(
+        [sys.executable, str(scan_py)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    by_repo = {m["repo_id"]: m for m in json.loads(proc.stdout)}
+    assert by_repo["Qwen/Qwen3.6-35B"]["path"] == str(hf_cache)
 
 
 # ── #1219 / #1459: keep big dependency wheel builds off the home pip cache ──
