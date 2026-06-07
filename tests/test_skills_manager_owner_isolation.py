@@ -24,7 +24,6 @@ silently mutates a file owned by a different user AND overwrites the
 import os
 import sys
 import textwrap
-import types
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -33,27 +32,12 @@ import pytest
 
 # ── module-load stubbing (matches other tests in this repo) ──────────
 # Stub heavy deps so importing the skills manager doesn't pull DB / FastAPI.
-for _mod in [
-    "sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext",
-    "sqlalchemy.ext.declarative", "src.database",
-    "core.atomic_io",  # we'll patch atomic_write_text below
-]:
+for _mod in ("sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext", "sqlalchemy.ext.declarative"):
     if _mod not in sys.modules:
-        sys.modules[_mod] = MagicMock()
-
-
-# Provide a no-op atomic_write_text for SkillsManager._write_skill.
-def _fake_atomic_write_text(path, content, **kw):
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(content, encoding="utf-8")
-
-_fake_core = types.ModuleType("core.atomic_io")
-_fake_core.atomic_write_text = _fake_atomic_write_text
-_fake_core.atomic_write_json = lambda p, d, **kw: Path(p).write_text(
-    "{}", encoding="utf-8"
-)
-sys.modules["core.atomic_io"] = _fake_core
-
+        try:
+            __import__(_mod)
+        except ImportError:
+            sys.modules[_mod] = MagicMock()
 
 from services.memory.skills import SkillsManager  # noqa: E402
 from services.memory.skill_format import Skill, slugify  # noqa: E402
@@ -195,13 +179,12 @@ def test_update_skill_scalar_keys_exclude_owner():
     )
 
 
-def test_read_skill_md_scopes_to_owner(tmp_path):
+def test_read_skill_md_and_references_are_owner_scoped(tmp_path):
     """Two users own distinct skills with the same slug. read_skill_md()
     called with owner='alice' must return Alice's content, not Bob's.
     Called without an owner it must match only ownerless skills."""
     skills_root = tmp_path / "skills"
     skills_root.mkdir(parents=True, exist_ok=True)
-
     alice_path = _write_skill_md(
         skills_root, category="alice-cat", name="login-flow",
         owner="alice", description="alice secret",
@@ -210,27 +193,28 @@ def test_read_skill_md_scopes_to_owner(tmp_path):
         skills_root, category="bob-cat", name="login-flow",
         owner="bob", description="bob secret",
     )
+    refs = bob_path.parent / "references"
+    refs.mkdir()
+    (refs / "notes.txt").write_text("bob private notes", encoding="utf-8")
 
     sm = SkillsManager(str(tmp_path))
 
     alice_md = sm.read_skill_md("login-flow", owner="alice")
     assert alice_md is not None, "read_skill_md returned None for alice's skill"
-    assert "alice secret" in alice_md, (
-        f"read_skill_md(owner='alice') returned the wrong file: {alice_md[:200]}"
-    )
+    assert "alice secret" in alice_md
 
     bob_md = sm.read_skill_md("login-flow", owner="bob")
     assert bob_md is not None, "read_skill_md returned None for bob's skill"
-    assert "bob secret" in bob_md, (
-        f"read_skill_md(owner='bob') returned the wrong file: {bob_md[:200]}"
-    )
+    assert "bob secret" in bob_md
 
     no_owner_md = sm.read_skill_md("login-flow")
     assert no_owner_md is None, (
         "read_skill_md without owner matched an owned skill — "
-        "default should only match ownerless skills. Got: "
-        f"{no_owner_md[:200] if no_owner_md else 'None'}"
+        "default should only match ownerless skills."
     )
+    assert sm.read_skill_md("login-flow", owner="charlie") is None
+    assert sm.read_skill_reference("login-flow", "references/notes.txt", owner="bob") == "bob private notes"
+    assert sm.read_skill_reference("login-flow", "references/notes.txt", owner="alice") is None
 
 
 def test_update_skill_positive_scoping(tmp_path):
@@ -262,3 +246,61 @@ def test_update_skill_positive_scoping(tmp_path):
     assert "bob original" in after_bob and "alice updated" not in after_bob, (
         "Bob's file was mutated by Alice's update_skill call — cross-tenant leak."
     )
+
+
+def test_add_skill_dedup_does_not_cross_owners(tmp_path):
+    sm = SkillsManager(str(tmp_path))
+    first = sm.add_skill(
+        name="shared-flow",
+        description="same description",
+        category="general",
+        when_to_use="same trigger",
+        procedure=["same procedure"],
+        owner="alice",
+        source="learned",
+    )
+    second = sm.add_skill(
+        name="shared-flow",
+        description="same description",
+        category="general",
+        when_to_use="same trigger",
+        procedure=["same procedure"],
+        owner="bob",
+        source="learned",
+    )
+
+    assert not first.get("_deduped")
+    assert not second.get("_deduped")
+    assert second.get("owner") == "bob"
+
+
+def test_usage_sidecar_is_owner_scoped(tmp_path):
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir(parents=True, exist_ok=True)
+    _write_skill_md(
+        skills_root, category="alice-cat", name="shared-flow",
+        owner="alice", description="alice secret",
+    )
+    _write_skill_md(
+        skills_root, category="bob-cat", name="shared-flow",
+        owner="bob", description="bob secret",
+    )
+
+    sm = SkillsManager(str(tmp_path))
+    sm.record_use("shared-flow", owner="alice")
+    sm.set_audit("shared-flow", "pass", by_teacher=False, owner="bob")
+    sm.set_necessity("shared-flow", False, ["other-flow"], "redundant", owner="bob")
+
+    alice = sm.load(owner="alice")[0]
+    bob = sm.load(owner="bob")[0]
+
+    assert alice["uses"] == 1
+    assert alice["audit_verdict"] is None
+    assert alice["necessity"] is None
+    assert bob["uses"] == 0
+    assert bob["audit_verdict"] == "pass"
+    assert bob["necessity"] == {
+        "necessary": False,
+        "redundant_with": ["other-flow"],
+        "reason": "redundant",
+    }

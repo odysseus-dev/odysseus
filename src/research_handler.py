@@ -20,6 +20,7 @@ from src.research_utils import strip_thinking, is_low_quality
 logger = logging.getLogger(__name__)
 
 RESEARCH_DATA_DIR = Path("data/deep_research")
+_RESEARCH_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,128}$")
 
 
 def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
@@ -28,6 +29,36 @@ def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(minimum, min(maximum, n))
+
+
+def _format_probe_failure(model: str, exc: Exception) -> str:
+    """Turn a failed research model probe into a user-facing message."""
+    detail = getattr(exc, "detail", None)
+    status = getattr(exc, "status_code", None)
+    err = str(detail if detail is not None else exc).strip()
+
+    if status in {401, 403} or "401" in err or "API key" in err or "Unauthorized" in err:
+        return f"Model '{model}' requires an API key. Check your endpoint configuration."
+
+    if status and err:
+        return f"Model '{model}' probe failed: {err}"
+
+    if err:
+        return f"Cannot reach model '{model}' — {err}"
+
+    return f"Cannot reach model '{model}' — check that the endpoint is running and accessible."
+
+
+def _research_json_path(session_id: str) -> Optional[Path]:
+    if not isinstance(session_id, str) or not _RESEARCH_SESSION_ID_RE.fullmatch(session_id):
+        return None
+    root = RESEARCH_DATA_DIR.resolve()
+    path = (RESEARCH_DATA_DIR / f"{session_id}.json").resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return None
+    return path
 
 
 class ResearchHandler:
@@ -143,10 +174,10 @@ class ResearchHandler:
     ) -> Optional[dict]:
         """Generate a research plan for user review before starting research."""
         try:
-            from src.deep_research import RESEARCH_PLAN_PROMPT
+            from src.deep_research import RESEARCH_PLAN_PROMPT, current_date_context
             from src.llm_core import llm_call_async
 
-            prompt = RESEARCH_PLAN_PROMPT.format(question=query)
+            prompt = current_date_context() + RESEARCH_PLAN_PROMPT.format(question=query)
             response = await llm_call_async(
                 url=llm_endpoint,
                 model=llm_model,
@@ -214,17 +245,30 @@ class ResearchHandler:
         max_rounds is the safety cap; the AI's _should_stop decision (after
         min_rounds) terminates the loop earlier in normal operation.
         """
+        if _research_json_path(session_id) is None:
+            raise ValueError("Invalid research session_id")
+
         # Resolve the hard wall-clock timeout from settings when the caller
         # didn't pin one. Local / edge models routinely need more than the
-        # old 600s default to finish a deep-research synthesis.
+        # old 600s default to finish a deep-research synthesis. A setting of
+        # 0 disables the cap entirely (unlimited run); any other value is
+        # bounded to [60, 86400] so a misconfigured settings.json can't
+        # explode into a multi-day hang.
         if hard_timeout is None:
             from src.settings import get_setting
-            hard_timeout = _bounded_int(
-                get_setting("research_run_timeout_seconds", 1800),
-                default=1800,
-                minimum=60,
-                maximum=86400,
-            )
+            try:
+                raw_timeout = int(get_setting("research_run_timeout_seconds", 1800))
+            except (TypeError, ValueError):
+                raw_timeout = 1800
+            if raw_timeout <= 0:
+                hard_timeout = None  # 0 = no wall-clock cap (asyncio.wait_for timeout=None)
+            else:
+                hard_timeout = _bounded_int(
+                    raw_timeout,
+                    default=1800,
+                    minimum=60,
+                    maximum=86400,
+                )
 
         # Cancel any existing research for this session
         if session_id in self._active_tasks:
@@ -318,8 +362,26 @@ class ResearchHandler:
                 raise
             except Exception as e:
                 logger.error(f"Background research failed: {e}", exc_info=True)
-                entry["result"] = str(e)
-                entry["status"] = "error"
+                # Preserve partial findings if available (mirrors timeout branch)
+                researcher = entry.get("researcher")
+                if researcher and researcher.evolving_report:
+                    _elapsed = time.time() - entry["started_at"]
+                    entry["result"] = self._format_research_report(
+                        query, researcher.evolving_report,
+                        researcher.get_stats(), _elapsed,
+                    )
+                    entry["status"] = "done"
+                    self._save_result(session_id, entry)
+                    try:
+                        sources = self._extract_sources(researcher.findings) if researcher.findings else []
+                        findings = self._extract_raw_findings(researcher.findings) if researcher.findings else []
+                        _guarded_complete(session_id, entry["result"], sources, findings)
+                    except Exception as cb_err:
+                        logger.warning(f"on_complete callback failed in error branch: {cb_err}")
+                    on_progress({"phase": "warning", "message": f"Research finished with errors — partial results saved ({_elapsed:.0f}s elapsed)"})
+                else:
+                    entry["result"] = str(e)
+                    entry["status"] = "error"
 
         task = asyncio.create_task(_run())
         entry["task"] = task
@@ -340,7 +402,9 @@ class ResearchHandler:
                 result["avg_duration"] = round(avg, 1)
             return result
         # Check disk for completed research (skip consumed results)
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        path = _research_json_path(session_id)
+        if path is None:
+            return None
         if path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -379,7 +443,9 @@ class ResearchHandler:
             if entry["status"] in ("done", "error", "cancelled"):
                 return entry.get("result")
         # Check disk (skip consumed results)
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        path = _research_json_path(session_id)
+        if path is None:
+            return None
         if path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -401,7 +467,9 @@ class ResearchHandler:
             if researcher and researcher.findings:
                 return self._extract_sources(researcher.findings)
         # Check disk
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        path = _research_json_path(session_id)
+        if path is None:
+            return None
         if path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -418,7 +486,9 @@ class ResearchHandler:
             if researcher and researcher.findings:
                 return self._extract_raw_findings(researcher.findings)
         # Check disk
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        path = _research_json_path(session_id)
+        if path is None:
+            return None
         if path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -433,6 +503,8 @@ class ResearchHandler:
         seen = set()
         sources = []
         for f in findings:
+            if not isinstance(f, dict):
+                continue
             url = f.get("url", "")
             title = f.get("title", "") or url
             summary = f.get("summary", "") or f.get("evidence", "")
@@ -451,6 +523,8 @@ class ResearchHandler:
         try:
             items = []
             for f in findings:
+                if not isinstance(f, dict):
+                    continue
                 url = f.get("url", "")
                 title = f.get("title", "") or "Untitled"
                 summary = f.get("summary", "")
@@ -489,7 +563,9 @@ class ResearchHandler:
         Keeps the JSON on disk so visual reports can be generated later.
         """
         self._active_tasks.pop(session_id, None)
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        path = _research_json_path(session_id)
+        if path is None:
+            return
         if path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -501,6 +577,10 @@ class ResearchHandler:
     def _save_result(self, session_id: str, entry: dict):
         """Persist completed research result to disk."""
         try:
+            path = _research_json_path(session_id)
+            if path is None:
+                logger.error("Refusing to save research result for invalid session_id: %r", session_id)
+                return
             # Extract and cache sources + raw findings
             sources = []
             raw_findings = []
@@ -510,7 +590,6 @@ class ResearchHandler:
                 raw_findings = self._extract_raw_findings(researcher.findings)
             entry["sources"] = sources
 
-            path = RESEARCH_DATA_DIR / f"{session_id}.json"
             data = {
                 "query": entry["query"],
                 "status": entry["status"],
@@ -537,7 +616,9 @@ class ResearchHandler:
 
     def _get_session_json(self, session_id: str) -> Optional[dict]:
         """Load the saved research JSON for a session, if it exists."""
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        path = _research_json_path(session_id)
+        if path is None:
+            return None
         if path.exists():
             try:
                 return json.loads(path.read_text(encoding="utf-8"))
@@ -547,7 +628,9 @@ class ResearchHandler:
 
     def get_report_html(self, session_id: str) -> Optional[str]:
         """Generate the visual HTML report for a session (always fresh from JSON)."""
-        json_path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        json_path = _research_json_path(session_id)
+        if json_path is None:
+            return None
         if not json_path.exists():
             logger.warning(f"No JSON found for visual report: {json_path}")
             return None
@@ -574,7 +657,9 @@ class ResearchHandler:
 
     def hide_image(self, session_id: str, image_url: str) -> bool:
         """Add image_url to the persisted hidden_images list for a research."""
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        path = _research_json_path(session_id)
+        if path is None:
+            return False
         if not path.exists():
             return False
         try:
@@ -592,7 +677,9 @@ class ResearchHandler:
 
     def unhide_all_images(self, session_id: str) -> bool:
         """Clear the hidden_images list for a research."""
-        path = RESEARCH_DATA_DIR / f"{session_id}.json"
+        path = _research_json_path(session_id)
+        if path is None:
+            return False
         if not path.exists():
             return False
         try:
@@ -624,14 +711,7 @@ class ResearchHandler:
             logger.info(f"Endpoint probe OK: {model}")
         except Exception as e:
             logger.error(f"Probe failed for {model}: {e}")
-            err = str(e)
-            if "401" in err or "API key" in err or "Unauthorized" in err:
-                raise RuntimeError(
-                    f"Model '{model}' requires an API key. Check your endpoint configuration."
-                ) from e
-            raise RuntimeError(
-                f"Cannot reach model '{model}' — check that the endpoint is running and accessible."
-            ) from e
+            raise RuntimeError(_format_probe_failure(model, e)) from e
 
     async def call_research_service(
         self,
@@ -697,16 +777,30 @@ class ResearchHandler:
                 minimum=1,
                 maximum=12,
             )
+            _planning_timeout = _bounded_int(
+                get_setting("research_planning_timeout_seconds", _extraction_timeout),
+                default=_extraction_timeout,
+                minimum=15,
+                maximum=3600,
+            )
+            _query_timeout = _bounded_int(
+                get_setting("research_query_timeout_seconds", _extraction_timeout),
+                default=_extraction_timeout,
+                minimum=15,
+                maximum=3600,
+            )
 
             researcher = DeepResearcher(
                 llm_endpoint=llm_endpoint,
                 llm_model=llm_model,
                 llm_headers=llm_headers,
                 max_rounds=max_rounds,
-                min_rounds=min(3, max_rounds),
+                min_rounds=max(2, max_rounds - 2),
                 max_time=max_time,
                 max_report_tokens=_max_report_tokens,
                 extraction_timeout=_extraction_timeout,
+                planning_timeout=_planning_timeout,
+                query_timeout=_query_timeout,
                 extraction_concurrency=_extraction_concurrency,
                 progress_callback=progress_callback,
                 search_provider=search_provider,

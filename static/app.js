@@ -4,6 +4,7 @@
 // ============================================
 import Storage from './js/storage.js';
 import uiModule from './js/ui.js';
+import workspaceModule from './js/workspace.js';
 import fileHandlerModule from './js/fileHandler.js';
 import modelsModule from './js/models.js';
 import ragModule from './js/rag.js';
@@ -13,6 +14,7 @@ import chatModule from './js/chat.js';
 import compareModule from './js/compare/index.js';
 import documentModule from './js/document.js';
 import searchChatModule from './js/search-chat.js';
+import { makeWindowDraggable } from './js/windowDrag.js';
 import markdownModule from './js/markdown.js';
 import chatRenderer from './js/chatRenderer.js';
 import sessionModule from './js/sessions.js';
@@ -84,6 +86,39 @@ async function _refreshDefaultChat() {
 // Prime the cache once at load for initial paint paths that read _defaultChat
 // synchronously; later reads should call _refreshDefaultChat() first.
 _refreshDefaultChat();
+
+async function _createDirectChatFromPreferredModel() {
+  if (!sessionModule) return false;
+
+  const pending = sessionModule.getPendingChat && sessionModule.getPendingChat();
+  if (pending && pending.url && pending.modelId) {
+    sessionModule.createDirectChat(pending.url, pending.modelId, pending.endpointId);
+    return true;
+  }
+
+  const sessions = sessionModule.getSessions();
+  const currentId = sessionModule.getCurrentSessionId();
+  const current = sessions.find(s => s.id === currentId);
+  if (current && current.endpoint_url && current.model) {
+    sessionModule.createDirectChat(current.endpoint_url, current.model, current.endpoint_id);
+    return true;
+  }
+
+  const dc = await _refreshDefaultChat();
+  if (dc) {
+    sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
+    return true;
+  }
+
+  const withModel = sessions.filter(s => s.endpoint_url && s.model);
+  if (withModel.length > 0) {
+    const last = withModel[0]; // sessions are sorted by recent
+    sessionModule.createDirectChat(last.endpoint_url, last.model, last.endpoint_id);
+    return true;
+  }
+
+  return false;
+}
 
 // ============================================
 // EVENT LISTENERS INITIALIZATION
@@ -270,7 +305,9 @@ function initializeEventListeners() {
           label = (raw || '').trim() || 'Assistant';
         }
         const body = child.querySelector('.body');
-        const text = body ? (body.innerText || body.textContent || '').trim() : '';
+        // Prefer dataset.raw (original markdown) over innerText (rendered HTML as text)
+        // to avoid extra newlines and formatting artifacts.
+        const text = body ? (body.dataset.raw || body.innerText || body.textContent || '').trim() : '';
         if (text) parts.push(`${label}: ${text}`);
       } else if (child.classList?.contains('agent-thread')) {
         const lines = ['[Tool calls]'];
@@ -499,6 +536,13 @@ function initializeEventListeners() {
         return;
       }
 
+      // Model picker popup — close before opening any modals
+      const modelPickerMenu = document.getElementById('model-picker-menu');
+      if (modelPickerMenu && modelPickerMenu.classList.contains('open')) {
+        modelPickerMenu.classList.remove('open');
+        return;
+      }
+
       // Close one modal at a time (last in DOM = topmost)
       // Map modal id → sidebar list-item id to clear active state
       const modalItemMap = {
@@ -510,7 +554,7 @@ function initializeEventListeners() {
       };
 
       // Dynamic modals (removed from DOM on close)
-      const dynamicModals = ['library-modal', 'archive-modal', 'doclib-modal', 'gallery-modal', 'tasks-modal'];
+      const dynamicModals = ['library-modal', 'archive-modal', 'doclib-modal', 'gallery-modal', 'tasks-modal', 'email-lib-modal'];
       for (const id of dynamicModals) {
         const m = document.getElementById(id);
         if (id === 'gallery-modal') {
@@ -1511,6 +1555,7 @@ function initializeEventListeners() {
   const MODE_TOOLS = [
     { btnId: 'web-toggle-btn',  checkboxId: 'web-toggle',  stateKey: 'web' },
     { btnId: 'bash-toggle-btn', checkboxId: 'bash-toggle', stateKey: 'bash' },
+    { btnId: 'plan-toggle-btn', checkboxId: 'plan-toggle', stateKey: 'plan' },
   ];
 
   function _modeKey(stateKey, mode) { return `${stateKey}_${mode}`; }
@@ -1519,6 +1564,9 @@ function initializeEventListeners() {
     const state = loadToggleState();
     const key = _modeKey(stateKey, mode);
     if (Object.prototype.hasOwnProperty.call(state, key)) return !!state[key];
+    // Plan mode is opt-in: never default it on, otherwise every agent turn
+    // would be forced into planning.
+    if (stateKey === 'plan') return false;
     return mode === 'agent'; // default: ON in agent, OFF in chat
   }
 
@@ -1531,6 +1579,7 @@ function initializeEventListeners() {
   const TOOL_TOGGLE_TOAST_LABELS = {
     web: 'Web search',
     bash: 'Shell',
+    plan: 'Plan mode',
   };
 
   function showToolToggleToast(stateKey, active) {
@@ -1564,6 +1613,8 @@ function initializeEventListeners() {
       saveToggleState(st);
       agentBtn.classList.toggle('active', mode === 'agent');
       chatBtn.classList.toggle('active', mode === 'chat');
+      agentBtn.setAttribute('aria-pressed', String(mode === 'agent'));
+      chatBtn.setAttribute('aria-pressed', String(mode === 'chat'));
       // Slide the pill to the active button
       const toggle = agentBtn.closest('.mode-toggle');
       if (toggle) toggle.classList.toggle('mode-chat', mode === 'chat');
@@ -1621,11 +1672,13 @@ function initializeEventListeners() {
     const chk = el(checkboxId);
     if (chk) chk.checked = saved;
     btn.classList.toggle('active', saved);
+    btn.setAttribute('aria-pressed', String(saved));
     btn.addEventListener('click', () => {
       const curMode = (loadToggleState().mode) || 'chat';
       const chk = el(checkboxId);
       chk.checked = !chk.checked;
       btn.classList.toggle('active', chk.checked);
+      btn.setAttribute('aria-pressed', String(chk.checked));
       saveToolPref(stateKey, curMode, chk.checked);
       showToolToggleToast(stateKey, chk.checked);
       if (chk.checked) _showToolSplash(stateKey);
@@ -1640,6 +1693,82 @@ function initializeEventListeners() {
   }
   setupToggle('web-toggle-btn', 'web-toggle', 'web');
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
+  try { workspaceModule.initWorkspace(); } catch (_) {}
+  setupToggle('plan-toggle-btn', 'plan-toggle', 'plan');
+
+  // Set plan mode on/off directly (checkbox + button state + saved pref) WITHOUT
+  // going through the button's click handler — used by the plan menu and by the
+  // "Approve & Run" flow. Going through .click() would hit the plan-menu
+  // intercept below (a stored plan re-opens the menu instead of toggling), which
+  // is exactly the bug that left approved plans stuck in plan mode.
+  function _setPlanMode(on) {
+    const btn = el('plan-toggle-btn');
+    const chk = el('plan-toggle');
+    const mode = (loadToggleState().mode) || 'chat';
+    if (chk) chk.checked = !!on;
+    if (btn) { btn.classList.toggle('active', !!on); btn.setAttribute('aria-pressed', String(!!on)); }
+    saveToolPref('plan', mode, !!on);
+  }
+  window._setPlanMode = _setPlanMode;
+
+  // ── Plan-button menu ──
+  // When a plan exists for this chat, clicking the plan button opens a small
+  // menu (Show plan / Plan mode on-off) instead of plain-toggling — so the plan
+  // window can be re-opened and docked at any time while the agent works. With
+  // no plan, the button behaves as before (one-click toggle).
+  (function initPlanMenu() {
+    const planBtn = el('plan-toggle-btn');
+    if (!planBtn) return;
+    const _hasPlan = () => { try { return !!(window._getStoredPlan && window._getStoredPlan()); } catch (_) { return false; } };
+    const _close = () => { const m = document.getElementById('plan-menu'); if (m) m.remove(); };
+    function _open() {
+      _close();
+      const planChk = el('plan-toggle');
+      const on = !!(planChk && planChk.checked);
+      const menu = document.createElement('div');
+      menu.id = 'plan-menu';
+      menu.className = 'overflow-menu plan-menu';
+      menu.innerHTML =
+        '<button type="button" class="overflow-menu-item" data-act="show">'
+        + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'
+        + '<span>Show plan</span></button>'
+        + '<button type="button" class="overflow-menu-item" data-act="toggle">'
+        + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>'
+        + '<span>Plan mode: ' + (on ? 'On' : 'Off') + '</span></button>';
+      document.body.appendChild(menu);
+      const r = planBtn.getBoundingClientRect();
+      menu.style.position = 'fixed';
+      menu.style.left = Math.round(r.left) + 'px';
+      menu.style.top = Math.round(r.top - menu.offsetHeight - 6) + 'px';
+      menu.querySelector('[data-act="show"]').addEventListener('click', () => {
+        _close();
+        const txt = window._getStoredPlan ? window._getStoredPlan() : '';
+        if (txt && window.planWindowModule) window.planWindowModule.openPlanWindow(txt, null);
+      });
+      menu.querySelector('[data-act="toggle"]').addEventListener('click', () => {
+        _close();
+        _setPlanMode(!on);   // flip state directly (no click → no menu re-open)
+      });
+      // Dismiss on any outside click (capture so it beats other handlers) / Escape.
+      setTimeout(() => {
+        const off = (e) => {
+          if (!menu.contains(e.target) && e.target !== planBtn) {
+            _close(); document.removeEventListener('click', off, true); document.removeEventListener('keydown', esc, true);
+          }
+        };
+        const esc = (e) => { if (e.key === 'Escape') { _close(); document.removeEventListener('click', off, true); document.removeEventListener('keydown', esc, true); } };
+        document.addEventListener('click', off, true);
+        document.addEventListener('keydown', esc, true);
+      }, 0);
+    }
+    planBtn.addEventListener('click', (e) => {
+      // With a stored plan, the button opens the menu (Show plan / toggle).
+      // Without one, it falls through to the normal one-click toggle.
+      if (_hasPlan()) { e.preventDefault(); e.stopImmediatePropagation(); _open(); }
+    }, true);  // capture phase: intercept before setupToggle's bubble handler
+  })();
+
+  try { workspaceModule.initWorkspace(); } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)
   const overflowDocBtn = el('overflow-doc-btn');
@@ -2368,7 +2497,7 @@ function initializeEventListeners() {
   };
 
   // Keys hidden by default on first run (no localStorage yet)
-  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn']);
+  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn', 'text-emojis']);
 
   // Keys that need admin to toggle off (reserved for future use)
   const UI_VIS_ADMIN_ONLY = new Set([]);
@@ -2396,11 +2525,9 @@ function initializeEventListeners() {
     document.querySelectorAll('.section[draggable]').forEach(el => {
       el.setAttribute('draggable', dragEnabled ? 'true' : 'false');
     });
-    // Text-only emojis toggle. Default is ON (the checkbox defaults to
-    // checked because text-emojis isn't in UI_VIS_DEFAULT_OFF), so treat
-    // an absent value as enabled — otherwise the toggle looked on at
-    // startup but the effect only activated after the user flipped it.
-    applyTextEmojis(state['text-emojis'] !== false);
+    // Text-only emojis toggle. Default is OFF so model-emitted shortcodes
+    // like `:blush:` render through the normal monochrome emoji path.
+    applyTextEmojis(state['text-emojis'] === true);
     // Hide thinking sections toggle (show-thinking: checked=show, unchecked=hide)
     document.body.classList.toggle('hide-thinking', state['show-thinking'] === false);
   }
@@ -2637,82 +2764,38 @@ function initializeEventListeners() {
     // Apply saved visibility on load
     applyUIVis(loadUIVis());
 
-    // Generic draggable for all .modal elements
-    const _sharedDragModalIds = new Set(['settings-modal']);
-    try { document.querySelectorAll('.modal').forEach(m => {
-      if (_sharedDragModalIds.has(m.id)) return;
-      const content = m.querySelector('.modal-content');
-      const header = m.querySelector('.modal-header');
-      if (!content || !header) return;
-      let dragX, dragY, startLeft, startTop, dragging = false;
-
-      // Reset to flex-centered position each time modal opens
-      new MutationObserver(() => {
-        if (!m.classList.contains('hidden')) {
-          content.style.position = '';
-          content.style.left = '';
-          content.style.top = '';
-          content.style.right = '';
-          content.style.bottom = '';
-          content.style.margin = '';
-        }
-      }).observe(m, { attributes: true, attributeFilter: ['class'] });
-
-      function startDrag(clientX, clientY) {
-        dragging = true;
-        const rect = content.getBoundingClientRect();
-        dragX = clientX; dragY = clientY;
-        startLeft = rect.left; startTop = rect.top;
-        // Switch to fixed so it can be freely positioned
-        content.style.position = 'fixed';
-        content.style.left = startLeft + 'px';
-        content.style.top = startTop + 'px';
-        content.style.margin = '0';
-      }
-
-      header.addEventListener('mousedown', (e) => {
-        if (e.target.closest('.close-btn')) return;
-        e.preventDefault();
-        startDrag(e.clientX, e.clientY);
-        document.addEventListener('mousemove', onDrag);
-        document.addEventListener('mouseup', stopDrag);
-      });
-      function onDrag(e) {
-        if (!dragging) return;
-        content.style.left = (startLeft + e.clientX - dragX) + 'px';
-        content.style.top = (startTop + e.clientY - dragY) + 'px';
-      }
-      function stopDrag() {
-        dragging = false;
-        document.removeEventListener('mousemove', onDrag);
-        document.removeEventListener('mouseup', stopDrag);
-      }
-
-      // Touch drag is desktop-only — on mobile, modals are bottom sheets and
-      // ui.js handles swipe-down-to-dismiss. Attaching this listener fights
-      // the swipe-dismiss gesture.
-      if (window.innerWidth > 768) {
-        header.addEventListener('touchstart', (e) => {
-          if (e.target.closest('.close-btn')) return;
-          const t = e.touches[0];
-          startDrag(t.clientX, t.clientY);
-          document.addEventListener('touchmove', onTouchDrag, { passive: false });
-          document.addEventListener('touchend', stopTouchDrag);
+    // The only two modals without a per-module makeWindowDraggable call. Wire
+    // them onto the shared helper, drag-only, to match their old behavior.
+    try {
+      ['custom-preset-modal', 'rename-session-modal'].forEach((id) => {
+        const m = document.getElementById(id);
+        if (!m) return;
+        const content = m.querySelector('.modal-content');
+        const header = m.querySelector('.modal-header');
+        if (!content || !header) return;
+        makeWindowDraggable(m, {
+          content, header,
+          skipSelector: '.close-btn',
+          enableDock: false,
+          enableResize: false,
         });
-      }
-      function onTouchDrag(e) {
-        if (!dragging) return;
-        e.preventDefault();
-        const t = e.touches[0];
-        content.style.left = (startLeft + t.clientX - dragX) + 'px';
-        content.style.top = (startTop + t.clientY - dragY) + 'px';
-      }
-      function stopTouchDrag() {
-        dragging = false;
-        document.removeEventListener('touchmove', onTouchDrag);
-        document.removeEventListener('touchend', stopTouchDrag);
-      }
-    }); } catch(e) { console.error('Modal drag init error:', e); }
+        // Re-center on open (these persist in the DOM). Guard on the
+        // hidden→visible edge so it never fires mid-drag.
+        let wasHidden = m.classList.contains('hidden');
+        new MutationObserver(() => {
+          const isHidden = m.classList.contains('hidden');
+          if (wasHidden && !isHidden) {
+            content.style.position = '';
+            content.style.left = '';
+            content.style.top = '';
+            content.style.right = '';
+            content.style.bottom = '';
+            content.style.margin = '';
+          }
+          wasHidden = isHidden;
+        }).observe(m, { attributes: true, attributeFilter: ['class'] });
+      });
+    } catch (e) { console.error('Dialog drag init error:', e); }
   })();
 
   // ── Modal minimize → dock ──
@@ -3011,27 +3094,7 @@ function initializeEventListeners() {
       // Clear research mode if active
       const _resChk = el('research-toggle');
       if (_resChk && _resChk.checked) _syncResearchIndicator(false);
-      // Use default chat if configured — always re-fetch so setting changes apply immediately
-      const dc = await _refreshDefaultChat();
-      if (dc) {
-        sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
-        return;
-      }
-      const sessions = sessionModule.getSessions();
-      const currentId = sessionModule.getCurrentSessionId();
-      const current = sessions.find(s => s.id === currentId);
-      // Try current session's model first
-      if (current && current.endpoint_url && current.model) {
-        sessionModule.createDirectChat(current.endpoint_url, current.model, current.endpoint_id);
-        return;
-      }
-      // Fallback: find any recent session with a model
-      const withModel = sessions.filter(s => s.endpoint_url && s.model);
-      if (withModel.length > 0) {
-        const last = withModel[0]; // sessions are sorted by recent
-        sessionModule.createDirectChat(last.endpoint_url, last.model, last.endpoint_id);
-        return;
-      }
+      if (await _createDirectChatFromPreferredModel()) return;
       // No models at all — show welcome screen
       sessionModule.setCurrentSessionId(null);
       if (documentModule && documentModule.isPanelOpen && documentModule.isPanelOpen()) documentModule.closePanel();
@@ -3076,23 +3139,7 @@ function initializeEventListeners() {
       if (presetsModule && presetsModule.deactivateCharacter) presetsModule.deactivateCharacter();
       // Clear research toggle when starting a fresh chat (not via research button)
       _syncResearchIndicator(false);
-      const dc = await _refreshDefaultChat();
-      if (dc) {
-        sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
-        return;
-      }
-      const sessions = sessionModule.getSessions();
-      const currentId = sessionModule.getCurrentSessionId();
-      const current = sessions.find(s => s.id === currentId);
-      if (current && current.endpoint_url && current.model) {
-        sessionModule.createDirectChat(current.endpoint_url, current.model, current.endpoint_id);
-        return;
-      }
-      const withModel = sessions.filter(s => s.endpoint_url && s.model);
-      if (withModel.length > 0) {
-        sessionModule.createDirectChat(withModel[0].endpoint_url, withModel[0].model, withModel[0].endpoint_id);
-        return;
-      }
+      if (await _createDirectChatFromPreferredModel()) return;
       // No models at all — show welcome screen
       sessionModule.setCurrentSessionId(null);
       if (documentModule && documentModule.isPanelOpen && documentModule.isPanelOpen()) documentModule.closePanel();
@@ -3129,10 +3176,7 @@ function initializeEventListeners() {
         const idx = sessions.findIndex(s => s.id === currentId);
         const nextSession = sessions.filter(s => !s.archived && s.id !== currentId)[Math.max(0, idx)] ||
                             sessions.find(s => !s.archived && s.id !== currentId);
-        const res = await fetch(`${API_BASE}/api/session/${currentId}/archive`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        });
+        const res = await fetch(`${API_BASE}/api/session/${currentId}`, { method: 'DELETE' });
         if (res.ok) {
           await sessionModule.loadSessions();
           if (nextSession) {
@@ -3159,7 +3203,7 @@ function initializeEventListeners() {
       setTimeout(() => uiModule.autoResize(textarea), 1);
     });
     textarea.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         // If ghost autocomplete is active, accept the suggestion instead of submitting
         if (window._ghostAutocomplete && window._ghostAutocomplete.isActive()) {
           e.preventDefault();
@@ -3732,7 +3776,7 @@ function startOdysseusApp() {
   // Enter to send (shift+enter for newline), or new chat when empty
   if (messageInput) {
     messageInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         // Flush the debounced icon update so dataset.mode reflects the current
         // text state. Without this, a fast type-and-Enter would still see the

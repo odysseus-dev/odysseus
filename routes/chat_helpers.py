@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -11,6 +12,7 @@ from core.models import ChatMessage
 from core.database import SessionLocal
 from core.database import Session as DBSession, ModelEndpoint
 from src.llm_core import normalize_model_id
+from src.endpoint_resolver import normalize_base
 from src.context_compactor import maybe_compact, trim_for_context
 from src.auth_helpers import get_current_user
 from src.prompt_security import untrusted_context_message
@@ -73,7 +75,7 @@ def _enforce_chat_privileges(request, sess) -> None:
     allowlist, or HTTPException(429) if the user has hit their daily message
     cap. No-op for unauthenticated callers or when auth_manager is absent
     (single-user mode). Admins receive ADMIN_PRIVILEGES from get_privileges,
-    which means empty allowed_models / zero cap → no-op for them.
+    which means unrestricted allowed_models / zero cap -> no-op for them.
     """
     try:
         user = get_current_user(request)
@@ -86,8 +88,10 @@ def _enforce_chat_privileges(request, sess) -> None:
         return
 
     privs = auth_manager.get_privileges(user) or {}
-    allowed = privs.get("allowed_models") or []
-    if allowed and sess.model and sess.model not in allowed:
+    allowed_raw = privs.get("allowed_models")
+    allowed = allowed_raw if isinstance(allowed_raw, list) else []
+    restricted = bool(privs.get("allowed_models_restricted")) or bool(allowed)
+    if restricted and sess.model and sess.model not in allowed:
         raise HTTPException(403, f"Your account is not allowed to use model '{sess.model}'.")
 
     cap = int(privs.get("max_messages_per_day") or 0)
@@ -119,7 +123,7 @@ def needs_auto_name(name: str) -> bool:
     if name.startswith("Chat:") or name == "Chat":
         return True
     # Default frontend name: "modelname HH:MM:SS AM/PM"
-    if re.match(r'^.+ \d{1,2}:\d{2}:\d{2}\s*(AM|PM)$', name):
+    if re.match(r"^.+ \d{1,2}:\d{2}:\d{2}(\s*(AM|PM))?$", name, re.IGNORECASE):
         return True
     return False
 
@@ -146,9 +150,13 @@ async def auto_name_session(session_manager, sess):
         if not first_msg:
             return
 
+        owner = getattr(sess, "owner", None)
         t_url, t_model, t_headers = resolve_task_endpoint(
-            sess.endpoint_url, sess.model, sess.headers,
+            sess.endpoint_url, sess.model, sess.headers, owner=owner,
         )
+        if not t_model:
+            logger.debug("[auto-name] No model provided, skipping")
+            return
 
         # max_tokens big enough that reasoning models (Minimax M2,
         # DeepSeek R1, QwQ, etc.) have headroom for <think>…</think>
@@ -269,11 +277,16 @@ def extract_preset(chat_handler, preset_id) -> PresetInfo:
 async def preprocess(
     chat_handler, message, att_ids, sess,
     auto_opened_docs: Optional[list] = None,
+    allow_tool_preprocessing: bool = True,
 ) -> PreprocessedMessage:
     """Run chat_handler.preprocess_message and wrap the result."""
     enhanced, user_content, text_ctx, yt_transcripts, att_meta = (
         await chat_handler.preprocess_message(
-            message, att_ids, sess, auto_opened_docs=auto_opened_docs
+            message,
+            att_ids,
+            sess,
+            auto_opened_docs=auto_opened_docs,
+            allow_tool_preprocessing=allow_tool_preprocessing,
         )
     )
     return PreprocessedMessage(
@@ -306,7 +319,24 @@ def fire_message_event(request, webhook_manager, session_id: str, sess, message:
     fire_event("message_sent", user)
 
 
-def resolve_session_auth(sess, session_id: str):
+def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
+    if not session_url or not endpoint_base:
+        return False
+    try:
+        from src.endpoint_resolver import build_chat_url, normalize_base
+
+        sess_url = session_url.rstrip("/")
+        base = normalize_base(endpoint_base).rstrip("/")
+        return sess_url in {
+            base,
+            base + "/chat/completions",
+            build_chat_url(base).rstrip("/"),
+        }
+    except Exception:
+        return False
+
+
+def resolve_session_auth(sess, session_id: str, owner: Optional[str] = None):
     """Ensure session has auth headers — resolve from endpoint DB if missing."""
     has_auth = sess.headers and isinstance(sess.headers, dict) and any(
         k.lower() in ('authorization', 'x-api-key') for k in sess.headers
@@ -315,23 +345,94 @@ def resolve_session_auth(sess, session_id: str):
         return
 
     try:
-        from src.endpoint_resolver import build_headers
+        from src.endpoint_resolver import build_headers, normalize_base
         db = SessionLocal()
         try:
-            domain = sess.endpoint_url.split("//")[1].split("/")[0] if "//" in sess.endpoint_url else ""
-            if domain:
-                ep = db.query(ModelEndpoint).filter(ModelEndpoint.base_url.contains(domain)).first()
-                if ep and ep.api_key:
-                    sess.headers = build_headers(ep.api_key, ep.base_url)
-                    db.query(DBSession).filter(DBSession.id == session_id).update(
-                        {"headers": json.dumps(sess.headers)}
-                    )
-                    db.commit()
-                    logger.info(f"Resolved and persisted auth headers for session {session_id} from endpoint {ep.name}")
+            target_url = getattr(sess, "endpoint_url", "") or ""
+            if not target_url:
+                return
+            q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+            if owner:
+                # Missing headers usually means "recover from the saved endpoint".
+                # Scope that lookup to the session owner, otherwise two users
+                # with similar endpoint URLs can borrow each other's API key.
+                from src.auth_helpers import owner_filter
+                q = owner_filter(q, ModelEndpoint, owner)
+            for ep in q.all():
+                if not _session_url_matches_endpoint(target_url, ep.base_url or ""):
+                    continue
+                if not ep.api_key:
+                    return
+                base = normalize_base(ep.base_url or "")
+                sess.headers = build_headers(ep.api_key, base)
+                update_q = db.query(DBSession).filter(DBSession.id == session_id)
+                if owner:
+                    update_q = update_q.filter(DBSession.owner == owner)
+                update_q.update({"headers": sess.headers})
+                db.commit()
+                logger.info(f"Resolved and persisted auth headers for session {session_id} from endpoint {ep.name}")
+                return
         finally:
             db.close()
     except Exception as e:
         logger.warning(f"Failed to resolve session headers: {e}")
+
+
+def _match_cached_model_id(requested: str, models) -> Optional[str]:
+    if not requested or not models:
+        return None
+    model_ids = [str(m) for m in models if m]
+    if requested in model_ids:
+        return requested
+
+    req_base = os.path.basename(requested.rstrip("/"))
+    for model_id in model_ids:
+        if os.path.basename(model_id.rstrip("/")) == req_base:
+            return model_id
+    return None
+
+
+def _normalize_model_id_from_cache(sess) -> Optional[str]:
+    """Use stored endpoint model IDs before falling back to a live /models probe."""
+    endpoint_url = getattr(sess, "endpoint_url", "") or ""
+    requested = getattr(sess, "model", "") or ""
+    if not endpoint_url or not requested:
+        return None
+
+    try:
+        session_base = normalize_base(endpoint_url)
+    except Exception:
+        session_base = endpoint_url.rstrip("/")
+    if not session_base:
+        return None
+
+    db = SessionLocal()
+    try:
+        endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        for ep in endpoints:
+            try:
+                if normalize_base(getattr(ep, "base_url", "") or "") != session_base:
+                    continue
+            except Exception:
+                continue
+
+            raw_models = getattr(ep, "cached_models", None)
+            if not raw_models:
+                continue
+            try:
+                models = json.loads(raw_models) if isinstance(raw_models, str) else raw_models
+            except Exception:
+                continue
+
+            matched = _match_cached_model_id(requested, models)
+            if matched:
+                return matched
+    except Exception as e:
+        logger.debug("Cached model normalization skipped: %s", e)
+    finally:
+        db.close()
+
+    return None
 
 
 async def build_chat_context(
@@ -354,6 +455,7 @@ async def build_chat_context(
     webhook_manager=None,
     use_enhanced_message: bool = False,
     agent_mode: bool = False,
+    allow_tool_preprocessing: bool = True,
 ) -> ChatContext:
     """Build the full context (preface + messages) for an LLM call.
 
@@ -371,6 +473,7 @@ async def build_chat_context(
     preprocessed = await preprocess(
         chat_handler, message, att_ids or [], sess,
         auto_opened_docs=auto_opened_docs,
+        allow_tool_preprocessing=allow_tool_preprocessing,
     )
 
     # Add user message to history
@@ -389,6 +492,9 @@ async def build_chat_context(
     # Skills injection respects its own enable toggle (mirrors memory_enabled).
     # When off, the "Available skills" index is not added to the prompt.
     skills_enabled = not incognito and uprefs.get("skills_enabled", True)
+    if not allow_tool_preprocessing:
+        mem_enabled = False
+        skills_enabled = False
     logger.debug(
         "Memory enabled=%s for user=%s (incognito=%s, no_memory=%s, pref=%s)",
         mem_enabled, user, incognito, no_memory, uprefs.get("memory_enabled", "NOT_SET"),
@@ -396,11 +502,11 @@ async def build_chat_context(
 
     # Use RAG?
     use_rag_val = (str(use_rag).lower() != "false") if use_rag is not None else True
-    if incognito:
+    if incognito or not allow_tool_preprocessing:
         use_rag_val = False
 
     # If pre-fetched search context was provided (compare mode), skip live web search
-    skip_web = bool(search_context)
+    skip_web = bool(search_context) or not allow_tool_preprocessing
 
     # Build context preface
     # The stream path uses enhanced_message (with CoT/preprocessing applied),
@@ -427,15 +533,16 @@ async def build_chat_context(
     used_memories = getattr(chat_processor, '_last_used_memories', [])
 
     # Inject pre-fetched search context (compare mode)
-    if search_context:
+    if search_context and allow_tool_preprocessing:
         preface.append(untrusted_context_message("prefetched search context", search_context))
 
     # YouTube transcripts
     for transcript in preprocessed.youtube_transcripts:
         preface.append(untrusted_context_message("youtube transcript", transcript))
 
-    # Normalize model ID
-    norm = normalize_model_id(sess.endpoint_url, sess.model)
+    # Normalize model ID. Prefer cached endpoint models so group chat does not
+    # re-hit slow local /models endpoints on every participant turn.
+    norm = _normalize_model_id_from_cache(sess) or normalize_model_id(sess.endpoint_url, sess.model)
     if norm:
         sess.model = norm
 
@@ -444,7 +551,7 @@ async def build_chat_context(
 
     # Auto-compact
     messages, context_length, was_compacted = await maybe_compact(
-        sess, sess.endpoint_url, sess.model, messages, sess.headers,
+        sess, sess.endpoint_url, sess.model, messages, sess.headers, owner=user,
     )
     messages = trim_for_context(messages, context_length)
 
@@ -494,6 +601,8 @@ def _normalize_thinking(text: str) -> str:
     import re
     if not text:
         return text
+    from src.text_helpers import normalize_thinking_markup
+    text = normalize_thinking_markup(text)
     reasoning_prefix_re = re.compile(
         r'^\s*(?:thinking(?:\s+process)?\s*:|the user |i need |i should |i will |they are |the question |i can )',
         re.IGNORECASE,
@@ -604,6 +713,10 @@ def _extract_thinking_meta(text: str) -> dict | None:
     import re
     if not text:
         return None
+    from src.text_helpers import normalize_thinking_markup
+    original_text = text
+    text = normalize_thinking_markup(text)
+    normalized_changed = text != original_text
 
     # Check for <think> tags (native or injected)
     time_match = re.search(r'<think(?:ing)?\s+time="([\d.]+)"', text)
@@ -634,6 +747,9 @@ def _extract_thinking_meta(text: str) -> dict | None:
             if thinking and reply:
                 return {"thinking": thinking, "reply": reply, "time": think_time}
 
+    if normalized_changed and text.strip() and text.strip() != original_text.strip():
+        return {"thinking": "", "reply": text.strip(), "time": think_time}
+
     return None
 
 
@@ -642,7 +758,8 @@ def clean_thinking_for_save(content: str, metadata: dict | None = None) -> tuple
     md = dict(metadata) if metadata else {}
     info = _extract_thinking_meta(content)
     if info:
-        md["thinking"] = info["thinking"]
+        if info.get("thinking"):
+            md["thinking"] = info["thinking"]
         if info.get("time"):
             md["thinking_time"] = info["time"]
         return info["reply"], md
@@ -667,7 +784,19 @@ def save_assistant_response(
 ):
     """Add assistant response to session history. In incognito mode, keeps in-memory context but skips DB persistence."""
     md = dict(last_metrics) if last_metrics else {}
-    md["model"] = sess.model
+    def _model_value(value) -> str:
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            value = str(value)
+        return value.strip()
+
+    requested_model = _model_value(md.get("requested_model") or md.get("selected_model") or getattr(sess, "model", ""))
+    actual_model = _model_value(md.get("model") or md.get("actual_model") or requested_model)
+    if requested_model:
+        md["requested_model"] = requested_model
+    if actual_model:
+        md["model"] = actual_model
     if character_name:
         md["character_name"] = character_name
     if web_sources:
@@ -686,8 +815,10 @@ def save_assistant_response(
     # Extract thinking into metadata (don't pollute message content with <think> tags)
     _think_info = _extract_thinking_meta(full_response)
     if _think_info:
-        md["thinking"] = _think_info["thinking"]
-        md["thinking_time"] = _think_info.get("time")
+        if _think_info.get("thinking"):
+            md["thinking"] = _think_info["thinking"]
+        if _think_info.get("time"):
+            md["thinking_time"] = _think_info.get("time")
         _content = _think_info["reply"]
     else:
         _content = full_response
@@ -734,16 +865,17 @@ def run_post_response_tasks(
     skills_manager=None,
     owner: str = None,
     extract_skills: bool = True,
+    allow_background_extraction: bool = True,
 ):
     """Fire background tasks after a completed response: memory extraction, webhooks, auto-name, skill extraction."""
     # Memory extraction — only every 4th message pair to avoid excess LLM calls
     _msg_count = len(sess.history) if hasattr(sess, 'history') else 0
     _should_extract = (_msg_count >= 4) and (_msg_count % 4 == 0)
-    if not incognito and not compare_mode and _should_extract and uprefs.get("auto_memory", True):
+    if allow_background_extraction and not incognito and not compare_mode and _should_extract and uprefs.get("auto_memory", True):
         from services.memory.memory_extractor import extract_and_store
         from src.task_endpoint import resolve_task_endpoint
         t_url, t_model, t_headers = resolve_task_endpoint(
-            sess.endpoint_url, sess.model, sess.headers,
+            sess.endpoint_url, sess.model, sess.headers, owner=owner,
         )
         asyncio.create_task(extract_and_store(
             sess, memory_manager, memory_vector,
@@ -766,6 +898,7 @@ def run_post_response_tasks(
     )
     if (
         extract_skills
+        and allow_background_extraction
         and auto_skills_enabled
         and not incognito
         and not compare_mode
@@ -780,7 +913,7 @@ def run_post_response_tasks(
             from services.memory.skill_extractor import maybe_extract_skill
             from src.task_endpoint import resolve_task_endpoint
             s_url, s_model, s_headers = resolve_task_endpoint(
-                sess.endpoint_url, sess.model, sess.headers,
+                sess.endpoint_url, sess.model, sess.headers, owner=owner,
             )
             logger.debug("[skill-extract] dispatching extractor (model=%s)", s_model)
             asyncio.create_task(maybe_extract_skill(

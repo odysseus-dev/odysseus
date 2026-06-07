@@ -20,7 +20,7 @@ export function extractEmail(addr) {
 export function buildReplyAllCc(data, mine) {
   const list = Array.isArray(mine) ? mine : [mine];
   const me = new Set(list.map((a) => (a || '').toLowerCase()).filter(Boolean));
-  const split = (s) => (s || '').split(',').map((x) => x.trim()).filter(Boolean);
+  const split = (s) => (typeof s === 'string' ? s : '').split(',').map((x) => x.trim()).filter(Boolean);
   return [...split(data && data.to), ...split(data && data.cc)]
     .filter((addr) => !me.has(extractEmail(addr)))
     .join(', ');

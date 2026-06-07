@@ -100,6 +100,19 @@ INTEGRATION_PRESETS: Dict[str, Dict[str, Any]] = {
             "  GET /{topic}/json?poll=1 — poll for messages"
         ),
     },
+    "discord_webhook": {
+        "name": "Discord Webhook",
+        "auth_type": "none",
+        "description": (
+            "Discord Incoming Webhook. Paste the full webhook URL (including the token) as the Base URL.\n"
+            "To get a URL: Discord server -> Server Settings -> Integrations -> Webhooks -> New Webhook -> Copy Webhook URL.\n"
+            "The secret is embedded in the URL — leave auth type as None.\n\n"
+            "Use this integration as the target in Settings -> Reminders -> Webhook channel.\n"
+            "Payload template examples:\n"
+            "  Simple:  {\"content\": \"{{title}}: {{message}}\"}\n"
+            "  Embed:   {\"embeds\": [{\"title\": \"{{title}}\", \"description\": \"{{message}}\", \"color\": 5793266}]}"
+        ),
+    },
     "vaultwarden": {
         "name": "Vaultwarden",
         "auth_type": "header",
@@ -197,6 +210,10 @@ def load_integrations() -> List[Dict[str, Any]]:
         if not isinstance(integrations, list):
             log.error("Invalid integrations file shape: expected a list")
             return []
+        valid_integrations = [item for item in integrations if isinstance(item, dict)]
+        if len(valid_integrations) != len(integrations):
+            log.error("Invalid integrations file rows: ignored non-object entries")
+        integrations = valid_integrations
         if _has_plaintext_api_key(integrations):
             save_integrations(_decrypt_integration_secrets(integrations))
         return _decrypt_integration_secrets(integrations)

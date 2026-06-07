@@ -42,8 +42,12 @@ def _manager() -> PersonalDocsManager:
     return _mgr
 
 
+def _file_rows(files):
+    return [f for f in files or [] if isinstance(f, dict)]
+
+
 def cmd_list(args):
-    files = getattr(_manager(), "index", []) or []
+    files = _file_rows(getattr(_manager(), "index", []) or [])
     out = [
         {"name": f.get("name"), "size": f.get("size"), "path": f.get("path", "")}
         for f in files

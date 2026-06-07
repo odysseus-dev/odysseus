@@ -13,6 +13,18 @@ import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
+def claim_json_entries(entries, owner):
+    count = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if not entry.get("owner"):
+            entry["owner"] = owner
+            count += 1
+    return count
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python scripts/claim_ownerless.py <username>")
@@ -31,11 +43,7 @@ def main():
             continue
         with open(path, "r", encoding="utf-8") as f:
             entries = json.load(f)
-        count = 0
-        for e in entries:
-            if not e.get("owner"):
-                e["owner"] = owner
-                count += 1
+        count = claim_json_entries(entries, owner)
         if count:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(entries, f, ensure_ascii=False, indent=2)
@@ -58,10 +66,12 @@ def main():
         count = db.query(Session).filter(Session.owner == None).update({"owner": owner})
         print(f"  sessions: claimed {count}")
 
-        # Documents
-        count = db.query(Document).filter(Document.session_id.in_(
-            db.query(Session.id).filter(Session.owner == owner)
-        )).update({"session_id": Document.session_id}, synchronize_session=False)
+        # Documents (have their own owner column; claim the ownerless ones,
+        # mirroring the sessions/gallery/comparisons blocks). The old query set
+        # session_id to itself — a no-op — and never set owner, so ownerless
+        # documents stayed ownerless and invisible in the user's Library.
+        count = db.query(Document).filter(Document.owner == None).update({"owner": owner})
+        print(f"  documents: claimed {count}")
 
         # Gallery
         if GalleryImage:

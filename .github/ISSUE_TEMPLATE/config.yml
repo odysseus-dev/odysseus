@@ -1,0 +1,13 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question / Need Help
+    url: https://github.com/pewdiepie-archdaemon/odysseus/discussions/categories/q-a
+    about: Ask how-to questions, setup help, and model configuration questions here. Issues are for confirmed bugs and concrete proposals only.
+
+  - name: Idea or Suggestion
+    url: https://github.com/pewdiepie-archdaemon/odysseus/discussions/categories/ideas
+    about: Discuss ideas and gauge interest before opening a formal feature request. If there is already a discussion, link it in your feature request.
+
+  - name: Security Vulnerability
+    url: https://github.com/pewdiepie-archdaemon/odysseus/security/advisories/new
+    about: Report vulnerabilities privately via GitHub Security Advisories — never as a public issue. Read SECURITY.md before reporting.

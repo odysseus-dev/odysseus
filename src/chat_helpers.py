@@ -4,10 +4,14 @@
 import re
 import os
 import json
+import time
+import ipaddress
 import logging
+import httpx
+from urllib.parse import urlparse
 from fastapi import HTTPException
 from fastapi import UploadFile
-from typing import List
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +36,22 @@ _VISION_MODEL_KEYWORDS = (
     "gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-4-turbo", "gpt-4-vision",
     "claude-sonnet", "claude-opus", "claude-haiku", "gemini",
     # open / local
-    "vision", "llava", "bakllava", "moondream", "pixtral", "minicpm",
+    "vision", "multimodal", "llava", "bakllava", "moondream", "pixtral", "minicpm",
     "internvl", "cogvlm", "qwen-vl", "qwen2-vl", "qwen3-vl", "qwen3vl",
+    # multimodal families whose names don't contain "vision"/"vl" but DO accept
+    # images — without these the image is silently dropped for common Ollama tags
+    # like gemma3:4b or gemma4:12b (issue #1274). Gemma 3/4 (4b+), Llama 4 (all),
+    # Mistral Small 3.1/3.2, and Phi-4 multimodal are vision-capable; per the
+    # err-toward-True policy (#124) a rare text-only tag being treated as vision is
+    # the safer failure than silently dropping a real image.
+    "gemma-3", "gemma3", "gemma-4", "gemma4",
+    "llama-4", "llama4",
+    "mistral-small-3.1", "mistral-small3.1", "mistral-small-3.2", "mistral-small3.2",
+    # Microsoft Phi-4 ships a dedicated multimodal variant ("phi-4-multimodal-instruct")
+    # but users often load it under the bare "phi-4" or "phi4" Ollama tag.
+    "phi-4", "phi4",
+    # zhipu / glm (glm-4.5v, glm-4.6v, glm-5v-turbo, etc.)
+    "glm-4.5v", "glm-4.6v", "glm-5v",
 )
 # Catches the "*-VL-*" / "*VL*" family not covered by a literal keyword above
 # (e.g. Qwen2.5-VL and various tags): a standalone "vl" token, plus "vlm".
@@ -51,6 +69,96 @@ def is_vision_model(model_name: str) -> bool:
     if any(kw in m for kw in _VISION_MODEL_KEYWORDS):
         return True
     return bool(_VISION_VL_RE.search(m))
+
+
+_PROVIDER_FINGERPRINT_TTL = 60.0
+# (host, port) -> (models_list | None, expiry); list = LM Studio, None = not LM Studio.
+_lmstudio_models_cache: dict = {}
+
+
+def _is_local_host(host: Optional[str]) -> bool:
+    """True for loopback/LAN/Tailscale hosts (never public domains)."""
+    host = (host or "").lower()
+    if not host:
+        return False
+    if host in {"localhost", "host.docker.internal"} or host.endswith(".local"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return "." not in host
+    if ip.is_loopback or ip.is_private or ip.is_link_local:
+        return True
+    return ip in ipaddress.ip_network("100.64.0.0/10")
+
+
+def _probe_lmstudio_models(url: str) -> Optional[list]:
+    """Return LM Studio's native /api/v1/models list, or None when the endpoint
+    isn't LM Studio or is unreachable (short-TTL cached; transient errors uncached)."""
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    key = (host, parsed.port)
+    now = time.time()
+    cached = _lmstudio_models_cache.get(key)
+    if cached is not None and cached[1] > now:
+        return cached[0]
+    authority = host if parsed.port is None else f"{host}:{parsed.port}"
+    probe_url = f"{parsed.scheme or 'http'}://{authority}/api/v1/models"
+    try:
+        r = httpx.get(probe_url, timeout=1.0)
+    except Exception:
+        return None
+    try:
+        data = r.json() if r.is_success else {}
+    except Exception:
+        data = {}
+    models = data.get("models")
+    valid = (
+        isinstance(models, list) and bool(models)
+        and isinstance(models[0], dict)
+        and "key" in models[0] and "architecture" in models[0]
+    )
+    models = models if valid else None
+    _lmstudio_models_cache[key] = (models, now + _PROVIDER_FINGERPRINT_TTL)
+    return models
+
+
+def lmstudio_supports_vision(url: str, model: str) -> Optional[bool]:
+    """Read `model`'s capabilities.vision flag from LM Studio, or None when the
+    endpoint isn't LM Studio or doesn't report it (so callers fall back)."""
+    if not model:
+        return None
+    # Never probe a remote provider; LM Studio is always a local/LAN host.
+    if not _is_local_host(urlparse(url).hostname):
+        return None
+    models = _probe_lmstudio_models(url)
+    if not models:
+        return None
+    want = model.strip().lower()
+    for m in models:
+        if not isinstance(m, dict):
+            continue
+        names = {str(m.get("key", "")).lower(), str(m.get("display_name", "")).lower()}
+        if want in names:
+            caps = m.get("capabilities")
+            if isinstance(caps, dict) and "vision" in caps:
+                return bool(caps.get("vision"))
+            return None
+    return None
+
+
+def model_supports_vision(model_name: str, endpoint_url: str = "") -> bool:
+    """Whether a model accepts images, using the endpoint's reported
+    capability when available (LM Studio) and falling back to name-based
+    detection otherwise."""
+    if endpoint_url:
+        try:
+            advertised = lmstudio_supports_vision(endpoint_url, model_name or "")
+        except Exception:
+            advertised = None
+        if advertised is not None:
+            return advertised
+    return is_vision_model(model_name)
 
 
 def validate_message(message: str) -> str:

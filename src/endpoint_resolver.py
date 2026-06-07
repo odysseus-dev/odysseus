@@ -11,7 +11,7 @@ import subprocess
 from typing import Optional, Tuple, Dict
 from urllib.parse import urlparse, urlunparse
 
-from src.database import SessionLocal, ModelEndpoint
+from core.database import SessionLocal, ModelEndpoint
 from src.llm_core import _detect_provider, _host_match
 
 logger = logging.getLogger(__name__)
@@ -194,6 +194,9 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
             headers["x-api-key"] = api_key
         headers["anthropic-version"] = "2023-06-01"
         return headers
+    if provider == "copilot":
+        from src.copilot import copilot_headers
+        return copilot_headers(api_key)
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     if provider == "openrouter":
@@ -234,9 +237,14 @@ def resolve_endpoint(
     ep_id = _stg(f"{setting_prefix}_endpoint_id")
     model = _stg(f"{setting_prefix}_model")
 
-    # Unset Utility means "same as Default Chat Model". This keeps background
-    # features usable out of the box and lets users override Utility only when
-    # they explicitly want a separate cheaper/faster model.
+    # If the specific endpoint is not configured, but the caller provided a
+    # valid fallback (e.g. the active session model), use that immediately.
+    # This prevents background tasks from jumping to the global default_model
+    # when the user is mid-conversation with a different model.
+    if not ep_id and fallback_url and fallback_model:
+        return fallback_url, fallback_model, fallback_headers
+
+    # Unset Utility means "same as Default Chat Model".
     if setting_prefix == "utility" and not ep_id:
         ep_id = _stg("default_endpoint_id")
         model = _stg("default_model")
@@ -280,6 +288,8 @@ def resolve_endpoint(
         # If no (usable) model specified, pick the first enabled chat model.
         if not model:
             model = _first_chat_model(_endpoint_enabled_models(ep)) or ""
+        if not model and not fallback_model:
+            logger.warning('[resolve_endpoint] no usable model (all models hidden or list empty)')
 
         return chat_url, model or fallback_model, headers
     except Exception as e:
@@ -290,7 +300,7 @@ def resolve_endpoint(
 
 
 def resolve_endpoint_by_id(
-    ep_id: str, model: Optional[str] = None
+    ep_id: str, model: Optional[str] = None, owner: Optional[str] = None
 ) -> Optional[Tuple[str, str, Dict]]:
     """Resolve a specific endpoint id (+ optional model) to (chat_url, model, headers).
 
@@ -301,10 +311,14 @@ def resolve_endpoint_by_id(
         return None
     db = SessionLocal()
     try:
-        ep = db.query(ModelEndpoint).filter(
+        q = db.query(ModelEndpoint).filter(
             ModelEndpoint.id == ep_id,
             ModelEndpoint.is_enabled == True,
-        ).first()
+        )
+        if owner:
+            from src.auth_helpers import owner_filter
+            q = owner_filter(q, ModelEndpoint, owner)
+        ep = q.first()
         if not ep:
             return None
         base = normalize_base(ep.base_url)
@@ -327,14 +341,14 @@ def resolve_endpoint_by_id(
         db.close()
 
 
-def resolve_chat_fallback_candidates() -> list:
+def resolve_chat_fallback_candidates(owner: Optional[str] = None) -> list:
     """Build the configured default-chat fallback chain as a list of
     (chat_url, model, headers) tuples, skipping any that can't resolve.
 
     The primary model is NOT included — callers prepend their session's
     current (url, model, headers) so per-session model overrides are honored.
     """
-    return _resolve_fallback_candidates("default_model_fallbacks")
+    return _resolve_fallback_candidates("default_model_fallbacks", owner=owner)
 
 
 def resolve_utility_fallback_candidates(owner: Optional[str] = None) -> list:
@@ -350,9 +364,9 @@ def resolve_utility_fallback_candidates(owner: Optional[str] = None) -> list:
     return _resolve_fallback_candidates("utility_model_fallbacks", owner=owner)
 
 
-def resolve_vision_fallback_candidates() -> list:
+def resolve_vision_fallback_candidates(owner: Optional[str] = None) -> list:
     """Configured fallback chain for the Vision model (`vision_model_fallbacks`)."""
-    return _resolve_fallback_candidates("vision_model_fallbacks")
+    return _resolve_fallback_candidates("vision_model_fallbacks", owner=owner)
 
 
 def _resolve_fallback_candidates(setting_key: str, owner: Optional[str] = None) -> list:
@@ -366,7 +380,7 @@ def _resolve_fallback_candidates(setting_key: str, owner: Optional[str] = None) 
     for entry in chain:
         if not isinstance(entry, dict):
             continue
-        resolved = resolve_endpoint_by_id(entry.get("endpoint_id", ""), entry.get("model", ""))
+        resolved = resolve_endpoint_by_id(entry.get("endpoint_id", ""), entry.get("model", ""), owner=owner)
         if resolved:
             out.append(resolved)
     return out

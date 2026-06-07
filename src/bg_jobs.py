@@ -33,6 +33,7 @@ from core.atomic_io import atomic_write_json
 from core.platform_compat import (
     detached_popen_kwargs,
     find_bash,
+    git_bash_path,
     kill_process_tree,
     pid_alive,
 )
@@ -55,7 +56,10 @@ _RETENTION_S = 3600  # 1 hour after follow-up
 def _load() -> Dict[str, Dict[str, Any]]:
     try:
         if _STORE.exists():
-            return json.loads(_STORE.read_text(encoding="utf-8")) or {}
+            data = json.loads(_STORE.read_text(encoding="utf-8")) or {}
+            if not isinstance(data, dict):
+                return {}
+            return {str(job_id): rec for job_id, rec in data.items() if isinstance(rec, dict)}
     except Exception:
         pass
     return {}
@@ -103,7 +107,7 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
         # handles drive paths and spaces correctly.
         cmd_path = _JOBS_DIR / f"{job_id}.cmd.sh"
         cmd_path.write_text(command + "\n", encoding="utf-8")
-        lp, xp, cp = (shlex.quote(p.as_posix()) for p in (log_path, exit_path, cmd_path))
+        lp, xp, cp = (shlex.quote(git_bash_path(p)) for p in (log_path, exit_path, cmd_path))
         script_path = _JOBS_DIR / f"{job_id}.sh"
         script_path.write_text(
             f"bash {cp} > {lp} 2>&1\n"

@@ -47,8 +47,12 @@ def _manager() -> MemoryManager:
     return _mgr
 
 
+def _memory_entries(entries):
+    return [e for e in entries or [] if isinstance(e, dict)]
+
+
 def cmd_list(args):
-    entries = _manager().load_all()
+    entries = _memory_entries(_manager().load_all())
     if args.category:
         entries = [e for e in entries if (e.get("category") or "fact") == args.category]
     if args.source:
@@ -62,14 +66,14 @@ def cmd_list(args):
 
 def cmd_search(args):
     q = args.query.lower()
-    entries = _manager().load_all()
+    entries = _memory_entries(_manager().load_all())
     matches = [e for e in entries if q in (e.get("text") or "").lower()]
     matches = sorted(matches, key=lambda e: e.get("timestamp", 0), reverse=True)
     emit(matches[: args.limit], args)
 
 
 def cmd_show(args):
-    for e in _manager().load_all():
+    for e in _memory_entries(_manager().load_all()):
         if e.get("id") == args.id:
             emit(e, args)
             return
@@ -93,7 +97,7 @@ def cmd_add(args):
 
 
 def cmd_delete(args):
-    entries = _manager().load_all()
+    entries = _memory_entries(_manager().load_all())
     target = next((e for e in entries if e.get("id") == args.id), None)
     if not target:
         fail(f"no memory with id {args.id!r}")
@@ -104,7 +108,7 @@ def cmd_delete(args):
 
 def cmd_categories(args):
     counts: dict[str, int] = {}
-    for e in _manager().load_all():
+    for e in _memory_entries(_manager().load_all()):
         cat = e.get("category") or "fact"
         counts[cat] = counts.get(cat, 0) + 1
     rows = sorted(counts.items(), key=lambda kv: -kv[1])

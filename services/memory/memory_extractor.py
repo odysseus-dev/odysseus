@@ -34,12 +34,18 @@ def _fingerprint_entries(entries) -> str:
     only on id+text+category. Any add/edit/delete invalidates it."""
     items = sorted(
         (str(e.get("id", "")), e.get("text", ""), e.get("category", ""))
-        for e in entries
+        for e in _memory_dicts(entries)
     )
     h = hashlib.sha256()
     for triple in items:
         h.update(("\x1f".join(triple) + "\x1e").encode("utf-8"))
     return h.hexdigest()
+
+
+def _memory_dicts(entries):
+    for entry in entries or []:
+        if isinstance(entry, dict):
+            yield entry
 
 
 def _load_tidy_state(memory_manager) -> dict:
@@ -186,11 +192,19 @@ def _fallback_memory_candidates(messages) -> list[dict]:
             if place:
                 add(f"User lives in {place}.", "identity")
 
-        m = re.search(r"\bi (?:prefer|like|love|hate|do not like|don't like)\s+([^.!?\n]{4,100})", text, re.I)
+        m = re.search(r"\bi (prefer|like|love|hate|do not like|don't like)\s+([^.!?\n]{4,100})", text, re.I)
         if m:
-            preference = _clean_memory_value(m.group(1), 100)
+            preference = _clean_memory_value(m.group(2), 100)
             if preference:
-                add(f"User prefers {preference}.", "preference")
+                # The same pattern catches likes and dislikes; keep the stored
+                # sentiment faithful instead of recording every match as a
+                # preference ("I hate cilantro" must not become "User prefers
+                # cilantro").
+                verb = m.group(1).lower()
+                if verb in ("hate", "do not like", "don't like"):
+                    add(f"User dislikes {preference}.", "preference")
+                else:
+                    add(f"User prefers {preference}.", "preference")
 
         m = re.search(
             r"\bi (?:(?:want|would like|plan|hope) to|wanna) "
@@ -211,7 +225,7 @@ def _is_text_duplicate(new_text: str, existing: list, threshold: float = 0.6) ->
     new_tokens = set(new_text.lower().split())
     if not new_tokens:
         return False
-    for entry in existing:
+    for entry in _memory_dicts(existing):
         old_tokens = set(entry.get("text", "").lower().split())
         if not old_tokens:
             continue
@@ -235,6 +249,10 @@ async def extract_and_store(
     Designed to run as a background task (asyncio.create_task).
     Errors are logged, never raised.
     """
+    if not endpoint_url or not model:
+        logger.debug("[memory-extract] No model or URL provided, skipping")
+        return
+
     try:
         from src.llm_core import llm_call_async
 
@@ -245,11 +263,30 @@ async def extract_and_store(
         if len(recent) < 2:
             return  # Need at least a user message and assistant response
 
-        fallback_facts = _fallback_memory_candidates(recent)
+        # Strip media (images/audio) from messages — background memory extraction
+        # only needs the text. The VL-generated descriptions are already in the
+        # text content of the messages. This avoids sending image tokens to
+        # non-vision models and prevents accidental "vision grounding" triggers.
+        stripped_recent = []
+        for msg in recent:
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                # Filter out multimodal blocks that aren't text
+                text_only = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                if not text_only and content:
+                    continue
+                content = text_only
+            stripped_recent.append({"role": role, "content": content})
+
+        if not stripped_recent:
+            return
+
+        fallback_facts = _fallback_memory_candidates(stripped_recent)
 
         extraction_messages = [
             {"role": "system", "content": EXTRACT_SYSTEM_PROMPT},
-        ] + recent
+        ] + stripped_recent
 
         facts = []
         try:
@@ -316,8 +353,17 @@ async def extract_and_store(
                     logger.warning(f"Memory dedup (vector) unavailable, using text fallback: {e}")
                     existing_id = None
                 if existing_id:
-                    logger.debug(f"Memory dedup (vector): '{fact_text[:50]}' matches {existing_id}")
-                    continue
+                    # The vector store is a single shared collection with no
+                    # owner metadata, so find_similar can return ANOTHER
+                    # tenant's memory. Only treat it as a duplicate when the
+                    # match is this user's own (or a legacy unowned) memory —
+                    # otherwise the user's freshly-extracted fact would be
+                    # silently dropped. Mirror the owner predicate used by the
+                    # text dedup below; cross-tenant/stale matches fall through.
+                    _match = next((e for e in existing if e.get("id") == existing_id), None)
+                    if _match is not None and (_match.get("owner") == _owner or _match.get("owner") is None):
+                        logger.debug(f"Memory dedup (vector): '{fact_text[:50]}' matches {existing_id}")
+                        continue
 
             # Text dedup fallback: exact match + fuzzy similarity
             user_existing = [e for e in existing if e.get("owner") == _owner or e.get("owner") is None] if _owner else existing
@@ -524,17 +570,20 @@ async def audit_memories(
             for e in all_entries:
                 if e.get("owner") is None and e["id"] not in audited_ids and e["id"] not in {o["id"] for o in other_entries}:
                     other_entries.append(e)
-            memory_manager.save(final_entries + other_entries)
+            saved_entries = final_entries + other_entries
         else:
-            memory_manager.save(final_entries)
+            saved_entries = final_entries
+        memory_manager.save(saved_entries)
         logger.info(
             f"Memory audit complete: {before_count} -> {after_count} entries "
             f"({before_count - after_count} removed/merged)"
         )
 
-        # Rebuild vector index
+        # Rebuild vector index from the full saved set, not just this owner's
+        # slice — otherwise the shared collection is wiped of every other
+        # owner's entries until they happen to run their own audit.
         if memory_vector and memory_vector.healthy:
-            memory_vector.rebuild(final_entries)
+            memory_vector.rebuild(saved_entries)
 
         # Persist the post-tidy fingerprint so the next call short-circuits
         # if nothing has changed in the meantime.

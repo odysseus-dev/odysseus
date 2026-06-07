@@ -30,6 +30,17 @@ except ModuleNotFoundError as e:
     sys.exit(2)
 
 
+def _mask_token(token: str, reveal: bool = False) -> str:
+    token = token or ""
+    if reveal:
+        return token
+    if not token:
+        return ""
+    if len(token) <= 10:
+        return "***"
+    return token[:6] + "…" + token[-4:]
+
+
 def _summary(t: "ScheduledTask", reveal: bool = False) -> dict:
     tok = t.webhook_token or ""
     return {
@@ -37,7 +48,7 @@ def _summary(t: "ScheduledTask", reveal: bool = False) -> dict:
         "name": t.name,
         "status": t.status,
         "task_type": t.task_type,
-        "webhook_token": tok if reveal else (tok[:6] + "…" + tok[-4:]) if tok else "",
+        "webhook_token": _mask_token(tok, reveal),
         "has_token": bool(tok),
     }
 

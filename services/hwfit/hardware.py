@@ -1,10 +1,13 @@
 import os
 import platform
+import re
 import shutil
 import subprocess
 import time
 
-CACHE_TTL = 1800  # 30 min — hardware rarely changes; use the Rescan button to force a re-probe
+CACHE_TTL = 24 * 3600  # 24 h — hardware probes are user-initiated via the Rescan button; bumped
+                       # from 30 min so changing filters doesn't keep re-probing the rig every
+                       # half-hour during a long session.
 
 
 _remote_host = None  # set by detect_system(host=...)
@@ -73,21 +76,29 @@ def _detect_nvidia():
     global _last_gpu_error
     _last_gpu_error = None
     out = _run(["nvidia-smi", "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
-    # Remote fallback: a non-interactive SSH shell often has a minimal PATH
-    # that omits where nvidia-smi lives (/usr/bin, /usr/local/cuda/bin), so the
-    # first call silently returns nothing → "No GPU" on hosts that DO have GPUs.
+    # Fallback: a non-interactive shell (or WSL) often has a minimal PATH
+    # that omits where nvidia-smi lives (/usr/bin, /usr/local/cuda/bin,
+    # /usr/lib/wsl/lib), so the first call silently returns nothing →
+    # "No GPU" on machines that DO have GPUs.
     # Retry through a login shell with the common CUDA bin dirs on PATH.
     if not out and _remote_host:
         out = _run(
-            "bash -lc 'export PATH=\"$PATH:/usr/bin:/usr/local/bin:/usr/local/cuda/bin\"; "
+            "bash -lc 'export PATH=\"$PATH:/usr/bin:/usr/local/bin:/usr/local/cuda/bin:/usr/lib/wsl/lib\"; "
             "nvidia-smi --query-gpu=memory.total,name --format=csv,noheader,nounits'"
         )
     # Last resort: call nvidia-smi by absolute path. Some hosts have a login
     # shell that isn't bash (or a profile that errors), so the bash -lc retry
     # above still comes back empty even though the binary is right there.
-    if not out and _remote_host:
-        for _p in ("/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi", "/usr/local/cuda/bin/nvidia-smi"):
-            out = _run(f"{_p} --query-gpu=memory.total,name --format=csv,noheader,nounits")
+    # Also handles WSL where nvidia-smi lives at /usr/lib/wsl/lib/ — a path
+    # that may not be in the server process's PATH.
+    if not out:
+        for _p in ("/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi", "/usr/local/cuda/bin/nvidia-smi", "/usr/lib/wsl/lib/nvidia-smi"):
+            # Use list form so subprocess.run (local) resolves the absolute path
+            # correctly instead of treating the whole string as an executable name.
+            if _remote_host:
+                out = _run(f"{_p} --query-gpu=memory.total,name --format=csv,noheader,nounits")
+            else:
+                out = _run([_p, "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
             if out:
                 break
     if not out:
@@ -104,6 +115,8 @@ def _detect_nvidia():
         return None
 
     gpus = []
+    # Devices nvidia-smi lists with a real name but a non-numeric memory.total.
+    unified = []
     # nvidia-smi lists GPUs in index order (0,1,2,...), so the row position is
     # the CUDA device index we'd pass to CUDA_VISIBLE_DEVICES.
     for idx, line in enumerate(out.strip().split("\n")):
@@ -113,9 +126,32 @@ def _detect_nvidia():
                 vram_mb = float(parts[0])
                 gpus.append({"index": idx, "name": parts[1], "vram_gb": vram_mb / 1024.0})
             except ValueError:
+                # Grace Blackwell GB10 / DGX Spark and other unified-memory
+                # NVIDIA parts report memory.total as "[N/A]"/"Not Supported"
+                # because the GPU shares the system LPDDR pool instead of
+                # carrying discrete VRAM. Don't drop the device — remember it so
+                # we report a unified-memory GPU below rather than "No GPU" (#1340).
+                if parts[1]:
+                    unified.append({"index": idx, "name": parts[1]})
                 continue
 
     if not gpus:
+        if unified:
+            # Unified-memory CUDA box: report the GPU backed by system RAM so the
+            # Cookbook recommends models and serving works. The pool is shared
+            # (not per-GPU discrete VRAM), so report the RAM total once.
+            ram_gb = round(_get_ram_gb(), 1)
+            gpus = [{"index": g["index"], "name": g["name"], "vram_gb": ram_gb} for g in unified]
+            return {
+                "gpu_name": gpus[0]["name"],
+                "gpu_vram_gb": ram_gb,
+                "gpu_count": len(gpus),
+                "gpus": gpus,
+                "gpu_groups": _group_gpus(gpus),
+                "homogeneous": True,
+                "backend": "cuda",
+                "unified_memory": True,
+            }
         return None
     total_vram = sum(g["vram_gb"] for g in gpus)
     groups = _group_gpus(gpus)
@@ -128,6 +164,33 @@ def _detect_nvidia():
         "homogeneous": len(groups) <= 1,
         "backend": "cuda",
     }
+
+
+def classify_amd_gfx(gfx):
+    """Map an AMD ISA target (e.g. "gfx1200") to (gfx, family).
+
+    family is one of:
+      "rdna"    — consumer Radeon RX (gfx10xx RDNA1/2, gfx11xx RDNA3, gfx12xx RDNA4)
+      "cdna"    — datacenter Instinct (gfx908 MI100, gfx90a MI200, gfx94x/95x MI300+)
+      "gcn"     — older GCN/Vega (gfx900/906)
+      "unknown" — empty/unrecognized; callers must treat conservatively
+
+    This drives the serving decision: vLLM/SGLang on ROCm are validated on CDNA
+    but fragile on consumer RDNA (AWQ kernels largely unsupported, FP8 needs
+    out-of-tree patches), so RDNA is steered to GGUF/llama.cpp.
+    """
+    gfx = (gfx or "").lower().strip()
+    m = re.fullmatch(r"gfx(\d+[a-f]?)", gfx)
+    if not m:
+        return "", "unknown"
+    digits = m.group(1)
+    if digits[:2] in ("10", "11", "12"):
+        return gfx, "rdna"
+    if digits in ("908", "90a") or digits[:2] in ("94", "95"):
+        return gfx, "cdna"
+    if digits[:1] == "9":
+        return gfx, "gcn"
+    return gfx, "unknown"
 
 
 def _detect_amd():
@@ -154,6 +217,17 @@ def _detect_amd():
             return [e for e in os.listdir("/sys/class/drm") if e.startswith("card") and "-" not in e]
         except Exception:
             return []
+
+    def _amd_arch():
+        """Best-effort AMD GPU ISA + family from rocminfo.
+
+        rocminfo is the source of truth; its GPU agents report a `Name: gfxNNNN`
+        line (CPU agents report a brand string, not a gfx target), so the first
+        gfx match is the GPU ISA. Returns (gfx, family) — see classify_amd_gfx.
+        """
+        info = _run(["rocminfo"]) or _run(["/opt/rocm/bin/rocminfo"]) or ""
+        m = re.search(r"gfx\d+[a-f]?", info)
+        return classify_amd_gfx(m.group(0) if m else "")
 
     try:
         cards = []
@@ -187,6 +261,7 @@ def _detect_amd():
             return None
         total_vram = sum(c["vram_gb"] for c in cards)
         groups = _group_gpus(cards)
+        gfx, family = _amd_arch()
         # NOTE: for APUs with BIOS UMA carveout (e.g. Strix Halo), vis_vram_total
         # is the real usable GPU memory — it's physically backed but reserved
         # by BIOS so it doesn't appear in /proc/meminfo. Don't cap it at system
@@ -200,6 +275,13 @@ def _detect_amd():
             "homogeneous": len(groups) <= 1,
             "backend": "rocm",
             "unified_memory": is_apu,
+            # AMD ISA/family so downstream can tell datacenter Instinct (CDNA,
+            # where vLLM/SGLang run AWQ/GPTQ reliably) from consumer Radeon
+            # (RDNA, where the practical path is GGUF via llama.cpp). Empty/
+            # "unknown" when rocminfo isn't available — callers must treat
+            # unknown conservatively, not assume vLLM works.
+            "gpu_arch": gfx,
+            "gpu_family": family,
         }
     except Exception:
         return None
@@ -394,39 +476,55 @@ def _detect_windows():
     """
     # Single PowerShell command that gathers all hardware info at once
     ps_cmd = (
-        "$r = @{}; "
-        "$os = Get-CimInstance Win32_OperatingSystem; "
-        "$r.ram_gb = [math]::Round($os.TotalVisibleMemorySize / 1048576, 1); "
-        "$r.avail_gb = [math]::Round($os.FreePhysicalMemory / 1048576, 1); "
-        "$cpu = Get-CimInstance Win32_Processor | Select-Object -First 1; "
-        "$r.cpu_name = $cpu.Name; "
-        "$r.cpu_cores = (Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum; "
-        "$r.arch = $cpu.AddressWidth; "
+        """
+        $r = @{}
+        $os = Get-CimInstance Win32_OperatingSystem
+        $r.ram_gb = [math]::Round($os.TotalVisibleMemorySize / 1048576, 1)
+        $r.avail_gb = [math]::Round($os.FreePhysicalMemory / 1048576, 1)
+        $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+        $r.cpu_name = $cpu.Name
+        $r.cpu_cores = (Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum
+        $r.arch = $cpu.AddressWidth
         # GPU detection via nvidia-smi (fastest) or WMI fallback
-        "try { "
-        "  $nv = nvidia-smi --query-gpu=memory.total,name --format=csv,noheader,nounits 2>$null; "
-        "  if ($LASTEXITCODE -eq 0 -and $nv) { "
-        "    $gpus = @(); "
-        "    foreach ($line in $nv -split \"`n\") { "
-        "      $p = $line -split ','; "
-        "      if ($p.Count -ge 2) { $gpus += @{name=$p[1].Trim(); vram_mb=[double]$p[0].Trim()} } "
-        "    }; "
-        "    $r.gpu_name = $gpus[0].name; "
-        "    $r.gpu_vram_gb = [math]::Round(($gpus | Measure-Object -Property vram_mb -Sum).Sum / 1024, 1); "
-        "    $r.gpu_count = $gpus.Count; "
-        "    $r.gpu_backend = 'cuda'; "
-        "  } "
-        "} catch {}; "
-        "if (-not $r.gpu_name) { "
-        "  $wmiGpu = Get-CimInstance Win32_VideoController | Where-Object { $_.AdapterRAM -gt 0 } | Select-Object -First 1; "
-        "  if ($wmiGpu) { "
-        "    $r.gpu_name = $wmiGpu.Name; "
-        "    $r.gpu_vram_gb = [math]::Round($wmiGpu.AdapterRAM / 1073741824, 1); "
-        "    $r.gpu_count = 1; "
-        "    $r.gpu_backend = 'cpu_x86'; "  # WMI doesn't tell us CUDA/ROCm
-        "  } "
-        "}; "
-        "$r | ConvertTo-Json -Compress"
+        try { 
+            $nv = nvidia-smi --query-gpu=memory.total,name --format=csv,noheader,nounits 2>$null
+            if ($LASTEXITCODE -eq 0 -and $nv) { 
+                $gpus = @()
+                foreach ($line in $nv -split "`n") { 
+                    $p = $line -split ','
+                    if ($p.Count -ge 2) { $gpus += [pscustomobject]@{name = $p[1].Trim(); vram_mb = [double]$p[0].Trim() } } 
+                }
+                $r.gpu_name = $gpus[0].name
+                $r.gpu_vram_gb = [math]::Round(($gpus | Measure-Object -Property vram_mb -Sum).Sum / 1024, 1)
+                $r.gpu_count = $gpus.Count
+                $r.gpu_backend = 'cuda'
+            } 
+        }
+        catch {}
+        if (-not $r.gpu_name) { 
+            $wmiGpu = Get-CimInstance Win32_VideoController | Where-Object { $_.AdapterRAM -gt 0 } | Select-Object -First 1
+            $GPUDriverKey = "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0*"
+            $GPUDeviceID = $wmiGpu.PNPDeviceID.Split('&')[0..1] -join '&'
+            $VRAMfromRegistry = Get-ItemProperty -Path $GPUDriverKey |
+            Where-Object { $_.MatchingDeviceId -like "${GPUDeviceID}*" } |
+            # Sometimes there happen to be multiple driver classes for the same gpu.
+            Select-Object -ExpandProperty HardwareInformation.qwMemorySize -ErrorAction SilentlyContinue -First 1
+            if ($wmiGpu) { 
+                $r.gpu_name = $wmiGpu.Name
+                # Edge case: driver is broken, otherwise $wmiGpu.AdapterRAM is redundant
+                if ($VRAMfromRegistry -ge $wmiGpu.AdapterRAM) {
+                    $r.gpu_vram_gb = [math]::Round($VRAMfromRegistry / 1073741824, 1)
+                }
+                else {
+                    $r.gpu_vram_gb = [math]::Round($wmiGpu.AdapterRAM / 1073741824, 1)
+                }
+                $r.gpu_count = 1
+                # WMI doesn't tell us CUDA/ROCm
+                $r.gpu_backend = 'cpu_x86';
+            } 
+        }
+        $r | ConvertTo-Json -Compress
+    """
     )
     if _remote_host:
         # Remote: ship a single command string over SSH. The remote shell parses
@@ -465,6 +563,7 @@ def _detect_windows():
             "backend": d.get("gpu_backend", "cpu_x86"),
             "homogeneous": True,
             "gpu_error": None,
+            "platform": "windows",
         }
         # PowerShell only reports aggregate GPU info, not per-card detail, so we
         # can't tell a mixed box from a uniform one here — assume one homogeneous

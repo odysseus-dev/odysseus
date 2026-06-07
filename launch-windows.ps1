@@ -30,6 +30,26 @@ function Fail($msg) {
     exit 1
 }
 
+function Find-GitBash {
+    $cmd = Get-Command bash -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+
+    $roots = @()
+    foreach ($name in @("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)", "LocalAppData")) {
+        $base = [Environment]::GetEnvironmentVariable($name)
+        if ($base) { $roots += (Join-Path $base "Git") }
+    }
+    $roots += @("C:\Program Files\Git", "C:\Program Files (x86)\Git")
+
+    foreach ($root in ($roots | Select-Object -Unique)) {
+        foreach ($relative in @("bin\bash.exe", "usr\bin\bash.exe")) {
+            $candidate = Join-Path $root $relative
+            if (Test-Path $candidate) { return $candidate }
+        }
+    }
+    return $null
+}
+
 # 1. Locate a Python interpreter (3.11+ required)
 Write-Step "Checking for Python"
 function Get-PythonVersionText($launcher, $launcherArgs) {
@@ -101,7 +121,7 @@ Write-Step "Running first-time setup"
 if ($LASTEXITCODE -ne 0) { Fail "setup.py failed." }
 
 # 5. Friendly note about Git Bash (full Cookbook / agent-shell parity)
-if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
+if (-not (Find-GitBash)) {
     Write-Host ""
     Write-Host "NOTE: Git Bash (bash.exe) was not found on PATH." -ForegroundColor Yellow
     Write-Host "      The core app works without it. For full Cookbook background" -ForegroundColor Yellow

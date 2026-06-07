@@ -5,6 +5,15 @@ from fastapi import APIRouter
 
 CUSTOM_FONTS_DIR = os.path.join("static", "fonts", "custom")
 FONT_EXTENSIONS = {".ttf", ".otf", ".woff", ".woff2"}
+FAMILY_SUFFIX_WORDS = ("Display", "Rounded", "Serif", "Sans", "Mono", "Code", "Text")
+
+
+def _split_family_token(token):
+    """Split common compact font-family suffixes without breaking brand names."""
+    for suffix in FAMILY_SUFFIX_WORDS:
+        if token.endswith(suffix) and len(token) > len(suffix):
+            return f"{token[:-len(suffix)]} {suffix}"
+    return re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', token)
 
 
 def _derive_family(filename):
@@ -15,10 +24,9 @@ def _derive_family(filename):
         r'[-_ ]?(Thin|ExtraLight|UltraLight|Light|Regular|Medium|SemiBold|DemiBold|Bold|ExtraBold|UltraBold|Black|Heavy|Italic|Oblique|Variable|VF)$',
         '', name, flags=re.IGNORECASE
     )
-    # Insert spaces before uppercase runs: "JetBrainsMono" → "Jet Brains Mono"
-    name = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', name)
     # Replace dashes/underscores with spaces
     name = re.sub(r'[-_]+', ' ', name).strip()
+    name = " ".join(_split_family_token(part) for part in name.split())
     return name or filename
 
 

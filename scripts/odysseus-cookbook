@@ -411,6 +411,8 @@ def cmd_state_set(args) -> None:
         obj = json.loads(data)
     except json.JSONDecodeError as e:
         fail(f"invalid JSON on stdin: {e}")
+    if not isinstance(obj, dict):
+        fail("invalid cookbook state: expected a JSON object")
     _STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     # Backup the existing state — undo button if a bad pipe clobbers it.
     if _STATE_PATH.exists():
