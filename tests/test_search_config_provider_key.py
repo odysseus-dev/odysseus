@@ -5,6 +5,7 @@ PROVIDER_ENV_KEYS = (
     "GOOGLE_API_KEY",
     "TAVILY_API_KEY",
     "SERPER_API_KEY",
+    "PERPLEXITY_API_KEY",
 )
 
 
@@ -20,6 +21,15 @@ def test_search_config_detects_active_provider_specific_key(monkeypatch):
     config = _config(monkeypatch, {
         "search_provider": "tavily",
         "tavily_api_key": "tavily-key",
+    })
+
+    assert config["has_api_key"] is True
+
+
+def test_search_config_detects_perplexity_api_key(monkeypatch):
+    config = _config(monkeypatch, {
+        "search_provider": "perplexity",
+        "perplexity_api_key": "pplx-key",
     })
 
     assert config["has_api_key"] is True

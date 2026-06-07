@@ -36,6 +36,7 @@ def _offline(monkeypatch):
     monkeypatch.setenv("DATA_BRAVE_API_KEY", "k")
     monkeypatch.setenv("TAVILY_API_KEY", "k")
     monkeypatch.setenv("SERPER_API_KEY", "k")
+    monkeypatch.setenv("PERPLEXITY_API_KEY", "k")
     monkeypatch.setenv("GOOGLE_API_KEY", "k")
     monkeypatch.setenv("GOOGLE_PSE_CX", "cx")
     monkeypatch.setattr(providers.httpx, "post", lambda *a, **k: _BadJSONResponse())
@@ -57,3 +58,7 @@ def test_google_pse_malformed_json_returns_empty():
 def test_brave_malformed_json_returns_empty():
     # Already correct on main — guards against regressing the reference behaviour.
     assert providers.brave_search("hello") == []
+
+
+def test_perplexity_malformed_json_returns_empty():
+    assert providers.perplexity_search("hello") == []

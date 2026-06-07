@@ -1,4 +1,4 @@
-"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper."""
+"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper, Perplexity."""
 
 import json
 import logging
@@ -25,6 +25,7 @@ PROVIDER_INFO = {
     "google_pse": ("Google PSE",      True,  False),
     "tavily":   ("Tavily",            True,  False),
     "serper":   ("Serper",            True,  False),
+    "perplexity": ("Perplexity",      True,  False),
     "disabled": ("Disabled",          False, False),
 }
 
@@ -57,6 +58,7 @@ def _get_provider_key(provider: str) -> str:
         "google_pse": "google_pse_key",
         "tavily": "tavily_api_key",
         "serper": "serper_api_key",
+        "perplexity": "perplexity_api_key",
     }
     field = key_map.get(provider, "")
     if field:
@@ -72,6 +74,7 @@ def _get_provider_key(provider: str) -> str:
         "google_pse": "GOOGLE_API_KEY",
         "tavily": "TAVILY_API_KEY",
         "serper": "SERPER_API_KEY",
+        "perplexity": "PERPLEXITY_API_KEY",
     }
     env_name = env_map.get(provider, "")
     return (os.environ.get(env_name) or "").strip() if env_name else ""
@@ -640,4 +643,59 @@ def serper_search(query: str, count: Optional[int] = None, time_filter: Optional
         })
 
     logger.info(f"Serper returned {len(results)} results")
+    return results
+
+
+# ── Perplexity ──
+
+def perplexity_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+    """Search using the Perplexity Search API. Requires perplexity_api_key or PERPLEXITY_API_KEY env var."""
+    api_key = _get_provider_key("perplexity") or os.environ.get("PERPLEXITY_API_KEY", "")
+    if not api_key:
+        logger.warning("Perplexity: no API key configured")
+        return []
+
+    payload = {"query": query, "max_results": min(count, 20)}  # API caps max_results at 20
+    if time_filter:
+        # search_recency_filter accepts hour/day/week/month/year
+        time_map = {"day": "day", "week": "week", "month": "month", "year": "year"}
+        if time_filter in time_map:
+            payload["search_recency_filter"] = time_map[time_filter]
+
+    try:
+        response = httpx.post(
+            "https://api.perplexity.ai/search",
+            json=payload,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if response.status_code == 429:
+            raise RateLimitError("Perplexity rate limit hit")
+        response.raise_for_status()
+    except httpx.RequestError as e:
+        error_logger.error(f"Perplexity search failed: {e}")
+        return []
+    except RateLimitError as e:
+        error_logger.error(str(e))
+        return []
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        error_logger.error(f"Perplexity returned invalid JSON: {e}")
+        return []
+
+    results = []
+    for item in data.get("results", [])[:count]:
+        url = item.get("url", "")
+        if not url:
+            continue
+        results.append({
+            "title": item.get("title", ""),
+            "url": url,
+            "snippet": item.get("snippet", ""),
+            "age": item.get("date", "") or item.get("last_updated", ""),
+        })
+
+    logger.info(f"Perplexity returned {len(results)} results")
     return results
