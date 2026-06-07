@@ -543,22 +543,29 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             ids = body.get("ids", [])
         except Exception:
             ids = []
+        deleted = 0
         for sid in ids:
             try:
                 _verify_session_owner(request, sid, session_manager)
-                session_manager.delete_session(sid)
+                # Skip starred sessions — same protection as single-session delete
                 db = SessionLocal()
                 try:
+                    db_sess = db.query(DbSession).filter(DbSession.id == sid).first()
+                    if db_sess and db_sess.is_important:
+                        continue
                     db.query(_CM).filter(_CM.session_id == sid).delete()
                     db.query(DbSession).filter(DbSession.id == sid).delete()
                     db.commit()
                 except Exception:
                     db.rollback()
+                    continue
                 finally:
                     db.close()
+                session_manager.delete_session(sid)
+                deleted += 1
             except Exception:
                 pass
-        return {"deleted": len(ids)}
+        return {"deleted": deleted}
 
     @router.delete("/session/{sid}")
     def delete_session(request: Request, sid: str):
