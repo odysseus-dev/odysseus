@@ -522,6 +522,8 @@ app.include_router(setup_emoji_routes())
 
 from routes.workspace_routes import setup_workspace_routes
 app.include_router(setup_workspace_routes())
+from routes.workspace_git_routes import setup_workspace_git_routes
+app.include_router(setup_workspace_git_routes())
 
 # Sessions
 from routes.session_routes import setup_session_routes
