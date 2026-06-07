@@ -131,10 +131,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 return {"ok": False, "requires_totp": True, "username": username}
             if not auth_manager.totp_verify(username, body.totp_code):
                 raise HTTPException(401, "Invalid 2FA code")
-        # All checks passed — create session
-        token = await asyncio.to_thread(auth_manager.create_session, username, body.password)
-        if not token:
-            raise HTTPException(401, "Invalid credentials")
+        # All checks passed — create session (password already verified above)
+        token = await asyncio.to_thread(auth_manager.create_session_trusted, username)
         cookie_kwargs = dict(
             key=SESSION_COOKIE,
             value=token,

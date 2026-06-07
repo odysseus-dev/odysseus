@@ -439,7 +439,8 @@ class DeepResearcher:
             )
             cat = (result or "").strip().lower()
             # Clean one-word answer first.
-            first = cat.split()[0].strip(".,\"'*:") if cat.split() else ""
+            parts = cat.split()
+            first = parts[0].strip(".,\"'*:") if parts else ""
             if first in CATEGORY_PROMPTS:
                 return first
             # Weak local models often wrap the label in preamble ("the category

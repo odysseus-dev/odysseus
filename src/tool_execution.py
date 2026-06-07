@@ -19,6 +19,7 @@ import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
+from src.tool_policy import ToolPolicy
 from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES
 
 # Persistent working directory for agent subprocesses.
@@ -1128,6 +1129,7 @@ async def execute_tool_block(
     block: Any,
     session_id: Optional[str] = None,
     disabled_tools: Optional[set] = None,
+    tool_policy: Optional[ToolPolicy] = None,
     owner: Optional[str] = None,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     workspace: Optional[str] = None,
@@ -1186,6 +1188,12 @@ async def execute_tool_block(
             pass
 
     # Reject tools that the user has disabled for this request
+    if tool_policy and tool_policy.blocks(tool):
+        desc = f"{tool}: BLOCKED"
+        result = {"error": tool_policy.reason_for(tool), "exit_code": 1}
+        logger.info("Tool blocked by policy: %s", tool)
+        return desc, result
+
     if disabled_tools and tool in disabled_tools:
         desc = f"{tool}: BLOCKED"
         result = {"error": f"Tool '{tool}' is disabled by user.", "exit_code": 1}

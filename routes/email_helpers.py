@@ -802,20 +802,28 @@ def _imap(account_id: str | None = None, owner: str = ""):
 def _decode_header(raw):
     if not raw:
         return ""
-    parts = email.header.decode_header(raw)
-    decoded = []
-    for data, charset in parts:
-        if isinstance(data, bytes):
-            try:
-                decoded.append(data.decode(charset or "utf-8", errors="replace"))
-            except (LookupError, ValueError):
-                # Unknown/invalid MIME charset (e.g. a malformed or spam header
-                # like =?x-unknown-charset?B?...?=). errors="replace" only covers
-                # byte-decode errors, not codec lookup, so fall back to utf-8.
-                decoded.append(data.decode("utf-8", errors="replace"))
-        else:
-            decoded.append(data)
-    return " ".join(decoded)
+    try:
+        # make_header concatenates per RFC 2047: no spurious space between an
+        # encoded-word and adjacent plain text (plain runs keep their own
+        # whitespace), and the whitespace between two adjacent encoded-words is
+        # dropped. The old " ".join produced "Re:  Jose"-style double spaces on
+        # every non-ASCII subject or sender.
+        return str(email.header.make_header(email.header.decode_header(raw)))
+    except Exception:
+        # Malformed header or unknown/invalid MIME charset (e.g. a spam header
+        # like =?x-unknown-charset?B?...?=) makes make_header raise LookupError;
+        # fall back to a lossy per-part decode. errors="replace" only covers
+        # byte-decode errors, not codec lookup, hence the explicit utf-8 retry.
+        decoded = []
+        for data, charset in email.header.decode_header(raw):
+            if isinstance(data, bytes):
+                try:
+                    decoded.append(data.decode(charset or "utf-8", errors="replace"))
+                except (LookupError, ValueError):
+                    decoded.append(data.decode("utf-8", errors="replace"))
+            else:
+                decoded.append(data)
+        return "".join(decoded)
 
 
 def _detect_sent_folder(conn):
@@ -1140,13 +1148,9 @@ def _fetch_sender_thread_context(sender_addr: str,
     if exclude_uid:
         seen_uids.add((exclude_folder or "INBOX", str(exclude_uid)))
 
+    conn = None
     try:
         conn = _imap_connect(account_id, owner=owner)
-    except Exception as e:
-        logger.warning(f"sender-thread-context: imap connect failed: {e}")
-        return ""
-
-    try:
         for folder in ["INBOX", "Sent", "Archive", "Drafts"]:
             if len(blocks) >= limit:
                 break
@@ -1213,11 +1217,14 @@ def _fetch_sender_thread_context(sender_addr: str,
                 if atts_text:
                     lines.append(atts_text)
                 blocks.append("\n".join(lines))
+    except Exception as e:
+        logger.warning(f"sender-thread-context: imap failed: {e}")
     finally:
-        try: conn.close()
-        except Exception: pass
-        try: conn.logout()
-        except Exception: pass
+        if conn:
+            try: conn.close()
+            except Exception: pass
+            try: conn.logout()
+            except Exception: pass
 
     if not blocks:
         return ""
@@ -1320,6 +1327,7 @@ def _pre_retrieve_context(
         if not terms_list:
             return context_snippets, terms_list
 
+        ctx_conn = None
         try:
             ctx_conn = _imap_connect(account_id, owner=owner)
             for folder in ["INBOX", "Sent", "Archive", "Drafts"]:
@@ -1356,12 +1364,12 @@ def _pre_retrieve_context(
                     except Exception as _e:
                         logger.warning(f"  search {folder} {term!r} failed: {_e}")
                         continue
-            try:
-                ctx_conn.logout()
-            except Exception:
-                pass
         except Exception as _e:
             logger.warning(f"IMAP context search failed: {_e}")
+        finally:
+            if ctx_conn:
+                try: ctx_conn.logout()
+                except Exception: pass
 
         try:
             from routes.contacts_routes import _fetch_contacts

@@ -5187,7 +5187,9 @@ function syncAdminVisibility() {
 export function open(tab) {
   if (!initialized) initAll();
   syncAppearanceCheckboxes();
-  resetWindowPlacement();
+  if (modalEl.classList.contains('hidden')) {
+    resetWindowPlacement();
+  }
   modalEl.classList.remove('hidden');
   syncAdminVisibility();
   const content = modalEl.querySelector('.settings-modal-content');

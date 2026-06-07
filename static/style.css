@@ -2940,6 +2940,34 @@ body.bg-pattern-sparkles {
       45% { text-shadow: 0 0 10px color-mix(in srgb, var(--accent, var(--red)) 60%, transparent); }
       100% { text-shadow: 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 0%, transparent); }
     }
+    /* Inline remove-from-recent button — only shown on Recent rows. */
+    .model-picker-list .mp-remove-dot {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      margin: -4px -4px -4px 2px;
+      padding: 0;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      color: color-mix(in srgb, var(--fg) 28%, transparent);
+      font-family: inherit;
+      font-size: 15px;
+      line-height: 1;
+      transition: color 0.15s ease, opacity 0.15s ease, transform 0.12s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .model-picker-list .mp-remove-dot:hover {
+      color: var(--red, #ff5555);
+      transform: scale(1.1);
+    }
+    .model-picker-list .mp-remove-dot:focus-visible {
+      outline: none;
+      color: var(--red, #ff5555);
+    }
     /* First-run hint when a large catalog has no Recent/Favorites yet. */
     .model-picker-list .mp-empty-hint {
       flex-direction: column;
@@ -7722,7 +7750,13 @@ button.hamburger {
   border-collapse: collapse;
   margin: 0.5em 0;
   font-size: 0.9em;
-  width: auto;
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  table-layout: auto;
 }
 .msg th {
   background: color-mix(in srgb, var(--fg) 7%, transparent);
@@ -7731,10 +7765,16 @@ button.hamburger {
   padding: 6px 12px;
   border: 1px solid var(--border);
   text-align: left;
+  min-width: 9ch;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 .msg td {
   padding: 5px 12px;
   border: 1px solid var(--border);
+  min-width: 9ch;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 /* Agent UI Styling */
@@ -10238,8 +10278,9 @@ textarea.memory-add-input {
 }
 
 .memory-toolbar-btn:disabled {
-  opacity: 1;
+  opacity: 0.35;
   cursor: default;
+  outline: none;
 }
 .memory-toolbar-btn.spinning {
   border-color: transparent;

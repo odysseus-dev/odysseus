@@ -285,6 +285,8 @@ _HOST_TO_CURATED = (
     ("x.ai", "xai"),
     ("openrouter.ai", "openrouter"),
     ("ollama.com", "ollama"),
+    ("opencode.ai/zen/go", "opencode-go"),
+    ("opencode.ai/zen", "opencode-zen"),
 )
 
 
@@ -698,7 +700,6 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         return list(fallback)
     return []
 
-
 def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> Dict[str, Any]:
     """Reachability probe that does not require installed/listed models."""
     from src.endpoint_resolver import resolve_url
@@ -713,6 +714,10 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
         parsed_base.port == 11434
         or "ollama" in (parsed_base.hostname or "").lower()
     )
+
+    # APFEL-specific detection
+    host = (parsed_base.hostname or "").lower()
+    looks_like_apfel = "apfel" in host or parsed_base.port == 11435
 
     def _result_from_response(r) -> Dict[str, Any]:
         if 300 <= r.status_code < 400:
@@ -735,7 +740,23 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
     last_error: Optional[str] = None
 
     try:
-        if looks_like_ollama:
+        # APFEL does not behave like Ollama; use its health endpoint.
+        if looks_like_apfel:
+            root = base
+            for suffix in ("/v1", "/api"):
+                if root.endswith(suffix):
+                    root = root[: -len(suffix)].rstrip("/")
+                    break
+            try:
+                r = httpx.get(root + "/health", timeout=timeout, verify=llm_verify())
+                result = _result_from_response(r)
+                if result["reachable"]:
+                    return result
+                last_error = result.get("error")
+            except Exception as e:
+                last_error = str(e)[:120]
+
+        elif looks_like_ollama:
             root = base
             for suffix in ("/v1", "/api"):
                 if root.endswith(suffix):
@@ -755,13 +776,30 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
 
     try:
         r = httpx.get(base, headers=headers, timeout=timeout, verify=llm_verify())
-        return _result_from_response(r)
+        result = _result_from_response(r)
+        # If the bare base URL returns a non-auth 4xx (e.g. 404), try /models
+        # as a fallback. OpenAI-compatible servers like llama-swap return 404
+        # on the base /v1 prefix but 200 on /v1/models.  Auth failures (401/403)
+        # are definitive — probing /models would just repeat the same rejection.
+        if (
+            not result["reachable"]
+            and result.get("status_code") is not None
+            and 400 <= result["status_code"] < 500
+            and result["status_code"] not in (401, 403)
+        ):
+            models_url = base.rstrip("/") + "/models"
+            try:
+                r2 = httpx.get(models_url, headers=headers, timeout=timeout, verify=llm_verify())
+                result2 = _result_from_response(r2)
+                if result2["reachable"]:
+                    return result2
+            except Exception:
+                pass
+        return result
     except Exception as e:
         last_error = str(e)[:120]
 
     return {"reachable": False, "status_code": None, "error": last_error}
-
-
 
 def _model_endpoint_error_message(base_url: str, ping: Dict[str, Any] = None) -> str:
     """Return a provider-aware error message for failed endpoint probes."""

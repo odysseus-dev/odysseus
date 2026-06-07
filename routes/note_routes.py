@@ -95,6 +95,32 @@ def _note_to_dict(note: Note) -> Dict[str, Any]:
     }
 
 
+def _reminder_text_from_note(note: Note) -> tuple[str, str]:
+    """Return the reminder title/body from a stored note row."""
+    title = (note.title or "Note reminder").strip() or "Note reminder"
+    if note.items:
+        try:
+            items = json.loads(note.items)
+        except (json.JSONDecodeError, TypeError):
+            items = None
+        if isinstance(items, list):
+            pending: list[str] = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("done") or item.get("checked"):
+                    continue
+                text = str(item.get("text") or "").strip()
+                if text:
+                    pending.append(text)
+            if pending:
+                shown = "\n".join(f"- {text}" for text in pending[:8])
+                extra = f"\n...and {len(pending) - 8} more" if len(pending) > 8 else ""
+                return title, f"Pending ({len(pending)}):\n{shown}{extra}"
+            return title, f"{len(items)} item{'s' if len(items) != 1 else ''}"
+    return title, (note.content or "").strip()[:400]
+
+
 
 # ---------------------------------------------------------------------------
 # Reminder dispatch — module-level so background tasks (built-in actions)
@@ -181,9 +207,9 @@ async def dispatch_reminder(
         try:
             from src.endpoint_resolver import resolve_endpoint
             from src.llm_core import llm_call_async
-            url, model, headers = resolve_endpoint("utility")
+            url, model, headers = resolve_endpoint("utility", owner=owner or None)
             if not url:
-                url, model, headers = resolve_endpoint("default")
+                url, model, headers = resolve_endpoint("default", owner=owner or None)
             if url and model:
                 raw = await llm_call_async(
                     url=url, model=model,
@@ -542,6 +568,23 @@ def setup_note_routes(task_scheduler=None):
     def _owner(request: Request) -> Optional[str]:
         return get_current_user(request)
 
+    def _is_admin_or_single_user(request: Request, user: str | None) -> bool:
+        if user == "internal-tool":
+            return True
+        if not user:
+            # require_user() already admitted this request, which only happens
+            # for auth-disabled, loopback-bypass, or unconfigured single-user
+            # modes. There is no separate non-admin account boundary there.
+            return True
+        try:
+            from core.auth import AuthManager
+            auth_mgr = getattr(request.app.state, "auth_manager", None) or AuthManager()
+            if not getattr(auth_mgr, "is_configured", True):
+                return True
+            return bool(auth_mgr.is_admin(user))
+        except Exception:
+            return False
+
     # --- LIST ---
     @router.get("")
     def list_notes(
@@ -759,27 +802,44 @@ def setup_note_routes(task_scheduler=None):
         """
         # Gate against anonymous callers — LLM synthesis can burn tokens.
         from src.auth_helpers import require_user as _ru
-        _ru(request)
+        user = _ru(request)
         body = await request.json()
-        note_id = body.get("note_id")
-        title = (body.get("title") or "").strip()
-        note_body = (body.get("body") or "").strip()
+        note_id = str(body.get("note_id") or "").strip()
         if not note_id:
             raise HTTPException(400, "note_id required")
 
-        # Optional overrides let the test button pass the current UI values
-        # directly so the test never races against a pending settings save.
+        caller = _owner(request)
+        is_test = note_id.startswith("test-")
+        is_admin = _is_admin_or_single_user(request, user or caller)
         _override: dict = {}
-        if body.get("channel"):
-            _override["reminder_channel"] = body["channel"]
-        if body.get("webhook_integration_id"):
-            _override["reminder_webhook_integration_id"] = body["webhook_integration_id"]
-        if body.get("webhook_payload_template"):
-            _override["reminder_webhook_payload_template"] = body["webhook_payload_template"]
+        if is_test:
+            if not is_admin:
+                raise HTTPException(403, "Admin only")
+            title = (body.get("title") or "Test Reminder").strip() or "Test Reminder"
+            note_body = (body.get("body") or "").strip()
+            # Optional overrides let the admin settings test button pass the
+            # current UI values directly so it never races a pending save.
+            if body.get("channel"):
+                _override["reminder_channel"] = body["channel"]
+            if body.get("webhook_integration_id"):
+                _override["reminder_webhook_integration_id"] = body["webhook_integration_id"]
+            if body.get("webhook_payload_template"):
+                _override["reminder_webhook_payload_template"] = body["webhook_payload_template"]
+        else:
+            db = SessionLocal()
+            try:
+                note = db.query(Note).filter(Note.id == note_id).first()
+                if not note:
+                    raise HTTPException(404, "Note not found")
+                if caller is not None and note.owner != caller:
+                    raise HTTPException(404, "Note not found")
+                title, note_body = _reminder_text_from_note(note)
+            finally:
+                db.close()
 
         return await dispatch_reminder(
             title=title, note_body=note_body, note_id=note_id,
-            owner=_owner(request) or "",
+            owner=caller or "",
             queue_browser=False,
             settings_override=_override or None,
         )

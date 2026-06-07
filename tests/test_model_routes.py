@@ -360,6 +360,48 @@ class TestClassifyEndpoint:
         assert seen == [("GET", "http://100.117.136.97:34521/v1")]
         assert all(not url.endswith("/models") for _, url in seen)
 
+    def test_ping_endpoint_falls_back_to_models_on_404(self, monkeypatch):
+        """llama-swap returns 404 on /v1 but 200 on /v1/models."""
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        seen = []
+
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
+            seen.append(url)
+            request = httpx.Request("GET", url)
+            if url.endswith("/models"):
+                return httpx.Response(200, request=request)
+            return httpx.Response(404, request=request)
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+
+        result = _ping_endpoint("http://172.17.0.1:8081/v1", timeout=1)
+
+        assert result["reachable"] is True
+        assert result["status_code"] == 200
+        assert seen == [
+            "http://172.17.0.1:8081/v1",
+            "http://172.17.0.1:8081/v1/models",
+        ]
+
+    def test_ping_endpoint_no_models_fallback_on_auth_failure(self, monkeypatch):
+        """401/403 are definitive — don't probe /models."""
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        seen = []
+
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
+            seen.append(url)
+            request = httpx.Request("GET", url)
+            return httpx.Response(401, request=request)
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+
+        result = _ping_endpoint("http://10.0.0.1:8080/v1", "bad-key", timeout=1)
+
+        assert result["reachable"] is False
+        assert result["status_code"] == 401
+        # Should NOT have tried /models — 401 is definitive
+        assert len(seen) == 1
+
 
 # ── setup probing ──
 
