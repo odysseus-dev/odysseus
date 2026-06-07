@@ -837,7 +837,7 @@ export async function saveCustomPreset(showToast, showError) {
       if (saveName) {
         const _existing = userTemplates.find(t => t.name === saveName);
         const _entry = {
-          id: (_existing && _existing.id) || '',
+          id: (_existing && _existing.id) || ('user-' + Math.random().toString(16).slice(2, 10)),
           name: saveName,
           system_prompt: system_prompt || '',
           temperature: config.temperature,
@@ -906,7 +906,7 @@ export function getAllPresets() {
  * Get the in-memory user templates list (may be stale; call loadUserTemplates first if freshness matters).
  */
 export function getUserTemplates() {
-  return userTemplates;
+  return [...userTemplates];
 }
 
 /**
