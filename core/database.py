@@ -29,8 +29,9 @@ class TimestampMixin:
     def updated_at(cls):
         return Column(DateTime, default=utcnow_naive, onupdate=utcnow_naive, nullable=False)
 
-# Get database URL from environment, default to SQLite
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
+# Get database URL from environment, default to SQLite in DATA_DIR
+from src.constants import DATA_DIR, AUTH_FILE, MEMORY_FILE, USER_PREFS_FILE, SETTINGS_FILE
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR}/app.db")
 
 # Create engine
 engine = create_engine(
@@ -1065,7 +1066,7 @@ def _migrate_assign_legacy_owner():
     # fell through to "first user" every time.
     auth_path = os.path.join(os.path.dirname(DATABASE_URL.replace("sqlite:///", "")), "auth.json")
     if not os.path.isabs(auth_path):
-        auth_path = os.path.join("data", "auth.json")
+        auth_path = AUTH_FILE
     admin_user = None
     try:
         with open(auth_path, "r", encoding="utf-8") as f:
@@ -1118,7 +1119,7 @@ def _migrate_assign_legacy_owner():
         logger.warning(f"Legacy owner migration failed: {e}")
 
     # Also migrate memory.json
-    mem_path = os.path.join("data", "memory.json")
+    mem_path = MEMORY_FILE
     try:
         if os.path.exists(mem_path):
             with open(mem_path, "r", encoding="utf-8") as f:
@@ -1136,7 +1137,7 @@ def _migrate_assign_legacy_owner():
         logger.warning(f"memory.json legacy migration failed: {e}")
 
     # Also migrate user_prefs.json to per-user format
-    prefs_path = os.path.join("data", "user_prefs.json")
+    prefs_path = USER_PREFS_FILE
     try:
         if os.path.exists(prefs_path):
             with open(prefs_path, "r", encoding="utf-8") as f:
@@ -1530,7 +1531,7 @@ def _migrate_seed_email_account():
         import json as _json
         import uuid as _uuid
         from pathlib import Path
-        settings_file = Path("data/settings.json")
+        settings_file = Path(SETTINGS_FILE)
         if not settings_file.exists():
             return
         try:

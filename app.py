@@ -51,7 +51,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # Core imports
 from core.constants import (
     BASE_DIR, STATIC_DIR, SESSIONS_FILE,
-    REQUEST_TIMEOUT, OPENAI_API_KEY,
+    REQUEST_TIMEOUT, OPENAI_API_KEY, AUTH_FILE,
 )
 from core.database import SessionLocal, ApiToken
 from core.middleware import SecurityHeadersMiddleware, is_cors_preflight
@@ -954,7 +954,7 @@ async def _startup_event():
         owners = set()
         try:
             import json as _json
-            auth_path = "data/auth.json"
+            auth_path = AUTH_FILE
             with open(auth_path, encoding="utf-8") as f:
                 users = _json.load(f).get("users", {})
             owners.update(users.keys())
@@ -1001,7 +1001,7 @@ async def _startup_event():
     # does not make an existing library look empty after auth/account changes.
     try:
         import json as _json
-        auth_path = "data/auth.json"
+        auth_path = AUTH_FILE
         with open(auth_path, encoding="utf-8") as f:
             users = _json.load(f).get("users", {})
         primary_owner = None

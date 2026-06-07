@@ -15,6 +15,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, Depends
 
 from src.auth_helpers import require_user
+from src.constants import COOKBOOK_STATE_FILE
 from pydantic import BaseModel
 
 from core.middleware import require_admin
@@ -33,7 +34,7 @@ from core.platform_compat import (
     get_wsl_windows_user_profile,
 )
 from routes.shell_routes import TMUX_LOG_DIR
-from core.constants import DATA_DIR
+from src.constants import COOKBOOK_STATE_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ _HF_TOKEN_STATUS_SNIPPET = (
 
 def setup_cookbook_routes() -> APIRouter:
     router = APIRouter(tags=["cookbook"])
-    _cookbook_state_path = Path(DATA_DIR) / "cookbook_state.json"
+    _cookbook_state_path = Path(COOKBOOK_STATE_FILE)
 
     def _mask_secret(value: str) -> str:
         if not value:

@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from src.endpoint_resolver import resolve_endpoint
 from src.auth_helpers import _auth_disabled, get_current_user
+from src.constants import DEEP_RESEARCH_DIR
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
 
@@ -100,7 +101,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         if entry is not None:
             return entry.get("owner", "") == user
         # Task no longer in memory — check the persisted JSON.
-        path = Path("data/deep_research") / f"{session_id}.json"
+        path = Path(DEEP_RESEARCH_DIR) / f"{session_id}.json"
         if not path.exists():
             return False
         try:
@@ -164,7 +165,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     def _assert_owns_research(session_id: str, user: str) -> None:
         """404-not-403 ownership gate for a research session's on-disk JSON.
         Use BEFORE returning any data or mutating the file."""
-        path = Path("data/deep_research") / f"{session_id}.json"
+        path = Path(DEEP_RESEARCH_DIR) / f"{session_id}.json"
         if not path.exists():
             raise HTTPException(404, "Research not found")
         try:
@@ -227,7 +228,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     ):
         user = _require_user(request)
         """List all completed research for the Library panel."""
-        data_dir = Path("data/deep_research")
+        data_dir = Path(DEEP_RESEARCH_DIR)
         items = []
         for p in data_dir.glob("*.json"):
             try:
@@ -277,7 +278,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         summary, stats — used by the Library preview panel."""
         user = _require_user(request)
         _validate_session_id(session_id)
-        path = Path("data/deep_research") / f"{session_id}.json"
+        path = Path(DEEP_RESEARCH_DIR) / f"{session_id}.json"
         if not path.exists():
             raise HTTPException(404, "Research not found")
         try:
@@ -294,7 +295,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         """Soft-archive / restore a research report (sets `archived` in its JSON)."""
         user = _require_user(request)
         _validate_session_id(session_id)
-        path = Path("data/deep_research") / f"{session_id}.json"
+        path = Path(DEEP_RESEARCH_DIR) / f"{session_id}.json"
         if not path.exists():
             raise HTTPException(404, "Research not found")
         try:
@@ -314,7 +315,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         """Delete a research result from disk."""
         user = _require_user(request)
         _validate_session_id(session_id)
-        data_dir = Path("data/deep_research")
+        data_dir = Path(DEEP_RESEARCH_DIR)
         json_path = data_dir / f"{session_id}.json"
         deleted = False
         if json_path.exists():
@@ -496,7 +497,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             raise HTTPException(404, "No research found for this session")
         result = research_handler.get_result(session_id)
         if result is None:
-            p = Path("data/deep_research") / f"{session_id}.json"
+            p = Path(DEEP_RESEARCH_DIR) / f"{session_id}.json"
             if p.exists():
                 d = json.loads(p.read_text(encoding="utf-8"))
                 return {
@@ -536,7 +537,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         sources = research_handler.get_sources(session_id) or []
         query = ""
 
-        path = Path("data/deep_research") / f"{session_id}.json"
+        path = Path(DEEP_RESEARCH_DIR) / f"{session_id}.json"
         if path.exists():
             try:
                 disk = json.loads(path.read_text(encoding="utf-8"))
