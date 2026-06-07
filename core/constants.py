@@ -38,3 +38,9 @@ CLEANUP_INTERVAL_HOURS = int(os.getenv("CLEANUP_INTERVAL_HOURS", "24"))
 # Default parameters
 DEFAULT_TEMPERATURE = 1.0
 DEFAULT_MAX_TOKENS = 0
+
+# PII Sanitization
+PII_SANITIZATION_ENABLED = os.getenv("PII_SANITIZATION_ENABLED", "False").lower() == "true"
+PII_SANITIZER_URL = os.getenv("PII_SANITIZER_URL", "")
+PII_SANITIZATION_POLICY = os.getenv("PII_SANITIZATION_POLICY", "warn").lower()  # "continue", "warn", "block"
+PII_SANITIZER_TIMEOUT = int(os.getenv("PII_SANITIZER_TIMEOUT", "5"))

@@ -10,6 +10,7 @@ import re
 from fastapi import HTTPException
 from typing import Optional, Dict, List, Tuple
 from src.model_context import get_context_length, DEFAULT_CONTEXT
+from src.sanitizer import sanitize_messages, sanitize_messages_sync
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -998,6 +999,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         h.update(headers)
 
     messages_copy = _sanitize_llm_messages(messages)
+    messages_copy = sanitize_messages_sync(messages_copy)
 
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
@@ -1145,6 +1147,7 @@ async def llm_call_async(
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
+    messages_copy = await sanitize_messages(messages_copy)
 
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
@@ -1262,6 +1265,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     """
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
+    messages_copy = await sanitize_messages(messages_copy)
 
     # Consolidate multiple system messages into one at the start.
     # Some models (e.g. Qwen3.5) reject system messages that aren't first.

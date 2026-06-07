@@ -339,6 +339,7 @@ Odysseus is a self-hosted workspace with powerful local tools: shell access, fil
 - Keep `AUTH_ENABLED=true` for any network-accessible deployment.
 - Keep `LOCALHOST_BYPASS=false` outside local development.
 - Use `SECURE_COOKIES=true` when Odysseus is served through HTTPS by a trusted reverse proxy or private access gateway.
+- **PII Sanitization (Issue #538):** An optional sanitization layer can be enabled in `.env` (`PII_SANITIZATION_ENABLED=true`) to redact sensitive information (names, emails, tokens) before it leaves your machine for external LLM providers. See `.env.example` for configuration.
 - Do not expose it directly to the public internet without HTTPS and a trusted reverse proxy or private access layer.
 - Keep `.env`, `data/`, `logs/`, databases, uploads, generated media, backups, auth/session files, API keys, and model/provider tokens out of Git and private shares. They are ignored by default.
 - Review `data/auth.json` after first boot: disable open signup unless you intentionally want it, make only your own account admin, and keep demo/test accounts non-admin.
