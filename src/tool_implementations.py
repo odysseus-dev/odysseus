@@ -2702,6 +2702,7 @@ _APP_API_BLOCKLIST_PREFIXES = (
     "/api/tokens",         # api token mgmt (bare /api/tokens list+create must also block)
     "/api/admin",          # admin one-shots (wipe etc.)
     "/api/backup/restore", # destructive restore
+    "/api/shell",          # host shell execution — use named tools instead
 )
 
 # (method, prefix) pairs to refuse specifically. Used for endpoints
@@ -2733,6 +2734,11 @@ _APP_API_BLOCKLIST_METHOD_PATH = (
     ("POST",   "/api/calendar/events"),
     ("PUT",    "/api/calendar/events"),
     ("DELETE", "/api/calendar/events"),
+    # Cookbook mutation routes — host-adjacent package/process control
+    # that should go through dedicated UI/named flows, not generic app_api.
+    ("POST",   "/api/cookbook/packages/install"),
+    ("POST",   "/api/cookbook/rebuild-engine"),
+    ("POST",   "/api/cookbook/kill-pid"),
 )
 
 
@@ -2829,7 +2835,13 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
             return {"error": "Don't hit /api/notes via app_api — use the `manage_notes` tool. It accepts natural-language due_date ('11pm today', 'tomorrow at 9am'), fires reminders from the due_date itself (no separate calendar event), and uses the caller's timezone. The raw endpoint requires ISO-UTC + a separate calendar event, both of which the agent tends to get wrong.", "exit_code": 1}
         if "/api/calendar/events" in path:
             return {"error": "Don't hit /api/calendar/events via app_api — use the `manage_calendar` tool. It handles tz-aware natural-language datetimes and reminder_minutes correctly. If the user wants a note + reminder, prefer `manage_notes` with due_date — it bundles both.", "exit_code": 1}
-        return {"error": f"{method} {path} is blocked — it overwrites the whole cookbook state file. Use list_serve_presets / serve_preset / serve_model instead.", "exit_code": 1}
+        if "/api/cookbook/packages/install" in path:
+            return {"error": "Don't install packages via app_api — use the Cookbook UI or named tools.", "exit_code": 1}
+        if "/api/cookbook/rebuild-engine" in path:
+            return {"error": "Don't rebuild engines via app_api — use the Cookbook UI or named tools.", "exit_code": 1}
+        if "/api/cookbook/kill-pid" in path:
+            return {"error": "Don't signal processes via app_api — use the Cookbook UI or named tools.", "exit_code": 1}
+        return {"error": f"{method} {path} is blocked — use the dedicated named tool instead.", "exit_code": 1}
 
     body = args.get("body")
     query = args.get("query") or None
