@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 MAX_INLINE_ATTACHMENT_CHARS = 24000
 MIN_INLINE_ATTACHMENT_SLICE = 500
 
+_PDF_FULLPAGE_OCR_PAGE_CAP = 5
+
 
 def _is_text_file(path: str) -> bool:
     """Check if file has text extension."""
@@ -144,6 +146,41 @@ def _process_pdf(path: str, owner: str | None = None) -> str:
                     except Exception as e:
                         logger.warning(f"Failed to analyze image in PDF: {e}")
                         continue
+
+        if not pdf_text or len(pdf_text.strip()) < 50:
+            from src.pdf_runtime import load_pymupdf_for_pdf_viewer
+            try:
+                fitz = load_pymupdf_for_pdf_viewer()
+            except RuntimeError:
+                fitz = None
+            if fitz is not None:
+                ocr_pages = 0
+                try:
+                    pdf_doc = fitz.open(path)
+                    try:
+                        for page_num_ocr, page_obj in enumerate(pdf_doc):
+                            if ocr_pages >= _PDF_FULLPAGE_OCR_PAGE_CAP:
+                                break
+                            tmp_path = None
+                            try:
+                                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                                    tmp_path = tmp.name
+                                pix = page_obj.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                                pix.save(tmp_path)
+                                ocr_text = analyze_image_with_vl(tmp_path)
+                                if ocr_text and "unavailable" not in ocr_text.lower():
+                                    pdf_text += f"\n\n[Page {page_num_ocr + 1} OCR]: {ocr_text}"
+                                    ocr_pages += 1
+                            finally:
+                                if tmp_path:
+                                    try:
+                                        os.unlink(tmp_path)
+                                    except OSError:
+                                        pass
+                    finally:
+                        pdf_doc.close()
+                except Exception as e:
+                    logger.warning(f"Full-page OCR fallback failed for {path}: {e}")
 
         if pdf_text:
             if len(pdf_text) > 15000:
