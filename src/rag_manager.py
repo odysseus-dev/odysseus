@@ -5,7 +5,7 @@ A thin wrapper around VectorRAG for backward compatibility and additional featur
 """
 
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # Try to import from different possible locations
 try:
@@ -34,9 +34,18 @@ class RAGManager:
         """Search for documents - delegates to VectorRAG."""
         return self.vector_rag.search(query, k)
     
-    def index_personal_documents(self, directory: str) -> Dict[str, Any]:
+    def index_personal_documents(
+        self,
+        directory: str,
+        file_extensions: Optional[set] = None,
+        owner: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Index documents - delegates to VectorRAG."""
-        return self.vector_rag.index_personal_documents(directory)
+        return self.vector_rag.index_personal_documents(
+            directory,
+            file_extensions=file_extensions,
+            owner=owner,
+        )
     
     def retrieve(self, query: str, k: int = 5) -> List[str]:
         """Retrieve relevant chunks - delegates to VectorRAG."""

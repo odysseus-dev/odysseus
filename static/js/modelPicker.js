@@ -35,6 +35,11 @@ function _pushRecent(mid) {
   next.unshift(mid);
   _saveList(RECENT_KEY, next.slice(0, RECENT_MAX));
 }
+function _removeRecent(mid) {
+  if (!mid) return;
+  const next = _loadRecent().filter(x => x !== mid);
+  _saveList(RECENT_KEY, next);
+}
 function _loadFavorites() { return _loadList(FAVORITES_KEY); }
 function _toggleFavorite(mid) {
   const favs = _loadFavorites();
@@ -304,7 +309,7 @@ function _initModelPickerDropdown() {
       empty.textContent = text;
       listEl.appendChild(empty);
     }
-    function _addRow(m) {
+    function _addRow(m, onRemove) {
       const row = document.createElement('div');
       row.className = 'model-switch-item';
       if (m.stale) {
@@ -323,6 +328,9 @@ function _initModelPickerDropdown() {
       const nameSpan = document.createElement('span');
       nameSpan.className = 'mp-model-name';
       nameSpan.textContent = m.display;
+      // Long model names are clipped with ellipsis — expose the full name on
+      // hover so the suffix/variant tag is still discoverable (#1982).
+      nameSpan.title = m.display;
       row.appendChild(nameSpan);
       if (m.stale) {
         const badge = document.createElement('span');
@@ -373,6 +381,20 @@ function _initModelPickerDropdown() {
       });
       row.appendChild(favDot);
 
+      // Remove-from-recent button (shown only for Recent section items).
+      if (onRemove) {
+        const rmBtn = document.createElement('button');
+        rmBtn.type = 'button';
+        rmBtn.className = 'mp-remove-dot';
+        rmBtn.textContent = '×';
+        rmBtn.title = 'Remove from recent';
+        rmBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          onRemove();
+        });
+        row.appendChild(rmBtn);
+      }
+
       row.addEventListener('click', () => _pick(m));
       listEl.appendChild(row);
     }
@@ -389,8 +411,7 @@ function _initModelPickerDropdown() {
       return;
     }
 
-    // ── Browse mode: Favorites (manual) + Recent (auto), with dedupe. ──
-    // Rules:
+    // ── Browse mode: sections in order: Favorites → Recent (big catalogs only) → All / Providers ──
     //   1. Never list the same model twice in the dropdown. Favorites
     //      win over Recent (if you favorited it, that's where it
     //      belongs — Recent shouldn't show it again as duplicate).
@@ -415,7 +436,13 @@ function _initModelPickerDropdown() {
         .slice(0, RECENT_MAX);
       if (recentModels.length) {
         _addSection('Recent');
-        recentModels.forEach(m => { shown.add(m.mid); _addRow(m); });
+        recentModels.forEach(m => {
+          shown.add(m.mid);
+          _addRow(m, () => {
+            _removeRecent(m.mid);
+            _populate('');
+          });
+        });
       }
     }
 
@@ -711,6 +738,9 @@ export function updateModelPicker() {
   }
 
   const displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  // The header indicator clips long names with ellipsis; show the full model
+  // identifier on hover (#1982). No tooltip on the "Select model" placeholder.
+  label.title = modelId || '';
   const logo = modelId ? providerLogo(modelId) : null;
   if (logo) {
     label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ' + displayName;

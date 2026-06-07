@@ -30,12 +30,27 @@ def test_patch_validates_target_album_ownership():
     assert "_get_or_404_album(db, req.album_id, user)" in body
 
 
+def test_upload_validates_target_album_ownership():
+    fns = _function_sources()
+    body = fns["gallery_upload"]
+    assert "album_id" in body
+    assert "_get_or_404_album(db, album_id, user)" in body
+
+
 def test_list_albums_count_and_cover_are_owner_scoped():
     fns = _function_sources()
     body = fns["list_albums"]
     # Both the per-album image count and the cover-fallback query must owner-scope
     # by GalleryImage.owner (the album list itself already filters by owner).
     assert body.count("GalleryImage.owner == user") >= 2
+
+
+def test_delete_album_cleanup_is_owner_scoped():
+    fns = _function_sources()
+    body = fns["delete_album"]
+    assert "GalleryImage.album_id == album_id" in body
+    assert "GalleryImage.owner == user" in body
+    assert 'q.update({"album_id": None}' in body
 
 
 def test_get_or_404_album_enforces_owner():

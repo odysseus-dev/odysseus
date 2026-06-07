@@ -14,16 +14,17 @@ Sub-modules:
 import logging
 from collections import namedtuple
 
+from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Constants (kept here — sub-modules import from here)
+# Constants (re-exported for backward compatibility — single source of truth
+# is src.constants; always prefer importing from there for new code)
 # ---------------------------------------------------------------------------
 MAX_AGENT_ROUNDS = 50
 SHELL_TIMEOUT = 60
 PYTHON_TIMEOUT = 30
-MAX_OUTPUT_CHARS = 10_000
-MAX_READ_CHARS = 20_000
 
 # Tool types that trigger execution
 TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file",

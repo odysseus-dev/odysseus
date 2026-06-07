@@ -12,7 +12,7 @@ from typing import Optional, Tuple, Dict
 from urllib.parse import urlparse, urlunparse
 
 from core.database import SessionLocal, ModelEndpoint
-from src.llm_core import _detect_provider, _host_match
+from src.llm_core import _detect_provider, _host_match, _ollama_api_root
 
 logger = logging.getLogger(__name__)
 
@@ -147,19 +147,6 @@ def _anthropic_api_root(base: str) -> str:
     base = (base or "").strip().rstrip("/")
     if _host_match(base, "anthropic.com") and base.endswith("/v1"):
         return base[:-3].rstrip("/")
-    return base
-
-
-def _ollama_api_root(base: str) -> str:
-    """Return the native Ollama API root, adding /api for ollama.com hosts."""
-    base = (base or "").strip().rstrip("/")
-    parsed = urlparse(base)
-    path = (parsed.path or "").rstrip("/")
-    if path.endswith("/api"):
-        return base
-    if _host_match(base, "ollama.com"):
-        root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
-        return root.rstrip("/") + "/api"
     return base
 
 
