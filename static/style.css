@@ -36624,3 +36624,10 @@ body.theme-frosted .modal {
 .analytics-heatmap-l2 { background: color-mix(in srgb, var(--accent) 35%, transparent); color: var(--fg); }
 .analytics-heatmap-l3 { background: color-mix(in srgb, var(--accent) 55%, transparent); color: var(--fg); }
 .analytics-heatmap-l4 { background: var(--accent); color: var(--bg); font-weight: 600; }
+
+.analytics-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+.analytics-table th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); color: var(--fg); opacity: 0.6; font-weight: 500; white-space: nowrap; }
+.analytics-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); color: var(--fg); white-space: nowrap; }
+.analytics-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.analytics-td-name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.analytics-td-date { opacity: 0.5; }
