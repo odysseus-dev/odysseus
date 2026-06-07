@@ -7722,7 +7722,13 @@ button.hamburger {
   border-collapse: collapse;
   margin: 0.5em 0;
   font-size: 0.9em;
-  width: auto;
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  table-layout: auto;
 }
 .msg th {
   background: color-mix(in srgb, var(--fg) 7%, transparent);
@@ -7731,10 +7737,16 @@ button.hamburger {
   padding: 6px 12px;
   border: 1px solid var(--border);
   text-align: left;
+  min-width: 9ch;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 .msg td {
   padding: 5px 12px;
   border: 1px solid var(--border);
+  min-width: 9ch;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 /* Agent UI Styling */
