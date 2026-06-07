@@ -151,12 +151,14 @@ def _anthropic_api_root(base: str) -> str:
 
 
 def _ollama_api_root(base: str) -> str:
-    """Return the native Ollama API root, adding /api for ollama.com hosts."""
+    """Return the native Ollama API root, adding /api when the path is bare."""
     base = (base or "").strip().rstrip("/")
     parsed = urlparse(base)
     path = (parsed.path or "").rstrip("/")
     if path.endswith("/api"):
         return base
+    if path == "":
+        return base + "/api"
     if _host_match(base, "ollama.com"):
         root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
         return root.rstrip("/") + "/api"

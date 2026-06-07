@@ -1,117 +1,15 @@
-"""Tests for endpoint_resolver — pure functions tested directly to avoid import pollution."""
+"""Tests for endpoint_resolver — pure functions tested directly."""
 import json
-import re
-from urllib.parse import urlparse
 
-
-# Copy the pure functions to test them without importing the full module.
-# This avoids module cache conflicts with other test files that mock dependencies.
-
-_NON_CHAT_MODEL = (
-    "text-embedding", "embedding", "tts-", "whisper", "dall-e",
-    "moderation", "rerank", "reranker", "clip", "stable-diffusion",
+from src.endpoint_resolver import (
+    _first_chat_model,
+    _endpoint_hidden_models,
+    _endpoint_enabled_models,
+    normalize_base,
+    build_chat_url,
+    build_models_url,
+    build_headers,
 )
-
-
-def _first_chat_model(models):
-    for m in (models or []):
-        if not any(p in str(m).lower() for p in _NON_CHAT_MODEL):
-            return m
-    return (models[0] if models else None)
-
-
-def _endpoint_cached_models(ep) -> list:
-    raw = getattr(ep, "cached_models", None) or getattr(ep, "models", None)
-    if not raw:
-        return []
-    try:
-        models = json.loads(raw) if isinstance(raw, str) else raw
-    except Exception:
-        return []
-    return models if isinstance(models, list) else []
-
-
-def _endpoint_hidden_models(ep) -> set:
-    raw = getattr(ep, "hidden_models", None)
-    if not raw:
-        return set()
-    try:
-        hidden = json.loads(raw) if isinstance(raw, str) else raw
-    except Exception:
-        return set()
-    return set(hidden) if isinstance(hidden, list) else set()
-
-
-def _endpoint_enabled_models(ep) -> list:
-    hidden = _endpoint_hidden_models(ep)
-    return [m for m in _endpoint_cached_models(ep) if m not in hidden]
-
-def normalize_base(url: str) -> str:
-    url = (url or "").strip().rstrip("/")
-    for suffix in ["/models", "/chat/completions", "/completions", "/v1/messages"]:
-        if url.endswith(suffix):
-            url = url[: -len(suffix)].rstrip("/")
-    for suffix in ["/chat", "/tags", "/generate"]:
-        if url.endswith("/api" + suffix):
-            url = url[: -len(suffix)].rstrip("/")
-    return url
-
-
-def _detect_provider(url: str) -> str:
-    parsed = urlparse(url or "")
-    host = parsed.hostname or ""
-    path = (parsed.path or "").rstrip("/")
-    if host.endswith("ollama.com"):
-        return "ollama"
-    if path.startswith("/v1"):
-        pass # OpenAI compat
-    elif (parsed.port == 11434 or host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}) and (path == "" or path == "/api" or path.startswith("/api/")):
-        return "ollama"
-    if "anthropic.com" in (url or ""):
-        return "anthropic"
-    return "openai"
-
-
-def _ollama_api_root(base: str) -> str:
-    base = (base or "").strip().rstrip("/")
-    parsed = urlparse(base)
-    host = parsed.hostname or ""
-    path = (parsed.path or "").rstrip("/")
-    if path.endswith("/api"):
-        return base
-    if path == "":
-        return base + "/api"
-    if host.endswith("ollama.com"):
-        return f"{parsed.scheme}://{parsed.netloc}/api"
-    return base
-
-
-def build_chat_url(base: str) -> str:
-    provider = _detect_provider(base)
-    if provider == "anthropic":
-        host = urlparse(base).hostname or ""
-        if host.endswith("anthropic.com") and base.rstrip("/").endswith("/v1"):
-            base = base.rstrip("/")[:-3].rstrip("/")
-        return base + "/v1/messages"
-    if provider == "ollama":
-        return _ollama_api_root(base) + "/chat"
-    return base + "/chat/completions"
-
-
-def build_models_url(base: str) -> str:
-    provider = _detect_provider(base)
-    if provider == "ollama":
-        return _ollama_api_root(base) + "/tags"
-    return base + "/models"
-
-
-def build_headers(api_key, base: str) -> dict:
-    if not api_key:
-        return {}
-    provider = _detect_provider(base)
-    if provider == "anthropic":
-        return {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
-    return {"Authorization": f"Bearer {api_key}"}
 
 
 class TestNormalizeBase:
