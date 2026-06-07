@@ -730,8 +730,50 @@ async def get_version():
     return {"version": APP_VERSION}
 
 @app.get("/api/health")
-async def health_check() -> Dict[str, str]:
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+async def health_check() -> Dict[str, object]:
+    import httpx as _httpx
+    checks: Dict[str, object] = {}
+    overall = "healthy"
+
+    # Database connectivity
+    try:
+        from core.database import SessionLocal as _SL
+        _db = _SL()
+        try:
+            _db.execute("SELECT 1")
+            checks["database"] = {"status": "ok"}
+        finally:
+            _db.close()
+    except Exception as e:
+        checks["database"] = {"status": "error", "detail": str(e)}
+        overall = "degraded"
+
+    # ChromaDB heartbeat
+    try:
+        _chroma_host = os.getenv("CHROMADB_HOST", "chromadb")
+        _chroma_port = os.getenv("CHROMADB_PORT", "8000")
+        async with _httpx.AsyncClient(timeout=5.0) as _c:
+            _r = await _c.get(f"http://{_chroma_host}:{_chroma_port}/api/v1/heartbeat")
+            _r.raise_for_status()
+            checks["chromadb"] = {"status": "ok"}
+    except Exception as e:
+        checks["chromadb"] = {"status": "error", "detail": str(e)}
+        overall = "degraded"
+
+    # SearXNG reachability
+    try:
+        _searxng = os.getenv("SEARXNG_INSTANCE", "http://searxng:8080")
+        async with _httpx.AsyncClient(timeout=5.0) as _c:
+            _r = await _c.get(_searxng + "/", allow_redirects=False)
+            # 200 or 302 (redirect to search page) both mean alive
+            if _r.status_code not in (200, 301, 302):
+                raise Exception(f"HTTP {_r.status_code}")
+            checks["searxng"] = {"status": "ok"}
+    except Exception as e:
+        checks["searxng"] = {"status": "error", "detail": str(e)}
+        overall = "degraded"
+
+    return {"status": overall, "timestamp": datetime.utcnow().isoformat(), "checks": checks}
 
 @app.get("/api/runtime")
 async def runtime_info() -> Dict[str, object]:

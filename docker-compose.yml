@@ -40,7 +40,13 @@ services:
       searxng:
         condition: service_healthy
       chromadb:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7000/api/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
 
   chromadb:
@@ -51,6 +57,12 @@ services:
       - chromadb-data:/chroma/chroma
     environment:
       - ANONYMIZED_TELEMETRY=FALSE
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/heartbeat', timeout=5)\""]
+      interval: 10s
+      timeout: 6s
+      retries: 5
+      start_period: 15s
     restart: unless-stopped
 
   searxng:
@@ -93,6 +105,12 @@ services:
       - ntfy-cache:/var/cache/ntfy
     environment:
       - NTFY_BASE_URL=${NTFY_BASE_URL:-http://localhost:8091}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
 volumes:
