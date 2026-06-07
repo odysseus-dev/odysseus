@@ -10,9 +10,17 @@ from .cache import cache_metrics
 
 logger = logging.getLogger(__name__)
 
-# Dedicated error logger with file handler
-_error_log_path = Path(__file__).resolve().parent.parent / "search_engine_error.log"
-_error_handler = logging.FileHandler(_error_log_path, encoding="utf-8")
+# Dedicated error logger — write to the mounted writable volume in Docker
+# (/app/logs is bind-mounted in docker-compose); fall back to NullHandler so a
+# missing or read-only path never crashes startup.
+_log_dir = Path("/app/logs")
+try:
+    _log_dir.mkdir(parents=True, exist_ok=True)
+    _error_handler: logging.Handler = logging.FileHandler(
+        _log_dir / "search_engine_error.log", encoding="utf-8"
+    )
+except OSError:
+    _error_handler = logging.NullHandler()
 _error_handler.setLevel(logging.WARNING)
 _error_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
 error_logger = logging.getLogger("search_engine_error")
