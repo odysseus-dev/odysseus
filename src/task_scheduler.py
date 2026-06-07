@@ -1776,12 +1776,13 @@ class TaskScheduler:
         try:
             RESEARCH_DATA_DIR.mkdir(parents=True, exist_ok=True)
             findings = getattr(researcher, "findings", []) or []
+            visited = getattr(researcher, "visited_urls", [])
             payload = {
                 "query": task.prompt or task.name or "Scheduled research",
                 "status": "done",
                 "result": report,
                 "raw_report": strip_thinking(report or ""),
-                "sources": ResearchHandler._extract_sources(findings),
+                "sources": ResearchHandler._extract_sources(findings, visited),
                 "raw_findings": ResearchHandler._extract_raw_findings(findings),
                 "stats": stats,
                 "category": "scheduled",
