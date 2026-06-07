@@ -219,6 +219,110 @@ class AuthManager:
         logger.info(f"Created user '{username}' (admin={is_admin})")
         return True
 
+    def get_user_by_oidc(self, sub: str, issuer: str) -> Optional[str]:
+        """Find a username by OIDC (sub, issuer) pair. Returns None if no match."""
+        for username, data in self.users.items():
+            if data.get("oidc_sub") == sub and data.get("oidc_issuer") == issuer:
+                return username
+        return None
+
+    def create_user_oidc(self, username: str, sub: str, issuer: str, email: str = "",
+                         is_admin: bool = False) -> Optional[str]:
+        """Create a passwordless user linked to an OIDC identity.
+
+        Returns the final username (may differ from *username* if a local
+        password user already owns that name), or ``None`` when creation
+        fails (e.g. all candidate usernames collide with different OIDC
+        identities).
+
+        OIDC users have no password hash — they can only authenticate
+        through the OIDC flow. An existing OIDC user with the same
+        (sub, issuer) is returned as-is (idempotent).
+        """
+        username = username.strip().lower()
+        if not username:
+            return None
+        if username in RESERVED_USERNAMES:
+            logger.warning("Refused OIDC user with reserved username '%s'", username)
+            return None
+
+        # Idempotent: same identity already exists
+        existing = self.get_user_by_oidc(sub, issuer)
+        if existing is not None:
+            return existing
+
+        # If the requested username is taken by a *different* identity
+        # (another OIDC user or a local password user), find a free slot
+        # by appending a numeric suffix.
+        base = username
+        candidate = username
+        suffix = 1
+        while candidate in self.users:
+            suffix += 1
+            candidate = f"{base}{suffix}"
+            if suffix > 100:  # safety valve
+                logger.error("OIDC username collision loop for '%s'", username)
+                return None
+
+        with self._config_lock:
+            # Double-check no race; if someone grabbed base while we were
+            # computing a suffix, re-find the next free name once.
+            if candidate in self.users:
+                suffix = 1
+                while candidate in self.users:
+                    suffix += 1
+                    candidate = f"{base}{suffix}"
+                    if suffix > 100:
+                        return None
+            if "users" not in self._config:
+                self._config["users"] = {}
+            self._config["users"][candidate] = {
+                "password_hash": None,
+                "created": time.time(),
+                "is_admin": is_admin,
+                "privileges": dict(ADMIN_PRIVILEGES if is_admin else DEFAULT_PRIVILEGES),
+                "oidc_sub": sub,
+                "oidc_issuer": issuer,
+                "oidc_email": email,
+            }
+            self._save()
+        logger.info(
+            "Created OIDC user '%s' (sub=%s issuer=%s admin=%s)",
+            candidate, sub, issuer, is_admin,
+        )
+        return candidate
+
+    def is_oidc_user(self, username: str) -> bool:
+        """Return True when *username* was created via OIDC (has no password)."""
+        user = self.users.get(username.strip().lower(), {})
+        return bool(user.get("oidc_sub"))
+
+    def set_oidc_user_admin(self, username: str, is_admin: bool) -> bool:
+        """Set (or clear) admin status for an OIDC user.
+
+        Called on every OIDC login so admin follows the IdP's group
+        membership.  Returns ``False`` if the user doesn't exist or is
+        not an OIDC user (password-account admins must be managed manually).
+        """
+        username = username.strip().lower()
+        user = self.users.get(username, {})
+        if not user.get("oidc_sub"):
+            return False  # not an OIDC user — don't touch
+        if user.get("is_admin") == is_admin:
+            return True   # no change needed
+        with self._config_lock:
+            self._config["users"][username]["is_admin"] = is_admin
+            if is_admin:
+                self._config["users"][username]["privileges"] = dict(ADMIN_PRIVILEGES)
+            else:
+                self._config["users"][username]["privileges"] = dict(DEFAULT_PRIVILEGES)
+            self._save()
+        logger.info(
+            "OIDC user '%s' admin=%s (synced from IdP group membership)",
+            username, is_admin,
+        )
+        return True
+
     def delete_user(self, username: str, requesting_user: str) -> bool:
         """Delete a user. Only admins can delete, and can't delete themselves.
 
@@ -303,10 +407,19 @@ class AuthManager:
         return self.users.get(username, {}).get("is_admin", False)
 
     def list_users(self) -> List[Dict[str, Any]]:
-        return [
-            {"username": u, "is_admin": d.get("is_admin", False), "privileges": self.get_privileges(u)}
-            for u, d in self.users.items()
-        ]
+        result = []
+        for u, d in self.users.items():
+            entry = {
+                "username": u,
+                "is_admin": d.get("is_admin", False),
+                "privileges": self.get_privileges(u),
+            }
+            if d.get("oidc_sub"):
+                entry["oidc"] = True
+                entry["oidc_issuer"] = d.get("oidc_issuer", "")
+                entry["oidc_email"] = d.get("oidc_email", "")
+            result.append(entry)
+        return result
 
     def get_privileges(self, username: str) -> Dict[str, Any]:
         """Get privileges for a user. Admins get all privileges."""
@@ -339,7 +452,10 @@ class AuthManager:
         username = username.strip().lower()
         if username not in self.users:
             return False
-        if not _verify_password(current_password, self.users[username]["password_hash"]):
+        pw_hash = self.users[username].get("password_hash")
+        if pw_hash is None:
+            return False  # OIDC-only user — password changes must go through the IdP
+        if not _verify_password(current_password, pw_hash):
             return False
         with self._config_lock:
             self._config["users"][username]["password_hash"] = _hash_password(new_password)
@@ -439,7 +555,10 @@ class AuthManager:
         username = username.strip().lower()
         if username not in self.users:
             return False
-        return _verify_password(password, self.users[username]["password_hash"])
+        pw_hash = self.users[username].get("password_hash")
+        if pw_hash is None:
+            return False  # OIDC-only user — no password set
+        return _verify_password(password, pw_hash)
 
     def create_session(self, username: str, password: str) -> Optional[str]:
         """Verify credentials and return a session token, or None."""

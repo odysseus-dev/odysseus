@@ -2009,6 +2009,13 @@ function initAccount() {
         const initial = (d.username || '?')[0].toUpperCase();
         avatarEl.textContent = initial;
       }
+      // OIDC users don't have a password — hide password change and 2FA.
+      if (d.is_oidc) {
+        const pwCard = document.getElementById('settings-pw-card');
+        const tfaCard = document.getElementById('settings-2fa-card');
+        if (pwCard) pwCard.style.display = 'none';
+        if (tfaCard) tfaCard.style.display = 'none';
+      }
     }).catch(() => {});
 
   // Change password
