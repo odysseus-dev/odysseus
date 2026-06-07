@@ -1828,6 +1828,22 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
         text = re.sub(r"^\s*reminder\s*:\s*", "", text)
         return re.sub(r"\s+", " ", text)
 
+    def _note_visible_to_owner(note, owner_value: Optional[str]) -> bool:
+        # Empty owner_value is single-user / auth-disabled mode. A real
+        # authenticated owner must match exactly; null/empty legacy rows are not
+        # shared between accounts.
+        if not owner_value:
+            return True
+        return getattr(note, "owner", None) == owner_value
+
+    def _note_by_prefix(note_id: str):
+        if not note_id:
+            return None
+        q = db.query(Note).filter(Note.id.startswith(note_id))
+        if owner:
+            q = q.filter(Note.owner == owner)
+        return q.first()
+
     try:
         if action == "list":
             q = db.query(Note)
@@ -1947,10 +1963,10 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
 
         elif action == "update":
             note_id = args.get("id", "")
-            note = db.query(Note).filter(Note.id.startswith(note_id)).first() if note_id else None
+            note = _note_by_prefix(note_id)
             if not note:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
-            if owner is not None and note.owner and note.owner != owner:
+            if not _note_visible_to_owner(note, owner):
                 return {"error": "Note not found", "exit_code": 1}
             for field in ("title", "content", "note_type", "color", "label"):
                 if field in args and args[field] is not None:
@@ -1983,10 +1999,10 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
 
         elif action == "delete":
             note_id = args.get("id", "")
-            note = db.query(Note).filter(Note.id.startswith(note_id)).first() if note_id else None
+            note = _note_by_prefix(note_id)
             if not note:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
-            if owner is not None and note.owner and note.owner != owner:
+            if not _note_visible_to_owner(note, owner):
                 return {"error": "Note not found", "exit_code": 1}
             title = note.title
             db.delete(note)
@@ -1996,10 +2012,10 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
         elif action == "toggle_item":
             note_id = args.get("id", "")
             index = args.get("index", 0)
-            note = db.query(Note).filter(Note.id.startswith(note_id)).first() if note_id else None
+            note = _note_by_prefix(note_id)
             if not note:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
-            if owner is not None and note.owner and note.owner != owner:
+            if not _note_visible_to_owner(note, owner):
                 return {"error": "Note not found", "exit_code": 1}
             if not note.items:
                 return {"error": "Note has no checklist items", "exit_code": 1}

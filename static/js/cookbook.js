@@ -162,13 +162,27 @@ function _getPort(hostOrTask) {
 /** Get platform for a given host (or task object). Returns 'windows', 'termux', 'linux', or '' */
 export function _getPlatform(hostOrTask) {
   const isWinBrowser = (window.navigator.userAgent || window.navigator.platform || '').toLowerCase().includes('win');
+  // The browser's OS is NOT the server's OS when the UI is opened remotely —
+  // e.g. a Windows browser driving a Mac/Linux homeserver. Trusting the
+  // user-agent there makes the serve builder emit the Windows python-only
+  // shape (`python -m llama_cpp.server`, no `llama-server ||` fallback), which
+  // then fails on the actual Unix server. The local hardware probe is
+  // authoritative: it reports a backend (metal/cuda/rocm/cpu_*) for any Unix
+  // server and carries platform:"windows" for local Windows (which sets
+  // _envState.platform, short-circuiting below). So only fall back to the
+  // browser hint when we have no server-side signal at all.
+  const localPlatform = () => {
+    if (_envState.platform) return _envState.platform;
+    if (String(_hwfitCache?.system?.backend || '')) return '';
+    return isWinBrowser ? 'windows' : '';
+  };
   if (!hostOrTask || hostOrTask === 'local') {
-    return _envState.platform || (isWinBrowser ? 'windows' : '');
+    return localPlatform();
   }
   if (typeof hostOrTask === 'object') {
     const h = hostOrTask.remoteHost;
     if (!h || h === 'local') {
-      return hostOrTask.platform || _envState.platform || (isWinBrowser ? 'windows' : '');
+      return hostOrTask.platform || localPlatform();
     }
     return hostOrTask.platform || _getPlatform(h);
   }
