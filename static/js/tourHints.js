@@ -114,14 +114,24 @@ function _show(modal) {
     pop.classList.add('tour-hint-in');
   });
 
-  const dismiss = () => {
+  const _escHandler = (e) => {
+    if (e.key === 'Escape' && pop.isConnected) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      _dismiss();
+    }
+  };
+  document.addEventListener('keydown', _escHandler, true);
+
+  const _dismiss = () => {
+    document.removeEventListener('keydown', _escHandler, true);
     pop.classList.add('tour-hint-out');
     setTimeout(() => pop.remove(), 280);
     _markSeen();
   };
-  pop.querySelector('.tour-hint-dismiss').addEventListener('click', dismiss);
+  pop.querySelector('.tour-hint-dismiss').addEventListener('click', _dismiss);
   // Auto-dismiss after 14s so it doesn't linger forever.
-  setTimeout(() => { if (pop.isConnected) dismiss(); }, 14000);
+  setTimeout(() => { if (pop.isConnected) _dismiss(); }, 14000);
 }
 
 function _watchModals() {

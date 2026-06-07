@@ -78,10 +78,15 @@ async function _runCheckInNow(taskId) {
 
 // ── Settings modal ─────────────────────────────────────────────────────────
 
+function _isModalHidden(modal) {
+  return !modal || modal.classList.contains('hidden') || modal.style.display === 'none';
+}
+
 function _closeModal() {
   if (_modalEl) {
     _modalEl.classList.add('hidden');
     _modalEl.style.display = '';
+    if (_modalEl._escCleanup) _modalEl._escCleanup();
   }
 }
 
@@ -108,6 +113,14 @@ function _ensureModalEl() {
   modal.addEventListener('click', (e) => {
     if (e.target === modal) _closeModal();
   });
+  const _escHandler = (e) => {
+    if (e.key === 'Escape' && !_isModalHidden(modal)) {
+      e.preventDefault();
+      _closeModal();
+    }
+  };
+  document.addEventListener('keydown', _escHandler);
+  modal._escCleanup = () => document.removeEventListener('keydown', _escHandler);
   _modalEl = modal;
   return modal;
 }

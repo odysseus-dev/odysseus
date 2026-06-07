@@ -268,6 +268,19 @@ export function getIsRecording() {
 export function init() {
   isRecording = false;
   refreshSttProvider();
+  _installEscHandler();
+}
+
+let _escHandlerInstalled = false;
+function _installEscHandler() {
+  if (_escHandlerInstalled) return;
+  _escHandlerInstalled = true;
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && isRecording) {
+      e.preventDefault();
+      stopRecording();
+    }
+  });
 }
 
 const voiceRecorderModule = {
