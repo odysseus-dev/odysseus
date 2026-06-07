@@ -215,6 +215,16 @@ def _rewrite_loopback_for_docker(base_url: str, *, container_local: bool = False
 # ── Curated model lists per provider ──
 # For cloud providers that return 100+ models, only show these by default.
 # A model ID matches if it starts with or equals a curated entry.
+_FIREPASS_MODEL = "accounts/fireworks/routers/kimi-k2p6-turbo"
+
+
+def _is_firepass_setup(base_url: str, name: str = "", api_key: str = "") -> bool:
+    if not _host_match(base_url, "fireworks.ai"):
+        return False
+    label = re.sub(r"[\s_-]+", "", (name or "").lower())
+    return "firepass" in label or (api_key or "").strip().startswith("fpk_")
+
+
 _PROVIDER_CURATED = {
     "openai": [
         "gpt-5.2", "gpt-5.2-pro", "gpt-5", "gpt-5-pro", "gpt-5-mini", "gpt-5-nano",
@@ -254,7 +264,7 @@ _PROVIDER_CURATED = {
         "Qwen/Qwen2.5-72B-Instruct-Turbo",
     ],
     "fireworks": [
-        "accounts/fireworks/routers/kimi-k2p6-turbo",
+        _FIREPASS_MODEL,
         "accounts/fireworks/models/llama4-scout-instruct-basic",
         "accounts/fireworks/models/llama4-maverick-instruct-basic",
         "accounts/fireworks/models/deepseek-r1",
@@ -1469,10 +1479,14 @@ def setup_model_routes(model_discovery):
         refresh_interval = _parse_positive_int(model_refresh_interval, minimum=30, maximum=86400)
         refresh_timeout = _parse_positive_int(model_refresh_timeout, minimum=1, maximum=60)
         require_model_list = _truthy(require_models)
+        _incoming_api_key = api_key.strip()
+        firepass_setup = _is_firepass_setup(base_url, name, _incoming_api_key)
         _pinned = _normalize_model_ids(pinned_models)
+        if firepass_setup:
+            _pinned = _merge_model_ids(_pinned, [_FIREPASS_MODEL])
         should_probe = (
             require_model_list or requested_kind in ("api", "proxy") or not _truthy(skip_probe)
-        )
+        ) and not firepass_setup
         explicit_timeout = _explicit_model_list_timeout(base_url, requested_kind, refresh_timeout)
 
         # Dedupe: if an endpoint with the same base_url and compatible
@@ -1482,7 +1496,6 @@ def setup_model_routes(model_discovery):
         # provider URL under multiple credentials.
         from src.auth_helpers import get_current_user as _gcu_dedup
         _caller = _gcu_dedup(request) or None
-        _incoming_api_key = api_key.strip()
         _db_dedup = SessionLocal()
         try:
             _same_url_rows = (
