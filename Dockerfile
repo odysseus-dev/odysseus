@@ -29,6 +29,12 @@ COPY requirements.txt requirements-optional.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && if [ "$INSTALL_OPTIONAL" = "true" ]; then pip install --no-cache-dir -r requirements-optional.txt; fi
 
+# PyMuPDF is AGPL-3.0, so it stays in requirements-optional.txt for native
+# installs. We install it here so the bundled image can render PDF pages
+# (document viewer) and OCR scanned PDFs through the configured VL model.
+# Native users opt in via `pip install -r requirements-optional.txt`.
+RUN pip install --no-cache-dir PyMuPDF
+
 # Copy app code
 COPY . .
 

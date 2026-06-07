@@ -424,6 +424,10 @@ docs/      landing page (index.html) + preview clips
 All user data lives in `data/` (gitignored): `app.db` (sessions, messages, documents),
 `memory.json`, `presets.json`, `uploads/`, `personal_docs/`, `chroma/`, `settings.json`.
 
+## Troubleshooting
+
+- **Uploaded PDF shows "processed but no readable content found"** in chat, or the document viewer says **"PDF viewer requires PyMuPDF"**: see [docs/pdf-vl-fallback.md](docs/pdf-vl-fallback.md) for the diagnosis and the install/fix path.
+
 ## Star History
 
 <a href="https://www.star-history.com/?repos=pewdiepie-archdaemon%2Fodysseus&type=date&legend=top-left">
