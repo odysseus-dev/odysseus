@@ -71,7 +71,6 @@ let _escHandler = null;
 let _modal = null;
 
 let _dragUid = null;
-let _sidebarWasOpen = false;
 let _slideDir = 0;  // -1 = prev, +1 = next, 0 = none
 
 // (Single undo stack lives at `_calUndoStack` further below; this used to
@@ -543,28 +542,6 @@ async function _createEventReminder(ev, dueDate) {
     }
   } catch (e) {
     if (uiModule.showError) uiModule.showError('Failed to create reminder');
-  }
-}
-
-// ── Sidebar collapse ──
-
-function _collapseSidebar() {
-  const sb = document.getElementById('sidebar');
-  if (sb && !sb.classList.contains('hidden')) {
-    // Only remember the prior state on desktop. On mobile the sidebar is an
-    // overlay that the user intentionally swipes/taps away when the tool
-    // opens — popping it back on close is unwanted.
-    if (window.innerWidth >= 700) _sidebarWasOpen = true;
-    sb.classList.add('hidden');
-    if (window.syncRailSide) window.syncRailSide();
-  }
-}
-
-function _restoreSidebar() {
-  if (_sidebarWasOpen) {
-    const sb = document.getElementById('sidebar');
-    if (sb) { sb.classList.remove('hidden'); if (window.syncRailSide) window.syncRailSide(); }
-    _sidebarWasOpen = false;
   }
 }
 
@@ -3271,7 +3248,6 @@ function openCalendar() {
   }
   _open = true;
   if (_todayCount() > 0) { _markBadgeSeen(); _updateBadge(); }
-  _collapseSidebar();
   const modal = _getModal();
   // Clean up any leftover state from a previous swipe-dismiss
   modal.classList.remove('hidden', 'modal-minimized');
@@ -3353,7 +3329,6 @@ let _highlightEventUid = null;
 
 function _doCloseCalendar() {
   _open = false;
-  _restoreSidebar();
   if (_modal) {
     _modal.style.display = 'none';
     _modal.classList.add('hidden');
