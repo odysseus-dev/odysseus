@@ -1458,7 +1458,11 @@ class CalendarCal(TimestampMixin, Base):
     owner = Column(String, nullable=True, index=True)
     name  = Column(String, nullable=False)
     color = Column(String, default="#5b8abf")
-    source = Column(String, default="local")  # "local" or "timetree"
+    source = Column(String, default="local")  # "local" or "caldav"
+    # UUID of the CalDAV account in user prefs that owns this calendar.
+    # NULL for local calendars and for CalDAV calendars created before
+    # multi-account support was added (treated as "use any configured account").
+    account_id = Column(String, nullable=True, index=True)
 
     events = relationship("CalendarEvent", back_populates="calendar", cascade="all, delete-orphan")
 
@@ -1622,9 +1626,78 @@ def init_db():
     _migrate_add_calendar_metadata()
     _migrate_add_calendar_is_utc()
     _migrate_add_calendar_origin()
+    _migrate_add_calendar_account_id()
+    _migrate_chat_messages_fts()
     _migrate_encrypt_email_passwords()
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
+
+
+def _migrate_chat_messages_fts():
+    """Create and backfill the session transcript FTS index for SQLite."""
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if db_path == ":memory:":
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS temp._odysseus_fts5_probe USING fts5(content)")
+            conn.execute("DROP TABLE IF EXISTS temp._odysseus_fts5_probe")
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"chat_messages FTS migration skipped; FTS5 unavailable: {e}")
+            return
+
+        conn.executescript(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS chat_messages_fts USING fts5(
+                content,
+                message_id UNINDEXED,
+                session_id UNINDEXED,
+                role UNINDEXED
+            );
+
+            CREATE TRIGGER IF NOT EXISTS chat_messages_fts_ai
+            AFTER INSERT ON chat_messages BEGIN
+                INSERT INTO chat_messages_fts(content, message_id, session_id, role)
+                VALUES (COALESCE(new.content, ''), new.id, new.session_id, new.role);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS chat_messages_fts_ad
+            AFTER DELETE ON chat_messages BEGIN
+                DELETE FROM chat_messages_fts WHERE message_id = old.id;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS chat_messages_fts_au
+            AFTER UPDATE ON chat_messages BEGIN
+                DELETE FROM chat_messages_fts WHERE message_id = old.id;
+                INSERT INTO chat_messages_fts(content, message_id, session_id, role)
+                VALUES (COALESCE(new.content, ''), new.id, new.session_id, new.role);
+            END;
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO chat_messages_fts(content, message_id, session_id, role)
+            SELECT COALESCE(cm.content, ''), cm.id, cm.session_id, cm.role
+            FROM chat_messages cm
+            WHERE NOT EXISTS (
+                SELECT 1 FROM chat_messages_fts fts
+                WHERE fts.message_id = cm.id
+            )
+            """
+        )
+        conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"chat_messages FTS migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def _migrate_add_email_smtp_security():
@@ -1784,6 +1857,27 @@ def _migrate_add_calendar_origin():
         conn.close()
     except Exception as e:
         logging.getLogger(__name__).warning(f"calendar_events.origin migration failed: {e}")
+
+
+def _migrate_add_calendar_account_id():
+    """Add `account_id` to calendars so each CalDAV-backed calendar knows which
+    credential set (from caldav_accounts in user prefs) owns it. Idempotent."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(calendars)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "account_id" not in columns:
+            conn.execute("ALTER TABLE calendars ADD COLUMN account_id TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS ix_calendars_account_id ON calendars(account_id)")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'account_id' column to calendars")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"calendars.account_id migration failed: {e}")
 
 
 def _migrate_add_calendar_metadata():

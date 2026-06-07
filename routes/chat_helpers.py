@@ -75,7 +75,7 @@ def _enforce_chat_privileges(request, sess) -> None:
     allowlist, or HTTPException(429) if the user has hit their daily message
     cap. No-op for unauthenticated callers or when auth_manager is absent
     (single-user mode). Admins receive ADMIN_PRIVILEGES from get_privileges,
-    which means empty allowed_models / zero cap → no-op for them.
+    which means unrestricted allowed_models / zero cap -> no-op for them.
     """
     try:
         user = get_current_user(request)
@@ -88,8 +88,10 @@ def _enforce_chat_privileges(request, sess) -> None:
         return
 
     privs = auth_manager.get_privileges(user) or {}
-    allowed = privs.get("allowed_models") or []
-    if allowed and sess.model and sess.model not in allowed:
+    allowed_raw = privs.get("allowed_models")
+    allowed = allowed_raw if isinstance(allowed_raw, list) else []
+    restricted = bool(privs.get("allowed_models_restricted")) or bool(allowed)
+    if restricted and sess.model and sess.model not in allowed:
         raise HTTPException(403, f"Your account is not allowed to use model '{sess.model}'.")
 
     cap = int(privs.get("max_messages_per_day") or 0)
@@ -275,11 +277,16 @@ def extract_preset(chat_handler, preset_id) -> PresetInfo:
 async def preprocess(
     chat_handler, message, att_ids, sess,
     auto_opened_docs: Optional[list] = None,
+    allow_tool_preprocessing: bool = True,
 ) -> PreprocessedMessage:
     """Run chat_handler.preprocess_message and wrap the result."""
     enhanced, user_content, text_ctx, yt_transcripts, att_meta = (
         await chat_handler.preprocess_message(
-            message, att_ids, sess, auto_opened_docs=auto_opened_docs
+            message,
+            att_ids,
+            sess,
+            auto_opened_docs=auto_opened_docs,
+            allow_tool_preprocessing=allow_tool_preprocessing,
         )
     )
     return PreprocessedMessage(
@@ -448,6 +455,7 @@ async def build_chat_context(
     webhook_manager=None,
     use_enhanced_message: bool = False,
     agent_mode: bool = False,
+    allow_tool_preprocessing: bool = True,
 ) -> ChatContext:
     """Build the full context (preface + messages) for an LLM call.
 
@@ -465,6 +473,7 @@ async def build_chat_context(
     preprocessed = await preprocess(
         chat_handler, message, att_ids or [], sess,
         auto_opened_docs=auto_opened_docs,
+        allow_tool_preprocessing=allow_tool_preprocessing,
     )
 
     # Add user message to history
@@ -483,6 +492,9 @@ async def build_chat_context(
     # Skills injection respects its own enable toggle (mirrors memory_enabled).
     # When off, the "Available skills" index is not added to the prompt.
     skills_enabled = not incognito and uprefs.get("skills_enabled", True)
+    if not allow_tool_preprocessing:
+        mem_enabled = False
+        skills_enabled = False
     logger.debug(
         "Memory enabled=%s for user=%s (incognito=%s, no_memory=%s, pref=%s)",
         mem_enabled, user, incognito, no_memory, uprefs.get("memory_enabled", "NOT_SET"),
@@ -490,11 +502,11 @@ async def build_chat_context(
 
     # Use RAG?
     use_rag_val = (str(use_rag).lower() != "false") if use_rag is not None else True
-    if incognito:
+    if incognito or not allow_tool_preprocessing:
         use_rag_val = False
 
     # If pre-fetched search context was provided (compare mode), skip live web search
-    skip_web = bool(search_context)
+    skip_web = bool(search_context) or not allow_tool_preprocessing
 
     # Build context preface
     # The stream path uses enhanced_message (with CoT/preprocessing applied),
@@ -521,7 +533,7 @@ async def build_chat_context(
     used_memories = getattr(chat_processor, '_last_used_memories', [])
 
     # Inject pre-fetched search context (compare mode)
-    if search_context:
+    if search_context and allow_tool_preprocessing:
         preface.append(untrusted_context_message("prefetched search context", search_context))
 
     # YouTube transcripts
@@ -772,7 +784,19 @@ def save_assistant_response(
 ):
     """Add assistant response to session history. In incognito mode, keeps in-memory context but skips DB persistence."""
     md = dict(last_metrics) if last_metrics else {}
-    md["model"] = sess.model
+    def _model_value(value) -> str:
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            value = str(value)
+        return value.strip()
+
+    requested_model = _model_value(md.get("requested_model") or md.get("selected_model") or getattr(sess, "model", ""))
+    actual_model = _model_value(md.get("model") or md.get("actual_model") or requested_model)
+    if requested_model:
+        md["requested_model"] = requested_model
+    if actual_model:
+        md["model"] = actual_model
     if character_name:
         md["character_name"] = character_name
     if web_sources:
@@ -841,12 +865,13 @@ def run_post_response_tasks(
     skills_manager=None,
     owner: str = None,
     extract_skills: bool = True,
+    allow_background_extraction: bool = True,
 ):
     """Fire background tasks after a completed response: memory extraction, webhooks, auto-name, skill extraction."""
     # Memory extraction — only every 4th message pair to avoid excess LLM calls
     _msg_count = len(sess.history) if hasattr(sess, 'history') else 0
     _should_extract = (_msg_count >= 4) and (_msg_count % 4 == 0)
-    if not incognito and not compare_mode and _should_extract and uprefs.get("auto_memory", True):
+    if allow_background_extraction and not incognito and not compare_mode and _should_extract and uprefs.get("auto_memory", True):
         from services.memory.memory_extractor import extract_and_store
         from src.task_endpoint import resolve_task_endpoint
         t_url, t_model, t_headers = resolve_task_endpoint(
@@ -873,6 +898,7 @@ def run_post_response_tasks(
     )
     if (
         extract_skills
+        and allow_background_extraction
         and auto_skills_enabled
         and not incognito
         and not compare_mode

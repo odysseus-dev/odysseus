@@ -16,7 +16,8 @@ from typing import Callable, Dict, List, Optional, Set
 
 from src.research_utils import strip_thinking, is_low_quality
 
-from src.goal_based_extractor import EXTRACTOR_PROMPT
+from src.goal_based_extractor import EXTRACTOR_SYSTEM
+from src.prompt_security import untrusted_context_message
 
 logger = logging.getLogger(__name__)
 
@@ -107,13 +108,16 @@ You are deciding whether a research report is comprehensive enough.
 **Current report:**
 {report}
 
-**Rounds completed:** {round_num}
+**Rounds completed:** {round_num} of {max_rounds}
 
 Based on the report so far, do we have enough information to answer the question \
 comprehensively?  Consider:
 - Are the key aspects of the question addressed?
 - Are there obvious gaps or unanswered sub-questions?
 - Is the evidence sufficient and from multiple sources?
+
+If rounds completed is well below the target, prefer continuing unless the \
+report is already exhaustive.
 
 Reply with ONLY "YES" or "NO" followed by a brief one-sentence reason.
 Example: "YES — The report covers all major aspects with evidence from multiple sources."
@@ -622,11 +626,12 @@ class DeepResearcher:
             else:
                 content = truncated
 
-        prompt = EXTRACTOR_PROMPT.format(webpage_content=content, goal=question)
-
         try:
             response = await self._llm(
-                [{"role": "user", "content": prompt}],
+                [
+                    {"role": "user", "content": EXTRACTOR_SYSTEM.format(goal=question)},
+                    untrusted_context_message("webpage", content),
+                ],
                 temperature=0.2,
                 max_tokens=2048,
                 timeout=self.extraction_timeout,
@@ -698,6 +703,7 @@ class DeepResearcher:
             question=question,
             report=report,
             round_num=round_num,
+            max_rounds=self.max_rounds,
         )
 
         try:

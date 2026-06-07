@@ -12,8 +12,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-MAX_OUTPUT_CHARS = 10_000
-MAX_READ_CHARS = 20_000
+from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS
 
 
 def get_mcp_manager():
@@ -549,7 +548,7 @@ async def do_suggest_document(content: str, doc_id: str = None, owner: Optional[
 # ---------------------------------------------------------------------------
 
 async def do_search_chats(query: str, limit: int = 20, owner: str | None = None) -> Dict:
-    """Search past chat messages for the calling user's sessions only.
+    """Search past session transcripts for the calling user's sessions only.
 
     Without an owner filter this used to leak EVERY user's chat history
     into the agent's `search_chats` results (v2 review HIGH-11). The
@@ -557,63 +556,36 @@ async def do_search_chats(query: str, limit: int = 20, owner: str | None = None)
     through; legacy callers without owner pass through as before but
     will only see legacy/null-owner rows.
     """
-    from src.database import SessionLocal, ChatMessage as DBChatMessage, Session as DBSession
-    # Escape LIKE wildcards in the user-supplied query so a stray % or _
-    # doesn't widen the match (and to keep the response deterministic).
-    safe_q = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    db = SessionLocal()
     try:
-        q = (
-            db.query(DBChatMessage, DBSession.id, DBSession.name)
-            .join(DBSession, DBChatMessage.session_id == DBSession.id)
-            .filter(
-                DBSession.archived == False,
-                DBChatMessage.content.ilike(f"%{safe_q}%", escape="\\"),
-                DBChatMessage.role.in_(["user", "assistant"]),
-            )
-        )
-        if owner is not None:
-            # Restrict to this user's sessions plus legacy null-owner
-            # rows (so single-user upgrades keep seeing their own data).
-            q = q.filter((DBSession.owner == owner) | (DBSession.owner.is_(None)))
-        rows = q.order_by(DBChatMessage.timestamp.desc()).limit(limit).all()
+        from src.session_search import search_session_messages
 
-        if not rows:
+        results = search_session_messages(query, limit=limit, owner=owner)
+        if not results:
             return {"results": f"No chats found matching \"{query}\"."}
 
         # Group by session to avoid duplicate links
         seen_sessions = {}
-        for msg, session_id, session_name in rows:
-            if session_id not in seen_sessions:
-                content = msg.content or ""
-                lower_content = content.lower()
-                idx = lower_content.find(query.lower())
-                if idx == -1:
-                    snippet = content[:150]
-                else:
-                    start = max(0, idx - 60)
-                    end = min(len(content), idx + len(query) + 60)
-                    snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
-                seen_sessions[session_id] = {
-                    "name": session_name or "Untitled",
-                    "snippet": snippet,
-                    "role": msg.role,
-                    "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
-                }
+        for result in results:
+            if result.session_id not in seen_sessions:
+                seen_sessions[result.session_id] = result
 
         lines = [f"Found {len(seen_sessions)} session(s) matching \"{query}\":\n"]
-        for sid, info in seen_sessions.items():
-            lines.append(f"- **{info['name']}** (#{sid})")
+        for sid, result in seen_sessions.items():
+            lines.append(f"- **{result.session_name}** (#{sid})")
             lines.append(f"  Link: [Open chat](#{sid})")
-            lines.append(f"  > {info['snippet']}")
+            lines.append(f"  Match ({result.role}): {result.content_snippet}")
+            if result.context_before:
+                before = result.context_before[-1]
+                lines.append(f"  Before ({before['role']}): {before['content'][:180]}")
+            if result.context_after:
+                after = result.context_after[0]
+                lines.append(f"  After ({after['role']}): {after['content'][:180]}")
             lines.append("")
 
         return {"results": "\n".join(lines)}
     except Exception as e:
         logger.error(f"search_chats failed: {e}")
         return {"error": str(e), "exit_code": 1}
-    finally:
-        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1566,6 +1538,8 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             "image gen": "image_gen_enabled", "image generation": "image_gen_enabled",
             "reminder channel": "reminder_channel", "reminders": "reminder_channel",
             "ntfy topic": "reminder_ntfy_topic",
+            "webhook integration": "reminder_webhook_integration_id",
+            "webhook template": "reminder_webhook_payload_template", "webhook payload": "reminder_webhook_payload_template",
             "agent tool calls": "agent_max_tool_calls", "max tool calls": "agent_max_tool_calls",
             "agent timeout": "agent_stream_timeout_seconds", "stream timeout": "agent_stream_timeout_seconds",
             "token budget": "agent_input_token_budget", "input budget": "agent_input_token_budget",
@@ -1581,7 +1555,7 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
 
         _ENUMS = {
             "image_quality": ["low", "medium", "high"],
-            "reminder_channel": ["browser", "email", "ntfy"],
+            "reminder_channel": ["browser", "email", "ntfy", "webhook"],
         }
         def _coerce(value, default):
             if isinstance(default, bool):
@@ -2137,6 +2111,13 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         """Parse agent event datetimes in the user's timezone when available."""
         return _parse_dt_pair(parse_due_for_user(raw))
 
+    def _first_nonempty_arg(*names: str):
+        for name in names:
+            value = args.get(name)
+            if value not in (None, ""):
+                return value
+        return None
+
     def _create_calendar_reminder(summary: str, location: str, dtstart: datetime,
                                   all_day: bool, minutes_before: int,
                                   is_utc: bool = False) -> tuple[Optional[str], Optional[str]]:
@@ -2194,12 +2175,18 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
 
         elif action == "list_events":
             try:
-                if args.get("start"):
-                    start_dt = _parse_dt(args["start"])
+                start_raw = _first_nonempty_arg(
+                    "start", "start_date", "range_start", "from", "dtstart", "since"
+                )
+                end_raw = _first_nonempty_arg(
+                    "end", "end_date", "range_end", "to", "dtend", "until"
+                )
+                if start_raw:
+                    start_dt = _parse_dt(start_raw)
                 else:
                     start_dt = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-                if args.get("end"):
-                    end_dt = _parse_dt(args["end"])
+                if end_raw:
+                    end_dt = _parse_dt(end_raw)
                 else:
                     end_dt = start_dt + timedelta(days=14)
             except ValueError as e:

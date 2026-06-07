@@ -1,8 +1,7 @@
-import importlib.machinery
-import importlib.util
 import sys
-from pathlib import Path
 from types import ModuleType
+
+from tests.helpers.cli_loader import load_script
 
 
 def _load_signature_cli(monkeypatch):
@@ -14,13 +13,7 @@ def _load_signature_cli(monkeypatch):
     monkeypatch.setitem(sys.modules, "sqlalchemy", sqlalchemy_mod)
     monkeypatch.setitem(sys.modules, "core", core_mod)
     monkeypatch.setitem(sys.modules, "core.database", database_mod)
-
-    path = Path(__file__).resolve().parent.parent / "scripts" / "odysseus-signature"
-    loader = importlib.machinery.SourceFileLoader("odysseus_signature_cli_under_test", str(path))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
+    return load_script("odysseus-signature")
 
 
 def test_decode_png_data_accepts_data_url(monkeypatch):

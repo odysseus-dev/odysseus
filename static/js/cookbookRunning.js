@@ -1862,7 +1862,17 @@ export function _renderRunningTab() {
       const startNow = el.querySelector('.cookbook-task-start-now');
       if (startNow) startNow.style.display = (task.type === 'download' && task.status === 'queued') ? '' : 'none';
       const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
-      if (terminalDiag) _showDiagnosis(el, terminalDiag, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+      if (terminalDiag) {
+        _showDiagnosis(el, terminalDiag, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+      } else {
+        const existingDiag = el.querySelector('.cookbook-diagnosis');
+        // Keep diagnosis for failed tasks even if output was cleared and we
+        // can no longer re-derive the exact message — removing it would hide
+        // the crash reason from the user.
+        if (existingDiag && !['stopped', 'error', 'crashed', 'failed'].includes(task.status)) {
+          existingDiag.remove();
+        }
+      }
     }
     if (!task) {
       if (el._uptimeInterval) { clearInterval(el._uptimeInterval); el._uptimeInterval = null; }
@@ -1900,6 +1910,9 @@ export function _renderRunningTab() {
 
     const terminalDiag = _terminalServeDiagnosis(task, task.output || '');
     if (terminalDiag) _showDiagnosis(el, terminalDiag, task.output || '');
+    if (!terminalDiag && (task.status === 'error' || task.status === 'crashed') && task._backendDiagnosis) {
+      _showDiagnosis(el, task._backendDiagnosis, task.output || '');
+    }
 
     const _uptimeEl = el.querySelector('.cookbook-task-uptime');
     if (_uptimeEl && (task.type === 'serve' || task.type === 'download') && task.status === 'running') {
@@ -2198,6 +2211,10 @@ export function _renderRunningTab() {
         items.push({ label: 'Copy last 50 lines', action: 'copy-log', custom: () => {
           const out = (el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
           const last = out.split('\n').slice(-50).join('\n');
+          if (!last.trim()) {
+            uiModule.showToast('No log content available yet');
+            return;
+          }
           _copyText(last);
           uiModule.showToast('Copied last 50 lines');
         }});
@@ -2434,6 +2451,10 @@ export function _renderRunningTab() {
     el.querySelector('.cookbook-output-copy').addEventListener('click', (e) => {
       e.stopPropagation();
       const text = el.querySelector('.cookbook-output-pre')?.textContent || '';
+      if (!text.trim()) {
+        uiModule.showToast('No log content available yet');
+        return;
+      }
       _copyText(text).then(() => {
         const btn = el.querySelector('.cookbook-output-copy');
         const origHTML = btn.innerHTML;
@@ -2735,6 +2756,7 @@ async function _reconnectTask(el, task) {
                   _updateTask(task.sessionId, { status: 'done', _doneConfirmAt: null, _lastStatusFlipAt: Date.now() });
                   const _el = document.querySelector(`.cookbook-task[data-task-id="${task.sessionId}"]`);
                   if (_el) {
+                    _clearDiagnosis(_el);
                     _el.dataset.status = 'done';
                     const _badge = _el.querySelector('.cookbook-task-status');
                     if (_badge) { _badge.textContent = _statusLabel('done', task.type); _badge.className = 'cookbook-task-status cookbook-task-done'; }
@@ -2801,13 +2823,14 @@ async function _reconnectTask(el, task) {
             const curProgress = computeProgressSignal(_bytes, _dlAgg, lastPct, snapshot);
             const _fetchPctMatches = [...snapshot.matchAll(/Fetching\s+\d+\s+files:\s*(\d+)%/g)];
             const _fetchPct = _fetchPctMatches.length ? parseInt(_fetchPctMatches[_fetchPctMatches.length - 1][1]) : null;
+            const isPipDep = !!(task.payload && task.payload._dep);
             const _startupStalled = !_bytes && ((_dlAgg === 0) || (_fetchPct === 0)) && curProgress === '0';
             const _STALE_TIMEOUT = _startupStalled ? STARTUP_STALE_PROGRESS_MS : STALE_PROGRESS_MS;
             if (!el._lastProgress) { el._lastProgress = curProgress; el._lastProgressTime = Date.now(); }
             if (curProgress !== el._lastProgress) {
               el._lastProgress = curProgress;
               el._lastProgressTime = Date.now();
-            } else if (Date.now() - (el._lastProgressTime || 0) > _STALE_TIMEOUT && task._autoRestarted) {
+            } else if (!isPipDep && Date.now() - (el._lastProgressTime || 0) > _STALE_TIMEOUT && task._autoRestarted) {
               const mins = Math.floor((Date.now() - (el._lastProgressTime || 0)) / 60000);
               // Already auto-restarted once and stalled again — make the badge a
               // one-click retry (resumes from the cached partial files) so the
@@ -2820,7 +2843,7 @@ async function _reconnectTask(el, task) {
                 badge._retryBound = true;
                 badge.addEventListener('click', (e) => { e.stopPropagation(); _retryTask(el, task); });
               }
-            } else if (Date.now() - (el._lastProgressTime || 0) > _STALE_TIMEOUT && !task._autoRestarted) {
+            } else if (!isPipDep && Date.now() - (el._lastProgressTime || 0) > _STALE_TIMEOUT && !task._autoRestarted) {
               task._autoRestarted = true;
               _updateTask(task.sessionId, { _autoRestarted: true });
               badge.textContent = _startupStalled ? '0% stall — retrying' : 'stale — restarting';
@@ -2972,6 +2995,7 @@ async function _reconnectTask(el, task) {
               break;
             }
             if (snapshot.includes('DOWNLOAD_OK') || (snapshot.includes('/snapshots/') && completed >= totalFiles && totalFiles > 0)) {
+              _clearDiagnosis(el);
               _dlRetryCount.delete(task.payload?.repo_id || task.name);
               badge.textContent = _statusLabel('done', task.type);
               badge.className = 'cookbook-task-status cookbook-task-done';
@@ -3515,6 +3539,12 @@ async function _pollBackgroundStatus() {
             updates.output = `${previous ? `${previous}\n` : ''}${tail}`.slice(-5000);
           }
         }
+        if (live.diagnosis && !task._diagnosisDismissed) {
+          updates._backendDiagnosis = live.diagnosis;
+        }
+        if (live.cmd && !task.payload?._cmd) {
+          updates.payload = { ...(task.payload || {}), _cmd: live.cmd };
+        }
         if (Object.keys(updates).length) {
           Object.assign(task, updates);
           changed = true;
@@ -3523,6 +3553,12 @@ async function _pollBackgroundStatus() {
       if (changed) {
         _saveTasks(localTasks);
         _renderRunningTab();
+        for (const task of localTasks) {
+          if (!task._backendDiagnosis) continue;
+          const el = document.querySelector(`[data-session-id="${CSS.escape(task.sessionId)}"]`);
+          if (!el || el.querySelector('.cookbook-diagnosis')) continue;
+          _showDiagnosis(el, task._backendDiagnosis, task.output || '');
+        }
         completedDeps.forEach(t => _refreshDepsAfterInstall(t));
       }
     } catch (_) { /* non-fatal: background status should never break polling */ }

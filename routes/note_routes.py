@@ -114,8 +114,9 @@ async def dispatch_reminder(
     note_id: str,
     owner: str = "",
     queue_browser: bool = True,
+    settings_override: dict | None = None,
 ) -> dict:
-    """Fire a reminder via the configured channel (browser/email/ntfy).
+    """Fire a reminder via the configured channel (browser/email/ntfy/webhook).
 
     Args:
         title: short headline shown to the user
@@ -129,7 +130,7 @@ async def dispatch_reminder(
     nothing is "sent" synchronously for it — the channel just routes there.
     """
     from src.settings import load_settings
-    settings = load_settings()
+    settings = {**load_settings(), **(settings_override or {})}
     channel = settings.get("reminder_channel", "browser")
     llm_on = bool(settings.get("reminder_llm_synthesis", False))
     title = (title or "").strip()
@@ -160,13 +161,14 @@ async def dispatch_reminder(
                 # Treat those as browser-only dedupe so email reminders can be
                 # retried by the backend scanner after a failed frontend path.
                 should_skip = last_dt >= _dt.now(_tz.utc) - _td(minutes=25)
-                if should_skip and channel in ("email", "ntfy"):
+                if should_skip and channel in ("email", "ntfy", "webhook"):
                     should_skip = last_channel == channel
                 if should_skip:
                     return {
                         "synthesis": None,
                         "email_sent": False,
                         "ntfy_sent": False,
+                        "webhook_sent": False,
                         "browser_sent": True,
                         "skipped": True,
                     }
@@ -360,6 +362,76 @@ async def dispatch_reminder(
             email_error = str(e) or e.__class__.__name__
             logger.warning(f"Reminder email send failed: {e}")
 
+    webhook_sent = False
+    webhook_error = ""
+    if channel == "webhook":
+        try:
+            import httpx
+            import json as _wjson
+            from src.integrations import load_integrations
+            # Built-in payload defaults for known presets so users don't have
+            # to configure a template just to use a standard service.
+            _PRESET_TEMPLATE_DEFAULTS = {
+                "discord_webhook": '{"embeds": [{"title": "{{title}}", "description": "{{message}}", "color": 5793266}]}',
+            }
+            intg_id = settings.get("reminder_webhook_integration_id", "").strip()
+            template = settings.get("reminder_webhook_payload_template", "").strip()
+            if not intg_id:
+                webhook_error = "No webhook integration selected"
+            else:
+                intg = next(
+                    (i for i in load_integrations()
+                     if i.get("id") == intg_id and i.get("base_url")),
+                    None,
+                )
+                if not intg:
+                    webhook_error = f"Integration {intg_id!r} not found or missing base URL"
+                else:
+                    # Fall back to a built-in default for known presets so
+                    # users don't have to configure a template for standard
+                    # services like Discord.
+                    if not template:
+                        template = _PRESET_TEMPLATE_DEFAULTS.get(intg.get("preset", ""), "")
+                    if not template:
+                        webhook_error = "No payload template configured"
+                    else:
+                        # Render template: JSON-escape the values so the result
+                        # is always valid JSON regardless of special characters.
+                        # dumps() returns `"value"` — strip outer quotes.
+                        msg = (synthesis or note_body or title or "Reminder")[:4000]
+                        _t = _wjson.dumps(title or "Reminder")[1:-1]
+                        _m = _wjson.dumps(msg)[1:-1]
+                        rendered = template.replace("{{title}}", _t).replace("{{message}}", _m)
+                        hdrs = {"Content-Type": "application/json"}
+                        api_key = intg.get("api_key", "")
+                        auth_type = (intg.get("auth_type") or "none").lower()
+                        if api_key:
+                            if auth_type == "bearer":
+                                hdrs["Authorization"] = f"Bearer {api_key}"
+                            elif auth_type == "header":
+                                hdrs[intg.get("auth_header") or "Authorization"] = api_key
+                        url = intg["base_url"].rstrip("/")
+                        # SSRF guard — matches the pattern used by webhook_routes,
+                        # CalDAV, search, and embeddings. Blocks link-local / metadata
+                        # addresses (169.254.x.x) by default; set
+                        # REMINDER_WEBHOOK_BLOCK_PRIVATE_IPS=true to also block
+                        # RFC-1918 ranges for locked-down deployments.
+                        import os as _os
+                        from src.url_safety import check_outbound_url as _chk
+                        _block = _os.getenv("REMINDER_WEBHOOK_BLOCK_PRIVATE_IPS", "false").lower() == "true"
+                        _ok, _reason = _chk(url, block_private=_block)
+                        if not _ok:
+                            webhook_error = f"Webhook URL rejected: {_reason}"
+                        else:
+                            async with httpx.AsyncClient(timeout=10.0) as client:
+                                resp = await client.post(url, content=rendered.encode(), headers=hdrs)
+                                webhook_sent = resp.is_success
+                                if not webhook_sent:
+                                    webhook_error = f"Webhook returned HTTP {resp.status_code}"
+        except Exception as e:
+            webhook_error = str(e) or e.__class__.__name__
+            logger.warning(f"Reminder webhook send failed: {e}")
+
     ntfy_sent = False
     ntfy_error = ""
     if channel == "ntfy":
@@ -415,7 +487,7 @@ async def dispatch_reminder(
     # second send for the same note within 25 min. Without this, a note
     # whose due_date fires while the user has the app open got TWO emails
     # (frontend-fired here + background-fired by ping_notes 0–5 min later).
-    if (email_sent or ntfy_sent or browser_sent or local_browser_sent) and note_id:
+    if (email_sent or ntfy_sent or webhook_sent or browser_sent or local_browser_sent) and note_id:
         try:
             import json as _json
             from datetime import datetime as _dt, timezone as _tz
@@ -431,7 +503,7 @@ async def dispatch_reminder(
                 _cache = cache or (_json.loads(_STATE.read_text(encoding="utf-8")) if _STATE.exists() else {})
             except Exception:
                 _cache = {}
-            sent_channel = "email" if email_sent else "ntfy" if ntfy_sent else "browser"
+            sent_channel = "email" if email_sent else "ntfy" if ntfy_sent else "webhook" if webhook_sent else "browser"
             _cache[cache_key or str(note_id)] = {
                 "at": _dt.now(_tz.utc).isoformat(),
                 "channel": sent_channel,
@@ -441,11 +513,14 @@ async def dispatch_reminder(
             logger.debug(f"dispatch_reminder: cache write failed: {_e}")
 
     return {
+        "channel": channel,
         "synthesis": synthesis,
         "email_sent": email_sent,
         "email_error": email_error,
         "ntfy_sent": ntfy_sent,
         "ntfy_error": ntfy_error,
+        "webhook_sent": webhook_sent,
+        "webhook_error": webhook_error,
         "browser_sent": browser_sent or local_browser_sent,
     }
 
@@ -692,12 +767,21 @@ def setup_note_routes(task_scheduler=None):
         if not note_id:
             raise HTTPException(400, "note_id required")
 
-        # Delegate to the module-level helper so background tasks can reuse
-        # the same dispatch without an HTTP roundtrip + auth cookie.
+        # Optional overrides let the test button pass the current UI values
+        # directly so the test never races against a pending settings save.
+        _override: dict = {}
+        if body.get("channel"):
+            _override["reminder_channel"] = body["channel"]
+        if body.get("webhook_integration_id"):
+            _override["reminder_webhook_integration_id"] = body["webhook_integration_id"]
+        if body.get("webhook_payload_template"):
+            _override["reminder_webhook_payload_template"] = body["webhook_payload_template"]
+
         return await dispatch_reminder(
             title=title, note_body=note_body, note_id=note_id,
             owner=_owner(request) or "",
             queue_browser=False,
+            settings_override=_override or None,
         )
 
     # --- REORDER NOTES ---

@@ -1170,6 +1170,22 @@ async function _cmdWorkspace(args, ctx) {
   slashReply('Usage: <code>/workspace</code> · <code>set /path</code> · <code>clear</code> · <code>pick</code>');
   return true;
 }
+// Plan mode: drive the real toggle pill (#plan-toggle-btn) so its per-mode
+// persistence/UI logic runs. Only meaningful in agent mode.
+async function _cmdTogglePlan(args, ctx) {
+  const btn = document.getElementById('plan-toggle-btn');
+  const chk = document.getElementById('plan-toggle');
+  if (!btn || btn.style.display === 'none' || btn.offsetParent === null) {
+    slashReply('Plan mode is only available in agent mode — switch to Agent first.');
+    return true;
+  }
+  const cur = !!(chk && chk.checked);
+  const v = (args[0] || '').toLowerCase();
+  const target = v === 'on' ? true : v === 'off' ? false : !cur;
+  if (target !== cur) btn.click();
+  slashReply(`Plan mode: ${target ? 'on' : 'off'}`);
+  return true;
+}
 
 async function _cmdToggleShow(args, ctx) {
   const name = (args[0] || '').toLowerCase();
@@ -5489,6 +5505,7 @@ const COMMANDS = {
       'bash':      { handler: _cmdToggleBash,      alias: ['b','shell'],       help: 'Toggle bash/shell',       usage: '/toggle bash' },
       'research':  { handler: _cmdToggleResearch,  alias: ['r'],               help: 'Toggle deep research',    usage: '/toggle research' },
       'doc':       { handler: _cmdToggleDoc,       alias: [],     help: 'Toggle document editor',  usage: '/toggle doc' },
+      'plan':      { handler: _cmdTogglePlan,      alias: ['p'],  help: 'Toggle plan mode (agent)', usage: '/toggle plan' },
       'sidebar':   { handler: _cmdToggleSidebar,   alias: ['sb'], help: 'Cycle sidebar (full/mini/off)', usage: '/toggle sidebar [1|2|3]' },
       '_show':     { handler: _cmdToggleShow,      alias: [],     help: 'Show all toggle states',  usage: '/toggle' }
     }
@@ -5500,6 +5517,13 @@ const COMMANDS = {
     handler: _cmdWorkspace,
     noUserBubble: true,
     usage: '/workspace [set <path> | clear | pick]',
+  },
+  plan: {
+    alias: [],
+    category: 'Quick toggles',
+    help: 'Toggle plan mode (agent)',
+    handler: _cmdTogglePlan,
+    usage: '/plan [on|off]',
   },
   memory: {
     alias: ['m'],
