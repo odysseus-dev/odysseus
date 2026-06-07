@@ -7723,6 +7723,10 @@ button.hamburger {
   margin: 0.5em 0;
   font-size: 0.9em;
   width: auto;
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .msg th {
   background: color-mix(in srgb, var(--fg) 7%, transparent);
