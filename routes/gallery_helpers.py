@@ -129,8 +129,21 @@ def _owner_filter(q, user):
     must too — otherwise the tag/model filter sidebars come back empty and the
     tag-cleanup endpoints (clear-user-tags, clear-ai-tags, dedupe-tags)
     silently affect zero rows in the most common self-hosted deployment.
+
+    When auth IS enabled, a None user means unauthenticated — block rather
+    than leak every user's images (issue #3148).
     """
     if user is None:
+        # Distinguish "auth disabled" (single-user, show all) from
+        # "auth enabled but unauthenticated" (block).
+        try:
+            from core.auth import AuthManager
+            if AuthManager().is_configured:
+                # Auth is on and user is None → unauthenticated. Return
+                # an empty result set rather than leaking all images.
+                return q.filter(False)
+        except Exception:
+            pass
         return q
     return q.filter(GalleryImage.owner == user)
 
