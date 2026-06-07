@@ -167,16 +167,18 @@ def _process_pdf(path: str, owner: str | None = None) -> str:
                                     tmp_path = tmp.name
                                 pix = page_obj.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
                                 pix.save(tmp_path)
-                                ocr_text = analyze_image_with_vl(tmp_path)
+                                ocr_text = analyze_image_with_vl(tmp_path, owner=owner)
                                 if ocr_text and "unavailable" not in ocr_text.lower():
                                     pdf_text += f"\n\n[Page {page_num_ocr + 1} OCR]: {ocr_text}"
-                                    ocr_pages += 1
+                            except Exception as e:
+                                logger.warning(f"Full-page OCR failed on page {page_num_ocr + 1} of {path}: {e}")
                             finally:
                                 if tmp_path:
                                     try:
                                         os.unlink(tmp_path)
                                     except OSError:
                                         pass
+                            ocr_pages += 1
                     finally:
                         pdf_doc.close()
                 except Exception as e:

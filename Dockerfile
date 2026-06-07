@@ -29,7 +29,7 @@ COPY requirements.txt requirements-optional.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && if [ "$INSTALL_OPTIONAL" = "true" ]; then pip install --no-cache-dir -r requirements-optional.txt; fi
 
-RUN pip install --no-cache-dir PyMuPDF
+RUN pip install --no-cache-dir "PyMuPDF>=1.24,<2"
 
 # Copy app code
 COPY . .
