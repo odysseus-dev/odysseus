@@ -12,7 +12,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from src.auth_helpers import require_user
@@ -26,6 +26,7 @@ TODO_WRITE_SCOPES = {"todos:write"}
 EMAIL_READ_SCOPES = {"email:read", "email:draft", "email:send"}
 EMAIL_DRAFT_SCOPES = {"email:draft", "email:send"}
 EMAIL_SEND_SCOPES = {"email:send"}
+EMAIL_DELETE_SCOPES = {"email:delete"}
 MEMORY_READ_SCOPES = {"memory:read", "memory:write"}
 MEMORY_WRITE_SCOPES = {"memory:write"}
 CALENDAR_READ_SCOPES = {"calendar:read", "calendar:write"}
@@ -85,6 +86,7 @@ def setup_codex_routes(
     email_read_endpoint = _find_endpoint(email_router, "GET", "/api/email/read/{uid}")
     email_send_endpoint = _find_endpoint(email_router, "POST", "/api/email/send")
     email_draft_endpoint = _find_endpoint(email_router, "POST", "/api/email/draft")
+    email_delete_endpoint = _find_endpoint(email_router, "DELETE", "/api/email/delete/{uid}")
     memory_list_endpoint = _find_endpoint(memory_router, "GET", "/api/memory")
     memory_add_endpoint = _find_endpoint(memory_router, "POST", "/api/memory/add")
     calendar_list_events = _find_endpoint(calendar_router, "GET", "/api/calendar/events")
@@ -112,7 +114,8 @@ def setup_codex_routes(
                     "read": scoped(EMAIL_READ_SCOPES),
                     "draft": scoped(EMAIL_DRAFT_SCOPES),
                     "send": scoped(EMAIL_SEND_SCOPES),
-                    "actions": ["list", "read", "draft", "send"],
+                    "delete": scoped(EMAIL_DELETE_SCOPES),
+                    "actions": ["list", "read", "draft", "send", "delete"],
                 },
                 "memory": {
                     "read": scoped(MEMORY_READ_SCOPES),
@@ -261,6 +264,23 @@ def setup_codex_routes(
         except Exception as exc:
             raise HTTPException(400, f"Invalid send payload: {exc}")
         return await email_send_endpoint(req=req, background_tasks=BackgroundTasks(), owner=owner)
+
+    # ── Email delete ─────────────────────────────────────────────────────
+    @router.delete("/emails/{uid}")
+    async def codex_email_delete(
+        request: Request,
+        uid: str,
+        folder: str = Query("INBOX"),
+        account_id: str | None = Query(None),
+    ):
+        """Move email to Trash (requires email:delete scope)."""
+        owner = _scope_owner(request, EMAIL_DELETE_SCOPES)
+        if email_delete_endpoint is None:
+            raise HTTPException(503, "Email delete not available")
+        if account_id:
+            from routes.email_helpers import _assert_owns_account
+            _assert_owns_account(account_id, owner)
+        return await _as_owner(request, owner, email_delete_endpoint, uid=uid, folder=folder, owner=owner)
 
     # ── Memory ────────────────────────────────────────────────────────────
 

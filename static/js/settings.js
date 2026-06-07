@@ -4798,6 +4798,7 @@ async function initUnifiedIntegrations() {
       { key: 'email:read', label: 'Email', detail: 'Read email when an email API is enabled' },
       { key: 'email:draft', label: 'Email drafts', detail: 'Create email reply drafts without sending' },
       { key: 'email:send', label: 'Email send', detail: 'Send email directly' },
+      { key: 'email:delete', label: 'Email delete', detail: 'Move emails to Trash' },
       { key: 'calendar:read', label: 'Calendar', detail: 'Read calendar events when enabled' },
       { key: 'calendar:write', label: 'Calendar write', detail: 'Create and update calendar events' },
       { key: 'memory:read', label: 'Memory', detail: 'Read memory when enabled' },

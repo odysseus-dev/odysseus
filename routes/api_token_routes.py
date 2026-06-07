@@ -21,6 +21,7 @@ ALLOWED_SCOPES = {
     "email:read",
     "email:draft",
     "email:send",
+    "email:delete",
     "calendar:read",
     "calendar:write",
     "memory:read",
