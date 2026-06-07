@@ -738,7 +738,16 @@ def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int 
     port = int(port or 993)
     if starttls:
         conn = imaplib.IMAP4(host, port, timeout=timeout)
-        conn.starttls()
+        try:
+            conn.starttls()
+        except Exception:
+            # Don't leak the open plain socket if the STARTTLS upgrade is
+            # rejected; close it before propagating. (#3174)
+            try:
+                conn.shutdown()
+            except Exception:
+                pass
+            raise
     elif port == 993:
         conn = imaplib.IMAP4_SSL(host, port, timeout=timeout)
     else:
@@ -771,7 +780,18 @@ def _imap_connect(account_id: str | None = None, owner: str = ""):
         starttls=bool(cfg.get("imap_starttls")),
         timeout=_IMAP_TIMEOUT_SECONDS,
     )
-    conn.login(cfg["imap_user"], cfg["imap_password"])
+    try:
+        conn.login(cfg["imap_user"], cfg["imap_password"])
+    except Exception:
+        # A failed AUTHENTICATE (e.g. an Office 365 app password on an
+        # MFA-enabled tenant, #3174) otherwise orphans the already-connected
+        # socket; close it before propagating so a misconfigured account
+        # can't leak one descriptor per retry / background poller pass.
+        try:
+            conn.shutdown()
+        except Exception:
+            pass
+        raise
     return conn
 
 

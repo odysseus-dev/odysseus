@@ -9,6 +9,7 @@ Functions covered:
     _download_attachment
 """
 
+import imaplib
 import os
 import sys
 import tempfile
@@ -227,4 +228,69 @@ def test_mcp_download_attachment_logs_out_on_select_failure(monkeypatch):
     assert captured.get("logout_calls", 0) == 1, (
         f"conn.logout() must be called after select raises in _download_attachment. "
         f"Got logout_calls={captured.get('logout_calls')}"
+    )
+
+
+# ── connect-time leak: _imap_connect / _open_imap_connection (#3174) ──────────
+# The cases above all monkeypatch _imap_connect to *succeed*; these cover the
+# gap where the connect itself fails (bad/expired app password, rejected
+# STARTTLS) and the already-open socket would otherwise be orphaned.
+
+
+def test_imap_connect_shuts_down_socket_on_login_failure(monkeypatch):
+    """A failed login() must close the already-connected socket, not leak it."""
+    import routes.email_helpers as helpers
+
+    captured = {}
+    conn = MagicMock()
+    conn.shutdown = MagicMock(side_effect=lambda: captured.__setitem__(
+        "shutdown_calls", captured.get("shutdown_calls", 0) + 1
+    ))
+    conn.login = MagicMock(side_effect=imaplib.IMAP4.error(b"AUTHENTICATE failed."))
+
+    monkeypatch.setattr(helpers, "_get_email_config", lambda *a, **kw: {
+        "imap_host": "imap.example.com",
+        "imap_port": 993,
+        "imap_starttls": False,
+        "imap_user": "user@example.com",
+        "imap_password": "wrong",
+    })
+    monkeypatch.setattr(helpers, "_open_imap_connection", lambda *a, **kw: conn)
+
+    raised = False
+    try:
+        helpers._imap_connect()
+    except Exception:
+        raised = True
+
+    assert raised, "login failure must propagate to the caller"
+    assert captured.get("shutdown_calls", 0) == 1, (
+        f"conn.shutdown() must be called exactly once when login fails. "
+        f"Got shutdown_calls={captured.get('shutdown_calls')}"
+    )
+
+
+def test_open_imap_connection_shuts_down_on_starttls_failure(monkeypatch):
+    """A rejected STARTTLS upgrade must close the open plain socket."""
+    import routes.email_helpers as helpers
+
+    captured = {}
+    conn = MagicMock()
+    conn.shutdown = MagicMock(side_effect=lambda: captured.__setitem__(
+        "shutdown_calls", captured.get("shutdown_calls", 0) + 1
+    ))
+    conn.starttls = MagicMock(side_effect=RuntimeError("STARTTLS rejected"))
+
+    monkeypatch.setattr(helpers.imaplib, "IMAP4", lambda *a, **kw: conn)
+
+    raised = False
+    try:
+        helpers._open_imap_connection("imap.example.com", 143, starttls=True)
+    except Exception:
+        raised = True
+
+    assert raised, "starttls failure must propagate to the caller"
+    assert captured.get("shutdown_calls", 0) == 1, (
+        f"conn.shutdown() must be called exactly once when STARTTLS fails. "
+        f"Got shutdown_calls={captured.get('shutdown_calls')}"
     )
