@@ -362,8 +362,26 @@ class ResearchHandler:
                 raise
             except Exception as e:
                 logger.error(f"Background research failed: {e}", exc_info=True)
-                entry["result"] = str(e)
-                entry["status"] = "error"
+                # Preserve partial findings if available (mirrors timeout branch)
+                researcher = entry.get("researcher")
+                if researcher and researcher.evolving_report:
+                    _elapsed = time.time() - entry["started_at"]
+                    entry["result"] = self._format_research_report(
+                        query, researcher.evolving_report,
+                        researcher.get_stats(), _elapsed,
+                    )
+                    entry["status"] = "done"
+                    self._save_result(session_id, entry)
+                    try:
+                        sources = self._extract_sources(researcher.findings) if researcher.findings else []
+                        findings = self._extract_raw_findings(researcher.findings) if researcher.findings else []
+                        _guarded_complete(session_id, entry["result"], sources, findings)
+                    except Exception as cb_err:
+                        logger.warning(f"on_complete callback failed in error branch: {cb_err}")
+                    on_progress({"phase": "warning", "message": f"Research finished with errors — partial results saved ({_elapsed:.0f}s elapsed)"})
+                else:
+                    entry["result"] = str(e)
+                    entry["status"] = "error"
 
         task = asyncio.create_task(_run())
         entry["task"] = task

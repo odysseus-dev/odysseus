@@ -2495,7 +2495,21 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
 # Cookbook routes loopback. The agent's tool calls run in-process but
 # need to reach admin-gated cookbook routes; we ride the per-process
 # internal token so require_admin lets us through. See core/middleware.py.
-_COOKBOOK_BASE = "http://localhost:7000"
+#
+# Resolution order:
+#   1. ODYSSEUS_INTERNAL_BASE — explicit override (e.g. behind a TLS proxy).
+#   2. APP_PORT — derive http://127.0.0.1:$APP_PORT (matches docker-compose).
+#   3. Fallback http://127.0.0.1:7000 — preserves legacy default.
+#
+# 127.0.0.1 (not "localhost") avoids IPv6/DNS ambiguity for a strictly-local
+# call. Without this, tools that loop back (app_api, trigger_research,
+# cookbook state read/write) fail with "All connection attempts failed"
+# whenever the running uvicorn isn't on 7000 — which is most non-default
+# deployments and any side-by-side multi-instance setup.
+_COOKBOOK_BASE = os.environ.get(
+    "ODYSSEUS_INTERNAL_BASE",
+    f"http://127.0.0.1:{os.environ.get('APP_PORT', '7000')}",
+)
 
 
 def _internal_headers(owner: Optional[str] = None) -> Dict[str, str]:
@@ -2662,7 +2676,7 @@ async def _cookbook_register_task(session_id: str, model: str, host: str,
     placeholder = (
         f"Launched via agent — waiting for tmux output…\n"
         f"  session: {session_id}\n"
-        f"  target:  {target}{cmd.split()[0] if cmd else ''}\n"
+        f"  target:  {target}{(cmd.split() or [''])[0] if cmd else ''}\n"
         f"  cmd:     {cmd[:200]}{'…' if len(cmd) > 200 else ''}"
     )
     tasks.append({
@@ -2693,26 +2707,32 @@ async def _cookbook_register_task(session_id: str, model: str, host: str,
 
 
 # Paths the generic `app_api` tool will refuse to call. Auth/token/user
-# administration is too risky to route through an agent surface even
-# when the agent is admin-context — accidental "delete account"
-# style mistakes have permanent blast radius.
+# administration and host shell execution are too risky to route through an
+# agent surface even when the agent is admin-context; accidental account or
+# command mistakes have permanent blast radius.
 _APP_API_BLOCKLIST_PREFIXES = (
     "/api/auth",           # login/logout/password
     "/api/users",          # user CRUD (bare /api/users list+create+delete must also block)
     "/api/tokens",         # api token mgmt (bare /api/tokens list+create must also block)
     "/api/admin",          # admin one-shots (wipe etc.)
+    "/api/shell",          # host shell execution must stay behind named command tooling
     "/api/backup/restore", # destructive restore
 )
 
 # (method, prefix) pairs to refuse specifically. Used for endpoints
-# where GET is fine but writes are destructive — saw the agent wipe
-# cookbook_state.json (presets + tasks) by POSTing {"tasks": []} to
-# /api/cookbook/state, which overwrote the whole file. Use the
-# dedicated preset/task tools instead.
+# where GET is fine but writes are destructive or host-control shaped.
+# Saw the agent wipe cookbook_state.json (presets + tasks) by POSTing
+# {"tasks": []} to /api/cookbook/state, which overwrote the whole file.
+# Use dedicated tools or UI flows instead.
 _APP_API_BLOCKLIST_METHOD_PATH = (
     ("GET",    "/api/email/accounts"),  # owner-filtered in tool context; use list_email_accounts MCP tool
     ("POST",   "/api/cookbook/state"),   # whole-file overwrite — agent must use serve_preset/serve_model instead
     ("DELETE", "/api/cookbook/state"),
+    # Host-control routes: package install, engine rebuild, and process
+    # signalling should not be reachable through the generic API bridge.
+    ("POST",   "/api/cookbook/packages/install"),
+    ("POST",   "/api/cookbook/rebuild-engine"),
+    ("POST",   "/api/cookbook/kill-pid"),
     # Use the named tools (download_model / serve_model) — they handle
     # host-name resolution, per-host env_prefix, AND register the task
     # in cookbook state so it shows in the UI + list_downloads. Hitting
@@ -2737,7 +2757,7 @@ _APP_API_BLOCKLIST_METHOD_PATH = (
 
 
 async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
-    """Generic loopback to any internal Odysseus API endpoint. Lets the
+    """Generic loopback to allowed internal Odysseus API endpoints. Lets the
     agent reach the full UI-button surface (cookbook, email, notes,
     calendar, skills, sessions, gallery, research, etc.) without us
     landing a named tool wrapper for every one.
@@ -2751,7 +2771,8 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
 
     The `endpoints` action returns the OpenAPI surface (method + path +
     summary) so the agent can discover what's reachable. A blocklist
-    refuses auth/user/admin paths to keep blast radius bounded.
+    refuses sensitive auth/user/admin/shell paths and method-specific
+    host-control routes to keep blast radius bounded.
     """
     import httpx
     try:
@@ -2811,7 +2832,7 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     if not path.startswith("/"):
         path = "/" + path
     if any(path.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES):
-        return {"error": f"Path blocked for safety: {path}. Auth/user/admin endpoints are off-limits via app_api.", "exit_code": 1}
+        return {"error": f"Path blocked for safety: {path}. Sensitive endpoints are off-limits via app_api.", "exit_code": 1}
 
     method = (args.get("method") or "GET").upper()
     if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
@@ -2819,6 +2840,12 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     if any(method == m and path.startswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_PATH):
         if "/api/email/accounts" in path:
             return {"error": "Don't use /api/email/accounts via app_api — it is owner-filtered in tool context and may return empty. Use the `list_email_accounts` email tool, then pass `account` to list_emails/read_email.", "exit_code": 1}
+        if "/api/cookbook/packages/install" in path:
+            return {"error": "Don't POST /api/cookbook/packages/install via app_api — package installation is host code execution. Use the dedicated Cookbook dependency UI/flow instead.", "exit_code": 1}
+        if "/api/cookbook/rebuild-engine" in path:
+            return {"error": "Don't POST /api/cookbook/rebuild-engine via app_api — engine rebuild mutates local or remote host state. Use the dedicated Cookbook UI/flow instead.", "exit_code": 1}
+        if "/api/cookbook/kill-pid" in path:
+            return {"error": "Don't POST /api/cookbook/kill-pid via app_api — process signalling is host control. Use the dedicated Cookbook stop/diagnostic flow instead.", "exit_code": 1}
         if "/api/model/download" in path:
             return {"error": "Don't POST /api/model/download directly — use the `download_model` tool (it resolves the server name, sets the venv env_prefix, and registers the task so it shows in the UI).", "exit_code": 1}
         if "/api/model/serve" in path:

@@ -18,10 +18,22 @@ import ntpath
 import shutil
 import subprocess
 from pathlib import Path
+import sys
 from typing import List, Optional
+import platform
 
 IS_WINDOWS = os.name == "nt"
 IS_POSIX = not IS_WINDOWS
+# Allows APFEL support and ARM-native binary recommendations on Apple Silicon Macs.
+IS_APPLE_SILICON = (
+    IS_POSIX
+    and platform.system() == "Darwin"
+    and platform.machine().lower()
+    in {
+        "arm64",
+        "aarch64",
+    }
+)
 
 
 # ── File permissions ────────────────────────────────────────────────────────
@@ -53,9 +65,8 @@ def detached_popen_kwargs() -> dict:
     and is detached from any console.
     """
     if IS_WINDOWS:
-        flags = (
-            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
-            | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+        flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200) | getattr(
+            subprocess, "DETACHED_PROCESS", 0x00000008
         )
         return {"creationflags": flags}
     return {"start_new_session": True}

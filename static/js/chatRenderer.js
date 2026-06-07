@@ -1877,7 +1877,13 @@ export function displayMetrics(messageElement, metrics) {
                 }
               }, 200);
             } else {
-              compactBody.innerHTML = '<span style="color:var(--red);">Compaction failed. Try again later.</span>';
+              let detail = 'Compaction failed. Try again later.';
+              try {
+                const err = await res.json();
+                if (err.detail) detail = err.detail;
+              } catch {}
+              compactBody.textContent = detail;
+              compactBody.style.color = 'var(--red)';
             }
           } catch (err) {
             clearInterval(waveInterval);

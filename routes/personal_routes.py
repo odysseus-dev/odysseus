@@ -286,9 +286,12 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
             except ValueError:
                 # commonpath raises on mixed drives / non-comparable paths
                 in_uploads = False
-            if in_uploads and abs_target != base_abs and os.path.exists(abs_target):
-                os.remove(abs_target)
-                deleted_from_disk = True
+            if in_uploads and abs_target != base_abs:
+                try:
+                    os.remove(abs_target)
+                    deleted_from_disk = True
+                except FileNotFoundError:
+                    pass  # already gone — race with another request or cleanup
 
             # Exclude the file from the listing (persists across restarts)
             personal_docs_manager.exclude_file(filepath)

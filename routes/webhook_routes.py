@@ -194,6 +194,8 @@ def setup_webhook_routes(
         "together": "https://api.together.xyz/v1",
         "openrouter": "https://openrouter.ai/api/v1",
         "ollama": "https://ollama.com/api",
+        "opencode-zen": "https://opencode.ai/zen/v1",
+        "opencode-go": "https://opencode.ai/zen/go/v1",
         "fireworks": "https://api.fireworks.ai/inference/v1",
         "venice": "https://api.venice.ai/api/v1",
     }

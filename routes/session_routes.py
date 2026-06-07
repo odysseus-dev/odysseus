@@ -543,22 +543,25 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             ids = body.get("ids", [])
         except Exception:
             ids = []
+        deleted_count = 0
         for sid in ids:
             try:
                 _verify_session_owner(request, sid, session_manager)
-                session_manager.delete_session(sid)
+                
+                # Enforce "starred" protection consistent with single-session delete
                 db = SessionLocal()
                 try:
-                    db.query(_CM).filter(_CM.session_id == sid).delete()
-                    db.query(DbSession).filter(DbSession.id == sid).delete()
-                    db.commit()
-                except Exception:
-                    db.rollback()
+                    db_sess = db.query(DbSession).filter(DbSession.id == sid).first()
+                    if db_sess and db_sess.is_important:
+                        continue
                 finally:
                     db.close()
+
+                if session_manager.delete_session(sid):
+                    deleted_count += 1
             except Exception:
                 pass
-        return {"deleted": len(ids)}
+        return {"deleted": deleted_count}
 
     @router.delete("/session/{sid}")
     def delete_session(request: Request, sid: str):
@@ -924,7 +927,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
 
-        url, model, headers = resolve_endpoint("utility", owner=get_current_user(request))
+        owner = getattr(session, "owner", None) or effective_user(request)
+        url, model, headers = resolve_endpoint("utility", owner=owner)
         if not url or not model:
             url, model, headers = session.endpoint_url, session.model, session.headers
         if not url or not model:
