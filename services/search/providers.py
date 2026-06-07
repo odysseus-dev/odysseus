@@ -415,10 +415,14 @@ def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = 
             return []
 
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
     except ImportError:
-        logger.warning("duckduckgo-search package not installed; using HTML fallback")
-        return _html_fallback()
+        try:
+            from duckduckgo_search import DDGS
+            logger.warning("duckduckgo-search is deprecated; install ddgs instead")
+        except ImportError:
+            logger.warning("Neither ddgs nor duckduckgo-search package installed; using HTML fallback")
+            return _html_fallback()
 
     timelimit = None
     if time_filter:
