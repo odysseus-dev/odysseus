@@ -9686,6 +9686,36 @@ details a:hover {
   border-color: var(--fg);
 }
 
+/* Custom styled tooltip for hint icons that carry a data-hint attribute.
+   Falls back gracefully to the native title= tooltip when data-hint is absent. */
+.preset-hint-icon[data-hint] {
+  position: relative;
+}
+.preset-hint-icon[data-hint]::after {
+  content: attr(data-hint);
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  width: 230px;
+  white-space: normal;
+  background: var(--panel, #1a1a1a);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.5;
+  padding: 7px 10px;
+  border-radius: 6px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 10000;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.preset-hint-icon[data-hint]:hover::after {
+  opacity: 1;
+}
+
 .preset-section-header {
   font-size: 11px;
   font-weight: 600;

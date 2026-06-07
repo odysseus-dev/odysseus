@@ -438,6 +438,7 @@ async function loadEndpoints() {
             </div>
           </div>
           <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${keyLabel}</div>
+          <div style="font-size:10px;color:color-mix(in srgb, var(--fg) 40%, transparent);margin-top:1px;" data-adm-ep-timeout-row="${ep.id}" data-adm-ep-timeout-val="${ep.request_timeout ?? ''}">Timeout: ${ep.request_timeout ? ep.request_timeout + 's' : 'default (60s)'}&nbsp;<a href="#" data-adm-ep-timeout-edit="${ep.id}">edit</a>&nbsp;<span class="preset-hint-icon" data-hint="Per-request timeout in seconds. Increase if responses are getting cut off. Cold-starting a model on a low-VRAM GPU (e.g. 6 GB) can take 60–120 s before the first token appears — raise to 120–300 s for slow or quantised local models.">?</span></div>
           ${hasModels ? `<div class="mcp-tools-panel hidden" data-adm-ep-models-panel="${ep.id}"></div>` : ''}
         </div>`;
     });
@@ -475,6 +476,47 @@ async function loadEndpoints() {
     };
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => { e.stopPropagation(); await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' }); loadEndpoints(); });
+    });
+    queryAll('[data-adm-ep-timeout-edit]').forEach(link => {
+      link.addEventListener('click', e => {
+        e.preventDefault(); e.stopPropagation();
+        const epId = link.dataset.admEpTimeoutEdit;
+        const row = link.closest('[data-adm-ep-timeout-row]');
+        if (!row || row.querySelector('[data-adm-ep-timeout-input]')) return; // already editing
+        const savedHtml = row.innerHTML;
+        const currentVal = row.dataset.admEpTimeoutVal || '';
+        row.innerHTML =
+          `<span style="color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:10px;">Timeout (s):&nbsp;</span>` +
+          `<input type="number" min="30" max="86400" placeholder="60" data-adm-ep-timeout-input ` +
+            `style="background:var(--bg);border:1px solid var(--border);color:var(--fg);border-radius:4px;padding:1px 4px;font-size:10px;width:60px;" value="${esc(currentVal)}">` +
+          `<button data-adm-ep-timeout-ok style="background:none;border:1px solid var(--border);color:var(--fg);border-radius:4px;padding:1px 5px;font-size:10px;cursor:pointer;margin-left:3px;">ok</button>` +
+          `<button data-adm-ep-timeout-cancel style="background:none;border:none;color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:10px;cursor:pointer;padding:1px 3px;">×</button>` +
+          `<span data-adm-ep-timeout-err style="color:var(--color-error);font-size:10px;margin-left:3px;"></span>`;
+        const input = row.querySelector('[data-adm-ep-timeout-input]');
+        const errEl = row.querySelector('[data-adm-ep-timeout-err]');
+        input.focus();
+        const doSave = async () => {
+          const raw = input.value.trim();
+          const parsed = raw === '' ? null : parseInt(raw, 10);
+          if (parsed !== null && (isNaN(parsed) || parsed < 30 || parsed > 86400)) {
+            errEl.textContent = '30–86400 or blank'; return;
+          }
+          const res = await fetch(`/api/model-endpoints/${epId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ request_timeout: parsed }),
+            credentials: 'same-origin',
+          });
+          if (res.ok) loadEndpoints(); else errEl.textContent = 'Save failed';
+        };
+        const doCancel = () => { row.innerHTML = savedHtml; };
+        row.querySelector('[data-adm-ep-timeout-ok]').addEventListener('click', doSave);
+        row.querySelector('[data-adm-ep-timeout-cancel]').addEventListener('click', doCancel);
+        input.addEventListener('keydown', e2 => {
+          if (e2.key === 'Enter') { e2.preventDefault(); doSave(); }
+          if (e2.key === 'Escape') { e2.stopPropagation(); doCancel(); }
+        });
+      });
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -885,6 +927,8 @@ function initEndpointForm() {
       fd.append('endpoint_kind', endpointKind);
       fd.append('model_refresh_mode', endpointKind === 'proxy' ? 'manual' : 'auto');
       fd.append('model_refresh_timeout', '30');
+      const reqTimeoutEl = el('adm-epReqTimeout');
+      if (reqTimeoutEl?.value.trim()) fd.append('request_timeout', reqTimeoutEl.value.trim());
       if (apiKey) fd.append('api_key', apiKey);
       if (provider.value && provider.selectedOptions && provider.selectedOptions[0]) {
         fd.append('name', provider.selectedOptions[0].textContent.trim());
@@ -899,6 +943,7 @@ function initEndpointForm() {
         const count = d.models ? d.models.length : 0;
         urlInput.value = ''; urlInput.style.display = '';
         el('adm-epApiKey').value = ''; provider.value = '';
+        if (reqTimeoutEl) reqTimeoutEl.value = '';
         if (kindSel) kindSel.value = 'proxy';
         if (epType) epType.value = 'llm';
         if (d.id) _recentlyAddedEpId = String(d.id);

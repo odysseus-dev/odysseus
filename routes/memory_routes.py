@@ -28,7 +28,7 @@ from core.database import SessionLocal
 from src.llm_core import llm_call_async
 from services.memory.memory_extractor import audit_memories
 from src.auth_helpers import get_current_user, require_user
-from src.endpoint_resolver import resolve_endpoint
+from src.endpoint_resolver import resolve_endpoint, resolve_endpoint_timeout, resolve_timeout_by_url
 from src.upload_limits import read_upload_limited
 
 logger = logging.getLogger(__name__)
@@ -233,6 +233,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                 temperature=0.2,
                 max_tokens=500,
                 headers=sess.headers,
+                timeout=resolve_timeout_by_url(sess.endpoint_url),
             )
             try:
                 suggestions = json.loads(suggestion_text)
@@ -340,6 +341,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         endpoint_url = None
         model = None
         headers = {}
+        _import_timeout = 300
 
         if session:
             try:
@@ -348,11 +350,13 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                 endpoint_url = sess.endpoint_url
                 model = sess.model
                 headers = sess.headers
+                _import_timeout = resolve_timeout_by_url(endpoint_url)
             except KeyError:
                  raise HTTPException(404, "Session not found — needed for LLM config")
         else:
             endpoint_url, model, headers = resolve_endpoint("utility", owner=_owner(request))
-    
+            _import_timeout = resolve_endpoint_timeout("utility", owner=_owner(request))
+
         if not endpoint_url or not model:
             raise HTTPException(400, "No LLM model configured. Set a default model in Settings.")
 
@@ -444,6 +448,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                 temperature=0.2,
                 max_tokens=2000,
                 headers=headers,
+                timeout=_import_timeout,
             )
 
             # Parse JSON

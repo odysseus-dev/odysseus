@@ -849,14 +849,16 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         """Use AI to judge if documents are junk/test/accidental, then delete them.
         Caches verdicts so previously-reviewed docs are skipped."""
         from src.task_endpoint import resolve_task_endpoint
-        from src.endpoint_resolver import resolve_endpoint
+        from src.endpoint_resolver import resolve_endpoint, resolve_endpoint_timeout
         from src.llm_core import llm_call_async
 
         user = get_current_user(request)
         url, model, headers = resolve_task_endpoint()
+        _tidy_timeout = resolve_endpoint_timeout("task")
         if not url or not model:
             # Fall back to default endpoint
             url, model, headers = resolve_endpoint("default")
+            _tidy_timeout = resolve_endpoint_timeout("default")
         if not url or not model:
             raise HTTPException(500, "No endpoint configured for AI tidy")
 
@@ -898,7 +900,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 temperature=0.1,
                 max_tokens=200,
                 headers=headers,
-                timeout=30,
+                timeout=_tidy_timeout,
             )
 
             # Parse verdicts
@@ -1153,12 +1155,14 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             db.close()
 
         # Resolve VL model (admin-configured or auto-detected vision-capable)
+        from src.endpoint_resolver import resolve_timeout_by_url as _resolve_timeout_by_url
         settings = _load_vl_settings()
         vl_model = settings.get("vision_model", "")
         try:
             url, model_id, headers = _resolve_vl_model(vl_model)
         except Exception as e:
             raise HTTPException(503, f"No vision model available: {e}")
+        _vl_timeout = _resolve_timeout_by_url(url)
 
         system_prompt = (
             "You analyze rendered PDF page images and propose values to fill in. "
@@ -1206,6 +1210,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     raw = await llm_call_async(
                         url, model_id, messages,
                         temperature=0.1, max_tokens=2000, headers=headers,
+                        timeout=_vl_timeout,
                     )
                 except Exception as e:
                     logger.error(f"VL call failed on page {page_index + 1}: {e}")

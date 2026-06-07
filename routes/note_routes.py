@@ -179,11 +179,13 @@ async def dispatch_reminder(
     _SYNTH_FAILED_TAG = "[utility model unavailable — no summary generated]"
     if llm_on:
         try:
-            from src.endpoint_resolver import resolve_endpoint
+            from src.endpoint_resolver import resolve_endpoint, resolve_endpoint_timeout
             from src.llm_core import llm_call_async
             url, model, headers = resolve_endpoint("utility")
+            _note_timeout = resolve_endpoint_timeout("utility")
             if not url:
                 url, model, headers = resolve_endpoint("default")
+                _note_timeout = resolve_endpoint_timeout("default")
             if url and model:
                 raw = await llm_call_async(
                     url=url, model=model,
@@ -191,7 +193,7 @@ async def dispatch_reminder(
                         {"role": "system", "content": "You are a reminder assistant. Write a single short, warm, motivating sentence (max 25 words) reminding the user about the note below. Do not add greetings, preamble, or hashtags. Output only the sentence."},
                         {"role": "user", "content": f"Title: {title}\n\n{note_body}".strip()},
                     ],
-                    temperature=0.7, max_tokens=200, headers=headers, timeout=30,
+                    temperature=0.7, max_tokens=200, headers=headers, timeout=_note_timeout,
                 )
                 from src.text_helpers import strip_think as _strip_think
                 # prose=True strips untagged "The user wants me to…" chain-of-thought.

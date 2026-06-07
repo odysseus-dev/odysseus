@@ -2406,11 +2406,13 @@ def setup_email_routes():
             # Call LLM to analyze writing style. Prefer the utility model;
             # fall back to the default chat model when utility isn't set
             # (matches how the background email tasks behave).
-            from src.endpoint_resolver import resolve_endpoint
+            from src.endpoint_resolver import resolve_endpoint, resolve_endpoint_timeout
 
             url, model, headers = resolve_endpoint("utility", owner=owner)
+            _style_timeout = resolve_endpoint_timeout("utility", owner=owner)
             if not url or not model:
                 url, model, headers = resolve_endpoint("default", owner=owner)
+                _style_timeout = resolve_endpoint_timeout("default", owner=owner)
             if not url or not model:
                 return {"success": False, "error": "No LLM endpoint configured — set a Utility or Default Chat model in Settings → AI Defaults."}
 
@@ -2433,7 +2435,7 @@ def setup_email_routes():
                 },
             ]
 
-            style = await llm_call_async(url, model, messages, headers=headers, max_tokens=2048)
+            style = await llm_call_async(url, model, messages, headers=headers, max_tokens=2048, timeout=_style_timeout)
             style = _strip_think(style or "")
             if not style:
                 return {"success": False, "error": "LLM failed to generate style description"}
@@ -2454,7 +2456,7 @@ def setup_email_routes():
     async def summarize_email(data: dict, owner: str = Depends(require_owner)):
         """Generate a quick AI summary of an email body."""
         try:
-            from src.endpoint_resolver import resolve_endpoint
+            from src.endpoint_resolver import resolve_endpoint, resolve_endpoint_timeout
             from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
             import requests as _req
 
@@ -2493,8 +2495,10 @@ def setup_email_routes():
                 body_for_llm = body + "\n\n--- ATTACHMENTS ---\n\n" + att_text
 
             url, model, headers = resolve_endpoint("utility", owner=owner)
+            _summary_timeout = resolve_endpoint_timeout("utility", owner=owner)
             if not url:
                 url, model, headers = resolve_endpoint("default", owner=owner)
+                _summary_timeout = resolve_endpoint_timeout("default", owner=owner)
             if not url or not model:
                 return {"success": False, "error": "No LLM endpoint configured"}
 
@@ -2516,7 +2520,7 @@ def setup_email_routes():
             if _restricts_temperature(model):
                 payload.pop("temperature", None)
             resp = await asyncio.to_thread(
-                _req.post, url, json=payload, headers=req_headers, timeout=180
+                _req.post, url, json=payload, headers=req_headers, timeout=_summary_timeout
             )
             if not resp.ok:
                 return {"success": False, "error": f"LLM HTTP {resp.status_code}"}
@@ -2572,7 +2576,7 @@ def setup_email_routes():
     async def ai_reply(data: dict, owner: str = Depends(require_owner)):
         """Generate an AI-drafted reply to an email using the user's writing style."""
         try:
-            from src.endpoint_resolver import resolve_endpoint
+            from src.endpoint_resolver import resolve_endpoint, resolve_endpoint_timeout
 
             to = data.get("to", "")
             subject = data.get("subject", "")
@@ -2662,6 +2666,7 @@ def setup_email_routes():
                     url, fallback_model, headers = resolve_endpoint("default", owner=owner)
                 if not model:
                     model = fallback_model
+            _reply_timeout = resolve_endpoint_timeout("utility", owner=owner)
 
             if not url or not model:
                 return {"success": False, "error": "No LLM endpoint configured"}
@@ -2778,7 +2783,7 @@ def setup_email_routes():
                     ],
                     temperature=0.7,
                     max_tokens=1024 if fast_reply else 6144,
-                    timeout=60 if fast_reply else 180,
+                    timeout=60 if fast_reply else _reply_timeout,
                 )
             except Exception as e:
                 detail = getattr(e, "detail", None) or str(e)

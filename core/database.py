@@ -350,6 +350,11 @@ class ModelEndpoint(TimestampMixin, Base):
     model_refresh_mode = Column(String, nullable=True, default="auto")
     model_refresh_interval = Column(Integer, nullable=True, default=None)
     model_refresh_timeout = Column(Integer, nullable=True, default=None)
+    # Per-inference request timeout in seconds. NULL = use caller default (300s).
+    # Controls all LLM inference calls to this endpoint (chat, agent, email,
+    # research, etc.). Distinct from model_refresh_timeout which only applies
+    # to the /v1/models probe.
+    request_timeout = Column(Integer, nullable=True, default=None)
     # Whether models on this endpoint accept OpenAI-style function
     # schemas + emit `tool_calls`. Auto-detected at Cookbook auto-
     # register time from `--enable-auto-tool-choice` in the serve cmd;
@@ -840,6 +845,22 @@ def _migrate_add_model_endpoint_refresh_columns():
         conn.close()
     except Exception as e:
         logging.getLogger(__name__).warning(f"model_endpoints refresh-policy migration failed: {e}")
+
+def _migrate_add_request_timeout_column():
+    """Add request_timeout column to model_endpoints if it doesn't exist."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(model_endpoints)").fetchall()]
+        if columns and "request_timeout" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN request_timeout INTEGER")
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"request_timeout migration failed: {e}")
 
 def _migrate_add_task_run_model_column():
     """Add model column to task_runs if it doesn't exist (records which model ran)."""
@@ -1597,6 +1618,7 @@ def init_db():
     _migrate_add_notes_sort_order()
     _migrate_add_model_type_column()
     _migrate_add_model_endpoint_refresh_columns()
+    _migrate_add_request_timeout_column()
     _migrate_add_model_endpoint_owner_column()
     _migrate_add_supports_tools_column()
     _migrate_add_task_run_model_column()

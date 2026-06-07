@@ -1384,11 +1384,12 @@ class TaskScheduler:
         except Exception as e:
             logger.warning(f"Agent loop failed for task '{task.name}', falling back to simple call: {e}")
             from src.llm_core import llm_call_async
+            from src.endpoint_resolver import resolve_timeout_by_url as _rtbu
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": task.prompt},
             ]
-            result = await llm_call_async(url=endpoint_url, model=model, messages=messages, timeout=120)
+            result = await llm_call_async(url=endpoint_url, model=model, messages=messages, timeout=_rtbu(endpoint_url))
 
         # Strip the model's chain-of-thought before saving/delivering. Task
         # output is LLM-only, so prose=True (which also removes untagged
@@ -1596,10 +1597,12 @@ class TaskScheduler:
         # primary endpoint won't silently yield `(no output)` — same recipe
         # chat uses but with the utility list (`utility_model_fallbacks`).
         try:
-            from src.endpoint_resolver import resolve_utility_fallback_candidates
+            from src.endpoint_resolver import resolve_utility_fallback_candidates, resolve_timeout_by_url
             _task_fallbacks = resolve_utility_fallback_candidates()
+            _task_ep_timeout = resolve_timeout_by_url(endpoint_url)
         except Exception:
             _task_fallbacks = []
+            _task_ep_timeout = 300
         async for event_str in stream_agent_loop(
             endpoint_url=endpoint_url,
             model=model,
@@ -1611,6 +1614,7 @@ class TaskScheduler:
             disabled_tools=disabled_tools,
             relevant_tools=relevant_tools,
             fallbacks=_task_fallbacks,
+            endpoint_timeout=_task_ep_timeout,
         ):
             if event_str.startswith("data: ") and not event_str.startswith("data: [DONE]"):
                 try:
@@ -1647,7 +1651,7 @@ class TaskScheduler:
                         {"role": "system", "content": system_content},
                         {"role": "user", "content": grace_context},
                     ],
-                    timeout=30,
+                    timeout=_task_ep_timeout,
                 )
                 full_text = (full_text or "").strip()
             except Exception as e:

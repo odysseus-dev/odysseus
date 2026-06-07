@@ -1037,7 +1037,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         AI news and summarize it") into a structured task draft the frontend
         can pre-fill the form with. Returns a draft only — the user reviews and
         saves it, so a misread schedule never goes live unreviewed."""
-        from src.endpoint_resolver import resolve_endpoint
+        from src.endpoint_resolver import resolve_endpoint, resolve_endpoint_timeout
         from src.llm_core import llm_call_async
         from src.text_helpers import strip_think as _strip_think
         import json as _json, re as _re
@@ -1074,15 +1074,17 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         )
         try:
             url, model, headers = resolve_endpoint("utility")
+            _task_timeout = resolve_endpoint_timeout("utility")
             if not url:
                 url, model, headers = resolve_endpoint("default")
+                _task_timeout = resolve_endpoint_timeout("default")
             if not (url and model):
                 return {"success": False, "message": "No model endpoint configured"}
             raw = await llm_call_async(
                 url=url, model=model,
                 messages=[{"role": "system", "content": sys},
                           {"role": "user", "content": desc[:1000]}],
-                temperature=0.2, max_tokens=400, headers=headers, timeout=45,
+                temperature=0.2, max_tokens=400, headers=headers, timeout=_task_timeout,
             )
             text = _strip_think(raw or "", prose=False, prompt_echo=False).strip()
             if text.startswith("```"):

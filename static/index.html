@@ -2119,6 +2119,10 @@
                   <option value="https://api.z.ai/api/paas/v4" data-logo="zhipu">Z.AI (Zhipu)</option>
                   <option value="https://api.z.ai/api/coding/paas/v4" data-logo="zhipu">Z.AI Coding Plan</option>
                 </select>
+                <div class="admin-model-form-row" style="gap:6px;align-items:center;">
+                  <label style="font-size:11px;opacity:0.65;white-space:nowrap;" for="adm-epReqTimeout">Timeout (s) <span class="preset-hint-icon" data-hint="Per-request timeout in seconds. Increase if responses are getting cut off. Cold-starting a model on a low-VRAM GPU (e.g. 6 GB) can take 60–120 s before the first token appears — raise to 120–300 s for slow or quantised local models. Leave blank for the default (60 s)." title="Per-request inference timeout. Leave blank for default (60 s).">?</span></label>
+                  <input id="adm-epReqTimeout" type="number" min="30" max="86400" placeholder="Default (60s)" style="width:110px;">
+                </div>
                 <div class="admin-model-form-row">
                   <input id="adm-epApiKey" type="password" placeholder="API key">
                   <select id="adm-epKind" style="padding:5px;width:82px;">

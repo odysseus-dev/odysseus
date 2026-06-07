@@ -1369,7 +1369,7 @@ def setup_calendar_routes() -> APIRouter:
         Uses the "utility" endpoint (small / fast model) to keep latency low.
         """
         _require_user(request)
-        from src.endpoint_resolver import resolve_endpoint
+        from src.endpoint_resolver import resolve_endpoint, resolve_endpoint_timeout
         from src.llm_core import llm_call_async
         from src.text_helpers import strip_think
         import json as _json
@@ -1395,8 +1395,10 @@ def setup_calendar_routes() -> APIRouter:
             set_user_tz_name(tz_hint)
 
         url, model, headers = resolve_endpoint("utility")
+        _cal_timeout = resolve_endpoint_timeout("utility")
         if not url:
             url, model, headers = resolve_endpoint("default")
+            _cal_timeout = resolve_endpoint_timeout("default")
         if not url or not model:
             return {"ok": False, "error": "No LLM endpoint configured"}
 
@@ -1436,7 +1438,7 @@ def setup_calendar_routes() -> APIRouter:
                 headers=headers,
                 temperature=0.0,
                 max_tokens=512,
-                timeout=20,
+                timeout=_cal_timeout,
             )
         except Exception as e:
             return {"ok": False, "error": f"LLM call failed: {e}"}

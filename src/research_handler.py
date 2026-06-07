@@ -676,24 +676,73 @@ class ResearchHandler:
 
     @staticmethod
     async def _probe_endpoint(endpoint: str, model: str, headers: dict = None):
-        """Quick probe to verify the LLM endpoint/model responds before research."""
+        """Probe the LLM endpoint before a research run.
+
+        Retries with backoff to tolerate cold model starts (e.g. Ollama loading
+        a large model from disk, which can take 30-120 s).  The per-attempt
+        timeout honours the endpoint's configured request_timeout so a single
+        setting controls all inference waits for that endpoint.
+        """
         from src.llm_core import llm_call_async
-        try:
-            logger.info(f"Probing {model} at {endpoint} (has_auth={bool(headers and 'Authorization' in (headers or {}))})")
-            await llm_call_async(
-                url=endpoint,
-                model=model,
-                messages=[{"role": "user", "content": "hi"}],
-                temperature=0,
-                max_tokens=5,
-                headers=headers,
-                timeout=15,
-                max_retries=1,
-            )
-            logger.info(f"Endpoint probe OK: {model}")
-        except Exception as e:
-            logger.error(f"Probe failed for {model}: {e}")
-            raise RuntimeError(_format_probe_failure(model, e)) from e
+        from src.settings import get_setting
+        from src.endpoint_resolver import resolve_timeout_by_url
+
+        max_attempts = _bounded_int(
+            get_setting("research_probe_max_attempts", 3),
+            default=3, minimum=1, maximum=10,
+        )
+        # Use the endpoint's configured request_timeout as the per-attempt
+        # ceiling so the same knob controls both inference and probe waits.
+        ep_timeout = resolve_timeout_by_url(endpoint)
+        probe_timeout = _bounded_int(
+            get_setting("research_probe_timeout_seconds", ep_timeout),
+            default=ep_timeout, minimum=10, maximum=ep_timeout,
+        )
+        retry_delay = _bounded_int(
+            get_setting("research_probe_retry_delay_seconds", 15),
+            default=15, minimum=5, maximum=120,
+        )
+
+        last_exc = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                if attempt == 1:
+                    logger.info(
+                        f"Probing {model} at {endpoint} "
+                        f"(has_auth={bool(headers and 'Authorization' in (headers or {}))}, "
+                        f"max_attempts={max_attempts}, timeout={probe_timeout}s)"
+                    )
+                else:
+                    logger.info(
+                        f"Waiting for model to load, attempt {attempt}/{max_attempts} "
+                        f"({model}) — retrying after previous failure"
+                    )
+                await llm_call_async(
+                    url=endpoint,
+                    model=model,
+                    messages=[{"role": "user", "content": "hi"}],
+                    temperature=0,
+                    max_tokens=5,
+                    headers=headers,
+                    timeout=probe_timeout,
+                    max_retries=1,
+                )
+                logger.info(f"Endpoint probe OK: {model} (attempt {attempt}/{max_attempts})")
+                return
+            except Exception as e:
+                last_exc = e
+                if attempt < max_attempts:
+                    logger.warning(
+                        f"Probe attempt {attempt}/{max_attempts} failed for {model}: {e} — "
+                        f"waiting {retry_delay}s before retry"
+                    )
+                    await asyncio.sleep(retry_delay)
+                else:
+                    logger.error(
+                        f"Probe failed for {model} after {max_attempts} attempts: {e}"
+                    )
+
+        raise RuntimeError(_format_probe_failure(model, last_exc)) from last_exc
 
     async def call_research_service(
         self,
