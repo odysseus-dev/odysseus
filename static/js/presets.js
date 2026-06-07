@@ -884,6 +884,13 @@ export function getAllPresets() {
 }
 
 /**
+ * Get the in-memory user templates list (may be stale; call loadUserTemplates first if freshness matters).
+ */
+export function getUserTemplates() {
+  return userTemplates;
+}
+
+/**
  * Get the character name (if set)
  */
 export function getCharacterName() {
@@ -1099,6 +1106,7 @@ const presetsModule = {
   getSelectedPreset,
   getPreset,
   getAllPresets,
+  getUserTemplates,
   getCharacterName,
   onSessionSwitch,
   isPersistentChat,
