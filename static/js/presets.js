@@ -830,6 +830,25 @@ export async function saveCustomPreset(showToast, showError) {
       const _selVal = document.getElementById('char-template-select')?.value || '';
       const isBuiltinPreset = PROMPT_TEMPLATES.some(t => t.isPreset && (t.name === name || t.name === _selVal));
       const saveName = isBuiltinPreset ? null : (name || null);
+      // Optimistically update the in-memory templates list so that any code
+      // reading getUserTemplates() (e.g. the Group participant dropdown) sees
+      // the new character immediately — before the async templates POST below
+      // completes and triggers loadUserTemplates().
+      if (saveName) {
+        const _existing = userTemplates.find(t => t.name === saveName);
+        const _entry = {
+          id: (_existing && _existing.id) || '',
+          name: saveName,
+          system_prompt: system_prompt || '',
+          temperature: config.temperature,
+          max_tokens: config.max_tokens,
+        };
+        if (_existing) {
+          Object.assign(_existing, _entry);
+        } else {
+          userTemplates.push(_entry);
+        }
+      }
       if (saveName) {
         fetch(`${API_BASE}/api/presets/templates`, {
           method: 'POST',
