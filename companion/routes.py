@@ -106,16 +106,22 @@ def _chat_run_options(body: dict) -> dict:
         live tool in agent mode (allow_web_search);
       - terminal (bash) is an agent-only tool, so enabling it implies agent mode.
     Anything omitted/false leaves the run as a plain chat, same as before."""
-    agent = bool(body.get("agent"))
-    web = bool(body.get("web"))
-    terminal = bool(body.get("terminal"))
-    if terminal:
-        agent = True
-    extra = {"mode": "agent" if agent else "chat"}
-    if web:
-        extra["allow_web_search" if agent else "use_web"] = "true"
-    if terminal:
-        extra["allow_bash"] = "true"
+    # Deep research is a self-contained mode: it forces chat mode and runs the
+    # research pipeline (which does its own searching), so it overrides the agent
+    # tool flags. Mirrors the desktop's research-toggle (static/js/chat.js).
+    if bool(body.get("research")):
+        extra = {"mode": "chat", "use_research": "true"}
+    else:
+        agent = bool(body.get("agent"))
+        web = bool(body.get("web"))
+        terminal = bool(body.get("terminal"))
+        if terminal:
+            agent = True
+        extra = {"mode": "agent" if agent else "chat"}
+        if web:
+            extra["allow_web_search" if agent else "use_web"] = "true"
+        if terminal:
+            extra["allow_bash"] = "true"
     # Attachment ids from POST /api/companion/upload; chat_stream parses this as
     # a JSON list and resolves each id owner-scoped.
     atts = body.get("attachments")

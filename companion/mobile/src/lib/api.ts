@@ -77,9 +77,15 @@ export interface ChatOptions {
   agent: boolean;
   web: boolean;
   terminal: boolean;
+  research: boolean;
 }
 
-export const DEFAULT_OPTIONS: ChatOptions = { agent: false, web: false, terminal: false };
+export const DEFAULT_OPTIONS: ChatOptions = {
+  agent: false,
+  web: false,
+  terminal: false,
+  research: false,
+};
 
 export interface Attachment {
   id: string;
