@@ -108,37 +108,56 @@ def _resolve_and_validate_ip(url: str) -> str:
     return str(addrs[0])
 
 
+class _PinnedIPTransport(httpx.HTTPTransport):
+    """httpx transport that resolves the hostname once, validates the IP
+    is public, then connects directly to that IP while preserving the
+    original hostname for TLS SNI and the Host header. This prevents
+    DNS rebinding attacks where the DNS response changes between
+    validation and connection."""
+
+    def __init__(self, resolved_ip: str, sni_hostname: str, *args, **kwargs):
+        self._resolved_ip = resolved_ip
+        self._sni_hostname = sni_hostname
+        super().__init__(*args, **kwargs)
+
+    def handle_request(self, request):
+        # Rewrite the URL to use the pinned IP, but keep the original
+        # hostname in the Host header and as the TLS SNI target.
+        original_url = request.url
+        rebuilt = original_url.copy_with(host=self._resolved_ip)
+        request.url = rebuilt
+        request.headers["Host"] = self._sni_hostname
+        # Set SNI hostname for TLS so the server presents the right cert.
+        # httpcore reads 'sni_hostname' from request.extensions.
+        if request.extensions is None:
+            request.extensions = {}
+        request.extensions["sni_hostname"] = self._sni_hostname
+        return super().handle_request(request)
+
+
 def _get_public_url(url: str, headers: dict, timeout: int, max_redirects: int = 5) -> httpx.Response:
     current = url
     for _ in range(max_redirects + 1):
         if not _public_http_url(current):
             raise httpx.RequestError("Blocked private/internal URL", request=httpx.Request("GET", current))
         # Pin the IP before connecting to prevent DNS rebinding.
-        # Resolve once, validate, then connect directly to the IP with
-        # the original Host header so the server still sees the right name.
+        # Resolve once, validate, then connect directly to the pinned IP
+        # while preserving the original hostname for TLS SNI and Host header.
         pinned_ip = _resolve_and_validate_ip(current)
         parsed = urlparse(current)
         host = parsed.hostname or ""
-        port = parsed.port
-        scheme = parsed.scheme or "http"
-        # Build URL with pinned IP
-        netloc = f"{pinned_ip}:{port}" if port else pinned_ip
-        pinned_url = f"{scheme}://{netloc}{parsed.path or '/'}"
-        if parsed.query:
-            pinned_url += f"?{parsed.query}"
-        response = httpx.get(
-            pinned_url,
-            headers={**headers, "Host": host},
-            timeout=timeout,
-            follow_redirects=False,
-        )
+        transport = _PinnedIPTransport(pinned_ip, host)
+        with httpx.Client(transport=transport, timeout=timeout) as _client:
+            response = _client.get(
+                current,
+                headers=headers,
+                follow_redirects=False,
+            )
         if response.status_code not in (301, 302, 303, 307, 308):
             return response
         location = response.headers.get("location")
         if not location:
             return response
-        # Use the original (pre-IP) URL as the base for resolving relative
-        # redirects, so the next iteration's hostname resolution works.
         current = urljoin(current, location)
     raise httpx.RequestError("Too many redirects", request=httpx.Request("GET", current))
 
