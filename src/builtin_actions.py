@@ -1006,7 +1006,7 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         from datetime import datetime as _dt, timedelta as _td
         import json as _json
 
-        from core.database import SessionLocal, CalendarEvent, CalendarCal, Note
+        from core.database import SessionLocal, CalendarEvent, CalendarCal, Note, EmailAccount as _EA
         from routes.email_helpers import _imap_connect, _decode_header
 
         # ----- Calendar: today's events -----
@@ -1039,42 +1039,63 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         finally:
             db.close()
 
-        # ----- Email: unread count + top 5 inbox subjects (best-effort) -----
-        # Direct IMAP: cheaper than the full _list_emails_sync helper and
-        # avoids the module/import coupling that broke this once already.
-        unread_count = 0
-        recent_subjects: list[tuple[str, str]] = []
+        # ----- Email: all accounts, best-effort -----
+        import email as _email
+        _SPAM_ACCOUNT = "surpriseb4y5@gmail.com"
+        _PRIMARY_ACCOUNT = "yousafb419@gmail.com"
+        _db2 = SessionLocal()
         try:
-            import email as _email
-            conn = _imap_connect(None)
+            _accounts = (
+                _db2.query(_EA)
+                .filter(_EA.enabled == True)  # noqa: E712
+                .order_by(_EA.created_at.asc())
+                .all()
+            )
+        finally:
+            _db2.close()
+        # Sort: primary first, spam last
+        def _acct_sort_key(a):
+            if a.imap_user == _PRIMARY_ACCOUNT:
+                return 0
+            if a.imap_user == _SPAM_ACCOUNT:
+                return 2
+            return 1
+        _accounts.sort(key=_acct_sort_key)
+        email_sections: list[tuple[str, int, list[tuple[str, str]]]] = []  # (label, unread, subjects)
+        for _acct in _accounts:
+            _unread = 0
+            _subjects: list[tuple[str, str]] = []
             try:
-                conn.select("INBOX", readonly=True)
-                status, data = conn.search(None, "UNSEEN")
-                uids = (data[0].split() if status == "OK" and data and data[0] else [])
-                unread_count = len(uids)
-                # Grab headers for the most recent 5 unread (UIDs increase with arrival)
-                for uid in uids[-5:][::-1]:
-                    try:
-                        _, msg_data = conn.fetch(uid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)])")
-                        if not msg_data or not msg_data[0]:
-                            continue
-                        hdr = msg_data[0][1] if isinstance(msg_data[0], tuple) else msg_data[0]
-                        parsed = _email.message_from_bytes(hdr)
-                        subject = _decode_header(parsed.get("Subject") or "") or "(no subject)"
-                        from_raw = _decode_header(parsed.get("From") or "") or "?"
-                        # Extract just the display name if "Name <addr>" form
-                        if "<" in from_raw:
-                            name = from_raw.split("<", 1)[0].strip().strip('"') or from_raw
-                        else:
-                            name = from_raw
-                        recent_subjects.append((name, subject))
-                    except Exception as fe:
-                        logger.debug(f"daily_brief: header fetch for uid {uid} failed: {fe}")
-            finally:
-                try: conn.logout()
-                except Exception: pass
-        except Exception as ee:
-            logger.debug(f"daily_brief: email fetch failed: {ee}")
+                _conn = _imap_connect(_acct.id)
+                try:
+                    _conn.select("INBOX", readonly=True)
+                    _status, _data = _conn.search(None, "UNSEEN")
+                    _uids = (_data[0].split() if _status == "OK" and _data and _data[0] else [])
+                    _unread = len(_uids)
+                    _is_spam = _acct.imap_user == _SPAM_ACCOUNT
+                    if not _is_spam:
+                        for _uid in _uids[-3:][::-1]:
+                            try:
+                                _, _msg_data = _conn.fetch(_uid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)])")
+                                if not _msg_data or not _msg_data[0]:
+                                    continue
+                                _hdr = _msg_data[0][1] if isinstance(_msg_data[0], tuple) else _msg_data[0]
+                                _parsed = _email.message_from_bytes(_hdr)
+                                _subject = _decode_header(_parsed.get("Subject") or "") or "(no subject)"
+                                _from_raw = _decode_header(_parsed.get("From") or "") or "?"
+                                if "<" in _from_raw:
+                                    _name = _from_raw.split("<", 1)[0].strip().strip('"') or _from_raw
+                                else:
+                                    _name = _from_raw
+                                _subjects.append((_name, _subject))
+                            except Exception as _fe:
+                                logger.debug(f"daily_brief: header fetch failed: {_fe}")
+                finally:
+                    try: _conn.logout()
+                    except Exception: pass
+            except Exception as _ee:
+                logger.debug(f"daily_brief: email account {_acct.imap_user} failed: {_ee}")
+            email_sections.append((_acct.imap_user, _unread, _subjects))
 
         # Pull active todo items from notes
         todo_lines: list[str] = []
@@ -1096,29 +1117,31 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         # Windows / non-glibc Python builds too.
         date_label = today.strftime(f"%A, %B {today.day}, %Y")
 
-        plain = [f"Daily brief — {date_label}", ""]
+        plain = [f"Daily Briefing — {date_label}", ""]
+
+        plain.append("📅 Calendar")
         if events:
-            plain.append("Calendar:")
             for e in events:
                 t = e.dtstart.strftime("%H:%M") if not e.all_day else "all day"
                 loc = f" @ {e.location}" if e.location else ""
                 plain.append(f"  {t}  {e.summary}{loc}")
-            plain.append("")
         else:
-            plain.append("Calendar: nothing scheduled.")
-            plain.append("")
-
-        plain.append(f"Email: {unread_count} unread")
-        for sender, subj in recent_subjects:
-            plain.append(f"  · {sender} — {subj}")
+            plain.append("  Nothing scheduled.")
         plain.append("")
 
+        plain.append("✉ Email")
+        for _label, _unread, _subjects in email_sections:
+            plain.append(f"  {_label}: {_unread} unread")
+            for _sender, _subj in _subjects:
+                plain.append(f"    · {_sender} — {_subj}")
+        plain.append("")
+
+        plain.append("✓ Todos")
         if todo_lines:
-            plain.append("Todos:")
             for t in todo_lines[:10]:
                 plain.append(f"  · {t}")
         else:
-            plain.append("Todos: none active.")
+            plain.append("  None active.")
 
         plain_body = "\n".join(plain)
 

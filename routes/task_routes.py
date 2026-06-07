@@ -3,8 +3,10 @@
 import json
 import logging
 import secrets
+import subprocess
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -18,6 +20,10 @@ from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
 from routes.prefs_routes import _load_for_user, _save_for_user
 
 logger = logging.getLogger(__name__)
+
+# Global tracking of running doit tasks
+# Format: { task_id: { "process": Popen, "started_at": datetime, "task_name": str, "logs": [...] } }
+_DOIT_TASKS: Dict[str, Dict[str, Any]] = {}
 
 
 def _maybe_cascade_calendar_event(task) -> None:
@@ -1160,5 +1166,290 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         except Exception as e:
             logger.error(f"parse_task failed: {e}")
             return {"success": False, "message": str(e)}
+
+    # ======================================================================
+    # ORCHESTRATION ENDPOINTS (Track 4d) — doit task runner
+    # ======================================================================
+
+    @router.post("/run/{task_name}")
+    async def run_doit_task(
+        request: Request,
+        task_name: str,
+        sync: bool = False,
+    ):
+        """Trigger a doit task from odysseus/dodo.py.
+
+        Args:
+            task_name: One of [orchestration_loop, sync_email, sync_calendar,
+                       deep_research, memory_snapshot]
+            sync: If true, wait for completion; else return immediately (202)
+        """
+        user = _owner(request)
+        valid_tasks = [
+            "orchestration_loop",
+            "sync_email",
+            "sync_calendar",
+            "deep_research",
+            "memory_snapshot",
+        ]
+
+        if task_name not in valid_tasks:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid task_name. Valid: {valid_tasks}",
+            )
+
+        # Check if orchestration_loop is already running (rate limit)
+        if task_name == "orchestration_loop":
+            for running_task in _DOIT_TASKS.values():
+                if running_task.get("task_name") == "orchestration_loop":
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"orchestration_loop already running (started {running_task.get('started_at')})",
+                    )
+
+        # Generate task_id
+        task_id = f"{task_name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(4)}"
+
+        # Prepare log file
+        log_dir = Path("/odysseus/logs")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"task-{task_id}.log"
+
+        try:
+            # Spawn doit subprocess
+            cmd = [
+                "python",
+                "-m",
+                "doit",
+                task_name,
+                "--quiet",
+            ]
+
+            # Change to odysseus repo directory
+            cwd = Path(__file__).parent.parent
+
+            process = subprocess.Popen(
+                cmd,
+                cwd=str(cwd),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+
+            # Track the task
+            _DOIT_TASKS[task_id] = {
+                "process": process,
+                "started_at": datetime.now(),
+                "task_name": task_name,
+                "logs": [],
+                "log_file": str(log_file),
+            }
+
+            logger.info(
+                f"Task {task_name} started (task_id={task_id}, pid={process.pid})"
+            )
+
+            if sync:
+                # Wait for completion
+                try:
+                    stdout, _ = process.communicate(timeout=120)
+                    _DOIT_TASKS[task_id]["logs"] = stdout.split("\n") if stdout else []
+                    _DOIT_TASKS[task_id]["exit_code"] = process.returncode
+                    _DOIT_TASKS[task_id]["finished_at"] = datetime.now()
+
+                    # Write logs to file
+                    with open(log_file, "w") as f:
+                        f.write(stdout or "")
+
+                    return {
+                        "task_id": task_id,
+                        "task_name": task_name,
+                        "status": "done" if process.returncode == 0 else "failed",
+                        "exit_code": process.returncode,
+                        "duration_sec": (
+                            _DOIT_TASKS[task_id].get("finished_at") - datetime.now()
+                        ).total_seconds(),
+                    }
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    _DOIT_TASKS[task_id]["status"] = "timeout"
+                    raise HTTPException(
+                        status_code=504,
+                        detail=f"Task {task_name} timed out after 120s",
+                    )
+            else:
+                # Return immediately (202 Accepted)
+                return {
+                    "task_id": task_id,
+                    "task_name": task_name,
+                    "status": "queued",
+                    "started_at": _DOIT_TASKS[task_id]["started_at"].isoformat(),
+                    "poll_url": f"/api/tasks/status/{task_id}",
+                    "estimated_duration_sec": 120,
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to start task {task_name}: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to start task: {str(e)}",
+            )
+
+    @router.get("/status/{task_id}")
+    async def poll_task_status(request: Request, task_id: str):
+        """Poll the status of a running doit task."""
+        user = _owner(request)
+
+        if task_id not in _DOIT_TASKS:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Task {task_id} not found",
+            )
+
+        task_info = _DOIT_TASKS[task_id]
+        process = task_info.get("process")
+
+        if process is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Task {task_id} not found",
+            )
+
+        # Check if process is still running
+        if process.poll() is None:
+            # Still running
+            # Try to read logs (best-effort, non-blocking)
+            logs = task_info.get("logs", [])
+            return {
+                "task_id": task_id,
+                "task_name": task_info.get("task_name"),
+                "status": "running",
+                "started_at": task_info.get("started_at").isoformat(),
+                "elapsed_sec": (
+                    datetime.now() - task_info.get("started_at")
+                ).total_seconds(),
+                "logs": logs[-50:] if logs else [],  # Last 50 lines
+            }
+        else:
+            # Process finished
+            exit_code = process.returncode
+            finished_at = task_info.get("finished_at", datetime.now())
+
+            # Read full logs from file
+            log_file = task_info.get("log_file")
+            logs = []
+            if log_file and Path(log_file).exists():
+                try:
+                    with open(log_file, "r") as f:
+                        logs = f.readlines()
+                except Exception as e:
+                    logger.warning(f"Failed to read log file {log_file}: {e}")
+
+            result = {
+                "task_id": task_id,
+                "task_name": task_info.get("task_name"),
+                "status": "done" if exit_code == 0 else "failed",
+                "started_at": task_info.get("started_at").isoformat(),
+                "finished_at": finished_at.isoformat(),
+                "duration_sec": (
+                    finished_at - task_info.get("started_at")
+                ).total_seconds(),
+                "exit_code": exit_code,
+                "logs": logs[-100:] if logs else [],  # Last 100 lines
+            }
+
+            # Cleanup old tasks (>24h old)
+            if (datetime.now() - task_info.get("started_at")) > timedelta(hours=24):
+                del _DOIT_TASKS[task_id]
+
+            return result
+
+    @router.post("/run/deep_research")
+    async def run_deep_research(
+        request: Request,
+        url: str,
+        depth: int = 2,
+    ):
+        """Trigger on-demand deep research task (doit deep_research).
+
+        Args:
+            url: URL to research
+            depth: Recursion depth (1-3)
+        """
+        user = _owner(request)
+
+        if not url:
+            raise HTTPException(
+                status_code=400,
+                detail="URL parameter is required",
+            )
+
+        if depth < 1 or depth > 3:
+            raise HTTPException(
+                status_code=400,
+                detail="Depth must be between 1 and 3",
+            )
+
+        # Generate task_id
+        task_id = f"deep_research-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(4)}"
+
+        try:
+            # Spawn doit subprocess with arguments
+            cmd = [
+                "python",
+                "-m",
+                "doit",
+                "deep_research",
+                "--",
+                f"--url={url}",
+                f"--depth={depth}",
+                "--quiet",
+            ]
+
+            cwd = Path(__file__).parent.parent
+
+            process = subprocess.Popen(
+                cmd,
+                cwd=str(cwd),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+
+            # Track the task
+            log_dir = Path("/odysseus/logs")
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / f"task-{task_id}.log"
+
+            _DOIT_TASKS[task_id] = {
+                "process": process,
+                "started_at": datetime.now(),
+                "task_name": "deep_research",
+                "logs": [],
+                "log_file": str(log_file),
+            }
+
+            logger.info(
+                f"Deep research started (task_id={task_id}, url={url}, depth={depth}, pid={process.pid})"
+            )
+
+            return {
+                "task_id": task_id,
+                "task_name": "deep_research",
+                "status": "queued",
+                "started_at": _DOIT_TASKS[task_id]["started_at"].isoformat(),
+                "poll_url": f"/api/tasks/status/{task_id}",
+                "estimated_duration_sec": 60 * depth,  # Estimate: ~60s per depth level
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to start deep_research: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to start task: {str(e)}",
+            )
 
     return router

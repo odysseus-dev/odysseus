@@ -894,6 +894,93 @@ async def runtime_info() -> Dict[str, object]:
         "ollama_base_url": ollama_url,
     }
 
+# ========= MCP SERVICE STUBS (Phase 3b) =========
+# These endpoints provide the API surface for MCP server integration.
+# Actual MCP servers (Playwright, PyMCP-FS) will be deployed in Phase 3c.
+
+@app.get("/mcp/status")
+async def mcp_status_check() -> Dict[str, object]:
+    """
+    Health check for MCP servers (Model Context Protocol).
+
+    Returns status of each configured MCP server.
+    Phase 3b: Returns "pending" for all servers (not deployed yet).
+    Phase 3c: Will check actual server sockets after deployment.
+    """
+    return {
+        "mcp_servers": {
+            "odys-browser-mcp": {
+                "status": "pending",
+                "description": "Browser automation via Playwright MCP",
+                "version": "0.1.0",
+                "deployment_target": "systemd service",
+                "expected_port": None,
+                "notes": "Awaiting Phase 3c deployment"
+            },
+            "odys-fs-mcp": {
+                "status": "pending",
+                "description": "Filesystem operations (read/write/list/search)",
+                "version": "0.1.0",
+                "deployment_target": "systemd service",
+                "expected_port": None,
+                "notes": "Awaiting Phase 3c deployment"
+            }
+        },
+        "overall_status": "pending",
+        "phase": "3b (stubs)",
+        "notes": "MCP servers will be deployed as systemd services in Phase 3c"
+    }
+
+
+@app.post("/mcp-call")
+async def mcp_call_proxy(request: Request) -> Dict[str, object]:
+    """
+    Proxy tool calls to MCP servers (Model Context Protocol).
+
+    Request body:
+    {
+        "server": "odys-browser-mcp" | "odys-fs-mcp",
+        "tool": "open_page" | "take_screenshot" | "fill_form" | ...,
+        "args": { ...tool-specific arguments... }
+    }
+
+    Phase 3b: Returns "not ready" error (servers not deployed yet).
+    Phase 3c: Will forward to actual MCP server sockets.
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid request body: {str(e)}"
+        )
+
+    server = body.get("server")
+    tool = body.get("tool")
+    args = body.get("args", {})
+
+    # Validate server name
+    valid_servers = ["odys-browser-mcp", "odys-fs-mcp"]
+    if server not in valid_servers:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown MCP server '{server}'. Valid: {valid_servers}"
+        )
+
+    # Phase 3b stub response
+    return {
+        "server": server,
+        "tool": tool,
+        "status": "error",
+        "error": "MCP servers not deployed yet (Phase 3b stub)",
+        "message": f"Server '{server}' will be available after Phase 3c deployment",
+        "phase": "3b",
+        "notes": {
+            "odys-browser-mcp": "Deploy as: systemd service (Playwright MCP binary)",
+            "odys-fs-mcp": "Deploy as: systemd service (PyMCP-FS Python module)"
+        }
+    }
+
 # ========= LIFECYCLE =========
 
 @asynccontextmanager
