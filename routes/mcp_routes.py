@@ -108,6 +108,47 @@ def _load_disabled_map():
         db.close()
 
 
+def _normalize_mcp_url(url) -> str:
+    """Normalize URL endpoints so trailing slashes do not create duplicates."""
+    if not url:
+        return ""
+    return str(url).strip().rstrip("/")
+
+
+def _normalize_mcp_args(args) -> str:
+    """Canonical JSON for stdio args comparison."""
+    if args is None:
+        return "[]"
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except (json.JSONDecodeError, TypeError):
+            return args
+    if isinstance(args, list):
+        return json.dumps(args)
+    return "[]"
+
+
+def find_duplicate_mcp_server(db, *, transport, command=None, args=None, url=None):
+    """Return an existing row with the same endpoint identity, if any."""
+    transport = (transport or "stdio").strip().lower()
+    if transport in ("http", "sse"):
+        norm_url = _normalize_mcp_url(url)
+        if not norm_url:
+            return None
+        for srv in db.query(McpServer).filter(McpServer.transport == transport).all():
+            if _normalize_mcp_url(srv.url) == norm_url:
+                return srv
+        return None
+
+    norm_cmd = (command or "").strip()
+    norm_args = _normalize_mcp_args(args)
+    for srv in db.query(McpServer).filter(McpServer.transport == "stdio").all():
+        if (srv.command or "").strip() == norm_cmd and _normalize_mcp_args(srv.args) == norm_args:
+            return srv
+    return None
+
+
 def setup_mcp_routes(mcp_manager: McpManager):
     """Setup MCP routes with the provided manager."""
 
@@ -231,6 +272,23 @@ def setup_mcp_routes(mcp_manager: McpManager):
         # Save to DB
         db = SessionLocal()
         try:
+            existing = find_duplicate_mcp_server(
+                db,
+                transport=transport,
+                command=command,
+                args=parsed_args,
+                url=url,
+            )
+            if existing:
+                raise HTTPException(
+                    409,
+                    detail={
+                        "message": "MCP server already configured",
+                        "id": existing.id,
+                        "name": existing.name,
+                    },
+                )
+
             srv = McpServer(
                 id=server_id,
                 name=name,

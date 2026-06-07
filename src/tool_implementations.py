@@ -1129,10 +1129,26 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
         if not name or not command:
             return {"error": "name and command are required", "exit_code": 1}
         sid = str(_uuid.uuid4())[:8]
+        parsed_cmd_args = cmd_args if isinstance(cmd_args, list) else json.loads(cmd_args)
         db = SessionLocal()
         try:
+            from routes.mcp_routes import find_duplicate_mcp_server
+
+            existing = find_duplicate_mcp_server(
+                db,
+                transport="stdio",
+                command=command,
+                args=parsed_cmd_args,
+            )
+            if existing:
+                return {
+                    "error": f"MCP server already configured (id={existing.id}, name={existing.name!r})",
+                    "existing_id": existing.id,
+                    "exit_code": 1,
+                }
+
             srv = McpServer(id=sid, name=name, transport="stdio", command=command,
-                            args=json.dumps(cmd_args) if isinstance(cmd_args, list) else cmd_args,
+                            args=json.dumps(parsed_cmd_args),
                             env=json.dumps(env) if isinstance(env, dict) else env,
                             is_enabled=True, created_at=datetime.utcnow(), updated_at=datetime.utcnow())
             db.add(srv)
@@ -1146,7 +1162,7 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
             try:
                 await mcp.connect_server(
                     sid, name, "stdio", command=command,
-                    args=cmd_args if isinstance(cmd_args, list) else json.loads(cmd_args),
+                    args=parsed_cmd_args,
                     env=env if isinstance(env, dict) else json.loads(env),
                 )
                 st = mcp.get_server_status(sid)
