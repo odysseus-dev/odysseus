@@ -4,6 +4,13 @@ import re
 import shutil
 import subprocess
 import time
+import shlex
+
+from core.platform_compat import (
+    NVIDIA_PATH_CANDIDATES,
+    SSH_PATH_OVERRIDE,
+    run_ssh_command,
+)
 
 CACHE_TTL = 24 * 3600  # 24 h — hardware probes are user-initiated via the Rescan button; bumped
                        # from 30 min so changing filters doesn't keep re-probing the rig every
@@ -21,16 +28,17 @@ def _run(cmd):
         if _remote_host:
             # Run command on remote host via SSH
             if isinstance(cmd, list):
-                cmd_str = " ".join(cmd)
+                cmd_str = shlex.join(str(c) for c in cmd)
             else:
                 cmd_str = cmd
-            ssh_cmd = ["ssh", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no"]
-            if _remote_port and _remote_port != "22":
-                ssh_cmd += ["-p", _remote_port]
-            ssh_cmd += [_remote_host, cmd_str]
-            r = subprocess.run(
-                ssh_cmd,
-                capture_output=True, text=True, timeout=15,
+            r = run_ssh_command(
+                _remote_host,
+                _remote_port,
+                cmd_str,
+                timeout=15,
+                connect_timeout=5,
+                strict_host_key_checking=False,
+                text=True,
             )
         else:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
@@ -83,7 +91,7 @@ def _detect_nvidia():
     # Retry through a login shell with the common CUDA bin dirs on PATH.
     if not out and _remote_host:
         out = _run(
-            "bash -lc 'export PATH=\"$PATH:/usr/bin:/usr/local/bin:/usr/local/cuda/bin:/usr/lib/wsl/lib\"; "
+            f"bash -lc '{SSH_PATH_OVERRIDE}"
             "nvidia-smi --query-gpu=memory.total,name --format=csv,noheader,nounits'"
         )
     # Last resort: call nvidia-smi by absolute path. Some hosts have a login
@@ -92,7 +100,7 @@ def _detect_nvidia():
     # Also handles WSL where nvidia-smi lives at /usr/lib/wsl/lib/ — a path
     # that may not be in the server process's PATH.
     if not out:
-        for _p in ("/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi", "/usr/local/cuda/bin/nvidia-smi", "/usr/lib/wsl/lib/nvidia-smi"):
+        for _p in NVIDIA_PATH_CANDIDATES:
             # Use list form so subprocess.run (local) resolves the absolute path
             # correctly instead of treating the whole string as an executable name.
             if _remote_host:

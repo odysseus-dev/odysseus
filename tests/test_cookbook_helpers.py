@@ -25,6 +25,7 @@ from routes.cookbook_helpers import (
     _validate_serve_cmd,
     _validate_serve_model_id,
     _validate_ssh_port,
+    run_ssh_command_async,
 )
 
 
@@ -33,6 +34,56 @@ def test_safe_env_prefix_accepts_quoted_venv_path():
         _safe_env_prefix("source '~/vllm-env/bin/activate'")
         == '[ -f "$HOME/vllm-env/bin/activate" ] && source "$HOME/vllm-env/bin/activate" || true'
     )
+
+
+@pytest.mark.asyncio
+async def test_run_ssh_command_executes_with_stdin_and_returns_output(monkeypatch):
+    captured = {}
+
+    class _Proc:
+        returncode = 0
+
+        async def communicate(self, input=None):
+            captured["input"] = input
+            return b"stdout", b"stderr"
+
+    async def _fake_exec(*args, **kwargs):
+        captured["args"] = list(args)
+        captured["stdin"] = kwargs.get("stdin")
+        captured["stdout"] = kwargs.get("stdout")
+        captured["stderr"] = kwargs.get("stderr")
+        return _Proc()
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", _fake_exec)
+
+    rc, out, err = await run_ssh_command_async(
+        "alice@gpu-box",
+        "2222",
+        "python -",
+        timeout=5,
+        connect_timeout=4,
+        strict_host_key_checking=False,
+        stdin_data=b"python -m pip install vllm",
+    )
+
+    assert rc == 0
+    assert out == b"stdout"
+    assert err == b"stderr"
+    assert captured["args"] == [
+        "ssh",
+        "-o",
+        "ConnectTimeout=4",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-p",
+        "2222",
+        "alice@gpu-box",
+        "python -",
+    ]
+    assert captured["stdin"] is not None
+    assert captured["stdout"] is not None
+    assert captured["stderr"] is not None
+    assert captured["input"] == b"python -m pip install vllm"
 
 
 def test_safe_env_prefix_leaves_compound_conda_prefix_unchanged():

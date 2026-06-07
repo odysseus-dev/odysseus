@@ -11,6 +11,8 @@ import shlex
 from fastapi import HTTPException
 from pydantic import BaseModel
 
+from core.platform_compat import _ssh_exec_argv
+
 logger = logging.getLogger(__name__)
 
 
@@ -996,3 +998,40 @@ def _diagnose_serve_output(text: str) -> dict | None:
             "suggestions": [{"label": "inspect traceback and retry with adjusted backend/settings", "op": "manual"}],
         }
     return None
+
+
+async def run_ssh_command_async(
+    remote: str,
+    ssh_port: str | None,
+    remote_cmd: str,
+    *,
+    timeout: float,
+    connect_timeout: int | None = None,
+    strict_host_key_checking: bool | None = None,
+    stdin_data: bytes | None = None,
+) -> tuple[int, bytes, bytes]:
+    """Run an ssh command with centralized timeout and stderr/stdout capture.
+    Async version of core.platform_compat.run_ssh_command_sync.
+    """
+    import asyncio
+    proc = await asyncio.create_subprocess_exec(
+        *_ssh_exec_argv(
+            remote,
+            ssh_port,
+            remote_cmd=remote_cmd,
+            connect_timeout=connect_timeout,
+            strict_host_key_checking=strict_host_key_checking,
+        ),
+        stdin=asyncio.subprocess.PIPE if stdin_data is not None else None,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(input=stdin_data), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        raise
+    return proc.returncode or 0, stdout, stderr

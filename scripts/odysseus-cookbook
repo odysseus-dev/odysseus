@@ -47,6 +47,9 @@ _STATE_PATH = _DATA_DIR / "cookbook_state.json"
 import tempfile
 _TMUX_LOG_DIR = Path(tempfile.gettempdir()) / "odysseus-tmux"
 
+from core.platform_compat import NVIDIA_PATH_CANDIDATES, SSH_PATH_EXT
+
+
 
 def fail(msg: str, code: int = 1) -> None:
     sys.stderr.write(f"error: {msg}\n")
@@ -166,16 +169,11 @@ def cmd_gpus(args) -> None:
             candidates.append(
                 "bash -lc "
                 + repr(
-                    "export PATH=\"$PATH:/usr/bin:/usr/local/bin:/usr/local/cuda/bin:/usr/lib/wsl/lib\"; "
+                    f"{SSH_PATH_EXT}"
                     f"nvidia-smi {args_part}"
                 )
             )
-            for nvidia_path in (
-                "/usr/bin/nvidia-smi",
-                "/usr/local/bin/nvidia-smi",
-                "/usr/local/cuda/bin/nvidia-smi",
-                "/usr/lib/wsl/lib/nvidia-smi",
-            ):
+            for nvidia_path in NVIDIA_PATH_CANDIDATES:
                 candidates.append(f"{nvidia_path} {args_part}")
 
             out = None

@@ -168,3 +168,136 @@ def test_get_wsl_windows_user_profile_returns_none_when_nothing_found(monkeypatc
     monkeypatch.setattr(platform_compat.os.path, "isdir", lambda _path: False)
 
     assert platform_compat.get_wsl_windows_user_profile() is None
+
+
+def test_nvidia_path_override_is_correct_string(monkeypatch):
+    monkeypatch.setattr(platform_compat, "_SSH_PATH_MEMBERS", ["path1", "path2"])
+    assert platform_compat._ssh_path_override() == "export PATH=\"$PATH:path1:path2\"; "
+
+
+def test_windows_powershell_argv_defaults_include_no_profile_and_noninteractive():
+    argv = platform_compat._windows_powershell_argv("Write-Output Hello")
+    assert argv == [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Write-Output Hello",
+    ]
+
+
+def test_windows_powershell_argv_respects_disabled_flags():
+    argv = platform_compat._windows_powershell_argv(
+        "Write-Output Hello",
+        no_profile=False,
+        non_interactive=False,
+    )
+    assert argv == ["powershell.exe", "-Command", "Write-Output Hello"]
+
+
+def test_run_wsl_windows_powershell_raises_outside_wsl(monkeypatch):
+    monkeypatch.setattr(platform_compat, "is_wsl", lambda: False)
+    try:
+        platform_compat.run_wsl_windows_powershell("Write-Output Hello", timeout=2)
+        raise AssertionError("Expected RuntimeError")
+    except RuntimeError as exc:
+        assert "only supported in WSL" in str(exc)
+
+
+def test_run_wsl_windows_powershell_calls_subprocess_with_expected_argv(monkeypatch):
+    monkeypatch.setattr(platform_compat, "is_wsl", lambda: True)
+    captured = {}
+
+    class _Result:
+        returncode = 0
+        stdout = "ok\n"
+        stderr = ""
+
+    def _fake_run(args, **kwargs):
+        captured["args"] = list(args)
+        captured["kwargs"] = kwargs
+        return _Result()
+
+    monkeypatch.setattr(platform_compat.subprocess, "run", _fake_run)
+
+    result = platform_compat.run_wsl_windows_powershell("Write-Output Hello", timeout=9)
+
+    assert result.returncode == 0
+    assert captured["args"] == [
+        "powershell.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Write-Output Hello",
+    ]
+    assert captured["kwargs"]["capture_output"] is True
+    assert captured["kwargs"]["text"] is True
+    assert captured["kwargs"]["timeout"] == 9
+
+
+def test_ssh_exec_argv_builds_default_command():
+    argv = platform_compat._ssh_exec_argv("alice@gpu-box", None, remote_cmd="echo ok")
+    assert argv == ["ssh", "alice@gpu-box", "echo ok"]
+
+
+def test_ssh_exec_argv_includes_port_and_options():
+    argv = platform_compat._ssh_exec_argv(
+        "alice@gpu-box",
+        "2222",
+        remote_cmd="tmux ls",
+        connect_timeout=6,
+        strict_host_key_checking=False,
+    )
+    assert argv == [
+        "ssh",
+        "-o",
+        "ConnectTimeout=6",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-p",
+        "2222",
+        "alice@gpu-box",
+        "tmux ls",
+    ]
+
+
+def test_run_ssh_command_uses_built_argv(monkeypatch):
+    captured = {}
+
+    class _Result:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def _fake_run(args, **kwargs):
+        captured["args"] = list(args)
+        captured["kwargs"] = kwargs
+        return _Result()
+
+    monkeypatch.setattr(platform_compat.subprocess, "run", _fake_run)
+
+    result = platform_compat.run_ssh_command(
+        "alice@gpu-box",
+        "2200",
+        "tmux ls",
+        timeout=7,
+        connect_timeout=3,
+        strict_host_key_checking=True,
+        text=False,
+    )
+
+    assert result.returncode == 0
+    assert captured["args"] == [
+        "ssh",
+        "-o",
+        "ConnectTimeout=3",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-p",
+        "2200",
+        "alice@gpu-box",
+        "tmux ls",
+    ]
+    assert captured["kwargs"]["timeout"] == 7
+    assert captured["kwargs"]["capture_output"] is True
+    assert captured["kwargs"]["text"] is False

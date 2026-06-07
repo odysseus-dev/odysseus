@@ -20,6 +20,8 @@ from pydantic import BaseModel
 from core.middleware import require_admin
 from core.platform_compat import (
     IS_WINDOWS,
+    SSH_PATH_OVERRIDE,
+    NVIDIA_PATH_CANDIDATES,
     detached_popen_kwargs,
     find_bash,
     git_bash_path,
@@ -43,7 +45,7 @@ from routes.cookbook_helpers import (
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
     _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
     _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
-    _diagnose_serve_output,
+    _diagnose_serve_output, run_ssh_command_async,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -570,26 +572,24 @@ def setup_cookbook_routes() -> APIRouter:
 
         scan_py = TMUX_LOG_DIR / "scan_cache.py"
         scan_py.write_text(paths_code, encoding="utf-8")
+        scan_payload = scan_py.read_bytes()
 
         if host:
-            _pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
             if platform == "windows":
-                # Windows: use 'python' and pipe via stdin with double-quote wrapping
-                cmd = f'ssh {_pf}{host} "python -" < \'{scan_py}\''
+                remote_cmd = "python -"
             else:
                 # POSIX: use 'python3' if available, fall back to 'python'; throw if neither is found.
-                cmd = (
-                    f"ssh {_pf}{host} "
-                    "'if command -v python3 >/dev/null 2>&1; then python3 -; "
+                remote_cmd = (
+                    "if command -v python3 >/dev/null 2>&1; then python3 -; "
                     "elif command -v python >/dev/null 2>&1; then python -; "
-                    "else echo \"python3/python not found\" >&2; exit 127; fi' "
-                    f"< '{scan_py}'"
+                    "else echo \"python3/python not found\" >&2; exit 127; fi"
                 )
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(Path.home()),
+            rc, stdout_b, stderr_b = await run_ssh_command_async(
+                host,
+                ssh_port,
+                remote_cmd,
+                timeout=60,
+                stdin_data=scan_payload,
             )
         else:
             # LOCAL scan: use sys.executable (the venv Python Odysseus is already
@@ -609,7 +609,7 @@ def setup_cookbook_routes() -> APIRouter:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(Path.home()),
             )
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=60)
+            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=60)
 
         models = []
         try:
@@ -1375,7 +1375,6 @@ def setup_cookbook_routes() -> APIRouter:
     async def _run_nvidia_smi(query: str, host: str | None, ssh_port: str | None, timeout: int = 8):
         """Run nvidia-smi locally or over SSH. Returns (stdout, error_or_None)."""
         if host:
-            pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
             candidates = [query]
             stripped = query.strip()
             if stripped.startswith("nvidia-smi "):
@@ -1383,30 +1382,26 @@ def setup_cookbook_routes() -> APIRouter:
                 candidates.append(
                     "bash -lc "
                     + shlex.quote(
-                        "export PATH=\"$PATH:/usr/bin:/usr/local/bin:/usr/local/cuda/bin:/usr/lib/wsl/lib\"; "
+                        f"{SSH_PATH_OVERRIDE}"
                         f"nvidia-smi {args}"
                     )
                 )
-                for nvidia_path in (
-                    "/usr/bin/nvidia-smi",
-                    "/usr/local/bin/nvidia-smi",
-                    "/usr/local/cuda/bin/nvidia-smi",
-                    "/usr/lib/wsl/lib/nvidia-smi",
-                ):
+                for nvidia_path in NVIDIA_PATH_CANDIDATES:
                     candidates.append(f"{nvidia_path} {args}")
 
             last_err = "nvidia-smi failed"
             for candidate in candidates:
-                cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} {shlex.quote(candidate)}"
-                proc = await asyncio.create_subprocess_shell(
-                    cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-                )
                 try:
-                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                    rc, stdout, stderr = await run_ssh_command_async(
+                        host,
+                        ssh_port,
+                        candidate,
+                        connect_timeout=5,
+                        timeout=timeout,
+                    )
                 except asyncio.TimeoutError:
-                    proc.kill()
                     return None, "nvidia-smi timed out"
-                if proc.returncode == 0:
+                if rc == 0:
                     return stdout.decode("utf-8", errors="replace"), None
                 err = (stderr.decode("utf-8", errors="replace") or "").strip()[:200]
                 if err:
