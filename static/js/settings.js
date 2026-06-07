@@ -38,6 +38,7 @@ function initTabs() {
       document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
       syncAppearanceOpacity(tab === 'appearance');
       if (tab === 'ai') refreshAiModelEndpoints();
+      if (tab === 'analytics' && window.initAnalytics) window.initAnalytics();
     });
   });
 }
@@ -578,6 +579,7 @@ async function initTeacherModel() {
   var epSel = el('set-teacherEpSelect');
   var modelSel = el('set-teacherModelSelect');
   var msg = el('set-teacherChatMsg');
+  var tier2Toggle = el('set-teacherTier2Toggle');
   if (!epSel || !modelSel) return;
   var _endpoints = [];
 
@@ -631,6 +633,7 @@ async function initTeacherModel() {
     }
     refreshModels(savedModel);
     syncEnabled();
+    if (tier2Toggle) tier2Toggle.checked = !!settings.teacher_tier2_enabled;
   } catch (e) { console.warn('Failed to load teacher model settings', e); }
 
   async function saveTeacher() {
@@ -641,9 +644,10 @@ async function initTeacherModel() {
         spec = ep ? (modelSel.value + '@' + ep.name) : modelSel.value;
       }
       var enabled = enabledToggle ? !!enabledToggle.checked : false;
+      var tier2 = tier2Toggle ? !!tier2Toggle.checked : false;
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teacher_enabled: enabled, teacher_model: spec })
+        body: JSON.stringify({ teacher_enabled: enabled, teacher_model: spec, teacher_tier2_enabled: tier2 })
       });
       msg.textContent = enabled ? (spec ? 'Saved' : 'Pick an endpoint + model') : 'Disabled';
       msg.style.color = enabled && !spec ? 'var(--red)' : 'var(--fg)';
@@ -659,6 +663,11 @@ async function initTeacherModel() {
   }
   epSel.addEventListener('change', function() { refreshModels(''); saveTeacher(); });
   modelSel.addEventListener('change', saveTeacher);
+  if (tier2Toggle) {
+    tier2Toggle.addEventListener('change', function() {
+      saveTeacher();
+    });
+  }
 
   _registerAiEndpointRefresh(function(endpoints) {
     _endpoints = endpoints;

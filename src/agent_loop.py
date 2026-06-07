@@ -2624,10 +2624,11 @@ async def stream_agent_loop(
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
 
     # Teacher-escalation: inline takeover visible in the chat stream.
-    # The student just finished; if Tier 1 flags failure, the teacher
-    # gets a turn (with its own tool calls forwarded to the user) and
-    # a skill is saved ONLY if the teacher actually succeeds. Skipped
-    # when we ARE the teacher to avoid recursion.
+    # The student just finished; if Tier 1 (regex) or Tier 2 (LLM
+    # self-eval) flags failure, the teacher gets a turn (with its own
+    # tool calls forwarded to the user) and a skill is saved ONLY if
+    # the teacher actually succeeds. Skipped when we ARE the teacher
+    # to avoid recursion.
     if not _is_teacher_run and not guide_only:
         try:
             from src.teacher_escalation import run_teacher_inline
@@ -2637,6 +2638,8 @@ async def stream_agent_loop(
                 student_tool_events=tool_events,
                 student_reply=full_response,
                 owner=owner,
+                student_model=model,
+                student_headers=headers,
             ):
                 yield evt
         except Exception as _esc_err:

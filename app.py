@@ -727,6 +727,10 @@ app.include_router(setup_vault_routes())
 from routes.contacts_routes import setup_contacts_routes
 app.include_router(setup_contacts_routes())
 
+# Usage analytics
+from routes.analytics_routes import router as analytics_router
+app.include_router(analytics_router)
+
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 

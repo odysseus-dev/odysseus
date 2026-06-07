@@ -2,7 +2,7 @@ import os
 import logging
 import sqlite3
 from datetime import datetime, timezone
-from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
+from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Float, Index, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
@@ -1509,7 +1509,26 @@ class Integration(TimestampMixin, Base):
     enabled = Column(Boolean, default=True)
 
 
+class UsageRecord(TimestampMixin, Base):
+    """Per-request usage analytics record."""
+    __tablename__ = "usage_records"
 
+    id              = Column(String, primary_key=True, index=True)
+    owner           = Column(String, nullable=True, index=True)
+    session_id      = Column(String, nullable=True, index=True)
+    model           = Column(String, nullable=False, index=True)
+    endpoint_name   = Column(String, nullable=True)
+    mode            = Column(String, nullable=True)       # "chat" | "agent" | "research"
+    input_tokens    = Column(Integer, default=0)
+    output_tokens   = Column(Integer, default=0)
+    total_tokens    = Column(Integer, default=0)
+    estimated_cost  = Column(Float, nullable=True)
+    response_time   = Column(Integer, default=0)           # milliseconds
+    tokens_per_second = Column(Integer, nullable=True)     # stored as int (tps * 100)
+    context_length  = Column(Integer, nullable=True)
+    context_percent = Column(Integer, nullable=True)       # stored as int (percent * 100)
+    usage_source    = Column(String, nullable=True)        # "real" | "estimated"
+    tps_source      = Column(String, nullable=True)        # "backend" | "computed"
 
 
 def _migrate_seed_email_account():
@@ -1632,6 +1651,25 @@ def init_db():
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
     _migrate_backfill_task_folders()
+    _migrate_usage_records()
+
+
+def _migrate_usage_records():
+    """Ensure the usage_records table exists (new in analytics feature)."""
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+    try:
+        with engine.connect() as conn:
+            tables = [r[0] for r in conn.execute(text(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='usage_records'"
+            ))]
+            if "usage_records" in tables:
+                return
+            logger.info("Creating usage_records table...")
+            UsageRecord.__table__.create(bind=engine)
+            logger.info("usage_records table created.")
+    except Exception as e:
+        logger.warning(f"usage_records migration failed: {e}")
 
 
 def _migrate_backfill_task_folders():

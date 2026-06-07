@@ -36423,3 +36423,204 @@ body.theme-frosted .modal {
    the input beside it (.confirm-btn won't stretch on its own). */
 .ask-user-other-send { flex-shrink: 0; white-space: nowrap; min-height: 39px; }
 .ask-user-other-send:disabled { opacity: 0.5; cursor: default; }
+
+/* ═══ Usage Analytics Dashboard ═══ */
+#analytics-dashboard {
+  padding: 4px 0;
+}
+.analytics-loading {
+  padding: 40px;
+  text-align: center;
+  opacity: 0.5;
+  font-size: 13px;
+}
+.analytics-range {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.analytics-range-btn {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--fg);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.analytics-range-btn:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: var(--accent);
+}
+.analytics-range-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+.analytics-section {
+  margin-bottom: 24px;
+}
+.analytics-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  opacity: 0.85;
+}
+.analytics-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+.analytics-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.analytics-card-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.analytics-card-body {
+  min-width: 0;
+}
+.analytics-card-value {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.analytics-card-label {
+  font-size: 10px;
+  opacity: 0.5;
+  margin-top: 1px;
+}
+.analytics-chart-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.analytics-chart-col {
+  flex: 1;
+  min-width: 260px;
+}
+.analytics-chart-svg {
+  display: block;
+}
+.analytics-chart-label {
+  font-size: 10px;
+  opacity: 0.4;
+  text-align: center;
+  margin-top: -2px;
+}
+.analytics-chart-empty {
+  padding: 24px;
+  text-align: center;
+  opacity: 0.4;
+  font-size: 12px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+.analytics-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.analytics-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.analytics-bar-label {
+  width: 120px;
+  font-size: 11px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.analytics-bar-track {
+  flex: 1;
+  height: 20px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  min-width: 60px;
+}
+.analytics-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+.analytics-bar-stats {
+  display: flex;
+  gap: 8px;
+  font-size: 10px;
+  opacity: 0.5;
+  white-space: nowrap;
+}
+.analytics-section-heatmap {
+  overflow-x: auto;
+}
+.analytics-heatmap-scroll {
+  overflow-x: auto;
+}
+.analytics-heatmap {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 9px;
+}
+.analytics-heatmap-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.analytics-heatmap-day {
+  width: 46px;
+  text-align: right;
+  padding-right: 6px;
+  opacity: 0.5;
+  flex-shrink: 0;
+  font-size: 9px;
+}
+.analytics-heatmap-hour-label {
+  opacity: 0.4;
+  font-size: 7px;
+  writing-mode: vertical-lr;
+  text-orientation: mixed;
+  height: 24px;
+  line-height: 24px;
+}
+.analytics-heatmap-cell {
+  width: 24px;
+  height: 24px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  color: transparent;
+  background: var(--border);
+  flex-shrink: 0;
+}
+.analytics-heatmap-l1 { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--fg); }
+.analytics-heatmap-l2 { background: color-mix(in srgb, var(--accent) 35%, transparent); color: var(--fg); }
+.analytics-heatmap-l3 { background: color-mix(in srgb, var(--accent) 55%, transparent); color: var(--fg); }
+.analytics-heatmap-l4 { background: var(--accent); color: var(--bg); font-weight: 600; }

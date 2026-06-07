@@ -1380,7 +1380,13 @@
             <span>Shortcuts</span>
           </button>
           <div class="settings-sidebar-divider"></div>
-          <!-- Section 4: Account (sits at the bottom of the user section) -->
+          <!-- Section 4: Analytics -->
+          <button class="settings-nav-item" data-settings-tab="analytics">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            <span>Analytics</span>
+          </button>
+          <div class="settings-sidebar-divider"></div>
+          <!-- Section 5: Account (sits at the bottom of the user section) -->
           <button class="settings-nav-item" data-settings-tab="account">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             <span>Account</span>
@@ -1604,6 +1610,10 @@
                 <select id="set-teacherModelSelect" class="settings-select"><option value="">—</option></select>
               </div>
               <div id="set-teacherChatMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+              <div style="margin-top:10px;padding-top:8px;border-top:1px solid color-mix(in srgb, var(--fg) 12%, transparent);display:flex;align-items:center;gap:8px;">
+                <label class="admin-switch" style="flex-shrink:0;"><input type="checkbox" id="set-teacherTier2Toggle"><span class="admin-slider"></span></label>
+                <div style="font-size:12px;line-height:1.4;"><strong>Tier 2 — LLM self-eval</strong><br><span style="opacity:0.6;">After regex passes, ask the student model to self-evaluate whether it actually succeeded. Catches failures regex misses. Adds latency &amp; cost. Off by default.</span></div>
+              </div>
             </div>
           </div>
         </div>
@@ -1876,6 +1886,10 @@
           </div>
         </div>
 
+        <!-- ═══ ANALYTICS TAB ═══ -->
+        <div data-settings-panel="analytics" class="hidden">
+          <div id="analytics-dashboard"></div>
+        </div>
 
         <!-- ═══ ACCOUNT TAB ═══ -->
         <div data-settings-panel="account" class="hidden">
@@ -2313,6 +2327,7 @@
 <script type="module" src="/static/js/compare/index.js"></script>
 <script type="module" src="/static/js/theme.js"></script>
 <script type="module" src="/static/js/censor.js"></script>
+<script src="/static/js/analytics.js"></script>
 <script type="module" src="/static/js/settings.js"></script>
 <script type="module" src="/static/js/admin.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>

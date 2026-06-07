@@ -590,6 +590,102 @@ def accumulate_token_usage(session_id: str, metrics: dict):
         db.close()
 
 
+# ── Usage analytics recording ─────────────────────────────────────
+
+# Per-model pricing ($ per 1M tokens). Mirrors static/js/chatRenderer.js MODEL_INFO.
+_USAGE_PRICING = {
+    "claude-sonnet-4-5": (3.00, 15.00), "claude-sonnet-4-6": (3.00, 15.00),
+    "claude-sonnet-4": (3.00, 15.00), "claude-opus-4": (15.00, 75.00),
+    "claude-opus-4-6": (15.00, 75.00), "claude-haiku-4": (0.80, 4.00),
+    "claude-haiku-3-5": (0.80, 4.00), "claude-3-5-sonnet": (3.00, 15.00),
+    "claude-3-5-haiku": (0.80, 4.00), "claude-3-opus": (15.00, 75.00),
+    "claude-3-sonnet": (3.00, 15.00), "claude-3-haiku": (0.25, 1.25),
+    "gpt-5": (2.00, 8.00), "gpt-4.1": (2.00, 8.00),
+    "gpt-4.1-mini": (0.40, 1.60), "gpt-4.1-nano": (0.10, 0.40),
+    "gpt-4o": (2.50, 10.00), "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4-turbo": (10.00, 30.00), "o1": (15.00, 60.00),
+    "o1-mini": (3.00, 12.00), "o1-pro": (150.00, 600.00),
+    "o3": (2.00, 8.00), "o3-mini": (1.10, 4.40), "o4-mini": (1.10, 4.40),
+    "deepseek-chat": (0.27, 1.10), "deepseek-coder": (0.27, 1.10),
+    "deepseek-reasoner": (0.55, 2.19), "deepseek-r1": (0.55, 2.19),
+    "deepseek-v3": (0.27, 1.10), "deepseek-v2": (0.14, 0.28),
+    "gemini-2.5-pro": (1.25, 10.00), "gemini-2.5-flash": (0.15, 0.60),
+    "gemini-2.0-flash": (0.10, 0.40), "gemini-1.5-pro": (1.25, 5.00),
+    "gemini-1.5-flash": (0.075, 0.30), "gemma-3": (0.10, 0.10),
+    "mistral-large": (2.00, 6.00), "mistral-medium": (2.00, 6.00),
+    "mistral-small": (0.20, 0.60), "mistral-nemo": (0.15, 0.15),
+    "mixtral": (0.24, 0.24), "codestral": (0.30, 0.90),
+    "pixtral": (2.00, 6.00), "grok-4": (3.00, 15.00),
+    "grok-3": (3.00, 15.00), "grok-2": (2.00, 10.00),
+    "llama-4": (0.20, 0.20), "llama-3.3": (0.20, 0.20),
+    "llama-3.2": (0.20, 0.20), "llama-3.1": (0.20, 0.20),
+    "llama-3": (0.20, 0.20), "qwen3": (0.30, 1.20),
+    "qwen2.5": (0.30, 1.20), "qwq": (0.30, 1.20),
+    "command-a": (2.50, 10.00), "command-r-plus": (2.50, 10.00),
+    "command-r": (0.15, 0.60), "sonar-pro": (3.00, 15.00),
+    "sonar": (1.00, 1.00), "minimax": (0.70, 0.70),
+    "moonshot": (1.00, 1.00), "kimi": (1.00, 1.00),
+    "phi-4": (0.07, 0.14), "phi-3": (0.07, 0.14),
+    "nemotron": (0.30, 1.20), "hermes": (0.20, 0.20),
+}
+
+_LOCAL_PROVIDER_PREFIXES = ("ollama", "lm-studio", "localhost", "127.0.0.1")
+
+
+def _compute_estimated_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+    """Estimate cost in dollars. Returns 0 for local/unknown models."""
+    model_lower = model.lower().strip()
+    prices = _USAGE_PRICING.get(model_lower)
+    if not prices:
+        return 0.0
+    in_price, out_price = prices
+    return (input_tokens * in_price + output_tokens * out_price) / 1_000_000
+
+
+def record_usage(session_id: str, model: str, endpoint_name: str, mode: str, metrics: dict, owner: str = None):
+    """Persist a usage record for analytics."""
+    import uuid
+    from core.database import UsageRecord
+    in_t = metrics.get("input_tokens", 0)
+    out_t = metrics.get("output_tokens", 0)
+    if not (in_t or out_t):
+        return
+    cost = _compute_estimated_cost(model, in_t, out_t)
+    response_time = int((metrics.get("response_time", 0) or 0) * 1000)
+    tps = metrics.get("tokens_per_second", 0) or 0
+    ctx_len = metrics.get("context_length", 0) or 0
+    ctx_pct = metrics.get("context_percent", 0) or 0
+    usage_src = metrics.get("usage_source") or "estimated"
+    tps_src = metrics.get("tps_source") or "computed"
+    db = SessionLocal()
+    try:
+        record = UsageRecord(
+            id=uuid.uuid4().hex,
+            owner=owner,
+            session_id=session_id,
+            model=model,
+            endpoint_name=endpoint_name,
+            mode=mode,
+            input_tokens=in_t,
+            output_tokens=out_t,
+            total_tokens=in_t + out_t,
+            estimated_cost=cost if cost else None,
+            response_time=response_time,
+            tokens_per_second=int(tps * 100) if tps else None,
+            context_length=ctx_len or None,
+            context_percent=int(ctx_pct * 100) if ctx_pct else None,
+            usage_source=usage_src,
+            tps_source=tps_src,
+        )
+        db.add(record)
+        db.commit()
+    except Exception as e:
+        logger.warning(f"record_usage failed: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _normalize_thinking(text: str) -> str:
     """Wrap inline thinking patterns in <think> tags so they persist on reload.
 
@@ -926,6 +1022,12 @@ def run_post_response_tasks(
     # Token accumulation
     if last_metrics:
         accumulate_token_usage(session_id, last_metrics)
+        # Usage analytics
+        try:
+            record_usage(session_id, sess.model, sess.endpoint_url or "",
+                         sess.mode or "chat", last_metrics, owner=owner)
+        except Exception:
+            pass
 
     # Webhook
     if webhook_manager and not compare_mode:
