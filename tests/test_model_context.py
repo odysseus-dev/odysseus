@@ -182,6 +182,14 @@ class TestLookupKnown:
     def test_gpt4_base(self):
         assert _lookup_known("gpt-4") == 8192
 
+    def test_minicpm_v_4_thinking(self):
+        """MiniCPM-V-4.6-Thinking: Apache-2.0, 32k context (per model card)."""
+        assert _lookup_known("MiniCPM-V-4.6-Thinking") == 32768
+
+    def test_minicpm_v_4_thinking_namespaced(self):
+        """openbmb/MiniCPM-V-4.6-Thinking should match the bare entry."""
+        assert _lookup_known("openbmb/MiniCPM-V-4.6-Thinking") == 32768
+
 
 class TestGetContextLength:
     def setup_method(self):
