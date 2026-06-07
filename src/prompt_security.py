@@ -42,34 +42,30 @@ def _escape_guard_markers(text: str) -> str:
 
 
 def _sanitize_label(label: str) -> str:
-    """Normalize a label so it cannot inject pre-guard lines or guard markers.
+    """Sanitize a label for safe inclusion *inside* the guarded block.
 
-    The label is emitted *before* the GUARD_OPEN delimiter on its own line::
-
-        Source: {label}
-
-        <<<UNTRUSTED_SOURCE_DATA>>>
-
-    A label that contains CR or LF characters would create extra lines that sit
-    outside the sandboxed block and are therefore implicitly trusted by the LLM.
-    A label that embeds a literal guard marker string can open or close the
-    guard region prematurely.
-
-    This function:
+    Even though the label now lives inside the sandboxed region, we still
+    escape it for defence-in-depth:
     1. Strips leading/trailing whitespace.
-    2. Replaces every CR (\\r) and LF (\\n) with a single space so the label
-       stays on one line.
-    3. Escapes guard marker literals via _escape_guard_markers().
+    2. Replaces every CR/LF with a single space.
+    3. Escapes guard marker literals via _escape_guard_markers() so the
+       label cannot prematurely close the sandbox block.
     """
     label = label.strip()
-    # Collapse any CR/LF sequences to a single space to prevent newline injection.
     label = label.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
     label = _escape_guard_markers(label)
     return label
 
 
 def untrusted_context_message(label: str, content: Any) -> Dict[str, Any]:
-    """Return an LLM message that keeps retrieved/source text out of system role."""
+    """Return an LLM message that keeps retrieved/source text out of system role.
+
+    The template is structured so that *only* the hardcoded
+    UNTRUSTED_CONTEXT_HEADER appears before GUARD_OPEN.  No user- or
+    caller-derived text is placed in the pre-guard trusted framing zone.
+    The source label and the body content are both placed *inside* the
+    guarded block where the LLM treats them as untrusted data.
+    """
     safe_label = _sanitize_label(label)
     text = "" if content is None else str(content)
     text = _escape_guard_markers(text)
@@ -77,8 +73,8 @@ def untrusted_context_message(label: str, content: Any) -> Dict[str, Any]:
         "role": "user",
         "content": (
             f"{UNTRUSTED_CONTEXT_HEADER}\n"
-            f"Source: {safe_label}\n\n"
             f"{GUARD_OPEN}\n"
+            f"Source: {safe_label}\n"
             f"{text}\n"
             f"{GUARD_CLOSE}"
         ),
