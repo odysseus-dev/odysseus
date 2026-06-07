@@ -7,13 +7,13 @@ from pathlib import Path
 from typing import Dict, Any
 
 from .cache import cache_metrics
+from core.constants import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
-# Dedicated error logger — write to the mounted writable volume in Docker
-# (/app/logs is bind-mounted in docker-compose); fall back to NullHandler so a
-# missing or read-only path never crashes startup.
-_log_dir = Path("/app/logs")
+# Dedicated error logger — write under DATA_DIR so both Docker (/app/data) and
+# native runs get a real file; fall back to NullHandler if the path is not writable.
+_log_dir = Path(DATA_DIR) / "logs"
 try:
     _log_dir.mkdir(parents=True, exist_ok=True)
     _error_handler: logging.Handler = logging.FileHandler(
