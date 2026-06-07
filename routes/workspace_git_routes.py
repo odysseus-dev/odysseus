@@ -78,6 +78,16 @@ def _resolve_commit_model(session_id: str | None, owner: str | None):
             sm = get_session_manager()
             sess = sm.get_session(session_id) if sm else None
             if sess and getattr(sess, "model", None):
+                # Refresh the session's auth exactly like the chat path does.
+                # Session-backed providers (ChatGPT Subscription, Copilot, …) keep
+                # a short-lived bearer that is re-resolved per request and never
+                # persisted to the session, so reading sess.headers alone yields no
+                # token and the model call goes out unauthorized (401).
+                try:
+                    from routes.chat_helpers import resolve_session_auth
+                    resolve_session_auth(sess, session_id, owner)
+                except Exception:
+                    pass
                 return (
                     getattr(sess, "endpoint_url", None) or None,
                     sess.model,
