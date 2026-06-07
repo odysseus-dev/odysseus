@@ -182,6 +182,32 @@ def save_workspace_file(workspace: str, path: str, content: str) -> dict[str, An
     return {"ok": True, "path": workspace_rel(base, target), "size": stat.st_size, "mtime": stat.st_mtime}
 
 
+def delete_workspace_file(workspace: str, path: str) -> dict[str, Any]:
+    """Delete a file (or, recursively, a folder) inside the workspace. Path
+    safety is inherited from resolve_workspace_path: traversal, sensitive paths,
+    and forbidden components (.git, node_modules, …) are rejected, and the
+    workspace root itself can never be removed."""
+    base = resolve_workspace(workspace)
+    if not str(path or "").strip():
+        raise GitWorkspaceError("invalid_request", "path is required")
+    target = resolve_workspace_path(base, path, must_exist=True)
+    if _norm(target) == _norm(base):
+        raise GitWorkspaceError("outside_workspace", "cannot delete the workspace root")
+    rel = workspace_rel(base, target)
+    try:
+        if os.path.islink(target) or os.path.isfile(target):
+            os.remove(target)
+        elif os.path.isdir(target):
+            shutil.rmtree(target)
+        else:
+            raise GitWorkspaceError("invalid_request", "path is not a file or directory")
+    except GitWorkspaceError:
+        raise
+    except OSError as exc:
+        raise GitWorkspaceError("git_failed", str(exc)) from exc
+    return {"ok": True, "path": rel}
+
+
 def _git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     env = {}
     for key, value in os.environ.items():

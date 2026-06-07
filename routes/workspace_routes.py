@@ -9,6 +9,7 @@ from src.auth_helpers import get_current_user
 from src.tool_security import owner_is_admin_or_single_user
 from src.workspace_git import (
     GitWorkspaceError,
+    delete_workspace_file,
     list_workspace_files,
     read_workspace_file,
     save_workspace_file,
@@ -100,6 +101,16 @@ def setup_workspace_routes():
             return _workspace_error(400, "invalid_request", "content must be provided as text")
         try:
             return save_workspace_file(body.get("workspace"), body.get("path") or "", body.get("content"))
+        except GitWorkspaceError as exc:
+            return _workspace_error(400, exc.code, exc.message)
+
+    @router.post("/file/delete")
+    def file_delete(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+        blocked = _require_workspace_admin(request)
+        if blocked is not None:
+            return blocked
+        try:
+            return delete_workspace_file(body.get("workspace"), body.get("path") or "")
         except GitWorkspaceError as exc:
             return _workspace_error(400, exc.code, exc.message)
 

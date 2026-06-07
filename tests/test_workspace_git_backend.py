@@ -1077,3 +1077,44 @@ def test_commit_message_refreshes_session_auth_like_chat(monkeypatch, tmp_path):
     # The fresh, request-local bearer must reach the model call.
     assert captured["headers"], "no auth headers were sent to the model"
     assert captured["headers"].get("Authorization") == "Bearer fresh-token"
+
+
+def test_delete_workspace_file_and_folder_and_rejections(monkeypatch, tmp_path):
+    client = _client(monkeypatch)
+    repo = _init_repo(tmp_path / "repo")
+    (repo / "gone.txt").write_text("gone\n", encoding="utf-8")
+    (repo / "keep.txt").write_text("keep\n", encoding="utf-8")
+    _git(repo, "add", "keep.txt")
+    _git(repo, "commit", "-m", "base")  # keep.txt is tracked
+    sub = repo / "sub"
+    sub.mkdir()
+    (sub / "inner.txt").write_text("inner\n", encoding="utf-8")
+
+    # Untracked file.
+    resp = client.post("/api/workspace/file/delete", json={"workspace": str(repo), "path": "gone.txt"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ok"] is True
+    assert not (repo / "gone.txt").exists()
+
+    # Tracked file (same code path; shows up as a git deletion afterward).
+    resp = client.post("/api/workspace/file/delete", json={"workspace": str(repo), "path": "keep.txt"})
+    assert resp.status_code == 200
+    assert not (repo / "keep.txt").exists()
+
+    # Folder, recursively.
+    resp = client.post("/api/workspace/file/delete", json={"workspace": str(repo), "path": "sub"})
+    assert resp.status_code == 200
+    assert not sub.exists()
+
+    # Rejections: traversal, forbidden .git component, missing path, workspace root.
+    for bad in ["../escape.txt", ".git/config", "missing.txt", "", "."]:
+        r = client.post("/api/workspace/file/delete", json={"workspace": str(repo), "path": bad})
+        assert r.status_code == 400, f"{bad!r} should be rejected"
+        assert r.json()["ok"] is False
+
+
+def test_delete_file_is_admin_only(monkeypatch, tmp_path):
+    client = _client(monkeypatch, admin=False)
+    r = client.post("/api/workspace/file/delete", json={"workspace": str(tmp_path), "path": "x"})
+    assert r.status_code == 403
+    assert r.json()["code"] == "not_authorized"
