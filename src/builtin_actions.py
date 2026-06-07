@@ -822,10 +822,10 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
                         })
                     except Exception:
                         continue
-            finally:
-                try: conn.logout()
-                except Exception: pass
-            return results
+             finally:
+                 try: conn.logout()
+                 except Exception as e: logger.debug(f"Failed to logout from IMAP: {e}")
+             return results
 
         mails = await _aio.to_thread(_pull_headers)
         if not mails:
@@ -894,10 +894,10 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
                             bodies.append(text[:4000])
                         except Exception:
                             continue
-                finally:
-                    try: conn2.logout()
-                    except Exception: pass
-                return bodies
+                 finally:
+                     try: conn2.logout()
+                     except Exception as e: logger.debug(f"Failed to logout from IMAP: {e}")
+                 return bodies
 
             try:
                 bodies = await _aio.to_thread(_fetch_bodies, msgs)
@@ -1045,10 +1045,10 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
                         recent_subjects.append((name, subject))
                     except Exception as fe:
                         logger.debug(f"daily_brief: header fetch for uid {uid} failed: {fe}")
-            finally:
-                try: conn.logout()
-                except Exception: pass
-        except Exception as ee:
+             finally:
+                 try: conn.logout()
+                 except Exception as e: logger.debug(f"Failed to logout from IMAP: {e}")
+         except Exception as ee:
             logger.debug(f"daily_brief: email fetch failed: {ee}")
 
         # Pull active todo items from notes
@@ -1611,10 +1611,10 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                             })
                         except Exception as _fe:
                             logger.debug(f"urgency: header fetch for uid {uid} failed: {_fe}")
-                finally:
-                    try: conn.logout()
-                    except Exception: pass
-                return results
+                 finally:
+                     try: conn.logout()
+                     except Exception as e: logger.debug(f"Failed to logout from IMAP: {e}")
+                 return results
 
             try:
                 items = await _aio.to_thread(_scan_one)
