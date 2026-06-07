@@ -1,3 +1,6 @@
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 
@@ -204,12 +207,13 @@ def test_clean_thinking_for_save_extracts_thought_tag():
     assert metadata["thinking"] == "internal reasoning"
 
 
-def test_save_assistant_response_preserves_actual_and_requested_model():
+async def test_save_assistant_response_preserves_actual_and_requested_model():
     sess = _FakeSession("selected-model")
+    session_manager = SimpleNamespace(session_lock=lambda session_id: asyncio.Lock())
 
-    save_assistant_response(
+    await save_assistant_response(
         sess,
-        session_manager=None,
+        session_manager=session_manager,
         session_id="s1",
         full_response="hello",
         last_metrics={"model": "actual-model", "input_tokens": 1, "output_tokens": 2},
