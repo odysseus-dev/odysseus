@@ -98,3 +98,45 @@ def test_service_ddg_html_fallback_sends_safesearch(monkeypatch):
 
     assert seen["params"]["kp"] == "-2"
     assert results[0]["url"].startswith("https://notduckduckgo.com/")
+
+
+def test_service_perplexity_search_payload_and_parsing(monkeypatch):
+    seen = {}
+
+    class _Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "results": [
+                    {"title": "T1", "url": "https://example.com/a", "snippet": "S1", "date": "2026-01-02"},
+                    {"title": "T2", "url": "https://example.com/b", "snippet": "S2", "last_updated": "2026-01-03"},
+                    {"title": "no url", "url": "", "snippet": "dropped"},
+                ]
+            }
+
+    def fake_post(url, **kwargs):
+        seen["url"] = url
+        seen["json"] = kwargs["json"]
+        seen["headers"] = kwargs["headers"]
+        return _Response()
+
+    monkeypatch.setattr(providers, "_get_search_settings", lambda: {"perplexity_api_key": "pplx-test"})
+    monkeypatch.setattr(providers.httpx, "post", fake_post)
+
+    results = providers.perplexity_search("odysseus", count=50, time_filter="week")
+
+    # endpoint + bearer auth
+    assert seen["url"] == "https://api.perplexity.ai/search"
+    assert seen["headers"]["Authorization"] == "Bearer pplx-test"
+    # payload: max_results capped at 20, time_filter -> search_recency_filter
+    assert seen["json"]["query"] == "odysseus"
+    assert seen["json"]["max_results"] == 20
+    assert seen["json"]["search_recency_filter"] == "week"
+    # parsing: url-less result dropped; date/last_updated -> age
+    assert [r["url"] for r in results] == ["https://example.com/a", "https://example.com/b"]
+    assert results[0]["age"] == "2026-01-02"
+    assert results[1]["age"] == "2026-01-03"
