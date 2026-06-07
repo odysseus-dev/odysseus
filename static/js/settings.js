@@ -1064,7 +1064,7 @@ var _searchProviderHints = {
   google_pse: 'Requires a Google API key and a Programmable Search Engine ID (CX). Create one at programmablesearchengine.google.com',
   tavily: 'AI-optimized search. 1,000 free credits/month at tavily.com',
   serper: 'Google results via API. 2,500 free queries at serper.dev',
-  perplexity: 'Fast web search via the Perplexity Search API. Get a key at perplexity.ai',
+  perplexity: 'Access real-time web search results with Perplexity’s Search API: perplexity.ai/api-platform',
   disabled: 'Web search and deep research tools will be unavailable.',
 };
 var _searchNeedsKey = { brave: 1, google_pse: 1, tavily: 1, serper: 1, perplexity: 1 };
