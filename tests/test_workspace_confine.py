@@ -92,20 +92,20 @@ async def test_subprocess_runs_with_workspace_cwd():
 @pytest.mark.asyncio
 async def test_edit_file_confined_in_workspace():
     import json
-    from src.tool_execution import _do_edit_file
+    from src.filesystem_tools import EditFileTool
     ws = tempfile.mkdtemp()
     open(os.path.join(ws, "f.txt"), "w").write("foo bar")
     # Edit inside the workspace succeeds.
-    res = await _do_edit_file(json.dumps(
-        {"path": "f.txt", "old_string": "foo", "new_string": "baz"}), workspace=ws)
+    res = await EditFileTool().execute(json.dumps(
+        {"path": "f.txt", "old_string": "foo", "new_string": "baz"}), {"workspace": ws})
     assert res["exit_code"] == 0
     assert open(os.path.join(ws, "f.txt")).read() == "baz bar"
     # Editing outside the workspace is rejected (sibling temp dir, portable).
     outside = tempfile.mkdtemp()
     outside_file = os.path.join(outside, "f.txt")
     open(outside_file, "w").write("a")
-    res = await _do_edit_file(json.dumps(
-        {"path": outside_file, "old_string": "a", "new_string": "b"}), workspace=ws)
+    res = await EditFileTool().execute(json.dumps(
+        {"path": outside_file, "old_string": "a", "new_string": "b"}), {"workspace": ws})
     assert res["exit_code"] == 1 and "outside the workspace" in res["error"]
 
 
