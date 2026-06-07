@@ -1130,45 +1130,70 @@ async def _direct_fallback(
 # ===========================================================================
 
 async def _tool_ask_user(content: str, **kwargs) -> tuple[str, dict]:
-    # ask_user: the agent poses a multiple-choice question to the user to get a
-    # decision/clarification. This is a pure UI-control marker — no subprocess,
-    # no filesystem. It returns an `ask_user` payload that the agent loop turns
-    # into an `ask_user` SSE event and then ENDS the turn, so the chat waits for
-    # the user's selection (their choice arrives as the next message).
+    """
+    Handles the ask_user tool execution with robust JSON vs Plain-text routing.
+    
+    This function processes input that can either be a structured JSON payload 
+    (for multiple-choice queries) or a raw plain-text string (for open-ended questions).
+    It ensures strict validation so that malformed or incomplete JSON structures 
+    are properly rejected instead of falling through as valid plain text.
+    """
     import json as _json
     raw = (content or "").strip()
     
-    # Safely parse JSON payload
-    try:
-        parsed = _json.loads(raw) if raw.startswith("{") else {}
-    except (ValueError, TypeError):
-        parsed = {}
+    # Initialize state flags and parsing variables
+    is_json_payload = False
+    parsed = None
 
-    if isinstance(parsed, dict) and "question" in parsed:
+    # Determine input type by safely attempting to decode it as a JSON object
+    try:
+        decoded = _json.loads(raw)
+        if isinstance(decoded, dict):
+            parsed = decoded
+            is_json_payload = True
+    except (ValueError, TypeError):
+        # Decoding failed or result is not a dictionary; treat as plain text
+        pass
+     
+    # JSON Payload Routing (Multiple-Choice Sceanario)
+    if is_json_payload and parsed is not None:
+        # Strict validation: The JSON structure MUST contain a 'question' key
+        if "question" not in parsed:
+            return "ask_user: invalid", {
+                "error": "ask_user needs a non-empty `question`.",
+                "exit_code": 1,
+            }
+
         question = str(parsed.get("question", "")).strip()
         multi = bool(parsed.get("multi") or parsed.get("multiSelect"))
         raw_opts = parsed.get("options") or []
         
-        # Normalize options to ensure consistent {"label": ..., "description": ...} format
+        # Normalize options format into standard {"label": ..., "description": ...}
         options = [
             {"label": str(o.get("label", "")).strip(), "description": str(o.get("description", "")).strip()}
             if isinstance(o, dict) else {"label": str(o).strip(), "description": ""}
             for o in raw_opts if o
         ]
-        # Filter out empty labels and cap at 6 options to keep UI sane
+        # Filter out empty options and enforce a maximum limit of 6 for UI sanity
         options = [o for o in options if o["label"]][:6]
+
+        # Multiple-choice payloads must provide at least 2 valid options to be interactive
+        if len(options) < 2:
+            return "ask_user: invalid", {
+                "error": "ask_user JSON payload requires at least 2 valid options.",
+                "exit_code": 1,
+            }
+
+    # Plain Text Routing (Open-Ended Query Scenario)
     else:
         question = raw
         options = []
         multi = False
 
-    # Guard clause: ensure valid payload before returning
-    if not question or len(options) < 2:
+    # Global Guard Clause: Ensure the extracted question is not empty
+    if not question:
         return "ask_user: invalid", {
-            "error": (
-                "ask_user needs a non-empty `question` and at least 2 `options` "
-                "(each an object with a `label`, optional `description`)."
-            ),
+            "error": "ask_user needs a non-empty `question`.",
             "exit_code": 1,
         }
         
@@ -1184,21 +1209,25 @@ async def _tool_ask_user(content: str, **kwargs) -> tuple[str, dict]:
     return desc, result
 
 async def _tool_update_plan(content: str, **kwargs) -> tuple[str, dict]:
-    # update_plan: the agent writes back to the active plan — tick an item done
-    # or revise steps (e.g. when the user asks to change something). Pure UI
-    # marker: returns a `plan_update` payload the agent loop turns into a
-    # `plan_update` SSE event; the frontend replaces the stored plan and refreshes
-    # the docked plan window. Does NOT end the turn.
+    """
+    Handles the update_plan tool execution.
+    
+    The agent updates the active task checklist, marking items complete or revising 
+    steps based on ongoing operations. This returns a 'plan_update' payload that 
+    the agent loop dispatches as an SSE event to update and refresh the front-end 
+    plan window view. This operation does NOT terminate the current agent turn.
+    """
     import json as _json
     raw = (content or "").strip()
     
     # Attempt to extract 'plan' from JSON, fallback to raw string if parsing fails
     try:
-        parsed = _json.loads(raw) if raw.startswith("{") else {}
-        plan = str(parsed.get("plan", "")).strip() if isinstance(parsed, dict) else raw
+        parsed = _json.loads(raw) if raw.startswith("{") else None
+        plan = str(parsed.get("plan", "")).strip() if isinstance(parsed, dict) and parsed else raw.strip()
     except (ValueError, TypeError):
         plan = raw
 
+    # Guard Clause: ensure the plan content is not empty
     if not plan:
         return "update_plan: invalid", {
             "error": "update_plan needs a non-empty `plan` (the full updated checklist as markdown).",
@@ -1220,7 +1249,7 @@ async def _tool_update_plan(content: str, **kwargs) -> tuple[str, dict]:
     return desc, result
     
 
-# dictionary registry
+# Dictionary Registry Mapping
 TOOL_HANDLERS = {
     "ask_user": _tool_ask_user,
     "update_plan": _tool_update_plan,
