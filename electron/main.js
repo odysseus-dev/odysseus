@@ -1,10 +1,10 @@
-const { app, BrowserWindow, globalShortcut, ipcMain } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, shell } = require('electron');
 const path = require('path');
 
-// Default URL for the Odysseus server.
-// Override with: $env:ODYSSEUS_ELECTRON_URL="http://127.0.0.1:7000" (PowerShell)
-//   or: set ODYSSEUS_ELECTRON_URL=http://127.0.0.1:7000 (cmd)
-const TARGET_URL = process.env.ODYSSEUS_ELECTRON_URL || 'http://127.0.0.1:7000';
+// Derive the Odysseus server port from the same env vars the server uses.
+// Priority: ODYSSEUS_ELECTRON_URL (explicit override) > APP_PORT > ODYSSEUS_PORT > 7000.
+const PORT = process.env.APP_PORT || process.env.ODYSSEUS_PORT || 7000;
+const TARGET_URL = process.env.ODYSSEUS_ELECTRON_URL || `http://127.0.0.1:${PORT}`;
 
 let mainWindow;
 
@@ -18,12 +18,27 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
     },
     title: 'Odysseus',
     show: false,
   });
 
   mainWindow.loadURL(TARGET_URL);
+
+  // External links open in the system browser, never inside the app.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const appOrigin = new URL(TARGET_URL).origin;
+    if (new URL(url).origin !== appOrigin) {
+      event.preventDefault();
+      shell.openExternal(url);
+    }
+  });
 
   // Show window once the DOM is ready (prevents white flash on success).
   mainWindow.webContents.once('dom-ready', () => {
