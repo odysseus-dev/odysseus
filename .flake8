@@ -1,0 +1,36 @@
+[flake8]
+# Odysseus project flake8 configuration
+# PEP 8 style guide compliance and error detection
+
+# Maximum line length (default 79, allow longer for URLs and docstrings)
+max-line-length = 119
+
+# Ignore specific errors
+# - E203: Whitespace before ':'
+# - W503: Line break before binary operator
+# - E501: Line too long (handled by max-line-length)
+ignore = E203, W503, E501
+
+# Exclude directories and files
+exclude =
+    .git,
+    .github,
+    __pycache__,
+    .venv,
+    venv,
+    env,
+    *.egg-info,
+    build,
+    dist,
+    .pytest_cache,
+    .mypy_cache,
+    node_modules,
+    static/
+
+# Complexity check (McCabe cyclomatic complexity)
+max-complexity = 12
+
+# Per-file ignores
+per-file-ignores =
+    __init__.py:F401,
+    tests/*:F401,F841,E501
