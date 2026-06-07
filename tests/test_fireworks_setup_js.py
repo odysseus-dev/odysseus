@@ -14,6 +14,12 @@ def test_fireworks_setup_presets_use_openai_compatible_endpoint():
 
 def test_firepass_setup_pins_router_model():
     src = SLASH_COMMANDS.read_text(encoding="utf-8")
-    assert "fd.append('pinned_models', JSON.stringify(detected.pinned_models));" in src
+    assert (
+        "if (detected.pinned_models?.length) {\n"
+        "      fd.append('pinned_models', JSON.stringify(detected.pinned_models));\n"
+        "    } else {\n"
+        "      fd.append('require_models', 'true');\n"
+        "    }"
+    ) in src
     assert "data.models.includes(detected.default_model)" in src
     assert "firepass:   { help: 'Fireworks Fire Pass'" in src

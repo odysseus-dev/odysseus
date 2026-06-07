@@ -855,6 +855,40 @@ def test_post_creates_endpoint_with_pinned_models(monkeypatch):
     assert json.loads(db.added[0].pinned_models) == ["deploy-1", "deploy-2"]
 
 
+def test_post_required_models_allows_pinned_router_when_model_list_is_unavailable(monkeypatch):
+    router = "accounts/fireworks/routers/kimi-k2p6-turbo"
+    saved_settings = []
+    db = _PinnedFakeDb([])
+    _patch_create_deps(monkeypatch, db)
+    monkeypatch.setattr(model_routes, "_probe_endpoint", lambda *a, **k: [])
+    monkeypatch.setattr(model_routes, "_ping_endpoint", lambda *a, **k: {
+        "reachable": False,
+        "status_code": 404,
+        "error": "HTTP 404",
+    })
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: {})
+    monkeypatch.setattr(model_routes, "_save_settings", saved_settings.append)
+    create = _get_route("/api/model-endpoints", "POST")
+
+    result = create(
+        _PinnedFakeRequest(),
+        base_url="https://api.fireworks.ai/inference/v1",
+        **_create_form_kwargs(
+            name="Fireworks Fire Pass",
+            api_key="test-key",
+            require_models="true",
+            pinned_models=router,
+        ),
+    )
+
+    assert result["models"] == [router]
+    assert result["pinned_models"] == [router]
+    assert result["online"] is True
+    assert result["status"] == "online"
+    assert json.loads(db.added[0].pinned_models) == [router]
+    assert saved_settings[0]["default_model"] == router
+
+
 def test_post_dedupe_existing_merges_and_returns_pinned(monkeypatch):
     existing = _make_endpoint(
         base_url="http://host:1234/v1",

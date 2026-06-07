@@ -1469,6 +1469,7 @@ def setup_model_routes(model_discovery):
         refresh_interval = _parse_positive_int(model_refresh_interval, minimum=30, maximum=86400)
         refresh_timeout = _parse_positive_int(model_refresh_timeout, minimum=1, maximum=60)
         require_model_list = _truthy(require_models)
+        _pinned = _normalize_model_ids(pinned_models)
         should_probe = (
             require_model_list or requested_kind in ("api", "proxy") or not _truthy(skip_probe)
         )
@@ -1506,11 +1507,10 @@ def setup_model_routes(model_discovery):
                 changed = False
                 # Persist any incoming pinned IDs onto the existing row. An
                 # empty/omitted form field must not wipe previously pinned IDs.
-                _incoming_pinned = _normalize_model_ids(pinned_models)
-                if _incoming_pinned:
+                if _pinned:
                     _merged_pinned = _merge_model_ids(
                         _normalize_model_ids(getattr(existing, "pinned_models", None)),
-                        _incoming_pinned,
+                        _pinned,
                     )
                     existing.pinned_models = json.dumps(_merged_pinned) if _merged_pinned else None
                     changed = True
@@ -1571,7 +1571,8 @@ def setup_model_routes(model_discovery):
         ping = {"reachable": False, "error": None}
         if (should_probe or requested_kind in ("api", "proxy")) and not model_ids:
             ping = _ping_endpoint(base_url, api_key.strip() or None, timeout=min(explicit_timeout, 2.0))
-        if require_model_list and not model_ids:
+        visible_model_ids = _merge_model_ids(model_ids, _pinned)
+        if require_model_list and not visible_model_ids:
             raise HTTPException(400, _model_endpoint_error_message(base_url, ping))
 
         ep_id = str(uuid.uuid4())[:8]
@@ -1579,7 +1580,6 @@ def setup_model_routes(model_discovery):
         try:
             _st_raw = (supports_tools or "").strip().lower()
             _st = True if _st_raw in ("true", "1", "yes") else (False if _st_raw in ("false", "0", "no") else None)
-            _pinned = _normalize_model_ids(pinned_models)
             # Stamp owner so the picker only shows this endpoint to the admin
             # who added it. Pass `shared=true` to mark it null-owner (visible
             # to all users), preserving the pre-fix "everyone sees everything"
@@ -1613,7 +1613,7 @@ def setup_model_routes(model_discovery):
             if not settings.get("default_endpoint_id"):
                 from src.endpoint_resolver import _first_chat_model
                 settings["default_endpoint_id"] = ep.id
-                settings["default_model"] = _first_chat_model(model_ids) or ""
+                settings["default_model"] = _first_chat_model(visible_model_ids) or ""
                 _save_settings(settings)
             _invalidate_models_cache()
             _local_probe_cache["data"] = None
@@ -1627,10 +1627,10 @@ def setup_model_routes(model_discovery):
             "base_url": base_url,
             "has_key": bool(api_key.strip()),
             "api_key_fingerprint": _api_key_fingerprint(api_key),
-            "models": _merge_model_ids(model_ids, _pinned),
+            "models": visible_model_ids,
             "pinned_models": _pinned,
-            "online": bool(model_ids) or bool(_pinned) or bool(ping.get("reachable")),
-            "status": "online" if (model_ids or _pinned) else ("empty" if ping.get("reachable") else "offline"),
+            "online": bool(visible_model_ids) or bool(ping.get("reachable")),
+            "status": "online" if visible_model_ids else ("empty" if ping.get("reachable") else "offline"),
             "ping_error": ping.get("error") if ping else None,
             "endpoint_kind": requested_kind,
             "category": _classify_endpoint(base_url, requested_kind),

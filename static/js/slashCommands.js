@@ -591,8 +591,11 @@ async function connectDetectedSetupEndpoint(detected) {
     fd.append('base_url', detected.base_url);
     if (detected.api_key) fd.append('api_key', detected.api_key);
     if (detected.name) fd.append('name', detected.name);
-    if (detected.pinned_models?.length) fd.append('pinned_models', JSON.stringify(detected.pinned_models));
-    fd.append('require_models', 'true');
+    if (detected.pinned_models?.length) {
+      fd.append('pinned_models', JSON.stringify(detected.pinned_models));
+    } else {
+      fd.append('require_models', 'true');
+    }
     if (!isLocal) fd.append('skip_probe', 'true');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30000);
