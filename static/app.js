@@ -22,6 +22,7 @@ import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
+import githubTrendingModule from './js/githubTrending.js';
 import notesModule from './js/notes.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
@@ -905,6 +906,15 @@ function initializeEventListeners() {
     });
   }
 
+  // GitHub Trending tool button — toggles inline page
+  const toolGithubTrendingBtn = el('tool-github-trending-btn');
+  if (toolGithubTrendingBtn) {
+    toolGithubTrendingBtn.addEventListener('click', () => {
+      if (githubTrendingModule.isOpen()) githubTrendingModule.closePanel();
+      else githubTrendingModule.openPanel();
+    });
+  }
+
   // Notes tool button
   const toolNotesBtn = el('tool-notes-btn');
   if (toolNotesBtn) {
@@ -1006,6 +1016,7 @@ function initializeEventListeners() {
     },
     '/calendar': () => calendarModule && calendarModule.openCalendar(),
     '/cookbook': () => document.getElementById('tool-cookbook-btn')?.click(),
+    '/github-trending': () => githubTrendingModule && githubTrendingModule.openPanel(),
     '/email':    () => {
       // Collapse the wide sidebar → icon rail (48px) so the user keeps
       // navigation visible alongside the fullscreen email view.
@@ -2389,6 +2400,7 @@ function initializeEventListeners() {
     'tool-calendar':       '#tool-calendar-btn',
     'tool-compare':        '#tool-compare-btn',
     'tool-cookbook':       '#tool-cookbook-btn',
+    'tool-github-trending':'#tool-github-trending-btn',
     'tool-research':       '#tool-research-btn',
     'tool-gallery':        '#tool-gallery-btn',
     'tool-library':        '#tool-library-btn',
@@ -3450,6 +3462,7 @@ function startOdysseusApp() {
     'rail-compare':   'tool-compare-btn',
     'rail-research':  'tool-research-btn',
     'rail-cookbook':   'tool-cookbook-btn',
+    'rail-github-trending': 'tool-github-trending-btn',
     'rail-archive':   'tool-library-btn',
     'rail-gallery':   'tool-gallery-btn',
     'rail-tasks':     'tool-tasks-btn',

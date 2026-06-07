@@ -2,7 +2,7 @@ import os
 import logging
 import sqlite3
 from datetime import datetime, timezone
-from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
+from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, UniqueConstraint, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
@@ -1430,6 +1430,32 @@ class Note(TimestampMixin, Base):
     # Chat session spawned by the note's "Agent" button (solve-this-todo).
     # The note shows a clickable tag that opens this session for review.
     agent_session_id  = Column(String, nullable=True)
+
+
+class GithubTrending(TimestampMixin, Base):
+    """Cached GitHub Trending snapshot — one row per date+period."""
+    __tablename__ = "github_trending"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    date       = Column(String(10), nullable=False, index=True)   # YYYY-MM-DD
+    period     = Column(String(10), nullable=False)                # daily/weekly/monthly
+    repos_json = Column(Text, nullable=False)                      # JSON array of repo dicts
+    # Future AI expansion columns (added via migration when needed)
+    # ai_summary = Column(Text, nullable=True)   # AI overall trend analysis
+    # ai_json    = Column(Text, nullable=True)   # per-repo AI interpretation + translation
+
+    __table_args__ = (
+        UniqueConstraint("date", "period", name="uq_gh_trending_date_period"),
+    )
+
+
+class GithubTrendingRepoAI(TimestampMixin, Base):
+    """Per-repo AI interpretation cache — shared across all periods/dates."""
+    __tablename__ = "github_trending_repo_ai"
+
+    repo_name      = Column(String, primary_key=True)
+    desc_zh        = Column(Text, nullable=True)     # Chinese translation of description
+    interpretation = Column(Text, nullable=True)     # AI analysis of why it's trending
 
 
 class CalendarCal(TimestampMixin, Base):

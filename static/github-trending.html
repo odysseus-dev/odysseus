@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<title>GitHub 热榜 - Odysseus</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0d1117;
+    color: #c9d1d9;
+    min-height: 100vh;
+  }
+  a { color: #58a6ff; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* Header */
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 24px;
+    border-bottom: 1px solid #21262d;
+    background: #161b22;
+  }
+  .header h1 { font-size: 20px; font-weight: 600; color: #f0f6fc; }
+  .header h1 span { color: #f78166; }
+  .controls { display: flex; gap: 12px; align-items: center; }
+  select {
+    background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+    border-radius: 6px; padding: 6px 12px; font-size: 14px;
+  }
+  select:focus { outline: none; border-color: #58a6ff; }
+  .refresh-btn {
+    background: #238636; color: #fff; border: none; border-radius: 6px;
+    padding: 6px 16px; font-size: 14px; cursor: pointer;
+  }
+  .refresh-btn:hover { background: #2ea043; }
+
+  /* Period tabs */
+  .tabs {
+    display: flex; gap: 0; border-bottom: 1px solid #21262d;
+    padding: 0 24px; background: #161b22;
+  }
+  .tab {
+    padding: 10px 16px; font-size: 14px; color: #8b949e; cursor: pointer;
+    border-bottom: 2px solid transparent; background: none; border-top: none;
+    border-left: none; border-right: none;
+  }
+  .tab:hover { color: #c9d1d9; }
+  .tab.active { color: #f0f6fc; border-bottom-color: #f78166; }
+
+  /* Repo list */
+  .list { max-width: 900px; margin: 0 auto; padding: 16px 24px; }
+  .repo-card {
+    display: flex; flex-direction: column; gap: 4px;
+    padding: 16px 0; border-bottom: 1px solid #21262d;
+  }
+  .repo-card:last-child { border-bottom: none; }
+  .repo-rank {
+    font-size: 12px; color: #8b949e; font-weight: 600; min-width: 24px;
+    display: inline-block;
+  }
+  .repo-name { font-size: 16px; font-weight: 600; color: #58a6ff; }
+  .repo-desc { font-size: 14px; color: #8b949e; margin-top: 4px; }
+  .repo-meta { display: flex; gap: 16px; margin-top: 8px; flex-wrap: wrap; }
+  .meta-item { font-size: 12px; color: #8b949e; display: flex; align-items: center; gap: 4px; }
+  .lang-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+  /* Loading */
+  .loading { text-align: center; padding: 80px 20px; color: #8b949e; }
+  .spinner {
+    width: 32px; height: 32px; border: 3px solid #21262d;
+    border-top-color: #58a6ff; border-radius: 50%;
+    animation: spin 0.8s linear infinite; margin: 0 auto 16px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Error */
+  .error { text-align: center; padding: 80px 20px; color: #f85149; }
+  .error button {
+    margin-top: 16px; background: #21262d; color: #c9d1d9;
+    border: 1px solid #30363d; border-radius: 6px; padding: 8px 20px;
+    cursor: pointer; font-size: 14px;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><span>⭐</span> GitHub 热榜</h1>
+  <div class="controls">
+    <select id="lang-select">
+      <option value="">全部语言</option>
+      <option value="python">Python</option>
+      <option value="javascript">JavaScript</option>
+      <option value="typescript">TypeScript</option>
+      <option value="go">Go</option>
+      <option value="rust">Rust</option>
+      <option value="java">Java</option>
+      <option value="cpp">C++</option>
+      <option value="c">C</option>
+      <option value="swift">Swift</option>
+      <option value="kotlin">Kotlin</option>
+    </select>
+    <button class="refresh-btn" id="refresh-btn">🔄 刷新</button>
+  </div>
+</div>
+
+<div class="tabs">
+  <button class="tab active" data-period="daily">今日</button>
+  <button class="tab" data-period="weekly">本周</button>
+  <button class="tab" data-period="monthly">本月</button>
+</div>
+
+<div class="list" id="repo-list">
+  <div class="loading">
+    <div class="spinner"></div>
+    <p>正在获取热榜数据...</p>
+  </div>
+</div>
+
+<script nonce="{{CSP_NONCE}}">
+let currentPeriod = 'daily';
+let currentLang = '';
+
+const LANG_COLORS = {
+  'Python': '#3572A5', 'JavaScript': '#f1e05a', 'TypeScript': '#3178c6',
+  'Go': '#00ADD8', 'Rust': '#dea584', 'Java': '#b07219',
+  'C++': '#f34b7d', 'C': '#555555', 'Swift': '#F05138',
+  'Kotlin': '#A97BFF', 'Vue': '#41b883', 'Shell': '#89e051',
+  'Ruby': '#701516', 'PHP': '#4F5D95', 'Dart': '#00B4AB',
+};
+
+async function loadTrending() {
+  const list = document.getElementById('repo-list');
+  list.innerHTML = '<div class="loading"><div class="spinner"></div><p>正在获取热榜数据...</p></div>';
+
+  const params = new URLSearchParams();
+  if (currentLang) params.set('language', currentLang);
+  params.set('period', currentPeriod);
+
+  try {
+    const resp = await fetch(`/api/github-trending/list?${params}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || '请求失败');
+    renderRepos(data.repos || []);
+  } catch (e) {
+    list.innerHTML = `<div class="error"><p>获取失败：${e.message}</p><button onclick="loadTrending()">重试</button></div>`;
+  }
+}
+
+function renderRepos(repos) {
+  const list = document.getElementById('repo-list');
+  if (!repos.length) {
+    list.innerHTML = '<div class="loading"><p>暂无数据</p></div>';
+    return;
+  }
+
+  const periodLabel = { daily: '今日', weekly: '本周', monthly: '本月' };
+  let html = `<p style="color:#8b949e;font-size:13px;margin-bottom:12px;">${periodLabel[currentPeriod]}热榜 · 共 ${repos.length} 个项目</p>`;
+
+  repos.forEach((repo, i) => {
+    const dotColor = LANG_COLORS[repo.lang] || '#8b949e';
+    const descHtml = repo.desc ? `<div class="repo-desc">${repo.desc}</div>` : '';
+    const langHtml = repo.lang ? `<span class="meta-item"><span class="lang-dot" style="background:${dotColor}"></span>${repo.lang}</span>` : '';
+    const starsHtml = repo.total_stars ? `<span class="meta-item">⭐ ${repo.total_stars}</span>` : '';
+    const todayHtml = repo.stars_today ? `<span class="meta-item">📈 +${repo.stars_today} ${currentPeriod === 'daily' ? '今日' : currentPeriod === 'weekly' ? '本周' : '本月'}</span>` : '';
+    const forksHtml = repo.forks ? `<span class="meta-item">🔀 ${repo.forks}</span>` : '';
+
+    html += `
+      <div class="repo-card">
+        <div>
+          <span class="repo-rank">${i + 1}.</span>
+          <a class="repo-name" href="${repo.url}" target="_blank">${repo.name}</a>
+        </div>
+        ${descHtml}
+        <div class="repo-meta">
+          ${langHtml}${starsHtml}${todayHtml}${forksHtml}
+        </div>
+      </div>`;
+  });
+
+  list.innerHTML = html;
+}
+
+// Tab switching
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelector('.tab.active').classList.remove('active');
+    tab.classList.add('active');
+    currentPeriod = tab.dataset.period;
+    loadTrending();
+  });
+});
+
+// Language select
+document.getElementById('lang-select').addEventListener('change', e => {
+  currentLang = e.target.value;
+  loadTrending();
+});
+
+// Refresh button
+document.getElementById('refresh-btn').addEventListener('click', loadTrending);
+
+// Initial load
+loadTrending();
+</script>
+</body>
+</html>

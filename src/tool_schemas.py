@@ -1056,6 +1056,21 @@ FUNCTION_TOOL_SCHEMAS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "github_trending",
+            "description": "查看 GitHub 实时热门项目（Trending）。返回按星标增长排列的项目列表，包含项目描述、语言、星标数和链接。当用户问 GitHub 有什么热门项目、最近什么项目火、今天 GitHub trending、GitHub 热榜等时调用此工具。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "language": {"type": "string", "description": "编程语言筛选，如 python、typescript、go、rust，留空则为全部语言"},
+                    "period": {"type": "string", "enum": ["daily", "weekly", "monthly"], "description": "时间范围：daily（今日热榜）、weekly（本周热榜）、monthly（本月热榜），默认 daily"}
+                },
+                "required": []
+            }
+        }
+    },
 ]
 
 

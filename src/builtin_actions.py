@@ -1998,6 +1998,19 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
+async def action_github_trending_fetch(owner: str, **kwargs) -> Tuple[str, bool]:
+    """Fetch GitHub Trending for all three periods and cache to DB."""
+    try:
+        from routes.github_trending_routes import fetch_and_cache_all_periods
+        import asyncio
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, fetch_and_cache_all_periods)
+        return "GitHub trending fetched and cached", True
+    except Exception as e:
+        logger.exception("github_trending_fetch action failed")
+        return str(e), False
+
+
 BUILTIN_ACTIONS = {
     "tidy_sessions": action_tidy_sessions,
     "tidy_documents": action_tidy_documents,
@@ -2017,6 +2030,7 @@ BUILTIN_ACTIONS = {
     "test_skills": action_test_skills,
     "audit_skills": action_audit_skills,
     "check_email_urgency": action_check_email_urgency,
+    "github_trending_fetch": action_github_trending_fetch,
     # ping_notes removed from the registry — runs only inside `_note_pings_loop`.
 }
 

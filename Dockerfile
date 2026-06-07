@@ -8,7 +8,15 @@ FROM python:3.12-slim
 # nodejs/npm provide npx for the optional built-in Browser MCP server.
 # gosu lets the entrypoint drop privileges cleanly so signals still reach
 # uvicorn directly (no extra shell layer like `su`/`sudo` would add).
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN printf '%s\n' \
+    'Types: deb' \
+    'URIs: https://deb.debian.org/debian' \
+    'Suites: trixie trixie-updates' \
+    'Components: main' \
+    'Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp' \
+    > /etc/apt/sources.list.d/debian.sources \
+    && apt-get -o Acquire::Retries=5 -o Acquire::http::Pipeline-Depth=0 update \
+    && apt-get -o Acquire::Retries=5 -o Acquire::http::Pipeline-Depth=0 install -y --no-install-recommends \
     build-essential \
     cmake \
     curl \
@@ -22,9 +30,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python deps first (layer cache)
+# Install Python deps first (layer cache). Use isolated pip config plus
+# explicit retries/timeouts so transient proxy/PyPI stalls do not leave
+# the rebuild half-finished after we've already cleared the old image.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_REQUIRE_HASHES=0 \
+    PIP_DEFAULT_TIMEOUT=180 \
+    python -m pip install \
+    --isolated \
+    --retries 10 \
+    --timeout 180 \
+    -r requirements.txt
 
 # Copy app code
 COPY . .

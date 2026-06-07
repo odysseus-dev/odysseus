@@ -4142,3 +4142,119 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
         pass
 
     return {"output": "Vault unlocked. Session saved.", "exit_code": 0}
+
+
+# ---------------------------------------------------------------------------
+# GitHub Trending tool
+# ---------------------------------------------------------------------------
+
+async def do_github_trending(content: str, owner: Optional[str] = None) -> Dict:
+    """Fetch GitHub trending repos and return a formatted Chinese report."""
+    import re as _re
+    try:
+        args = _parse_tool_args(content)
+    except ValueError:
+        args = {}
+
+    language = (args.get("language") or "").strip().lower()
+    period = (args.get("period") or "daily").strip().lower()
+    if period not in ("daily", "weekly", "monthly"):
+        period = "daily"
+
+    if language:
+        url = f"https://github.com/trending/{language}?since={period}"
+    else:
+        url = f"https://github.com/trending?since={period}"
+
+    try:
+        import httpx as _httpx
+        async with _httpx.AsyncClient(
+            timeout=15,
+            follow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; Odysseus/1.0)"}
+        ) as _client:
+            _resp = await _client.get(url)
+            _resp.raise_for_status()
+            _html = _resp.text
+    except Exception as _e:
+        return {"error": f"获取 GitHub Trending 失败：{_e}", "exit_code": 1}
+
+    _articles = _re.findall(r'<article[^>]*>(.*?)</article>', _html, _re.DOTALL | _re.IGNORECASE)
+    if not _articles:
+        return {"error": "无法解析 GitHub Trending 页面，页面结构可能已变化。", "exit_code": 1}
+
+    _PERIOD_LABEL = {"daily": "今日", "weekly": "本周", "monthly": "本月"}
+    _results = []
+    for _art in _articles[:25]:
+        _h2 = _re.search(r'<h2[^>]*>(.*?)</h2>', _art, _re.DOTALL)
+        _repo_path = ""
+        if _h2:
+            _h2_links = _re.findall(r'href="(/[^"]+/[^"]+)"', _h2.group(1))
+            for _lnk in _h2_links:
+                if _lnk.count('/') == 1 and not any(
+                    _lnk.endswith(s) for s in ('/stargazers', '/forks', '/network', '/issues', '/pulls')
+                ):
+                    _repo_path = _lnk
+                    break
+        if not _repo_path:
+            continue
+        _repo_url = f"https://github.com{_repo_path}"
+
+        _desc = ""
+        _desc_match = _re.search(r'<p[^>]+class="[^"]*col-9[^"]*"[^>]*>(.*?)</p>', _art, _re.DOTALL)
+        if _desc_match:
+            _desc = _re.sub(r'<[^>]+>', '', _desc_match.group(1))
+            _desc = _re.sub(r'\s+', ' ', _desc).strip()
+
+        _lang = ""
+        _lang_match = _re.search(r'itemprop="programmingLanguage">(.*?)<', _art, _re.DOTALL | _re.IGNORECASE)
+        if _lang_match:
+            _lang = _lang_match.group(1).strip()
+
+        _stars_today = ""
+        _today_match = _re.search(r'([\d][\d,]*)\s+stars?\s+(today|this\s+week|this\s+month)', _art, _re.DOTALL | _re.IGNORECASE)
+        if _today_match:
+            _stars_today = _today_match.group(1).strip()
+
+        _total_stars = ""
+        _stars_match = _re.search(r'/stargazers">.*?([\d,]+)\s*<', _art, _re.DOTALL)
+        if _stars_match:
+            _total_stars = _stars_match.group(1).strip()
+
+        _forks = ""
+        _forks_match = _re.search(r'/forks">.*?([\d,]+)\s*<', _art, _re.DOTALL)
+        if _forks_match:
+            _forks = _forks_match.group(1).strip()
+
+        _results.append({"name": _repo_path.lstrip('/'), "url": _repo_url, "desc": _desc, "lang": _lang, "stars_today": _stars_today, "total_stars": _total_stars, "forks": _forks})
+
+    if not _results:
+        return {"error": "未能提取到任何项目信息，页面结构可能已变化。", "exit_code": 1}
+
+    _period_cn = _PERIOD_LABEL.get(period, period)
+    _lang_cn = f" · {language.upper()}" if language else ""
+    _lines = [
+        f"# ⭐ GitHub {_period_cn}热榜{_lang_cn}",
+        f"",
+        f"共找到 {len(_results)} 个热门项目，按热度排列：",
+        f"",
+    ]
+    for _i, _r in enumerate(_results, 1):
+        _lines.append(f"## {_i}. [{_r['name']}]({_r['url']})")
+        if _r["desc"]:
+            _lines.append(f"> {_r['desc']}")
+        _info = []
+        if _r["lang"]:
+            _info.append(f"语言：{_r['lang']}")
+        if _r["total_stars"]:
+            _info.append(f"⭐ {_r['total_stars']}")
+        if _r["stars_today"]:
+            _info.append(f"今日新增：+{_r['stars_today']}")
+        elif _r["forks"]:
+            _info.append(f" Fork：{_r['forks']}")
+        if _info:
+            _lines.append(" | ".join(_info))
+        _lines.append("")
+
+    return {"output": "\n".join(_lines), "exit_code": 0}
+

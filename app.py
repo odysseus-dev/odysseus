@@ -720,6 +720,11 @@ app.include_router(setup_contacts_routes())
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 
+# GitHub Trending standalone page
+from routes.github_trending_routes import setup_github_trending_routes, register_github_trending_page
+app.include_router(setup_github_trending_routes())
+register_github_trending_page(app)
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
