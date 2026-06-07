@@ -7,6 +7,13 @@ on:
     - cron: '17 */6 * * *'   # every 6 hours — offset from the hour to avoid runner queues
   workflow_dispatch:
 
+# Push, schedule, and manual runs can overlap. Without this, two runs can both
+# observe "no marker comment yet" on the same PR and both create one. Queue
+# (don't cancel) so a run that's already mutating comments/labels finishes cleanly.
+concurrency:
+  group: pr-conflict-check
+  cancel-in-progress: false
+
 # pull-requests: write  — add/remove labels and post comments on PRs
 # issues: write         — required by the REST issues API used for labels/comments
 permissions:

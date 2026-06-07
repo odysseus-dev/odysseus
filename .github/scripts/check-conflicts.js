@@ -44,6 +44,10 @@ module.exports = async ({ github, context, core }) => {
               mergeable
               baseRefName
               author { login ... on Bot { __typename } }
+              labels(first: 100) { nodes { name } }
+              comments(first: 50, orderBy: { field: UPDATED_AT, direction: DESC }) {
+                nodes { databaseId body }
+              }
             }
           }
         }
@@ -69,11 +73,23 @@ module.exports = async ({ github, context, core }) => {
     return comments.find(c => (c.body ?? '').includes(MARKER)) ?? null;
   }
 
-  async function hasLabel(prNumber) {
-    const { data } = await github.rest.issues.listLabelsOnIssue({
-      owner, repo, issue_number: prNumber,
-    });
-    return data.some(l => l.name === LABEL);
+  // GraphQL gives us labels and the most recent comments for free in the same
+  // page that lists open PRs. Most PRs in the queue are clean and have neither
+  // the label nor a marker comment, so this lets clearConflict() skip the two
+  // REST round-trips (listComments + listLabelsOnIssue) for the common case —
+  // the queue scans hundreds of PRs per run and only a fraction need mutation.
+  function hydratedState(pr) {
+    const labelNodes   = pr.labels?.nodes ?? [];
+    const commentNodes = pr.comments?.nodes ?? [];
+    const marker = commentNodes.find(c => (c.body ?? '').includes(MARKER)) ?? null;
+    return {
+      hasLabel: labelNodes.some(l => l.name === LABEL),
+      markerCommentId: marker ? marker.databaseId : null,
+      // The comments connection is capped at 50, newest first — if a PR has
+      // more than that, an old marker comment could sit outside the page and
+      // we can't trust "no marker found here" as "no marker exists".
+      commentsMayBeIncomplete: commentNodes.length >= 50,
+    };
   }
 
   function buildConflictComment(pr) {
@@ -109,32 +125,41 @@ module.exports = async ({ github, context, core }) => {
   }
 
   async function flagConflict(pr) {
-    const body     = buildConflictComment(pr);
-    const existing = await findBotComment(pr.number);
+    const body  = buildConflictComment(pr);
+    const state = hydratedState(pr);
+    const existingId = state.markerCommentId
+      ?? (state.commentsMayBeIncomplete ? (await findBotComment(pr.number))?.id ?? null : null);
 
-    if (existing) {
-      await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+    if (existingId) {
+      await github.rest.issues.updateComment({ owner, repo, comment_id: existingId, body });
     } else {
       await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body });
       core.info(`Posted conflict comment on PR #${pr.number}.`);
     }
 
-    if (!(await hasLabel(pr.number))) {
+    if (!state.hasLabel) {
       await github.rest.issues.addLabels({ owner, repo, issue_number: pr.number, labels: [LABEL] });
       core.info(`Added "${LABEL}" to PR #${pr.number}.`);
     }
   }
 
   async function clearConflict(pr) {
-    const [existing, labeled] = await Promise.all([
-      findBotComment(pr.number),
-      hasLabel(pr.number),
-    ]);
+    const state = hydratedState(pr);
 
-    if (!existing && !labeled) return;
+    // Nothing to clear, and the comment page we have is complete enough to
+    // trust that absence — skip the REST round-trips entirely.
+    if (!state.hasLabel && !state.markerCommentId && !state.commentsMayBeIncomplete) {
+      return;
+    }
 
-    if (existing) {
-      await github.rest.issues.deleteComment({ owner, repo, comment_id: existing.id });
+    const existingId = state.markerCommentId
+      ?? (state.commentsMayBeIncomplete ? (await findBotComment(pr.number))?.id ?? null : null);
+    const labeled = state.hasLabel;
+
+    if (!existingId && !labeled) return;
+
+    if (existingId) {
+      await github.rest.issues.deleteComment({ owner, repo, comment_id: existingId });
     }
 
     if (labeled) {
