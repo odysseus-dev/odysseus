@@ -4120,14 +4120,14 @@ async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict
     topic = args.get("topic", "") or args.get("query", "")
     if not topic:
         return {"error": "topic (or query) is required", "exit_code": 1}
-    payload: Dict[str, Any] = {"query": topic}
-    # Optional knobs the research panel supports.
-    if args.get("max_rounds") is not None:
-        try: payload["max_rounds"] = int(args["max_rounds"])
-        except (ValueError, TypeError): pass
-    if args.get("max_time") is not None:
-        try: payload["max_time"] = int(args["max_time"])
-        except (ValueError, TypeError): pass
+     payload: Dict[str, Any] = {"query": topic}
+     # Optional knobs the research panel supports.
+     if args.get("max_rounds") is not None:
+         try: payload["max_rounds"] = int(args["max_rounds"])
+         except (ValueError, TypeError) as e: logger.warning(f"Invalid max_rounds value '{args['max_rounds']}': {e}")
+     if args.get("max_time") is not None:
+         try: payload["max_time"] = int(args["max_time"])
+         except (ValueError, TypeError) as e: logger.warning(f"Invalid max_time value '{args['max_time']}': {e}")
     if args.get("category"):
         payload["category"] = args["category"]
     if args.get("search_provider"):
