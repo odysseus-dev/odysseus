@@ -755,7 +755,26 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
 
     try:
         r = httpx.get(base, headers=headers, timeout=timeout, verify=llm_verify())
-        return _result_from_response(r)
+        result = _result_from_response(r)
+        # If the bare base URL returns a non-auth 4xx (e.g. 404), try /models
+        # as a fallback. OpenAI-compatible servers like llama-swap return 404
+        # on the base /v1 prefix but 200 on /v1/models.  Auth failures (401/403)
+        # are definitive — probing /models would just repeat the same rejection.
+        if (
+            not result["reachable"]
+            and result.get("status_code") is not None
+            and 400 <= result["status_code"] < 500
+            and result["status_code"] not in (401, 403)
+        ):
+            models_url = base.rstrip("/") + "/models"
+            try:
+                r2 = httpx.get(models_url, headers=headers, timeout=timeout, verify=llm_verify())
+                result2 = _result_from_response(r2)
+                if result2["reachable"]:
+                    return result2
+            except Exception:
+                pass
+        return result
     except Exception as e:
         last_error = str(e)[:120]
 
