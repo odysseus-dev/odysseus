@@ -1311,6 +1311,22 @@ function _wireTabEvents(body) {
       let envPath = host ? (_hsrv.envPath || '') : _envState.envPath;
       const payload = { repo_id: repo };
       if (autoInclude) payload.include = autoInclude;
+      // A GGUF repo entered without a :QUANT_TAG would pull EVERY quantization
+      // in the repo (often 9+ files / 50+ GB), because no --include filter is
+      // sent. _resolveDownloadScope below doesn't catch this — for a pure-GGUF
+      // repo every .gguf counts as "serving", so there are no "extras" to trim.
+      // Confirm before starting so the user can cancel and re-enter with a tag
+      // rather than discover the runaway download hours later.
+      if (!autoInclude && /gguf/i.test(repo)) {
+        const proceed = await uiModule.styledConfirm(
+          `"${repo}" has no quantization tag, so ALL quantizations in the repo ` +
+          `will be downloaded — this can be many files and tens of GB.\n\n` +
+          `To download a single quantization instead, cancel and use the format ` +
+          `"${repo}:Q4_K_M".`,
+          { confirmText: 'Download all quants', cancelText: 'Cancel' }
+        );
+        if (!proceed) { dlInput.focus(); return; }
+      }
       if (_envState.hfToken) payload.hf_token = _envState.hfToken;
       if (host) { payload.remote_host = host; const _sp3 = _getPort(host); if (_sp3) payload.ssh_port = _sp3; }
       const srvPlatform = _getPlatform(host);
