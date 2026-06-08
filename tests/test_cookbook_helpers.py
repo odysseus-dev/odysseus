@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from routes.cookbook_helpers import (
     _cached_model_scan_script,
     _append_llama_cpp_linux_accel_build_lines,
+    _append_pip_install_runner_lines,
     _append_serve_exit_code_lines,
     _append_serve_preflight_exit_lines,
     _llama_cpp_rebuild_cmd,
@@ -148,7 +149,9 @@ def test_pip_install_fallback_chain_prefers_venv_safe_install():
     # First attempt: plain install, wrapped in status-preserving subshell
     assert chain.startswith("bash -c '")
     assert "python3 -m pip install -q -U huggingface_hub" in chain
-    # Second attempt: --user --break-system-packages, also wrapped
+    # Fallback: --user first, then guarded --break-system-packages for PEP-668 pip.
+    assert "python3 -m pip install --user -q -U huggingface_hub" in chain
+    assert "python3 -m pip install --help 2>/dev/null | grep -q -- --break-system-packages" in chain
     assert "--user --break-system-packages" in chain
     assert "python3 -m pip install --user --break-system-packages -q -U huggingface_hub" in chain
     # No bare `| tail` (which would mask pip's exit code)
@@ -163,11 +166,23 @@ def test_pip_install_fallback_chain_prefers_venv_safe_install():
 def test_pip_install_fallback_chain_allows_custom_python_command():
     chain = _pip_install_fallback_chain("hf_transfer", python_cmd="pip", upgrade=False)
     assert "pip install -q hf_transfer" in chain
+    assert "pip install --user -q hf_transfer" in chain
+    assert "pip install --help 2>/dev/null | grep -q -- --break-system-packages" in chain
     assert "pip install --user --break-system-packages -q hf_transfer" in chain
     # venv check uses the python executable derived from the pip command
     assert 'python -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"' in chain
-    # Both attempts are wrapped in bash -c subshells
-    assert chain.count("bash -c '") == 2
+    # All install attempts are wrapped in bash -c subshells
+    assert chain.count("bash -c '") == 3
+
+
+def test_pip_install_fallback_chain_accepts_python_executable():
+    chain = _pip_install_fallback_chain("llama-cpp-python[server]", python_cmd="python")
+
+    assert "python -m pip install -q 'llama-cpp-python[server]'" in chain
+    assert "python -m pip install --user -q 'llama-cpp-python[server]'" in chain
+    assert "python -m pip install --help 2>/dev/null | grep -q -- --break-system-packages" in chain
+    assert "python install " not in chain
+    assert 'python -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"' in chain
 
 
 def test_pip_install_fallback_chain_propagates_failure_in_venv():
@@ -219,8 +234,8 @@ def test_pip_install_fallback_chain_quotes_extras_spec():
     (which pulls in starlette_context for ``python -m llama_cpp.server``) is
     actually installed instead of a bare ``llama-cpp-python`` (issue #730)."""
     chain = _pip_install_fallback_chain("llama-cpp-python[server]", python_cmd="pip")
-    # Quoted in both the plain and the --user attempt.
-    assert chain.count("'llama-cpp-python[server]'") == 2
+    # Quoted in the plain, --user, and guarded --break-system-packages attempts.
+    assert chain.count("'llama-cpp-python[server]'") == 3
     # llama-cpp installs must prefer prebuilt wheels to avoid fragile source builds.
     assert "--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu" in chain
     # Never the unquoted form (bracket-glob risk).
@@ -279,6 +294,27 @@ def test_venv_safe_local_pip_install_strips_user_flags_only_for_local_venv():
     assert cleaned == "python3 -m pip install -U vllm"
     assert _venv_safe_local_pip_install_cmd(cmd, local=False, in_venv=True) == cmd
     assert _venv_safe_local_pip_install_cmd(cmd, local=True, in_venv=False) == cmd
+
+
+def test_pip_install_runner_guards_break_system_packages():
+    lines = []
+    _append_pip_install_runner_lines(
+        lines,
+        'python3 -m pip install --no-cache-dir --user --break-system-packages "llama-cpp-python[server]"',
+    )
+    script = "\n".join(lines)
+
+    assert "python3 -m pip install --help 2>/dev/null | grep -q -- --break-system-packages" in script
+    assert 'python3 -m pip install --no-cache-dir --user --break-system-packages "llama-cpp-python[server]"' in script
+    assert "python3 -m pip install --no-cache-dir --user 'llama-cpp-python[server]'" in script
+    assert "pip does not support --break-system-packages" in script
+
+
+def test_pip_install_runner_leaves_plain_commands_unchanged():
+    lines = []
+    _append_pip_install_runner_lines(lines, "python3 -m pip install --no-cache-dir vllm")
+
+    assert lines == ["python3 -m pip install --no-cache-dir vllm"]
 
 
 def test_pip_install_attempt_wraps_in_status_preserving_subshell():
