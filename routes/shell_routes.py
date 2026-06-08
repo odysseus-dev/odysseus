@@ -430,7 +430,11 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, An
             stderr=asyncio.subprocess.PIPE,
             cwd=str(Path.home()),
         )
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        # A falsy timeout (0/None) means "no limit" — matches the request model
+        # (`0 = no timeout`) and the stream path's `if timeout` deadline. Passing
+        # 0 straight to wait_for would time out immediately.
+        comm = proc.communicate()
+        stdout_b, stderr_b = await (asyncio.wait_for(comm, timeout=timeout) if timeout else comm)
         stdout = stdout_b.decode(errors="replace")[:MAX_OUTPUT]
         stderr = stderr_b.decode(errors="replace")[:MAX_OUTPUT]
         return {"stdout": stdout, "stderr": stderr, "exit_code": proc.returncode}
