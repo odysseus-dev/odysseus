@@ -242,6 +242,21 @@ def _build_dav_client(url: str, username: str, password: str):
     return client
 
 
+def _should_prune_window(seen_uids: set, parse_failed: bool) -> bool:
+    """Whether the post-sync prune of vanished CalDAV events is safe to run.
+
+    The prune deletes local ``origin=="caldav"`` rows in the window whose UID the
+    server did not just return. When ``seen_uids`` is empty that normally means
+    the calendar has no events in the window, so pruning is correct. But if the
+    server returned objects and every one failed to parse, ``seen_uids`` is empty
+    only because we could not read them — pruning would wipe the whole window.
+    Skip the prune in that case (no readable data + at least one parse failure).
+    """
+    if seen_uids:
+        return True
+    return not parse_failed
+
+
 def _sync_blocking(owner: str, url: str, username: str, password: str, account_id: str = "") -> dict:
     """The actual sync — synchronous, intended to run in a threadpool.
     Returns counts: {calendars, events, deleted, errors}."""
@@ -328,6 +343,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                 # duplicate UIDs within the same batch are updated, not re-inserted
                 # (which would violate the UNIQUE constraint on commit).
                 pending: dict = {}
+                parse_failed = False
                 try:
                     objs = remote_cal.date_search(start=start, end=end, expand=False)
                 except Exception as e:
@@ -339,6 +355,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                         ical = iCal.from_ical(obj.data)
                     except Exception as e:
                         result["errors"].append(f"{display_name}: parse failed ({e})")
+                        parse_failed = True
                         continue
 
                     for comp in ical.walk():
@@ -415,17 +432,21 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                 # are prunable; locally-created events (agent / email triage / a
                 # UI event whose write-back failed) carry origin NULL and must
                 # never be deleted just because the server didn't return them.
-                stale = db.query(CalendarEvent).filter(
-                    CalendarEvent.calendar_id == local_cal.id,
-                    CalendarEvent.origin == "caldav",
-                    CalendarEvent.dtstart >= start,
-                    CalendarEvent.dtstart <= end,
-                    ~CalendarEvent.uid.in_(seen_uids) if seen_uids else CalendarEvent.uid.isnot(None),
-                ).all()
-                for ev in stale:
-                    db.delete(ev)
-                result["deleted"] += len(stale)
-                db.commit()
+                # Skip the prune when the fetch returned objects we couldn't read
+                # (empty seen_uids from parse failures, not an empty calendar) —
+                # otherwise the isnot(None) branch deletes every windowed event.
+                if _should_prune_window(seen_uids, parse_failed):
+                    stale = db.query(CalendarEvent).filter(
+                        CalendarEvent.calendar_id == local_cal.id,
+                        CalendarEvent.origin == "caldav",
+                        CalendarEvent.dtstart >= start,
+                        CalendarEvent.dtstart <= end,
+                        ~CalendarEvent.uid.in_(seen_uids) if seen_uids else CalendarEvent.uid.isnot(None),
+                    ).all()
+                    for ev in stale:
+                        db.delete(ev)
+                    result["deleted"] += len(stale)
+                    db.commit()
             except Exception as e:
                 logger.exception("CalDAV sync failed for one calendar")
                 result["errors"].append(str(e)[:200])
