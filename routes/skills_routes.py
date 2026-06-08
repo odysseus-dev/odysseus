@@ -1239,6 +1239,79 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         _fire_skill_added(user)
         return {"ok": True, "skill": entry, "files": len(files)}
 
+    @router.post("/upload")
+    async def upload_skill(request: Request):
+        require_admin(request)
+        user = _owner(request)
+
+        form = await request.form()
+        file = form.get("file")
+        if not file:
+            raise HTTPException(400, "No file uploaded")
+
+        content_bytes = await file.read()
+        filename = (file.filename or "").lower()
+
+        if filename.endswith(".zip"):
+            import io
+            import zipfile
+            from services.memory.skill_importer import SkillImportError
+
+            files = {}
+            try:
+                with zipfile.ZipFile(io.BytesIO(content_bytes)) as z:
+                    for name in z.namelist():
+                        if name.endswith("/") or name.startswith("__MACOSX") or ".DS_Store" in name:
+                            continue
+                        try:
+                            files[name] = z.read(name).decode("utf-8")
+                        except UnicodeDecodeError:
+                            pass
+                if not files:
+                    raise SkillImportError("ZIP file contains no valid text files")
+                entry = skills_manager.import_bundle_from_files(
+                    files,
+                    owner=user,
+                    source_url="Uploaded ZIP",
+                )
+            except SkillImportError as e:
+                raise HTTPException(400, str(e)) from e
+            except Exception as e:
+                raise HTTPException(400, f"Failed to extract ZIP: {e}")
+
+            _fire_skill_added(user)
+            return {"ok": True, "skill": entry, "files": len(files)}
+
+        elif filename.endswith(".md"):
+            try:
+                content = content_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                raise HTTPException(400, "File is not valid UTF-8 text")
+
+            try:
+                from services.memory.skill_format import Skill
+                sk = Skill.from_markdown(content)
+            except Exception as e:
+                raise HTTPException(400, f"Could not parse SKILL.md: {e}")
+
+            existing = {s["name"] for s in skills_manager.load_all()}
+            nm = sk.name
+            base = nm
+            i = 2
+            while nm in existing:
+                nm = f"{base}-{i}"
+                i += 1
+            sk.name = nm
+            sk.owner = user
+            sk.source = "imported"
+
+            skills_manager._write_skill(sk)
+            _fire_skill_added(user)
+            return {"ok": True, "skill": sk.to_dict(), "files": 1}
+
+        else:
+            raise HTTPException(400, "Unsupported file format. Please upload a .md or .zip file.")
+
     @router.post("/add")
     async def add_skill(request: Request, body: SkillAddRequest):
         user = _owner(request)
