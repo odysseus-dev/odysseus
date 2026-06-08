@@ -1,0 +1,7 @@
+<svg viewBox="0 0 32 32" width="256" height="256" aria-hidden="true">
+  <path d="M16 4L16 22L6 22Z" fill="#e06c75"></path>
+  
+  <path d="M16 8L16 22L24 22Z" fill="#9b565e"></path>
+  
+  <path d="M4 24Q10 20 16 24Q22 28 28 24" stroke="#9b565e" stroke-width="2.5" fill="none" stroke-linecap="round"></path>
+</svg>
