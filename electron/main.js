@@ -52,6 +52,12 @@ function createWindow() {
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
     if (!mainWindow.isVisible()) mainWindow.show();
     mainWindow.webContents.executeJavaScript(`
+      document.documentElement.style.margin = '0';
+      document.documentElement.style.padding = '0';
+      document.documentElement.style.background = '#1a1a1a';
+      document.body.style.margin = '0';
+      document.body.style.padding = '0';
+      document.body.style.background = '#1a1a1a';
       document.body.innerHTML = \`
         <div style="
           display:flex;flex-direction:column;align-items:center;justify-content:center;
