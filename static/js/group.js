@@ -89,12 +89,16 @@ function _initGroupTab() {
 
     const charSel = document.createElement('select');
     charSel.className = 'preset-input';
+    // add an identifier that this is a character selection
+    charSel.dataset.selectionType = "character"
     charSel.style.cssText = 'font-size:11px;flex:1;height:26px;';
     charSel.innerHTML = '<option value="">Empty...</option>' +
       characters.map(c => '<option value="' + c.id + '">' + uiModule.esc(c.name) + '</option>').join('');
 
     const modelSel = document.createElement('select');
     modelSel.className = 'preset-input';
+    // add an identifier that this is a model selection
+    modelSel.dataset.selectionType = "model"
     modelSel.style.cssText = 'font-size:11px;flex:1;height:26px;';
     modelSel.innerHTML = '<option value="">Model…</option>' +
       models.map(m => '<option value="' + m.mid + '">' + uiModule.esc(m.display) + '</option>').join('');
@@ -196,14 +200,66 @@ function _initGroupTab() {
   });
 
   const groupTab = document.querySelector('.preset-tab[data-chartab="group"]');
+  // whenever a user navigates to the Group tab
   if (groupTab) groupTab.addEventListener('click', () => {
     _modelsCache = null;
     if (startBtn) startBtn.textContent = 'Start Group';
     _loadGroupPresets();
-    if (_groupParticipants.length === 0) {
+
+    const isGroupTabUnInitialized =
+      _groupParticipants.length === 0 && participantsEl.children.length === 0;
+
+    if (isGroupTabUnInitialized) {
       setTimeout(() => addBtn.click(), 100);
+    } else {
+      // queue this asynchronously since repopulating the selection drop-downs
+      // do not need to be visible right away; it can be safely delayed before
+      // the next event loop
+      queueMicrotask(() => {
+        repopulateExistingSelections();
+      })
     }
   });
+
+  async function repopulateExistingSelections() {
+    const EMPTY = "";
+
+    const characterSelections = participantsEl.querySelectorAll("select.preset-input[data-selection-type=character");
+    const modelSelections = participantsEl.querySelectorAll("select.preset-input[data-selection-type=model");
+
+    if (characterSelections.length !== 0) { 
+      const characters = await _getCharacterList();
+ 
+      characterSelections.forEach((characterSelection) => {
+
+        const chosenCharacter = characterSelection.value;
+        const isChosenCharacterExisting = chosenCharacter !== EMPTY
+          && characters.findIndex((char) => char.id === chosenCharacter) !== -1;
+
+        characterSelection.innerHTML = '<option value="">Empty...</option>' +
+          characters.map(c => '<option value="' + c.id + '">' + uiModule.esc(c.name) + '</option>').join('');
+        if (isChosenCharacterExisting) {
+          characterSelection.value = chosenCharacter;
+        }
+      });
+    }
+
+    if (modelSelections.length !== 0) {
+      const models = await _getModels();
+
+      modelSelections.forEach((modelSelection) => {
+        const chosenModel = modelSelection.value;
+        const isChosenModelExisting = chosenModel !== EMPTY
+          && models.findIndex((model) => model.mid === chosenModel) !== -1;
+
+        modelSelection.innerHTML = '<option value="">Model…</option>' +
+          models.map(m => '<option value="' + m.mid + '">' + uiModule.esc(m.display) + '</option>').join('');
+        if (isChosenModelExisting) {
+          modelSelection.vale = chosenModel;
+        }
+      });
+    }
+  }
 
   // Load and render saved group presets
   async function _loadGroupPresets() {
