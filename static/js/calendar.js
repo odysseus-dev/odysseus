@@ -3443,22 +3443,23 @@ window.addEventListener('calendar-refresh', () => {
 // setup lives there, so reset the one-shot sync guard and pull immediately;
 // otherwise a user who opened Calendar before adding an account can stay on an
 // empty cached view until a full reload or manual Sync now.
-window.addEventListener('odysseus-integrations-changed', () => {
+async function _refreshAfterIntegrationsChanged() {
   _caldavSyncedOnce = false;
   _allEvents = {};
   _fetchedRanges = [];
   try { localStorage.removeItem(LS_KEY); } catch (_) {}
-  _syncCaldav(false)
-    .then(async () => {
-      await _fetchCalendars();
-      const range = (_view === 'year')
-        ? [`${_currentDate.getFullYear()}-01-01`, `${_currentDate.getFullYear() + 1}-01-01`]
-        : (_view === 'week') ? _weekRange(_currentDate) : _monthRange(_currentDate);
-      await _fetchEvents(range[0], range[1], /*force*/ true);
-      if (_open) _render();
-      _updateBadge();
-    })
-    .catch(() => {});
+  await _syncCaldav(false);
+  await _fetchCalendars();
+  const range = (_view === 'year')
+    ? [`${_currentDate.getFullYear()}-01-01`, `${_currentDate.getFullYear() + 1}-01-01`]
+    : (_view === 'week') ? _weekRange(_currentDate) : _monthRange(_currentDate);
+  await _fetchEvents(range[0], range[1], /*force*/ true);
+  if (_open) _render();
+  _updateBadge();
+}
+
+window.addEventListener('odysseus-integrations-changed', () => {
+  _refreshAfterIntegrationsChanged().catch(() => {});
 });
 
 // Cross-session catch-up: when the tab/app becomes visible again (you alt-tab
@@ -3503,5 +3504,5 @@ window.addEventListener('focus', () => {
 // notification dispatch so calendar reminders do not fire twice.
 
 const calendarModule = { openCalendar, closeCalendar, isCalendarOpen };
-export { openCalendar, openCalendarTo, closeCalendar, isCalendarOpen };
+export { openCalendar, openCalendarTo, closeCalendar, isCalendarOpen, _refreshAfterIntegrationsChanged };
 export default calendarModule;
