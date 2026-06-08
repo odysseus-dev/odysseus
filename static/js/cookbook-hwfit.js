@@ -18,6 +18,8 @@ import {
   _lastCacheHost,
   _setLastCacheHost,
   _serverByVal,
+  _serverKey,
+  _currentServerValue,
   _shellQuote,
   _MODELDIR_CHECK_ON,
   _MODELDIR_CHECK_OFF,
@@ -358,6 +360,7 @@ function _scanSig() {
   const tc = document.getElementById('hwfit-gpu-toggles');
   return JSON.stringify({
     h: _envState.remoteHost || '',
+    hk: _currentServerValue(),
     u: document.getElementById('hwfit-usecase')?.value || '',
     s: document.getElementById('hwfit-search')?.value?.trim() || '',
     o: sortEl?.value || 'score',
@@ -467,9 +470,10 @@ export async function _hwfitFetch(fresh = false) {
     _hwfitCache = null;   // no instant paint — clear until the fetch returns
   }
   // Only fetch cached model IDs when server changes, not on every search/sort
-  if (!_cachedModelIds || _lastCacheHost() !== remoteHost) {
-    _setLastCacheHost(remoteHost);
-    const _cacheSrv = _envState.servers.find(s => s.host === remoteHost);
+  const remoteKey = _currentServerValue();
+  if (!_cachedModelIds || _lastCacheHost() !== remoteKey) {
+    _setLastCacheHost(remoteKey);
+    const _cacheSrv = _serverByVal(_envState.remoteServerKey || remoteHost);
     const _cachePort = _cacheSrv?.port || '';
     const _cacheParams = new URLSearchParams({ host: remoteHost }); if (_cachePort) _cacheParams.set('ssh_port', _cachePort); if (_cacheSrv?.platform) _cacheParams.set('platform', _cacheSrv.platform);
     fetch(`/api/model/cached?${_cacheParams}`, { credentials: 'same-origin' })
@@ -510,7 +514,7 @@ export async function _hwfitFetch(fresh = false) {
     if (search) params.set('search', search);
     if (remoteHost) {
       params.set('host', remoteHost);
-      const _srv = _envState.servers.find(s => s.host === remoteHost);
+      const _srv = _serverByVal(_envState.remoteServerKey || remoteHost);
       const _hp = _srv?.port || '';
       if (_hp) params.set('ssh_port', _hp);
       if (_srv?.platform) params.set('platform', _srv.platform);
@@ -1024,11 +1028,13 @@ function _syncHostFromScanDropdown() {
   let host = '';
   if (ss.value === 'local') {
     _envState.remoteHost = '';
+    _envState.remoteServerKey = '';
   } else {
     const s = _serverByVal(ss.value);
     if (s) {
       host = s.host;
       _envState.remoteHost = s.host;
+      _envState.remoteServerKey = _serverKey(s);
       _envState.env = s.env;
       _envState.envPath = s.envPath;
       _envState.platform = s.platform || '';
@@ -1209,7 +1215,7 @@ export function _expandModelRow(row, modelData) {
       // Launch via serve API. Field names must match the backend ServeRequest
       // schema (repo_id + cmd) — sending `command`/`model` failed Pydantic
       // validation (422), which is why Run silently did nothing.
-      const _srv = (_envState.servers || []).find(s => s.host === host);
+      const _srv = _serverByVal(_envState.remoteServerKey || host);
       const payload = {
         repo_id: modelData.name,
         cmd: cmd,
@@ -1428,7 +1434,7 @@ export function _hwfitInit() {
     // dropdown still showed odysseus. The user's selection must only change via
     // an explicit dropdown pick. Here we just refresh env/path if we can match
     // the current host; otherwise leave remoteHost untouched.
-    const sel = _envState.servers.find(s => s.host === _envState.remoteHost);
+    const sel = _serverByVal(_envState.remoteServerKey || _envState.remoteHost);
     if (sel) { _envState.env = sel.env; _envState.envPath = sel.envPath; }
     _persistEnvState();
   }
@@ -1604,15 +1610,16 @@ export function _hwfitInit() {
         // (inline — _applyServerSelection lives in cookbook.js and isn't imported here).
         const _dk = _envState.defaultServer;
         if (_dk) {
-          if (_dk === 'local') { _envState.remoteHost = ''; _envState.env = 'none'; _envState.envPath = ''; _envState.platform = ''; }
-          else { const _s = (_envState.servers || []).find(x => x.host === _dk); if (_s) { _envState.remoteHost = _s.host; _envState.env = _s.env || 'none'; _envState.envPath = _s.envPath || ''; _envState.platform = _s.platform || ''; } }
+          if (_dk === 'local') { _envState.remoteHost = ''; _envState.remoteServerKey = ''; _envState.env = 'none'; _envState.envPath = ''; _envState.platform = ''; }
+          else { const _s = _serverByVal(_dk); if (_s) { _envState.remoteHost = _s.host; _envState.remoteServerKey = _serverKey(_s); _envState.env = _s.env || 'none'; _envState.envPath = _s.envPath || ''; _envState.platform = _s.platform || ''; } }
           _persistEnvState();
           document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
-            if (sel && sel.tagName === 'SELECT') sel.value = _envState.remoteHost || 'local';
+            if (sel && sel.tagName === 'SELECT') sel.value = _currentServerValue();
           });
         }
+        const defaultSrv = _serverByVal(_envState.defaultServer);
         uiModule.showToast(_envState.defaultServer
-          ? 'Default server: ' + (_envState.defaultServer === 'local' ? 'Local' : _envState.defaultServer)
+          ? 'Default server: ' + (_envState.defaultServer === 'local' ? 'Local' : (defaultSrv?.name || defaultSrv?.host || 'selected server'))
           : 'Default server cleared');
       });
     }
@@ -1866,12 +1873,14 @@ export function _hwfitInit() {
       const val = serverSelect.value;
       if (val === 'local') {
         _envState.remoteHost = '';
+        _envState.remoteServerKey = '';
         _envState.env = 'none';
         _envState.envPath = '';
       } else {
         const s = _serverByVal(val);
         if (s) {
           _envState.remoteHost = s.host;
+          _envState.remoteServerKey = _serverKey(s);
           _envState.env = s.env;
           _envState.envPath = s.envPath;
         }
@@ -1881,10 +1890,9 @@ export function _hwfitInit() {
       // download-input button reads #hwfit-dl-server *directly*, so without this
       // it kept its old value and downloads went to the wrong host even
       // though the scan here correctly switched to the selected server.
-      // Option values are host strings now ('local' for the local box).
       document.querySelectorAll('#hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
         if (!sel || sel.tagName !== 'SELECT') return;
-        sel.value = _envState.remoteHost || 'local';
+        sel.value = _currentServerValue();
       });
       _hwfitCache = null;
       // Reset GPU-toggle state (no flicker) so the new server's hardware re-renders.

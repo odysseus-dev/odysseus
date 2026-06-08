@@ -72,7 +72,7 @@ function _platformIcon(platform) {
   return '';
 }
 
-export let _envState = { env: 'none', envPath: '', hfToken: '', hfTokenConfigured: false, hfTokenMasked: '', gpus: '', remoteHost: '', servers: [], modelPaths: [], platform: '', defaultServer: '' };
+export let _envState = { env: 'none', envPath: '', hfToken: '', hfTokenConfigured: false, hfTokenMasked: '', gpus: '', remoteHost: '', remoteServerKey: '', servers: [], modelPaths: [], platform: '', defaultServer: '' };
 let _lastCacheHostVal = null;
 let _cookbookOpeningSpinners = [];
 export function _lastCacheHost() { return _lastCacheHostVal; }
@@ -114,16 +114,42 @@ function _setCookbookOpening(on) {
 // True for the local server entry (empty / "local" / "localhost" host).
 function _isLocalEntry(s) { return !s || !s.host || s.host === 'local' || s.host.toLowerCase() === 'localhost'; }
 
-// Resolve a dropdown option value to a server entry. Option values are the
-// stable HOST string ('local' for the local box) — NOT array indices — because
-// `_envState.servers` gets deduped/reordered, which made index-based selection
-// silently resolve to the wrong (or local) server. Accepts a numeric index too
-// for backwards-compat with any stale value.
+// Resolve a dropdown option value to a server entry. New option values are
+// stable per-profile keys, so same-host SSH profiles stay distinguishable.
+// Host strings and numeric indices remain accepted for stale saved state.
+export function _serverKey(s) {
+  if (_isLocalEntry(s)) return 'local';
+  return 'srv:' + [
+    s?.name || '',
+    s?.host || '',
+    s?.port || '',
+    s?.envPath || '',
+    s?.platform || '',
+  ].map(v => encodeURIComponent(String(v).trim())).join('|');
+}
+
 function _serverByVal(val) {
   if (val == null || val === 'local' || val === '') return null;
-  let s = _envState.servers.find(x => x.host === val);
+  const raw = String(val);
+  let s = _envState.servers.find(x => _serverKey(x) === raw);
+  if (!s) s = _envState.servers.find(x => x.host === raw);
   if (!s && /^\d+$/.test(String(val))) s = _envState.servers[parseInt(val)];
   return s || null;
+}
+
+export function _selectedServer() {
+  if (_envState.remoteServerKey) {
+    const keyed = _serverByVal(_envState.remoteServerKey);
+    if (keyed) return keyed;
+  }
+  if (_envState.remoteHost) return _envState.servers.find(s => s.host === _envState.remoteHost) || null;
+  return null;
+}
+
+export function _currentServerValue() {
+  const selected = _selectedServer();
+  if (selected) return _serverKey(selected);
+  return _envState.remoteHost || 'local';
 }
 
 function _buildServerOpts(excludeLocal = false) {
@@ -134,13 +160,20 @@ function _buildServerOpts(excludeLocal = false) {
   const _localSrv = _localIdx >= 0 ? _envState.servers[_localIdx] : null;
   const _localLabel = (_localSrv && _localSrv.name) ? _localSrv.name : 'Local';
   let html = `<option value="local"${!_envState.remoteHost ? ' selected' : ''}>${esc(_localLabel)}</option>`;
+  const selectedKey = _envState.remoteServerKey || '';
+  let legacyHostSelected = false;
   for (let i = 0; i < _envState.servers.length; i++) {
     const s = _envState.servers[i];
     if (i === _localIdx) continue;                 // already the synthetic "local" option
     if (excludeLocal && _isLocalEntry(s)) continue;
     const label = s.name || s.host || `Server ${i + 1}`;
-    const selected = _envState.remoteHost === s.host ? ' selected' : '';
-    html += `<option value="${esc(s.host)}"${selected}>${esc(label)}</option>`;
+    const value = _serverKey(s);
+    let selected = selectedKey ? value === selectedKey : false;
+    if (!selectedKey && _envState.remoteHost === s.host && !legacyHostSelected) {
+      selected = true;
+      legacyHostSelected = true;
+    }
+    html += `<option value="${esc(value)}"${selected ? ' selected' : ''}>${esc(label)}</option>`;
   }
   return html;
 }
@@ -154,8 +187,9 @@ export function _sshCmd(host, cmd, port) {
 /** Get SSH port for a given host (or task object) */
 function _getPort(hostOrTask) {
   if (!hostOrTask) return '';
-  if (typeof hostOrTask === 'object') return hostOrTask.sshPort || _getPort(hostOrTask.remoteHost);
-  const srv = _envState.servers.find(s => s.host === hostOrTask);
+  if (typeof hostOrTask === 'object') return hostOrTask.sshPort || _getPort(hostOrTask.remoteServerKey || hostOrTask.remoteHost);
+  const selected = hostOrTask === _envState.remoteHost ? _selectedServer() : null;
+  const srv = selected || _serverByVal(hostOrTask);
   return srv?.port || '';
 }
 
@@ -184,9 +218,10 @@ export function _getPlatform(hostOrTask) {
     if (!h || h === 'local') {
       return hostOrTask.platform || localPlatform();
     }
-    return hostOrTask.platform || _getPlatform(h);
+    return hostOrTask.platform || _getPlatform(hostOrTask.remoteServerKey || h);
   }
-  const srv = _envState.servers.find(s => s.host === hostOrTask);
+  const selected = hostOrTask === _envState.remoteHost ? _selectedServer() : null;
+  const srv = selected || _serverByVal(hostOrTask);
   return srv?.platform || '';
 }
 
@@ -929,6 +964,7 @@ async function _fetchDependencies() {
 function _applyServerSelection(val) {
   if (val === 'local') {
     _envState.remoteHost = '';
+    _envState.remoteServerKey = '';
     _envState.env = 'none';
     _envState.envPath = '';
     _envState.platform = '';
@@ -936,6 +972,7 @@ function _applyServerSelection(val) {
     const s = _serverByVal(val);
     if (s) {
       _envState.remoteHost = s.host;
+      _envState.remoteServerKey = _serverKey(s);
       _envState.env = s.env || 'none';
       _envState.envPath = s.envPath || '';
       _envState.platform = s.platform || '';
@@ -946,10 +983,9 @@ function _applyServerSelection(val) {
   // bug: the Download/Cache/Deps dropdowns set the host but never saved it, so
   // it silently reverted and downloads/scans hit the wrong server).
   _persistEnvState();
-  const _want = _envState.remoteHost || 'local';
+  const _want = _currentServerValue();
   document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
     if (!sel || sel.tagName !== 'SELECT') return;
-    // Option values are host strings now ('local' for the local box).
     sel.value = _want;
     // If the host isn't among this select's current options (stale options after
     // the server list changed), the browser leaves the box BLANK/grey even though
@@ -957,7 +993,7 @@ function _applyServerSelection(val) {
     // re-apply; fall back to 'local' only if it's genuinely gone.
     if (sel.selectedIndex < 0) {
       sel.innerHTML = _buildServerOpts(sel.id === 'hwfit-dl-server');
-      sel.value = _want;
+      sel.value = _currentServerValue();
       if (sel.selectedIndex < 0) sel.value = 'local';
     }
   });
@@ -1045,11 +1081,13 @@ function _wireTabEvents(body) {
       const remotes = servers.filter(s => !_isLocalEntry(s));
       if (remotes.length === 1) {
         _envState.remoteHost = remotes[0].host;
+        _envState.remoteServerKey = _serverKey(remotes[0]);
         _envState.env = remotes[0].env || 'none';
         _envState.envPath = remotes[0].envPath || '';
       }
     }
-    const activeSrv = servers.find(s => s.host === _envState.remoteHost);
+    const activeSrv = _selectedServer();
+    if (activeSrv) _envState.remoteServerKey = _serverKey(activeSrv);
     _envState.platform = activeSrv?.platform || '';
     localStorage.setItem('cookbook-last-state', JSON.stringify(_envStateForStorage()));
     _saveTasks(_loadTasks());
@@ -1057,7 +1095,7 @@ function _wireTabEvents(body) {
     // UI matches the resolved host. Done in a microtask so the dropdowns
     // exist by the time we set their .value.
     Promise.resolve().then(() => {
-      const _want = _envState.remoteHost || 'local';
+      const _want = _currentServerValue();
       document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
         if (sel && sel.tagName === 'SELECT') sel.value = _want;
       });
@@ -1345,7 +1383,7 @@ function _wireTabEvents(body) {
       if (srvVal !== 'local') {
         host = _serverByVal(srvVal)?.host || '';
       }
-      const _hsrv = _envState.servers.find(sv => sv.host === host) || {};
+      const _hsrv = srvVal !== 'local' ? (_serverByVal(srvVal) || {}) : {};
       let env = host ? (_hsrv.env || 'none') : _envState.env;
       let envPath = host ? (_hsrv.envPath || '') : _envState.envPath;
       const payload = { repo_id: repo };
@@ -1605,8 +1643,9 @@ export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
   let html = '';
   html += `<div class="cookbook-server-entry" data-idx="${i}" data-platform="${esc(s.platform || '')}">`;
   const _srvTitle = s.name || (isLocal ? 'Local' : (s.host || `Server ${i + 1}`));
-  const _srvKey = isLocal ? 'local' : (s.host || '');
-  const _isDefaultSrv = (defaultServer || '') === _srvKey;
+  const _srvKey = isLocal ? 'local' : _serverKey(s);
+  const _legacyDefault = !String(defaultServer || '').startsWith('srv:') && !isLocal && (defaultServer || '') === (s.host || '');
+  const _isDefaultSrv = (defaultServer || '') === _srvKey || _legacyDefault;
   const _pIco = _platformIcon(s.platform);
   const _keyBtn = `<button class="cookbook-server-key-btn" title="Set up SSH key for this server" style="height:22px;box-sizing:border-box;display:inline-flex;align-items:center;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><circle cx="7.5" cy="15.5" r="5.5"/><path d="M12 11l8-8"/><path d="M17 6l3 3"/></svg>Key</button>`;
   const _checkBtn = `<button class="cookbook-server-check-btn" title="Check SSH connection" style="height:22px;box-sizing:border-box;display:inline-flex;align-items:center;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>Check</button>`;
@@ -1846,7 +1885,7 @@ function _renderRecipes() {
   html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">';
   html += '<h2 style="margin:0;padding:0;line-height:1;">Serve <span id="serve-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>';
   html += '</div>';
-  const _selSrv = _es.servers.find(s => s.host === _es.remoteHost) || _es.servers[0] || {};
+  const _selSrv = _selectedServer() || _es.servers[0] || {};
   const _srvDirs = (Array.isArray(_selSrv.modelDirs) ? _selSrv.modelDirs : [_selSrv.modelDir || '~/.cache/huggingface/hub']).map(d => d.replaceAll('✕', '').replaceAll('✖', '').trim()).filter(Boolean);
   html += '<div class="cookbook-serve-dirs" style="margin-top:6px;">';
   html += _srvDirs.map(d => `<span class="cookbook-serve-dir-pill">${esc(d)}</span>`).join('');
@@ -2052,10 +2091,10 @@ export async function open(opts) {
     if (_envState.defaultServer) {
       const _dk = _envState.defaultServer;
       if (_dk === 'local') {
-        _envState.remoteHost = ''; _envState.env = 'none'; _envState.envPath = ''; _envState.platform = '';
+        _envState.remoteHost = ''; _envState.remoteServerKey = ''; _envState.env = 'none'; _envState.envPath = ''; _envState.platform = '';
       } else {
-        const _ds = (_envState.servers || []).find(s => s.host === _dk);
-        if (_ds) { _envState.remoteHost = _ds.host; _envState.env = _ds.env || 'none'; _envState.envPath = _ds.envPath || ''; _envState.platform = _ds.platform || ''; }
+        const _ds = _serverByVal(_dk);
+        if (_ds) { _envState.remoteHost = _ds.host; _envState.remoteServerKey = _serverKey(_ds); _envState.env = _ds.env || 'none'; _envState.envPath = _ds.envPath || ''; _envState.platform = _ds.platform || ''; }
       }
     }
     // Re-render on every open AFTER sync so the freshly-fetched state (servers,
@@ -2178,6 +2217,9 @@ const shared = {
   _getPort,
   _sshPrefix,
   _getPlatform,
+  _serverByVal,
+  _selectedServer,
+  _currentServerValue,
   _isWindows,
   _isMetal,
   _buildEnvPrefix,
