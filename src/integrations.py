@@ -434,8 +434,9 @@ async def execute_api_call(
                             data[:lo] + [sentinel], indent=2, ensure_ascii=False
                         )
                     elif isinstance(data, dict):
-                        data["_truncated"] = True
-                        formatted = json.dumps(data, indent=2, ensure_ascii=False)
+                        formatted = json.dumps(
+                            {**data, "_truncated": True}, indent=2, ensure_ascii=False
+                        )
                     else:
                         total = len(full)
                         formatted = full[:12000] + f"\n... (truncated, {total} chars total)"
