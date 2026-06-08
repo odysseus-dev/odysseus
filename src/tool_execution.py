@@ -18,10 +18,7 @@ import sys
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
-<<<<<<< HEAD
-=======
 
->>>>>>> 6182972 (fix: resolve circular import between tool_execution and agent_tools)
 
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
 from src.tool_policy import ToolPolicy
