@@ -469,6 +469,8 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "googleapis.com"): return "Google"
     if _host_match(url, "together.xyz", "together.ai"): return "Together"
     if _host_match(url, "fireworks.ai"): return "Fireworks"
+    if _host_match(url, "api-us-ca.umodelverse.ai"): return "Astraflow"
+    if _host_match(url, "api.modelverse.cn"): return "Astraflow CN"
     if _is_ollama_native_url(url): return "Ollama"
     try:
         host = (urlparse(url).hostname or "").lower()

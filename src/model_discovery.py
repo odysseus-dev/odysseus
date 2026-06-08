@@ -250,4 +250,32 @@ class ModelDiscovery:
                 }
             )
 
+        astraflow_key = os.getenv("ASTRAFLOW_API_KEY", "").strip()
+        if astraflow_key:
+            providers.append(
+                {
+                    "provider": "astraflow",
+                    "items": [
+                        {
+                            "url": "https://api-us-ca.umodelverse.ai/v1/chat/completions",
+                            "models": [],
+                        }
+                    ],
+                }
+            )
+
+        astraflow_cn_key = os.getenv("ASTRAFLOW_CN_API_KEY", "").strip()
+        if astraflow_cn_key:
+            providers.append(
+                {
+                    "provider": "astraflow-cn",
+                    "items": [
+                        {
+                            "url": "https://api.modelverse.cn/v1/chat/completions",
+                            "models": [],
+                        }
+                    ],
+                }
+            )
+
         return {"providers": providers}
