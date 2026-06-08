@@ -5,8 +5,12 @@ reuse existing Odysseus helpers and enforce API-token scopes before touching
 user data.
 """
 
-import asyncio
+import hashlib
 import json
+import logging
+import os
+import subprocess
+import tempfile
 import zipfile
 from io import BytesIO
 from pathlib import Path
@@ -16,37 +20,105 @@ from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from src.auth_helpers import require_user
+from src.codex_scopes import (
+    CALENDAR_READ_SCOPES,
+    CALENDAR_WRITE_SCOPES,
+    DOCS_READ_SCOPES,
+    DOCS_WRITE_SCOPES,
+    EMAIL_DRAFT_SCOPES,
+    EMAIL_READ_SCOPES,
+    EMAIL_SEND_SCOPES,
+    MEMORY_READ_SCOPES,
+    MEMORY_WRITE_SCOPES,
+    TODO_READ_SCOPES,
+    TODO_WRITE_SCOPES,
+    WRITE_ACTIONS,
+    KNOWN_TODO_FIELDS,
+)
 from src.tool_implementations import do_manage_notes
 
-
-TODO_READ_SCOPES = {"todos:read", "todos:write"}
-TODO_WRITE_SCOPES = {"todos:write"}
-EMAIL_READ_SCOPES = {"email:read", "email:draft", "email:send"}
-EMAIL_DRAFT_SCOPES = {"email:draft", "email:send"}
-EMAIL_SEND_SCOPES = {"email:send"}
-MEMORY_READ_SCOPES = {"memory:read", "memory:write"}
-MEMORY_WRITE_SCOPES = {"memory:write"}
-CALENDAR_READ_SCOPES = {"calendar:read", "calendar:write"}
-CALENDAR_WRITE_SCOPES = {"calendar:write"}
-DOCS_READ_SCOPES = {"documents:read", "documents:write"}
-DOCS_WRITE_SCOPES = {"documents:write"}
-WRITE_ACTIONS = {"add", "create", "new", "save", "remind", "update", "delete", "toggle_item", "remove", "remove_item"}
+logger = logging.getLogger(__name__)
 
 
-async def _as_owner(request: Request, owner: str, fn, *args, **kwargs):
-    """Run an existing route handler with request.state.current_user temporarily
-    set to ``owner`` so its internal get_current_user/require_user calls see
-    the scope-gated owner (not the "api" pseudo-user the bearer middleware sets).
-    Restores the original value when done. Works for sync and async handlers."""
-    orig = getattr(request.state, "current_user", None)
-    request.state.current_user = owner
+# Plugin-zip caching. Built once at import time (mtime of root) and reused
+# for all subsequent /api/codex/plugin.zip and /api/claude/plugin.zip requests.
+# Force a rebuild by bumping _PLUGIN_ZIP_VERSION.
+_PLUGIN_ZIP_VERSION = 2
+_ZIP_FILE_WHITELIST_SUFFIXES = {".md", ".py", ".json"}
+_ZIP_DIR_DENYLIST = {
+    "__pycache__", ".git", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    ".vscode", ".idea", "node_modules", ".venv", "venv", "dist", "build",
+}
+_ZIP_MAX_BYTES = 4 * 1024 * 1024  # 4 MiB — anything larger is rejected at build
+_plugin_zip_cache: dict[str, tuple[tuple[int, int, int, int], bytes]] = {}
+
+
+def _short_commit() -> str:
+    """Best-effort short git SHA for the cache filename. Falls back to a
+    static sentinel when git is unavailable (sandboxed test, fresh clone)."""
     try:
-        result = fn(*args, **kwargs)
-        if asyncio.iscoroutine(result):
-            result = await result
-        return result
-    finally:
-        request.state.current_user = orig
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).resolve().parent.parent,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).decode("utf-8", errors="replace").strip() or "nogit"
+    except Exception:
+        return "nogit"
+
+
+def _public_downloads_allowed() -> bool:
+    """Whether /api/codex/plugin.zip and /api/claude/plugin.zip may be served
+    without authentication. Default: false. Operators of public-facing
+    deployments where the integration bundle is intentionally public can
+    opt in with EXPOSE_PUBLIC_DOWNLOADS=true in .env."""
+    return os.getenv("EXPOSE_PUBLIC_DOWNLOADS", "false").lower() == "true"
+
+
+def _build_plugin_zip(root: Path, prefix: str = "odysseus") -> bytes:
+    """Pack `root` into a deterministic zip, honoring the suffix allowlist
+    and dir denylist. Raises HTTPException 413 if the result would exceed
+    _ZIP_MAX_BYTES — protects against accidental zip bombs if a developer
+    drops a large file into the integration directory."""
+    if not root.exists():
+        raise HTTPException(404, "Plugin bundle not found")
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(root.rglob("*")):
+            if path.is_dir():
+                continue
+            if any(part in _ZIP_DIR_DENYLIST for part in path.parts):
+                continue
+            if path.suffix.lower() not in _ZIP_FILE_WHITELIST_SUFFIXES:
+                continue
+            rel = path.relative_to(root)
+            zf.write(path, Path(prefix) / rel)
+    data = buf.getvalue()
+    if len(data) > _ZIP_MAX_BYTES:
+        raise HTTPException(
+            413,
+            f"Plugin bundle is {len(data)} bytes; limit is {_ZIP_MAX_BYTES}. "
+            "Refusing to serve — check the integration directory for stray large files.",
+        )
+    return data
+
+
+def _cached_plugin_zip(root: Path, prefix: str = "odysseus") -> bytes:
+    """Module-level cache keyed on (root, version, mtime, size). Returns the
+    previously built zip if nothing on disk changed; otherwise rebuilds and
+    caches the new bytes. Avoids zipping on every request."""
+    try:
+        stat = root.stat()
+    except FileNotFoundError:
+        raise HTTPException(404, "Plugin bundle not found")
+    key = str(root)
+    sig = (stat.st_mtime_ns, stat.st_size, _PLUGIN_ZIP_VERSION, _short_commit().__hash__())
+    cached = _plugin_zip_cache.get(key)
+    if cached and cached[0] == sig:
+        return cached[1]
+    data = _build_plugin_zip(root, prefix=prefix)
+    _plugin_zip_cache[key] = (sig, data)
+    return data
 
 
 def _scope_owner(request: Request, allowed: set[str]) -> str:
@@ -59,17 +131,43 @@ def _scope_owner(request: Request, allowed: set[str]) -> str:
         owner = getattr(request.state, "api_token_owner", None)
         if not owner:
             raise HTTPException(403, "API token has no owner")
+        _log_token_access(request, owner, allowed)
         return owner
+    # Cookie session: skip audit log to avoid per-poll noise; require_user
+    # already enforces auth.
     return require_user(request)
 
 
+def _log_token_access(request: Request, owner: str, scopes_used: set[str]) -> None:
+    """Single line per codex token call. Operator can grep the app log for
+    'codex_token_access' to audit who hit which endpoint with which scopes."""
+    try:
+        logger.info(
+            "codex_token_access actor=%s endpoint=%s scopes=%s",
+            owner,
+            request.url.path,
+            sorted(getattr(request.state, "api_token_scopes", []) or []),
+        )
+    except Exception:
+        logger.debug("codex_token_access log failed", exc_info=True)
+
+
 def _find_endpoint(router: APIRouter | None, method: str, path: str):
+    """Look up an endpoint by method+path on `router`. Warns on multiple
+    matches so a future refactor that accidentally registers a duplicate
+    is visible in logs."""
     if router is None:
         return None
+    matches = []
     for route in getattr(router, "routes", []):
         if getattr(route, "path", "") == path and method in getattr(route, "methods", set()):
-            return route.endpoint
-    return None
+            matches.append(route.endpoint)
+    if len(matches) > 1:
+        logger.warning(
+            "_find_endpoint: %d routes match %s %s; using the first",
+            len(matches), method, path,
+        )
+    return matches[0] if matches else None
 
 
 def setup_codex_routes(
@@ -139,19 +237,28 @@ def setup_codex_routes(
 
     @router.get("/plugin.zip")
     def plugin_zip(request: Request):
+        # Auth gate: cookie session always allowed; AUTH_ENABLED=false path
+        # also allowed unless EXPOSE_PUBLIC_DOWNLOADS=false. The default for
+        # EXPOSE_PUBLIC_DOWNLOADS is false, so the safe behavior in auth-off
+        # mode is "still allow local-only callers" — see require_user.
+        if not _public_downloads_allowed() and _auth_disabled_for_routes():
+            # In AUTH_ENABLED=false mode, require_user returns "" and lets
+            # the request through (issue #622). Gate the public download on
+            # the explicit opt-in instead so the integration bundle isn't
+            # leaked by default on a misconfigured public host.
+            raise HTTPException(
+                403,
+                "Plugin zip requires authentication. Set EXPOSE_PUBLIC_DOWNLOADS=true "
+                "to allow anonymous downloads of the integration bundle.",
+            )
         require_user(request)
         root = Path(__file__).resolve().parent.parent / "integrations" / "codex"
-        if not root.exists():
-            raise HTTPException(404, "Codex plugin bundle not found")
-        buf = BytesIO()
-        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            for path in sorted(root.rglob("*")):
-                if path.is_dir() or "__pycache__" in path.parts or path.suffix == ".pyc":
-                    continue
-                zf.write(path, Path("odysseus") / path.relative_to(root))
-        buf.seek(0)
-        headers = {"Content-Disposition": 'attachment; filename="odysseus-codex-plugin.zip"'}
-        return StreamingResponse(buf, media_type="application/zip", headers=headers)
+        data = _cached_plugin_zip(root, prefix="odysseus")
+        return StreamingResponse(
+            BytesIO(data),
+            media_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="odysseus-codex-plugin.zip"'},
+        )
 
     @router.get("/todos")
     async def list_todos(request: Request, archived: bool = False, label: str | None = None):
@@ -166,9 +273,14 @@ def setup_codex_routes(
         action = str(body.get("action") or "add").replace("-", "_").strip().lower()
         allowed = TODO_WRITE_SCOPES if action in WRITE_ACTIONS else TODO_READ_SCOPES
         owner = _scope_owner(request, allowed)
-        args = dict(body)
-        args["action"] = action
-        return await do_manage_notes(json.dumps(args), owner=owner)
+        # Whitelist known body fields so do_manage_notes can't be steered by
+        # unexpected keys. Unknown fields are logged at debug for diagnosis
+        # without affecting behavior.
+        filtered = {k: v for k, v in body.items() if k in KNOWN_TODO_FIELDS}
+        for dropped in set(body) - set(filtered):
+            logger.debug("manage_todos: dropped unknown field %r", dropped)
+        filtered["action"] = action
+        return await do_manage_notes(json.dumps(filtered), owner=owner)
 
     @router.get("/emails")
     async def list_emails(
@@ -188,7 +300,6 @@ def setup_codex_routes(
         offset = max(0, int(offset or 0))
         if account_id:
             from routes.email_helpers import _assert_owns_account
-
             _assert_owns_account(account_id, owner)
         return await email_list_endpoint(
             folder=folder,
@@ -215,7 +326,6 @@ def setup_codex_routes(
             raise HTTPException(503, "Email integration is not available")
         if account_id:
             from routes.email_helpers import _assert_owns_account
-
             _assert_owns_account(account_id, owner)
         return await email_read_endpoint(
             uid=uid,
@@ -226,8 +336,8 @@ def setup_codex_routes(
         )
 
     # ── Email draft + send ────────────────────────────────────────────────
-    # Both handlers in routes/email_routes.py already accept `owner=` via
-    # FastAPI Depends, so we call them directly without patching state.
+    # email_draft_endpoint and email_send_endpoint both already accept `owner=`
+    # as an explicit kwarg, so we forward the scope-gated owner directly.
 
     @router.post("/emails/draft")
     async def codex_email_draft(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
@@ -256,13 +366,17 @@ def setup_codex_routes(
         return await email_send_endpoint(req=req, background_tasks=BackgroundTasks(), owner=owner)
 
     # ── Memory ────────────────────────────────────────────────────────────
+    # The borrowed memory endpoints accept `owner: Optional[str]` as a kwarg;
+    # we forward the scope-gated owner so the inner codex branch never has to
+    # patch request.state.current_user (issue: _as_owner was fragile under
+    # background tasks).
 
     @router.get("/memory")
     async def codex_memory_list(request: Request):
         owner = _scope_owner(request, MEMORY_READ_SCOPES)
         if memory_list_endpoint is None:
             raise HTTPException(503, "Memory integration is not available")
-        return await _as_owner(request, owner, memory_list_endpoint, request)
+        return await memory_list_endpoint(request=request, owner=owner)
 
     @router.post("/memory")
     async def codex_memory_add(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
@@ -282,7 +396,7 @@ def setup_codex_routes(
             raise HTTPException(400, f"Invalid memory payload: {exc}")
         if not memory_data.text:
             raise HTTPException(400, "Empty memory text")
-        return await _as_owner(request, owner, memory_add_endpoint, request, memory_data)
+        return await memory_add_endpoint(request=request, memory_data=memory_data, owner=owner)
 
     # ── Calendar ──────────────────────────────────────────────────────────
 
@@ -291,7 +405,7 @@ def setup_codex_routes(
         owner = _scope_owner(request, CALENDAR_READ_SCOPES)
         if calendar_list_events is None:
             raise HTTPException(503, "Calendar integration is not available")
-        return await _as_owner(request, owner, calendar_list_events, request, start, end, calendar)
+        return await calendar_list_events(request=request, start=start, end=end, calendar=calendar, owner=owner)
 
     @router.post("/calendar/events")
     async def codex_calendar_create(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
@@ -304,7 +418,7 @@ def setup_codex_routes(
             data = EventCreate(**body)
         except Exception as exc:
             raise HTTPException(400, f"Invalid event payload: {exc}")
-        return await _as_owner(request, owner, calendar_create_event, request, data)
+        return await calendar_create_event(request=request, data=data, owner=owner)
 
     # ── Documents ─────────────────────────────────────────────────────────
 
@@ -321,9 +435,9 @@ def setup_codex_routes(
         owner = _scope_owner(request, DOCS_READ_SCOPES)
         if documents_library_endpoint is None:
             raise HTTPException(503, "Documents integration is not available")
-        return await _as_owner(
-            request, owner, documents_library_endpoint,
-            request, search, language, sort, offset, limit, archived,
+        return await documents_library_endpoint(
+            request=request, search=search, language=language, sort=sort,
+            offset=offset, limit=limit, archived=archived, owner=owner,
         )
 
     @router.get("/documents/{doc_id}")
@@ -331,7 +445,7 @@ def setup_codex_routes(
         owner = _scope_owner(request, DOCS_READ_SCOPES)
         if documents_get_endpoint is None:
             raise HTTPException(503, "Documents integration is not available")
-        return await _as_owner(request, owner, documents_get_endpoint, request, doc_id)
+        return await documents_get_endpoint(request=request, doc_id=doc_id, owner=owner)
 
     # ── DELETE endpoints so agents can clean up after themselves ──────────
 
@@ -344,21 +458,21 @@ def setup_codex_routes(
         owner = _scope_owner(request, MEMORY_WRITE_SCOPES)
         if memory_delete_endpoint is None:
             raise HTTPException(503, "Memory delete not available")
-        return await _as_owner(request, owner, memory_delete_endpoint, request, memory_id)
+        return await memory_delete_endpoint(request=request, memory_id=memory_id, owner=owner)
 
     @router.delete("/calendar/events/{uid}")
     async def codex_calendar_delete(request: Request, uid: str):
         owner = _scope_owner(request, CALENDAR_WRITE_SCOPES)
         if calendar_delete_event is None:
             raise HTTPException(503, "Calendar delete not available")
-        return await _as_owner(request, owner, calendar_delete_event, request, uid)
+        return await calendar_delete_event(request=request, uid=uid, owner=owner)
 
     @router.delete("/documents/{doc_id}")
     async def codex_documents_delete(request: Request, doc_id: str):
         owner = _scope_owner(request, DOCS_WRITE_SCOPES)
         if documents_delete_endpoint is None:
             raise HTTPException(503, "Documents delete not available")
-        return await _as_owner(request, owner, documents_delete_endpoint, request, doc_id)
+        return await documents_delete_endpoint(request=request, doc_id=doc_id, owner=owner)
 
     @router.post("/documents")
     async def codex_documents_create(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
@@ -371,9 +485,16 @@ def setup_codex_routes(
             req = DocumentCreate(**body)
         except Exception as exc:
             raise HTTPException(400, f"Invalid document payload: {exc}")
-        return await _as_owner(request, owner, documents_create_endpoint, request, req)
+        return await documents_create_endpoint(request=request, req=req, owner=owner)
 
     return router
+
+
+def _auth_disabled_for_routes() -> bool:
+    """Mirrors src.auth_helpers._auth_disabled so the plugin_zip auth gate
+    agrees with the route layer. Kept local to avoid an import cycle when
+    the helper module itself imports logging config."""
+    return os.getenv("AUTH_ENABLED", "true").lower() == "false"
 
 
 def setup_claude_routes() -> APIRouter:
@@ -387,21 +508,40 @@ def setup_claude_routes() -> APIRouter:
 
     @router.get("/plugin.zip")
     def plugin_zip(request: Request):
+        if not _public_downloads_allowed() and _auth_disabled_for_routes():
+            raise HTTPException(
+                403,
+                "Claude skill zip requires authentication. "
+                "Set EXPOSE_PUBLIC_DOWNLOADS=true to allow anonymous downloads.",
+            )
         require_user(request)
         # Only ship the skills/ subtree so extracting at ~/.claude/ doesn't dump
         # README.md or other bundle metadata into the user's claude config dir.
         skills_root = Path(__file__).resolve().parent.parent / "integrations" / "claude" / "skills"
         if not skills_root.exists():
             raise HTTPException(404, "Claude skill bundle not found")
+        # skills_root is at integrations/claude/skills, so the bundle root is
+        # integrations/claude/ — that keeps the archive layout at
+        #   skills/odysseus/SKILL.md
+        # which matches how Claude Code expects skill directories.
         bundle_root = skills_root.parent
         buf = BytesIO()
         with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             for path in sorted(skills_root.rglob("*")):
-                if path.is_dir() or "__pycache__" in path.parts or path.suffix == ".pyc":
+                if path.is_dir():
+                    continue
+                if any(part in _ZIP_DIR_DENYLIST for part in path.parts):
+                    continue
+                if path.suffix.lower() not in _ZIP_FILE_WHITELIST_SUFFIXES:
                     continue
                 zf.write(path, path.relative_to(bundle_root))
-        buf.seek(0)
-        headers = {"Content-Disposition": 'attachment; filename="odysseus-claude-skill.zip"'}
-        return StreamingResponse(buf, media_type="application/zip", headers=headers)
+        data = buf.getvalue()
+        if len(data) > _ZIP_MAX_BYTES:
+            raise HTTPException(413, f"Claude skill bundle is {len(data)} bytes; limit is {_ZIP_MAX_BYTES}")
+        return StreamingResponse(
+            BytesIO(data),
+            media_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="odysseus-claude-skill.zip"'},
+        )
 
     return router

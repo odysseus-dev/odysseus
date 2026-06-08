@@ -715,8 +715,9 @@ def setup_calendar_routes() -> APIRouter:
             db.close()
 
     @router.get("/events")
-    async def list_events(request: Request, start: str, end: str, calendar: str = ""):
-        owner = _require_user(request)
+    async def list_events(request: Request, start: str, end: str, calendar: str = "", owner: Optional[str] = None):
+        if owner is None:
+            owner = _require_user(request)
         try:
             start_dt = _parse_dt(start)
             end_dt = _parse_dt(end)
@@ -777,8 +778,9 @@ def setup_calendar_routes() -> APIRouter:
             db.close()
 
     @router.post("/events")
-    async def create_event(request: Request, data: EventCreate):
-        owner = _require_user(request)
+    async def create_event(request: Request, data: EventCreate, owner: Optional[str] = None):
+        if owner is None:
+            owner = _require_user(request)
         db = SessionLocal()
         try:
             cal = None
@@ -899,8 +901,9 @@ def setup_calendar_routes() -> APIRouter:
             db.close()
 
     @router.delete("/events/{uid}")
-    async def delete_event(request: Request, uid: str):
-        owner = _require_user(request)
+    async def delete_event(request: Request, uid: str, owner: Optional[str] = None):
+        if owner is None:
+            owner = _require_user(request)
         try:
             base_uid = _resolve_base_uid(uid)
         except ValueError as e:

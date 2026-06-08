@@ -84,7 +84,8 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     @router.post("/add", response_model=Dict[str, Any])
     async def api_add_memory(
         request: Request,
-        memory_data: Optional[MemoryAddRequest] = None
+        memory_data: Optional[MemoryAddRequest] = None,
+        owner: Optional[str] = None,
     ):
         """Add a new memory entry with optional category, source, and session reference."""
         from src.auth_helpers import require_privilege
@@ -98,7 +99,9 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                 session_id=form.get("session_id")
             )
 
-        user = _owner(request)
+        if owner is None:
+            owner = _owner(request)
+        user = owner
         text = (memory_data.text or "").strip()
         if not text:
             raise HTTPException(400, "empty memory")
@@ -123,9 +126,11 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         return {"ok": True, "count": len([m for m in all_mem if m.get("owner") == user])}
 
     @router.get("")
-    def api_get_memory(request: Request):
+    def api_get_memory(request: Request, owner: Optional[str] = None):
         """Return all memory entries with their metadata."""
-        user = _owner(request)
+        if owner is None:
+            owner = _owner(request)
+        user = owner
         return {"memory": memory_manager.load(owner=user)}
 
     @router.post("/search")
@@ -527,9 +532,11 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         raise HTTPException(404, f"Memory item {memory_id} not found")
 
     @router.delete("/{memory_id}")
-    def delete_memory(request: Request, memory_id: str):
+    def delete_memory(request: Request, memory_id: str, owner: Optional[str] = None):
         """Delete a memory item by its ID."""
-        user = _owner(request)
+        if owner is None:
+            owner = _owner(request)
+        user = owner
         all_mem = memory_manager.load_all()
 
         # Find and verify ownership before deleting

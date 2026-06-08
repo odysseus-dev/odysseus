@@ -256,8 +256,11 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         offset: int = Query(0, ge=0),
         limit: int = Query(20, ge=1, le=50),
         archived: bool = Query(False),
+        owner: Optional[str] = None,
     ) -> Dict[str, Any]:
-        user = get_current_user(request)
+        if owner is None:
+            owner = get_current_user(request)
+        user = owner
         db = SessionLocal()
         try:
             from sqlalchemy import or_
@@ -378,8 +381,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- GET /api/document/{doc_id} ----
     @router.get("/api/document/{doc_id}")
-    async def get_document(request: Request, doc_id: str) -> Dict[str, Any]:
-        user = get_current_user(request)
+    async def get_document(request: Request, doc_id: str, owner: Optional[str] = None) -> Dict[str, Any]:
+        if owner is None:
+            owner = get_current_user(request)
+        user = owner
         db = SessionLocal()
         try:
             doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -630,8 +635,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- DELETE /api/document/{doc_id} — soft delete ----
     @router.delete("/api/document/{doc_id}")
-    async def delete_document(request: Request, doc_id: str) -> Dict[str, str]:
-        user = get_current_user(request)
+    async def delete_document(request: Request, doc_id: str, owner: Optional[str] = None) -> Dict[str, str]:
+        if owner is None:
+            owner = get_current_user(request)
+        user = owner
         db = SessionLocal()
         try:
             doc = db.query(Document).filter(Document.id == doc_id).first()
