@@ -51,6 +51,50 @@ NON_ADMIN_BLOCKED_TOOLS = {
 }
 
 
+# Tools whose OUTPUT is externally controllable (web pages, emails, files an
+# attacker may influence). Their results are wrapped as untrusted data before
+# being returned to the model. Plan 0059 audit C1.
+UNTRUSTED_RESULT_TOOLS = {
+    "web_fetch", "web_search", "fetch_url",
+    "read_email", "list_emails", "search_email",
+    "read_file", "grep", "glob", "ls",
+}
+
+# Tools that exfiltrate, execute code, or make persistent/irreversible changes.
+# Plan 0059 audit C2.
+HIGH_RISK_TOOLS = {
+    "bash", "python",
+    "write_file", "edit_file",
+    "send_email", "reply_to_email", "bulk_email",
+    "manage_settings", "manage_tokens", "manage_webhooks",
+    "manage_mcp", "manage_skills",
+    "api_call", "app_api",
+}
+
+
+def is_untrusted_result_tool(tool_name: Optional[str]) -> bool:
+    return isinstance(tool_name, str) and tool_name in UNTRUSTED_RESULT_TOOLS
+
+
+def is_high_risk_tool(tool_name: Optional[str]) -> bool:
+    """Whether a tool needs confirmation under the high-risk gate. Fails CLOSED:
+    a non-string name is treated as high-risk."""
+    if tool_name is None or tool_name == "":
+        return False
+    if not isinstance(tool_name, str):
+        return True
+    return tool_name in HIGH_RISK_TOOLS
+
+
+def highrisk_confirm_enabled() -> bool:
+    """True when this deployment requires human confirmation for high-risk tools
+    (AGENT_HIGHRISK_REQUIRE_CONFIRM). Off by default to preserve upstream behavior."""
+    import os
+    return os.environ.get("AGENT_HIGHRISK_REQUIRE_CONFIRM", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
 def is_public_blocked_tool(tool_name: Optional[str]) -> bool:
     """Return True when a non-admin/public user must not execute this tool.
 

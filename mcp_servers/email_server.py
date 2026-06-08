@@ -31,6 +31,59 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 server = Server("email")
 EMAIL_SOCKET_TIMEOUT = float(os.environ.get("EMAIL_SOCKET_TIMEOUT", "20"))
+
+# Outbound recipient allowlist (Plan 0059 audit C3). Empty = disabled (any
+# recipient; back-compatible). Entries are exact addresses or "@domain" suffixes,
+# comma-separated. Enforced at the single SMTP chokepoint (_send_email) so it
+# covers send, reply, and poller paths.
+EMAIL_SEND_ALLOWLIST = [
+    a.strip().lower()
+    for a in os.environ.get("EMAIL_SEND_ALLOWLIST", "").split(",")
+    if a.strip()
+]
+
+
+class EmailRecipientNotAllowed(Exception):
+    """Raised when an outbound recipient is not in EMAIL_SEND_ALLOWLIST."""
+
+
+def _extract_addr(value):
+    value = (value or "").strip().lower()
+    m = re.search(r"<([^>]+)>", value)
+    if m:
+        value = m.group(1).strip().lower()
+    return value
+
+
+def _recipient_allowed(addr):
+    addr = _extract_addr(addr)
+    if not addr:
+        return False
+    if not EMAIL_SEND_ALLOWLIST:
+        return True
+    for entry in EMAIL_SEND_ALLOWLIST:
+        if entry.startswith("@"):
+            if addr.endswith(entry):
+                return True
+        elif addr == entry:
+            return True
+    return False
+
+
+def _enforce_recipient_allowlist(recipients):
+    if not EMAIL_SEND_ALLOWLIST:
+        return
+    flat = []
+    for r in recipients:
+        if isinstance(r, str):
+            flat.extend(p for p in re.split(r"[,;]", r) if p.strip())
+        elif r:
+            flat.append(r)
+    bad = sorted({_extract_addr(a) for a in flat if a and not _recipient_allowed(a)})
+    if bad:
+        raise EmailRecipientNotAllowed(
+            "Recipient(s) not in EMAIL_SEND_ALLOWLIST: " + ", ".join(bad)
+        )
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 
@@ -815,6 +868,8 @@ def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, b
     if bcc:
         recipients.extend([a.strip() for a in bcc.split(",")] if isinstance(bcc, str) else bcc)
 
+    _enforce_recipient_allowlist(recipients)
+
     conn = _smtp_connect(send_account, cfg=cfg)
     try:
         conn.send_message(msg, from_addr=cfg["from_address"], to_addrs=recipients)
@@ -1484,14 +1539,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             body = arguments.get("body")
             if not to or not subject or body is None:
                 return [TextContent(type="text", text="Error: to, subject, and body are required")]
-            result = _send_email(
-                to=to,
-                subject=subject,
-                body=body,
-                cc=arguments.get("cc"),
-                bcc=arguments.get("bcc"),
-                account=acct,
-            )
+            try:
+                result = _send_email(
+                    to=to,
+                    subject=subject,
+                    body=body,
+                    cc=arguments.get("cc"),
+                    bcc=arguments.get("bcc"),
+                    account=acct,
+                )
+            except EmailRecipientNotAllowed as exc:
+                return [TextContent(type="text", text=f"Error: {exc}")]
             acct_note = f" (from {result['account']})" if result.get("account") else ""
             return [TextContent(type="text", text=f"Sent email to {result['to']} with subject '{result['subject']}'{acct_note}.")]
 

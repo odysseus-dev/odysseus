@@ -18,7 +18,11 @@ from urllib.parse import urlparse
 from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
 from src.model_context import estimate_tokens
 from src.settings import get_setting
-from src.prompt_security import untrusted_context_message
+from src.prompt_security import (
+    untrusted_context_message,
+    wrap_tool_result,
+    UNTRUSTED_CONTEXT_POLICY,
+)
 from src.tool_security import blocked_tools_for_owner
 from src.agent_tools import (
     parse_tool_blocks,
@@ -404,13 +408,14 @@ def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool 
     if compact:
         tool_list = ", ".join(sorted(included)) if included else "none"
         parts = [
+            UNTRUSTED_CONTEXT_POLICY,
             "You are an AI assistant with tool access.",
             f"Available tools: {tool_list}.",
             _API_AGENT_RULES,
         ]
         return "\n\n".join(parts)
 
-    parts = [_AGENT_PREAMBLE]
+    parts = [UNTRUSTED_CONTEXT_POLICY, _AGENT_PREAMBLE]
 
     # Collect full-block tool sections (with examples)
     full_blocks = []
@@ -1184,7 +1189,7 @@ def _append_tool_results(
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.get("id", f"call_{round_num}_{j}"),
-                "content": result_text,
+                "content": wrap_tool_result(result_text),
             })
     else:
         tool_output_text = "\n\n".join(tool_results)
@@ -1193,7 +1198,7 @@ def _append_tool_results(
             msg["reasoning_content"] = round_reasoning
         messages.append(msg)
         messages.append(
-            {"role": "user", "content": f"[Tool execution results]\n\n{tool_output_text}"}
+            {"role": "user", "content": wrap_tool_result(f"[Tool execution results]\n\n{tool_output_text}")}
         )
 
 

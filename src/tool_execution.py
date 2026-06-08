@@ -1184,6 +1184,28 @@ async def execute_tool_block(
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
         return desc, result
 
+    # Optional high-risk confirmation gate (Plan 0059 audit C2). Off by default
+    # so upstream behavior is unchanged; the family-office deployment enables it
+    # via AGENT_HIGHRISK_REQUIRE_CONFIRM=1. When on, tools that exfiltrate,
+    # execute code, or make persistent changes do NOT auto-execute inside the
+    # agent loop -- closing the prompt-injection -> autonomous exfil/RCE chain.
+    # Confirmation must come from outside the model (human/UI ack); an in-band
+    # marker is intentionally not honored, since the model could emit it itself.
+    from src.tool_security import is_high_risk_tool, highrisk_confirm_enabled
+    if highrisk_confirm_enabled() and is_high_risk_tool(tool):
+        desc = f"{tool}: CONFIRMATION REQUIRED"
+        result = {
+            "error": (
+                f"Tool '{tool}' is high-risk and this deployment requires explicit "
+                "human confirmation before it can run. It was NOT executed. Tell "
+                "the user what you intend to do and ask them to perform or approve it."
+            ),
+            "exit_code": 1,
+            "needs_confirmation": True,
+        }
+        logger.warning("High-risk tool gated (confirm required) owner=%r tool=%s", owner, tool)
+        return desc, result
+
     # Background execution: a `bash` block whose first line is the `#!bg`
     # marker runs DETACHED — returns a job id immediately so the chat stream
     # isn't held open for a multi-minute install/ffmpeg/download. The always-on
