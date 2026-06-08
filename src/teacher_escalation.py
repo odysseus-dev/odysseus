@@ -229,12 +229,13 @@ portable across users / hosts.
 """
 
 
-async def _call_teacher(teacher_model_spec: str, prompt: str) -> Optional[str]:
+async def _call_teacher(teacher_model_spec: str, prompt: str,
+                        owner: Optional[str] = None) -> Optional[str]:
     """Call the configured teacher endpoint with the escalation prompt."""
     from src.llm_core import llm_call_async
     from src.ai_interaction import _resolve_model, _TEACHER_SYSTEM_PROMPT
     try:
-        url, model, headers = _resolve_model(teacher_model_spec)
+        url, model, headers = _resolve_model(teacher_model_spec, owner=owner)
     except Exception as e:
         logger.warning(f"teacher endpoint not resolvable ({teacher_model_spec!r}): {e}")
         return None
@@ -344,6 +345,7 @@ def _extract_skill_json(teacher_response: str) -> Optional[Dict[str, Any]]:
 
 def _format_trace(tool_results: List[Dict[str, Any]], agent_reply: str) -> str:
     """Render the turn's tool calls + final reply for the teacher prompt."""
+    from src.prompt_security import _escape_guard_markers
     lines = []
     for i, r in enumerate(tool_results or []):
         if not isinstance(r, dict):
@@ -360,12 +362,11 @@ def _format_trace(tool_results: List[Dict[str, Any]], agent_reply: str) -> str:
     if agent_reply:
         snippet = agent_reply if len(agent_reply) < 800 else agent_reply[:800] + "..."
         trace += f"\n\nFinal reply: {snippet!r}"
+    # Escape any delimiter sequences in tool output before fencing to prevent
+    # spoofing attacks (see prompt_security._escape_guard_markers).
+    trace = _escape_guard_markers(trace)
     # Fence the trace so the teacher prompt's untrusted-data guard has explicit
     # boundaries to point at. Content inside is data, not instructions.
-    # Escape any delimiter sequences that appear in tool output to prevent
-    # spoofing attacks (see prompt_security._escape_delimiters).
-    from src.prompt_security import _escape_delimiters
-    trace = _escape_delimiters(trace)
     return f"<<<UNTRUSTED_TRACE>>>\n{trace}\n<<<END_UNTRUSTED_TRACE>>>"
 
 
@@ -392,7 +393,7 @@ async def escalate_and_learn(
         untrusted_trace_guard=_UNTRUSTED_TRACE_GUARD,
         trace=_format_trace(tool_results, agent_reply),
     )
-    response = await _call_teacher(teacher_spec, prompt)
+    response = await _call_teacher(teacher_spec, prompt, owner=owner)
     if not response:
         return None
 
@@ -527,7 +528,7 @@ async def run_teacher_inline(
     # Resolve teacher endpoint
     try:
         from src.ai_interaction import _resolve_model
-        teacher_url, teacher_model, teacher_headers = _resolve_model(teacher_spec)
+        teacher_url, teacher_model, teacher_headers = _resolve_model(teacher_spec, owner=owner)
     except Exception as e:
         logger.warning(f"teacher endpoint not resolvable ({teacher_spec!r}): {e}")
         yield (
@@ -621,7 +622,7 @@ async def run_teacher_inline(
         untrusted_trace_guard=_UNTRUSTED_TRACE_GUARD,
         trace=_format_trace(captured_tool_events, teacher_text),
     )
-    skill_response = await _call_teacher(teacher_spec, prompt)
+    skill_response = await _call_teacher(teacher_spec, prompt, owner=owner)
     if skill_response and "NO_SKILL" in skill_response and not _extract_skill_json(skill_response):
         logger.info("teacher declined to write a skill (NO_SKILL)")
         yield (
