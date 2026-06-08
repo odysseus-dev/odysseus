@@ -11,7 +11,7 @@ from src.tool_security import (
     is_public_blocked_tool,
     blocked_tools_for_owner,
 )
-from src.filesystem_tools import EditFileTool
+from src.agent_tools.filesystem_tools import EditFileTool
 from src.agent_tools import ToolBlock
 
 
