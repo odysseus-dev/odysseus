@@ -431,7 +431,8 @@ async function loadEndpoints() {
               ${ep.is_enabled ? '' : '<span class="admin-badge admin-badge-off">disabled</span>'}
               ${hasModels ? '<span style="font-size:10px;opacity:0.4;">Click to manage models</span>' : ''}
             </div>
-            <div style="display:flex;gap:4px;align-items:center;">
+            <div class="admin-ep-actions">
+              ${_isLocalEndpoint(ep.base_url) ? '<select class="admin-tools-select" data-adm-tools-select="' + ep.id + '" title="Native tool calling mode. Auto = use heuristic (fenced blocks for Ollama /v1). On = always use native function calling. Off = always use fenced blocks."><option value="auto"' + (ep.supports_tools !== true && ep.supports_tools !== false ? ' selected' : '') + '>Tools: Auto</option><option value="true"' + (ep.supports_tools === true ? ' selected' : '') + '>Tools: On</option><option value="false"' + (ep.supports_tools === false ? ' selected' : '') + '>Tools: Off</option></select>' : ''}
               <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
               <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
               ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
@@ -475,6 +476,22 @@ async function loadEndpoints() {
     };
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => { e.stopPropagation(); await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' }); loadEndpoints(); });
+    });
+    queryAll('[data-adm-tools-select]').forEach(sel => {
+      sel.addEventListener('change', async (e) => {
+        e.stopPropagation();
+        const epId = sel.dataset.admToolsSelect;
+        const val = sel.value;
+        const body = {};
+        if (val === 'auto') body.supports_tools = null;
+        else body.supports_tools = val === 'true';
+        await fetch(`/api/model-endpoints/${epId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        loadEndpoints();
+      });
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
       btn.addEventListener('click', (e) => {

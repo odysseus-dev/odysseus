@@ -7,7 +7,7 @@ from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form
 
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from core.database import SessionLocal, Document, DocumentVersion
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user
@@ -38,6 +38,19 @@ def _aggregate_language_facets(lang_rows):
         out[key] = out.get(key, 0) + cnt
     return out
 
+
+def _library_language_for_document(doc: Document) -> str:
+    """Return the display language used by the document library.
+
+    PDF documents are stored as markdown wrappers so the editor can preserve
+    extracted text, form fields, and annotations. The library should still
+    identify them as PDFs instead of exposing that internal wrapper format.
+    """
+    from src.pdf_form_doc import find_source_upload_id
+
+    if find_source_upload_id(doc.current_content or ""):
+        return "pdf"
+    return doc.language or "text"
 
 
 from routes.document_helpers import (
@@ -260,18 +273,29 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         db = SessionLocal()
         try:
             from sqlalchemy import or_
+            pdf_marker_cond = or_(
+                Document.current_content.like('%<!-- pdf_source upload_id="%'),
+                Document.current_content.like('%<!-- pdf_form_source upload_id="%'),
+            )
+            library_language_expr = case(
+                (pdf_marker_cond, "pdf"),
+                (Document.language.is_(None), "text"),
+                else_=Document.language,
+            )
             # Archived view shows ONLY archived docs; the default view excludes
             # them (NULL = legacy rows that predate the column = not archived).
             _arch_cond = (Document.archived == True) if archived else or_(
                 Document.archived == False, Document.archived.is_(None))
-            # Language facet counts (owner-filtered)
+            # Language facet counts (owner-filtered). PDF documents are stored
+            # as markdown wrappers, so group by the library display language
+            # instead of the raw stored language.
             lang_q = (
-                db.query(Document.language, func.count(Document.id))
+                db.query(library_language_expr, func.count(Document.id))
                 .outerjoin(DbSession, Document.session_id == DbSession.id)
                 .filter(Document.is_active == True).filter(_arch_cond)
             )
             lang_q = _owner_session_filter(lang_q, user)
-            lang_rows = lang_q.group_by(Document.language).all()
+            lang_rows = lang_q.group_by(library_language_expr).all()
             languages = _aggregate_language_facets(lang_rows)
 
             # Session count (owner-filtered)
@@ -303,12 +327,17 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                         Document.title.ilike(term) | Document.current_content.ilike(term)
                     )
 
-            # Language filter
+            # Language filter. "pdf" is a display language derived from the
+            # source marker; "markdown" excludes those wrappers.
             if language:
                 if language == "text":
                     q = q.filter((Document.language == None) | (Document.language == "text"))
+                elif language == "pdf":
+                    q = q.filter(pdf_marker_cond)
                 else:
                     q = q.filter(Document.language == language)
+                    if language == "markdown":
+                        q = q.filter(~pdf_marker_cond)
 
             # Total before pagination
             total = q.count()
@@ -332,7 +361,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     "session_id": doc.session_id,
                     "session_name": session_name,
                     "title": doc.title,
-                    "language": doc.language or "text",
+                    "language": _library_language_for_document(doc),
                     "preview": (doc.current_content or "")[:500],
                     "version_count": doc.version_count,
                     "created_at": (doc.created_at.isoformat() + "Z") if doc.created_at else None,
