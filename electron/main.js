@@ -72,9 +72,6 @@ function createWindow() {
           <p style="margin-top:20px;color:#888;font-size:13px;">
             Start the server first, then press <strong>Ctrl+R</strong> to retry.
           </p>
-          <p style="margin-top:12px;color:#888;font-size:12px;">
-            To use a different URL, set <code>ODYSSEUS_ELECTRON_URL</code> before launching Electron.
-          </p>
         </div>
       \`;
     `).catch(() => {});
