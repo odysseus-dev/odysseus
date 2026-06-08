@@ -89,9 +89,12 @@ def setup_ws_routes():
         try:
             while True:
                 notification = await q.get()
-                # Re-validate credential on each send so revoked/deleted
+                # Re-validate credential on each send so revoked/deleted/renamed
                 # sessions are cut off, not silently kept alive.
-                if auth_mgr and used_credential and not auth_mgr.validate_token(used_credential):
+                if auth_mgr and used_credential and (
+                    not auth_mgr.validate_token(used_credential) or
+                    auth_mgr.get_username_for_token(used_credential) != owner
+                ):
                     await websocket.close(code=4001)
                     return
                 try:
