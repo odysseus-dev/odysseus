@@ -5,6 +5,7 @@ import uiModule from './ui.js';
 import searchModule from './search.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { clearDockSide } from './modalSnap.js';
+import * as Modals from './modalManager.js';
 import { sortModelIds } from './modelSort.js';
 import { providerLogo } from './providers.js';
 import { isAltGrEvent } from './platform.js';
@@ -5706,12 +5707,23 @@ function syncAdminVisibility() {
 export function open(tab) {
   if (!initialized) initAll();
   syncAppearanceCheckboxes();
-  if (modalEl.classList.contains('hidden')) {
+  // If the modal was minimized to a dock chip, restore it through the modal
+  // manager — CSS uses .modal-minimized { display: none !important } which
+  // would otherwise keep it invisible even after removing .hidden.
+  if (Modals.isMinimized('settings-modal')) {
+    Modals.restore('settings-modal');
+  } else if (modalEl.classList.contains('hidden')) {
     resetWindowPlacement();
   }
   modalEl.classList.remove('hidden');
-  syncAdminVisibility();
   const content = modalEl.querySelector('.settings-modal-content');
+  if (content) {
+    // Clear any lingering close-animation class so a previous close()
+    // animationend doesn't fire and re-hide the modal right after open.
+    content.classList.remove('modal-closing', 'sheet-ready');
+  }
+  syncAdminVisibility();
+  // content already queried above for class cleanup
   if (tab) {
     modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
     modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
