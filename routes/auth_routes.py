@@ -297,10 +297,22 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         if new_username in auth_manager.users:
             raise HTTPException(409, "Username already taken")
 
-        # Gate on auth first. Every mutation below is contingent on this
-        # succeeding — doing it last meant a rejected rename (e.g. reserved
-        # username) left file-backed owner fields already rewritten with no
-        # way to roll them back.
+        # Atomically update the auth store (in-memory users dict + live session
+        # tokens) BEFORE touching any persistent data.  This ensures:
+        #   1. If rename_user fails (race: another request just created
+        #      new_username), we abort before the DB is touched -- no state skew.
+        #   2. The DB commit that follows happens with old_username already gone
+        #      from self.users and all session tokens already re-pointed to
+        #      new_username, so there is no window where the user's session token
+        #      resolves to a username that no longer exists in self.users
+        #      (which would trigger the orphan-drop in get_username_for_token and
+        #      make the user appear to lose all their chats / data).
+        #
+        # Every mutation below is contingent on this succeeding. If a later
+        # step (the SQL owner migration) fails, _rollback_auth_rename() below
+        # restores auth to old_username so a transient DB failure can't leave
+        # auth committed to new_username while owner-scoped rows stay on
+        # old_username (which would let a future account claim them).
         ok = auth_manager.rename_user(old_username, new_username, user)
         if not ok:
             raise HTTPException(400, "Cannot rename user")
@@ -318,9 +330,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 )
                 return False
 
-        # Usernames are ownership keys for user data. Rename the common
-        # owner-scoped DB rows so the account keeps access to its sessions,
-        # docs, email accounts, tasks, etc.
+        # Usernames are ownership keys for user data.  Rename all owner-scoped
+        # DB rows now that auth has been updated.
         try:
             from sqlalchemy import func
             from core.database import Base, SessionLocal

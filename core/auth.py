@@ -317,7 +317,16 @@ class AuthManager:
         return True
 
     def rename_user(self, old_username: str, new_username: str, requesting_user: str) -> bool:
-        """Rename a user in auth config and active sessions. Admin only."""
+        """Rename a user in auth config and active sessions. Admin only.
+
+        Sessions are updated *before* old_username is removed from self.users so
+        the orphan-check in get_username_for_token never sees a token that points
+        to a username no longer in self.users.  Both mutations are performed while
+        holding _config_lock (and _sessions_lock nested inside it) to keep them
+        atomic with respect to concurrent request threads.  Acquisition order is
+        always _config_lock then _sessions_lock; no other path holds _sessions_lock
+        and then acquires _config_lock, so there is no deadlock risk.
+        """
         old_username = old_username.strip().lower()
         new_username = new_username.strip().lower()
         requesting_user = (requesting_user or "").strip().lower()
@@ -333,16 +342,22 @@ class AuthManager:
                 return False
             if not self.users.get(requesting_user, {}).get("is_admin"):
                 return False
+
+            # Update sessions first -- while old_username is still in self.users --
+            # so get_username_for_token's orphan check cannot fire between the
+            # two mutations and silently drop the live session token.
+            renamed_sessions = 0
+            with self._sessions_lock:
+                for sess in self._sessions.values():
+                    sess_user = str((sess or {}).get("username") or "").strip().lower()
+                    if sess_user == old_username:
+                        sess["username"] = new_username
+                        renamed_sessions += 1
+
+            # Now it is safe to swap the auth config key.
             self._config.setdefault("users", {})[new_username] = self._config["users"].pop(old_username)
             self._save()
 
-        renamed_sessions = 0
-        with self._sessions_lock:
-            for sess in self._sessions.values():
-                sess_user = str((sess or {}).get("username") or "").strip().lower()
-                if sess_user == old_username:
-                    sess["username"] = new_username
-                    renamed_sessions += 1
         if renamed_sessions:
             self._save_sessions()
         logger.info(
