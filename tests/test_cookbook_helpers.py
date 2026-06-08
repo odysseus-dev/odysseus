@@ -152,6 +152,34 @@ def test_validate_local_dir_rejects_windows_shell_metacharacters():
             _validate_local_dir(path)
 
 
+def test_validate_local_dir_accepts_non_ascii_unicode_paths():
+    # Folder names are routinely non-ASCII on localized systems; the validator
+    # must accept them the same way it accepts spaces (see issue: spaces AND
+    # non-ASCII chars were both rejected by the old ASCII-only allowlist).
+    for path in [
+        "/Volumes/Модели/llamacpp",   # Cyrillic (POSIX / external drive)
+        "/home/josé/models",          # accented Latin
+        "/Volumes/モデル/llm",         # CJK
+        r"D:\AI Models\Модели",       # Cyrillic (Windows drive path)
+    ]:
+        assert _validate_local_dir(path) == path
+
+
+def test_validate_local_dir_rejects_metacharacters_in_unicode_paths():
+    # Widening the allowlist to Unicode must not reopen the injection surface:
+    # shell metacharacters stay rejected even alongside non-ASCII segments.
+    for path in [
+        "/Volumes/Модели; touch /tmp/pwned",
+        "/Volumes/Модели/$(touch pwned)",
+        "/Volumes/Модели/`touch pwned`",
+        "/Volumes/Модели/a|b",
+        "/Volumes/Модели\nnext",
+        r"D:\Модели\llamacpp & calc.exe",
+    ]:
+        with pytest.raises(HTTPException):
+            _validate_local_dir(path)
+
+
 def test_validate_gpus_accepts_indexes_only():
     assert _validate_gpus("0,1,2") == "0,1,2"
     with pytest.raises(HTTPException):

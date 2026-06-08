@@ -43,10 +43,15 @@ _SSH_PORT_RE = re.compile(r"^\d{1,5}$")
 _GPU_LIST_RE = re.compile(r"^\d+(?:,\d+)*$")
 # A download target directory. Absolute or ~-relative path; safe path glyphs
 # only (no quotes or shell metacharacters). Spaces are allowed because command
-# builders pass the value through quoted shell/Python contexts. A leading ~ is
-# expanded to $HOME at command-build time.
-_LOCAL_DIR_RE = re.compile(r"^~?(?:/[A-Za-z0-9._ -]*)+$|^~$")
-_WINDOWS_LOCAL_DIR_RE = re.compile(r"^[A-Za-z]:[\\/](?:[A-Za-z0-9._ -]+(?:[\\/][A-Za-z0-9._ -]+)*[\\/]?)?$")
+# builders pass the value through quoted shell/Python contexts. The character
+# class uses ``\w`` — Unicode word characters under Python 3's default str
+# matching — so non-ASCII folder names pass validation too: Cyrillic, accented
+# Latin, CJK, e.g. ``/Volumes/Модели`` or ``D:\AI Models\Модели``. This stays
+# shell-safe: none of ``; & | ` $ '' "" () {}`` newlines etc. are in ``[\w. -]``,
+# so injection vectors remain rejected. A leading ~ is expanded to $HOME at
+# command-build time. (Drive letters stay ASCII: ``[A-Za-z]:``.)
+_LOCAL_DIR_RE = re.compile(r"^~?(?:/[\w. -]*)+$|^~$")
+_WINDOWS_LOCAL_DIR_RE = re.compile(r"^[A-Za-z]:[\\/](?:[\w. -]+(?:[\\/][\w. -]+)*[\\/]?)?$")
 _WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
@@ -390,6 +395,7 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "    for root, dirs, fns in safe_walk(base):",
         "        for fn in sorted(fns):",
         "            if not fn.lower().endswith('.gguf'): continue",
+        "            if fn.startswith('._'): continue  # macOS AppleDouble sidecar, not a real GGUF",
         "            fp = os.path.join(root, fn)",
         "            try: size = os.path.getsize(fp)",
         "            except Exception: size = 0",
