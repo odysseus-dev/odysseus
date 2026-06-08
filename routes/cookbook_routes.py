@@ -50,6 +50,7 @@ from routes.cookbook_helpers import (
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
     _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     _normalize_llama_cpp_python_cache_types,
+    _append_zero_byte_incomplete_cleanup_lines, _append_zero_byte_incomplete_cleanup_ps_lines,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -552,8 +553,16 @@ def setup_cookbook_routes() -> APIRouter:
                 ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
                 ps_lines.append('    }}')
                 ps_lines.append('  }}')
-                ps_lines.append('  if ($LASTEXITCODE -eq 0) {{ Write-Host ""; Write-Host "DOWNLOAD_OK" }}')
-                ps_lines.append('  else {{ Write-Host ""; Write-Host "DOWNLOAD_FAILED (exit $LASTEXITCODE)" }}')
+                ps_lines.append('  $odExit = $LASTEXITCODE')
+                ps_lines.append('  if ($odExit -eq 0) {{')
+                _append_zero_byte_incomplete_cleanup_ps_lines(
+                    ps_lines,
+                    repo_id=req.repo_id,
+                    local_dir=req.local_dir,
+                )
+                ps_lines.append('  }}')
+                ps_lines.append('  if ($odExit -eq 0) {{ Write-Host ""; Write-Host "DOWNLOAD_OK" }}')
+                ps_lines.append('  else {{ Write-Host ""; Write-Host "DOWNLOAD_FAILED (exit $odExit)" }}')
                 ps_lines.append('}} catch {{')
                 ps_lines.append('  Write-Host ""; Write-Host "DOWNLOAD_FAILED ($_)"')
                 ps_lines.append('}}')
@@ -661,7 +670,16 @@ def setup_cookbook_routes() -> APIRouter:
             runner_lines.append('    sleep 30')
             runner_lines.append('  fi')
             runner_lines.append('done')
-            runner_lines.append('if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec after $_attempt attempts)"; fi')
+            runner_lines.append('if [ $_ec -eq 0 ]; then')
+            _append_zero_byte_incomplete_cleanup_lines(
+                runner_lines,
+                repo_id=req.repo_id,
+                local_dir=req.local_dir,
+            )
+            runner_lines.append('  echo ""; echo "DOWNLOAD_OK"')
+            runner_lines.append('else')
+            runner_lines.append('  echo ""; echo "DOWNLOAD_FAILED (exit $_ec after $_attempt attempts)"')
+            runner_lines.append('fi')
             runner_lines.append(f"rm -f {remote_runner}")
             runner_lines.append('exec "${SHELL:-/bin/bash}"')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
@@ -702,7 +720,16 @@ def setup_cookbook_routes() -> APIRouter:
             lines.append('    sleep 30')
             lines.append('  fi')
             lines.append('done')
-            lines.append('if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec after $_attempt attempts)"; fi')
+            lines.append('if [ $_ec -eq 0 ]; then')
+            _append_zero_byte_incomplete_cleanup_lines(
+                lines,
+                repo_id=req.repo_id,
+                local_dir=req.local_dir,
+            )
+            lines.append('  echo ""; echo "DOWNLOAD_OK"')
+            lines.append('else')
+            lines.append('  echo ""; echo "DOWNLOAD_FAILED (exit $_ec after $_attempt attempts)"')
+            lines.append('fi')
             if not IS_WINDOWS:
                 lines.append(f"rm -f '{wrapper_script}'")
                 lines.append('exec "${SHELL:-/bin/bash}"')

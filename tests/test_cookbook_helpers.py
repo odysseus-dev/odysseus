@@ -11,6 +11,8 @@ from routes.cookbook_helpers import (
     _cached_model_scan_script,
     _append_llama_cpp_linux_accel_build_lines,
     _append_pip_install_runner_lines,
+    _append_zero_byte_incomplete_cleanup_lines,
+    _append_zero_byte_incomplete_cleanup_ps_lines,
     _append_serve_exit_code_lines,
     _append_serve_preflight_exit_lines,
     _llama_cpp_rebuild_cmd,
@@ -858,6 +860,36 @@ def test_cached_model_scan_uses_huggingface_cache_env(tmp_path):
 
     by_repo = {m["repo_id"]: m for m in json.loads(proc.stdout)}
     assert by_repo["Qwen/Qwen3.6-35B"]["path"] == str(hf_cache)
+
+
+def test_zero_byte_incomplete_cleanup_lines_only_target_zero_byte_markers():
+    lines = []
+    _append_zero_byte_incomplete_cleanup_lines(
+        lines,
+        repo_id="Qwen/Qwen3.6-35B",
+        local_dir="~/models",
+    )
+    script = "\n".join(lines)
+
+    assert 'models--Qwen--Qwen3.6-35B' in script
+    assert 'find "$_od_root" -type f -name "*.incomplete" -size 0c -print0' in script
+    assert '_od_prune_zero_incomplete "$HOME/models/Qwen3.6-35B"' in script
+    assert 'Removed $ODYSSEUS_INCOMPLETE_PRUNED stale zero-byte .incomplete marker(s).' in script
+
+
+def test_zero_byte_incomplete_cleanup_ps_lines_filter_length_zero():
+    lines = []
+    _append_zero_byte_incomplete_cleanup_ps_lines(
+        lines,
+        repo_id="Qwen/Qwen3.6-35B",
+        local_dir="~/models",
+    )
+    script = "\n".join(lines)
+
+    assert "$HOME/.cache/huggingface/hub/models--Qwen--Qwen3.6-35B" in script
+    assert "Where-Object { $_.Length -eq 0 }" in script
+    assert "~/models/Qwen3.6-35B" in script
+    assert 'Removed $odPruned stale zero-byte .incomplete marker(s).' in script
 
 
 # ── #1219 / #1459: keep big dependency wheel builds off the home pip cache ──

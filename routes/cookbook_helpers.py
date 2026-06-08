@@ -372,6 +372,78 @@ def _user_shell_path_bootstrap() -> list[str]:
     ]
 
 
+def _append_zero_byte_incomplete_cleanup_lines(
+    runner_lines: list[str],
+    *,
+    repo_id: str,
+    local_dir: str | None = None,
+) -> None:
+    """Append bash lines that delete only stale zero-byte ``.incomplete`` files.
+
+    Hugging Face downloads can leave zero-byte marker files behind even after a
+    successful run. Those markers make the cache scanner report the model as
+    "downloading"/"stalled" despite a complete snapshot. Preserve non-zero
+    partials so resume remains possible for interrupted downloads.
+    """
+    repo_cache = repo_id.replace("/", "--")
+    repo_leaf = repo_id.split("/")[-1] if "/" in repo_id else repo_id
+    local_target = None
+    if local_dir:
+        base = local_dir.rstrip("/") or "/"
+        local_target = f"{base}/{repo_leaf}" if base != "/" else f"/{repo_leaf}"
+
+    runner_lines.append('ODYSSEUS_INCOMPLETE_PRUNED=0')
+    runner_lines.append('_od_prune_zero_incomplete() {')
+    runner_lines.append('  local _od_root="$1"')
+    runner_lines.append('  [ -n "$_od_root" ] || return 0')
+    runner_lines.append('  [ -d "$_od_root" ] || return 0')
+    runner_lines.append('  while IFS= read -r -d "" _od_file; do')
+    runner_lines.append('    rm -f "$_od_file" && ODYSSEUS_INCOMPLETE_PRUNED=$((ODYSSEUS_INCOMPLETE_PRUNED+1))')
+    runner_lines.append('  done < <(find "$_od_root" -type f -name "*.incomplete" -size 0c -print0 2>/dev/null)')
+    runner_lines.append('}')
+    runner_lines.append(f'_od_prune_zero_incomplete "$HOME/.cache/huggingface/hub/models--{repo_cache}"')
+    runner_lines.append(f'_od_prune_zero_incomplete "/app/.cache/huggingface/hub/models--{repo_cache}"')
+    # TODO: Add any additional HF cache roots, i.e. Windows cache.
+    if local_target:
+        runner_lines.append(f'_od_prune_zero_incomplete {_shell_path(local_target)}')
+    runner_lines.append('if [ "$ODYSSEUS_INCOMPLETE_PRUNED" -gt 0 ]; then')
+    runner_lines.append('  echo "[odysseus] Removed $ODYSSEUS_INCOMPLETE_PRUNED stale zero-byte .incomplete marker(s)."')
+    runner_lines.append('fi')
+
+
+def _append_zero_byte_incomplete_cleanup_ps_lines(
+    runner_lines: list[str],
+    *,
+    repo_id: str,
+    local_dir: str | None = None,
+) -> None:
+    """Append PowerShell lines that delete stale zero-byte ``.incomplete`` files."""
+    repo_cache = repo_id.replace("/", "--")
+    repo_leaf = repo_id.split("/")[-1] if "/" in repo_id else repo_id
+    local_target = None
+    if local_dir:
+        base = local_dir.rstrip("/") or "/"
+        local_target = f"{base}/{repo_leaf}" if base != "/" else f"/{repo_leaf}"
+
+    roots = [
+        f"$HOME/.cache/huggingface/hub/models--{repo_cache}",
+    ]
+    if local_target:
+        roots.append(local_target)
+    roots_expr = ", ".join(f"'{_ps_squote(r)}'" for r in roots)
+
+    runner_lines.append('    $odPruned = 0')
+    runner_lines.append(f'    $odRoots = @({roots_expr})')
+    runner_lines.append('    foreach ($odRoot in $odRoots) {')
+    runner_lines.append('      if (-not $odRoot) { continue }')
+    runner_lines.append('      if (-not (Test-Path -LiteralPath $odRoot)) { continue }')
+    runner_lines.append('      Get-ChildItem -LiteralPath $odRoot -Recurse -File -Filter "*.incomplete" -ErrorAction SilentlyContinue |')
+    runner_lines.append('        Where-Object { $_.Length -eq 0 } |')
+    runner_lines.append('        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue; $odPruned++ }')
+    runner_lines.append('    }')
+    runner_lines.append('    if ($odPruned -gt 0) { Write-Host "[odysseus] Removed $odPruned stale zero-byte .incomplete marker(s)." }')
+
+
 def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache: str | None = None) -> str:
     """Build the standalone Python scanner used by /api/model/cached.
     Allows for an additional HuggingFace cache path to be scanned (i.e. Windows HF cache for local WSL envs.)
