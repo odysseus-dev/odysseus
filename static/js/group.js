@@ -249,8 +249,13 @@ function _initGroupTab() {
           (g.participants || []).forEach(p => {
             const model = models.find(m => m.mid === p.modelId) || models[0];
             const entry = { model: model || null, character: null };
-            if (p.characterId) {
-              entry.character = chars.find(c => c.id === p.characterId) || null;
+            // Match by id, falling back to name: older presets saved the
+            // transient 'custom' id for personas that now resolve to a saved
+            // template with a real id, so an id-only lookup would lose them.
+            if (p.characterId || p.characterName) {
+              entry.character = chars.find(c => c.id === p.characterId)
+                || (p.characterName ? chars.find(c => c.name === p.characterName) : null)
+                || null;
             }
             if (entry.model) _groupParticipants.push(entry);
           });
@@ -288,18 +293,12 @@ async function _getCharacterList() {
   const chars = PROMPT_TEMPLATES.filter(t => t.isCharacter).map(t => ({
     id: t.id, name: t.name, prompt: t.prompt,
   }));
-  // User-created characters from presets
-  try {
-    const allPresets = getAllPresets();
-    if (allPresets && allPresets.custom && allPresets.custom.character_name) {
-      chars.push({
-        id: 'custom',
-        name: allPresets.custom.character_name,
-        prompt: allPresets.custom.system_prompt || allPresets.custom.prompt || '',
-      });
-    }
-  } catch (e) {}
-  // Load user templates and wait for them before returning.
+  // Dedupe by NAME, not id: the same persona reaches us from two sources with
+  // different ids — the saved template (real id) and the transient `custom`
+  // slot (id 'custom') — so an id-only check let it show up twice.
+  const hasName = (name) => chars.some(c => c.name === name);
+  // Load user templates first — these are the canonical saved personas (real
+  // ids), so they win over the `custom` slot below.
   // The endpoint returns a JSON array directly (not {templates:[...]}).
   // All user templates are personas by definition — no isCharacter filter needed.
   try {
@@ -307,10 +306,24 @@ async function _getCharacterList() {
     const data = await r.json();
     const templates = Array.isArray(data) ? data : (data.templates || []);
     templates.forEach(t => {
-      if (t.id && t.name && !chars.find(c => c.id === t.id)) {
+      if (t.id && t.name && !chars.find(c => c.id === t.id) && !hasName(t.name)) {
         chars.push({ id: t.id, name: t.name, prompt: t.system_prompt || t.prompt || '' });
       }
     });
+  } catch (e) {}
+  // The currently-active custom persona. Saving a persona auto-stores it as a
+  // template, so it's normally already covered above — only add it when no
+  // template/built-in of the same name exists (e.g. an unsaved custom persona).
+  try {
+    const allPresets = getAllPresets();
+    const custom = allPresets && allPresets.custom;
+    if (custom && custom.character_name && !hasName(custom.character_name)) {
+      chars.push({
+        id: 'custom',
+        name: custom.character_name,
+        prompt: custom.system_prompt || custom.prompt || '',
+      });
+    }
   } catch (e) {}
   return chars;
 }
