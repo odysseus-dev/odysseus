@@ -1,11 +1,9 @@
 // Accessibility enhancements for keyboard + screen-reader users.
 //
 // Several primary controls in Odysseus are authored as click-only <div>s
-// (most notably the whole sidebar navigation: New Chat, Search, Brain,
-// Calendar, Compare, Cookbook, Deep Research, Gallery, Library, Notes,
-// Tasks, Theme, plus the account row). <div>s are not in the tab order and
-// are not announced as buttons, so keyboard and screen-reader users cannot
-// reach or operate them.
+// (most notably the whole sidebar navigation and popover menu rows). <div>s
+// are not in the tab order and are not announced as buttons, so keyboard and
+// screen-reader users cannot reach or operate them.
 //
 // This module enhances those rows in place — making them focusable
 // (tabindex=0), announcing them as buttons when it's safe to do so, and
@@ -17,8 +15,21 @@
 (function () {
   'use strict';
 
-  // Click-as-button rows we want reachable by keyboard.
-  var ROW_SELECTOR = ['#sidebar .list-item', '#user-bar-profile'].join(',');
+  // Click-as-button rows we want reachable by keyboard. Keep this to visual
+  // action rows that already have click handlers; broad selectors make static
+  // layout text noisy in the tab order.
+  var ROW_SELECTOR = [
+    '#sidebar .list-item',
+    '#user-bar-profile',
+    '.export-dropdown-item',
+    '.model-picker-row',
+    '.doc-tab',
+    '.doc-library-card',
+    '.gallery-editor-draft-card',
+    '.cookbook-serve-running-pill[role="button"]',
+    '.adm-section-toggle',
+    '.adm-quickstart-toggle'
+  ].join(',');
 
   // Native interactive descendants. If a row contains one of these we must
   // NOT give the row role="button" — a button inside a button is invalid
@@ -149,11 +160,13 @@
           for (var j = 0; j < added.length; j++) {
             var n = added[j];
             if (n.nodeType !== 1) continue;
+            if (n.matches && n.matches(ROW_SELECTOR)) enhanceRow(n);
+            if (n.querySelectorAll) enhanceAll(n);
             if (n.matches && n.matches(MODAL_SEL)) enhanceModal(n, headingSelFor(n));
             if (n.querySelector && n.querySelector(MODAL_SEL)) enhanceModals(n);
           }
         }
-      }).observe(document.body, { childList: true });
+      }).observe(document.body, { childList: true, subtree: true });
     }
   }
 

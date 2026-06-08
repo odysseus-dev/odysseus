@@ -63,7 +63,7 @@ the codebase, you are probably right to stay away.
   assignable to an agent from the UI, possibly through a button, task action,
   or dedicated skill/tool flow.
 - Mobile gallery/editor polish. Easier to launch/download inpaint model or any missing pieces.
-- Accessibility pass: keyboard navigation, focus states, contrast, reduced motion.
+- Accessibility pass: contrast.
 - Improve empty states and error messages on fresh installs.
 - Tighten first-run setup, hints, and tours so they do not repeat or fight each other.
 - Vendor CDN assets eventually for a more fully self-hosted/offline mode.
