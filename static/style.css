@@ -2940,34 +2940,6 @@ body.bg-pattern-sparkles {
       45% { text-shadow: 0 0 10px color-mix(in srgb, var(--accent, var(--red)) 60%, transparent); }
       100% { text-shadow: 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 0%, transparent); }
     }
-    /* Inline remove-from-recent button — only shown on Recent rows. */
-    .model-picker-list .mp-remove-dot {
-      flex: 0 0 auto;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 24px;
-      height: 24px;
-      margin: -4px -4px -4px 2px;
-      padding: 0;
-      border: none;
-      background: transparent;
-      cursor: pointer;
-      color: color-mix(in srgb, var(--fg) 28%, transparent);
-      font-family: inherit;
-      font-size: 15px;
-      line-height: 1;
-      transition: color 0.15s ease, opacity 0.15s ease, transform 0.12s ease;
-      -webkit-tap-highlight-color: transparent;
-    }
-    .model-picker-list .mp-remove-dot:hover {
-      color: var(--red, #ff5555);
-      transform: scale(1.1);
-    }
-    .model-picker-list .mp-remove-dot:focus-visible {
-      outline: none;
-      color: var(--red, #ff5555);
-    }
     /* First-run hint when a large catalog has no Recent/Favorites yet. */
     .model-picker-list .mp-empty-hint {
       flex-direction: column;
