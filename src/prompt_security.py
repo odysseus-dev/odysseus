@@ -47,7 +47,7 @@ _DELIMITER_RE = re.compile(
 )
 
 # Secondary pattern: full-width Unicode angle-bracket spoofs
-# (＜＜＜TAG＞＞＞, «TAG», ≪TAG≫).
+# (\uff1c\uff1c\uff1cTAG\uff1e\uff1e\uff1e, \u00abTAG\u00bb, \u226aTAG\u226b).
 _FULLWIDTH_DELIMITER_RE = re.compile(
     r"[\uff1c\u226a\u00ab]{2,3}\s*(?:"
     + "|".join(re.escape(t) for t in _DELIMITER_TAGS)
@@ -60,9 +60,9 @@ def _escape_guard_markers(text: str) -> str:
     """Neutralise delimiter literals inside untrusted text.
 
     Provides two layers of protection:
-    1. Regex-based sweep — catches case-insensitive, whitespace-padded,
+    1. Regex-based sweep -- catches case-insensitive, whitespace-padded,
        double-bracket, and Unicode full-width spoof variants.
-    2. Literal string fallback — replaces any surviving exact guard strings
+    2. Literal string fallback -- replaces any surviving exact guard strings
        with a visually distinct but structurally inert token.
 
     The text remains human-readable; angle brackets are swapped for
@@ -94,7 +94,7 @@ _escape_delimiters = _escape_guard_markers
 def validate_no_delimiter_leak(text: str) -> None:
     """Assert that sanitised content contains no raw delimiter sequences.
 
-    Raises ValueError if any delimiter pattern survived escaping — acts as
+    Raises ValueError if any delimiter pattern survived escaping -- acts as
     a defence-in-depth check so callers can fail-closed.
     """
     if _DELIMITER_RE.search(text):
