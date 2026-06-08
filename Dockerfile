@@ -1,5 +1,5 @@
 # ============================================================
-# Stage 1: Builder — compiles deps, builds llama.cpp if needed
+# Stage 1: Builder — installs system build deps and Python packages
 # ============================================================
 FROM python:3.12-slim AS builder
 
@@ -24,19 +24,23 @@ RUN python -m venv /opt/venv && \
     && if [ "$INSTALL_OPTIONAL" = "true" ]; then /opt/venv/bin/pip install --no-cache-dir -r requirements-optional.txt; fi
 
 # ============================================================
-# Stage 2: Runtime — slim, no build tools
+# Stage 2: Runtime — slim image with venv from builder
 # ============================================================
 FROM python:3.12-slim
 
-# Runtime-only system deps:
+# Runtime system deps:
+#   build-essential, cmake, git — Cookbook builds llama.cpp from source at
+#                                  runtime on Linux (cmake + compiler needed)
 #   tmux            — Cookbook background downloads/serves
 #   openssh-client  — Cookbook remote server tests/probes
 #   gosu            — privilege-dropping entrypoint
 #   curl            — health checks, MCP server connectivity
-#   nodejs          — optional built-in Browser MCP server (npx)
-# (build-essential, cmake, git, npm moved to builder)
+#   nodejs, npm     — optional built-in Browser MCP server (npx)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
     curl \
+    git \
     gosu \
     nodejs \
     npm \
@@ -61,7 +65,7 @@ COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:7000/api/health || exit 1
+    CMD curl -f "http://localhost:${APP_PORT:-7000}/api/health" || exit 1
 
 EXPOSE 7000
 
