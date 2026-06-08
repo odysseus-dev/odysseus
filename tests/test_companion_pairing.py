@@ -98,8 +98,8 @@ def test_mint_pairing_token_tolerates_no_invalidator(monkeypatch):
 
 
 def test_pairing_payload_shape():
-    p = P.pairing_payload("192.168.1.9", 7000, "ody_x")
-    assert p == {"v": 1, "host": "192.168.1.9", "port": 7000, "token": "ody_x"}
+    p = P.pairing_payload("10.0.0.1", 7000, "ody_x")
+    assert p == {"v": 1, "host": "10.0.0.1", "port": 7000, "token": "ody_x"}
 
 
 # --- admin-only gate: a bearer/non-admin caller is rejected ----------------

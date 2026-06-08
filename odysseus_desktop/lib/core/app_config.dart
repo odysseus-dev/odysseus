@@ -14,9 +14,9 @@ class AppConfig {
     // or use a fixed path if we know the structure.
     
     // On Windows development:
-    // D:\Android Projects\Agent\odysseus_desktop
+    // C:\path\to\project\odysseus_desktop
     
-    // We want: D:\Android Projects\Agent\odysseus
+    // We want: C:\path\to\project\odysseus
     
     Directory current = Directory.current;
     if (current.path.endsWith('odysseus_desktop')) {

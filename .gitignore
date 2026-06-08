@@ -89,3 +89,6 @@ docs/windows-port/
 compound.config.json
 *.error.log
 _scratch/
+
+# FVM Version Cache
+.fvm/

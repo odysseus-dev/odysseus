@@ -19,6 +19,7 @@ A self-hosted AI workspace -- meant to be the self-hosted version of the UI expe
   - **Notes & Tasks** -- Quick notes with reminders, a todo list, and scheduled tasks the agent can act on.<br>　<sub>note pings · checklist · cron-style tasks · ntfy / browser / email channels</sub>
   - **Calendar** -- Local-first calendar with CalDAV sync to Radicale / Nextcloud / Apple / Fastmail.<br>　<sub>CalDAV pull · .ics import/export · per-calendar colors · agent-aware</sub>
   - **Works on mobile** -- looks and runs great on your phone, not just desktop.<br>　<sub>responsive · installable (PWA) · touch gestures</sub>
+  - **Desktop App** -- native PC version for a more integrated experience.<br>　<sub>Windows · native window · auto-startup</sub>
   - **Extras** -- more to explore, happy if you give it a go!<br>　<sub>image editor · theme editor · file uploads (vision + PDF) · web search · presets · sessions · 2FA</sub>
 
 ## Demo
@@ -233,6 +234,19 @@ runs setup, and starts uvicorn on port `7860` because AirPlay often holds
 do not run on macOS. MLX-only models are not served by Odysseus.
 
 </details>
+
+### Windows Desktop (Standalone)
+
+For the easiest native experience on PC, use the pre-built desktop version:
+
+1.  **Locate the App:** Go to the `Odysseus_Release_Test/Release/` folder (or extract `Odysseus-Windows-x64.zip`).
+2.  **Start the Server:** Run `run-server.bat`. This will:
+    *   Set up the local Python environment (first time only).
+    *   Install necessary dependencies.
+    *   Start the Odysseus backend server on port 7000.
+    *   **Registration:** On the very first run, it will print your **temporary admin password** in the terminal. Copy this!
+3.  **Launch the Desktop UI:** Once the server is running, launch `Odysseus.exe` in the same folder.
+4.  **Login:** Log in with the username `admin` and the temporary password from Step 2. You can change your password later in **Settings**.
 
 ### Native Windows
 

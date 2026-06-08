@@ -43,7 +43,7 @@ def _is_local(url: str) -> bool:
     "http://nim-nano:8000/v1",
     "http://localhost:7000",
     "http://127.0.0.1:11434",
-    "http://192.168.50.244",            # private ranges
+    "http://10.0.0.42",            # private ranges
     "http://10.0.0.5:8080",
     "http://172.16.0.9",
     "http://server.local",              # mDNS / .local
