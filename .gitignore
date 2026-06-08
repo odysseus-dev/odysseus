@@ -82,6 +82,7 @@ research_data/
 
 # Internal dev/review notes — not for public repo
 dev-docs/
+.pi/
 # Windows-port working docs (local only, not for public repo)
 docs/windows-port/
 
