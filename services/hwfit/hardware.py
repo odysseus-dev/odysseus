@@ -4,6 +4,13 @@ import re
 import shutil
 import subprocess
 import time
+import shlex
+
+from core.platform_compat import (
+    NVIDIA_PATH_CANDIDATES,
+    SSH_PATH_OVERRIDE,
+    run_ssh_command,
+)
 
 CACHE_TTL = 24 * 3600  # 24 h — hardware probes are user-initiated via the Rescan button; bumped
                        # from 30 min so changing filters doesn't keep re-probing the rig every
@@ -21,16 +28,17 @@ def _run(cmd):
         if _remote_host:
             # Run command on remote host via SSH
             if isinstance(cmd, list):
-                cmd_str = " ".join(cmd)
+                cmd_str = shlex.join(str(c) for c in cmd)
             else:
                 cmd_str = cmd
-            ssh_cmd = ["ssh", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no"]
-            if _remote_port and _remote_port != "22":
-                ssh_cmd += ["-p", _remote_port]
-            ssh_cmd += [_remote_host, cmd_str]
-            r = subprocess.run(
-                ssh_cmd,
-                capture_output=True, text=True, timeout=15,
+            r = run_ssh_command(
+                _remote_host,
+                _remote_port,
+                cmd_str,
+                timeout=15,
+                connect_timeout=5,
+                strict_host_key_checking=False,
+                text=True,
             )
         else:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
@@ -76,21 +84,29 @@ def _detect_nvidia():
     global _last_gpu_error
     _last_gpu_error = None
     out = _run(["nvidia-smi", "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
-    # Remote fallback: a non-interactive SSH shell often has a minimal PATH
-    # that omits where nvidia-smi lives (/usr/bin, /usr/local/cuda/bin), so the
-    # first call silently returns nothing → "No GPU" on hosts that DO have GPUs.
+    # Fallback: a non-interactive shell (or WSL) often has a minimal PATH
+    # that omits where nvidia-smi lives (/usr/bin, /usr/local/cuda/bin,
+    # /usr/lib/wsl/lib), so the first call silently returns nothing →
+    # "No GPU" on machines that DO have GPUs.
     # Retry through a login shell with the common CUDA bin dirs on PATH.
     if not out and _remote_host:
         out = _run(
-            "bash -lc 'export PATH=\"$PATH:/usr/bin:/usr/local/bin:/usr/local/cuda/bin\"; "
+            f"bash -lc '{SSH_PATH_OVERRIDE}"
             "nvidia-smi --query-gpu=memory.total,name --format=csv,noheader,nounits'"
         )
     # Last resort: call nvidia-smi by absolute path. Some hosts have a login
     # shell that isn't bash (or a profile that errors), so the bash -lc retry
     # above still comes back empty even though the binary is right there.
-    if not out and _remote_host:
-        for _p in ("/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi", "/usr/local/cuda/bin/nvidia-smi"):
-            out = _run(f"{_p} --query-gpu=memory.total,name --format=csv,noheader,nounits")
+    # Also handles WSL where nvidia-smi lives at /usr/lib/wsl/lib/ — a path
+    # that may not be in the server process's PATH.
+    if not out:
+        for _p in NVIDIA_PATH_CANDIDATES:
+            # Use list form so subprocess.run (local) resolves the absolute path
+            # correctly instead of treating the whole string as an executable name.
+            if _remote_host:
+                out = _run(f"{_p} --query-gpu=memory.total,name --format=csv,noheader,nounits")
+            else:
+                out = _run([_p, "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
             if out:
                 break
     if not out:
@@ -468,39 +484,55 @@ def _detect_windows():
     """
     # Single PowerShell command that gathers all hardware info at once
     ps_cmd = (
-        "$r = @{}; "
-        "$os = Get-CimInstance Win32_OperatingSystem; "
-        "$r.ram_gb = [math]::Round($os.TotalVisibleMemorySize / 1048576, 1); "
-        "$r.avail_gb = [math]::Round($os.FreePhysicalMemory / 1048576, 1); "
-        "$cpu = Get-CimInstance Win32_Processor | Select-Object -First 1; "
-        "$r.cpu_name = $cpu.Name; "
-        "$r.cpu_cores = (Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum; "
-        "$r.arch = $cpu.AddressWidth; "
+        """
+        $r = @{}
+        $os = Get-CimInstance Win32_OperatingSystem
+        $r.ram_gb = [math]::Round($os.TotalVisibleMemorySize / 1048576, 1)
+        $r.avail_gb = [math]::Round($os.FreePhysicalMemory / 1048576, 1)
+        $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+        $r.cpu_name = $cpu.Name
+        $r.cpu_cores = (Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum
+        $r.arch = $cpu.AddressWidth
         # GPU detection via nvidia-smi (fastest) or WMI fallback
-        "try { "
-        "  $nv = nvidia-smi --query-gpu=memory.total,name --format=csv,noheader,nounits 2>$null; "
-        "  if ($LASTEXITCODE -eq 0 -and $nv) { "
-        "    $gpus = @(); "
-        "    foreach ($line in $nv -split \"`n\") { "
-        "      $p = $line -split ','; "
-        "      if ($p.Count -ge 2) { $gpus += [pscustomobject]@{name=$p[1].Trim(); vram_mb=[double]$p[0].Trim()} } "
-        "    }; "
-        "    $r.gpu_name = $gpus[0].name; "
-        "    $r.gpu_vram_gb = [math]::Round(($gpus | Measure-Object -Property vram_mb -Sum).Sum / 1024, 1); "
-        "    $r.gpu_count = $gpus.Count; "
-        "    $r.gpu_backend = 'cuda'; "
-        "  } "
-        "} catch {}; "
-        "if (-not $r.gpu_name) { "
-        "  $wmiGpu = Get-CimInstance Win32_VideoController | Where-Object { $_.AdapterRAM -gt 0 } | Select-Object -First 1; "
-        "  if ($wmiGpu) { "
-        "    $r.gpu_name = $wmiGpu.Name; "
-        "    $r.gpu_vram_gb = [math]::Round($wmiGpu.AdapterRAM / 1073741824, 1); "
-        "    $r.gpu_count = 1; "
-        "    $r.gpu_backend = 'cpu_x86'; "  # WMI doesn't tell us CUDA/ROCm
-        "  } "
-        "}; "
-        "$r | ConvertTo-Json -Compress"
+        try { 
+            $nv = nvidia-smi --query-gpu=memory.total,name --format=csv,noheader,nounits 2>$null
+            if ($LASTEXITCODE -eq 0 -and $nv) { 
+                $gpus = @()
+                foreach ($line in $nv -split "`n") { 
+                    $p = $line -split ','
+                    if ($p.Count -ge 2) { $gpus += [pscustomobject]@{name = $p[1].Trim(); vram_mb = [double]$p[0].Trim() } } 
+                }
+                $r.gpu_name = $gpus[0].name
+                $r.gpu_vram_gb = [math]::Round(($gpus | Measure-Object -Property vram_mb -Sum).Sum / 1024, 1)
+                $r.gpu_count = $gpus.Count
+                $r.gpu_backend = 'cuda'
+            } 
+        }
+        catch {}
+        if (-not $r.gpu_name) { 
+            $wmiGpu = Get-CimInstance Win32_VideoController | Where-Object { $_.AdapterRAM -gt 0 } | Select-Object -First 1
+            $GPUDriverKey = "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0*"
+            $GPUDeviceID = $wmiGpu.PNPDeviceID.Split('&')[0..1] -join '&'
+            $VRAMfromRegistry = Get-ItemProperty -Path $GPUDriverKey |
+            Where-Object { $_.MatchingDeviceId -like "${GPUDeviceID}*" } |
+            # Sometimes there happen to be multiple driver classes for the same gpu.
+            Select-Object -ExpandProperty HardwareInformation.qwMemorySize -ErrorAction SilentlyContinue -First 1
+            if ($wmiGpu) { 
+                $r.gpu_name = $wmiGpu.Name
+                # Edge case: driver is broken, otherwise $wmiGpu.AdapterRAM is redundant
+                if ($VRAMfromRegistry -ge $wmiGpu.AdapterRAM) {
+                    $r.gpu_vram_gb = [math]::Round($VRAMfromRegistry / 1073741824, 1)
+                }
+                else {
+                    $r.gpu_vram_gb = [math]::Round($wmiGpu.AdapterRAM / 1073741824, 1)
+                }
+                $r.gpu_count = 1
+                # WMI doesn't tell us CUDA/ROCm
+                $r.gpu_backend = 'cpu_x86';
+            } 
+        }
+        $r | ConvertTo-Json -Compress
+    """
     )
     if _remote_host:
         # Remote: ship a single command string over SSH. The remote shell parses
@@ -566,6 +598,19 @@ def _detect_windows():
 _cache_by_host = {}  # host -> (timestamp, result)
 
 
+def _cache_key(host: str, ssh_port: str, platform_name: str):
+    """Build a stable cache key that isolates remote SSH context.
+
+    Same host aliases can have different hardware due to visibility, forwarding etc.
+    To avoid using the wrong cached hardware info, include the SSH port and platform in the cache key.
+    """
+    return (
+        host or "_local",
+        str(ssh_port or ""),
+        str(platform_name or "").lower(),
+    )
+
+
 def detect_system(host="", ssh_port="", platform="", fresh=False):
     """Detect system hardware: RAM, CPU, GPU. Cached per host (hardware rarely
     changes, and probing a remote host over SSH is slow). Pass fresh=True to
@@ -575,7 +620,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
     """
     global _remote_host, _remote_port, _remote_platform
 
-    cache_key = host or "_local"
+    cache_key = _cache_key(host, ssh_port, platform)
     now = time.time()
     if not fresh and cache_key in _cache_by_host:
         ts, cached = _cache_by_host[cache_key]

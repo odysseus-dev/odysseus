@@ -131,10 +131,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 return {"ok": False, "requires_totp": True, "username": username}
             if not auth_manager.totp_verify(username, body.totp_code):
                 raise HTTPException(401, "Invalid 2FA code")
-        # All checks passed — create session
-        token = await asyncio.to_thread(auth_manager.create_session, username, body.password)
-        if not token:
-            raise HTTPException(401, "Invalid credentials")
+        # All checks passed — create session (password already verified above)
+        token = await asyncio.to_thread(auth_manager.create_session_trusted, username)
         cookie_kwargs = dict(
             key=SESSION_COOKIE,
             value=token,
@@ -584,6 +582,27 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 if parsed.hostname not in ("127.0.0.1", "localhost"):
                     hint = " If this is Docker Compose ntfy, set NTFY_BIND to that host/Tailscale IP and NTFY_BASE_URL to the same server URL in .env, then recreate ntfy."
                 return {"ok": False, "message": f"ntfy publish to {full_url} failed: {e}.{hint}"[:500]}
+
+        if preset == "discord_webhook":
+            import httpx
+            webhook_url = (integ.get("base_url") or "").strip()
+            if not webhook_url:
+                return {"ok": False, "message": "No webhook URL set — paste the full Discord webhook URL into the Base URL field."}
+            payload = {
+                "embeds": [{
+                    "title": "Odysseus connectivity test",
+                    "description": "If you see this, your Discord Webhook integration is wired up correctly.",
+                    "color": 5793266,
+                }]
+            }
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    r = await client.post(webhook_url, json=payload)
+                if r.is_success:
+                    return {"ok": True, "message": "Test embed sent — check your Discord channel to confirm it arrived."}
+                return {"ok": False, "message": f"Discord returned HTTP {r.status_code}: {r.text[:200]}"}
+            except Exception as e:
+                return {"ok": False, "message": f"Request failed: {e}"[:400]}
 
         # All other presets: GET against a known health endpoint.
         # Fall back to detecting from name if preset is missing.

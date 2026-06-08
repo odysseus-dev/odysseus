@@ -258,7 +258,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_chats",
-            "description": "Search the user's past chat conversations by keyword. Use when the user asks about previous chats, past conversations, or wants to find a discussion they had before. Returns matching sessions with clickable links.",
+            "description": "Search the user's past session transcripts by keyword. Use when the user asks about previous chats, past conversations, or when direct transcript evidence is better than persistent memory. Returns matching sessions with clickable links and nearby context.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -450,6 +450,47 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "ask_user",
+            "description": "Ask the user a multiple-choice question to get a decision or clarification when the task is genuinely ambiguous and the answer changes what you do next (e.g. pick between approaches, confirm an assumption, choose a target). The user sees clickable option buttons; calling this ENDS your turn and their selection arrives as your next message. Prefer sensible defaults over asking — only ask when you truly cannot proceed well without the user's input. Do NOT use it to confirm irreversible/destructive actions that have a dedicated confirmation flow.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "The question to ask. Be specific and self-contained."},
+                    "options": {
+                        "type": "array",
+                        "description": "2-6 mutually exclusive choices. Each is an object with a short `label` and an optional `description` explaining the trade-off.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string", "description": "Concise choice text the user clicks (1-5 words)."},
+                                "description": {"type": "string", "description": "Optional one-line explanation of this choice."}
+                            },
+                            "required": ["label"]
+                        }
+                    },
+                    "multi": {"type": "boolean", "description": "Set true to let the user select multiple options instead of one. Default false."}
+                },
+                "required": ["question", "options"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_plan",
+            "description": "Write back to the ACTIVE PLAN: mark steps done or revise them. Use this while executing an approved plan — after you finish a step, call update_plan with the full checklist and that step marked `- [x]`; when the user asks to change the plan, call it with the revised checklist. The user's docked plan window updates live. Pass the COMPLETE checklist every time (not a diff). No effect if there is no active plan.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "plan": {"type": "string", "description": "The full updated plan as a GitHub-style markdown checklist — one step per line, `- [ ]` for pending and `- [x]` for done. Always send the whole list."}
+                },
+                "required": ["plan"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "manage_tasks",
             "description": "Manage scheduled/automated tasks: list, create, edit, delete, pause, resume, or run tasks. Use this for ANY recurring/scheduled request ('every morning…', 'each day at 7:30', 'daily summarize…') — create a task rather than doing it once. Task types: llm (AI runs a prompt), research (runs the deep-research pipeline on a question), or action (built-in automation). Triggers can be time-based or event-based.",
             "parameters": {
@@ -504,8 +545,8 @@ FUNCTION_TOOL_SCHEMAS = [
                     "uid": {"type": "string", "description": "Event UID (for update/delete)"},
                     "calendar_href": {"type": "string", "description": "Specific calendar URL (optional; defaults to first calendar)"},
                     "calendar": {"type": "string", "description": "Filter list_events by calendar name or href"},
-                    "start": {"type": "string", "description": "list_events range start (ISO datetime); defaults to today"},
-                    "end": {"type": "string", "description": "list_events range end (ISO datetime); defaults to +14 days"},
+                    "start": {"type": "string", "description": "list_events range start (ISO datetime); defaults to today. Prefer start; backend also accepts start_date, range_start, from, dtstart, since."},
+                    "end": {"type": "string", "description": "list_events range end (ISO datetime); defaults to +14 days. Prefer end; backend also accepts end_date, range_end, to, dtend, until."},
                     "event_type": {"type": "string", "description": "Tag / category for the event. Common values: work, personal, health, travel, meal, social, admin, other. Aliases accepted: tag, category, type."},
                     "importance": {"type": "string", "enum": ["low", "normal", "high", "critical"], "description": "Priority level (defaults to 'normal')"},
                     "reminder_minutes": {"type": "integer", "description": "For create_event: create an Odysseus reminder this many minutes before the event, e.g. 5 for 'reminder 5 min before'."},
@@ -790,6 +831,21 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "tail_serve_output",
+            "description": "Read the last N lines of a cookbook serve/download task's tmux pane. Use ONLY in this exact sequence: (1) the user asked to serve a model, (2) you launched it via serve_model, (3) list_served_models reports the NEW task as crashed/error, (4) call tail_serve_output on the new sessionId to find the root cause, (5) call serve_model again with adjusted flags. DO NOT call this on old stopped/completed download tasks — they are historical and won't tell you anything about the current attempt. DO NOT investigate past failures before launching; the environment may have changed since.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string", "description": "Tmux session id from list_served_models (e.g. 'serve-abc12345', 'cookbook-a1b2c3d4')."},
+                    "tail": {"type": "integer", "description": "How many lines of pane scrollback to fetch (default 300, max 4000). Bump this if the error in the visible tail references an earlier line ('see root cause above')."},
+                },
+                "required": ["session_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_downloads",
             "description": "List in-progress model downloads in the Cookbook. Shows each download's model name, phase, percent (if available), session ID, and remote host.",
             "parameters": {"type": "object", "properties": {}}
@@ -894,7 +950,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "app_api",
-            "description": "Generic loopback to ANY internal Odysseus endpoint. Use this when there's no named tool for what the user wants. Hits the same routes the UI buttons hit (cookbook, gallery, library/documents, memory, notes, calendar, tasks, settings, themes, research, compare, etc.). action='endpoints' returns the OpenAPI surface (use `filter` to narrow). action='call' (default) takes method+path+body. Auth/user/admin paths are blocked for safety. Do not use for email account discovery; use list_email_accounts instead because /api/email/accounts is owner-filtered in tool context.",
+            "description": "Generic loopback to allowed internal Odysseus endpoints. Use this when there's no named tool for what the user wants. Hits the same routes the UI buttons hit (cookbook, gallery, library/documents, memory, notes, calendar, tasks, settings, themes, research, compare, etc.). action='endpoints' returns the OpenAPI surface (use `filter` to narrow). action='call' (default) takes method+path+body. Sensitive auth/user/admin/shell paths and host-control Cookbook mutation routes are blocked for safety. Do not use for shell commands; use named command tooling instead. Do not use for package installs, engine rebuilds, PID signalling, or email account discovery; use list_email_accounts for email accounts because /api/email/accounts is owner-filtered in tool context.",
             "parameters": {
                 "type": "object",
                 "properties": {

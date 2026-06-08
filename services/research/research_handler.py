@@ -15,10 +15,11 @@ from pathlib import Path
 from typing import Optional, Dict
 
 from src.research_utils import is_low_quality
+from src.constants import DEEP_RESEARCH_DIR
 
 logger = logging.getLogger(__name__)
 
-RESEARCH_DATA_DIR = Path("data/deep_research")
+RESEARCH_DATA_DIR = Path(DEEP_RESEARCH_DIR)
 
 
 class ResearchHandler:

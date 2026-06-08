@@ -10,7 +10,7 @@ def test_signature_picker_allows_only_raster_data_urls():
     src = (_REPO / "static" / "js" / "signature.js").read_text(encoding="utf-8")
 
     assert "function _safeSignatureDataUrl(raw)" in src
-    assert r"^data:image\/(?:png|jpe?g);base64," in src
+    assert r"^data:image\/png;base64," in src
     assert '<img src="${_esc(dataUrl)}"/>' in src
     assert 'dataUrl: s.data_url' not in src
 

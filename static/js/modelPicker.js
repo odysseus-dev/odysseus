@@ -35,6 +35,11 @@ function _pushRecent(mid) {
   next.unshift(mid);
   _saveList(RECENT_KEY, next.slice(0, RECENT_MAX));
 }
+function _removeRecent(mid) {
+  if (!mid) return;
+  const next = _loadRecent().filter(x => x !== mid);
+  _saveList(RECENT_KEY, next);
+}
 function _loadFavorites() { return _loadList(FAVORITES_KEY); }
 function _toggleFavorite(mid) {
   const favs = _loadFavorites();
@@ -179,14 +184,23 @@ function _initModelPickerDropdown() {
     const result = [];
     const seen = new Set();
     items.forEach(item => {
-      if (item.offline) return;
+      // Previously: offline endpoints were skipped entirely, so a server
+      // that briefly went down disappeared from the picker — confusing
+      // when the user can still see it (offline-tagged) in Settings.
+      // Now: include offline-endpoint models too but flag them
+      // `stale: true` so the row renderer dims them + shows the offline
+      // pill. The user can still click and try anyway (matches the
+      // existing "local server appears offline" path on line 301).
+      const epOffline = !!item.offline;
       const allModels = (item.models || []).concat(item.models_extra || []);
       const allDisplay = (item.models_display || []).concat(item.models_extra_display || []);
       // Mark local endpoints whose live probe failed.
       const probeResult = item.endpoint_id ? _localProbe[item.endpoint_id] : null;
       const isLocalDead = !!(probeResult && probeResult.alive === false);
       allModels.forEach((mid, i) => {
-        // Deduplicate by model ID — prefer DB endpoints over env-discovered
+        // Deduplicate by model ID — prefer ONLINE endpoint entries over
+        // offline duplicates so the user gets a working endpoint first
+        // when the same model is exposed by both.
         if (seen.has(mid)) return;
         seen.add(mid);
         result.push({
@@ -201,8 +215,11 @@ function _initModelPickerDropdown() {
             item.host || '',
             item.url || '',
           ].filter(Boolean).join(' '),
-          stale: isLocalDead,
-          staleReason: isLocalDead ? (probeResult.error || 'not responding') : '',
+          stale: isLocalDead || epOffline,
+          staleReason: epOffline
+            ? (item.ping_error || 'endpoint offline')
+            : (isLocalDead ? (probeResult.error || 'not responding') : ''),
+          offline: epOffline,
         });
       });
     });
@@ -292,7 +309,7 @@ function _initModelPickerDropdown() {
       empty.textContent = text;
       listEl.appendChild(empty);
     }
-    function _addRow(m) {
+    function _addRow(m, onRemove) {
       const row = document.createElement('div');
       row.className = 'model-switch-item';
       if (m.stale) {
@@ -311,6 +328,9 @@ function _initModelPickerDropdown() {
       const nameSpan = document.createElement('span');
       nameSpan.className = 'mp-model-name';
       nameSpan.textContent = m.display;
+      // Long model names are clipped with ellipsis — expose the full name on
+      // hover so the suffix/variant tag is still discoverable (#1982).
+      nameSpan.title = m.display;
       row.appendChild(nameSpan);
       if (m.stale) {
         const badge = document.createElement('span');
@@ -361,6 +381,20 @@ function _initModelPickerDropdown() {
       });
       row.appendChild(favDot);
 
+      // Remove-from-recent button (shown only for Recent section items).
+      if (onRemove) {
+        const rmBtn = document.createElement('button');
+        rmBtn.type = 'button';
+        rmBtn.className = 'mp-remove-dot';
+        rmBtn.textContent = '×';
+        rmBtn.title = 'Remove from recent';
+        rmBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          onRemove();
+        });
+        row.appendChild(rmBtn);
+      }
+
       row.addEventListener('click', () => _pick(m));
       listEl.appendChild(row);
     }
@@ -377,21 +411,39 @@ function _initModelPickerDropdown() {
       return;
     }
 
-    // ── Browse mode: Recent (auto) + Favorites (manual). No flat "All" dump. ──
+    // ── Browse mode: sections in order: Favorites → Recent (big catalogs only) → All / Providers ──
+    //   1. Never list the same model twice in the dropdown. Favorites
+    //      win over Recent (if you favorited it, that's where it
+    //      belongs — Recent shouldn't show it again as duplicate).
+    //   2. Small catalogs (≤ BROWSE_ALL_LIMIT total) skip the Recent
+    //      section entirely — when there's only ~10 models, the whole
+    //      list fits below as "All models" and a separate Recent
+    //      section just duplicates rows.
     const shown = new Set();
-    const recentModels = _loadRecent()
-      .map(id => byId.get(id))
-      .filter(Boolean)
-      .slice(0, RECENT_MAX);
     const favModels = favs.map(id => byId.get(id)).filter(Boolean);
-
-    if (recentModels.length) {
-      _addSection('Recent');
-      recentModels.forEach(m => { shown.add(m.mid); _addRow(m); });
-    }
     if (favModels.length) {
       _addSection('Favorites');
       favModels.forEach(m => { shown.add(m.mid); _addRow(m); });
+    }
+    // Recent: only render when the catalog is big enough that surfacing
+    // a recency shortlist is actually useful, AND only models that
+    // aren't already in Favorites (dedupe).
+    if (all.length > BROWSE_ALL_LIMIT) {
+      const recentModels = _loadRecent()
+        .map(id => byId.get(id))
+        .filter(Boolean)
+        .filter(m => !shown.has(m.mid))
+        .slice(0, RECENT_MAX);
+      if (recentModels.length) {
+        _addSection('Recent');
+        recentModels.forEach(m => {
+          shown.add(m.mid);
+          _addRow(m, () => {
+            _removeRecent(m.mid);
+            _populate('');
+          });
+        });
+      }
     }
 
     // Small catalogs: still list everything so users aren't forced to search.
@@ -686,6 +738,9 @@ export function updateModelPicker() {
   }
 
   const displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  // The header indicator clips long names with ellipsis; show the full model
+  // identifier on hover (#1982). No tooltip on the "Select model" placeholder.
+  label.title = modelId || '';
   const logo = modelId ? providerLogo(modelId) : null;
   if (logo) {
     label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ' + displayName;
