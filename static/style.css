@@ -145,7 +145,7 @@ body.electron .notes-pane-backdrop {
   height: calc(100dvh - 32px);
 }
 
-/* Fullscreen overrides — remove custom title-bar offsets in OS fullscreen */
+/* Fullscreen overrides â€” remove custom title-bar offsets in OS fullscreen */
 body.electron-fullscreen { padding-top: 0 !important; }
 body.electron-fullscreen .icon-rail { padding-top: 16px !important; }
 body.electron-fullscreen .hamburger-btn { top: 12px !important; }
