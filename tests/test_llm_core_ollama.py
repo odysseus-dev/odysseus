@@ -176,6 +176,50 @@ def test_ollama_payload_text_only_array_collapses_without_images_key():
     assert "images" not in msg
 
 
+def test_ollama_payload_drops_unsupported_content_block():
+    # A block native Ollama can't carry (e.g. audio) is dropped, not forwarded
+    # as an array (which would 400) nor mistaken for an image. Text survives.
+    msgs = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "hi"},
+            {"type": "audio", "audio": {"url": "data:audio/wav;base64,SND"}},
+        ],
+    }]
+    payload = llm_core._build_ollama_payload("m", msgs, temperature=0.0, max_tokens=0)
+    msg = payload["messages"][0]
+    assert msg["content"] == "hi"
+    assert "images" not in msg
+
+
+def test_ollama_payload_handles_tool_calls_and_multimodal_together():
+    # Tool-arg normalization and multimodal flattening compose without clobbering
+    # each other: a vision user turn and an assistant tool call in one request.
+    msgs = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look"},
+                {"type": "image_url",
+                 "image_url": {"url": "data:image/png;base64,IMG"}},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{
+                "id": "c0", "type": "function",
+                "function": {"name": "app_api", "arguments": '{"a": 1}'},
+            }],
+        },
+    ]
+    payload = llm_core._build_ollama_payload("m", msgs, temperature=0.0, max_tokens=0)
+    user, asst = payload["messages"][0], payload["messages"][1]
+    assert user["content"] == "look"
+    assert user["images"] == ["IMG"]
+    assert asst["tool_calls"][0]["function"]["arguments"] == {"a": 1}
+
+
 def test_ollama_payload_tolerates_malformed_arguments():
     msgs = [{
         "role": "assistant",

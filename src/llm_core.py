@@ -363,6 +363,14 @@ def _ollama_split_multimodal_content(content: List) -> Tuple[str, List[str]]:
             url = (block.get("image_url") or {}).get("url", "")
             if url.startswith("data:") and "," in url:
                 images.append(url.split(",", 1)[1])
+        else:
+            # Native Ollama /api/chat only carries text + base64 images; any other
+            # block type (e.g. audio) has no representation here and is dropped.
+            # Log it so a vanished attachment is debuggable rather than silent.
+            logger.debug(
+                "ollama: dropping unsupported content block type %r",
+                block.get("type"),
+            )
     return "\n".join(t for t in texts if t), images
 
 
