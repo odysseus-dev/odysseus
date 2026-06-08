@@ -411,17 +411,51 @@ async def execute_api_call(
         if "application/json" in content_type:
             try:
                 data = response.json()
-                formatted = json.dumps(data, indent=2, ensure_ascii=False)
+                full = json.dumps(data, indent=2, ensure_ascii=False)
+                if len(full) > 12000:
+                    if isinstance(data, list):
+                        # Binary-search for the largest prefix that fits within the limit
+                        lo, hi = 0, len(data)
+                        while lo < hi:
+                            mid = (lo + hi + 1) // 2
+                            candidate = json.dumps(
+                                data[:mid], indent=2, ensure_ascii=False
+                            )
+                            if len(candidate) < 12000:
+                                lo = mid
+                            else:
+                                hi = mid - 1
+                        sentinel = {
+                            "_truncated": True,
+                            "total_items": len(data),
+                            "shown_items": lo,
+                        }
+                        formatted = json.dumps(
+                            data[:lo] + [sentinel], indent=2, ensure_ascii=False
+                        )
+                    elif isinstance(data, dict):
+                        data["_truncated"] = True
+                        formatted = json.dumps(data, indent=2, ensure_ascii=False)
+                    else:
+                        total = len(full)
+                        formatted = full[:12000] + f"\n... (truncated, {total} chars total)"
+                else:
+                    formatted = full
             except (json.JSONDecodeError, ValueError):
                 formatted = response.text
+                if len(formatted) > 12000:
+                    total = len(formatted)
+                    formatted = formatted[:12000] + f"\n... (truncated, {total} chars total)"
         elif "text/html" in content_type:
             formatted = _strip_html_tags(response.text)
+            if len(formatted) > 12000:
+                total = len(formatted)
+                formatted = formatted[:12000] + f"\n... (truncated, {total} chars total)"
         else:
             formatted = response.text
-
-        # Truncate
-        if len(formatted) > 12000:
-            formatted = formatted[:12000] + "\n... (truncated)"
+            if len(formatted) > 12000:
+                total = len(formatted)
+                formatted = formatted[:12000] + f"\n... (truncated, {total} chars total)"
 
         output = f"HTTP {status}\n{formatted}"
 
