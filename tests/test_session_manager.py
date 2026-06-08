@@ -22,19 +22,19 @@ def sm():
     # `from .database import SessionLocal` at import time.
     # The conftest stubs sqlalchemy itself, which can interfere,
     # so we isolate by patching the imported names directly.
-    
+
     orig_session_local = SessionManager.__init__
-    
+
     def patched_init(self, sessions_file=None):
         """__init__ that skips DB load and starts with empty cache."""
         self.sessions = {}
-    
+
     SessionManager.__init__ = patched_init
-    
+
     manager = SessionManager()
-    
+
     yield manager
-    
+
     SessionManager.__init__ = orig_session_local
 
 

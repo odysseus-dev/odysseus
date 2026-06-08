@@ -191,8 +191,9 @@ class SessionManager:
         """
         Add a message to a session and persist to database.
 
-        Delegates to ``session.add_message()`` which appends to the
-        authoritative history list and calls ``_persist_message``.
+        Updates the authoritative history list and persists through this
+        manager directly so tests and temporary managers do not depend on the
+        process-wide session-manager singleton.
 
         Args:
             session_id: Session ID
@@ -293,7 +294,7 @@ class SessionManager:
 
             # Update in-memory
             session.history = session.history[:keep_count]
-            session._history = session.history[:keep_count]
+            session._history = session.history
 
             logger.info(f"Truncated session {session_id} to {keep_count} messages")
             return True
@@ -344,7 +345,7 @@ class SessionManager:
 
             db.commit()
             session.history = list(messages)
-            session._history = list(messages)
+            session._history = session.history
             session.message_count = len(messages)
             logger.info("Replaced session %s history with %d messages", session_id, len(messages))
             return True
