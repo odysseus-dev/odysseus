@@ -42,6 +42,8 @@ def _find_npx() -> str:
         return "npx.cmd"  # fallback, will fail with a clear error
     # Common POSIX locations when PATH is minimal (e.g. systemd)
     for candidate in [
+        os.path.expanduser("~/.local/opt/node-v22.22.1-linux-x64/bin/npx"),
+        os.path.expanduser("~/.nvm/versions/node/v20.20.2/bin/npx"),
         os.path.expanduser("~/.npm-global/bin/npx"),
         os.path.expanduser("~/.local/bin/npx"),
         "/usr/local/bin/npx",
