@@ -107,6 +107,29 @@ def _detect_nvidia():
                 out = _run(f"{_p} --query-gpu=memory.total,name --format=csv,noheader,nounits")
             else:
                 out = _run([_p, "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
+    if not out:
+        _last_gpu_error = "nvidia-smi not found or failed"
+        return None
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    gpus = []
+    for i, line in enumerate(lines):
+        parts = line.split(", ")
+        if len(parts) != 2:
+            continue
+        vram_str, name = parts
+        try:
+            vram_mb = int(vram_str)
+        except ValueError:
+            continue
+        gpus.append({
+            "index": i,
+            "name": name.strip(),
+            "vram_gb": vram_mb / 1024.0,
+        })
+    if not gpus:
+        _last_gpu_error = "No GPU devices found"
+        return None
+    return _group_gpus(gpus)n([_p, "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
             if out:
                 break
     if not out:
