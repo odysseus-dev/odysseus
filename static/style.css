@@ -15475,6 +15475,9 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
     height: auto !important;
   }
 }
+#cookbook-modal .hwfit-cached-list {
+  flex-shrink: 0;
+}
 .memory-toolbar {
   transition: opacity 0.12s ease, max-height 0.2s ease;
   max-height: 120px;
