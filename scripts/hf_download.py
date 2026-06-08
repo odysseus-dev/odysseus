@@ -141,6 +141,56 @@ def _patch_tqdm():
         pass
 
 
+def _cleanup_zero_byte_incomplete(repo_id: str, download_path: str) -> int:
+    """Delete stale zero-byte HF `.incomplete` marker files.
+
+    Preserve non-zero files so interrupted downloads can still resume.
+    """
+    repo_cache = repo_id.replace("/", "--")
+    marker = f"models--{repo_cache}"
+    roots = set()
+
+    # Canonical HF cache roots where this repo may have markers.
+    roots.add(os.path.expanduser(f"~/.cache/huggingface/hub/{marker}"))
+    roots.add(f"/app/.cache/huggingface/hub/{marker}")
+
+    hf_cache = os.environ.get("HUGGINGFACE_HUB_CACHE")
+    if hf_cache:
+        roots.add(os.path.join(os.path.expanduser(hf_cache), marker))
+    hf_home = os.environ.get("HF_HOME")
+    if hf_home:
+        roots.add(os.path.join(os.path.expanduser(hf_home), "hub", marker))
+
+    # The resolved download path often points at snapshots/<rev>; include both
+    # that path and the enclosing models--<repo> root if present.
+    if download_path:
+        resolved = os.path.realpath(os.path.expanduser(download_path))
+        roots.add(resolved)
+        parts = resolved.split(os.sep)
+        if marker in parts:
+            idx = parts.index(marker)
+            base = os.sep.join(parts[: idx + 1])
+            roots.add(base or os.sep)
+
+    removed = 0
+    for root in sorted(r for r in roots if r):
+        if not os.path.isdir(root):
+            continue
+        for dirpath, _, filenames in os.walk(root):
+            for name in filenames:
+                if not name.endswith(".incomplete"):
+                    continue
+                fp = os.path.join(dirpath, name)
+                try:
+                    if os.path.getsize(fp) != 0:
+                        continue
+                    os.remove(fp)
+                    removed += 1
+                except OSError:
+                    continue
+    return removed
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("repo_id", help="HuggingFace repo (e.g. meta-llama/Llama-3-8B)")
@@ -172,6 +222,9 @@ def main():
     print(f"START {args.repo_id}", flush=True)
     try:
         path = snapshot_download(**kwargs)
+        pruned = _cleanup_zero_byte_incomplete(args.repo_id, path)
+        if pruned:
+            print(f"CLEANUP removed {pruned} stale zero-byte .incomplete marker(s)", flush=True)
         print(f"DONE {path}", flush=True)
     except Exception as e:
         print(f"ERROR {e}", file=sys.stderr, flush=True)
