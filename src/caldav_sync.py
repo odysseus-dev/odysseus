@@ -246,14 +246,13 @@ def _should_prune_window(seen_uids: set, parse_failed: bool) -> bool:
     """Whether the post-sync prune of vanished CalDAV events is safe to run.
 
     The prune deletes local ``origin=="caldav"`` rows in the window whose UID the
-    server did not just return. When ``seen_uids`` is empty that normally means
-    the calendar has no events in the window, so pruning is correct. But if the
-    server returned objects and every one failed to parse, ``seen_uids`` is empty
-    only because we could not read them — pruning would wipe the whole window.
-    Skip the prune in that case (no readable data + at least one parse failure).
+    server did not just return. Any parse failure (total or partial) makes
+    ``seen_uids`` an incomplete view of the server, so pruning against it can
+    delete events that still exist upstream but could not be read: a total
+    failure wipes the whole window, a partial failure deletes just the
+    unreadable ones. Only prune on a clean read. An empty ``seen_uids`` after a
+    clean read is a genuinely empty window, which is safe to prune.
     """
-    if seen_uids:
-        return True
     return not parse_failed
 
 
@@ -432,9 +431,11 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                 # are prunable; locally-created events (agent / email triage / a
                 # UI event whose write-back failed) carry origin NULL and must
                 # never be deleted just because the server didn't return them.
-                # Skip the prune when the fetch returned objects we couldn't read
-                # (empty seen_uids from parse failures, not an empty calendar) —
-                # otherwise the isnot(None) branch deletes every windowed event.
+                # Skip the prune on any parse failure: seen_uids is then an
+                # incomplete view of the server, so pruning against it would
+                # delete events that still exist upstream but could not be read
+                # (the empty-seen_uids case wipes the whole window; a partial
+                # failure deletes just the unreadable rows).
                 if _should_prune_window(seen_uids, parse_failed):
                     stale = db.query(CalendarEvent).filter(
                         CalendarEvent.calendar_id == local_cal.id,
