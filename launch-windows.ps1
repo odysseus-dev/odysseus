@@ -55,7 +55,8 @@ Write-Step "Checking for Python"
 function Get-PythonVersionText($launcher, $launcherArgs) {
     try {
         return (& $launcher @launcherArgs -c "import sys; print('.'.join(map(str, sys.version_info[:3])))" 2>$null).Trim()
-    } catch {
+    }
+    catch {
         return $null
     }
 }
@@ -105,7 +106,8 @@ if (-not (Test-Path $venvPy)) {
     Write-Step "Creating virtual environment (venv)"
     & $pyExe @pyArgs -m venv venv
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPy)) { Fail "Failed to create the virtual environment." }
-} else {
+}
+else {
     Write-Host "venv already exists - skipping creation."
 }
 
@@ -133,4 +135,4 @@ if (-not (Find-GitBash)) {
 Write-Step ("Starting Odysseus at http://{0}:{1}" -f $BindHost, $Port)
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
-& $venvPy -m uvicorn app:app --host $BindHost --port $Port
+& $venvPy -m uvicorn app:app --host $BindHost --port $Port --loop asyncio
