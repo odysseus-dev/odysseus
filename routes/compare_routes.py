@@ -39,6 +39,24 @@ def _owned_endpoint_by_url(db, base_url, owner):
     return owner_filter(q, ModelEndpoint, owner).first()
 
 
+def _owned_endpoint_by_id(db, endpoint_id, owner):
+    """ModelEndpoint whose id == `endpoint_id` and is VISIBLE to `owner` (their
+    own rows + legacy null-owner "shared" rows); None otherwise.
+
+    Preferred over _owned_endpoint_by_url for credential resolution: two visible
+    endpoints can share the same base_url but hold DIFFERENT api_keys (e.g. two
+    accounts on the same provider). A base_url-only match returns whichever row
+    sorts first, so it can copy the WRONG owner-scoped key into the [CMP] session.
+    An id pins the exact registered endpoint, so /api/compare/start prefers it and
+    only falls back to URL matching for legacy / admin raw-URL callers. Owner
+    scoping is identical to _owned_endpoint_by_url (a null/empty owner is a no-op).
+    """
+    from core.database import ModelEndpoint
+    from src.auth_helpers import owner_filter
+    q = db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id)
+    return owner_filter(q, ModelEndpoint, owner).first()
+
+
 class RecordVoteRequest(BaseModel):
     prompt: str
     models: List[str]
@@ -55,8 +73,10 @@ def setup_compare_routes(session_manager: SessionManager):
         prompt: str = Form(...),
         model_a: str = Form(...),
         model_b: str = Form(...),
-        endpoint_a: str = Form(...),
-        endpoint_b: str = Form(...),
+        endpoint_a: str = Form(""),
+        endpoint_b: str = Form(""),
+        endpoint_a_id: str = Form(""),
+        endpoint_b_id: str = Form(""),
         is_blind: str = Form("true"),
     ):
         """Create two ephemeral sessions and a comparison record.
@@ -99,12 +119,37 @@ def setup_compare_routes(session_manager: SessionManager):
         resolved = []
         db = SessionLocal()
         try:
-            for sid, model, endpoint in [(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]:
-                # Resolve the supplied URL to a ModelEndpoint the caller owns
-                # (their own rows + legacy null-owner shared rows), scoped so a
-                # comparison can't borrow another user's private endpoint key.
-                base = normalize_base(endpoint)
-                ep = _owned_endpoint_by_url(db, base, user)
+            for sid, model, endpoint, endpoint_id in [
+                (sid_a, model_a, endpoint_a, endpoint_a_id),
+                (sid_b, model_b, endpoint_b, endpoint_b_id),
+            ]:
+                # Prefer an explicit endpoint id: it pins the EXACT registered
+                # endpoint (and its api_key), even when two endpoints visible to
+                # the caller share a base_url with different keys — a URL-only
+                # match would copy whichever row sorts first, i.e. possibly the
+                # wrong key. Fall back to URL resolution only for legacy / admin
+                # raw-URL callers that don't send an id.
+                eid = endpoint_id.strip() if isinstance(endpoint_id, str) else ""
+                if eid:
+                    ep = _owned_endpoint_by_id(db, eid, user)
+                    if ep is None:
+                        # An id the caller can't see (wrong owner / deleted) must
+                        # NOT silently fall back to a same-URL row with a different
+                        # key — that's exactly the mix-up ids exist to prevent.
+                        raise HTTPException(404, "Model endpoint not found")
+                    # The id already resolved the endpoint; ignore any raw URL the
+                    # caller also sent and dial the stored config instead.
+                    endpoint = ep.base_url
+                elif not endpoint:
+                    raise HTTPException(
+                        422, "endpoint_a/endpoint_b or endpoint_a_id/endpoint_b_id is required"
+                    )
+                else:
+                    # Resolve the supplied URL to a ModelEndpoint the caller owns
+                    # (their own rows + legacy null-owner shared rows), scoped so a
+                    # comparison can't borrow another user's private endpoint key.
+                    base = normalize_base(endpoint)
+                    ep = _owned_endpoint_by_url(db, base, user)
                 # Reject *unregistered* raw URLs for signed-in non-admins; a
                 # matched registered endpoint supplies an id so the caller can
                 # still compare endpoints they own. Blanket-rejecting here (the
@@ -160,8 +205,12 @@ def setup_compare_routes(session_manager: SessionManager):
                 prompt=prompt,
                 model_a=model_a,
                 model_b=model_b,
-                endpoint_a=endpoint_a,
-                endpoint_b=endpoint_b,
+                # Record the URL the session actually dials. For URL callers this
+                # is their raw input; for id-only callers (empty endpoint_a/_b)
+                # fall back to the resolved endpoint URL so the column stays
+                # meaningful and non-null. resolved is in [a, b] order.
+                endpoint_a=endpoint_a or resolved[0][2],
+                endpoint_b=endpoint_b or resolved[1][2],
                 is_blind=blind,
                 blind_mapping=json.dumps(mapping),
                 owner=user,

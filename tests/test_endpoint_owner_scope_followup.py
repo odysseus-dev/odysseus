@@ -270,17 +270,110 @@ def test_compare_start_admin_raw_endpoint_carries_no_borrowed_key(monkeypatch):
         assert s.headers == {}  # no borrowed key/headers
 
 
+def test_compare_start_prefers_endpoint_id_over_url(monkeypatch):
+    # Two endpoints visible to the caller share a base_url but hold DIFFERENT
+    # api_keys (e.g. two accounts on one provider). A base_url-only match returns
+    # whichever row sorts first, so it can copy the WRONG key. Passing the
+    # explicit id must pin the intended endpoint and copy ITS key.
+    import routes.compare_routes as cr
+    from src.endpoint_resolver import build_chat_url, build_headers, normalize_base
+
+    monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
+
+    url = "http://127.0.0.1:8000/v1"
+    by_url = SimpleNamespace(id=1, api_key="sk-first", base_url=url)   # URL match
+    by_id = SimpleNamespace(id=2, api_key="sk-second", base_url=url)   # id match
+
+    # URL resolution would return the WRONG row; the id resolves the intended one.
+    monkeypatch.setattr(cr, "_owned_endpoint_by_url", lambda *a, **k: by_url)
+    monkeypatch.setattr(
+        cr, "_owned_endpoint_by_id", lambda db, eid, owner: by_id if eid == "2" else None
+    )
+
+    created = {}
+    captured = {}
+
+    def _create_session(session_id, **kw):
+        created[session_id] = SimpleNamespace(headers={})
+        captured[session_id] = kw
+
+    start = _compare_start_route(
+        SimpleNamespace(create_session=_create_session, sessions=_SessionStore(created))
+    )
+    start(
+        _compare_request(),
+        prompt="p",
+        model_a="a",
+        model_b="b",
+        endpoint_a="",
+        endpoint_b="",
+        endpoint_a_id="2",
+        endpoint_b_id="2",
+    )
+
+    expected_url = build_chat_url(normalize_base(url))
+    expected_headers = build_headers("sk-second", url)
+    assert captured and all(kw["endpoint_url"] == expected_url for kw in captured.values())
+    # The id's key is copied in, NOT the same-URL row's key.
+    for s in created.values():
+        assert s.headers == expected_headers
+
+
+def test_compare_start_rejects_unowned_endpoint_id(monkeypatch):
+    # An id the caller can't see (wrong owner / deleted) must 404 and must NOT
+    # silently fall back to a same-URL row with a different key.
+    import routes.compare_routes as cr
+
+    monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
+    # A same-URL row exists and would resolve, but the governing id is invisible.
+    monkeypatch.setattr(
+        cr,
+        "_owned_endpoint_by_url",
+        lambda *a, **k: SimpleNamespace(id=1, api_key="sk", base_url="http://127.0.0.1:8000/v1"),
+    )
+    monkeypatch.setattr(cr, "_owned_endpoint_by_id", lambda *a, **k: None)
+
+    created = {}
+
+    def _create_session(session_id, **_):
+        created[session_id] = SimpleNamespace(headers={})
+
+    start = _compare_start_route(
+        SimpleNamespace(create_session=_create_session, sessions=_SessionStore(created))
+    )
+    with pytest.raises(HTTPException) as exc:
+        start(
+            _compare_request(),
+            prompt="p",
+            model_a="a",
+            model_b="b",
+            endpoint_a="",
+            endpoint_b="",
+            endpoint_a_id="999",
+            endpoint_b_id="999",
+        )
+
+    assert exc.value.status_code == 404
+    assert created == {}
+
+
 def test_compare_endpoint_key_lookup_is_owner_scoped():
     body = Path("routes/compare_routes.py").read_text(encoding="utf-8")
     start_body = body.split("def start_comparison", 1)[1].split("# Store comparison record", 1)[0]
     helper_body = body.split("def _owned_endpoint_by_url", 1)[1].split("class RecordVoteRequest", 1)[0]
+    id_helper_body = body.split("def _owned_endpoint_by_id", 1)[1].split("class RecordVoteRequest", 1)[0]
 
     assert "_reject_raw_endpoint_url_for_non_admin" in start_body
     assert "_owned_endpoint_by_url(db, base, user)" in start_body
+    # Credentials prefer an explicit endpoint id (pins the exact key) and only
+    # fall back to URL matching for legacy / admin raw-URL callers.
+    assert "_owned_endpoint_by_id(db, eid, user)" in start_body
     # The session binds to the resolved endpoint's stored base URL, not the raw
     # caller-supplied string (the reviewer's remaining compare blocker).
     assert "build_chat_url(normalize_base(ep.base_url))" in start_body
     assert "owner_filter(q, ModelEndpoint, owner)" in helper_body
+    # The id lookup is owner-scoped the same way the URL lookup is.
+    assert "owner_filter(q, ModelEndpoint, owner)" in id_helper_body
 
 
 def test_gallery_image_endpoint_lookups_are_owner_scoped():
