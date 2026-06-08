@@ -3,9 +3,20 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional, Set
 
 logger = logging.getLogger(__name__)
+
+
+def _auth_intentionally_disabled() -> bool:
+    """True when the operator has explicitly turned auth off (AUTH_ENABLED=false).
+
+    This is the intentional single-user / local self-host mode. Mirrors the
+    AUTH_ENABLED parsing in app.py / core.middleware so the tool layer agrees
+    with the request layer on what "no auth" means.
+    """
+    return os.getenv("AUTH_ENABLED", "true").strip().lower() == "false"
 
 
 # Tools regular/public users must not execute directly. These either expose
@@ -162,13 +173,24 @@ def is_public_blocked_tool(tool_name: Optional[str]) -> bool:
 
 
 def owner_is_admin_or_single_user(owner: Optional[str]) -> bool:
-    """Return True for admins, or when auth is not configured yet."""
+    """Return True for admins, or in intentional single-user mode.
+
+    Single-user mode means the operator explicitly disabled auth
+    (``AUTH_ENABLED=false``) — the local/self-host default where the owner has
+    full access to their own box.
+
+    The pre-setup window (auth ENABLED but no admin created yet) is treated as
+    NON-admin: returning True there would hand server-execution tools
+    (``bash``/``python``) to any caller before setup completes. The auth
+    middleware already 401s ``/api/`` requests pre-setup, so this is
+    defense-in-depth for callers that bypass it (e.g. trusted loopback).
+    """
     try:
         from core.auth import AuthManager
 
         auth = AuthManager()
         if not auth.is_configured:
-            return True
+            return _auth_intentionally_disabled()
         return bool(owner and auth.is_admin(owner))
     except Exception as exc:
         logger.warning("Unable to evaluate owner admin status: %s", exc)
