@@ -1098,7 +1098,7 @@ class TaskScheduler:
                                endpoint_url: str, model: str) -> str:
         """Gather raw data from all integrations, hand it to the LLM to write the check-in."""
         from src.tool_implementations import do_manage_notes
-        from src.agent_tools import get_mcp_manager
+        from src.tool_utils import get_mcp_manager
 
         tz_name = _resolve_task_timezone(db, task)
         try:

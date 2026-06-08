@@ -12,19 +12,9 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE
+from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE
+from src.tool_utils import get_mcp_manager
 from core.constants import internal_api_base
-
-
-def get_mcp_manager():
-    from src import agent_tools
-    return agent_tools.get_mcp_manager()
-
-
-def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
-    if len(text) > limit:
-        return text[:limit] + f"\n... (truncated, {len(text)} chars total)"
-    return text
 
 logger = logging.getLogger(__name__)
 

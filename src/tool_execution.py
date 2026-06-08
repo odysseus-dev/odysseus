@@ -21,6 +21,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
 from src.tool_policy import ToolPolicy
 from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
+from src.tool_utils import _truncate, get_mcp_manager
 
 # Persistent working directory for agent subprocesses.
 # Resolves to <repo_root>/data, which is the bind-mounted volume in Docker
@@ -326,12 +327,6 @@ PROGRESS_INTERVAL_S = 2.0
 # snippet without dragging the whole output along.
 PROGRESS_TAIL_LINES = 12
 
-
-def get_mcp_manager():
-    from src import agent_tools
-    return agent_tools.get_mcp_manager()
-
-
 # Directories ignored by the code-nav tools' Python fallbacks so results aren't
 # polluted by VCS internals / dependency trees / build caches. ripgrep already
 # honours .gitignore; this is the parity floor for the no-rg path (and the
@@ -363,12 +358,6 @@ def _resolve_search_root(raw_path: str, workspace: Optional[str] = None) -> str:
         roots = _tool_path_roots()
         return roots[0] if roots else os.path.realpath(".")
     return _resolve_tool_path(raw)
-
-
-def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
-    if len(text) > limit:
-        return text[:limit] + f"\n... (truncated, {len(text)} chars total)"
-    return text
 
 logger = logging.getLogger(__name__)
 
