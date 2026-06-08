@@ -2215,7 +2215,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 if (json.tool === 'manage_memory') {
                   if (window._manageMemoryTimer) clearTimeout(window._manageMemoryTimer);
                   window._manageMemoryTimer = setTimeout(
-                    () => window.dispatchEvent(new CustomEvent('memory-refresh')), 600);
+                    () => window.dispatchEvent(new CustomEvent('memory-refresh')), 2000);
                 }
                 // --- Apply UI control actions embedded in tool_output ---
                 if (json.ui_event) {
@@ -2803,6 +2803,17 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           }
         }
       } // end if (!_isBgFinal)
+
+      // --- Deferred sidebar refresh after auto-extraction ---
+      // Background memory/skill extraction starts as asyncio tasks on the
+      // backend after [DONE] and can take several seconds (LLM call). Two
+      // staggered refreshes cover fast and slow models without hammering the
+      // server. Skipped for background streams — the user isn't watching this
+      // session's sidebar right now.
+      if (!_isBgFinal) {
+        setTimeout(() => window.dispatchEvent(new CustomEvent('memory-refresh')), 4000);
+        setTimeout(() => window.dispatchEvent(new CustomEvent('memory-refresh')), 10000);
+      }
 
     } catch (err) {
       _renderStream();
