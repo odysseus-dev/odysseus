@@ -192,7 +192,20 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                         # that partial view delete or rewrite the full memory.
                         keep_ids.update(mid for mid in truncated_ids if mid in by_id)
 
-                        if keep_ids:
+                        # Delete only memories the model EXPLICITLY dropped, never
+                        # ones it merely omitted from `keep`. Treating the
+                        # complement of `keep` as deletions meant a model that
+                        # forgot to re-list an id (common) silently destroyed that
+                        # memory. Honor the explicit `drop` set instead.
+                        drop_ids = {
+                            d.get("id")
+                            for d in drop_items
+                            if isinstance(d, dict) and d.get("id") in by_id
+                        }
+                        # Never delete a memory the model only saw truncated.
+                        drop_ids -= truncated_ids
+
+                        if drop_ids or cleaned_by_id:
                             changed_text = 0
                             group_ref_ids = {id(m) for m in group_memories}
                             kept_all = []
@@ -201,7 +214,7 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                                     kept_all.append(mem)
                                     continue
                                 mid = mem.get("id")
-                                if mid not in keep_ids:
+                                if mid in drop_ids:
                                     continue
                                 cleaned = cleaned_by_id.get(mid) or {}
                                 if mid in truncated_ids:
@@ -213,7 +226,7 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                                     mem["category"] = cleaned["category"]
                                 kept_all.append(mem)
 
-                            removed = len(group_memories) - len(keep_ids)
+                            removed = sum(1 for m in group_memories if m.get("id") in drop_ids)
                             total_scanned += len(group_memories)
                             if removed or changed_text:
                                 all_memories = kept_all
