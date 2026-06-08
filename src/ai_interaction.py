@@ -1288,6 +1288,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
       create_theme <name> <bg> <fg> <panel> <border> <accent> [key=val ...] — Create custom theme. Optional key=val: advanced color overrides AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false
       open_panel <name>       — Open a panel (documents, gallery, email, sessions, notes, memories, skills, settings, cookbook)
       open_email_reply <uid> [folder] [reply|reply-all|ai-reply] — Open a reply draft document for an email; does not send
+      email_view <folder> [unread|unanswered] [from:<addr>] [attachments] — Switch what the email tab shows (folder + filters). Changes the user's view; not the same as list_emails.
       get_toggles             — Return current toggle states (server-side knowledge)
     """
     lines = content.strip().split("\n")
@@ -1535,8 +1536,10 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         uid = reply_parts[1].strip() if len(reply_parts) > 1 else ""
         folder = reply_parts[2].strip() if len(reply_parts) > 2 else "INBOX"
         mode = reply_parts[3].strip().lower() if len(reply_parts) > 3 else "reply"
-        if not uid:
-            return {"error": "open_email_reply needs: open_email_reply <uid> [folder] [reply|reply-all|ai-reply]"}
+        if not uid or not uid.isdigit():
+            # Reject a non-numeric/blank UID (a model trying to "show" email this
+            # way) so it can't open a broken reply draft + reset the email view.
+            return {"error": "open_email_reply needs a real numeric email UID from a prior list_emails/read_email result. To SHOW or FILTER the email view (e.g. 'show emails from X'), use email_view instead."}
         if mode not in ("reply", "reply-all", "ai-reply"):
             mode = "reply"
         return {
@@ -1545,6 +1548,47 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
             "folder": folder or "INBOX",
             "mode": mode,
             "results": f"Opening reply draft for email UID {uid}",
+        }
+
+    elif action == "email_view":
+        # Switch what the email tab DISPLAYS. shlex keeps a quoted folder with
+        # spaces (e.g. "[Gmail]/All Mail") as one token.
+        import shlex
+        try:
+            tokens = shlex.split(lines[0].strip())[1:]
+        except ValueError:
+            tokens = lines[0].strip().split()[1:]
+        folder = ""
+        filter_ = "all"
+        from_addr = ""
+        has_attachments = False
+        for tok in tokens:
+            low = tok.lower()
+            if low in ("unread", "unanswered", "all"):
+                filter_ = low
+            elif low in ("attachments", "attachment", "has_attachments", "with_attachments"):
+                has_attachments = True
+            elif low.startswith("from:"):
+                from_addr = tok[5:].strip()
+            elif not folder:
+                folder = tok
+        if not folder:
+            folder = "INBOX"
+        bits = []
+        if filter_ != "all":
+            bits.append(filter_)
+        if from_addr:
+            bits.append(f"from {from_addr}")
+        if has_attachments:
+            bits.append("with attachments")
+        suffix = f" ({', '.join(bits)})" if bits else ""
+        return {
+            "ui_event": "set_email_view",
+            "folder": folder,
+            "filter": filter_,
+            "from": from_addr,
+            "has_attachments": has_attachments,
+            "results": f"Switching email view to {folder}{suffix}",
         }
 
     elif action == "get_toggles":

@@ -599,12 +599,13 @@ let _libPrewarmTimer = null;
 let _libPrewarmPromise = null;
 let _libLastPrewarmAt = 0;
 
-function _libCacheKeyFor(accountId, folder, filter, hasAttachments) {
+function _libCacheKeyFor(accountId, folder, filter, hasAttachments, fromAddr) {
   return [
     accountId || '',
     folder || '',
     filter || '',
     hasAttachments ? 1 : 0,
+    fromAddr || '',
   ].join('|');
 }
 function _libCacheKey() {
@@ -612,7 +613,8 @@ function _libCacheKey() {
     state._libAccountId || '',
     state._libFolder || '',
     state._libFilter || '',
-    state._libHasAttachments
+    state._libHasAttachments,
+    state._libFrom || ''
   );
 }
 function _libCacheGet(key) { return _libListCache.get(key) || null; }
@@ -754,6 +756,7 @@ export function openEmailLibrary(opts = {}) {
   state._libSearch = '';
   state._libFilter = 'all';
   state._libHasAttachments = false;
+  state._libFrom = '';
   // Animate the very first card render with a domino cascade (same as the
   // sidebar section-domino-in keyframe). Reset by _renderGrid after the
   // animation is queued so subsequent filter/sort re-renders are instant.
@@ -763,6 +766,12 @@ export function openEmailLibrary(opts = {}) {
     _publishActiveAccount();
   }
   if (opts.folder) state._libFolder = opts.folder;
+  // Agent-emitted filter subset; the UI exposes more (favorites/tags/etc.) — extend if the agent learns them.
+  if (opts.filter && ['all', 'unread', 'unanswered'].includes(String(opts.filter))) {
+    state._libFilter = String(opts.filter);
+  }
+  if (opts.from) state._libFrom = String(opts.from);
+  if (opts.hasAttachments) state._libHasAttachments = true;
   state._libPendingExpandUid = opts.uid || null;
 
   const modal = document.createElement('div');
@@ -1285,9 +1294,51 @@ export function openEmailLibrary(opts = {}) {
 
   _renderAccountsLoading();
   _loadAccounts();
+  // Reflect agent-applied filter/attachments in the controls.
+  const _fEl = document.getElementById('email-lib-filter');
+  if (_fEl) _fEl.value = state._libFilter;
+  const _aBtn = document.getElementById('email-attach-btn');
+  if (_aBtn) _aBtn.classList.toggle('active', !!state._libHasAttachments);
+  _syncUnreadWindowGlow();
   _loadFolders();
   _loadEmailReminderBellVisibility();
   _loadEmails();
+}
+
+// Switch the email view for the agent's `set_email_view`. When the panel is
+// already open, update in place (preserving the user's window/dock) rather than
+// recreating it via openEmailLibrary.
+export function setEmailView(opts = {}) {
+  if (!state._libOpen || !document.getElementById('email-lib-modal')) {
+    return openEmailLibrary(opts);
+  }
+  if (opts.folder) {
+    const folders = Array.isArray(state._libFolders) ? state._libFolders : [];
+    const resolved = _resolveRequestedFolder(opts.folder, folders);
+    if (resolved) {
+      state._libFolder = resolved;
+    } else if (folders.length) {
+      try { showToast(`Couldn't find folder "${opts.folder}" — showing INBOX`); } catch (_) {}
+      state._libFolder = folders.includes('INBOX') ? 'INBOX' : (folders[0] || 'INBOX');
+    } else {
+      state._libFolder = opts.folder;
+    }
+  }
+  state._libFilter = (opts.filter && ['all', 'unread', 'unanswered'].includes(String(opts.filter)))
+    ? String(opts.filter) : 'all';
+  state._libFrom = opts.from ? String(opts.from) : '';
+  state._libHasAttachments = !!opts.hasAttachments;
+  state._libSearch = '';
+  const folderEl = document.getElementById('email-lib-folder');
+  if (folderEl) folderEl.value = state._libFolder;
+  const filterEl = document.getElementById('email-lib-filter');
+  if (filterEl) filterEl.value = state._libFilter;
+  const searchEl = document.getElementById('email-lib-search');
+  if (searchEl) searchEl.value = '';
+  const attBtn = document.getElementById('email-attach-btn');
+  if (attBtn) attBtn.classList.toggle('active', state._libHasAttachments);
+  _syncUnreadWindowGlow();
+  _loadEmailsFresh();
 }
 
 async function _loadAccounts() {
@@ -1455,11 +1506,24 @@ async function _loadFolders({ resetMissing = false } = {}) {
     const sel = document.getElementById('email-lib-folder');
     if (!sel || !data.folders) return;
     state._libFolders = data.folders;
+    // Resolve an agent folder alias (e.g. "all mail"); toast + fall back to
+    // INBOX if unresolved. (resetMissing below does the full stale-state reset.)
+    if (state._libFolder && state._libFolder !== '__scheduled__'
+        && !data.folders.includes(state._libFolder)) {
+      const resolved = _resolveRequestedFolder(state._libFolder, data.folders);
+      if (resolved) {
+        state._libFolder = resolved;
+      } else if (!resetMissing) {
+        try { showToast(`Couldn't find folder "${state._libFolder}" — showing INBOX`); } catch (_) {}
+        state._libFolder = data.folders.includes('INBOX') ? 'INBOX' : (data.folders[0] || 'INBOX');
+      }
+    }
     if (resetMissing && state._libFolder !== '__scheduled__' && !data.folders.includes(state._libFolder)) {
       state._libFolder = data.folders.includes('INBOX') ? 'INBOX' : (data.folders[0] || 'INBOX');
       state._libFilter = 'all';
       state._libSearch = '';
       state._libHasAttachments = false;
+      state._libFrom = '';
       _libListCache.clear();
       const searchEl = document.getElementById('email-lib-search');
       const filterEl = document.getElementById('email-lib-filter');
@@ -1504,6 +1568,34 @@ async function _loadFolders({ resetMissing = false } = {}) {
     sel.appendChild(schedOpt);
     sel.value = state._libFolder;
   } catch (e) {}
+}
+
+// Map an agent folder alias ("all mail", "starred", …) to a real IMAP folder;
+// null if nothing matches.
+function _resolveRequestedFolder(requested, available) {
+  if (!requested) return null;
+  const want = String(requested).trim();
+  const lower = new Map((available || []).map(f => [String(f).toLowerCase(), f]));
+  const exact = lower.get(want.toLowerCase());
+  if (exact) return exact;
+  const ALIASES = {
+    inbox: ['inbox'],
+    'all mail': ['all mail', 'archive', 'archived'],
+    archive: ['all mail', 'archive', 'archived'],
+    archived: ['all mail', 'archive', 'archived'],
+    starred: ['starred', 'flagged'],
+    important: ['important'],
+    spam: ['spam', 'junk'],
+    junk: ['spam', 'junk'],
+    trash: ['trash', 'bin', 'deleted'],
+    bin: ['trash', 'bin', 'deleted'],
+    sent: ['sent'],
+    drafts: ['drafts', 'draft'],
+  };
+  const patterns = ALIASES[want.toLowerCase()] || [want.toLowerCase()];
+  const match = (available || []).find(f =>
+    patterns.some(p => String(f).toLowerCase().includes(p)));
+  return match || null;
 }
 
 function _crossFolderCandidates() {
@@ -1641,6 +1733,7 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
   const offsetAtStart = state._libOffset;
   const searchAtStart = state._libSearch;
   const hasAttachmentsAtStart = state._libHasAttachments;
+  const fromAtStart = state._libFrom || '';
 
   const grid = document.getElementById('email-lib-grid');
   if (!grid) { if (seq === _libLoadSeq) state._libLoading = false; return; }
@@ -1686,11 +1779,12 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
     } else {
       const accountQS = accountAtStart ? `&account_id=${encodeURIComponent(accountAtStart)}` : '';
       const attQS = hasAttachmentsAtStart ? '&has_attachments=1' : '';
+      const fromQS = fromAtStart ? `&from=${encodeURIComponent(fromAtStart)}` : '';
       // `&_=Date.now()` bypasses the server's 8s list cache. Default
       // opens omit it so rapid close/reopen returns instantly; the
       // Refresh button passes `force: true` to add it back.
       const buster = force ? `&_=${Date.now()}` : '';
-      const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folderAtStart)}${accountQS}&limit=100&offset=${offsetAtStart}&filter=${filterAtStart}${attQS}${buster}`);
+      const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folderAtStart)}${accountQS}&limit=100&offset=${offsetAtStart}&filter=${filterAtStart}${attQS}${fromQS}${buster}`);
       const data = await res.json();
       if (seq !== _libLoadSeq || accountAtStart !== (state._libAccountId || '')) return;
       if (data.error) throw new Error(data.error);
@@ -1809,6 +1903,7 @@ function _renderGrid() {
       state._libEmails.length === 0
       && (!state._libFilter || state._libFilter === 'all')
       && !(state._libSearch || '').trim()
+      && !(state._libFrom || '').trim()
     );
     if (_isTrulyEmpty) {
       grid.innerHTML =
