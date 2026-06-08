@@ -705,10 +705,20 @@ async def _direct_fallback(
             # Run user code in a subprocess so an infinite loop or crash
             # can't take the whole server down. -I = isolated mode (skip
             # user site, no PYTHONPATH inheritance) for hygiene.
+            # -u + line-buffered stdout so print() reaches the pipe (and
+            # tool_progress tail) while the subprocess is still running —
+            # without this, Windows/pipe mode often buffers until exit.
+            _py_code = (
+                "import sys as _sys\n"
+                "try:\n"
+                "    _sys.stdout.reconfigure(line_buffering=True)\n"
+                "except Exception:\n"
+                "    pass\n"
+            ) + content
             proc = await asyncio.create_subprocess_exec(
                 # Use the running interpreter — there is no `python3.exe` on
                 # Windows, which made the agent's `python` tool fail there.
-                (sys.executable or "python"), "-I", "-c", content,
+                (sys.executable or "python"), "-u", "-I", "-c", _py_code,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,
