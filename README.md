@@ -90,7 +90,7 @@ connect to API or remote model servers instead. Use `--host 0.0.0.0` only when y
 
 ### Apple Silicon
 Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
-M-series Mac, run Odysseus natively:
+M-series Mac(Odysseus will not work on any os other then Tahoe), run Odysseus natively:
 
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
