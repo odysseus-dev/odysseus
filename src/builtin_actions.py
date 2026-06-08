@@ -12,7 +12,7 @@ from typing import Tuple
 
 from src.auth_helpers import owner_filter
 from core.platform_compat import IS_WINDOWS, find_bash
-from core.constants import internal_api_base
+from core.constants import DATA_DIR, internal_api_base
 
 logger = logging.getLogger(__name__)
 
@@ -2043,7 +2043,7 @@ async def action_cookbook_serve(
     except Exception:
         end_after_min = 0
 
-    state_path = Path("/app/data/cookbook_state.json")
+    state_path = Path(DATA_DIR) / "cookbook_state.json"
     try:
         state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
     except Exception:

@@ -210,8 +210,10 @@ async def maybe_extract_skill(
             pass
 
         # Parse JSON. The object may be wrapped in code fences or surrounded by
-        # commentary (and may contain a stray brace before the real object), so
-        # use a tolerant extractor that tries each '{' candidate.
+        # commentary (and may contain a stray/invalid brace fragment before
+        # the real object — including one that makes the response itself look
+        # like it starts with '{'), so use a tolerant extractor that tries the
+        # whole string first and then each '{' candidate left-to-right.
         data = _extract_json_object(response)
         if not data:
             logger.debug("[skill-extract] no JSON object found in response, dropping")

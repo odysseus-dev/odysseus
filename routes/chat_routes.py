@@ -1209,11 +1209,30 @@ def setup_chat_routes(
             finally:
                 _active_streams.pop(session, None)
 
-        # Run the stream as a DETACHED background task so it survives the client
-        # closing the tab / navigating away (true terminal-agent behavior). The
-        # SSE response just subscribes (replay buffered output + live); dropping
-        # the SSE only removes a subscriber — the run keeps going and saves the
-        # assistant message on completion regardless. Reconnect via /api/chat/resume.
+        # Compare panes are short-lived, single-shot generations whose sessions
+        # exist only to drive that one pane — there's nothing to "resume" and
+        # the user expects the pane's Stop button (which aborts the fetch,
+        # closing this SSE) to promptly cancel the upstream LLM call. Detaching
+        # them would keep burning upstream tokens/compute after the pane is
+        # stopped or the comparison is abandoned, and would surface a stale
+        # "still streaming" /resume target for a session nobody will revisit.
+        #
+        # So: stream them directly (no agent_runs wrapping). Starlette cancels
+        # the underlying async generator (raising CancelledError/GeneratorExit
+        # inside it) as soon as it notices the client disconnected — which the
+        # mode-specific except blocks above already handle by saving the
+        # partial response exactly once. This stops the upstream call promptly
+        # without waiting on the next streamed chunk.
+        #
+        # Normal chat/agent streams keep the DETACHED behavior below: they
+        # survive the client closing the tab / navigating away (true
+        # terminal-agent semantics). The SSE response just subscribes (replay
+        # buffered output + live); dropping the SSE only removes a subscriber —
+        # the run keeps going and saves the assistant message on completion
+        # regardless. Reconnect via /api/chat/resume.
+        if compare_mode:
+            return StreamingResponse(_safe_stream(), media_type="text/event-stream")
+
         agent_runs.start(session, _safe_stream())
         return StreamingResponse(agent_runs.subscribe(session), media_type="text/event-stream")
 

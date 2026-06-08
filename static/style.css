@@ -14154,6 +14154,22 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   background: var(--border);
   border-color: var(--red);
 }
+.admin-tools-select {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  height: 26px;
+  min-width: 90px;
+}
+.admin-tools-select:hover {
+  background: var(--border);
+  border-color: var(--red);
+}
 .admin-spinner {
   display: inline-block;
   width: 12px;
@@ -14269,6 +14285,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 .admin-ep-actions {
   display: flex;
   gap: 4px;
+  align-items: center;
   flex-shrink: 0;
 }
 
