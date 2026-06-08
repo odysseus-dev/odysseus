@@ -87,8 +87,11 @@ async function loadUsers() {
           <input type="number" min="0" value="${maxMsg}" data-priv="max_messages_per_day" data-user="${esc(u.username)}" style="width:70px;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:12px;text-align:center;">
         </div>`;
         // Allowed models — checkbox list
-        const allowedSet = new Set((u.privileges && u.privileges.allowed_models) || []);
-        const allEmpty = allowedSet.size === 0;
+        const allowedModels = Array.isArray(u.privileges && u.privileges.allowed_models)
+          ? u.privileges.allowed_models
+          : [];
+        const allowedSet = new Set(allowedModels);
+        const modelsRestricted = !!(u.privileges && u.privileges.allowed_models_restricted);
         html += `<div style="padding:4px 0;">
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <span style="font-size:12px;">Allowed models</span>
@@ -97,7 +100,7 @@ async function loadUsers() {
               <a href="#" class="priv-models-none" data-user="${esc(u.username)}" style="font-size:10px;opacity:0.5;">None</a>
             </div>
           </div>
-          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${allEmpty ? 'All models allowed (no restrictions)' : allowedSet.size + ' model(s) allowed'}</div>
+          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${!modelsRestricted ? 'All models allowed (no restrictions)' : (allowedSet.size === 0 ? 'No models allowed' : allowedSet.size + ' model(s) allowed')}</div>
           <div class="priv-models-list" data-user="${esc(u.username)}">
             <span style="opacity:0.4;font-size:11px;">Loading models...</span>
           </div>
@@ -119,7 +122,7 @@ async function loadUsers() {
           // Load models list on first expand
           if (!_modelsLoaded && !privPanel.classList.contains('hidden')) {
             _modelsLoaded = true;
-            _loadModelsForUser(u.username, allowedSet, privPanel);
+            _loadModelsForUser(u.username, allowedSet, modelsRestricted, privPanel);
           }
         });
 
@@ -199,7 +202,7 @@ async function loadUsers() {
   } catch (e) { list.innerHTML = '<div class="admin-error">Failed to load users</div>'; }
 }
 
-async function _loadModelsForUser(username, allowedSet, privPanel) {
+async function _loadModelsForUser(username, allowedSet, modelsRestricted, privPanel) {
   const listEl = privPanel.querySelector(`.priv-models-list[data-user="${username}"]`);
   if (!listEl) return;
   try {
@@ -216,9 +219,9 @@ async function _loadModelsForUser(username, allowedSet, privPanel) {
       listEl.innerHTML = '<span style="opacity:0.4;font-size:11px;">No models available</span>';
       return;
     }
-    const allEmpty = allowedSet.size === 0;
+    let restricted = modelsRestricted;
     listEl.innerHTML = sortModelObjects(allModels).map(m => {
-      const checked = allEmpty || allowedSet.has(m.mid) ? 'checked' : '';
+      const checked = !restricted || allowedSet.has(m.mid) ? 'checked' : '';
       return `<label>
         <input type="checkbox" class="priv-model-cb" data-mid="${esc(m.mid)}" ${checked}>
         <span>${esc(m.display)}</span>
@@ -232,14 +235,15 @@ async function _loadModelsForUser(username, allowedSet, privPanel) {
       listEl.querySelectorAll('.priv-model-cb').forEach(cb => {
         if (cb.checked) checked.push(cb.dataset.mid);
       });
-      // If all are checked, send empty array (= no restrictions)
-      const value = checked.length === allModels.length ? [] : checked;
+      // All checked means unrestricted; zero checked means explicitly no models.
+      restricted = checked.length !== allModels.length;
+      const value = restricted ? checked : [];
       const hint = privPanel.querySelector('.priv-models-list[data-user]')?.previousElementSibling?.querySelector('div[style*="opacity"]');
-      if (hint) hint.textContent = value.length === 0 ? 'All models allowed (no restrictions)' : value.length + ' model(s) allowed';
+      if (hint) hint.textContent = !restricted ? 'All models allowed (no restrictions)' : (value.length === 0 ? 'No models allowed' : value.length + ' model(s) allowed');
       fetch(`/api/auth/users/${encodeURIComponent(username)}/privileges`, {
         method: 'PUT', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ allowed_models: value }),
+        body: JSON.stringify({ allowed_models: value, allowed_models_restricted: restricted }),
       }).catch(() => {});
     }
     listEl.querySelectorAll('.priv-model-cb').forEach(cb => cb.addEventListener('change', _saveModels));
@@ -371,7 +375,7 @@ async function loadEndpoints() {
   const listLegacy = el('adm-epList');
   // Refresh model picker so new endpoints show up in chat
   if (window.modelsModule && window.modelsModule.refreshModels) {
-    window.modelsModule.refreshModels(true);
+    window.modelsModule.refreshModels();
     setTimeout(() => {
       if (window.sessionModule && window.sessionModule.updateModelPicker) {
         window.sessionModule.updateModelPicker();
@@ -411,23 +415,30 @@ async function loadEndpoints() {
           ? `<span class="admin-badge">${visibleCount}/${totalCount} models enabled</span>`
           : '<span class="admin-badge admin-badge-off">offline</span>';
       const justAddedClass = (_recentlyAddedEpId && String(ep.id) === _recentlyAddedEpId) ? ' adm-ep-just-added' : '';
+      const category = ep.category || (_isLocalEndpoint(ep.base_url) ? 'local' : 'api');
+      const kindLabel = ep.endpoint_kind && ep.endpoint_kind !== 'auto' ? ep.endpoint_kind.toUpperCase() : '';
+      const keyLabel = ep.has_key
+        ? (ep.api_key_fingerprint ? ` (key ${esc(ep.api_key_fingerprint)})` : ' (key set)')
+        : '';
       return `
         <div class="admin-user-row${ep.is_enabled ? '' : ' admin-ep-disabled'}${justAddedClass}" data-adm-ep-id="${ep.id}">
           <div style="display:flex;align-items:center;justify-content:space-between;${hasModels ? 'cursor:pointer;' : ''}padding:4px 0;" data-adm-ep-header="${ep.id}">
             <div class="admin-user-info" style="flex:1;flex-wrap:wrap;gap:0.3rem;">
               <span class="admin-user-name">${esc(ep.name)}</span>
               ${ep.model_type === 'image' ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);">Image</span>' : ''}
+              ${kindLabel ? `<span class="admin-badge">${esc(kindLabel)}</span>` : ''}
               ${statusBadge}
               ${ep.is_enabled ? '' : '<span class="admin-badge admin-badge-off">disabled</span>'}
               ${hasModels ? '<span style="font-size:10px;opacity:0.4;">Click to manage models</span>' : ''}
             </div>
-            <div style="display:flex;gap:4px;align-items:center;">
+            <div class="admin-ep-actions">
+              ${_isLocalEndpoint(ep.base_url) ? '<select class="admin-tools-select" data-adm-tools-select="' + ep.id + '" title="Native tool calling mode. Auto = use heuristic (fenced blocks for Ollama /v1). On = always use native function calling. Off = always use fenced blocks."><option value="auto"' + (ep.supports_tools !== true && ep.supports_tools !== false ? ' selected' : '') + '>Tools: Auto</option><option value="true"' + (ep.supports_tools === true ? ' selected' : '') + '>Tools: On</option><option value="false"' + (ep.supports_tools === false ? ' selected' : '') + '>Tools: Off</option></select>' : ''}
               <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
               <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
               ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
             </div>
           </div>
-          <div class="admin-ep-detail">${esc(ep.base_url)}${_isLocalEndpoint(ep.base_url) ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${ep.has_key ? ' (key set)' : ''}</div>
+          <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${keyLabel}</div>
           ${hasModels ? `<div class="mcp-tools-panel hidden" data-adm-ep-models-panel="${ep.id}"></div>` : ''}
         </div>`;
     });
@@ -446,7 +457,7 @@ async function loadEndpoints() {
       container.innerHTML = indices.map(i => rowHtml[i]).join('');
     };
     const localIdx = [], apiIdx = [];
-    data.forEach((ep, i) => (_isLocalEndpoint(ep.base_url) ? localIdx : apiIdx).push(i));
+    data.forEach((ep, i) => ((ep.category || (_isLocalEndpoint(ep.base_url) ? 'local' : 'api')) === 'local' ? localIdx : apiIdx).push(i));
     // Sort each section: enabled endpoints first, disabled at the bottom.
     // Preserve original order within each group via stable sort.
     const _sortByEnabled = (a, b) => Number(!!data[b].is_enabled) - Number(!!data[a].is_enabled);
@@ -465,6 +476,22 @@ async function loadEndpoints() {
     };
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => { e.stopPropagation(); await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' }); loadEndpoints(); });
+    });
+    queryAll('[data-adm-tools-select]').forEach(sel => {
+      sel.addEventListener('change', async (e) => {
+        e.stopPropagation();
+        const epId = sel.dataset.admToolsSelect;
+        const val = sel.value;
+        const body = {};
+        if (val === 'auto') body.supports_tools = null;
+        else body.supports_tools = val === 'true';
+        await fetch(`/api/model-endpoints/${epId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        loadEndpoints();
+      });
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -552,22 +579,48 @@ async function loadEndpoints() {
           } catch (_) {}
           panel.appendChild(_ld);
           const _stopSpin = () => { try { _modelsSpin && _modelsSpin.stop(); } catch (_) {} };
-          try {
-            const res = await fetch(`/api/model-endpoints/${epId}/models`, { credentials: 'same-origin' });
-            const models = await res.json();
-            _stopSpin();
+          const _loadingHtml = (label) => `<span style="opacity:0.55;font-size:11px;display:inline-flex;align-items:center;gap:8px;">${esc(label)}</span>`;
+          const renderModels = (models, warning = '') => {
             const sortedModels = sortModelObjects(models);
-            if (!sortedModels.length) { panel.innerHTML = '<span style="opacity:0.5;font-size:11px;">No models</span>'; return; }
+            const warningHtml = warning ? `<div class="admin-error" style="font-size:11px;margin:6px 0;">${esc(warning)}</div>` : '';
+            const attachRefresh = () => {
+              panel.querySelector(`[data-ep-refresh-models="${epId}"]`)?.addEventListener('click', async (e) => {
+                e.preventDefault();
+                panel.innerHTML = _loadingHtml('Refreshing models...');
+                try {
+                  const res = await fetch(`/api/model-endpoints/${epId}/models?refresh=true&refresh_timeout=60`, { credentials: 'same-origin' });
+                  const refreshWarning = res.headers.get('X-Model-Refresh-Warning') || '';
+                  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                  const refreshedModels = await res.json();
+                  renderModels(refreshedModels, refreshWarning);
+                  if (refreshWarning && uiModule?.showToast) uiModule.showToast(refreshWarning, 6000);
+                } catch (_) {
+                  renderModels(sortedModels, 'Model refresh failed; kept cached models.');
+                }
+              });
+            };
+            if (!sortedModels.length) {
+              panel.innerHTML = `<div class="mcp-tools-header">
+                <span>Models</span>
+                <span style="display:flex;gap:8px;align-items:center;">
+                  <span class="mcp-tools-count">0/0 enabled</span>
+                  <a href="#" data-ep-refresh-models="${epId}">Refresh</a>
+                </span>
+              </div>${warningHtml}<span style="opacity:0.5;font-size:11px;">No models</span>`;
+              attachRefresh();
+              return;
+            }
             const hiddenSet = new Set(sortedModels.filter(m => m.is_hidden).map(m => m.id));
             const showSearch = sortedModels.length >= 8;
             panel.innerHTML = `<div class="mcp-tools-header">
               <span>Models</span>
               <span style="display:flex;gap:8px;align-items:center;">
                 <span class="mcp-tools-count">${sortedModels.length - hiddenSet.size}/${sortedModels.length} enabled</span>
+                <a href="#" data-ep-refresh-models="${epId}">Refresh</a>
                 <a href="#" data-ep-select-all="${epId}">All</a>
                 <a href="#" data-ep-select-none="${epId}">None</a>
               </span>
-            </div>${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${sortedModels.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + sortedModels.map(m =>
+            </div>${warningHtml}${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${sortedModels.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + sortedModels.map(m =>
               `<label title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" class="adm-model-row">
                 <input type="checkbox" class="adm-cb-hidden" data-ep-model-id="${esc(m.id)}" ${!m.is_hidden ? 'checked' : ''}>
                 <span class="adm-check-dot" aria-hidden="true"></span>
@@ -580,6 +633,7 @@ async function loadEndpoints() {
                 row.style.display = (!needle || row.dataset.search.includes(needle)) ? '' : 'none';
               });
             };
+            attachRefresh();
             panel.querySelector(`[data-ep-search="${epId}"]`)?.addEventListener('input', (e) => filterRows(e.target.value));
             panel.querySelector(`[data-ep-select-all="${epId}"]`)?.addEventListener('click', (e) => {
               e.preventDefault();
@@ -598,6 +652,13 @@ async function loadEndpoints() {
             panel.querySelectorAll('input[type=checkbox]').forEach(cb => {
               cb.addEventListener('change', () => _saveEpModelState(epId, panel));
             });
+          };
+          try {
+            const res = await fetch(`/api/model-endpoints/${epId}/models`, { credentials: 'same-origin' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const models = await res.json();
+            _stopSpin();
+            renderModels(models);
           } catch (e) { _stopSpin(); panel.innerHTML = '<span class="admin-error" style="font-size:11px;">Failed to load models</span>'; }
         }
       });
@@ -637,6 +698,7 @@ async function _saveEpModelState(epId, panel) {
 function initEndpointForm() {
   const provider = el('adm-epProvider');
   const urlInput = el('adm-epUrl');
+  const kindSel = el('adm-epKind');
 
   // Custom provider picker — mirrors the (now hidden) <select id="adm-epProvider">
   // so the rest of this function (which reads provider.value and dispatches
@@ -688,14 +750,20 @@ function initEndpointForm() {
   provider.addEventListener('change', () => {
     if (provider.value) urlInput.value = provider.value;
     else urlInput.value = '';
+    if (kindSel) kindSel.value = provider.value ? 'api' : 'proxy';
   });
   urlInput.addEventListener('input', () => {
     if (provider.value && urlInput.value.trim() !== provider.value) {
       provider.value = '';
+      if (kindSel) kindSel.value = 'api';
       _renderPickerMenu();
       _syncPickerCurrent();
     }
   });
+  if (kindSel) kindSel.value = kindSel.value || 'api';
+  function _apiEndpointKind() {
+    return (kindSel && kindSel.value) ? kindSel.value : 'api';
+  }
   function _normalizeBaseUrl(raw) {
     let u = raw.trim();
     // Fix common protocol typos
@@ -722,7 +790,7 @@ function initEndpointForm() {
       }
     } catch(e) {}
     // Ensure /v1 suffix for bare host:port URLs (not cloud providers)
-    if (!u.includes('api.') && !u.includes('openrouter') && !u.includes('ollama.com') && !u.endsWith('/v1')) {
+    if (!u.includes('api.') && !u.includes('openrouter') && !u.includes('opencode.ai') && !u.includes('ollama.com') && !u.endsWith('/v1')) {
       try {
         const parsed = new URL(u);
         if (!parsed.pathname || parsed.pathname === '/') {
@@ -784,6 +852,8 @@ function initEndpointForm() {
       try {
         const fd = new FormData();
         fd.append('base_url', url);
+        fd.append('endpoint_kind', _apiEndpointKind());
+        fd.append('model_refresh_timeout', '30');
         if (apiKey) fd.append('api_key', apiKey);
         const res = await fetch('/api/model-endpoints/test', {
           method: 'POST',
@@ -828,6 +898,10 @@ function initEndpointForm() {
     try {
       const fd = new FormData();
       fd.append('base_url', url);
+      const endpointKind = _apiEndpointKind();
+      fd.append('endpoint_kind', endpointKind);
+      fd.append('model_refresh_mode', endpointKind === 'proxy' ? 'manual' : 'auto');
+      fd.append('model_refresh_timeout', '30');
       if (apiKey) fd.append('api_key', apiKey);
       if (provider.value && provider.selectedOptions && provider.selectedOptions[0]) {
         fd.append('name', provider.selectedOptions[0].textContent.trim());
@@ -842,6 +916,7 @@ function initEndpointForm() {
         const count = d.models ? d.models.length : 0;
         urlInput.value = ''; urlInput.style.display = '';
         el('adm-epApiKey').value = ''; provider.value = '';
+        if (kindSel) kindSel.value = 'proxy';
         if (epType) epType.value = 'llm';
         if (d.id) _recentlyAddedEpId = String(d.id);
         await loadEndpoints();
@@ -860,6 +935,78 @@ function initEndpointForm() {
     } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
     btn.disabled = false; btn.textContent = 'Add';
   });
+
+  // GitHub Copilot — device-flow login. Starts the flow, shows the user a
+  // code + verification link, and polls until they authorise (or it expires).
+  const copilotBtn = el('adm-copilotConnectBtn');
+  if (copilotBtn) {
+    let copilotPolling = false;
+    copilotBtn.addEventListener('click', async () => {
+      if (copilotPolling) return;
+      const status = el('adm-copilotStatus');
+      const reset = () => { copilotBtn.disabled = false; copilotBtn.textContent = 'Connect GitHub Copilot'; copilotPolling = false; };
+      status.textContent = ''; status.className = 'adm-ep-inline-msg';
+      copilotBtn.disabled = true; copilotBtn.textContent = 'Starting...';
+      copilotPolling = true;
+      let start;
+      try {
+        const res = await fetch('/api/copilot/device/start', { method: 'POST', body: new FormData(), credentials: 'same-origin' });
+        start = await res.json();
+        if (!res.ok) { status.textContent = start.detail || 'Failed to start login'; status.className = 'admin-error'; reset(); return; }
+      } catch (e) { status.textContent = 'Request failed'; status.className = 'admin-error'; reset(); return; }
+
+      const { poll_id, user_code, verification_uri, verification_uri_complete, interval, expires_in } = start;
+      // Prefer the "complete" URL — it embeds the code so the user only has to
+      // click "Authorize" (no manual code entry).
+      const authUrl = verification_uri_complete || verification_uri || '';
+      const esc = (s) => String(s || '').replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+      copilotBtn.textContent = 'Waiting…';
+
+      // Cohesive waiting panel: spinner + status line, the device code as a
+      // copyable chip, and a primary "Authorize on GitHub" action.
+      status.className = '';
+      status.innerHTML =
+        '<div class="adm-copilot-panel">' +
+          '<div class="adm-copilot-wait"><span class="admin-spinner"></span>' +
+            '<span>Waiting for GitHub authorization…</span></div>' +
+          '<div class="adm-copilot-coderow">' +
+            '<span class="adm-copilot-code-label">Code</span>' +
+            '<code class="adm-copilot-code">' + esc(user_code) + '</code>' +
+            '<button type="button" class="admin-btn-sm adm-copilot-copy">Copy</button>' +
+          '</div>' +
+          '<a class="admin-btn-add adm-copilot-auth" href="' + encodeURI(authUrl) + '" target="_blank" rel="noopener">Authorize on GitHub ↗</a>' +
+          '<div class="adm-copilot-hint">A new tab opened on GitHub — approve there to finish. Didn\'t open? Use the button above.</div>' +
+        '</div>';
+      const copyBtn = status.querySelector('.adm-copilot-copy');
+      if (copyBtn) copyBtn.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(user_code || ''); copyBtn.textContent = 'Copied'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500); } catch (e) {}
+      });
+      try { if (authUrl) window.open(authUrl, '_blank', 'noopener'); } catch (e) {}
+
+      const deadline = Date.now() + (expires_in || 900) * 1000;
+      const stepMs = Math.max((interval || 5), 2) * 1000;
+      const done = (cls, text) => { status.className = cls; status.textContent = text; reset(); };
+      const poll = async () => {
+        if (Date.now() > deadline) { done('admin-error', 'Authorization expired — try again.'); return; }
+        try {
+          const fd = new FormData(); fd.append('poll_id', poll_id);
+          const r = await fetch('/api/copilot/device/poll', { method: 'POST', body: fd, credentials: 'same-origin' });
+          const d = await r.json();
+          if (d.status === 'authorized') {
+            const n = ((d.endpoint && d.endpoint.models) || []).length;
+            done('admin-success', '✓ Connected — ' + n + ' Copilot model' + (n !== 1 ? 's' : '') + ' available.');
+            if (d.endpoint && d.endpoint.id) _recentlyAddedEpId = String(d.endpoint.id);
+            await loadEndpoints();
+            await _selectAddedModelInChat(d.endpoint || {});
+            return;
+          }
+          if (d.status === 'failed') { done('admin-error', 'Authorization failed (' + (d.error || 'denied') + ').'); return; }
+        } catch (e) { /* transient — keep polling */ }
+        setTimeout(poll, stepMs);
+      };
+      setTimeout(poll, stepMs);
+    });
+  }
 
   // Local "Add" button — sibling form for self-hosted base URLs.
   const localAddBtn = el('adm-epLocalAddBtn');
@@ -904,6 +1051,8 @@ function initEndpointForm() {
         const fd = new FormData();
         fd.append('base_url', url);
         if (apiKey) fd.append('api_key', apiKey);
+        fd.append('endpoint_kind', 'local');
+        fd.append('model_refresh_mode', 'auto');
         const lt = el('adm-epLocalType');
         if (lt) fd.append('model_type', lt.value);
         fd.append('skip_probe', 'false');
@@ -986,6 +1135,8 @@ function initEndpointForm() {
             const base = item.url.replace('/chat/completions', '').replace(/\/$/, '');
             const fd = new FormData();
             fd.append('base_url', base);
+            fd.append('endpoint_kind', 'local');
+            fd.append('model_refresh_mode', 'auto');
             fd.append('skip_probe', 'false');
             const r = await fetch('/api/model-endpoints', { method: 'POST', body: fd });
             if (r.ok) {
@@ -1078,11 +1229,11 @@ const _GOOGLE_OAUTH_HELP = `To get Google OAuth credentials:
 
 const MCP_PRESETS = [
   { name: "Gmail",           command: "npx", args: ["-y", "@gongrzhe/server-gmail-autoauth-mcp"],      env: { GOOGLE_CLIENT_ID: "", GOOGLE_CLIENT_SECRET: "" },
-    oauthFile: { dir: "~/.gmail-mcp", filename: "gcp-oauth.keys.json" },
+    oauthFile: { dir: "gmail", filename: "gcp-oauth.keys.json" },
     oauth: {
       provider: "google",
-      keys_file: "~/.gmail-mcp/gcp-oauth.keys.json",
-      token_file: "~/.gmail-mcp/credentials.json",
+      keys_file: "gmail/gcp-oauth.keys.json",
+      token_file: "gmail/credentials.json",
       scopes: ["https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/gmail.settings.basic"],
     },
     help: `Setup:
@@ -1986,14 +2137,22 @@ function initBackup() {
     const btn = el('adm-importDataBtn');
     btn.disabled = true; btn.textContent = 'Importing...'; msg.textContent = '';
     try {
-      const text = await file.text();
-      const data = JSON.parse(text);
+      const text = (await file.text()).replace(/^\uFEFF/, '').trim();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        throw new Error('Invalid backup file: ' + e.message);
+      }
       const res = await fetch('/api/import', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
-      const result = await res.json();
+      const result = await res.json().catch(() => null);
+      if (!result) {
+        throw new Error(`Import failed: server returned ${res.status}`);
+      }
       if (res.ok && result.ok) {
         msg.textContent = result.message || 'Import successful.'; msg.className = 'admin-success';
       } else {

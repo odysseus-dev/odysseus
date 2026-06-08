@@ -14,7 +14,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional
 
-from .database import Session as DbSession, ChatMessage as DbChatMessage, Document as DbDocument, SessionLocal
+from .database import Session as DbSession, ChatMessage as DbChatMessage, Document as DbDocument, SessionLocal, utcnow_naive
 from .models import Session, ChatMessage
 
 logger = logging.getLogger(__name__)
@@ -273,7 +273,10 @@ class SessionManager:
 
             db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
             if db_session:
-                db_session.message_count = keep_count
+                # keep_count can exceed the real message total (e.g. the AI tool
+                # defaults to keep_count=10 on a short session); message_count must
+                # track the rows that actually remain, not the requested cap.
+                db_session.message_count = min(keep_count, len(db_messages))
                 db_session.updated_at = datetime.now(timezone.utc)
 
             db.commit()
@@ -616,7 +619,7 @@ class SessionManager:
 
         try:
             all_sessions = db.query(DbSession).all()
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=auto_archive_days)
+            cutoff_date = utcnow_naive() - timedelta(days=auto_archive_days)
 
             for db_session in all_sessions:
                 stats['total_checked'] += 1

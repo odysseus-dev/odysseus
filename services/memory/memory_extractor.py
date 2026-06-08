@@ -192,11 +192,19 @@ def _fallback_memory_candidates(messages) -> list[dict]:
             if place:
                 add(f"User lives in {place}.", "identity")
 
-        m = re.search(r"\bi (?:prefer|like|love|hate|do not like|don't like)\s+([^.!?\n]{4,100})", text, re.I)
+        m = re.search(r"\bi (prefer|like|love|hate|do not like|don't like)\s+([^.!?\n]{4,100})", text, re.I)
         if m:
-            preference = _clean_memory_value(m.group(1), 100)
+            preference = _clean_memory_value(m.group(2), 100)
             if preference:
-                add(f"User prefers {preference}.", "preference")
+                # The same pattern catches likes and dislikes; keep the stored
+                # sentiment faithful instead of recording every match as a
+                # preference ("I hate cilantro" must not become "User prefers
+                # cilantro").
+                verb = m.group(1).lower()
+                if verb in ("hate", "do not like", "don't like"):
+                    add(f"User dislikes {preference}.", "preference")
+                else:
+                    add(f"User prefers {preference}.", "preference")
 
         m = re.search(
             r"\bi (?:(?:want|would like|plan|hope) to|wanna) "
@@ -345,8 +353,17 @@ async def extract_and_store(
                     logger.warning(f"Memory dedup (vector) unavailable, using text fallback: {e}")
                     existing_id = None
                 if existing_id:
-                    logger.debug(f"Memory dedup (vector): '{fact_text[:50]}' matches {existing_id}")
-                    continue
+                    # The vector store is a single shared collection with no
+                    # owner metadata, so find_similar can return ANOTHER
+                    # tenant's memory. Only treat it as a duplicate when the
+                    # match is this user's own (or a legacy unowned) memory —
+                    # otherwise the user's freshly-extracted fact would be
+                    # silently dropped. Mirror the owner predicate used by the
+                    # text dedup below; cross-tenant/stale matches fall through.
+                    _match = next((e for e in existing if e.get("id") == existing_id), None)
+                    if _match is not None and (_match.get("owner") == _owner or _match.get("owner") is None):
+                        logger.debug(f"Memory dedup (vector): '{fact_text[:50]}' matches {existing_id}")
+                        continue
 
             # Text dedup fallback: exact match + fuzzy similarity
             user_existing = [e for e in existing if e.get("owner") == _owner or e.get("owner") is None] if _owner else existing

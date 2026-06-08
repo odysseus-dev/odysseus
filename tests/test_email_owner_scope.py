@@ -43,6 +43,129 @@ def test_email_tag_clause_keeps_legacy_rows_for_single_user_mode(monkeypatch):
     assert params == [""]
 
 
+def test_email_ai_cache_tables_are_owner_scoped_and_migrate_legacy_rows(tmp_path, monkeypatch):
+    import routes.email_helpers as email_helpers
+
+    db_path = tmp_path / "scheduled_emails.db"
+    monkeypatch.setattr(email_helpers, "SCHEDULED_DB", db_path)
+
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE email_summaries (
+            message_id TEXT PRIMARY KEY,
+            uid TEXT,
+            folder TEXT,
+            subject TEXT,
+            sender TEXT,
+            summary TEXT NOT NULL,
+            model_used TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO email_summaries
+        (message_id, uid, folder, subject, sender, summary, model_used, created_at)
+        VALUES ('<shared@example.com>', '1', 'INBOX', 'Subject', 'a@example.com', 'legacy', 'm', '2026-01-01')
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    email_helpers._init_scheduled_db()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        for table in (
+            "email_summaries",
+            "email_ai_replies",
+            "email_calendar_extractions",
+            "email_urgency_alerts",
+        ):
+            info = conn.execute(f"PRAGMA table_info({table})").fetchall()
+            pk_cols = [r[1] for r in sorted((r for r in info if r[5]), key=lambda r: r[5])]
+            assert pk_cols == ["message_id", "owner"]
+        assert conn.execute(
+            "SELECT owner, summary FROM email_summaries WHERE message_id=?",
+            ("<shared@example.com>",),
+        ).fetchone() == ("", "legacy")
+
+        conn.execute(
+            """
+            INSERT INTO email_summaries
+            (message_id, owner, uid, folder, subject, sender, summary, model_used, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("<shared@example.com>", "alice", "2", "INBOX", "Subject", "a@example.com", "alice", "m", "2026-01-02"),
+        )
+        conn.execute(
+            """
+            INSERT INTO email_summaries
+            (message_id, owner, uid, folder, subject, sender, summary, model_used, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("<shared@example.com>", "bob", "3", "INBOX", "Subject", "a@example.com", "bob", "m", "2026-01-03"),
+        )
+        rows = conn.execute(
+            "SELECT owner, summary FROM email_summaries WHERE message_id=? ORDER BY owner",
+            ("<shared@example.com>",),
+        ).fetchall()
+        assert rows == [("", "legacy"), ("alice", "alice"), ("bob", "bob")]
+    finally:
+        conn.close()
+
+
+@pytest.mark.asyncio
+async def test_ai_reply_cache_lookup_is_owner_scoped(tmp_path, monkeypatch):
+    import routes.email_helpers as email_helpers
+    import routes.email_routes as email_routes
+
+    db_path = tmp_path / "scheduled_emails.db"
+    monkeypatch.setattr(email_helpers, "SCHEDULED_DB", db_path)
+    monkeypatch.setattr(email_routes, "SCHEDULED_DB", db_path)
+    email_helpers._init_scheduled_db()
+
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        INSERT INTO email_ai_replies
+        (message_id, owner, uid, folder, reply, model_used, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("<shared@example.com>", "alice", "1", "INBOX", "alice private draft", "m-a", "2026-01-01"),
+    )
+    conn.execute(
+        """
+        INSERT INTO email_ai_replies
+        (message_id, owner, uid, folder, reply, model_used, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("<shared@example.com>", "bob", "2", "INBOX", "bob private draft", "m-b", "2026-01-02"),
+    )
+    conn.commit()
+    conn.close()
+
+    router = email_routes.setup_email_routes()
+    ai_reply = _route_endpoint(router, "/api/email/ai-reply", "POST")
+
+    result = await ai_reply(
+        {
+            "to": "sender@example.com",
+            "subject": "Subject",
+            "original_body": "Body",
+            "message_id": "<shared@example.com>",
+        },
+        owner="bob",
+    )
+
+    assert result["success"] is True
+    assert result["cached"] is True
+    assert result["reply"] == "bob private draft"
+    assert result["model_used"] == "m-b"
+
+
 @pytest.mark.asyncio
 async def test_scheduled_email_routes_are_owner_scoped(tmp_path, monkeypatch):
     import routes.email_helpers as email_helpers

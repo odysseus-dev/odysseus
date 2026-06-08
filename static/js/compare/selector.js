@@ -1195,7 +1195,7 @@ async function showModelSelector() {
               const row = document.createElement('div');
               row.className = 'compare-probe-row';
               row.dataset.idx = 'p' + i;
-              row.innerHTML = `<span class="compare-probe-spinner">▁▂▃</span><span class="compare-probe-name">${p.label || p.id}</span><span class="compare-probe-status"></span>`;
+              row.innerHTML = `<span class="compare-probe-spinner">▁▂▃</span><span class="compare-probe-name">${escapeHtml(p.label || p.id)}</span><span class="compare-probe-status"></span>`;
               const waveEl = row.querySelector('.compare-probe-spinner');
               const waveFrames = WAVE_FRAMES;
               let wIdx = 0;

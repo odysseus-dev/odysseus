@@ -76,6 +76,15 @@ function _hlSearch(text) {
                        '<mark class="doclib-search-hl">$1</mark>');
   } catch { return esc; }
 }
+
+function _safeResearchHref(raw) {
+  try {
+    const parsed = new URL(String(raw || '').trim(), window.location.origin);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return _esc(parsed.href);
+  } catch {}
+  return '';
+}
+
 let _libraryEscHandler = null;
 let _librarySelectMode = false;
 let _librarySelectedIds = new Set();
@@ -389,6 +398,27 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       });
       wrap.appendChild(chip);
     }
+  }
+
+  function libraryRemoveDocumentFromState(docId) {
+    const removed = _libraryDocs.find(d => String(d.id) === String(docId));
+    _libraryDocs = _libraryDocs.filter(d => String(d.id) !== String(docId));
+    _librarySelectedIds.delete(docId);
+    _libraryTotal = Math.max(0, _libraryTotal - 1);
+
+    const lang = removed && (removed.language || 'text');
+    if (lang && Object.prototype.hasOwnProperty.call(_libraryLanguages, lang)) {
+      const next = Math.max(0, Number(_libraryLanguages[lang] || 0) - 1);
+      if (next > 0) {
+        _libraryLanguages[lang] = next;
+      } else {
+        delete _libraryLanguages[lang];
+      }
+    }
+
+    libraryRenderStats();
+    libraryRenderLangChips();
+    libraryUpdateBulkCount();
   }
 
   function libraryRenderGrid() {
@@ -709,8 +739,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         const res = await fetch(`${API_BASE}/api/document/${doc.id}/archive?archived=${toArchived}`, { method: 'POST', credentials: 'same-origin' });
         if (!res.ok) throw new Error('failed');
         // Drop it from the current view (it no longer belongs here) and refresh.
-        _libraryDocs = _libraryDocs.filter(d => d.id !== doc.id);
-        _libraryTotal = Math.max(0, _libraryTotal - 1);
+        libraryRemoveDocumentFromState(doc.id);
         libraryRenderGrid();
         if (uiModule) uiModule.showToast(toArchived ? 'Archived' : 'Restored');
       } catch { if (uiModule) uiModule.showError('Failed to ' + (toArchived ? 'archive' : 'restore')); }
@@ -802,8 +831,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       try {
         const res = await fetch(`${API_BASE}/api/document/${doc.id}/archive?archived=${toArchived}`, { method: 'POST', credentials: 'same-origin' });
         if (!res.ok) throw new Error('failed');
-        _libraryDocs = _libraryDocs.filter(d => d.id !== doc.id);
-        _libraryTotal = Math.max(0, _libraryTotal - 1);
+        libraryRemoveDocumentFromState(doc.id);
         libraryRenderGrid();
         if (uiModule) uiModule.showToast(toArchived ? 'Archived' : 'Restored');
       } catch { if (uiModule) uiModule.showError('Failed to ' + (toArchived ? 'archive' : 'restore')); }
@@ -1170,9 +1198,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         card.addEventListener('transitionend', () => card.remove(), { once: true });
         setTimeout(() => { if (card.parentElement) card.remove(); }, 400);
       }
-      _libraryDocs = _libraryDocs.filter(d => d.id !== docId);
-      _libraryTotal = Math.max(0, _libraryTotal - 1);
-      libraryRenderStats();
+      libraryRemoveDocumentFromState(docId);
       if (uiModule) uiModule.showToast('Document deleted');
     } catch (e) {
       if (uiModule) uiModule.showError(`Failed to delete document: ${e.message || e}`);
@@ -1572,7 +1598,11 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     modal.innerHTML = `
       <div class="modal-content doclib-modal-content" style="width:min(640px, 92vw);max-height:85vh;background:var(--bg);">
         <div class="modal-header">
-          <h4><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="14" y2="11"/></svg>Library</h4>
+          <!-- Header title + icon mirror the currently-active sub-tab (Chats /
+               Documents / Research / Archive) so the user sees ONE icon at
+               the top representing the section they're in, with the tab
+               strip below as sub-navigation. _switchLibTab() updates this. -->
+          <h4 id="doclib-header-title"><span id="doclib-header-icon" style="vertical-align:-2px;margin-right:4px;display:inline-flex;"></span><span id="doclib-header-text">Library</span></h4>
           <button class="close-btn" id="doclib-close">\u2716</button>
         </div>
         <div class="lib-tabs" id="doclib-lib-tabs" style="padding:0 10px;">
@@ -1805,6 +1835,27 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       grid.parentElement.appendChild(btn);
     }
 
+    // SVG markup + label for each tab — used to keep the modal header
+    // in sync with whichever sub-tab the user is on.
+    const _TAB_HEADERS = {
+      chats: {
+        label: 'Chats',
+        svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+      },
+      documents: {
+        label: 'Documents',
+        svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>',
+      },
+      research: {
+        label: 'Research',
+        svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>',
+      },
+      archive: {
+        label: 'Archive',
+        svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>',
+      },
+    };
+
     function _switchLibTab(tab) {
       _activeLibTab = tab;
       _tabBtns.forEach(b => b.classList.toggle('active', b.dataset.doclibTab === tab));
@@ -1815,6 +1866,14 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           p.style.display = 'none';
         }
       });
+      // Sync the modal header icon + label to match the active sub-tab.
+      const hdr = _TAB_HEADERS[tab];
+      if (hdr) {
+        const ico = document.getElementById('doclib-header-icon');
+        const txt = document.getElementById('doclib-header-text');
+        if (ico) ico.innerHTML = hdr.svg;
+        if (txt) txt.textContent = hdr.label;
+      }
       if (tab === 'chats') _renderLibChats();
       else if (tab === 'archive') _renderLibArchive();
       else if (tab === 'research') _renderLibResearch();
@@ -2632,7 +2691,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         const data = await res.json();
         _researchItems = data.research || data || [];
       } catch (e) {
-        grid.innerHTML = `<div class="hwfit-loading">Failed to load: ${e.message}</div>`;
+        grid.innerHTML = `<div class="hwfit-loading">Failed to load: ${_esc(e.message)}</div>`;
         return;
       }
       _renderResearchGrid();
@@ -2674,9 +2733,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const sources = Array.isArray(detail.sources) ? detail.sources : [];
       const sourcesList = sources.slice(0, 12).map((src, i) => {
         const title = _esc(src.title || src.url || `Source ${i + 1}`);
-        const url = src.url || '';
+        const url = _safeResearchHref(src.url);
         return url
-          ? `<li><a href="${_esc(url)}" target="_blank" rel="noopener">${title}</a></li>`
+          ? `<li><a href="${url}" target="_blank" rel="noopener">${title}</a></li>`
           : `<li>${title}</li>`;
       }).join('');
       const sourcesHtml = sources.length
@@ -3095,8 +3154,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       return new Date(iso).toLocaleDateString();
     }
 
-    // Switch to initial tab if not documents
-    if (_activeLibTab !== 'documents') _switchLibTab(_activeLibTab);
+    // Switch to the initial tab. Always call this — even when the
+    // default ('documents') matches — so the modal header's icon + label
+    // sync from "Library" to the active sub-tab on first open.
+    _switchLibTab(_activeLibTab);
 
     const searchInput = document.getElementById('doclib-search');
     searchInput.addEventListener('input', () => {
