@@ -403,7 +403,6 @@ def _append_zero_byte_incomplete_cleanup_lines(
     runner_lines.append('}')
     runner_lines.append(f'_od_prune_zero_incomplete "$HOME/.cache/huggingface/hub/models--{repo_cache}"')
     runner_lines.append(f'_od_prune_zero_incomplete "/app/.cache/huggingface/hub/models--{repo_cache}"')
-    # TODO: Add any additional HF cache roots, i.e. Windows cache.
     if local_target:
         runner_lines.append(f'_od_prune_zero_incomplete {_shell_path(local_target)}')
     runner_lines.append('if [ "$ODYSSEUS_INCOMPLETE_PRUNED" -gt 0 ]; then')
