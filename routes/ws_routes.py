@@ -65,13 +65,16 @@ def setup_ws_routes():
             token = auth_header[7:]
 
         owner = None
+        used_credential = None  # which credential to revalidate on each send
         if auth_mgr:
             if token:
                 if auth_mgr.validate_token(token):
                     owner = auth_mgr.get_username_for_token(token)
+                    used_credential = token
             if not owner and session_id:
                 if auth_mgr.validate_token(session_id):
                     owner = auth_mgr.get_username_for_token(session_id)
+                    used_credential = session_id
 
         # Fallback: if auth is disabled, allow anonymous
         if not owner and not (auth_mgr and auth_mgr.is_configured):
@@ -86,6 +89,11 @@ def setup_ws_routes():
         try:
             while True:
                 notification = await q.get()
+                # Re-validate credential on each send so revoked/deleted
+                # sessions are cut off, not silently kept alive.
+                if auth_mgr and used_credential and not auth_mgr.validate_token(used_credential):
+                    await websocket.close(code=4001)
+                    return
                 try:
                     await websocket.send_json(notification)
                 except WebSocketDisconnect:

@@ -114,7 +114,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             # don't execute script, the residual risk is visual-only.
             # Dynamic WebSocket CSP — matches the request's host/port so HTTPS
             # (wss://), custom ports, and reverse-proxies all work.
-            ws_scheme = "wss" if request.url.scheme == "https" else "ws"
+            # Check X-Forwarded-Proto for reverse-proxy HTTPS termination.
+            forwarded_proto = request.headers.get("x-forwarded-proto", "")
+            effective_scheme = forwarded_proto if forwarded_proto in ("http", "https") else request.url.scheme
+            ws_scheme = "wss" if effective_scheme == "https" else "ws"
             ws_origin = f"{ws_scheme}://{request.url.hostname}"
             if request.url.port:
                 ws_origin += f":{request.url.port}"
