@@ -11,6 +11,7 @@ from sqlalchemy import case, func, or_
 from core.database import SessionLocal, Document, DocumentVersion
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user
+from src.constants import MAIL_ATTACHMENTS_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -1542,10 +1543,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         # don't import from a routes file (cycle-prone). Same env override
         # as email_routes (ODYSSEUS_MAIL_ATTACHMENTS_DIR).
         from pathlib import Path as _Path
-        import os as _os
-        _DATA_DIR = _Path(__file__).resolve().parent.parent / "data"
-        _BASE = _os.environ.get("ODYSSEUS_MAIL_ATTACHMENTS_DIR", str(_DATA_DIR / "mail-attachments"))
-        _COMPOSE_DIR = _Path(_BASE) / "_compose"
+        _COMPOSE_DIR = _Path(MAIL_ATTACHMENTS_DIR) / "_compose"
         _COMPOSE_DIR.mkdir(parents=True, exist_ok=True)
 
         user = get_current_user(request)

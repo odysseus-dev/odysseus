@@ -680,9 +680,11 @@ export function applyModelColor(roleEl, modelName) {
           html += '<div><span class="ctx-label">Max tokens</span> ' + _mt.toLocaleString() + ' <span style="opacity:0.4">(configured)</span></div>';
         }
       }
-      if (info && info.input != null) html += '<div><span class="ctx-label">Input</span> $' + info.input.toFixed(2) + ' / 1M</div>';
-      if (info && info.output != null) html += '<div><span class="ctx-label">Output</span> $' + info.output.toFixed(2) + ' / 1M</div>';
-      if (!info) html += '<div style="opacity:0.4;font-size:0.85em;margin-top:4px;">No pricing data available</div>';
+      if (isCostTrackedEndpoint(_epUrl)) {
+        if (info && info.input != null) html += '<div><span class="ctx-label">Input</span> $' + info.input.toFixed(2) + ' / 1M</div>';
+        if (info && info.output != null) html += '<div><span class="ctx-label">Output</span> $' + info.output.toFixed(2) + ' / 1M</div>';
+        if (!info) html += '<div style="opacity:0.4;font-size:0.85em;margin-top:4px;">No pricing data available</div>';
+      }
       popup.innerHTML = html;
       const rect = roleEl.getBoundingClientRect();
       popup.style.top = (rect.bottom + 4) + 'px';
@@ -735,11 +737,31 @@ export function isLocalEndpoint(url) {
   return false;
 }
 
-/** Cost for the current turn, returning null (free) for local endpoints. */
-function _billableCost(model, inputTokens, outputTokens) {
-  const url = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
+export function isSubscriptionEndpoint(url) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.replace(/\/+$/, '');
+    return parsed.hostname === 'chatgpt.com'
+      && (path === '/backend-api/codex' || path.startsWith('/backend-api/codex/'));
+  } catch (_e) {
+    return false;
+  }
+}
+
+function _currentEndpointUrl() {
+  return (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
     ? window.sessionModule.getCurrentEndpointUrl() : null;
-  if (isLocalEndpoint(url)) return null;
+}
+
+export function isCostTrackedEndpoint(url) {
+  return !isLocalEndpoint(url) && !isSubscriptionEndpoint(url);
+}
+
+/** Cost for the current turn, returning null for non-billable endpoints. */
+function _billableCost(model, inputTokens, outputTokens) {
+  const url = _currentEndpointUrl();
+  if (!isCostTrackedEndpoint(url)) return null;
   return getModelCost(model, inputTokens, outputTokens);
 }
 
@@ -784,11 +806,10 @@ export function resetSessionCost(sessionId) {
 export function updateSessionCostUI() {
   const el = document.getElementById('session-cost-display');
   if (!el) return;
-  // Local model? It's free — hide the badge and clear any stale cost that a
-  // previous (buggy) cloud-rate billing left in localStorage for this session.
-  const _url = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
-    ? window.sessionModule.getCurrentEndpointUrl() : null;
-  if (isLocalEndpoint(_url)) {
+  // Non-billable endpoint? Hide the badge and clear stale cost that a previous
+  // cloud-rate calculation may have left in localStorage for this session.
+  const _url = _currentEndpointUrl();
+  if (!isCostTrackedEndpoint(_url)) {
     const sid = window.sessionModule && window.sessionModule.getCurrentSessionId();
     if (sid && getSessionCost(sid) > 0) {
       try {
@@ -1708,7 +1729,8 @@ export function displayMetrics(messageElement, metrics) {
     e.stopPropagation();
     document.querySelectorAll('.ctx-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
 
-    const costStr = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : 'n/a';
+    const costStr = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : '';
+    const costRows = costStr ? `<div><span class="ctx-label">Cost</span> ${costStr}</div>` : '';
     const speedStr = tps != null && tps !== 'undefined' ? `${tps} tok/s` : 'n/a';
     const totalTok = inputTokens + outputTokens;
     const ctxColor = ctxPct >= 85 ? 'var(--red, #e06c75)' : ctxPct >= 70 ? '#ff9900' : 'var(--color-muted-alt, #6b7280)';
@@ -1722,7 +1744,7 @@ export function displayMetrics(messageElement, metrics) {
     // Session total cost
     let sessionCostStr = '';
     const sc = getSessionCost();
-    if (sc > 0) {
+    if (costStr && sc > 0) {
       sessionCostStr = `<div><span class="ctx-label">Session</span> $${sc < 0.01 ? sc.toFixed(4) : sc.toFixed(3)}</div>`;
     }
 
@@ -1738,7 +1760,7 @@ export function displayMetrics(messageElement, metrics) {
       <div><span class="ctx-label">Time</span> ${responseTime}s</div>
       ${prepTime != null ? `<div><span class="ctx-label">Prep</span> ${prepTime}s</div>` : ''}
       ${modelWaitTime != null ? `<div><span class="ctx-label">Model wait</span> ${modelWaitTime}s</div>` : ''}
-      <div><span class="ctx-label">Cost</span> ${costStr}</div>
+      ${costRows}
       ${sessionCostStr}
       ${prepDetails ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:0.85em;opacity:0.8;">
         <div style="font-weight:600;margin-bottom:4px;color:var(--fg);">Agent prep</div>
@@ -2392,6 +2414,8 @@ const chatRenderer = {
   modelColor,
   applyModelColor,
   getModelCost,
+  isCostTrackedEndpoint,
+  isSubscriptionEndpoint,
   getImageCost,
   getSessionCost,
   resetSessionCost,
