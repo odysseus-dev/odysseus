@@ -2205,7 +2205,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 if end_raw:
                     end_dt = _parse_dt(end_raw)
                 else:
-                    end_dt = start_dt + timedelta(days=14)
+                    end_dt = start_dt + timedelta(days=30)
             except ValueError as e:
                 return {"error": f"Invalid date format: {e}", "exit_code": 1}
 
