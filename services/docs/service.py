@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Any
 
 from src.rag_manager import RAGManager
+from src.constants import CHROMA_DIR
 
 
 @dataclass
@@ -34,7 +35,7 @@ class DocsService:
         results = await service.query("what is async await?")
     """
 
-    def __init__(self, persist_dir: str = "data/chroma"):
+    def __init__(self, persist_dir: str = CHROMA_DIR):
         self.rag = RAGManager(persist_directory=persist_dir)
 
     async def query(self, query: str, top_k: int = 5) -> List[DocChunk]:

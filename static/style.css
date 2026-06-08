@@ -97,9 +97,9 @@ html, body { overflow-x: hidden; height: 100%; margin: 0; overscroll-behavior: n
 body {
   background-color: var(--bg);
   color: var(--fg);
-  /* Animate the dock push BOTH ways. Keeping the transition on the base body
-     (not on .right/left-dock-active) means removing the class on undock also
-     animates padding back to 0 — otherwise the chat snapped back instantly. */
+  /* Keep the base padding transition for older layout paths that still adjust
+     the body directly. Edge docks reserve workspace room on the flex panes
+     below so left + right docks can coexist without skewing the whole body. */
   transition: padding-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
               padding-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
   font-family: var(--font-family, 'Fira Code', monospace);
@@ -842,7 +842,7 @@ body.bg-pattern-sparkles {
       display: flex; gap: 6px; flex-wrap: wrap;
       max-width: calc(100vw - 24px);
       padding: 4px;
-      z-index: 10020;
+      z-index: 100;
       pointer-events: none;
     }
     .minimized-dock-chip {
@@ -1773,6 +1773,8 @@ body.bg-pattern-sparkles {
       min-width:0;
       margin-top:8px;
       margin-bottom: 0;
+      transition: margin-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
+                  margin-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
     }
     .chat-meta { font-size:12px; color:color-mix(in srgb, var(--fg) 60%, transparent); margin-bottom:6px; }
     .chat-history {
@@ -2304,6 +2306,104 @@ body.bg-pattern-sparkles {
       opacity: 1;
       color: var(--fg);
       background: color-mix(in srgb, var(--fg) 9%, transparent);
+    }
+    /* Plan mode: "Approve & Run" affordance under a proposed plan */
+    .plan-approve-bar {
+      margin: 8px 0 2px;
+    }
+    .plan-approve-btn {
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+      border: 1px solid var(--accent);
+      transition: background 0.15s, transform 0.1s;
+    }
+    .plan-approve-btn:hover {
+      background: color-mix(in srgb, var(--accent) 22%, transparent);
+    }
+    .plan-approve-btn:active {
+      transform: scale(0.97);
+    }
+    .plan-approve-bar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .plan-open-btn {
+      font: inherit;
+      font-size: 13px;
+      padding: 6px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      color: var(--fg);
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+      border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
+      transition: background 0.15s;
+    }
+    .plan-open-btn:hover {
+      background: color-mix(in srgb, var(--fg) 15%, transparent);
+    }
+    /* GitHub-style task lists (- [ ] / - [x]) — used by plan-mode checklists */
+    li.task-item {
+      list-style: none;
+      margin-left: -1.2em;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    li.task-item .task-check {
+      flex: 0 0 auto;
+      width: 15px;
+      height: 15px;
+      margin-top: 3px;
+      border-radius: 4px;
+      border: 1.5px solid color-mix(in srgb, var(--fg) 45%, transparent);
+      box-sizing: border-box;
+      position: relative;
+    }
+    li.task-item.task-done .task-check {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    li.task-item.task-done .task-check::after {
+      content: '';
+      position: absolute;
+      left: 4px;
+      top: 1px;
+      width: 4px;
+      height: 8px;
+      border: solid var(--bg);
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
+    li.task-item.task-done .task-text {
+      opacity: 0.6;
+      text-decoration: line-through;
+    }
+    /* Plan window: a draggable/dockable modal (shares .modal framework) */
+    .plan-window-content {
+      width: 520px;
+      max-width: 92vw;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .plan-window-body {
+      overflow-y: auto;
+      padding: 14px 18px;
+      flex: 1 1 auto;
+      line-height: 1.55;
+    }
+    .plan-window-footer {
+      padding: 10px 18px;
+      border-top: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+      display: flex;
+      justify-content: flex-end;
     }
     /* While the menu is open the chevron stays in its highlighted state
        — don't run the opacity fade transition so we never flash from
@@ -2839,6 +2939,34 @@ body.bg-pattern-sparkles {
       0% { text-shadow: 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 0%, transparent); }
       45% { text-shadow: 0 0 10px color-mix(in srgb, var(--accent, var(--red)) 60%, transparent); }
       100% { text-shadow: 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 0%, transparent); }
+    }
+    /* Inline remove-from-recent button — only shown on Recent rows. */
+    .model-picker-list .mp-remove-dot {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      margin: -4px -4px -4px 2px;
+      padding: 0;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      color: color-mix(in srgb, var(--fg) 28%, transparent);
+      font-family: inherit;
+      font-size: 15px;
+      line-height: 1;
+      transition: color 0.15s ease, opacity 0.15s ease, transform 0.12s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .model-picker-list .mp-remove-dot:hover {
+      color: var(--red, #ff5555);
+      transform: scale(1.1);
+    }
+    .model-picker-list .mp-remove-dot:focus-visible {
+      outline: none;
+      color: var(--red, #ff5555);
     }
     /* First-run hint when a large catalog has no Recent/Favorites yet. */
     .model-picker-list .mp-empty-hint {
@@ -4840,6 +4968,15 @@ body.bg-pattern-sparkles {
       box-shadow:0 8px 32px rgba(0,0,0,0.45);
       pointer-events:auto;
       animation: modal-enter 0.25s ease-out both;
+    }
+    .memory-modal-content,
+    .tasks-modal-content,
+    .preset-modal-content,
+    #cookbook-modal .modal-content,
+    #theme-popup,
+    .doclib-modal-content,
+    .gallery-modal-content {
+      container-type: inline-size;
     }
     .modal-header {
       display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;
@@ -7613,7 +7750,13 @@ button.hamburger {
   border-collapse: collapse;
   margin: 0.5em 0;
   font-size: 0.9em;
-  width: auto;
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  table-layout: auto;
 }
 .msg th {
   background: color-mix(in srgb, var(--fg) 7%, transparent);
@@ -7622,10 +7765,16 @@ button.hamburger {
   padding: 6px 12px;
   border: 1px solid var(--border);
   text-align: left;
+  min-width: 9ch;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 .msg td {
   padding: 5px 12px;
   border: 1px solid var(--border);
+  min-width: 9ch;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 /* Agent UI Styling */
@@ -10017,6 +10166,15 @@ details a:hover {
   height: 32px;
 }
 
+/* Skill Import beside URL field — match input height; cancel modal-body button margin. */
+.memory-add-row .theme-io-btn {
+  flex: none;
+  height: 28px;
+  box-sizing: border-box;
+  margin-top: 0;
+  padding: 5px 10px;
+}
+
 .memory-add-input {
   flex: 1;
   height: 28px;
@@ -10120,8 +10278,9 @@ textarea.memory-add-input {
 }
 
 .memory-toolbar-btn:disabled {
-  opacity: 1;
+  opacity: 0.35;
   cursor: default;
+  outline: none;
 }
 .memory-toolbar-btn.spinning {
   border-color: transparent;
@@ -13995,6 +14154,22 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   background: var(--border);
   border-color: var(--red);
 }
+.admin-tools-select {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  height: 26px;
+  min-width: 90px;
+}
+.admin-tools-select:hover {
+  background: var(--border);
+  border-color: var(--red);
+}
 .admin-spinner {
   display: inline-block;
   width: 12px;
@@ -14110,6 +14285,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 .admin-ep-actions {
   display: flex;
   gap: 4px;
+  align-items: center;
   flex-shrink: 0;
 }
 
@@ -14745,7 +14921,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   body.email-doc-split-active.doc-view .doc-editor-pane {
     position: fixed !important;
     left: var(--email-doc-split-right-x, 420px) !important;
-    right: 0 !important;
+    right: var(--right-dock-w, 0px) !important;
     top: 0 !important;
     bottom: 0 !important;
     width: auto !important;
@@ -14766,15 +14942,21 @@ body [data-act="from-sender"] {
   display: none !important;
 }
 
-/* Snap-to-right docking. A modal dragged to the right edge becomes a
-   docked side panel (mirrors Notes/Doc panels). Body reserves space via
-   padding-right so the chat / notes / doc panel underneath shrinks to
-   fit instead of being hidden behind the panel. */
+/* Edge docking. Docked panels are fixed to the viewport edge; the workspace
+   panes reserve room with margins so left + right docks can be active at the
+   same time without skewing the entire body box. */
 body.right-dock-active {
-  padding-right: var(--right-dock-w, 0px);
+  padding-right: 0;
 }
 body.left-dock-active {
-  padding-left: var(--left-dock-w, 0px);
+  padding-left: 0;
+}
+body.left-dock-active:not(.email-doc-split-active) .chat-container {
+  margin-left: var(--left-dock-w, 0px);
+}
+body.right-dock-active .chat-container,
+body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
+  margin-right: var(--right-dock-w, 0px);
 }
 .modal.modal-right-docked {
   align-items: stretch;
@@ -23093,6 +23275,89 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
 .gallery-tab.active {
   opacity: 1;
   border-bottom-color: var(--red);
+}
+
+/* Narrow modal tab strips should stay on one row. Resized docked windows can
+   be much narrower than the viewport, so this cannot live only in mobile media
+   queries. */
+.cookbook-tabs,
+.memory-tabs,
+.admin-tabs,
+.lib-tabs,
+.gallery-tabs,
+.preset-tabs {
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.cookbook-tabs::-webkit-scrollbar,
+.memory-tabs::-webkit-scrollbar,
+.admin-tabs::-webkit-scrollbar,
+.lib-tabs::-webkit-scrollbar,
+.gallery-tabs::-webkit-scrollbar,
+.preset-tabs::-webkit-scrollbar {
+  display: none;
+}
+.cookbook-tabs > *,
+.memory-tabs > *,
+.admin-tabs > *,
+.lib-tabs > *,
+.gallery-tabs > *,
+.preset-tabs > * {
+  flex: 0 0 auto;
+}
+.cookbook-tab,
+.memory-tab,
+.admin-tab,
+.lib-tab,
+.gallery-tab,
+.preset-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  line-height: 1;
+}
+.gallery-tab {
+  gap: 6px;
+}
+
+@container (max-width: 360px) {
+  .cookbook-tab:has(svg),
+  .memory-tab:has(svg),
+  .admin-tab:has(svg),
+  .lib-tab:has(svg),
+  .gallery-tab:has(svg),
+  .preset-tab:has(svg) {
+    width: 34px;
+    min-width: 34px;
+    padding-left: 0;
+    padding-right: 0;
+    font-size: 0;
+  }
+
+  .cookbook-tab:has(svg) svg,
+  .memory-tab:has(svg) svg,
+  .admin-tab:has(svg) svg,
+  .lib-tab:has(svg) svg,
+  .gallery-tab:has(svg) svg,
+  .preset-tab:has(svg) svg {
+    width: 14px;
+    height: 14px;
+    margin-right: 0 !important;
+    vertical-align: middle !important;
+  }
+
+  .memory-tab:has(svg) .memory-count,
+  .gallery-tab:has(svg) .gallery-tab-label,
+  .gallery-tab:has(svg) .gallery-tab-close,
+  .cookbook-tab:has(svg) .cookbook-tab-count,
+  .preset-tab:has(svg) .preset-count {
+    display: none !important;
+  }
 }
 /* Icon + label layout inside each tab. */
 .gallery-tab {
@@ -36141,3 +36406,78 @@ body.theme-frosted .modal {
   0%   { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
   100% { box-shadow: 0 0 0 2px transparent; }
 }
+/* ── ask_user: multiple-choice question card ─────────────────────────────
+   The agent posed a question and ended its turn. The user clicks an option,
+   types a free-text "Other" answer, or dismisses (×) to just type in the
+   composer. Reuses theme vars (and .modal-close for the ×) so it reads as
+   part of the conversation, not a modal. */
+.ask-user-card {
+  /* Left-align like an assistant message (.msg-ai), not centered. */
+  align-self: flex-start;
+  margin: 10px auto 10px 8px;
+  width: 85%;
+  max-width: 680px;
+  padding: 12px 16px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--fg) 4%, var(--panel));
+}
+/* Focused only programmatically (tabIndex -1) to move SR/keyboard position; no
+   visible outline on the whole card box. */
+.ask-user-card:focus { outline: none; }
+.ask-user-head {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+.ask-user-close { font-size: 15px; }
+.ask-user-question {
+  margin: -2px 0 10px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--fg);
+}
+.ask-user-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ask-user-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  /* Match the height of the free-text input below (.styled-prompt-input). */
+  min-height: 39px;
+  text-align: left;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.ask-user-option:hover:not(:disabled) {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, var(--panel));
+}
+.ask-user-option:disabled { cursor: default; }
+.ask-user-option-label { font-weight: 500; }
+.ask-user-option-desc { opacity: 0.65; font-size: 12px; }
+/* Free-text "Other" row: input + send, on one line. */
+.ask-user-other {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+/* Reuses .styled-prompt-input; override its full-width + top margin so it
+   sits inline in the flex row next to the send button. */
+.ask-user-other-input { flex: 1; min-width: 0; width: auto; margin-top: 0; }
+/* Reuses .confirm-btn .confirm-btn-primary; flex-row deltas + height match to
+   the input beside it (.confirm-btn won't stretch on its own). */
+.ask-user-other-send { flex-shrink: 0; white-space: nowrap; min-height: 39px; }
+.ask-user-other-send:disabled { opacity: 0.5; cursor: default; }

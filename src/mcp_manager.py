@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +88,44 @@ def _format_mcp_params(input_schema: Any) -> str:
     if len(hint) > _MCP_HINT_MAX:
         hint = hint[:_MCP_HINT_MAX - 1].rstrip() + "…"
     return hint
+
+
+# Tool-name prefixes that denote a read-only/inspection operation. Used to
+# classify MCP tools for plan mode when the server provides no readOnlyHint.
+# These are PREFIXES, not whole words (matched via str.startswith below), so a
+# stem like "summar" intentionally covers "summarise"/"summarize"/"summary".
+_MCP_READONLY_VERBS = (
+    "list", "get", "read", "search", "fetch", "query", "find", "describe",
+    "show", "view", "lookup", "count", "status", "info", "inspect", "summar",
+)
+
+
+def mcp_tool_is_readonly(tool: Dict) -> bool:
+    """Classify an MCP tool as safe (non-mutating) for plan mode.
+
+    Prefer the server's own annotations (readOnlyHint / destructiveHint). When
+    absent, fall back to a tool-name verb heuristic, and FAIL CLOSED (treat as
+    write) for anything that doesn't clearly read — plan mode must not run a
+    write tool just because its intent is ambiguous.
+    """
+    ann = tool.get("annotations")
+    # annotations may be a dict or a pydantic model
+    read_hint = None
+    destructive = None
+    if ann is not None:
+        if isinstance(ann, dict):
+            read_hint = ann.get("readOnlyHint")
+            destructive = ann.get("destructiveHint")
+        else:
+            read_hint = getattr(ann, "readOnlyHint", None)
+            destructive = getattr(ann, "destructiveHint", None)
+    if read_hint is True:
+        return True
+    if read_hint is False or destructive is True:
+        return False
+    # No usable hint — heuristic on the tool name's leading verb.
+    name = (tool.get("name") or "").lower()
+    return name.startswith(_MCP_READONLY_VERBS)
 
 
 class McpManager:
@@ -170,6 +208,10 @@ class McpManager:
                     "name": tool.name,
                     "description": tool.description or "",
                     "input_schema": tool.inputSchema if hasattr(tool, 'inputSchema') else {},
+                    # MCP tool annotations (readOnlyHint / destructiveHint) drive
+                    # plan-mode read-only gating. Absent on many servers, so we
+                    # fall back to a name heuristic in mcp_tool_is_readonly().
+                    "annotations": getattr(tool, 'annotations', None),
                 })
 
             self._sessions[server_id] = session
@@ -227,6 +269,10 @@ class McpManager:
                     "name": tool.name,
                     "description": tool.description or "",
                     "input_schema": tool.inputSchema if hasattr(tool, 'inputSchema') else {},
+                    # MCP tool annotations (readOnlyHint / destructiveHint) drive
+                    # plan-mode read-only gating. Absent on many servers, so we
+                    # fall back to a name heuristic in mcp_tool_is_readonly().
+                    "annotations": getattr(tool, 'annotations', None),
                 })
 
             self._sessions[server_id] = session
@@ -536,6 +582,24 @@ class McpManager:
                     "is_disabled": tool["name"] in disabled,
                 })
         return result
+
+    def plan_mode_blocked_mcp(self) -> Tuple[Dict[str, Set[str]], Set[str]]:
+        """Plan mode: block every MCP tool that isn't clearly read-only.
+
+        Returns (disabled_map, qualified_names):
+          - disabled_map: {server_id: {tool_name, ...}} to hide write tools from
+            the prompt/schemas (merged into the existing mcp_disabled_map).
+          - qualified_names: {"mcp__<server>__<tool>", ...} for runtime rejection
+            in execute_tool_block (which matches the qualified name).
+        """
+        disabled_map: Dict[str, Set[str]] = {}
+        qualified: Set[str] = set()
+        for server_id, tools in self._tools.items():
+            for tool in tools:
+                if not mcp_tool_is_readonly(tool):
+                    disabled_map.setdefault(server_id, set()).add(tool["name"])
+                    qualified.add(f"mcp__{server_id}__{tool['name']}")
+        return disabled_map, qualified
 
     def is_builtin(self, server_id: str) -> bool:
         """Check if a server is a built-in (auto-registered) server."""

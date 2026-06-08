@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 
@@ -11,6 +12,7 @@ from routes.cookbook_helpers import (
     _append_serve_exit_code_lines,
     _append_serve_preflight_exit_lines,
     _llama_cpp_rebuild_cmd,
+    _append_vllm_linux_preflight_lines,
     _local_tooling_path_export,
     _pip_install_attempt,
     _pip_install_fallback_chain,
@@ -23,6 +25,7 @@ from routes.cookbook_helpers import (
     _validate_serve_cmd,
     _validate_serve_model_id,
     _validate_ssh_port,
+    run_ssh_command_async,
 )
 
 
@@ -31,6 +34,56 @@ def test_safe_env_prefix_accepts_quoted_venv_path():
         _safe_env_prefix("source '~/vllm-env/bin/activate'")
         == '[ -f "$HOME/vllm-env/bin/activate" ] && source "$HOME/vllm-env/bin/activate" || true'
     )
+
+
+@pytest.mark.asyncio
+async def test_run_ssh_command_executes_with_stdin_and_returns_output(monkeypatch):
+    captured = {}
+
+    class _Proc:
+        returncode = 0
+
+        async def communicate(self, input=None):
+            captured["input"] = input
+            return b"stdout", b"stderr"
+
+    async def _fake_exec(*args, **kwargs):
+        captured["args"] = list(args)
+        captured["stdin"] = kwargs.get("stdin")
+        captured["stdout"] = kwargs.get("stdout")
+        captured["stderr"] = kwargs.get("stderr")
+        return _Proc()
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", _fake_exec)
+
+    rc, out, err = await run_ssh_command_async(
+        "alice@gpu-box",
+        "2222",
+        "python -",
+        timeout=5,
+        connect_timeout=4,
+        strict_host_key_checking=False,
+        stdin_data=b"python -m pip install vllm",
+    )
+
+    assert rc == 0
+    assert out == b"stdout"
+    assert err == b"stderr"
+    assert captured["args"] == [
+        "ssh",
+        "-o",
+        "ConnectTimeout=4",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-p",
+        "2222",
+        "alice@gpu-box",
+        "python -",
+    ]
+    assert captured["stdin"] is not None
+    assert captured["stdout"] is not None
+    assert captured["stderr"] is not None
+    assert captured["input"] == b"python -m pip install vllm"
 
 
 def test_safe_env_prefix_leaves_compound_conda_prefix_unchanged():
@@ -168,6 +221,8 @@ def test_pip_install_fallback_chain_quotes_extras_spec():
     chain = _pip_install_fallback_chain("llama-cpp-python[server]", python_cmd="pip")
     # Quoted in both the plain and the --user attempt.
     assert chain.count("'llama-cpp-python[server]'") == 2
+    # llama-cpp installs must prefer prebuilt wheels to avoid fragile source builds.
+    assert "--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu" in chain
     # Never the unquoted form (bracket-glob risk).
     assert "install -q llama-cpp-python[server]" not in chain
     # A plain package name is still passed through unquoted (no regression).
@@ -190,6 +245,30 @@ def test_serve_runner_installs_llama_cpp_server_extra():
     # The [server] extra is requested in the build/fallback paths.
     assert "'llama-cpp-python[server]'" in src
     assert "_pip_install_fallback_chain('llama-cpp-python[server]'" in src
+
+
+def test_serve_pip_install_normalizes_llama_cpp_alias_and_adds_wheel_index():
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parent.parent
+        / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+
+    assert "re.sub(r\"(?<![A-Za-z0-9_.-])llama_cpp(?![A-Za-z0-9_.-])\", \"llama-cpp-python[server]\", req.cmd)" in src
+    assert "if \"llama-cpp-python\" in req.cmd and \"--extra-index-url\" not in req.cmd:" in src
+    assert "https://abetlen.github.io/llama-cpp-python/whl/cpu" in src
+
+
+def test_vllm_preflight_reports_cli_and_version():
+    lines = []
+
+    _append_vllm_linux_preflight_lines(lines)
+    script = "\n".join(lines)
+
+    assert 'export PATH="$HOME/.local/bin:$PATH"' in script
+    assert 'ODYSSEUS_VLLM_BIN="$(command -v vllm 2>/dev/null || true)"' in script
+    assert 'echo "[odysseus] vLLM CLI: $ODYSSEUS_VLLM_BIN"' in script
+    assert '"$ODYSSEUS_VLLM_BIN" --version' in script
+    assert 'ODYSSEUS_PREFLIGHT_EXIT=127' in script
 
 
 def test_venv_safe_local_pip_install_strips_user_flags_only_for_local_venv():
@@ -224,6 +303,8 @@ def test_pip_install_attempt_failure_propagates_real_exit_code():
     """Run the generated snippet against a deliberately broken pip install
     to confirm the subshell exits with pip's non-zero status."""
     snippet = _pip_install_attempt("python3 -m pip install __nonexistent_package_12345__")
+    if sys.platform == "win32":
+        snippet = snippet.replace("$", "\\$")
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
@@ -236,6 +317,8 @@ def test_pip_install_attempt_failure_propagates_real_exit_code():
 def test_pip_install_attempt_success_exits_zero():
     """When pip succeeds, the subshell should exit 0."""
     snippet = _pip_install_attempt("python3 -c 'pass'")
+    if sys.platform == "win32":
+        snippet = snippet.replace("$", "\\$")
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
@@ -248,6 +331,8 @@ def test_pip_install_attempt_success_exits_zero():
 def test_pip_install_attempt_surfaces_stderr_on_failure():
     """On failure, the last 5 lines of pip output should appear in stdout."""
     snippet = _pip_install_attempt("python3 -m pip install __nonexistent_package_12345__")
+    if sys.platform == "win32":
+        snippet = snippet.replace("$", "\\$")
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
@@ -268,6 +353,7 @@ def test_local_tooling_path_export_converts_windows_paths_for_bash():
 def test_user_shell_path_bootstrap_falls_back_to_python_on_windows_bash():
     script = "\n".join(_user_shell_path_bootstrap())
     assert 'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }' in script
+    assert 'command -v python >/dev/null 2>&1 || python() { python3 "$@"; }' in script
 
 
 def test_serve_preflight_failure_keeps_tmux_pane_visible():
@@ -337,6 +423,15 @@ def test_validate_serve_cmd_accepts_llama_advanced_controls():
         '|| python3 -m llama_cpp.server --model "$MODEL_FILE" --host 0.0.0.0 --port 8000'
     )
 
+    assert _validate_serve_cmd(cmd) == cmd
+
+
+def test_validate_serve_cmd_accepts_windows_printf_format():
+    cmd = (
+        "python -m llama_cpp.server --model "
+        "\"$(printf %s ${HOME}'/.cache/huggingface/hub/models--unsloth--Qwen3.5-2B-GGUF/snapshots/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-Q4_K_M.gguf')\" "
+        "--host 0.0.0.0 --port 8000 --n_gpu_layers 99 --n_ctx 32768 --flash_attn true --type_k q4_0 --type_v q4_0"
+    )
     assert _validate_serve_cmd(cmd) == cmd
 
 
@@ -467,11 +562,13 @@ def test_llama_cpp_rebuild_cmd_clears_cached_build_paths():
 def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):
     """The command should succeed even when neither path exists yet."""
     import os
+    from core.platform_compat import find_bash, git_bash_path
 
+    bash = find_bash() or "bash"
     env = dict(os.environ)
-    env["HOME"] = str(tmp_path)
+    env["HOME"] = git_bash_path(tmp_path)
     result = subprocess.run(
-        ["bash", "-c", _llama_cpp_rebuild_cmd()],
+        [bash, "-c", _llama_cpp_rebuild_cmd()],
         capture_output=True, text=True, env=env, timeout=10,
     )
 
@@ -526,6 +623,36 @@ def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):
     assert ggufs[3]["quant"] == "BF16"
 
 
+def test_cached_model_scan_uses_huggingface_cache_env(tmp_path):
+    """Docker recreates can leave the persisted HF cache outside HOME.
+    The Serve scanner should honor the cache env path instead of only ~/.cache.
+    """
+    hf_cache = tmp_path / "app-cache" / "hub"
+    model = hf_cache / "models--Qwen--Qwen3.6-35B"
+    (model / "blobs").mkdir(parents=True)
+    (model / "blobs" / "weights.safetensors").write_bytes(b"weights")
+    (model / "snapshots" / "abc").mkdir(parents=True)
+    (model / "snapshots" / "abc" / "config.json").write_text("{}", encoding="utf-8")
+
+    empty_home = tmp_path / "home"
+    empty_home.mkdir()
+    scan_py = tmp_path / "scan_cache_env.py"
+    scan_py.write_text(_cached_model_scan_script(), encoding="utf-8")
+    env = dict(os.environ)
+    env["HOME"] = str(empty_home)
+    env["HUGGINGFACE_HUB_CACHE"] = str(hf_cache)
+    proc = subprocess.run(
+        [sys.executable, str(scan_py)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    by_repo = {m["repo_id"]: m for m in json.loads(proc.stdout)}
+    assert by_repo["Qwen/Qwen3.6-35B"]["path"] == str(hf_cache)
+
+
 # ── #1219 / #1459: keep big dependency wheel builds off the home pip cache ──
 
 def test_pip_install_no_cache_injects_flag():
@@ -544,3 +671,35 @@ def test_pip_install_no_cache_is_idempotent_and_scoped():
     # not a pip install -> unchanged
     assert _pip_install_no_cache("vllm serve --model x") == "vllm serve --model x"
     assert _pip_install_no_cache("") == ""
+
+
+def test_cached_model_scan_runs_additional_hf_cache(tmp_path):
+    extra_cache = tmp_path / "extra_hf_cache"
+    model_dir = extra_cache / "models--acme--sample-7b"
+    snap = model_dir / "snapshots" / "rev-1"
+    snap.mkdir(parents=True)
+    weights = snap / "model.safetensors"
+    weights.write_bytes(b"abc123")
+
+    scan_py = tmp_path / "scan_cache.py"
+    scan_py.write_text(
+        _cached_model_scan_script(add_hf_cache=str(extra_cache)),
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [sys.executable, str(scan_py)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    models = json.loads(proc.stdout)
+    by_repo = {m["repo_id"]: m for m in models}
+
+    assert "acme/sample-7b" in by_repo
+    rec = by_repo["acme/sample-7b"]
+    assert rec["path"] == str(extra_cache)
+    assert rec["nb_files"] == 1
+    assert rec["size_bytes"] == len(b"abc123")
+    assert rec["has_incomplete"] is False
+    assert rec["is_diffusion"] is False

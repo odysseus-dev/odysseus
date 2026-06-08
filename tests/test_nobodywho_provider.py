@@ -519,7 +519,7 @@ def test_list_model_ids_uses_manager(monkeypatch):
     import src.nobodywho_provider as nbw_mod
     monkeypatch.setattr(nbw_mod, "manager", mgr)
     # Avoid DB-cached models interfering
-    monkeypatch.setattr(llm_core, "_configured_cached_model_ids", lambda url: [])
+    monkeypatch.setattr(llm_core, "_configured_cached_model_ids", lambda url, **kw: [])
 
     assert llm_core.list_model_ids(CANONICAL_URL) == ["ModelA", "ModelB"]
 

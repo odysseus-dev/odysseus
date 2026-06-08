@@ -15,19 +15,26 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, Depends
 
 from src.auth_helpers import require_user
+from src.constants import COOKBOOK_STATE_FILE
 from pydantic import BaseModel
 
 from core.middleware import require_admin
 from core.platform_compat import (
     IS_WINDOWS,
+    SSH_PATH_OVERRIDE,
+    NVIDIA_PATH_CANDIDATES,
     detached_popen_kwargs,
     find_bash,
+    git_bash_path,
     kill_process_tree,
     pid_alive,
     safe_chmod,
     which_tool,
+    translate_path,
+    get_wsl_windows_user_profile,
 )
 from routes.shell_routes import TMUX_LOG_DIR
+from src.constants import COOKBOOK_STATE_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +45,10 @@ from routes.cookbook_helpers import (
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
-    _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
-    _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
-    ModelDownloadRequest, ServeRequest, _diagnose_serve_output,
+    _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
+    _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
+    _diagnose_serve_output, run_ssh_command_async,
+    ModelDownloadRequest, ServeRequest,
 )
 
 _HF_TOKEN_STATUS_SNIPPET = (
@@ -54,7 +62,7 @@ _HF_TOKEN_STATUS_SNIPPET = (
 
 def setup_cookbook_routes() -> APIRouter:
     router = APIRouter(tags=["cookbook"])
-    _cookbook_state_path = Path(os.environ.get("DATA_DIR", "data")) / "cookbook_state.json"
+    _cookbook_state_path = Path(COOKBOOK_STATE_FILE)
 
     def _mask_secret(value: str) -> str:
         if not value:
@@ -174,6 +182,7 @@ def setup_cookbook_routes() -> APIRouter:
         safe_chmod(key_path.with_suffix(".pub"), 0o644)
         return {"ok": True, "public_key": _read_cookbook_public_key()}
 
+
     def _needs_binary(cmd: str, binary: str) -> bool:
         return bool(re.search(rf"(^|[\s;&|()]){re.escape(binary)}($|[\s;&|()])", cmd or ""))
 
@@ -234,8 +243,8 @@ def setup_cookbook_routes() -> APIRouter:
             # POSIX form + shell-quoting so drive paths / spaces survive.
             inner = TMUX_LOG_DIR / f"{session_id}_run.sh"
             inner.write_text("\n".join(bash_lines) + "\n", encoding="utf-8")
-            lp = shlex.quote(log_path.as_posix())
-            ip = shlex.quote(inner.as_posix())
+            lp = shlex.quote(git_bash_path(log_path))
+            ip = shlex.quote(git_bash_path(inner))
             script_path = TMUX_LOG_DIR / f"{session_id}.sh"
             script_path.write_text(
                 f"bash {ip} > {lp} 2>&1\n",
@@ -351,6 +360,8 @@ def setup_cookbook_routes() -> APIRouter:
             ps_lines = []
             ps_lines.append('$sessionDir = "$env:TEMP\\odysseus-sessions"')
             ps_lines.append('New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null')
+            ps_lines.append('$env:PYTHONIOENCODING = "utf-8"')
+            ps_lines.append('$env:PYTHONUTF8 = "1"')
             if req.hf_token:
                 ps_lines.append(f"$env:HF_TOKEN = '{_ps_squote(req.hf_token)}'")
             if req.env_prefix:
@@ -552,24 +563,35 @@ def setup_cookbook_routes() -> APIRouter:
             for d in model_dir.split(','):
                 d = d.strip()
                 if d:
-                    model_dirs.append(d)
-        paths_code = _cached_model_scan_script(model_dirs)
+                    translated_d = translate_path(d) if not host else d
+                    model_dirs.append(translated_d)
+        win_hf_hub = None
+        if not host:
+            win_profile = get_wsl_windows_user_profile()
+            win_hf_hub = os.path.join(win_profile, ".cache", "huggingface", "hub") if win_profile else None
+            
+        paths_code = _cached_model_scan_script(model_dirs, win_hf_hub)
 
         scan_py = TMUX_LOG_DIR / "scan_cache.py"
         scan_py.write_text(paths_code, encoding="utf-8")
+        scan_payload = scan_py.read_bytes()
 
         if host:
-            _pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
             if platform == "windows":
-                # Windows: use 'python' and pipe via stdin with double-quote wrapping
-                cmd = f'ssh {_pf}{host} "python -" < \'{scan_py}\''
+                remote_cmd = "python -"
             else:
-                cmd = f"ssh {_pf}{host} 'python3 -' < '{scan_py}'"
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(Path.home()),
+                # POSIX: use 'python3' if available, fall back to 'python'; throw if neither is found.
+                remote_cmd = (
+                    "if command -v python3 >/dev/null 2>&1; then python3 -; "
+                    "elif command -v python >/dev/null 2>&1; then python -; "
+                    "else echo \"python3/python not found\" >&2; exit 127; fi"
+                )
+            rc, stdout_b, stderr_b = await run_ssh_command_async(
+                host,
+                ssh_port,
+                remote_cmd,
+                timeout=60,
+                stdin_data=scan_payload,
             )
         else:
             # LOCAL scan: use sys.executable (the venv Python Odysseus is already
@@ -589,7 +611,7 @@ def setup_cookbook_routes() -> APIRouter:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(Path.home()),
             )
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=60)
+            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=60)
 
         models = []
         try:
@@ -794,6 +816,10 @@ def setup_cookbook_routes() -> APIRouter:
                 existing.name = display_name
                 if supports_tools is not None:
                     existing.supports_tools = supports_tools
+                # Wipe stale model lists so the picker re-probes and discovers
+                # the newly-served model instead of showing the old one.
+                existing.cached_models = None
+                existing.hidden_models = None
                 db.commit()
                 logger.info(f"Updated existing local model endpoint: {base_url}")
                 return existing.id
@@ -850,11 +876,27 @@ def setup_cookbook_routes() -> APIRouter:
             in_venv=sys.prefix != sys.base_prefix,
         )
         is_pip_install = bool(req.cmd and "pip install" in req.cmd)
+        remote = req.remote_host
+        is_windows = req.platform == "windows"
+        local_windows = IS_WINDOWS and not remote
+        if is_windows or local_windows:
+            if req.cmd.startswith("python3 "):
+                req.cmd = "python " + req.cmd[len("python3 "):]
+        if is_pip_install and ("llama-cpp-python" in req.cmd or "llama_cpp" in req.cmd) and (is_windows or local_windows):
+            if "--extra-index-url" not in req.cmd:
+                req.cmd += " --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
+
         if is_pip_install:
             # Keep big dependency wheel builds (vLLM, …) off the home filesystem's
             # pip cache so they don't fail mid-build with "No space left" (#1219)
             # and leave the dep installed-but-unusable (#1459).
             req.cmd = _pip_install_no_cache(req.cmd)
+            # Accept common aliases and enforce server extras for llama-cpp so
+            # `python -m llama_cpp.server` has all runtime dependencies.
+            req.cmd = re.sub(r"(?<![A-Za-z0-9_.-])llama_cpp(?![A-Za-z0-9_.-])", "llama-cpp-python[server]", req.cmd)
+            req.cmd = re.sub(r"(?<![A-Za-z0-9_.-])llama-cpp-python(?!\[)", "llama-cpp-python[server]", req.cmd)
+            if "llama-cpp-python" in req.cmd and "--extra-index-url" not in req.cmd:
+                req.cmd += " --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
             # PEP-508-style package spec — letters, digits, `.-_` for the
             # name; `[` `]` for extras; `<>=!~,` for version specifiers.
             # v2 review HIGH-14: tightened from the previous regex which
@@ -907,6 +949,8 @@ def setup_cookbook_routes() -> APIRouter:
             ps_lines = []
             ps_lines.append('$sessionDir = "$env:TEMP\\odysseus-sessions"')
             ps_lines.append('New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null')
+            ps_lines.append('$env:PYTHONIOENCODING = "utf-8"')
+            ps_lines.append('$env:PYTHONUTF8 = "1"')
             if req.hf_token:
                 ps_lines.append(f"$env:HF_TOKEN = '{_ps_squote(req.hf_token)}'")
             if req.gpus:
@@ -925,7 +969,7 @@ def setup_cookbook_routes() -> APIRouter:
                 ps_lines.append('try { python -c "import llama_cpp" 2>$null } catch {}')
                 ps_lines.append('if ($LASTEXITCODE -ne 0) {')
                 ps_lines.append('  Write-Host "Installing llama-cpp-python..."')
-                ps_lines.append('  python -m pip install llama-cpp-python[server]')
+                ps_lines.append('  python -m pip install llama-cpp-python[server] --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu')
                 ps_lines.append('}')
             elif "vllm" in req.cmd:
                 ps_lines.append('Write-Host "ERROR: vLLM is not supported on Windows. Use Ollama or llama.cpp instead."')
@@ -1000,45 +1044,57 @@ def setup_cookbook_routes() -> APIRouter:
                 # ollama is found (otherwise macOS falls back to a slow source build).
                 # /opt/homebrew = Apple Silicon, /usr/local = Intel; harmless on Linux.
                 runner_lines.append('export PATH="$HOME/.local/bin:$HOME/bin:$HOME/llama.cpp/build/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"')
-                runner_lines.append('if [ -d /data/data/com.termux ]; then')
-                runner_lines.append('  # Termux: no native build — use the Python bindings (CPU).')
-                runner_lines.append('  if ! python3 -c "import llama_cpp" 2>/dev/null; then')
-                runner_lines.append('    pkg install -y cmake 2>/dev/null')
-                runner_lines.append('    pip install numpy diskcache jinja2 2>/dev/null')
-                runner_lines.append('    CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_LLAMAFILE=OFF" pip install \'llama-cpp-python[server]\' --no-build-isolation --no-cache-dir 2>&1 || true')
-                runner_lines.append('  fi')
-                runner_lines.append('elif ! command -v llama-server &>/dev/null; then')
-                runner_lines.append('  echo "Native llama-server not found — building from source (one-time, may take a few minutes)..."')
-                runner_lines.append('  mkdir -p ~/bin')
-                runner_lines.append('  cd ~ && [ -d llama.cpp ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp')
-                # Build with the right accelerator: Metal on macOS (llama.cpp
-                # enables it automatically, no flag), CUDA on Linux when present,
-                # else a plain CPU build. nproc is Linux-only — fall back to
-                # `sysctl hw.ncpu` on macOS. (Tip: `brew install llama.cpp` ships
-                # a prebuilt llama-server and skips this whole source build.)
-                runner_lines.append('  NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"')
-                runner_lines.append('  if [ "$(uname -s)" = "Darwin" ]; then')
-                runner_lines.append('    command -v cmake >/dev/null 2>&1 || echo "WARNING: cmake not found — install it with: brew install cmake (or: brew install llama.cpp for a prebuilt llama-server)."')
-                # Start from a clean cache: a prior failed configure (e.g. a CUDA
-                # attempt) poisons build/CMakeCache.txt, so a plain `cmake -B build`
-                # would reuse the bad settings and fail again. CMAKE_BUILD_TYPE is
-                # explicit so the binary is optimized (Metal auto-enables on macOS).
-                runner_lines.append('    cd ~/llama.cpp && rm -rf build && cmake -B build -DCMAKE_BUILD_TYPE=Release \\')
-                runner_lines.append('      && cmake --build build -j"$NPROC" --target llama-server \\')
-                runner_lines.append('      && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
-                runner_lines.append('  else')
-                _append_llama_cpp_linux_accel_build_lines(runner_lines)
-                runner_lines.append('  fi')
-                runner_lines.append('  # If the native build failed, fall back to the Python bindings.')
-                runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
-                runner_lines.append('    echo "llama-server build failed — installing Python bindings as fallback..."')
-                runner_lines.append(f"    {_pip_install_fallback_chain('llama-cpp-python[server]', python_cmd='pip')} || true")
-                runner_lines.append('  fi')
-                runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
-                runner_lines.append('    echo "ERROR: llama.cpp serving is not available after install/build attempts."')
-                runner_lines.append('    ODYSSEUS_PREFLIGHT_EXIT=127')
-                runner_lines.append('  fi')
-                runner_lines.append('fi')
+                if local_windows:
+                    # LOCAL Windows: no native source compilation (no cmake/compiler on Git Bash).
+                    # Just check python bindings (using native `python` binary) and fall back to pip install.
+                    runner_lines.append('if ! command -v llama-server &>/dev/null && ! python -c "import llama_cpp" 2>/dev/null; then')
+                    runner_lines.append('  echo "llama-server not found — installing Python bindings..."')
+                    runner_lines.append(f"  {_pip_install_fallback_chain('llama-cpp-python[server]', python_cmd='python')} || true")
+                    runner_lines.append('fi')
+                    runner_lines.append('if ! command -v llama-server &>/dev/null && ! python -c "import llama_cpp" 2>/dev/null; then')
+                    runner_lines.append('  echo "ERROR: llama.cpp serving is not available after install attempts."')
+                    runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
+                    runner_lines.append('fi')
+                else:
+                    runner_lines.append('if [ -d /data/data/com.termux ]; then')
+                    runner_lines.append('  # Termux: no native build — use the Python bindings (CPU).')
+                    runner_lines.append('  if ! python3 -c "import llama_cpp" 2>/dev/null; then')
+                    runner_lines.append('    pkg install -y cmake 2>/dev/null')
+                    runner_lines.append('    pip install numpy diskcache jinja2 2>/dev/null')
+                    runner_lines.append('    CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_LLAMAFILE=OFF" pip install \'llama-cpp-python[server]\' --no-build-isolation --no-cache-dir 2>&1 || true')
+                    runner_lines.append('  fi')
+                    runner_lines.append('elif ! command -v llama-server &>/dev/null; then')
+                    runner_lines.append('  echo "Native llama-server not found — building from source (one-time, may take a few minutes)..."')
+                    runner_lines.append('  mkdir -p ~/bin')
+                    runner_lines.append('  cd ~ && [ -d llama.cpp ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp')
+                    # Build with the right accelerator: Metal on macOS (llama.cpp
+                    # enables it automatically, no flag), CUDA on Linux when present,
+                    # else a plain CPU build. nproc is Linux-only — fall back to
+                    # `sysctl hw.ncpu` on macOS. (Tip: `brew install llama.cpp` ships
+                    # a prebuilt llama-server and skips this whole source build.)
+                    runner_lines.append('  NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"')
+                    runner_lines.append('  if [ "$(uname -s)" = "Darwin" ]; then')
+                    runner_lines.append('    command -v cmake >/dev/null 2>&1 || echo "WARNING: cmake not found — install it with: brew install cmake (or: brew install llama.cpp for a prebuilt llama-server)."')
+                    # Start from a clean cache: a prior failed configure (e.g. a CUDA
+                    # attempt) poisons build/CMakeCache.txt, so a plain `cmake -B build`
+                    # would reuse the bad settings and fail again. CMAKE_BUILD_TYPE is
+                    # explicit so the binary is optimized (Metal auto-enables on macOS).
+                    runner_lines.append('    cd ~/llama.cpp && rm -rf build && cmake -B build -DCMAKE_BUILD_TYPE=Release \\')
+                    runner_lines.append('      && cmake --build build -j"$NPROC" --target llama-server \\')
+                    runner_lines.append('      && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+                    runner_lines.append('  else')
+                    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+                    runner_lines.append('  fi')
+                    # If the native build failed, fall back to the Python bindings.
+                    runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
+                    runner_lines.append('    echo "llama-server build failed — installing Python bindings as fallback..."')
+                    runner_lines.append(f"    {_pip_install_fallback_chain('llama-cpp-python[server]', python_cmd='pip')} || true")
+                    runner_lines.append('  fi')
+                    runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
+                    runner_lines.append('    echo "ERROR: llama.cpp serving is not available after install/build attempts."')
+                    runner_lines.append('    ODYSSEUS_PREFLIGHT_EXIT=127')
+                    runner_lines.append('  fi')
+                    runner_lines.append('fi')
             elif "ollama" in req.cmd:
                 handled_ollama_serve = True
                 _ollama_default_host = "0.0.0.0" if remote else "127.0.0.1"
@@ -1060,13 +1116,23 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('    ODYSSEUS_OLLAMA_PORT="$_ody_try_port"')
                 runner_lines.append('    break')
                 runner_lines.append('  fi')
-                runner_lines.append('  exec 3<&-; exec 3>&-')
-                runner_lines.append('done')
+                runner_lines.append('  echo "[odysseus] Ollama API ready on port ${ODYSSEUS_OLLAMA_PORT}: ${ODYSSEUS_OLLAMA_URL}"')
+                runner_lines.append('  echo "[odysseus] This task is monitoring an existing Ollama server; stopping it here will not stop an external Docker/system service."')
+                if local_windows:
+                    # Windows detached process has no TTY; exec bash -i crashes.
+                    # Keep the monitoring task alive with a sleep loop.
+                    runner_lines.append('  while true; do sleep 60; done')
+                else:
+                    runner_lines.append('  exec bash -i')
+                runner_lines.append('fi')
                 runner_lines.append('if ! command -v ollama &>/dev/null; then')
                 runner_lines.append('  echo "ERROR: Ollama not found on this server. Install it from https://ollama.com/download or `curl -fsSL https://ollama.com/install.sh | sh`."')
                 runner_lines.append('  echo')
                 runner_lines.append('  echo "=== Process exited with code 127 ==="')
-                runner_lines.append('  exec bash -i')
+                if local_windows:
+                    runner_lines.append('  exit 127')
+                else:
+                    runner_lines.append('  exec bash -i')
                 runner_lines.append('fi')
                 runner_lines.append('ODYSSEUS_OLLAMA_URL="http://${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}"')
                 if remote and _ollama_host in ("0.0.0.0", "::"):
@@ -1074,24 +1140,20 @@ def setup_cookbook_routes() -> APIRouter:
                     runner_lines.append('echo "[odysseus] Ollama has no built-in authentication; expose this only on a trusted LAN/VPN or provide an explicit OLLAMA_HOST with your own access controls."')
                 runner_lines.append('echo "Starting ollama server on ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}..."')
                 runner_lines.append('OLLAMA_HOST="${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}" ollama serve')
-                runner_lines.append('_ody_exit=$?')
-                runner_lines.append('echo')
-                runner_lines.append('echo "=== Process exited with code ${_ody_exit} ==="')
-                runner_lines.append('exec bash -i')
+                if local_windows:
+                    _append_serve_exit_code_lines(runner_lines, keep_shell_open=False)
+                else:
+                    runner_lines.append('_ody_exit=$?')
+                    runner_lines.append('echo')
+                    runner_lines.append('echo "=== Process exited with code ${_ody_exit} ==="')
+                    runner_lines.append('exec bash -i')
             elif "vllm serve" in req.cmd:
                 # vLLM is CUDA/ROCm-only and does not run on macOS at all.
                 runner_lines.append('if [ "$(uname -s)" = "Darwin" ]; then')
                 runner_lines.append('  echo "ERROR: vLLM does not run on macOS. Use Ollama or llama.cpp (Metal) instead."')
                 runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=1')
                 runner_lines.append('fi')
-                # Put ~/.local/bin on PATH first — without a venv, vllm installs
-                # there via --user and the non-login serve shell otherwise can't
-                # find the `vllm` CLI ("command not found"). Mirrors llama.cpp above.
-                runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
-                runner_lines.append('if ! command -v vllm &>/dev/null; then')
-                runner_lines.append('  echo "ERROR: vLLM is not installed."')
-                runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
-                runner_lines.append('fi')
+                _append_vllm_linux_preflight_lines(runner_lines)
             elif "sglang.launch_server" in req.cmd:
                 runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
                 runner_lines.append('if ! command -v sglang &>/dev/null; then')
@@ -1315,11 +1377,38 @@ def setup_cookbook_routes() -> APIRouter:
     async def _run_nvidia_smi(query: str, host: str | None, ssh_port: str | None, timeout: int = 8):
         """Run nvidia-smi locally or over SSH. Returns (stdout, error_or_None)."""
         if host:
-            pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
-            cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} '{query}'"
-            proc = await asyncio.create_subprocess_shell(
-                cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
+            candidates = [query]
+            stripped = query.strip()
+            if stripped.startswith("nvidia-smi "):
+                args = stripped[len("nvidia-smi "):]
+                candidates.append(
+                    "bash -lc "
+                    + shlex.quote(
+                        f"{SSH_PATH_OVERRIDE}"
+                        f"nvidia-smi {args}"
+                    )
+                )
+                for nvidia_path in NVIDIA_PATH_CANDIDATES:
+                    candidates.append(f"{nvidia_path} {args}")
+
+            last_err = "nvidia-smi failed"
+            for candidate in candidates:
+                try:
+                    rc, stdout, stderr = await run_ssh_command_async(
+                        host,
+                        ssh_port,
+                        candidate,
+                        connect_timeout=5,
+                        timeout=timeout,
+                    )
+                except asyncio.TimeoutError:
+                    return None, "nvidia-smi timed out"
+                if rc == 0:
+                    return stdout.decode("utf-8", errors="replace"), None
+                err = (stderr.decode("utf-8", errors="replace") or "").strip()[:200]
+                if err:
+                    last_err = err
+            return None, last_err
         else:
             proc = await asyncio.create_subprocess_exec(
                 *shlex.split(query),
@@ -2082,7 +2171,13 @@ def setup_cookbook_routes() -> APIRouter:
                 "inc=os.path.isdir(blobs) and any(x.endswith('.incomplete') for x in os.listdir(blobs));"
                 "sys.exit(0 if ok and not inc else 1)"
             )
-            cmd = ["python3", "-c", py, repo_id]
+            if remote_host:
+                cmd = ["python3", "-c", py, repo_id]
+            else:
+                # Local Windows: python3 can hit the Microsoft Store stub. Use the
+                # real Python Odysseus is running under (guaranteed to exist).
+                import sys as _sys_local
+                cmd = [_sys_local.executable, "-c", py, repo_id]
             try:
                 if remote_host:
                     ssh_base = ["ssh"]

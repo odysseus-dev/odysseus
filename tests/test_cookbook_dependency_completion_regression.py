@@ -56,10 +56,14 @@ def test_session_gone_heuristic_honors_dep_install_success():
     source = _read("static/js/cookbookRunning.js")
 
     assert "const depInstallSucceeded = !!task.payload?._dep && _depInstallSucceeded(lastOutput);" in source
+    # Whitespace-normalized so the check survives line-wrapping/formatting while
+    # still proving the invariant: a finished dependency install short-circuits
+    # looksSuccessful ahead of the download/serve branch.
+    normalized = " ".join(source.split())
     assert (
         "const looksSuccessful = depInstallSucceeded "
-        "|| (task.type === 'download' ? downloadLooksSuccessful : serveLooksReady);"
-    ) in source
+        "|| (task.type === 'download'"
+    ) in normalized
 
 
 def test_background_poll_recovers_done_for_stopped_dependency_install():

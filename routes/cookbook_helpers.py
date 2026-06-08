@@ -11,6 +11,8 @@ import shlex
 from fastapi import HTTPException
 from pydantic import BaseModel
 
+from core.platform_compat import _ssh_exec_argv
+
 logger = logging.getLogger(__name__)
 
 
@@ -206,12 +208,19 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     exit code is preserved (no ``| tail`` masking) and the last 5 lines of
     pip output appear in the Cookbook log on failure.
     """
+    from core.platform_compat import IS_WINDOWS
     upgrade_flag = " -U" if upgrade else ""
     # Shell-quote the package spec: an extras spec like ``llama-cpp-python[server]``
     # contains brackets that bash would treat as a glob, so it must be quoted
     # before being embedded in the install command. Plain names (e.g.
     # ``huggingface_hub``) are returned unchanged by ``shlex.quote``.
     pkg = shlex.quote(package)
+    # llama-cpp-python source builds are brittle on older distro pip/packaging
+    # stacks (common on WSL images). Prefer the prebuilt wheel index whenever
+    # this package is requested so dependency-install tasks are reliable.
+    if "llama-cpp-python" in package:
+        pkg += " --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
+
     base = _pip_install_attempt(f"{python_cmd} install -q{upgrade_flag} {pkg}")
     user = _pip_install_attempt(f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {pkg}")
     # Derive the python executable for the venv detection check.
@@ -271,11 +280,14 @@ def _user_shell_path_bootstrap() -> list[str]:
         '  if [ -n "$ODYSSEUS_USER_PATH" ]; then export PATH="$ODYSSEUS_USER_PATH:$PATH"; fi',
         'fi',
         'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }',
+        'command -v python >/dev/null 2>&1 || python() { python3 "$@"; }',
     ]
 
 
-def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
-    """Build the standalone Python scanner used by /api/model/cached."""
+def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache: str | None = None) -> str:
+    """Build the standalone Python scanner used by /api/model/cached.
+    Allows for an additional HuggingFace cache path to be scanned (i.e. Windows HF cache for local WSL envs.)
+    """
     lines = [
         "import json, os, re, shutil, subprocess, urllib.request",
         "models = []",
@@ -338,6 +350,15 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
         "                if f.is_file(): nf += 1; sz += f.stat().st_size",
         "                if f.name.endswith('.incomplete'): ic = True",
         "        snap = os.path.join(cache, d, 'snapshots')",
+        "        # Windows HF cache stores files directly in snapshots/; blobs/ may be empty.",
+        "        # Fallback: scan snapshots for real files when blobs yielded nothing.",
+        "        if sz == 0 and os.path.isdir(snap):",
+        "            for sd in os.listdir(snap):",
+        "                sf = os.path.join(snap, sd)",
+        "                if not os.path.isdir(sf): continue",
+        "                for f in os.scandir(sf):",
+        "                    if f.is_file(): nf += 1; sz += f.stat().st_size",
+        "                    if f.name.endswith('.incomplete'): ic = True",
         "        is_diffusion = False; gguf_files = []",
         "        if os.path.isdir(snap):",
         "            for sd in os.listdir(snap):",
@@ -346,6 +367,21 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
         "                if os.path.exists(os.path.join(sf, 'model_index.json')): is_diffusion = True",
         "                for f in collect_ggufs(sf): f['rel_path'] = sd + '/' + f['rel_path']; gguf_files.append(f)",
         "        models.append({'repo_id':rid,'size_bytes':sz,'nb_files':nf,'has_incomplete':ic,'path':cache,'is_diffusion':is_diffusion,'is_gguf':bool(gguf_files),'gguf_files':gguf_files})",
+        "def hf_cache_paths():",
+        "    candidates = []",
+        "    def add(p):",
+        "        if not p: return",
+        "        p = os.path.expanduser(p)",
+        "        if p not in candidates: candidates.append(p)",
+        "    add(os.environ.get('HUGGINGFACE_HUB_CACHE'))",
+        "    hf_home = os.environ.get('HF_HOME')",
+        "    if hf_home: add(os.path.join(hf_home, 'hub'))",
+        "    add('~/.cache/huggingface/hub')",
+        "    # Docker images mount ./data/huggingface at /app/.cache/huggingface.",
+        "    # When HOME is /root, expanduser() misses that persisted cache.",
+        "    add('/app/.cache/huggingface/hub')",
+        f"    add({add_hf_cache!r})" if add_hf_cache else "",
+        "    return candidates",
         "def scan_dir(p):",
         "    if not os.path.isdir(p) or not safe_path(p): return",
         "    for d in sorted(os.listdir(p)):",
@@ -409,7 +445,7 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
         "            seen.add(name)",
         "            models.append({'repo_id':name,'size_bytes':size_bytes,'nb_files':1,'has_incomplete':False,'path':'ollama','backend':'ollama','is_ollama':True})",
         "        return",
-        "scan_hf(os.path.expanduser('~/.cache/huggingface/hub'))",
+        "for _hf_cache in hf_cache_paths(): scan_hf(_hf_cache)",
         "scan_ollama()",
         "scan_ollama_api()",
     ]
@@ -525,6 +561,7 @@ def _validate_serve_cmd(v: str | None) -> str | None:
     # Backticks and raw newlines are never legitimate here.
     if any(c in v for c in ("`", "\n", "\r")):
         raise HTTPException(400, "Invalid characters in cmd")
+
     # Known GGUF launcher prelude → validate the serve invocation(s) it guards.
     m = _GGUF_PRELUDE_RE.match(v)
     if m:
@@ -533,9 +570,19 @@ def _validate_serve_cmd(v: str | None) -> str | None:
         for part in rest.split("||"):
             _check_serve_binary(part.strip())
         return v
+
     # Otherwise: a single invocation — no shell metacharacters allowed.
+    # Temporarily replace safe $(printf %s ...) expressions with a placeholder
+    # to avoid triggering the metacharacter/command-injection checks.
+    cleaned_v = v
+    printf_matches = list(re.finditer(r"\$\(\s*printf\s+%s\s+([^\n()]*?)\)", v))
+    for match in printf_matches:
+        inner = match.group(1)
+        if not any(c in inner for c in (";", "&&", "||", "$(", "`")):
+            cleaned_v = cleaned_v.replace(match.group(0), "/placeholder/safe/path.gguf")
+
     # (`$(` was the original intent; bare `$` is fine for shell-safe paths.)
-    if any(c in v for c in (";", "&&", "||", "$(")):
+    if any(c in cleaned_v for c in (";", "&&", "||", "$(")):
         raise HTTPException(400, "Invalid characters in cmd")
     _check_serve_binary(v)
     return v
@@ -558,6 +605,21 @@ def _append_serve_preflight_exit_lines(runner_lines: list[str], *, keep_shell_op
         runner_lines.append('  exit "$ODYSSEUS_PREFLIGHT_EXIT"')
     runner_lines.append('fi')
 
+
+def _append_vllm_linux_preflight_lines(runner_lines: list[str]) -> None:
+    """Append Linux vLLM readiness lines that identify the runtime being used."""
+    # Keep the user install bin visible for Odysseus-managed `pip install --user`
+    # installs, but then report the actual CLI path so external runtimes are clear.
+    runner_lines.append('export PATH="$HOME/.local/bin:$PATH"')
+    runner_lines.append('ODYSSEUS_VLLM_BIN="$(command -v vllm 2>/dev/null || true)"')
+    runner_lines.append('if [ -z "$ODYSSEUS_VLLM_BIN" ]; then')
+    runner_lines.append('  echo "ERROR: vLLM is not installed."')
+    runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
+    runner_lines.append('else')
+    runner_lines.append('  echo "[odysseus] vLLM CLI: $ODYSSEUS_VLLM_BIN"')
+    runner_lines.append('  ODYSSEUS_VLLM_VERSION="$("$ODYSSEUS_VLLM_BIN" --version 2>&1 | head -n 1 || true)"')
+    runner_lines.append('  if [ -n "$ODYSSEUS_VLLM_VERSION" ]; then echo "[odysseus] vLLM version: $ODYSSEUS_VLLM_VERSION"; fi')
+    runner_lines.append('fi')
 
 def _append_serve_exit_code_lines(
     runner_lines: list[str],
@@ -861,6 +923,16 @@ def _diagnose_serve_output(text: str) -> dict | None:
             [{"label": "retry with --trust-remote-code", "op": "append", "arg": "--trust-remote-code"}],
         ),
         (
+            r"There is no module or parameter named ['\"]lm_head\.input_scale['\"]|lm_head\.input_scale|weight_scale_2",
+            "vLLM cannot load this ModelOpt LM-head quantized checkpoint with the current runtime.",
+            [
+                {
+                    "label": "upgrade vLLM through the environment that provides this CLI, or use a compatible checkpoint",
+                    "op": "manual",
+                }
+            ],
+        ),
+        (
             r"Either a revision or a version must be specified|transformers\.integrations\.hub_kernels|kernels/layer",
             "vLLM/Transformers kernel package mismatch.",
             [{"label": "update vLLM, Transformers, and kernels on this server", "op": "dependency", "package": "vllm transformers kernels"}],
@@ -926,3 +998,40 @@ def _diagnose_serve_output(text: str) -> dict | None:
             "suggestions": [{"label": "inspect traceback and retry with adjusted backend/settings", "op": "manual"}],
         }
     return None
+
+
+async def run_ssh_command_async(
+    remote: str,
+    ssh_port: str | None,
+    remote_cmd: str,
+    *,
+    timeout: float,
+    connect_timeout: int | None = None,
+    strict_host_key_checking: bool | None = None,
+    stdin_data: bytes | None = None,
+) -> tuple[int, bytes, bytes]:
+    """Run an ssh command with centralized timeout and stderr/stdout capture.
+    Async version of core.platform_compat.run_ssh_command_sync.
+    """
+    import asyncio
+    proc = await asyncio.create_subprocess_exec(
+        *_ssh_exec_argv(
+            remote,
+            ssh_port,
+            remote_cmd=remote_cmd,
+            connect_timeout=connect_timeout,
+            strict_host_key_checking=strict_host_key_checking,
+        ),
+        stdin=asyncio.subprocess.PIPE if stdin_data is not None else None,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(input=stdin_data), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        raise
+    return proc.returncode or 0, stdout, stderr
