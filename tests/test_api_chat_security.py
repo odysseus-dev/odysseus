@@ -1,3 +1,4 @@
+import asyncio
 import ipaddress
 import importlib.util
 import sys
@@ -189,6 +190,12 @@ class _SessionManager:
     def __init__(self):
         self.created = []
         self.save_calls = 0
+        self._locks = {}
+
+    def session_lock(self, session_id):
+        if session_id not in self._locks:
+            self._locks[session_id] = asyncio.Lock()
+        return self._locks[session_id]
 
     def create_session(self, *, session_id, name, endpoint_url, model, owner):
         session = _ChatSession(endpoint_url, model)
