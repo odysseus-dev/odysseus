@@ -741,16 +741,20 @@ function initEndpointForm() {
         msg.className = '';
       }
     } else {
-      urlInput.placeholder = 'Base URL or pick provider';
-      urlInput.readOnly = false;
+      // Claude CLI and similar no-key providers: disable API key field
+      const _opt = _selectedProviderOption();
+      const isNoKey = _opt && _opt.dataset && _opt.dataset.noKey === 'true';
+      urlInput.placeholder = isNoKey ? 'claude-cli://local (set automatically)' : 'Base URL or pick provider';
+      urlInput.readOnly = isNoKey;
       if (apiKey) {
-        apiKey.placeholder = 'API key';
-        apiKey.disabled = false;
+        apiKey.placeholder = isNoKey ? 'No API key needed — uses Claude CLI' : 'API key';
+        apiKey.disabled = isNoKey;
+        if (isNoKey) apiKey.value = '';
       }
       if (testBtn) {
-        testBtn.disabled = false;
-        testBtn.style.opacity = '';
-        testBtn.style.cursor = '';
+        testBtn.disabled = isNoKey;
+        testBtn.style.opacity = isNoKey ? '0.45' : '';
+        testBtn.style.cursor = isNoKey ? 'not-allowed' : '';
       }
       if (addBtn) {
         addBtn.disabled = false;
@@ -759,8 +763,8 @@ function initEndpointForm() {
         addBtn.style.display = '';
       }
       if (msg) {
-        msg.textContent = '';
-        msg.className = '';
+        msg.textContent = isNoKey ? 'Runs locally via claude CLI (your subscription, no API charges).' : '';
+        msg.className = isNoKey ? 'adm-ep-inline-msg adm-ep-ok' : '';
       }
       if (!deviceAuthPolling && status) status.textContent = '';
     }

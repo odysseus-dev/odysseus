@@ -3,6 +3,10 @@
 // All SVGs use viewBox="0 0 24 24" fill="currentColor"
 
 const _PROVIDERS = [
+  // Claude CLI / Anthropic — matches "claude" model names AND the "claude-cli" data-logo tag
+  [/claude-cli/i,
+    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg>'],
+
   // Ollama
   [/ollama|:11434/i,
     '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5c-3.1 0-5.65 2.43-5.86 5.48A6.62 6.62 0 0 0 3 13.62C3 18 6.8 21.5 12 21.5s9-3.5 9-7.88a6.62 6.62 0 0 0-3.14-5.64C17.65 4.93 15.1 2.5 12 2.5Zm-2.7 8.25a1.15 1.15 0 1 1 0 2.3 1.15 1.15 0 0 1 0-2.3Zm5.4 0a1.15 1.15 0 1 1 0 2.3 1.15 1.15 0 0 1 0-2.3Zm-5.15 5.15c.75.7 1.55 1.04 2.45 1.04s1.7-.34 2.45-1.04c.26-.24.66-.23.9.03.24.26.23.66-.03.9-.98.91-2.08 1.37-3.32 1.37s-2.34-.46-3.32-1.37a.64.64 0 0 1-.03-.9.64.64 0 0 1 .9-.03Z"/></svg>'],
@@ -89,7 +93,7 @@ const _PROVIDERS = [
     '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.948 8.798v-1.43a6.7 6.7 0 0 1 .424-.018c3.922-.124 6.493 3.374 6.493 3.374s-2.774 3.851-5.75 3.851c-.398 0-.787-.062-1.158-.185v-4.346c1.528.185 1.837.857 2.747 2.385l2.04-1.714s-1.492-1.952-4-1.952a6.016 6.016 0 0 0-.796.035m0-4.735v2.138l.424-.027c5.45-.185 9.01 4.47 9.01 4.47s-4.08 4.964-8.33 4.964c-.37 0-.733-.035-1.095-.097v1.325c.3.035.61.062.91.062 3.957 0 6.82-2.023 9.593-4.408.459.371 2.34 1.263 2.73 1.652-2.633 2.208-8.772 3.984-12.253 3.984-.335 0-.653-.018-.971-.053v1.864H24V4.063zm0 10.326v1.131c-3.657-.654-4.673-4.46-4.673-4.46s1.758-1.944 4.673-2.262v1.237H8.94c-1.528-.186-2.73 1.245-2.73 1.245s.68 2.412 2.739 3.11M2.456 10.9s2.164-3.197 6.5-3.533V6.201C4.153 6.59 0 10.653 0 10.653s2.35 6.802 8.948 7.42v-1.237c-4.84-.6-6.492-5.936-6.492-5.936z"/></svg>'],
 ];
 
-// Returns an SVG string for the given model ID, or null if no match
+// Returns an SVG string for the given model ID or endpoint URL, or null if no match
 export function providerLogo(modelId) {
   if (!modelId) return null;
   for (const [re, svg] of _PROVIDERS) {
@@ -128,6 +132,8 @@ const _ENDPOINT_LABELS = [
  */
 export function providerLabel(endpointUrl) {
   if (!endpointUrl || typeof endpointUrl !== "string") return null;
+  // Claude CLI (Acqua OS subscription provider) — special scheme, not an HTTP URL.
+  if (endpointUrl.startsWith("claude-cli://")) return "Claude CLI";
   let host;
   try {
     host = new URL(endpointUrl).hostname;

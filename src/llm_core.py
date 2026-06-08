@@ -259,6 +259,15 @@ ANTHROPIC_MODELS = [
     "claude-haiku-4-20250514", "claude-haiku-4", "claude-haiku-3-5-20241022", "claude-haiku-3-5",
 ]
 
+# ── Acqua OS — Claude CLI provider (subscription quota, zero API cost) ───────
+from src.claude_cli_provider import (
+    call_claude_cli,
+    call_claude_cli_async,
+    stream_claude_cli,
+    CLAUDE_CLI_URL,
+    CLAUDE_CLI_MODELS,
+)
+
 
 def _is_ollama_native_url(url: str) -> bool:
     """Return True for native Ollama API URLs, including Ollama Cloud."""
@@ -416,6 +425,8 @@ def _detect_provider(url: str) -> str:
     """
     if _is_ollama_native_url(url):
         return "ollama"
+    if url == CLAUDE_CLI_URL or url.startswith("claude-cli://"):
+        return "claude-cli"
     if _host_match(url, "anthropic.com"):
         return "anthropic"
     if _host_match(url, "opencode.ai/zen/go"):
@@ -1033,6 +1044,8 @@ def list_model_ids(
     if cached:
         return cached
     provider = _detect_provider(base_chat_url)
+    if provider == "claude-cli":
+        return list(CLAUDE_CLI_MODELS)
     if provider == "anthropic":
         return list(ANTHROPIC_MODELS)
     try:
@@ -1123,6 +1136,15 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     if cached_response:
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
+
+    # ── Acqua OS Claude CLI (subscription quota, no API key) ─────────────────
+    if provider == "claude-cli":
+        try:
+            response = call_claude_cli(messages_copy, model=model)
+            _set_cached_response(cache_key, response)
+            return response
+        except RuntimeError as e:
+            raise HTTPException(502, f"Claude CLI error: {e}")
 
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
@@ -1312,6 +1334,15 @@ async def llm_call_async(
         response = "".join(parts)
         _set_cached_response(cache_key, response)
         return response
+
+    # ── Acqua OS Claude CLI (subscription quota, no API key) ─────────────────
+    if provider == "claude-cli":
+        try:
+            response = await call_claude_cli_async(messages_copy, model=model)
+            _set_cached_response(cache_key, response)
+            return response
+        except RuntimeError as e:
+            raise HTTPException(502, f"Claude CLI error: {e}")
 
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
@@ -1595,6 +1626,12 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         except Exception as e:
             logger.error(f"Ollama stream error: {e}")
             yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+        return
+
+    # ── Acqua OS Claude CLI streaming (pseudo-stream, subscription quota) ──────
+    if provider == "claude-cli":
+        async for chunk in stream_claude_cli(messages_copy, model=model):
+            yield chunk
         return
 
     # ── Anthropic streaming ──
