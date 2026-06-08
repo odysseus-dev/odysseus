@@ -46,7 +46,8 @@ jobs:
             // Conventional Commits: type(optional-scope)(optional !): summary
             const re = /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([\w .\/-]+\))?!?: .+/;
             if (!re.test(title)) {
-              core.setFailed(
+              // Advisory only (per #2288): annotate, do not block merges.
+              core.warning(
                 `PR title is not in Conventional Commits format:\n  "${title}"\n\n` +
                 `Expected: type(scope): summary\n` +
                 `Example:  fix(search): handle empty query\n` +

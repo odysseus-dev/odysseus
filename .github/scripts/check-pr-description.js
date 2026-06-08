@@ -125,6 +125,7 @@ module.exports = async ({ github, context, core }) => {
     await swapLabel(prNum, 'ready for review', 'needs work');
   } else {
     await swapLabel(prNum, 'needs work', 'ready for review');
-    core.setFailed(`PR description has ${problems.length} issue(s) — see bot comment for details.`);
+    // Advisory only (per #2288): comment + label, but do not block merges.
+    core.warning(`PR description has ${problems.length} issue(s) — see bot comment for details.`);
   }
 };
