@@ -43,13 +43,14 @@ function _compactUrlSchemeValue(value) {
   return String(value || '').replace(/[\u0000-\u0020\u007f-\u009f]+/g, '').toLowerCase();
 }
 
-function _isDangerousUrl(value) {
+function _isDangerousUrl(value, allowDataUri) {
   const compact = _compactUrlSchemeValue(value);
+  if (allowDataUri && compact.startsWith('data:')) return false;
   return compact.startsWith('javascript:') || compact.startsWith('vbscript:') || compact.startsWith('data:');
 }
 
-function _isDangerousSrcset(value) {
-  return String(value || '').split(',').some(candidate => _isDangerousUrl(candidate));
+function _isDangerousSrcset(value, allowDataUri) {
+  return String(value || '').split(',').some(candidate => _isDangerousUrl(candidate, allowDataUri));
 }
 
 // Escape + linkify URLs and email addresses. Returns innerHTML-safe markup.
@@ -177,9 +178,12 @@ function _sanitizeHtmlOnce(html) {
       const name = attr.name.toLowerCase();
       if (name.startsWith('on')) { el.removeAttribute(attr.name); continue; }
       if (name === 'srcdoc') { el.removeAttribute(attr.name); continue; }
-      if (URL_ATTRS.includes(name) && (name === 'srcset' ? _isDangerousSrcset(attr.value) : _isDangerousUrl(attr.value))) {
-        el.removeAttribute(attr.name);
-        continue;
+      if (URL_ATTRS.includes(name)) {
+        const allowDataUri = (el.tagName === 'IMG' || el.tagName === 'SOURCE') && (name === 'src' || name === 'srcset');
+        if (name === 'srcset' ? _isDangerousSrcset(attr.value, allowDataUri) : _isDangerousUrl(attr.value, allowDataUri)) {
+          el.removeAttribute(attr.name);
+          continue;
+        }
       }
     }
     el.removeAttribute('color');
@@ -195,7 +199,8 @@ function _sanitizeHtmlOnce(html) {
       const kept = style.split(';').map(s => s.trim()).filter(decl => {
         if (!decl) return false;
         const lower = _compactUrlSchemeValue(decl);
-        if (lower.includes('javascript:') || lower.includes('vbscript:') || lower.includes('data:') || lower.includes('expression(')) return false;
+        if (lower.includes('javascript:') || lower.includes('vbscript:') || lower.includes('expression(')) return false;
+        if (lower.includes('data:') && !lower.includes('data:image/')) return false;
         const prop = decl.split(':', 1)[0].trim().toLowerCase();
         return !STRIP_CSS_PROPS.includes(prop);
       });

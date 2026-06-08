@@ -90,7 +90,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "script-src 'self' 'unsafe-inline'; "
                 "style-src 'self' 'unsafe-inline'; "
                 "font-src 'self'; "
-                "img-src 'self' data: blob: https:; "
+                "img-src 'self' data: blob: http: https:; "
                 "connect-src 'self'; "
                 "frame-ancestors 'none'"
             )
@@ -118,7 +118,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
                 "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
                 "font-src 'self' https://cdn.jsdelivr.net; "
-                "img-src 'self' data: blob: https:; "
+                "img-src 'self' data: blob: http: https:; "
                 "media-src 'self' blob:; "
                 "connect-src 'self'; "
                 "frame-src 'self'; "

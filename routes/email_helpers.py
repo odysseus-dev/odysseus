@@ -13,6 +13,7 @@ and `email_pollers.py` (the background loops):
 """
 
 import os
+import base64
 import imaplib
 import smtplib
 import email as email_mod
@@ -1147,6 +1148,49 @@ def _extract_html(msg):
             charset = msg.get_content_charset() or "utf-8"
             return payload.decode(charset, errors="replace")
     return None
+
+
+def _resolve_cid_images(body_html, msg):
+    """Replace cid: references in the HTML body with inline base64 data URIs.
+
+    Walks the MIME parts of the message looking for image parts whose
+    Content-Id matches a cid: reference in the HTML, then embeds the
+    image payload as a data: URI so the frontend can render it without
+    needing a separate fetch.
+    """
+    if not body_html or not msg.is_multipart():
+        return body_html
+
+    cid_map = {}
+    for part in msg.walk():
+        if part.is_multipart():
+            continue
+        cid = part.get("Content-ID", "") or ""
+        cid = cid.strip().strip("<>")
+        if not cid:
+            continue
+        ct = part.get_content_type() or ""
+        if not ct.startswith("image/"):
+            continue
+        payload = part.get_payload(decode=True)
+        if not payload:
+            continue
+        b64 = base64.b64encode(payload).decode("ascii")
+        cid_map[cid] = (b64, ct)
+
+    if not cid_map:
+        return body_html
+
+    def _replace_src(m):
+        cid = m.group(1)
+        entry = cid_map.get(cid)
+        if entry:
+            b64, ct = entry
+            return f"data:{ct};base64,{b64}"
+        return m.group(0)
+
+    body_html = re.sub(r'cid:([^\s"\'<>]+)', _replace_src, body_html)
+    return body_html
 
 
 def _extract_text(msg):

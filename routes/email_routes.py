@@ -44,7 +44,7 @@ from routes.email_helpers import (
     _IMAP_TIMEOUT_SECONDS, _open_imap_connection,
     _imap_connect, _imap, _decode_header, _detect_sent_folder, _detect_drafts_folder,
     _extract_attachment_text, _list_attachments_from_msg,
-    _extract_attachment_to_disk, _extract_html, _extract_text,
+    _extract_attachment_to_disk, _extract_html, _extract_text, _resolve_cid_images,
     _fetch_sender_thread_context, _pre_retrieve_context,
     _EMAIL_REPLY_SYS_PROMPT_BASE, _POOL_HOOKS,
     SendEmailRequest, ExtractStyleRequest,
@@ -480,6 +480,7 @@ def setup_email_routes():
     _LIST_TTL = 8.0
     _READ_CACHE = {}  # key → (expires_at, response_dict)
     _READ_TTL = 30 * 60.0
+    _READ_CACHE_VERSION = 2  # increment to invalidate all cached reads
     _IMAP_POOL = {}   # account_id → (conn, last_used_at)
     _IMAP_IDLE_MAX = 60.0
     _WARMING_READS = set()
@@ -543,7 +544,7 @@ def setup_email_routes():
         # SECURITY: include owner so two users with `account_id == ""` /
         # None (i.e. resolved through the per-user default) don't share
         # a cached message body.
-        return (account_id or "", folder, str(uid), owner)
+        return (_READ_CACHE_VERSION, account_id or "", folder, str(uid), owner)
 
     def _list_cache_get(key):
         v = _LIST_CACHE.get(key)
@@ -1278,6 +1279,7 @@ def setup_email_routes():
             references = msg.get("References", "")
             body = _extract_text(msg)
             body_html = _extract_html(msg)
+            body_html = _resolve_cid_images(body_html, msg)
 
             sender_name, sender_addr = email.utils.parseaddr(sender)
             parsed_date = email.utils.parsedate_to_datetime(date_str) if date_str else None
