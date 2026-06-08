@@ -363,7 +363,7 @@ GENERIC LOOPBACK to allowed Odysseus internal endpoints. Use this whenever the u
 
 **Common surfaces (use `endpoints` with filter to discover the full set per domain):**
 - Calendar: `/api/calendar/events`, `/api/calendar/calendars`, `/api/calendar/events/{uid}`
-- Cookbook: `/api/cookbook/gpus`, `/api/cookbook/state`, `/api/cookbook/setup`, `/api/cookbook/kill-pid`, `/api/cookbook/packages`, `/api/cookbook/hf-latest`, `/api/model/cached`
+- Cookbook: `/api/cookbook/gpus`, `/api/cookbook/state`, `/api/cookbook/setup`, `/api/cookbook/packages`, `/api/cookbook/hf-latest`, `/api/model/cached`. Do NOT use `app_api` for package installs, engine rebuilds, or PID signalling.
 - Gallery: `/api/gallery/list`, `/api/gallery/delete`, `/api/gallery/{id}`, `/api/gallery/albums`
 - Library / Documents: list all via `/api/documents/library`; docs in a session via `/api/documents/{session_id}`; a single doc via `/api/document/{id}` (singular) and its history via `/api/document/{id}/versions` (singular). Note the plural `/api/documents/...` vs singular `/api/document/{id}` split.
 - Memory: `/api/memory`, `/api/memory/{id}`, `/api/memory/search`
@@ -382,7 +382,7 @@ Body for POST/PUT/PATCH goes in `body` (object). Query params in `query` (object
 
 **When to prefer named tools over app_api:** if a named wrapper exists (list_email_accounts, list_emails, read_email, manage_calendar, manage_notes, list_served_models, etc.) USE IT — it has nicer output formatting and clearer schema. Reach for `app_api` only when there's no wrapper for what you need.
 
-Blocked paths (refused for safety): /api/auth/, /api/users/, /api/tokens/, /api/admin/, /api/shell/, /api/backup/restore, /api/email/accounts.""",
+Blocked paths/routes (refused for safety): /api/auth/, /api/users/, /api/tokens/, /api/admin/, /api/shell/, /api/backup/restore, /api/email/accounts, POST /api/cookbook/packages/install, POST /api/cookbook/rebuild-engine, POST /api/cookbook/kill-pid.""",
 }
 
 def get_builtin_overrides() -> dict:
@@ -1437,6 +1437,18 @@ def build_active_plan_note(approved_plan: str) -> str:
     )
 
 
+def _detect_runaway_call(call_freq, threshold=15):
+    """Tool name of a call signature repeated >= ``threshold`` times — a real
+    runaway loop. Counts IDENTICAL repeated calls (same tool AND args), so a
+    legitimate batch of distinct calls to one tool (e.g. creating 18 calendar
+    events at once) is NOT flagged. Returns ``None`` when nothing is runaway.
+
+    ``call_freq`` is a Counter keyed by ``"{tool_type}:{content[:120]}"``.
+    """
+    sig = next((s for s, n in call_freq.items() if n >= threshold), None)
+    return sig.split(":", 1)[0] if sig else None
+
+
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
@@ -1774,7 +1786,10 @@ async def stream_agent_loop(
     # signatures + consecutive no-text tool rounds to bail early.
     _recent_call_sigs = collections.deque(maxlen=6)
     _stuck_rounds = 0
-    _tool_type_counts: collections.Counter = collections.Counter()
+    # Frequency of each exact call signature (tool + args), for the runaway
+    # backstop. Counting identical repeats — not distinct same-tool calls —
+    # lets a legit batch (e.g. 18 calendar events at once) through.
+    _call_freq: collections.Counter = collections.Counter()
     _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
     _force_answer = False  # set by loop-breaker → next round runs with NO tools
     # Supervisor: how many times we've nudged the model after it announced
@@ -2221,7 +2236,7 @@ async def stream_agent_loop(
         _is_repeat = _sig in _recent_call_sigs
         _recent_call_sigs.append(_sig)
         for _b in tool_blocks:
-            _tool_type_counts[_b.tool_type] += 1
+            _call_freq[f"{_b.tool_type}:{(_b.content or '').strip()[:120]}"] += 1
         # "Real" answer text = round text minus <think> blocks. Empty-think
         # rounds (just "<think>\n\n</think>" + a tool call) must not read as
         # progress, so strip think before checking.
@@ -2232,9 +2247,12 @@ async def stream_agent_loop(
             _stuck_rounds += 1
         else:
             _stuck_rounds = 0
-        _runaway = next((t for t, n in _tool_type_counts.items() if n >= 15), None)
+        # Runaway = the SAME exact call repeated an absurd number of times.
+        # Distinct calls to one tool (a real batch) are legitimate work, so we
+        # count identical call signatures, not raw per-tool-type totals.
+        _runaway = _detect_runaway_call(_call_freq)
         if _stuck_rounds >= 4 or _runaway:
-            reason = (f"calling {_runaway} over and over" if _runaway
+            reason = (f"calling {_runaway} with identical arguments over and over" if _runaway
                       else "repeating the same tool calls without new progress")
             logger.warning(f"[agent] loop-breaker tripped on round {round_num} ({reason}); sig={_sig[:80]!r}")
             # The model has been executing tools, so its results are already

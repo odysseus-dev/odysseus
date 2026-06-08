@@ -381,7 +381,10 @@ async def maybe_compact(
         )
     except Exception as e:
         logger.error(f"Compaction summary failed: {e}")
-        return system_msgs + recent, context_length, False
+        # Degrade gracefully: keep the conversation intact rather than
+        # silently dropping the older half. was_compacted=False signals the
+        # caller nothing was summarized; trim_for_context handles length.
+        return messages, context_length, False
 
     summary_msg = {
         "role": "system",

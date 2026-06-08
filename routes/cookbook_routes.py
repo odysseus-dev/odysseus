@@ -15,11 +15,14 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, Depends
 
 from src.auth_helpers import require_user
+from src.constants import COOKBOOK_STATE_FILE
 from pydantic import BaseModel
 
 from core.middleware import require_admin
 from core.platform_compat import (
     IS_WINDOWS,
+    SSH_PATH_OVERRIDE,
+    NVIDIA_PATH_CANDIDATES,
     detached_popen_kwargs,
     find_bash,
     git_bash_path,
@@ -27,8 +30,11 @@ from core.platform_compat import (
     pid_alive,
     safe_chmod,
     which_tool,
+    translate_path,
+    get_wsl_windows_user_profile,
 )
 from routes.shell_routes import TMUX_LOG_DIR
+from src.constants import COOKBOOK_STATE_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +47,7 @@ from routes.cookbook_helpers import (
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
     _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
     _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
-    _diagnose_serve_output,
+    _diagnose_serve_output, run_ssh_command_async,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -56,7 +62,7 @@ _HF_TOKEN_STATUS_SNIPPET = (
 
 def setup_cookbook_routes() -> APIRouter:
     router = APIRouter(tags=["cookbook"])
-    _cookbook_state_path = Path(os.environ.get("DATA_DIR", "data")) / "cookbook_state.json"
+    _cookbook_state_path = Path(COOKBOOK_STATE_FILE)
 
     def _mask_secret(value: str) -> str:
         if not value:
@@ -557,24 +563,35 @@ def setup_cookbook_routes() -> APIRouter:
             for d in model_dir.split(','):
                 d = d.strip()
                 if d:
-                    model_dirs.append(d)
-        paths_code = _cached_model_scan_script(model_dirs)
+                    translated_d = translate_path(d) if not host else d
+                    model_dirs.append(translated_d)
+        win_hf_hub = None
+        if not host:
+            win_profile = get_wsl_windows_user_profile()
+            win_hf_hub = os.path.join(win_profile, ".cache", "huggingface", "hub") if win_profile else None
+            
+        paths_code = _cached_model_scan_script(model_dirs, win_hf_hub)
 
         scan_py = TMUX_LOG_DIR / "scan_cache.py"
         scan_py.write_text(paths_code, encoding="utf-8")
+        scan_payload = scan_py.read_bytes()
 
         if host:
-            _pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
             if platform == "windows":
-                # Windows: use 'python' and pipe via stdin with double-quote wrapping
-                cmd = f'ssh {_pf}{host} "python -" < \'{scan_py}\''
+                remote_cmd = "python -"
             else:
-                cmd = f"ssh {_pf}{host} 'python3 -' < '{scan_py}'"
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(Path.home()),
+                # POSIX: use 'python3' if available, fall back to 'python'; throw if neither is found.
+                remote_cmd = (
+                    "if command -v python3 >/dev/null 2>&1; then python3 -; "
+                    "elif command -v python >/dev/null 2>&1; then python -; "
+                    "else echo \"python3/python not found\" >&2; exit 127; fi"
+                )
+            rc, stdout_b, stderr_b = await run_ssh_command_async(
+                host,
+                ssh_port,
+                remote_cmd,
+                timeout=60,
+                stdin_data=scan_payload,
             )
         else:
             # LOCAL scan: use sys.executable (the venv Python Odysseus is already
@@ -594,7 +611,7 @@ def setup_cookbook_routes() -> APIRouter:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(Path.home()),
             )
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=60)
+            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=60)
 
         models = []
         try:
@@ -874,6 +891,12 @@ def setup_cookbook_routes() -> APIRouter:
             # pip cache so they don't fail mid-build with "No space left" (#1219)
             # and leave the dep installed-but-unusable (#1459).
             req.cmd = _pip_install_no_cache(req.cmd)
+            # Accept common aliases and enforce server extras for llama-cpp so
+            # `python -m llama_cpp.server` has all runtime dependencies.
+            req.cmd = re.sub(r"(?<![A-Za-z0-9_.-])llama_cpp(?![A-Za-z0-9_.-])", "llama-cpp-python[server]", req.cmd)
+            req.cmd = re.sub(r"(?<![A-Za-z0-9_.-])llama-cpp-python(?!\[)", "llama-cpp-python[server]", req.cmd)
+            if "llama-cpp-python" in req.cmd and "--extra-index-url" not in req.cmd:
+                req.cmd += " --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
             # PEP-508-style package spec — letters, digits, `.-_` for the
             # name; `[` `]` for extras; `<>=!~,` for version specifiers.
             # v2 review HIGH-14: tightened from the previous regex which
@@ -1354,11 +1377,38 @@ def setup_cookbook_routes() -> APIRouter:
     async def _run_nvidia_smi(query: str, host: str | None, ssh_port: str | None, timeout: int = 8):
         """Run nvidia-smi locally or over SSH. Returns (stdout, error_or_None)."""
         if host:
-            pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
-            cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} '{query}'"
-            proc = await asyncio.create_subprocess_shell(
-                cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
+            candidates = [query]
+            stripped = query.strip()
+            if stripped.startswith("nvidia-smi "):
+                args = stripped[len("nvidia-smi "):]
+                candidates.append(
+                    "bash -lc "
+                    + shlex.quote(
+                        f"{SSH_PATH_OVERRIDE}"
+                        f"nvidia-smi {args}"
+                    )
+                )
+                for nvidia_path in NVIDIA_PATH_CANDIDATES:
+                    candidates.append(f"{nvidia_path} {args}")
+
+            last_err = "nvidia-smi failed"
+            for candidate in candidates:
+                try:
+                    rc, stdout, stderr = await run_ssh_command_async(
+                        host,
+                        ssh_port,
+                        candidate,
+                        connect_timeout=5,
+                        timeout=timeout,
+                    )
+                except asyncio.TimeoutError:
+                    return None, "nvidia-smi timed out"
+                if rc == 0:
+                    return stdout.decode("utf-8", errors="replace"), None
+                err = (stderr.decode("utf-8", errors="replace") or "").strip()[:200]
+                if err:
+                    last_err = err
+            return None, last_err
         else:
             proc = await asyncio.create_subprocess_exec(
                 *shlex.split(query),
