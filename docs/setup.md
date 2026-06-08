@@ -51,6 +51,21 @@ downloads and serves. The app itself is lightweight; local model serving is the
 heavy part and depends on the model, runtime, GPU, and VRAM, so small hosts can
 connect to API or remote model servers instead. Use `--host 0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
 
+### Nix
+
+The flake provides a reproducible development environment with Python and all
+dependencies pinned — no venv or pip needed. Works on Linux, macOS, and Windows
+(via WSL2).
+
+```bash
+nix develop            # or: nix-shell nix/shell.nix
+odysseus-setup-wrapper # first run: creates the admin account
+odysseus-run-tmux      # start ChromaDB + Odysseus in a tmux session
+```
+
+Or start the pieces manually: `odysseus-chroma run --path ./data/chroma --host 0.0.0.0 --port 8100`, then `odysseus`.
+To update the pinned inputs later, run `nix flake update`.
+
 ### Apple Silicon
 Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
 M-series Mac, run Odysseus natively:
