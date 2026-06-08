@@ -11,6 +11,8 @@ import shlex
 from fastapi import HTTPException
 from pydantic import BaseModel
 
+from core.platform_compat import _ssh_exec_argv
+
 logger = logging.getLogger(__name__)
 
 
@@ -213,7 +215,10 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     # before being embedded in the install command. Plain names (e.g.
     # ``huggingface_hub``) are returned unchanged by ``shlex.quote``.
     pkg = shlex.quote(package)
-    if IS_WINDOWS and "llama-cpp-python" in package:
+    # llama-cpp-python source builds are brittle on older distro pip/packaging
+    # stacks (common on WSL images). Prefer the prebuilt wheel index whenever
+    # this package is requested so dependency-install tasks are reliable.
+    if "llama-cpp-python" in package:
         pkg += " --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
 
     base = _pip_install_attempt(f"{python_cmd} install -q{upgrade_flag} {pkg}")
@@ -275,11 +280,14 @@ def _user_shell_path_bootstrap() -> list[str]:
         '  if [ -n "$ODYSSEUS_USER_PATH" ]; then export PATH="$ODYSSEUS_USER_PATH:$PATH"; fi',
         'fi',
         'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }',
+        'command -v python >/dev/null 2>&1 || python() { python3 "$@"; }',
     ]
 
 
-def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
-    """Build the standalone Python scanner used by /api/model/cached."""
+def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache: str | None = None) -> str:
+    """Build the standalone Python scanner used by /api/model/cached.
+    Allows for an additional HuggingFace cache path to be scanned (i.e. Windows HF cache for local WSL envs.)
+    """
     lines = [
         "import json, os, re, shutil, subprocess, urllib.request",
         "models = []",
@@ -372,6 +380,7 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None) -> str:
         "    # Docker images mount ./data/huggingface at /app/.cache/huggingface.",
         "    # When HOME is /root, expanduser() misses that persisted cache.",
         "    add('/app/.cache/huggingface/hub')",
+        f"    add({add_hf_cache!r})" if add_hf_cache else "",
         "    return candidates",
         "def scan_dir(p):",
         "    if not os.path.isdir(p) or not safe_path(p): return",
@@ -989,3 +998,40 @@ def _diagnose_serve_output(text: str) -> dict | None:
             "suggestions": [{"label": "inspect traceback and retry with adjusted backend/settings", "op": "manual"}],
         }
     return None
+
+
+async def run_ssh_command_async(
+    remote: str,
+    ssh_port: str | None,
+    remote_cmd: str,
+    *,
+    timeout: float,
+    connect_timeout: int | None = None,
+    strict_host_key_checking: bool | None = None,
+    stdin_data: bytes | None = None,
+) -> tuple[int, bytes, bytes]:
+    """Run an ssh command with centralized timeout and stderr/stdout capture.
+    Async version of core.platform_compat.run_ssh_command_sync.
+    """
+    import asyncio
+    proc = await asyncio.create_subprocess_exec(
+        *_ssh_exec_argv(
+            remote,
+            ssh_port,
+            remote_cmd=remote_cmd,
+            connect_timeout=connect_timeout,
+            strict_host_key_checking=strict_host_key_checking,
+        ),
+        stdin=asyncio.subprocess.PIPE if stdin_data is not None else None,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(input=stdin_data), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        raise
+    return proc.returncode or 0, stdout, stderr

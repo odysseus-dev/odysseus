@@ -12,6 +12,8 @@ import os
 from datetime import datetime
 from typing import Optional
 
+from src.constants import AUTH_FILE
+
 logger = logging.getLogger(__name__)
 
 _task_scheduler = None
@@ -54,9 +56,7 @@ def _resolve_event_owner(owner: Optional[str]) -> Optional[str]:
         return owner
 
     try:
-        from src.constants import DATA_DIR
-
-        auth_path = os.path.join(DATA_DIR, "auth.json")
+        auth_path = AUTH_FILE
         with open(auth_path, "r", encoding="utf-8") as f:
             users = (json.load(f).get("users") or {})
         for username, data in users.items():
