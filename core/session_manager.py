@@ -199,7 +199,11 @@ class SessionManager:
             message: ChatMessage to add
         """
         session = self.get_session(session_id)
-        session.add_message(message)
+        session.history.append(message)
+        session._history = session.history
+        session.message_count = len(session.history)
+
+        self._persist_message(session_id, message)
 
     def _persist_message(self, session_id: str, message: ChatMessage):
         """Persist a single message to the database."""
