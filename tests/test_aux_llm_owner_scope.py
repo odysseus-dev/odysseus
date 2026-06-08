@@ -64,4 +64,8 @@ def test_research_routes_fallbacks_are_owner_scoped():
     assert '_merge(*resolve_endpoint("utility", owner=user))' in src
     assert "ep = _owned_enabled_endpoint(db, user)" in src
     assert "db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).first()" not in src
-    assert "owner = getattr(sess, \"owner\", None) or None" in src
+    # _resolve_research_endpoint derives the scope from the session owner. The
+    # rebased code generalized this to honor an explicit `owner` argument first
+    # (``owner = owner or getattr(sess, "owner", None) or None``), so assert on
+    # the stable session-derivation substring rather than the exact line.
+    assert 'getattr(sess, "owner", None) or None' in src

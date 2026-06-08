@@ -426,6 +426,9 @@ def _detect_provider(url: str) -> str:
         return "openrouter"
     if _host_match(url, "groq.com"):
         return "groq"
+    from src.chatgpt_subscription import is_chatgpt_subscription_base
+    if is_chatgpt_subscription_base(url):
+        return "chatgpt-subscription"
     from src.copilot import is_copilot_base
     if is_copilot_base(url):
         return "copilot"
@@ -462,6 +465,8 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
     if _host_match(url, "opencode.ai/zen"): return "OpenCode Zen"
     if _host_match(url, "groq.com"): return "Groq"
+    from src.chatgpt_subscription import is_chatgpt_subscription_base
+    if is_chatgpt_subscription_base(url): return "ChatGPT Subscription"
     from src.copilot import is_copilot_base
     if is_copilot_base(url): return "GitHub Copilot"
     if _host_match(url, "mistral.ai"): return "Mistral"
@@ -477,6 +482,77 @@ def _provider_label(url: str) -> str:
     if host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
         return "local endpoint"
     return host or "provider"
+
+
+def _normalize_chatgpt_subscription_url(url: str) -> str:
+    base = (url or "").strip().rstrip("/")
+    if base.endswith("/responses"):
+        return base
+    return base + "/responses"
+
+
+def _message_content_as_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if not isinstance(part, dict):
+                if part:
+                    parts.append(str(part))
+                continue
+            if isinstance(part.get("text"), str):
+                parts.append(part["text"])
+                continue
+            if isinstance(part.get("content"), str):
+                parts.append(part["content"])
+        return "\n".join(parts)
+    return "" if content is None else str(content)
+
+
+def _chatgpt_subscription_instructions(messages: List[Dict]) -> str:
+    instructions = [
+        _message_content_as_text(msg.get("content")).strip()
+        for msg in messages or []
+        if (msg.get("role") or "") == "system"
+    ]
+    instructions = [part for part in instructions if part]
+    if instructions:
+        return "\n\n".join(instructions)
+    return "You are a helpful AI assistant."
+
+
+def _build_chatgpt_responses_payload(
+    model: str,
+    messages: List[Dict],
+    temperature: float,
+    max_tokens: int,
+    *,
+    stream: bool = False,
+) -> Dict:
+    from src.chatgpt_subscription import build_responses_input
+
+    conversation = [msg for msg in (messages or []) if (msg.get("role") or "") != "system"]
+    payload: Dict = {
+        "model": model,
+        "instructions": _chatgpt_subscription_instructions(messages),
+        "input": build_responses_input(conversation),
+        "stream": stream,
+        "store": False,
+    }
+    if not _restricts_temperature(model):
+        payload["temperature"] = temperature
+    if max_tokens and max_tokens > 0:
+        payload["max_output_tokens"] = max_tokens
+    return payload
+
+
+def _format_chatgpt_subscription_error(status_code: int, text: str) -> str:
+    if status_code in (401, 403):
+        return "ChatGPT Subscription credentials expired or were rejected. Reconnect the provider."
+    if status_code == 429:
+        return "ChatGPT Subscription quota or rate limit was reached. Retry after the upstream limit resets."
+    return _format_upstream_error(status_code, text, "https://chatgpt.com/backend-api/codex")
 
 
 def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:
@@ -874,7 +950,7 @@ def _normalize_anthropic_url(url: str) -> str:
 def _model_list_base(url: str) -> str:
     """Normalize model/chat URLs to the configured endpoint base."""
     base = (url or "").strip().rstrip("/")
-    for suffix in ("/models", "/chat/completions", "/completions", "/v1/messages"):
+    for suffix in ("/models", "/chat/completions", "/completions", "/v1/messages", "/responses"):
         if base.endswith(suffix):
             base = base[: -len(suffix)].rstrip("/")
     for suffix in ("/chat", "/tags", "/generate"):
@@ -903,7 +979,12 @@ def _parse_model_cache(raw) -> List[str]:
     return out
 
 
-def _configured_cached_model_ids(endpoint_url: str) -> List[str]:
+def _configured_cached_model_ids(
+    endpoint_url: str,
+    *,
+    owner: Optional[str] = None,
+    endpoint_id: Optional[str] = None,
+) -> List[str]:
     """Return cached models for a configured endpoint matching endpoint_url."""
     target = _model_list_base(endpoint_url)
     if not target:
@@ -914,7 +995,13 @@ def _configured_cached_model_ids(endpoint_url: str) -> List[str]:
         return []
     db = SessionLocal()
     try:
-        rows = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        if endpoint_id:
+            q = q.filter(ModelEndpoint.id == endpoint_id)
+        if owner:
+            from src.auth_helpers import owner_filter
+            q = owner_filter(q, ModelEndpoint, owner)
+        rows = q.all()
         for ep in rows:
             if _model_list_base(getattr(ep, "base_url", "")) != target:
                 continue
@@ -933,9 +1020,16 @@ def _configured_cached_model_ids(endpoint_url: str) -> List[str]:
     return []
 
 
-def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT, headers: Optional[Dict] = None) -> List[str]:
+def list_model_ids(
+    base_chat_url: str,
+    timeout: int = LLMConfig.DEFAULT_TIMEOUT,
+    headers: Optional[Dict] = None,
+    *,
+    owner: Optional[str] = None,
+    endpoint_id: Optional[str] = None,
+) -> List[str]:
     """List available model IDs from an endpoint."""
-    cached = _configured_cached_model_ids(base_chat_url)
+    cached = _configured_cached_model_ids(base_chat_url, owner=owner, endpoint_id=endpoint_id)
     if cached:
         return cached
     provider = _detect_provider(base_chat_url)
@@ -971,9 +1065,16 @@ def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT,
             pass
         return []
 
-def normalize_model_id(endpoint_url: str, requested: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT) -> Optional[str]:
+def normalize_model_id(
+    endpoint_url: str,
+    requested: str,
+    timeout: int = LLMConfig.DEFAULT_TIMEOUT,
+    *,
+    owner: Optional[str] = None,
+    endpoint_id: Optional[str] = None,
+) -> Optional[str]:
     """Normalize a model ID to match available models."""
-    avail = list_model_ids(endpoint_url, timeout)
+    avail = list_model_ids(endpoint_url, timeout, owner=owner, endpoint_id=endpoint_id)
     if not avail:
         return None
     if requested in avail:
@@ -1169,6 +1270,49 @@ async def llm_call_async(
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
 
+    if provider == "chatgpt-subscription":
+        # ChatGPT/Codex requires streamed Responses requests even for callers
+        # that want a plain string (auto-title, memory extraction, etc.).
+        # Reuse stream_llm's validated Codex SSE path and collect deltas.
+        parts: List[str] = []
+        async for chunk in stream_llm(
+            url,
+            model,
+            messages_copy,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            headers=headers,
+            timeout=timeout,
+        ):
+            event_is_error = False
+            for line in str(chunk).splitlines():
+                if line.startswith("event:"):
+                    event_is_error = line[6:].strip() == "error"
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                raw = line[5:].strip()
+                if not raw:
+                    continue
+                if raw == "[DONE]":
+                    response = "".join(parts)
+                    _set_cached_response(cache_key, response)
+                    return response
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if event_is_error or data.get("error") or (data.get("status") and data.get("text")):
+                    status = int(data.get("status") or 502)
+                    text = data.get("text") or data.get("error") or "ChatGPT Subscription request failed"
+                    raise HTTPException(status, text)
+                delta = data.get("delta")
+                if isinstance(delta, str):
+                    parts.append(delta)
+        response = "".join(parts)
+        _set_cached_response(cache_key, response)
+        return response
+
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
@@ -1294,6 +1438,10 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             model, messages_copy, temperature, max_tokens,
             stream=True, tools=tools, num_ctx=get_context_length(url, model),
         )
+    elif provider == "chatgpt-subscription":
+        target_url = _normalize_chatgpt_subscription_url(url)
+        h = _provider_headers(provider, headers)
+        payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
     else:
         target_url = url
         payload = {
@@ -1324,6 +1472,68 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         yield f'event: error\ndata: {json.dumps({"error": f"Upstream {_host_key(target_url)} unreachable (cooldown active)", "status": 503})}\n\n'
         return
     note_model_activity(target_url, model)
+
+    # ── ChatGPT Subscription / Codex Responses streaming ──
+    if provider == "chatgpt-subscription":
+        event_name = ""
+        input_tokens = 0
+        output_tokens = 0
+        try:
+            client = _get_http_client()
+            async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
+                _clear_host_dead(target_url)
+                if r.status_code != 200:
+                    raw = (await r.aread()).decode(errors="replace")
+                    friendly = _format_chatgpt_subscription_error(r.status_code, raw)
+                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    return
+                async for line in r.aiter_lines():
+                    if not line:
+                        continue
+                    if line.startswith("event:"):
+                        event_name = line[6:].strip()
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+                    raw = line[5:].strip()
+                    if not raw:
+                        continue
+                    try:
+                        data = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    evt = data.get("type") or event_name
+                    if evt == "response.output_text.delta":
+                        delta = data.get("delta") or ""
+                        if delta:
+                            yield f'data: {json.dumps({"delta": delta})}\n\n'
+                    elif evt == "response.completed":
+                        usage = (data.get("response") or {}).get("usage") or data.get("usage") or {}
+                        input_tokens = usage.get("input_tokens") or usage.get("prompt_tokens") or input_tokens
+                        output_tokens = usage.get("output_tokens") or usage.get("completion_tokens") or output_tokens
+                        if input_tokens or output_tokens:
+                            yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": input_tokens, "output_tokens": output_tokens}})}\n\n'
+                        yield "data: [DONE]\n\n"
+                        return
+                    elif evt in ("response.failed", "error"):
+                        err = data.get("error") or (data.get("response") or {}).get("error") or {}
+                        text = err.get("message") if isinstance(err, dict) else str(err or "ChatGPT Subscription request failed")
+                        yield f'event: error\ndata: {json.dumps({"status": 502, "text": text})}\n\n'
+                        return
+                yield "data: [DONE]\n\n"
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            _cooled = _mark_host_dead(target_url)
+            _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
+            logger.warning(f"ChatGPT Subscription stream connect to {target_url} failed: {e}{_tail}")
+            yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
+        except httpx.ReadTimeout:
+            yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
+        except httpx.NetworkError:
+            yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
+        except Exception as e:
+            logger.error(f"ChatGPT Subscription stream error: {e}")
+            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+        return
 
     # ── Native Ollama streaming ──
     if provider == "ollama":
