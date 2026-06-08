@@ -168,7 +168,6 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                     drop_items = decision.get("drop") if isinstance(decision, dict) else None
                     if isinstance(keep_items, list) and isinstance(drop_items, list):
                         by_id = {m.get("id"): m for m in group_memories if m.get("id")}
-                        keep_ids = set()
                         cleaned_by_id = {}
                         for item in keep_items:
                             if not isinstance(item, dict):
@@ -179,7 +178,6 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                             text = (item.get("text") or "").strip()
                             if not text:
                                 continue
-                            keep_ids.add(mid)
                             cleaned = {
                                 "category": (item.get("category") or by_id[mid].get("category") or "fact").strip(),
                             }
@@ -187,10 +185,6 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                             if len(original_text) <= text_limit:
                                 cleaned["text"] = text
                             cleaned_by_id[mid] = cleaned
-
-                        # If the model only saw a truncated memory, do not let
-                        # that partial view delete or rewrite the full memory.
-                        keep_ids.update(mid for mid in truncated_ids if mid in by_id)
 
                         # Delete only memories the model EXPLICITLY dropped, never
                         # ones it merely omitted from `keep`. Treating the
