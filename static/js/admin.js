@@ -93,6 +93,7 @@ async function loadUsers() {
           : [];
         const allowedSet = new Set(allowedModels);
         const modelsRestricted = !!(u.privileges && u.privileges.allowed_models_restricted);
+        const blockAllModels = !!(u.privileges && u.privileges.block_all_models);
         html += `<div style="padding:4px 0;">
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <span style="font-size:12px;">Allowed models</span>
@@ -101,7 +102,7 @@ async function loadUsers() {
               <a href="#" class="priv-models-none" data-user="${esc(u.username)}" style="font-size:10px;opacity:0.5;">None</a>
             </div>
           </div>
-          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${!modelsRestricted ? 'All models allowed (no restrictions)' : (allowedSet.size === 0 ? 'No models allowed' : allowedSet.size + ' model(s) allowed')}</div>
+          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${blockAllModels ? 'No models allowed' : (!modelsRestricted ? 'All models allowed (no restrictions)' : (allowedSet.size === 0 ? 'No models allowed' : allowedSet.size + ' model(s) allowed'))}</div>
           <div class="priv-models-list" data-user="${esc(u.username)}">
             <span style="opacity:0.4;font-size:11px;">Loading models...</span>
           </div>
@@ -123,7 +124,7 @@ async function loadUsers() {
           // Load models list on first expand
           if (!_modelsLoaded && !privPanel.classList.contains('hidden')) {
             _modelsLoaded = true;
-            _loadModelsForUser(u.username, allowedSet, modelsRestricted, privPanel);
+            _loadModelsForUser(u.username, allowedSet, modelsRestricted, blockAllModels, privPanel);
           }
         });
 
@@ -203,17 +204,22 @@ async function loadUsers() {
   } catch (e) { list.innerHTML = '<div class="admin-error">Failed to load users</div>'; }
 }
 
-async function _loadModelsForUser(username, allowedSet, modelsRestricted, privPanel) {
+async function _loadModelsForUser(username, allowedSet, modelsRestricted, blockAllModels, privPanel) {
   const listEl = privPanel.querySelector(`.priv-models-list[data-user="${username}"]`);
   if (!listEl) return;
   try {
-    const res = await fetch('/api/models', { credentials: 'same-origin' });
+    // Use /api/model-endpoints rather than /api/models — the latter is
+    // backed by `cached_models`, so endpoints that haven't been probed yet
+    // (e.g. a freshly-added cloud API like DeepSeek) simply don't show up
+    // until some other endpoint happens to trigger a cache refresh. The
+    // endpoints listing always reflects every configured endpoint.
+    const res = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
     const data = await res.json();
     const allModels = [];
-    (data.items || []).forEach(item => {
-      if (item.offline) return;
-      (item.models || []).forEach(mid => {
-        allModels.push({ mid, epName: item.endpoint_name || '', display: mid.split('/').pop() });
+    (Array.isArray(data) ? data : []).forEach(ep => {
+      if (!ep.online) return;
+      (ep.models || []).forEach(mid => {
+        allModels.push({ mid, epName: ep.name || '', display: mid.split('/').pop() });
       });
     });
     if (!allModels.length) {
@@ -221,8 +227,9 @@ async function _loadModelsForUser(username, allowedSet, modelsRestricted, privPa
       return;
     }
     let restricted = modelsRestricted;
+    let blockAll = blockAllModels;
     listEl.innerHTML = sortModelObjects(allModels).map(m => {
-      const checked = !restricted || allowedSet.has(m.mid) ? 'checked' : '';
+      const checked = !blockAll && (!restricted || allowedSet.has(m.mid)) ? 'checked' : '';
       return `<label>
         <input type="checkbox" class="priv-model-cb" data-mid="${esc(m.mid)}" ${checked}>
         <span>${esc(m.display)}</span>
@@ -236,15 +243,33 @@ async function _loadModelsForUser(username, allowedSet, modelsRestricted, privPa
       listEl.querySelectorAll('.priv-model-cb').forEach(cb => {
         if (cb.checked) checked.push(cb.dataset.mid);
       });
-      // All checked means unrestricted; zero checked means explicitly no models.
-      restricted = checked.length !== allModels.length;
-      const value = restricted ? checked : [];
+      // Three distinct states the backend must be able to tell apart:
+      //  - all checked   -> no restriction (allowed_models: [], block_all_models: false)
+      //  - none checked  -> block everything (allowed_models: [], block_all_models: true)
+      //  - some checked  -> allowlist (allowed_models: checked, block_all_models: false)
+      let value, hintText;
+      if (checked.length === allModels.length) {
+        restricted = false;
+        blockAll = false;
+        value = [];
+        hintText = 'All models allowed (no restrictions)';
+      } else if (checked.length === 0) {
+        restricted = true;
+        blockAll = true;
+        value = [];
+        hintText = 'No models allowed';
+      } else {
+        restricted = true;
+        blockAll = false;
+        value = checked;
+        hintText = value.length + ' model(s) allowed';
+      }
       const hint = privPanel.querySelector('.priv-models-list[data-user]')?.previousElementSibling?.querySelector('div[style*="opacity"]');
-      if (hint) hint.textContent = !restricted ? 'All models allowed (no restrictions)' : (value.length === 0 ? 'No models allowed' : value.length + ' model(s) allowed');
+      if (hint) hint.textContent = hintText;
       fetch(`/api/auth/users/${encodeURIComponent(username)}/privileges`, {
         method: 'PUT', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ allowed_models: value, allowed_models_restricted: restricted }),
+        body: JSON.stringify({ allowed_models: value, allowed_models_restricted: restricted, block_all_models: blockAll }),
       }).catch(() => {});
     }
     listEl.querySelectorAll('.priv-model-cb').forEach(cb => cb.addEventListener('change', _saveModels));
