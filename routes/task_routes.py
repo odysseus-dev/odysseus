@@ -974,7 +974,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             "tag", "label", "move", "archive", "delete", "mark", "schedule",
         )
         try:
-            from src.agent_tools import get_mcp_manager
+            from src.tool_utils import get_mcp_manager
             mcp = get_mcp_manager()
             if mcp:
                 for tool in mcp.get_all_tools():

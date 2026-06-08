@@ -21,6 +21,7 @@ from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, ToolPolicy
+from src.tool_utils import get_mcp_manager
 from src.agent_tools import (
     parse_tool_blocks,
     strip_tool_blocks,
@@ -29,7 +30,6 @@ from src.agent_tools import (
     set_active_document,
     set_active_model,
     function_call_to_tool_block,
-    get_mcp_manager,
     FUNCTION_TOOL_SCHEMAS,
     TOOL_TAGS,
     ToolBlock,
