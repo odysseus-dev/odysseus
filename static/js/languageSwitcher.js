@@ -11,16 +11,16 @@ const languageSwitcher = {
    */
   createSwitcher() {
     const container = document.createElement('div');
-    container.className = 'language-switcher';
+    container.style.cssText = 'display: flex; align-items: center; gap: 8px; justify-content: flex-end;';
     container.id = 'language-switcher';
     
     const label = document.createElement('label');
     label.textContent = i18nModule.t('settings.language');
-    label.className = 'language-label';
+    label.style.cssText = 'font-weight: 500; color: var(--fg); font-size: 14px;';
     
     const select = document.createElement('select');
     select.id = 'language-select';
-    select.className = 'language-select';
+    select.style.cssText = 'padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: color-mix(in srgb, var(--panel) 60%, transparent); color: var(--fg); font-size: 14px; cursor: pointer; font-family: inherit; outline: none;';
     
     const languages = i18nModule.getAvailableLanguages();
     for (const [code, name] of Object.entries(languages)) {
