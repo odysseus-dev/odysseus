@@ -333,6 +333,12 @@ To expose Odysseus on a local network or Tailscale with HTTPS:
 | `PyMuPDF` | PDF page rendering in the side viewer panel and form-filling. (Note: AGPL-3.0) |
 | `markitdown` | Office/EPUB document text extraction (converts .docx/.xlsx/.pptx/.xls/.epub to Markdown). |
 
+### Outlook / Office 365 email
+Odysseus email accounts currently use IMAP/SMTP username-password auth. Outlook
+and Microsoft 365 generally require OAuth instead, so normal Microsoft mailbox
+passwords will fail. See [docs/email-outlook.md](docs/email-outlook.md) for the
+current limitation and the planned integration direction.
+
 ## Security Notes
 Odysseus is a self-hosted workspace with powerful local tools: shell access, file uploads, model downloads, web research, email/calendar integrations, and API tokens. Treat it like an admin console.
 
