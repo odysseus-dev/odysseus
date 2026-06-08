@@ -22,6 +22,7 @@ NVIDIA_OVERLAY = ROOT / "docker" / "gpu.nvidia.yml"
 AMD_OVERLAY = ROOT / "docker" / "gpu.amd.yml"
 NVIDIA_STANDALONE = ROOT / "docker-compose.gpu-nvidia.yml"
 AMD_STANDALONE = ROOT / "docker-compose.gpu-amd.yml"
+NVIDIA_DOCKERFILE = ROOT / "Dockerfile.nvidia"
 
 SERVICE = "odysseus"
 
@@ -105,8 +106,18 @@ def test_top_level_volumes_match_base(base, standalone_path):
 
 def test_nvidia_odysseus_adds_only_overlay(base):
     standalone = _load(NVIDIA_STANDALONE)
+    overlay = _load(NVIDIA_OVERLAY)
     svc = standalone["services"][SERVICE]
     base_svc = base["services"][SERVICE]
+
+    # NVIDIA selects the opt-in CUDA devel image in both overlay forms.
+    expected_build = {
+        "context": ".",
+        "dockerfile": "Dockerfile.nvidia",
+        "args": {"INSTALL_OPTIONAL": "${INSTALL_OPTIONAL:-false}"},
+    }
+    assert overlay["services"][SERVICE]["build"] == expected_build
+    assert svc["build"] == expected_build
 
     # Base environment preserved, plus exactly the two NVIDIA variables.
     assert "NVIDIA_VISIBLE_DEVICES=all" in svc["environment"]
@@ -127,6 +138,19 @@ def test_nvidia_odysseus_adds_only_overlay(base):
     # No AMD-only keys leaked in.
     assert "devices" not in svc
     assert "group_add" not in svc
+
+
+def test_nvidia_dockerfile_provides_cuda_tooling_in_image():
+    dockerfile = NVIDIA_DOCKERFILE.read_text(encoding="utf-8")
+
+    assert dockerfile.startswith("FROM nvidia/cuda:12.4.1-devel-ubuntu22.04")
+    assert "ENV ODYSSEUS_COOKBOOK_LOCAL_SERVE_HOST=localhost" in dockerfile
+    assert "python-is-python3" in dockerfile
+    assert "python3-dev" in dockerfile
+    assert "python3-pip" in dockerfile
+    assert "python3 -m pip install --no-cache-dir -r requirements.txt" in dockerfile
+    assert "python3 -m venv" not in dockerfile
+    assert ".venv" not in dockerfile
 
 
 def test_amd_odysseus_adds_only_overlay(base):

@@ -11,7 +11,11 @@
 # for setup details.
 services:
   odysseus:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.nvidia
+      args:
+        INSTALL_OPTIONAL: ${INSTALL_OPTIONAL:-false}
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
     volumes:

@@ -34,6 +34,7 @@ from core.platform_compat import (
     get_wsl_windows_user_profile,
 )
 from routes.shell_routes import TMUX_LOG_DIR
+from routes.model_routes import _docker_host_gateway_reachable
 from src.constants import COOKBOOK_STATE_FILE
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,19 @@ _HF_TOKEN_STATUS_SNIPPET = (
     'Add one in Odysseus Settings -> Cookbook -> HuggingFace Token."; '
     'fi'
 )
+
+
+def _cookbook_llm_endpoint_host(remote: str | None) -> str:
+    """Return the host Odysseus should save for a Cookbook-served LLM endpoint."""
+    if remote:
+        return remote.split("@")[-1] if "@" in remote else remote
+
+    host_override = os.getenv("ODYSSEUS_COOKBOOK_LOCAL_SERVE_HOST", "").strip()
+    if host_override:
+        return host_override
+
+    return "host.docker.internal" if _docker_host_gateway_reachable() else "localhost"
+
 
 def setup_cookbook_routes() -> APIRouter:
     router = APIRouter(tags=["cookbook"])
@@ -788,15 +802,11 @@ def setup_cookbook_routes() -> APIRouter:
             port = 8080  # llama.cpp's llama-server default — the Apple Silicon path
 
         # Determine host (mirrors the image path: SSH alias for remote serves).
-        # For local serves while Odysseus runs inside Docker, "localhost"
-        # resolves to the container itself — useless. Use host.docker.internal
-        # which compose maps to the actual host, matching what /setup adds
-        # for Ollama by hand.
-        if remote:
-            host = remote.split("@")[-1] if "@" in remote else remote
-        else:
-            from routes.model_routes import _docker_host_gateway_reachable
-            host = "host.docker.internal" if _docker_host_gateway_reachable() else "localhost"
+        # Default Docker installs keep the previous host.docker.internal
+        # behavior, because local model servers often run on the Docker host.
+        # Images that serve models inside the Odysseus container itself can opt
+        # into a container-local endpoint with ODYSSEUS_COOKBOOK_LOCAL_SERVE_HOST.
+        host = _cookbook_llm_endpoint_host(remote)
 
         base_url = f"http://{host}:{port}/v1"
 
