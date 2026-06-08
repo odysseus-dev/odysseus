@@ -395,6 +395,17 @@ async def _run_subprocess_streaming(
     stderr_full: list[str] = []
     tail = collections.deque(maxlen=PROGRESS_TAIL_LINES)
 
+    async def _emit_progress():
+        if not progress_cb:
+            return
+        try:
+            await progress_cb({
+                "elapsed_s": round(time.time() - started, 1),
+                "tail": "\n".join(list(tail)),
+            })
+        except Exception:
+            pass
+
     async def _reader(stream, full_buf, label: str):
         if stream is None:
             return
@@ -402,12 +413,13 @@ async def _run_subprocess_streaming(
             line = await stream.readline()
             if not line:
                 break
-            decoded = line.decode("utf-8", errors="replace").rstrip("\n")
+            decoded = line.decode("utf-8", errors="replace").rstrip("\n\r")
             full_buf.append(decoded)
             if label == "err":
                 tail.append(f"! {decoded}")
             else:
                 tail.append(decoded)
+            await _emit_progress()
 
     async def _progress_emitter():
         # Skip the first push — many commands finish well under
@@ -415,16 +427,7 @@ async def _run_subprocess_streaming(
         # just add UI churn.
         await asyncio.sleep(PROGRESS_INTERVAL_S)
         while True:
-            if progress_cb:
-                try:
-                    await progress_cb({
-                        "elapsed_s": round(time.time() - started, 1),
-                        "tail": "\n".join(list(tail)),
-                    })
-                except Exception:
-                    # Progress is best-effort — never let a UI hiccup
-                    # break the underlying subprocess.
-                    pass
+            await _emit_progress()
             await asyncio.sleep(PROGRESS_INTERVAL_S)
 
     rd_out = asyncio.create_task(_reader(proc.stdout, stdout_full, "out"))
@@ -672,6 +675,7 @@ async def _direct_fallback(
         "COLUMNS": "120",
         "LINES": "40",
         "HOME": _AGENT_WORKDIR,
+        "PYTHONUNBUFFERED": "1",
     }
 
     try:

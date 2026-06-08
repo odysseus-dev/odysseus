@@ -48,3 +48,9 @@ def test_image_generation_fast_path_checks_policy_before_tool_start():
 def test_streaming_chat_paths_disable_background_extraction_under_policy():
     src = _source()
     assert src.count("allow_background_extraction=not tool_policy.block_all_tool_calls") >= 3
+
+
+def test_streaming_chat_forwards_tool_progress_events():
+    src = _source()
+    marker = '"tool_start", "tool_output", "tool_progress", "agent_step"'
+    assert marker in src
