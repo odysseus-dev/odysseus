@@ -10869,6 +10869,11 @@ textarea.memory-add-input {
   }
 }
 
+.doclib-card.memory-item.doclib-card-expanded > .hwfit-serve-panel {
+  overflow-y: auto;
+  max-height: 100%;
+}
+
 /* Research-preview sub-sections — used by the research-tab expand pattern. */
 .doclib-research-section-label {
   font-size: 9px;
