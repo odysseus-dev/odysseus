@@ -254,17 +254,16 @@ def _cleanup_compose_uploads(tokens) -> None:
             pass
 
 
-from src.constants import DATA_DIR as _DATA_DIR, MAIL_ATTACHMENTS_DIR, SETTINGS_FILE as _SETTINGS_FILE, SCHEDULED_EMAILS_DB
-DATA_DIR = Path(_DATA_DIR)
-SETTINGS_FILE = Path(_SETTINGS_FILE)
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+SETTINGS_FILE = DATA_DIR / "settings.json"
 # Override at deploy time via ODYSSEUS_MAIL_ATTACHMENTS_DIR. Defaults to a
 # subdir of the install's data/ tree so the app works out-of-the-box without
 # a hardcoded /home/<user>/ path.
-ATTACHMENTS_DIR = Path(MAIL_ATTACHMENTS_DIR)
+ATTACHMENTS_DIR = Path(os.environ.get("ODYSSEUS_MAIL_ATTACHMENTS_DIR", str(DATA_DIR / "mail-attachments")))
 ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 COMPOSE_UPLOADS_DIR = ATTACHMENTS_DIR / "_compose"
 COMPOSE_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-SCHEDULED_DB = Path(SCHEDULED_EMAILS_DB)
+SCHEDULED_DB = DATA_DIR / "scheduled_emails.db"
 
 
 OWNER_SCOPED_EMAIL_CACHE_TABLES = {
@@ -541,6 +540,64 @@ def _init_scheduled_db():
             source TEXT
         )
     """)
+    # Email analysis tables: sender categorization and message-level analysis.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS email_categories (
+            name TEXT NOT NULL,
+            owner TEXT DEFAULT '',
+            color TEXT DEFAULT '#888',
+            description TEXT DEFAULT '',
+            PRIMARY KEY (name, owner)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS email_sender_analysis (
+            sender TEXT NOT NULL,
+            owner TEXT DEFAULT '',
+            sender_name TEXT DEFAULT '',
+            category TEXT DEFAULT '',
+            email_count INTEGER DEFAULT 0,
+            spam_count INTEGER DEFAULT 0,
+            first_seen TEXT,
+            last_seen TEXT,
+            last_subject TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            PRIMARY KEY (sender, owner)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS email_message_analysis (
+            message_id TEXT NOT NULL,
+            owner TEXT DEFAULT '',
+            uid TEXT,
+            folder TEXT,
+            sender TEXT,
+            sender_name TEXT DEFAULT '',
+            subject TEXT,
+            category TEXT DEFAULT '',
+            is_spam INTEGER DEFAULT 0,
+            analyzed_at TEXT NOT NULL,
+            PRIMARY KEY (message_id, owner)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_email_analysis_uid
+        ON email_message_analysis (uid, folder, owner)
+    """)
+    # Lazy migration: add is_read column for tracking read/unread status
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(email_message_analysis)").fetchall()]
+        if "is_read" not in cols:
+            conn.execute("ALTER TABLE email_message_analysis ADD COLUMN is_read INTEGER DEFAULT 0")
+    except Exception:
+        pass
+    # Lazy migration: add tags column for multi-tag support in analysis
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(email_message_analysis)").fetchall()]
+        if "tags" not in cols:
+            conn.execute("ALTER TABLE email_message_analysis ADD COLUMN tags TEXT DEFAULT '[]'")
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 

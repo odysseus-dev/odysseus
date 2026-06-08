@@ -27725,9 +27725,8 @@ button .spinner-whirlpool {
   overflow-y: auto;
   padding: 14px;
   min-height: 0;
-  /* Use the OS colored emoji font for incoming mail content */
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif,
-               "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla";
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif,
+               "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
   font-variant-emoji: emoji;
 }
 /* When rendering HTML emails, override pre-wrap so layout works */
@@ -33659,6 +33658,44 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
 .email-loading-label {
   font-size: 11px;
   opacity: 0.6;
+}
+
+.email-lib-pagination {
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+}
+.email-pag-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--fg);
+  font-size: 11px;
+  padding: 4px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, opacity 0.15s;
+  font-family: inherit;
+}
+.email-pag-btn:hover:not(:disabled) {
+  border-color: var(--red);
+  color: var(--red);
+}
+.email-pag-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.email-pag-prefetch-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg-muted, #888);
+  vertical-align: middle;
+  margin: 0 4px;
+  animation: email-pag-pulse 1.2s ease-in-out infinite;
+}
+@keyframes email-pag-pulse {
+  0%, 100% { opacity: 0.2; transform: scale(0.7); }
+  50% { opacity: 0.9; transform: scale(1.2); }
 }
 
 /* Refresh button now lives top-right in the modal header next to the close X.

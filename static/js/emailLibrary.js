@@ -30,6 +30,10 @@ let _libFolderSeq = 0;
 let _libSearchSeq = 0;
 let _libSearchHadResults = false;
 let _activeEmailReaderForSelectAll = null;
+const _libPageCache = new Map();
+const _libSearchPageCache = new Map();
+const _LIB_PAGE_CACHE_MAX = 18;
+let _libPrefetchTimer = null;
 
 function _isEmailTypingTarget(t) {
   return !!(t && (
@@ -211,6 +215,7 @@ function _syncEmailReadState(uid, isRead = true) {
   const read = !!isRead;
   const match = (state._libEmails || []).find(x => String(x.uid) === uidStr);
   if (match) match.is_read = read;
+  if (read) { state._unreadUids.delete(uidStr); } else { state._unreadUids.add(uidStr); }
 
   document.querySelectorAll('.doclib-card[data-uid="' + CSS.escape(uidStr) + '"]').forEach(card => {
     card.classList.toggle('email-card-unread', !read);
@@ -249,6 +254,7 @@ window.addEventListener('email-answered', (e) => {
   if (uid == null) return;
   const em = (state._libEmails || []).find(x => String(x.uid) === String(uid));
   if (em) { em.is_answered = true; em.is_read = true; }
+  state._unreadUids.delete(String(uid));
   _syncEmailReadState(uid, true);
   document.querySelectorAll('.doclib-card[data-uid="' + CSS.escape(String(uid)) + '"]').forEach(card => {
     card.classList.add('email-card-answered');
@@ -269,6 +275,28 @@ function _toggleUnreadEmails() {
   document.getElementById('email-undone-btn')?.classList.remove('active');
   document.getElementById('email-reminder-btn')?.classList.remove('active');
   _loadEmailsFresh();
+}
+
+async function _loadCategoryFilterOptions() {
+  const group = document.getElementById('email-lib-category-group');
+  if (!group) return;
+  try {
+    const r = await fetch(`${window.location.origin}/api/email/analysis/categories?_=${Date.now()}`);
+    const data = await r.json();
+    if (!data.ok || !data.categories) return;
+    // Clear existing dynamic options (keep the optgroup itself)
+    group.innerHTML = '';
+    const seen = new Set();
+    data.categories.forEach(cat => {
+      const name = cat.name || '';
+      if (!name || seen.has(name)) return;
+      seen.add(name);
+      const opt = document.createElement('option');
+      opt.value = `category:${name}`;
+      opt.textContent = name.charAt(0).toUpperCase() + name.slice(1);
+      group.appendChild(opt);
+    });
+  } catch { /* ignore */ }
 }
 
 function _syncUnreadTabBadge(count) {
@@ -628,13 +656,30 @@ function _libCachePut(key, value) {
 
 function _resetEmailListForFreshLoad() {
   state._libOffset = 0;
+  state._libSearchOffset = 0;
+  state._libSearchTotal = 0;
   state._libEmails = [];
   state._libTotal = 0;
+  state._libSearch = '';
+  state._libFilterText = '';
+  state._unreadUids = new Set();
+  _libSearchHadResults = false;
   _libLoadSeq += 1;
+  _libPageCache.clear();
+  _libSearchPageCache.clear();
+  const searchEl = document.getElementById('email-lib-search');
+  if (searchEl) searchEl.value = '';
+  const pagEl = document.getElementById('email-lib-pagination');
+  if (pagEl) pagEl.style.display = 'none';
   const grid = document.getElementById('email-lib-grid');
   if (grid) _renderEmailLoading(grid);
   const stats = document.getElementById('email-lib-stats');
   if (stats) stats.textContent = 'Loading...';
+  // Clear preview panel on fresh load
+  const preview = document.getElementById('email-lib-preview');
+  if (preview) {
+    preview.innerHTML = '<div class="email-preview-placeholder" style="display:flex;flex:1;align-items:center;justify-content:center;color:var(--text-dim,#888);font-size:13px;padding:20px;text-align:center;">Select an email to preview</div>';
+  }
 }
 
 function _loadEmailsFresh() {
@@ -752,6 +797,9 @@ export function openEmailLibrary(opts = {}) {
   state._libEmails = [];
   state._libOffset = 0;
   state._libSearch = '';
+  state._libFilterText = '';
+  state._libSearchOffset = 0;
+  state._libSearchTotal = 0;
   state._libFilter = 'all';
   state._libHasAttachments = false;
   // Animate the very first card render with a domino cascade (same as the
@@ -778,9 +826,14 @@ export function openEmailLibrary(opts = {}) {
           </svg>
           Email
           <span id="email-lib-unread-badge" class="email-lib-unread-badge" role="button" tabindex="0" title="Show unread emails" style="display:none"></span>
+          <span id="email-pag-prefetch-dot" class="email-pag-prefetch-dot" style="display:none;"></span>
           <span id="email-lib-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal;margin-left:8px;position:relative;top:-2px"></span>
         </h4>
         <div class="email-lib-header-actions" style="display:flex;align-items:center;gap:8px;">
+          <button class="memory-toolbar-btn" id="email-lib-split-toggle" title="Toggle split-pane preview" style="font-size:10px;padding:3px 6px;display:flex;align-items:center;gap:4px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
+            Preview
+          </button>
           <button class="close-btn" id="email-lib-close">\u2716</button>
         </div>
       </div>
@@ -815,6 +868,7 @@ export function openEmailLibrary(opts = {}) {
                   <option value="tag:newsletter">Newsletter</option>
                   <option value="tag:marketing">Marketing</option>
                 </optgroup>
+                <optgroup label="Categories" id="email-lib-category-group"></optgroup>
               </select>
               <button class="memory-toolbar-btn email-filter-select-btn" id="email-lib-select-btn">Select</button>
               <button class="memory-toolbar-btn email-filter-refresh-btn" id="email-lib-refresh-btn" title="Refresh">
@@ -827,7 +881,10 @@ export function openEmailLibrary(opts = {}) {
             </div>
             <div class="email-search-row" style="display:flex;gap:6px;align-items:flex-start;">
             <div class="email-search-wrap" style="position:relative;flex:1;min-width:140px;">
-              <input type="text" id="email-lib-search" placeholder="Search emails\u2026" class="memory-search-input" style="width:100%;padding-right:96px;" />
+              <input type="text" id="email-lib-search" placeholder="Filter emails\u2026 (Enter to search old)" class="memory-search-input" style="width:100%;padding-right:130px;" />
+              <button class="memory-toolbar-btn" id="email-lib-search-btn" title="Search old emails on server (Enter)" style="position:absolute;right:72px;top:50%;transform:translateY(-50%);padding:2px 6px;font-size:10px;line-height:1.4;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              </button>
               <button class="memory-toolbar-btn email-undone-toggle email-undone-toggle-inline" id="email-undone-btn" title="Show only emails not marked as done (undone)">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
               </button>
@@ -847,7 +904,15 @@ export function openEmailLibrary(opts = {}) {
             <button class="memory-toolbar-btn" id="email-lib-bulk-delete" style="position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>
             <button class="memory-toolbar-btn" id="email-lib-bulk-cancel" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
           </div>
-          <div id="email-lib-grid" class="doclib-grid"></div>
+          <div class="email-split-wrap" style="flex:1;display:flex;overflow:hidden;min-height:0;">
+            <div id="email-lib-grid" class="doclib-grid" style="flex:1;min-width:0;max-height:none;"></div>
+            <div id="email-lib-preview" class="email-preview-panel" style="display:none;flex:0 0 50%;min-width:0;overflow-y:auto;border-left:1px solid var(--border);"></div>
+          </div>
+          <div id="email-lib-pagination" class="email-lib-pagination" style="display:none;flex-shrink:0;padding:8px 0 4px;text-align:center;user-select:none;">
+            <button class="email-pag-btn" id="email-pag-prev" type="button" disabled style="display:none;">‹ Prev</button>
+            <span id="email-pag-info" style="margin:0 12px;font-size:11px;opacity:0.7;"></span>
+            <button class="email-pag-btn" id="email-pag-next" type="button" style="display:none;">Next ›</button>
+          </div>
           <button class="email-lib-fab" id="email-lib-fab" type="button" aria-label="New email">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/><path d="M3 6.5l9 6 9-6"/></svg>
             <span class="email-lib-fab-label">New</span>
@@ -935,6 +1000,10 @@ export function openEmailLibrary(opts = {}) {
 
   // Wire events
   document.getElementById('email-lib-close').addEventListener('click', closeEmailLibrary);
+  document.getElementById('email-lib-split-toggle')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _toggleSplitPane();
+  });
 
   // Clicking the modal header (anywhere except buttons/inputs) collapses
   // any currently-expanded email card and returns to the inbox list view.
@@ -957,6 +1026,9 @@ export function openEmailLibrary(opts = {}) {
   // Drag-to-top edge → snap to fullscreen (Aero Snap). Dragging away from
   // the top edge while fullscreen unsnaps back to a centered window.
   _makeDraggable(content, modal, 'email-lib-fullscreen');
+
+  // Populate category filter options from analysis data
+  _loadCategoryFilterOptions();
 
   document.getElementById('email-lib-folder').addEventListener('change', (e) => {
     state._libFolder = e.target.value;
@@ -1048,11 +1120,38 @@ export function openEmailLibrary(opts = {}) {
   // \Flagged search). _libSort stays at its 'recent' default so the grid keeps
   // the API's newest-first order.
 
-  let searchTimer = null;
   document.getElementById('email-lib-search').addEventListener('input', (e) => {
-    state._libSearch = e.target.value;
-    if (searchTimer) clearTimeout(searchTimer);
-    searchTimer = setTimeout(_doSearch, 350);
+    state._libFilterText = e.target.value;
+    if (state._libSearch) {
+      state._libSearch = '';
+      state._libSearchOffset = 0;
+      state._libSearchTotal = 0;
+      _libSearchHadResults = false;
+      _libSearchPageCache.clear();
+      state._libOffset = 0;
+      _loadEmails({ useCache: true });
+      return;
+    }
+    if (!state._libFilterText.trim()) {
+      const g = document.getElementById('email-lib-grid');
+      if (g) g.querySelectorAll('.doclib-card[data-uid]').forEach(card => { card.style.display = ''; });
+      const stats = document.getElementById('email-lib-stats');
+      if (stats && !state._libSearch) stats.textContent = `${state._libEmails.length} / ${state._libTotal} emails`;
+      _renderPagination();
+      return;
+    }
+    _applyLocalFilter();
+  });
+
+  document.getElementById('email-lib-search').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      _commitServerSearch();
+    }
+  });
+
+  document.getElementById('email-lib-search-btn').addEventListener('click', () => {
+    _commitServerSearch();
   });
 
   document.getElementById('email-lib-refresh-btn').addEventListener('click', async () => {
@@ -1082,6 +1181,8 @@ export function openEmailLibrary(opts = {}) {
     }
   });
 
+  document.getElementById('email-pag-prev').addEventListener('click', () => _goToPage(-1));
+  document.getElementById('email-pag-next').addEventListener('click', () => _goToPage(1));
 
   const _composeNew = () => {
     // Desktop: keep Email open when there is enough room for it plus the
@@ -1288,6 +1389,11 @@ export function openEmailLibrary(opts = {}) {
   _loadFolders();
   _loadEmailReminderBellVisibility();
   _loadEmails();
+
+  // Restore split-pane state from previous session
+  if (state._libSplitPane) {
+    requestAnimationFrame(() => _applySplitPane(true));
+  }
 }
 
 async function _loadAccounts() {
@@ -1525,15 +1631,60 @@ function _crossFolderCandidates() {
   return Array.from(new Set(candidates.filter(Boolean)));
 }
 
-async function _doSearch() {
+function _applyLocalFilter() {
+  const q = state._libFilterText.trim().toLowerCase();
+  const grid = document.getElementById('email-lib-grid');
+  if (!grid) return;
+  if (!q) {
+    grid.querySelectorAll('.doclib-card[data-uid]').forEach(card => { card.style.display = ''; });
+    const stats = document.getElementById('email-lib-stats');
+    if (stats && !state._libSearch) stats.textContent = `${state._libEmails.length} / ${state._libTotal} emails`;
+    _renderPagination();
+    return;
+  }
+  let matchCount = 0;
+  grid.querySelectorAll('.doclib-card[data-uid]').forEach(card => {
+    const em = state._libEmails.find(e => String(e.uid) === card.dataset.uid);
+    const matches = em && (
+      (em.subject || '').toLowerCase().includes(q) ||
+      (em.from_name || '').toLowerCase().includes(q) ||
+      (em.from_address || '').toLowerCase().includes(q)
+    );
+    card.style.display = matches ? '' : 'none';
+    if (matches) matchCount++;
+  });
+  const stats = document.getElementById('email-lib-stats');
+  if (stats) {
+    if (matchCount === 0 && q.length >= 2) {
+      stats.textContent = `0 filtered — press Enter to search all mail`;
+    } else {
+      stats.textContent = `${matchCount} / ${state._libEmails.length} filtered`;
+    }
+  }
+  const pagEl = document.getElementById('email-lib-pagination');
+  if (pagEl) pagEl.style.display = 'none';
+}
+
+function _commitServerSearch() {
+  const q = state._libFilterText.trim();
+  if (!q || q.length < 2) return;
+  state._libSearch = q;
+  state._libSearchOffset = 0;
+  state._libSearchTotal = 0;
+  _libSearchPageCache.clear();
+  _doSearch();
+}
+
+async function _doSearch({ append = false, skipCache = false } = {}) {
   const seq = ++_libSearchSeq;
   const q = state._libSearch.trim();
   if (q.length < 2) {
-    // Empty or too short — restore the normal folder if a previous search
-    // had replaced the grid contents.
     if (_libSearchHadResults) {
       _libSearchHadResults = false;
       state._libOffset = 0;
+      state._libSearchOffset = 0;
+      state._libSearchTotal = 0;
+      _libSearchPageCache.clear();
       await _loadEmails({ useCache: true });
       return;
     }
@@ -1542,15 +1693,35 @@ async function _doSearch() {
   }
   const grid = document.getElementById('email-lib-grid');
   if (!grid) return;
-  const sp = _renderEmailLoading(grid);
   const accountAtStart = state._libAccountId || '';
   const folderAtStart = state._libFolder || 'INBOX';
+  const offset = append ? (state._libSearchOffset || 0) : 0;
+
+  const searchPrefix = `${accountAtStart}|${folderAtStart}|${q}`;
+  const pageCk = _pageCacheKey(searchPrefix, offset);
+  const pageCached = !skipCache && !append ? _pageCacheGet(_libSearchPageCache, pageCk) : null;
+
+  if (!append) {
+    state._libSearchOffset = offset;
+  }
+
+  let sp = null;
+  if (pageCached) {
+    state._libEmails = pageCached.emails.slice();
+    state._libSearchTotal = pageCached.total || 0;
+    _libSearchHadResults = true;
+    _renderGrid();
+  } else {
+    if (!append) sp = _renderEmailLoading(grid);
+  }
 
   try {
+    const controller = new AbortController();
+    const to = setTimeout(() => controller.abort(), 15000);
     const accountQS = accountAtStart ? `&account_id=${encodeURIComponent(accountAtStart)}` : '';
-    const res = await fetch(`${API_BASE}/api/email/search?folder=${encodeURIComponent(folderAtStart)}${accountQS}&q=${encodeURIComponent(q)}&limit=100`);
-    const data = await res.json();
-    sp.destroy();
+    const res = await fetch(`${API_BASE}/api/email/search?folder=${encodeURIComponent(folderAtStart)}${accountQS}&q=${encodeURIComponent(q)}&limit=100&offset=${offset}`, { signal: controller.signal });
+    clearTimeout(to);
+    if (sp) sp.destroy();
     if (
       seq !== _libSearchSeq ||
       q !== state._libSearch.trim() ||
@@ -1559,18 +1730,35 @@ async function _doSearch() {
     ) {
       return;
     }
-    if (data.error) throw new Error(data.error);
+    if (!res.ok) {
+      throw new Error(`Search returned ${res.status}`);
+    }
+    const data = await res.json();
+    if (data.detail) throw new Error(data.detail);
 
     const results = data.emails || [];
+    const newTotal = data.total || results.length;
     _libSearchHadResults = true;
-    state._libEmails = results;  // temporarily replace with search results
+    state._libSearchTotal = newTotal;
+    if (append) {
+      state._libEmails.push(...results);
+    } else {
+      state._libEmails = results;
+    }
     _renderGrid();
+    if (results.length) {
+      _pageCachePut(_libSearchPageCache, pageCk, { emails: results, total: newTotal });
+      _prefetchPages(offset);
+    }
 
     const stats = document.getElementById('email-lib-stats');
-    if (stats) stats.textContent = `${data.total || results.length} match${(data.total || results.length) === 1 ? '' : 'es'}`;
+    if (stats) stats.textContent = `${state._libEmails.length} / ${state._libSearchTotal} match${state._libSearchTotal === 1 ? '' : 'es'}`;
   } catch (e) {
-    sp.destroy();
-    grid.innerHTML = '<div class="email-loading">Search failed</div>';
+    if (sp) sp.destroy();
+    if (!append && !pageCached) {
+      const msg = e?.name === 'AbortError' ? 'Search timed out' : (e?.message || 'Search failed');
+      grid.innerHTML = `<div class="email-loading" style="color:var(--color-warning);">${_esc(msg)}</div>`;
+    }
   }
 }
 
@@ -1632,7 +1820,7 @@ async function _refreshUnreadBadge() {
   } catch (_) { _syncUnreadTabBadge(0); }
 }
 
-async function _loadEmails({ force = false, useCache = true } = {}) {
+async function _loadEmails({ force = false, useCache = true, append = false } = {}) {
   const seq = ++_libLoadSeq;
   state._libLoading = true;
   const accountAtStart = state._libAccountId || '';
@@ -1645,6 +1833,10 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
   const grid = document.getElementById('email-lib-grid');
   if (!grid) { if (seq === _libLoadSeq) state._libLoading = false; return; }
 
+  const pagePrefix = `${accountAtStart}|${folderAtStart}|${filterAtStart}|${hasAttachmentsAtStart ? 1 : 0}`;
+  const pageCk = _pageCacheKey(pagePrefix, offsetAtStart);
+  const pageCached = _pageCacheGet(_libPageCache, pageCk);
+
   // SWR: when loading the first page of a real folder with no search,
   // paint the cached list immediately (no spinner, no blank grid) and
   // then quietly refetch behind it. Pagination, search, and the
@@ -1656,19 +1848,21 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
   const cacheable =
     offsetAtStart === 0 &&
     !searchAtStart &&
-    folderAtStart !== '__scheduled__';
+    folderAtStart !== '__scheduled__' &&
+    !append;
   const ck = cacheable ? _libCacheKey() : null;
-  const cached = (useCache && cacheable) ? _libCacheGet(ck) : null;
+  const cached = (useCache && cacheable && !pageCached) ? _libCacheGet(ck) : null;
 
   let sp = null;
-  if (cached) {
+  if (pageCached) {
+    state._libEmails = pageCached.emails.slice();
+    state._libTotal = pageCached.total || 0;
+    state._libJustOpened = false;
+    _renderGrid();
+    _prefetchPages(offsetAtStart);
+  } else if (cached) {
     state._libEmails = cached.emails || [];
     state._libTotal = cached.total || 0;
-    // Suppress the open-cascade animation when we're painting from
-    // cache — the data was already on screen a moment ago, so sliding
-    // each card in fresh feels janky. Also prevents the cascade from
-    // re-firing when the bg refetch lands within the 900ms cleanup
-    // window and appends new card nodes into the still-classed grid.
     state._libJustOpened = false;
     const grid2 = document.getElementById('email-lib-grid');
     if (grid2) grid2.classList.remove('email-lib-just-opened');
@@ -1686,35 +1880,198 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
     } else {
       const accountQS = accountAtStart ? `&account_id=${encodeURIComponent(accountAtStart)}` : '';
       const attQS = hasAttachmentsAtStart ? '&has_attachments=1' : '';
-      // `&_=Date.now()` bypasses the server's 8s list cache. Default
-      // opens omit it so rapid close/reopen returns instantly; the
-      // Refresh button passes `force: true` to add it back.
       const buster = force ? `&_=${Date.now()}` : '';
-      const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folderAtStart)}${accountQS}&limit=100&offset=${offsetAtStart}&filter=${filterAtStart}${attQS}${buster}`);
-      const data = await res.json();
+      const baseUrl = `${API_BASE}/api/email/list?folder=${encodeURIComponent(folderAtStart)}${accountQS}`;
+      // Fetch both the main list and the unread list in parallel
+      const [mainRes, unreadRes] = await Promise.all([
+        fetch(`${baseUrl}&limit=100&offset=${offsetAtStart}&filter=${filterAtStart}${attQS}${buster}`),
+        fetch(`${baseUrl}&limit=9999&offset=0&filter=unread&_=${Date.now()}`),
+      ]);
+      const [mainData, unreadData] = await Promise.all([mainRes.json(), unreadRes.json()]);
       if (seq !== _libLoadSeq || accountAtStart !== (state._libAccountId || '')) return;
-      if (data.error) throw new Error(data.error);
-      state._libEmails = data.emails || [];
-      state._libTotal = data.total || 0;
+      if (mainData.error) throw new Error(mainData.error);
+      const newEmails = mainData.emails || [];
+      const newTotal = mainData.total || 0;
+      state._libTotal = newTotal;
+      if (append) {
+        state._libEmails.push(...newEmails);
+      } else {
+        state._libEmails = newEmails;
+      }
+      state._unreadUids = new Set((unreadData.emails || []).map(e => String(e.uid)));
       if (sp) sp.destroy();
       _renderGrid();
       const stats = document.getElementById('email-lib-stats');
-      if (stats) stats.textContent = `${state._libTotal} emails`;
+      if (stats) stats.textContent = `${state._libEmails.length} / ${state._libTotal} emails`;
       _refreshUnreadBadge();
-      if (cacheable) _libCachePut(ck, { emails: state._libEmails.slice(), total: state._libTotal });
+      _pageCachePut(_libPageCache, pageCk, { emails: newEmails, total: newTotal });
+      _prefetchPages(offsetAtStart);
+      if (cacheable && !append) _libCachePut(ck, { emails: state._libEmails.slice(), total: state._libTotal });
     }
   } catch (e) {
     if (seq !== _libLoadSeq || accountAtStart !== (state._libAccountId || '')) return;
     if (sp) sp.destroy();
     // If we already painted the cached list, leave it on screen — beats
     // wiping it for "Failed to load" when there's still readable content.
-    if (!cached) {
+    if (!cached && !pageCached) {
       const msg = e && e.message ? `Failed to load: ${e.message}` : 'Failed to load';
       grid.innerHTML = `<div class="email-loading">${_esc(msg)}${_emailSetupHintHtml()}</div>`;
       _wireEmailSetupHint(grid);
     }
   } finally {
     if (seq === _libLoadSeq) state._libLoading = false;
+  }
+}
+
+const _PAGE_LIMIT = 100;
+
+function _pageCacheKey(prefix, offset) {
+  return `${prefix}|${offset}`;
+}
+
+function _pageCachePut(cache, key, value) {
+  cache.delete(key);
+  cache.set(key, value);
+  if (cache.size > _LIB_PAGE_CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    cache.delete(oldest);
+  }
+}
+
+function _pageCacheGet(cache, key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  return entry;
+}
+
+function _pageFromOffset(offset) {
+  return Math.floor(offset / _PAGE_LIMIT) + 1;
+}
+
+function _totalPages(total) {
+  return Math.max(1, Math.ceil((total || 0) / _PAGE_LIMIT));
+}
+
+function _renderPagination() {
+  const pagEl = document.getElementById('email-lib-pagination');
+  const prevBtn = document.getElementById('email-pag-prev');
+  const nextBtn = document.getElementById('email-pag-next');
+  const infoEl = document.getElementById('email-pag-info');
+  if (!pagEl || !prevBtn || !nextBtn || !infoEl) return;
+
+  const isSearch = !!state._libSearch.trim();
+  const currentOffset = isSearch ? (state._libSearchOffset || 0) : (state._libOffset || 0);
+  const total = isSearch ? (state._libSearchTotal || 0) : state._libTotal;
+  const currentPage = _pageFromOffset(currentOffset);
+  const pages = _totalPages(total);
+
+  if (total === 0 || pages <= 1) {
+    pagEl.style.display = 'none';
+    return;
+  }
+
+  pagEl.style.display = '';
+  prevBtn.style.display = '';
+  nextBtn.style.display = '';
+  prevBtn.disabled = currentPage <= 1;
+  nextBtn.disabled = currentPage >= pages;
+  infoEl.textContent = `${currentPage} / ${pages}`;
+}
+
+let _libLastPrefetchAt = 0;
+function _setPrefetchDot(active) {
+  const dot = document.getElementById('email-pag-prefetch-dot');
+  if (dot) dot.style.display = active ? 'inline-block' : 'none';
+}
+async function _prefetchPages(currentOffset) {
+  const now = Date.now();
+  if (now - _libLastPrefetchAt < 3000) return;
+  if (_libPrefetchTimer) return;
+  _libPrefetchTimer = setTimeout(async () => {
+    _libPrefetchTimer = null;
+    _libLastPrefetchAt = Date.now();
+    const isSearch = !!state._libSearch.trim();
+    const cache = isSearch ? _libSearchPageCache : _libPageCache;
+    const prefix = isSearch
+      ? `${state._libAccountId || ''}|${state._libFolder || 'INBOX'}|${state._libSearch.trim()}`
+      : `${state._libAccountId || ''}|${state._libFolder || 'INBOX'}|${state._libFilter || 'all'}|${state._libHasAttachments ? 1 : 0}`;
+    const total = isSearch ? (state._libSearchTotal || 0) : state._libTotal;
+
+    const offsets = [currentOffset + _PAGE_LIMIT, currentOffset + _PAGE_LIMIT * 2];
+    let anyFetched = false;
+    for (const nextOffset of offsets) {
+      if (nextOffset <= 0 || nextOffset >= total) continue;
+      const ck = _pageCacheKey(prefix, nextOffset);
+      if (_pageCacheGet(cache, ck)) continue;
+      anyFetched = true;
+      _setPrefetchDot(true);
+      try {
+        const controller = new AbortController();
+        const to = setTimeout(() => controller.abort(), 8000);
+        const accountQS = state._libAccountId ? `&account_id=${encodeURIComponent(state._libAccountId)}` : '';
+        const url = isSearch
+          ? `${API_BASE}/api/email/search?folder=${encodeURIComponent(state._libFolder || 'INBOX')}${accountQS}&q=${encodeURIComponent(state._libSearch.trim())}&limit=${_PAGE_LIMIT}&offset=${nextOffset}`
+          : `${API_BASE}/api/email/list?folder=${encodeURIComponent(state._libFolder || 'INBOX')}${accountQS}&limit=${_PAGE_LIMIT}&offset=${nextOffset}&filter=${state._libFilter || 'all'}${state._libHasAttachments ? '&has_attachments=1' : ''}`;
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(to);
+        if (res.ok) {
+          const data = await res.json();
+          if (!data.error) {
+            _pageCachePut(cache, ck, { emails: data.emails || [], total: data.total || 0 });
+          }
+        }
+      } catch (_) {}
+    }
+    _setPrefetchDot(false);
+  }, 2500);
+}
+
+async function _goToPage(delta) {
+  if (state._libLoading) return;
+  const isSearch = !!state._libSearch.trim();
+  const currentOffset = isSearch ? (state._libSearchOffset || 0) : (state._libOffset || 0);
+  const newOffset = currentOffset + delta * _PAGE_LIMIT;
+  const total = isSearch ? (state._libSearchTotal || 0) : state._libTotal;
+  if (newOffset < 0 || newOffset >= total) return;
+
+  const cache = isSearch ? _libSearchPageCache : _libPageCache;
+  const prefix = isSearch
+    ? `${state._libAccountId || ''}|${state._libFolder || 'INBOX'}|${state._libSearch.trim()}`
+    : `${state._libAccountId || ''}|${state._libFolder || 'INBOX'}|${state._libFilter || 'all'}|${state._libHasAttachments ? 1 : 0}`;
+  const ck = _pageCacheKey(prefix, newOffset);
+  const cached = _pageCacheGet(cache, ck);
+
+  if (cached) {
+    state._libEmails = cached.emails.slice();
+    if (isSearch) {
+      state._libSearchTotal = cached.total || total;
+      state._libSearchOffset = newOffset;
+    } else {
+      state._libTotal = cached.total || total;
+      state._libOffset = newOffset;
+    }
+    _renderGrid();
+    _prefetchPages(newOffset);
+    return;
+  }
+
+  const prevOffset = currentOffset;
+  if (isSearch) {
+    state._libSearchOffset = newOffset;
+    try {
+      await _doSearch({ append: false, skipCache: true });
+    } catch (_) {
+      state._libSearchOffset = prevOffset;
+      _renderPagination();
+    }
+  } else {
+    state._libOffset = newOffset;
+    try {
+      await _loadEmails({ append: false, useCache: false });
+    } catch (_) {
+      state._libOffset = prevOffset;
+      _renderPagination();
+    }
   }
 }
 
@@ -1861,13 +2218,15 @@ function _renderGrid() {
       }
     }
   }
+
+  _renderPagination();
 }
 
 function _createCard(em) {
   const card = document.createElement('div');
   let cls = 'doclib-card memory-item';
   if (em.is_answered) cls += ' email-card-answered';
-  else if (!em.is_read) cls += ' email-card-unread';
+  else if (state._unreadUids && state._unreadUids.has(String(em.uid))) cls += ' email-card-unread';
   card.className = cls;
   card.dataset.uid = String(em.uid);
   if (state._selectMode && state._selectedUids.has(em.uid)) card.classList.add('selected');
@@ -1976,7 +2335,7 @@ function _createCard(em) {
     };
     doneCheck.addEventListener('click', _toggleDone);
     titleRow.appendChild(doneCheck);
-    if (!em.is_read) {
+    if (em.is_read === false) {
       const dot = document.createElement('span');
       dot.className = 'email-card-unread-dot';
       dot.style.cssText = `width:6px;height:6px;border-radius:50%;background:${color};flex-shrink:0;margin-left:2px;`;
@@ -2044,7 +2403,16 @@ function _createCard(em) {
   meta.className = 'memory-item-meta';
   meta.style.cssText = 'font-size:10px;opacity:0.7;margin-top:2px;';
   const senderPrefix = isSentFolderEarly ? 'to ' : '';
-  meta.innerHTML = `<span class="email-meta-sender"><span style="opacity:0.55">${senderPrefix}</span><span style="color:${color};font-weight:600">${_esc(senderName)}</span></span><span class="email-meta-sep"> · </span><span class="email-meta-date">${_esc(dateStr)}</span>`;
+  // Classification tags — inline in meta row, right-justified
+  const tags = Array.isArray(em.tags) ? em.tags : [];
+  const catTag = em.category
+    ? `<span class="email-tag email-tag-${_esc(em.category)}" title="AI category: ${_esc(em.category)}">${_esc(em.category)}</span>`
+    : '';
+  const tagSpans = tags.length
+    ? tags.map(t => `<span class="email-tag email-tag-${_esc(t)}">${_esc(t)}</span>`).join('')
+    : '';
+  const tagsHtml = [catTag, tagSpans].filter(Boolean).join('');
+  meta.innerHTML = `<span class="email-meta-sender"><span style="opacity:0.55">${senderPrefix}</span><span style="color:${color};font-weight:600">${_esc(senderName)}</span></span><span class="email-meta-sep"> · </span><span class="email-meta-date">${_esc(dateStr)}</span>${tagsHtml ? `<span class="email-meta-tags" style="margin-left:auto;display:inline-flex;flex-wrap:wrap;gap:3px;">${tagsHtml}</span>` : ''}`;
   content.appendChild(meta);
 
   card.appendChild(content);
@@ -2103,7 +2471,11 @@ function _createCard(em) {
       _updateBulkBar();
       return;
     }
-    await _toggleCardPreview(card, em);
+    if (state._libSplitPane) {
+      await _loadPreviewPanel(em);
+    } else {
+      await _toggleCardPreview(card, em);
+    }
   });
 
   return card;
@@ -2155,6 +2527,186 @@ function _prefetchAdjacentEmails(card, count = 1) {
       .catch(() => {})
       .finally(() => _emailReadPrefetching.delete(key));
   }, 900);
+}
+
+async function _applySplitPane(active) {
+  const modal = document.getElementById('email-lib-modal');
+  const btn = document.getElementById('email-lib-split-toggle');
+  const grid = document.getElementById('email-lib-grid');
+  const preview = document.getElementById('email-lib-preview');
+  const wrap = modal?.querySelector('.email-split-wrap');
+  const adminCard = modal?.querySelector('.admin-card');
+  if (!modal || !grid || !preview || !wrap || !adminCard) return;
+
+  if (active) {
+    btn?.classList.add('active');
+    if (btn) btn.title = 'Close preview panel';
+    modal.classList.add('email-split-pane');
+    preview.innerHTML = '<div class="email-preview-placeholder" style="display:flex;flex:1;align-items:center;justify-content:center;color:var(--text-dim,#888);font-size:13px;padding:20px;text-align:center;">Select an email to preview</div>';
+
+    // Collapse any expanded inline card
+    grid.querySelectorAll('.doclib-card.doclib-card-expanded').forEach(c => {
+      const uid = c.dataset.uid;
+      const liveEm = state._libEmails.find(e => String(e.uid) === String(uid));
+      if (liveEm) _toggleCardPreview(c, liveEm);
+    });
+  } else {
+    btn?.classList.remove('active');
+    if (btn) btn.title = 'Toggle split-pane preview';
+    modal.classList.remove('email-split-pane');
+    preview.innerHTML = '';
+  }
+  state._libSplitPane = !!active;
+}
+
+function _toggleSplitPane() {
+  _applySplitPane(!state._libSplitPane);
+}
+
+async function _loadPreviewPanel(em) {
+  const preview = document.getElementById('email-lib-preview');
+  const grid = document.getElementById('email-lib-grid');
+  if (!preview || !em) return;
+  const folderAtStart = state._libFolder || 'INBOX';
+
+  // Highlight the selected card in the grid and remove highlight from others
+  grid?.querySelectorAll('.doclib-card').forEach(c => {
+    c.classList.toggle('email-card-selected', String(c.dataset.uid) === String(em.uid));
+  });
+
+  // Show loading
+  preview.innerHTML = '';
+  const loadingWrap = document.createElement('div');
+  loadingWrap.style.cssText = 'display:flex;flex:1;align-items:center;justify-content:center;padding:20px;';
+  const sp = spinnerModule.createWhirlpool(28);
+  loadingWrap.appendChild(sp.element);
+  preview.appendChild(loadingWrap);
+
+  if (!em.is_read) {
+    _syncEmailReadState(em.uid, true);
+    fetch(`${API_BASE}/api/email/mark-read/${em.uid}?folder=${encodeURIComponent(folderAtStart)}${_acct()}`, { method: 'POST' })
+      .catch(err => console.error('Failed to mark email read:', err));
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/api/email/read/${em.uid}?folder=${encodeURIComponent(folderAtStart)}${_acct()}`);
+    const data = await res.json();
+    if (data.error) {
+      preview.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">Error: ${_esc(data.error)}</div>`;
+      return;
+    }
+
+    if (!state._libSplitPane) return;
+
+    // Mark as read locally
+    _syncEmailReadState(em.uid, true);
+
+    // Build attachments
+    const attsHtml = _buildAttsHtmlFor(em.uid, data);
+
+    // Format date
+    let dateDisplay = data.date || '';
+    try {
+      if (data.date) {
+        const d = new Date(data.date);
+        if (!isNaN(d.getTime())) {
+          dateDisplay = d.toLocaleString([], {
+            month: 'short', day: 'numeric', year: 'numeric',
+            hour: '2-digit', minute: '2-digit',
+          });
+        }
+      }
+    } catch (_) {}
+
+    const buildRecipients = (str) => {
+      if (!str) return '';
+      const addrs = _splitRecipientList(str);
+      if (addrs.length === 0) return '';
+      return addrs.map(a => {
+        const name = _extractName(a);
+        return _recipientChipHtml(a, name);
+      }).join('');
+    };
+
+    const fromChip = _recipientChipHtml(`${data.from_name || ''} <${data.from_address || ''}>`, data.from_name || data.from_address, 'from-chip');
+
+    preview.innerHTML = `
+      <div class="email-reader-header" style="flex-shrink:0;">
+        <div class="email-reader-meta">
+          <div class="email-reader-meta-row"><strong>From:</strong><span class="recipient-chips">${fromChip}</span></div>
+          ${data.to ? `<div class="email-reader-meta-row"><strong>To:</strong><span class="recipient-chips">${buildRecipients(data.to)}</span></div>` : ''}
+          ${data.cc ? `<div class="email-reader-meta-row"><strong>Cc:</strong><span class="recipient-chips">${buildRecipients(data.cc)}</span></div>` : ''}
+          <div class="email-reader-meta-row" style="opacity:0.65;font-size:10px;margin-top:4px;">${_esc(dateDisplay)}</div>
+        </div>
+        <div class="email-reader-actions">
+          <div class="email-reader-actions-row email-reader-actions-row-primary">
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="reply" title="Reply"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><span class="reader-btn-label">Reply</span></button>
+            ${_hasMultipleRecipients(data) ? `<button class="memory-toolbar-btn reader-icon-btn" data-act="reply-all" title="Reply All"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/></svg><span class="reader-btn-label">Reply all</span></button>` : ''}
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">Forward</span></button>
+          </div>
+          <div class="email-reader-actions-row email-reader-actions-row-secondary">
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply (suggest a draft)'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize">${_summaryIcon(data)}<span class="reader-btn-label">Summary</span></button>
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="from-sender" title="Search text in this thread"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span class="reader-btn-label">Search</span></button>
+          </div>
+        </div>
+      </div>
+      ${attsHtml}
+      <div class="email-reader-body${data.body_html ? ' html-body' : ''}" style="flex:1;overflow-y:auto;min-height:0;">${_safeRenderEmailBody(data)}</div>
+    `;
+
+    // Wire events — same as in _toggleCardPreview
+    const attsWrap = preview.querySelector('.email-reader-atts-wrap');
+    if (attsWrap) {
+      const attsToggle = attsWrap.querySelector('.email-reader-atts-header');
+      if (attsToggle) {
+        attsToggle.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          attsWrap.classList.toggle('collapsed');
+        });
+        attsToggle.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') {
+            ev.preventDefault();
+            attsWrap.classList.toggle('collapsed');
+          }
+        });
+      }
+    }
+
+    _wireAttachmentHandlers(preview, state._libFolder);
+
+    preview.querySelector('[data-act="reply"]')?.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      _snapEmailModalToLeftSidebar(ev.currentTarget.closest('.modal'));
+      if (state._onEmailClick) await state._onEmailClick({ email: em, emailData: data, mode: 'reply' });
+    });
+    preview.querySelector('[data-act="reply-all"]')?.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      _snapEmailModalToLeftSidebar(ev.currentTarget.closest('.modal'));
+      if (state._onEmailClick) await state._onEmailClick({ email: em, emailData: data, mode: 'reply-all' });
+    });
+    preview.querySelector('[data-act="ai-reply"]')?.addEventListener('click', (ev) => _handleAiReplyButton(ev, em, data));
+    preview.querySelector('[data-act="forward"]')?.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      if (state._onEmailClick) await state._onEmailClick({ email: em, emailData: data, mode: 'forward' });
+    });
+    // If the email has a pre-cached summary, show it immediately
+    if (data.cached_summary) {
+      const sumBtn = preview.querySelector('[data-act="summarize"]');
+      _showCachedSummary(preview, data.cached_summary, sumBtn);
+    }
+
+    // from-sender / thread-search Search button is DISABLED for now
+    preview.querySelector('[data-act="from-sender"]')?.remove();
+
+    _wireRecipientChips(preview);
+    _markEmailReaderActive(preview);
+  } catch (err) {
+    console.error(err);
+    if (state._libSplitPane) {
+      preview.innerHTML = `<div style="padding:20px;color:var(--red,#e55)">Error loading email</div>`;
+    }
+  }
 }
 
 async function _toggleCardPreview(card, em) {

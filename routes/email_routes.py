@@ -32,7 +32,6 @@ from email.mime.multipart import MIMEMultipart
 
 from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPException, Depends, Request
 from fastapi.responses import FileResponse
-from src.constants import DATA_DIR
 
 from src.llm_core import llm_call_async
 from src.upload_limits import read_upload_limited
@@ -489,6 +488,10 @@ def setup_email_routes():
     _WARM_RECENT_SECONDS = 7 * 24 * 60 * 60
     _pool_lock = _threading.Lock()
 
+    # ── Email analysis background task progress ──
+    _analysis_tasks: dict = {}
+    _analysis_task_counter = 0
+
     def _pooled_connect(account_id, owner=""):
         """Reuse a live IMAP connection if one is in the pool and still
         responsive. Otherwise open fresh and store it. Caller must release
@@ -739,6 +742,46 @@ def setup_email_routes():
                     return {"emails": [], "total": 0, "folder": folder}
                 data = [b" ".join(sorted(_uids, key=lambda x: int(x) if str(x, "ascii", "ignore").isdigit() else 0))]
                 status = "OK"
+            elif filter_ and filter_.startswith("category:"):
+                _cat_name = filter_[len("category:"):].strip().lower()
+                _cat_message_ids = []
+                try:
+                    import sqlite3 as _sql3c
+                    _cc = _sql3c.connect(SCHEDULED_DB)
+                    _owner_clause_c, _owner_params_c = _email_cache_owner_clause(owner)
+                    if _cat_name == "spam":
+                        rows_c = _cc.execute(
+                            "SELECT message_id FROM email_message_analysis "
+                            "WHERE folder=? AND is_spam=1 "
+                            f"AND {_owner_clause_c}",
+                            (folder, *_owner_params_c),
+                        ).fetchall()
+                    else:
+                        rows_c = _cc.execute(
+                            "SELECT message_id FROM email_message_analysis "
+                            "WHERE folder=? AND category=? "
+                            f"AND {_owner_clause_c}",
+                            (folder, _cat_name, *_owner_params_c),
+                        ).fetchall()
+                    _cat_message_ids = [str(r[0]).strip() for r in rows_c if r[0]]
+                    _cc.close()
+                except Exception as _ce:
+                    logger.warning(f"category filter lookup failed: {_ce}")
+                if not _cat_message_ids:
+                    conn.logout()
+                    return {"emails": [], "total": 0, "folder": folder}
+                def _imap_search_quote_c(value: str) -> str:
+                    return '"' + str(value or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
+                _uids_c = set()
+                for _mid in dict.fromkeys(_cat_message_ids):
+                    st_m, data_m = _imap_uid_search(conn, f'(HEADER Message-ID {_imap_search_quote_c(_mid)}{from_clause})')
+                    if st_m == "OK" and data_m and data_m[0]:
+                        _uids_c.update(data_m[0].split())
+                if not _uids_c:
+                    conn.logout()
+                    return {"emails": [], "total": 0, "folder": folder}
+                data = [b" ".join(sorted(_uids_c, key=lambda x: int(x) if str(x, "ascii", "ignore").isdigit() else 0))]
+                status = "OK"
             elif from_clause:
                 status, data = _imap_uid_search(conn, f"({from_clause.strip()})")
             else:
@@ -786,6 +829,29 @@ def setup_email_routes():
                 _c.close()
             except Exception as e:
                 logger.warning(f"Tag preload failed: {e}")
+
+            # Preload analysis categories by uid
+            _cat_by_uid = {}
+            try:
+                import sqlite3 as _sql3c
+                _cc = _sql3c.connect(SCHEDULED_DB)
+                _oc, _op = _email_cache_owner_clause(owner)
+                _crows = _cc.execute(
+                    f"SELECT uid, category, is_spam, tags FROM email_message_analysis "
+                    f"WHERE folder=? AND {_oc} AND uid IN ({','.join('?'*len(_uid_strs))})",
+                    [folder, *_op, *_uid_strs],
+                ).fetchall()
+                for r in _crows:
+                    try:
+                        tg = json.loads(r[3] or "[]")
+                    except Exception:
+                        tg = []
+                    if not isinstance(tg, list):
+                        tg = []
+                    _cat_by_uid[r[0]] = {"category": r[1] or "", "analysis_spam": bool(r[2]), "tags": tg}
+                _cc.close()
+            except Exception as e:
+                logger.warning(f"Category preload failed: {e}")
 
             # Batch fetch ALL requested UIDs in a single IMAP round-trip.
             # Per-UID fetch was the dominant cost — N round-trips × (~5-20ms
@@ -891,6 +957,23 @@ def setup_email_routes():
                         ct = msg.get("Content-Type", "")
                         has_attachments = "multipart/mixed" in ct.lower() or "multipart/related" in ct.lower()
                         tag_entry = _tag_by_message_id.get(message_id.strip()) or _tag_by_uid.get(uid_num, {})
+                        cat_entry = _cat_by_uid.get(uid_num, {})
+                        # Merge tags from both sources (email_tags + email_message_analysis)
+                        _tags_from_tags_tbl = tag_entry.get("tags", [])
+                        _tags_from_analysis = cat_entry.get("tags", [])
+                        if isinstance(_tags_from_tags_tbl, list) and isinstance(_tags_from_analysis, list):
+                            _merged = _tags_from_tags_tbl + _tags_from_analysis
+                        elif isinstance(_tags_from_tags_tbl, list):
+                            _merged = _tags_from_tags_tbl
+                        else:
+                            _merged = _tags_from_analysis if isinstance(_tags_from_analysis, list) else []
+                        _merged = ["marketing" if t == "promo" else t for t in _merged]
+                        _seen = set()
+                        _all_tags = []
+                        for t in _merged:
+                            if t not in _seen:
+                                _seen.add(t)
+                                _all_tags.append(t)
                         emails.append({
                             "uid": uid_num,
                             "message_id": message_id.strip(),
@@ -908,8 +991,10 @@ def setup_email_routes():
                             "is_flagged": is_flagged,
                             "flags": flags,
                             "has_attachments": has_attachments,
-                            "tags": tag_entry.get("tags", []),
+                            "tags": _all_tags,
                             "is_spam_verdict": tag_entry.get("spam", False),
+                            "category": cat_entry.get("category", ""),
+                            "analysis_spam": cat_entry.get("analysis_spam", False),
                         })
                     except Exception as e:
                         logger.warning(f"Error parsing batched email entry: {e}")
@@ -1065,6 +1150,7 @@ def setup_email_routes():
         q: str = Query(""),
         folder: str = Query("INBOX"),
         limit: int = Query(50),
+        offset: int = Query(0),
         account_id: str | None = Query(None),
         owner: str = Depends(require_owner),
     ):
@@ -1088,7 +1174,7 @@ def setup_email_routes():
 
                 uid_list = data[0].split()
                 total = len(uid_list)
-                uid_list = list(reversed(uid_list))[:limit]
+                uid_list = list(reversed(uid_list))[offset:offset + limit]
 
                 emails = []
                 for uid in uid_list:
@@ -2905,7 +2991,7 @@ def setup_email_routes():
         from pathlib import Path as _P
         import json as _json
         _slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
-        path = _P(DATA_DIR) / f"email_urgency_state_{_slug}.json"
+        path = _P(f"data/email_urgency_state_{_slug}.json")
         if not path.exists():
             return {"total_unread": 0, "total_urgent": 0, "max_score": 0, "per_uid": {}}
         try:
@@ -3213,5 +3299,762 @@ def setup_email_routes():
             return {"ok": True}
         finally:
             db.close()
+
+    # ── Email Analysis (sender categorization / themes) ──
+
+    async def _analysis_for_message(
+        uid: str, folder: str, account_id: str | None, owner: str,
+        msg_data: bytes | None = None,
+    ) -> dict | None:
+        """Analyze a single email: categorize sender, detect spam, dedupe by
+        message_id.  Returns the analysis dict or None if skipped / error."""
+        import hashlib as _hl
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
+
+            # Quick UID-based dedup before any IMAP/LLM work
+            dup = conn.execute(
+                "SELECT category, is_spam, is_read, tags FROM email_message_analysis WHERE uid=? AND folder=? AND owner=?",
+                (uid_str, folder, owner),
+            ).fetchone()
+            if dup:
+                try:
+                    tags = json.loads(dup[3] or "[]")
+                except Exception:
+                    tags = []
+                if not isinstance(tags, list):
+                    tags = []
+                return {
+                    "message_id": f"<uid-{uid_str}@{folder}>",
+                    "category": dup[0] or "",
+                    "tags": tags,
+                    "is_spam": bool(dup[1]),
+                    "is_read": bool(dup[2]) if len(dup) > 2 else False,
+                    "cached": True,
+                }
+
+            is_read = False
+            if msg_data is None:
+                _c, acct_owner = _imap_connect(account_id, owner=owner), owner
+                try:
+                    _c.select(_q(folder), readonly=True)
+                    st, d = _c.uid("FETCH", uid, "(FLAGS RFC822)")
+                    if st != "OK":
+                        return {"error": "IMAP fetch failed"}
+                    raw = d[0][1]
+                    flags_part = d[0][0] if isinstance(d[0][0], bytes) else str(d[0][0]).encode()
+                    is_read = b'\\Seen' in flags_part
+                finally:
+                    try:
+                        _c.logout()
+                    except Exception:
+                        pass
+            else:
+                raw = msg_data
+
+            msg = email_mod.message_from_bytes(raw)
+            message_id = msg.get("Message-ID", "").strip()
+            if not message_id:
+                uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
+                seed = f"{folder}|{uid_str}|{msg.get('From','')}|{msg.get('Date','')}|{msg.get('Subject','')}"
+                message_id = f"<synth-{_hl.sha256(seed.encode()).hexdigest()[:16]}@local>"
+
+            # Dedup: check if we've already analyzed this message
+            existing = conn.execute(
+                "SELECT category, is_spam, tags FROM email_message_analysis WHERE message_id=? AND owner=?",
+                (message_id, owner),
+            ).fetchone()
+            if existing:
+                try:
+                    tags = json.loads(existing[2] or "[]")
+                except Exception:
+                    tags = []
+                if not isinstance(tags, list):
+                    tags = []
+                return {
+                    "message_id": message_id,
+                    "category": existing[0] or "",
+                    "tags": tags,
+                    "is_spam": bool(existing[1]),
+                    "cached": True,
+                }
+
+            sender_raw = _decode_header(msg.get("From", ""))
+            sender_name, sender_addr = email.utils.parseaddr(sender_raw)
+            if not sender_addr:
+                sender_addr = sender_raw
+            subject = _decode_header(msg.get("Subject", ""))
+            body = _extract_text(msg)
+
+            if not body and not subject:
+                return {"error": "empty body and subject"}
+
+            # LLM classification
+            from src.endpoint_resolver import resolve_endpoint
+            url, model, headers = resolve_endpoint("utility", owner=owner)
+            if not url or not model:
+                url, model, headers = resolve_endpoint("default", owner=owner)
+            if not url or not model:
+                return {"error": "no LLM endpoint configured"}
+
+            req_headers = {"Content-Type": "application/json"}
+            if headers:
+                req_headers.update(headers)
+
+            sys_prompt = (
+                "You are classifying emails for theme/category analysis. "
+                "Return ONLY a JSON object, no prose, no markdown fences.\n"
+                'Schema: {"category": "category_name", "tags": ["tag1", "tag2"], "is_spam": false, "reason": "short reason"}\n\n'
+                "Choose the SINGLE best primary category from:\n"
+                "- work: Job-related, colleagues, projects, meetings\n"
+                "- personal: Friends, family, personal correspondence\n"
+                "- finance: Banking, investments, billing, invoices, receipts\n"
+                "- shopping: Purchases, orders, delivery notifications\n"
+                "- travel: Flights, hotels, bookings, itineraries\n"
+                "- newsletter: Subscriptions, digests, mailing lists\n"
+                "- promo: Marketing, promotions, discounts, offers\n"
+                "- security: Password resets, login alerts, 2FA codes\n"
+                "- social: Social media notifications, forum activity\n"
+                "- calendar: Calendar invites, event confirmations\n"
+                "- notification: Automated notifications, service updates\n"
+                "- spam: Bulk/unsolicited/irrelevant\n\n"
+                "IMPORTANT: Assign one or more TAGS in the \"tags\" array. "
+                "Emails often belong to MULTIPLE categories — e.g. a travel "
+                "booking promo is both \"travel\" and \"promo\"; a bank "
+                "statement notification is both \"finance\" and "
+                "\"notification\"; a flight receipt is \"travel\" and "
+                "\"receipt\". The primary \"category\" should be the main "
+                "theme, and \"tags\" should include ALL relevant labels "
+                "from the list above. Return 1-4 tags per email.\n\n"
+                "Set is_spam=true for: phishing, scams, unsolicited marketing, "
+                "generic bulk mail with no personal action needed. "
+                "Reason should be 5-10 words."
+            )
+
+            import requests as _req
+            from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
+            tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": (
+                        f"From: {sender_raw}\nSubject: {subject}\n\n{body[:4000]}"
+                    )},
+                ],
+                tok_key: 512,
+                "temperature": 0.1,
+                "stream": False,
+            }
+            if _restricts_temperature(model):
+                payload.pop("temperature", None)
+
+            _llm_endpoints = [(url, model, req_headers)]
+            from core.database import SessionLocal as _SL, ModelEndpoint as _ME
+            try:
+                _db = _SL()
+                try:
+                    for _ep in _db.query(_ME).filter(_ME.is_enabled == True).all():
+                        if _ep.base_url and _ep.id not in ("0b2cfed5",):
+                            _llm_endpoints.append((
+                                (_ep.base_url.rstrip("/") + "/chat/completions"),
+                                "qwen3:8b",
+                                {"Content-Type": "application/json"},
+                            ))
+                            break
+                finally:
+                    _db.close()
+            except Exception:
+                pass
+
+            resp = None
+            for ep_url, ep_model, ep_headers in _llm_endpoints:
+                for retry in range(3):
+                    resp = await asyncio.to_thread(
+                        _req.post, ep_url, json={
+                            "model": ep_model,
+                            "messages": payload["messages"],
+                            "max_tokens": 512,
+                            "temperature": 0.1,
+                            "stream": False,
+                        }, headers=ep_headers, timeout=120
+                    )
+                    if resp.ok:
+                        url, model, req_headers = ep_url, ep_model, ep_headers
+                        break
+                    if resp.status_code == 429 and retry < 2:
+                        await asyncio.sleep(2)
+                        continue
+                    break
+                if resp and resp.ok:
+                    break
+
+            if not resp or not resp.ok:
+                code = resp.status_code if resp else "no response"
+                logger.warning(f"Analysis LLM call failed for {message_id}: {code}")
+                return {"error": f"LLM HTTP {code}"}
+
+            rdata = resp.json()
+            m = (rdata.get("choices") or [{}])[0].get("message", {})
+            raw_out = (m.get("content") or "").strip()
+            raw_out = _strip_think(raw_out)
+            raw_out = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_out, flags=re.MULTILINE).strip()
+            jm = re.search(r'\{.*\}', raw_out, re.DOTALL)
+            if not jm:
+                return {"error": "LLM response unparseable", "raw": raw_out[:200]}
+
+            parsed = json.loads(jm.group(0))
+            category = str(parsed.get("category") or "uncategorized").strip().lower().replace("_", "-")
+            ALLOWED_CATS = {
+                "work", "personal", "finance", "shopping", "travel",
+                "newsletter", "promo", "security", "social", "calendar",
+                "notification", "spam", "uncategorized",
+            }
+            if category not in ALLOWED_CATS:
+                category = "uncategorized"
+            is_spam = bool(parsed.get("is_spam"))
+
+            # Parse multi-tags from the response
+            raw_tags = parsed.get("tags", [])
+            if not isinstance(raw_tags, list):
+                raw_tags = []
+            ALLOWED_TAGS = {"work", "personal", "finance", "bills", "receipt", "travel",
+                            "newsletter", "marketing", "promo", "notification", "security",
+                            "social", "shopping", "calendar"}
+            normalized_tags = []
+            for t in raw_tags:
+                t = str(t).strip().lower().replace("_", "-").replace(" ", "-")
+                if t == "promo":
+                    t = "marketing"
+                if t in ALLOWED_TAGS:
+                    normalized_tags.append(t)
+            # Deduplicate preserving order
+            seen = set()
+            tags_deduped = []
+            for t in normalized_tags:
+                if t not in seen:
+                    seen.add(t)
+                    tags_deduped.append(t)
+            tags_json = json.dumps(tags_deduped)
+
+            # Store message-level analysis
+            now = datetime.utcnow().isoformat()
+            conn.execute(
+                "INSERT OR REPLACE INTO email_message_analysis "
+                "(message_id, owner, uid, folder, sender, sender_name, subject, category, is_spam, is_read, analyzed_at, tags) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (message_id, owner, uid.decode() if isinstance(uid, bytes) else str(uid),
+                 folder, sender_addr, sender_name or sender_addr, subject, category, 1 if is_spam else 0,
+                 1 if is_read else 0, now, tags_json),
+            )
+
+            # Upsert sender-level analysis
+            existing_sender = conn.execute(
+                "SELECT category, email_count, spam_count FROM email_sender_analysis "
+                "WHERE sender=? AND owner=?", (sender_addr, owner),
+            ).fetchone()
+            if existing_sender:
+                new_count = existing_sender[1] + 1
+                new_spam = existing_sender[2] + (1 if is_spam else 0)
+                conn.execute(
+                    "UPDATE email_sender_analysis SET category=?, email_count=?, spam_count=?, "
+                    "last_seen=?, last_subject=? WHERE sender=? AND owner=?",
+                    (category, new_count, new_spam, now, subject, sender_addr, owner),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO email_sender_analysis "
+                    "(sender, owner, sender_name, category, email_count, spam_count, first_seen, last_seen, last_subject) "
+                    "VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)",
+                    (sender_addr, owner, sender_name or sender_addr, category,
+                     1 if is_spam else 0, now, now, subject),
+                )
+
+            # Auto-create category if new
+            existing_cat = conn.execute(
+                "SELECT name FROM email_categories WHERE name=? AND owner=?",
+                (category, owner),
+            ).fetchone()
+            if not existing_cat:
+                cat_colors = {
+                    "work": "var(--accent-primary)",
+                    "personal": "var(--color-save-green)",
+                    "finance": "var(--color-brand-blue)",
+                    "shopping": "var(--color-blind-orange)",
+                    "travel": "var(--color-agent-active)",
+                    "newsletter": "var(--color-muted)",
+                    "promo": "var(--color-muted-alt)",
+                    "security": "var(--color-error)",
+                    "social": "var(--color-link-hover)",
+                    "calendar": "var(--color-accent)",
+                    "notification": "var(--color-subheader)",
+                    "spam": "var(--color-warning)",
+                    "uncategorized": "var(--color-muted)",
+                }
+                conn.execute(
+                    "INSERT OR IGNORE INTO email_categories (name, owner, color, description) VALUES (?, ?, ?, ?)",
+                    (category, owner, cat_colors.get(category, "var(--color-muted)"), ""),
+                )
+
+            conn.commit()
+            return {
+                "message_id": message_id,
+                "category": category,
+                "tags": tags_deduped,
+                "is_spam": is_spam,
+                "sender": sender_addr,
+                "cached": False,
+            }
+        except Exception as e:
+            logger.warning(f"Email analysis failed for uid={uid}: {e}")
+            return {"error": str(e)}
+        finally:
+            conn.close()
+
+    @router.post("/analysis/run")
+    async def run_analysis(
+        request: Request,
+        uid: str | None = Query(None),
+        folder: str = Query("INBOX"),
+        account_id: str | None = Query(None),
+        owner: str = Depends(require_user),
+        mode: str = Query("unread"),
+        batch_max: int | None = Query(None),
+        batch_start_date: str | None = Query(None),
+        batch_end_date: str | None = Query(None),
+        batch_size: int = Query(50),
+    ):
+        """Run email analysis on recent messages or a specific email by UID."""
+        if uid:
+            result = await _analysis_for_message(uid, folder, account_id, owner)
+            if result and not result.get("error"):
+                return {"ok": True, "results": [result]}
+            return {"ok": False, "error": (result or {}).get("error", "Analysis failed")}
+
+        # No UID: launch background scan (returns immediately with task_id)
+        import uuid as _uuid
+
+        # Gather UIDs first (synchronous IMAP)
+        try:
+            _c, _acct_owner = _imap_connect(account_id, owner=owner), owner
+            try:
+                _c.select(_q(folder), readonly=True)
+
+                if mode == "batch":
+                    # Batch mode: scan read + unread emails with optional date range
+                    parts = ["ALL"]
+                    if batch_start_date:
+                        try:
+                            since_imap = datetime.strptime(batch_start_date, "%Y-%m-%d").strftime("%d-%b-%Y")
+                            parts.append(f'SINCE {since_imap}')
+                        except ValueError:
+                            pass
+                    if batch_end_date:
+                        try:
+                            before_imap = datetime.strptime(batch_end_date, "%Y-%m-%d").strftime("%d-%b-%Y")
+                            parts.append(f'BEFORE {before_imap}')
+                        except ValueError:
+                            pass
+                    search_criteria = f'({" ".join(parts)})'
+                    st, data = _c.uid("SEARCH", None, search_criteria)
+                    uids = []
+                    if st == "OK" and data[0]:
+                        uids_raw = data[0].split()
+                        if batch_max is not None and batch_max > 0:
+                            uids_raw = uids_raw[-batch_max:]
+                        for u in reversed(uids_raw):
+                            uids.append(u)
+                    source = "batch"
+                else:
+                    # Search ALL unread emails (up to 20 most recent)
+                    st, data = _c.uid("SEARCH", None, "UNSEEN")
+                    uids = []
+                    if st == "OK" and data[0]:
+                        for u in reversed(data[0].split()[-20:]):
+                            uids.append(u)
+                    source = "unread"
+                    if not uids:
+                        from datetime import timedelta as _td
+                        since = (datetime.utcnow() - _td(days=3)).strftime("%d-%b-%Y")
+                        source = "recent"
+                        st, data = _c.uid("SEARCH", None, f'(SINCE {since})')
+                        if st == "OK" and data[0]:
+                            for u in reversed(data[0].split()[-20:]):
+                                uids.append(u)
+            finally:
+                try:
+                    _c.logout()
+                except Exception:
+                    pass
+        except Exception as e:
+            return {"ok": False, "error": f"IMAP failed: {e}"}
+
+        if not uids:
+            return {"ok": True, "analyzed": 0, "source": source, "results": [], "task_id": None}
+
+        uid_strs = [u.decode() if isinstance(u, bytes) else str(u) for u in uids]
+        task_id = str(_uuid.uuid4())[:8]
+        _analysis_tasks[task_id] = {
+            "status": "running",
+            "total": len(uid_strs),
+            "completed": 0,
+            "current": "Starting scan…",
+            "source": source,
+            "error": None,
+            "batch_size": batch_size if mode == "batch" else 0,
+        }
+
+        async def _scan_worker():
+            logs = []
+            def _log(msg):
+                logs.append(msg)
+            try:
+                batch_sz = _analysis_tasks[task_id].get("batch_size", 0) or 1
+                total = len(uid_strs)
+                total_batches = max(1, (total + batch_sz - 1) // batch_sz)
+                for i, u in enumerate(uid_strs):
+                    if _analysis_tasks.get(task_id, {}).get("status") == "cancelled":
+                        break
+                    display = f"Email {i+1}/{total} (UID {u})"
+                    if batch_sz > 1:
+                        batch_num = i // batch_sz + 1
+                        _analysis_tasks[task_id]["current"] = f"Batch {batch_num}/{total_batches} — {display}…"
+                    else:
+                        _analysis_tasks[task_id]["current"] = f"Analyzing {display}…"
+                    _analysis_tasks[task_id]["completed"] = i
+                    r = await _analysis_for_message(u, folder, account_id, owner)
+                    if i < total - 1:
+                        await asyncio.sleep(1.5)
+                    if r and not r.get("error"):
+                        _analysis_tasks[task_id].setdefault("results", []).append(r)
+                        _analysis_tasks[task_id].setdefault("email_logs", []).append(
+                            f"{display}: ✓ {r.get('category','?')} tags={r.get('tags',[])} (spam={r.get('is_spam',False)})"
+                        )
+                        _log(f"✓ {r.get('sender','?')} → {r.get('category','?')} tags={r.get('tags',[])}")
+                    else:
+                        err = (r or {}).get("error", "unknown")
+                        _analysis_tasks[task_id].setdefault("email_logs", []).append(
+                            f"{display}: ✗ {err}"
+                        )
+                        _log(f"✗ UID {u} — {err}")
+                    _analysis_tasks[task_id]["completed"] = i + 1
+                _analysis_tasks[task_id]["status"] = "done"
+                _analysis_tasks[task_id]["current"] = (
+                    f'Analyzed {len(_analysis_tasks[task_id].get("results", []))} '
+                    f'of {len(uid_strs)} {source} emails'
+                )
+                _analysis_tasks[task_id]["logs"] = logs
+            except Exception as e:
+                _analysis_tasks[task_id]["status"] = "error"
+                _analysis_tasks[task_id]["error"] = str(e)
+                _analysis_tasks[task_id]["current"] = f"Error: {e}"
+                _analysis_tasks[task_id]["logs"] = logs + [f"ERROR: {e}"]
+
+        _asyncio.create_task(_scan_worker())
+        return {
+            "ok": True,
+            "task_id": task_id,
+            "total": len(uid_strs),
+            "source": source,
+        }
+
+    @router.get("/analysis/progress/{task_id}")
+    async def analysis_progress(task_id: str, owner: str = Depends(require_user)):
+        """Poll progress of a running analysis scan."""
+        entry = _analysis_tasks.get(task_id)
+        if not entry:
+            return {"ok": False, "error": "Unknown task_id"}
+        analyzed = len(entry.get("results", []))
+        return {
+            "ok": True,
+            "status": entry["status"],
+            "total": entry["total"],
+            "completed": entry["completed"],
+            "analyzed": analyzed,
+            "current": entry["current"],
+            "source": entry.get("source", "unread"),
+            "error": entry.get("error"),
+            "logs": entry.get("logs", []),
+            "email_logs": entry.get("email_logs", []),
+        }
+
+    @router.get("/analysis/stats")
+    async def analysis_stats(owner: str = Depends(require_user)):
+        """Get category counts for visualization."""
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            rows = conn.execute(
+                "SELECT sa.category, COUNT(*) as cnt, COALESCE(c.color, 'var(--color-muted)') as color "
+                "FROM email_sender_analysis sa "
+                "LEFT JOIN email_categories c ON c.name = sa.category AND c.owner = ? "
+                "WHERE sa.owner = ? AND sa.category != '' "
+                "GROUP BY sa.category ORDER BY cnt DESC",
+                (owner, owner),
+            ).fetchall()
+            total = conn.execute(
+                "SELECT COUNT(*) FROM email_sender_analysis WHERE owner=?",
+                (owner,),
+            ).fetchone()[0]
+            spam_count = conn.execute(
+                "SELECT COALESCE(SUM(spam_count), 0) FROM email_sender_analysis WHERE owner=?",
+                (owner,),
+            ).fetchone()[0]
+            return {
+                "ok": True,
+                "categories": [{"name": r[0], "count": r[1], "color": r[2]} for r in rows],
+                "total_senders": total,
+                "total_spam": spam_count,
+            }
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        finally:
+            conn.close()
+
+    @router.get("/analysis/senders")
+    async def analysis_senders(owner: str = Depends(require_user)):
+        """List all analyzed senders with their categories."""
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            rows = conn.execute(
+                "SELECT sa.sender, sa.sender_name, sa.category, sa.email_count, "
+                "sa.spam_count, sa.first_seen, sa.last_seen, sa.last_subject, "
+                "COALESCE(c.color, 'var(--color-muted)') as color "
+                "FROM email_sender_analysis sa "
+                "LEFT JOIN email_categories c ON c.name = sa.category AND c.owner = ? "
+                "WHERE sa.owner = ? AND sa.category != '' "
+                "ORDER BY sa.last_seen DESC",
+                (owner, owner),
+            ).fetchall()
+            return {
+                "ok": True,
+                "senders": [
+                    {
+                        "sender": r[0], "sender_name": r[1], "category": r[2],
+                        "email_count": r[3], "spam_count": r[4],
+                        "first_seen": r[5], "last_seen": r[6],
+                        "last_subject": r[7], "color": r[8],
+                    }
+                    for r in rows
+                ],
+            }
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        finally:
+            conn.close()
+
+    @router.get("/analysis/categories")
+    async def analysis_categories(owner: str = Depends(require_user)):
+        """List all known categories."""
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            rows = conn.execute(
+                "SELECT name, color, description FROM email_categories WHERE owner=? ORDER BY name",
+                (owner,),
+            ).fetchall()
+            return {
+                "ok": True,
+                "categories": [{"name": r[0], "color": r[1], "description": r[2]} for r in rows],
+            }
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        finally:
+            conn.close()
+
+    @router.put("/analysis/sender")
+    async def update_sender_category(
+        request: Request,
+        owner: str = Depends(require_user),
+    ):
+        """Manually reassign a sender's category."""
+        body = await request.json()
+        sender = (body.get("sender") or "").strip()
+        category = (body.get("category") or "").strip().lower()
+        if not sender or not category:
+            return {"ok": False, "error": "sender and category required"}
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            conn.execute(
+                "UPDATE email_sender_analysis SET category=? WHERE sender=? AND owner=?",
+                (category, sender, owner),
+            )
+            conn.commit()
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        finally:
+            conn.close()
+
+    @router.get("/analysis/messages")
+    async def analysis_messages(
+        owner: str = Depends(require_user),
+        filter: str = Query("all"),
+        account_id: str | None = Query(None),
+    ):
+        """Get analyzed messages grouped by category. Supports filter=all|unread."""
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            rows = conn.execute(
+                "SELECT m.uid, m.folder, m.sender, m.sender_name, m.subject, "
+                "m.category, m.is_spam, m.is_read, m.analyzed_at, m.tags, "
+                "COALESCE(c.color, 'var(--color-muted)') as color "
+                "FROM email_message_analysis m "
+                "LEFT JOIN email_categories c ON c.name = m.category AND c.owner = ? "
+                "WHERE m.owner = ? AND m.category != '' AND m.uid IS NOT NULL "
+                "ORDER BY m.analyzed_at DESC",
+                (owner, owner),
+            ).fetchall()
+            messages = []
+            for r in rows:
+                uid, folder, sender, sender_name, subject = r[0], r[1], r[2], r[3], r[4]
+                category, is_spam, is_read, analyzed_at = r[5], r[6], r[7], r[8]
+                tags_raw, color = r[9], r[10]
+                is_read_val = bool(is_read) if is_read is not None else False
+                try:
+                    tags = json.loads(tags_raw or "[]")
+                except Exception:
+                    tags = []
+                if not isinstance(tags, list):
+                    tags = []
+                msg = {
+                    "uid": uid,
+                    "folder": folder or "INBOX",
+                    "sender": sender or "",
+                    "sender_name": sender_name or "",
+                    "subject": subject or "",
+                    "category": category or "uncategorized",
+                    "tags": tags,
+                    "is_spam": bool(is_spam),
+                    "is_read": is_read_val,
+                    "analyzed_at": analyzed_at or "",
+                    "color": color,
+                }
+                messages.append(msg)
+            # Group by category
+            cat_map = {}
+            cat_order = []
+            for m in messages:
+                cat = m["category"]
+                if filter == "unread" and m["is_read"]:
+                    continue
+                if cat not in cat_map:
+                    cat_map[cat] = []
+                    cat_order.append(cat)
+                cat_map[cat].append(m)
+            categories_out = []
+            for cat in cat_order:
+                msgs = cat_map[cat]
+                total = len(msgs)
+                unread_count = sum(1 for m in msgs if not m["is_read"])
+                categories_out.append({
+                    "name": cat,
+                    "color": msgs[0]["color"] if msgs else "var(--color-muted)",
+                    "total": total,
+                    "unread": unread_count,
+                    "messages": msgs,
+                })
+            return {"ok": True, "categories": categories_out}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        finally:
+            conn.close()
+
+    @router.post("/analysis/mark-category-read")
+    async def mark_category_read(
+        request: Request,
+        owner: str = Depends(require_user),
+        account_id: str | None = Query(None),
+    ):
+        """Mark all unread emails in a category as read."""
+        body = await request.json()
+        category = (body.get("category") or "").strip().lower()
+        if not category:
+            return {"ok": False, "error": "category required"}
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            rows = conn.execute(
+                "SELECT uid, folder FROM email_message_analysis "
+                "WHERE owner=? AND category=? AND (is_read IS NULL OR is_read = 0) "
+                "AND uid IS NOT NULL",
+                (owner, category),
+            ).fetchall()
+            if not rows:
+                return {"ok": True, "marked": 0}
+            marked = 0
+            errors = []
+            # Group by folder for batch IMAP ops
+            folder_map = {}
+            for r in rows:
+                uid_str = r[0]
+                fld = r[1] or "INBOX"
+                folder_map.setdefault(fld, []).append(uid_str)
+            for fld, uids in folder_map.items():
+                with _imap(account_id, owner=owner) as _c:
+                    _c.select(_q(fld))
+                    for uid_str in uids:
+                        try:
+                            if _store_email_flag(_c, uid_str, "\\Seen", add=True):
+                                marked += 1
+                                conn.execute(
+                                    "UPDATE email_message_analysis SET is_read = 1 "
+                                    "WHERE uid=? AND folder=? AND owner=?",
+                                    (uid_str, fld, owner),
+                                )
+                        except Exception as e:
+                            errors.append(f"UID {uid_str}: {e}")
+                _invalidate_list_cache(account_id, fld)
+            conn.commit()
+            result = {"ok": True, "marked": marked}
+            if errors:
+                result["errors"] = errors
+            return result
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        finally:
+            conn.close()
+
+    @router.post("/analysis/mark-read")
+    async def mark_analysis_messages_read(
+        request: Request,
+        owner: str = Depends(require_user),
+        account_id: str | None = Query(None),
+    ):
+        """Mark specific UIDs as read."""
+        body = await request.json()
+        uids = body.get("uids", [])
+        folder = body.get("folder", "INBOX")
+        if not uids:
+            return {"ok": False, "error": "uids list required"}
+        if isinstance(uids, str):
+            uids = [uids]
+        marked = 0
+        errors = []
+        try:
+            with _imap(account_id, owner=owner) as _c:
+                _c.select(_q(folder))
+                for uid_str in uids:
+                    try:
+                        if _store_email_flag(_c, uid_str, "\\Seen", add=True):
+                            marked += 1
+                    except Exception as e:
+                        errors.append(f"UID {uid_str}: {e}")
+            _invalidate_list_cache(account_id, folder)
+            conn = _sql3.connect(SCHEDULED_DB)
+            try:
+                for uid_str in uids:
+                    conn.execute(
+                        "UPDATE email_message_analysis SET is_read = 1 "
+                        "WHERE uid=? AND folder=? AND owner=?",
+                        (uid_str, folder, owner),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+            result = {"ok": True, "marked": marked}
+            if errors:
+                result["errors"] = errors
+            return result
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     return router
