@@ -82,6 +82,7 @@ let _docModule = null;
 let _listSpinner = null;
 let _senderFilter = null;       // email address (lowercased) to filter by, or null
 let _senderFilterLabel = null;  // display label for the active filter chip
+let _categoryFilter = null;     // category name to filter by, or null
 
 export function init(documentModule) {
   _docModule = documentModule;
@@ -303,7 +304,8 @@ export async function loadEmails(append = false) {
 
   try {
     const fromQS = _senderFilter ? `&from=${encodeURIComponent(_senderFilter)}` : '';
-    const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(_currentFolder)}&limit=50&offset=${_offset}${fromQS}${_acct()}&_=${Date.now()}`);
+    const filterQS = _categoryFilter ? `&filter=category:${encodeURIComponent(_categoryFilter)}` : '';
+    const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(_currentFolder)}&limit=50&offset=${_offset}${fromQS}${filterQS}${_acct()}&_=${Date.now()}`);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
 
@@ -420,11 +422,19 @@ function _renderList() {
     chip.querySelector('.email-filter-chip-clear').addEventListener('click', () => _clearSenderFilter());
     list.appendChild(chip);
   }
+  if (_categoryFilter) {
+    const chip = document.createElement('div');
+    chip.className = 'email-filter-chip';
+    chip.innerHTML = `<span class="email-filter-chip-label">Category: ${_esc(_categoryFilter)}</span><button class="email-filter-chip-clear" title="Clear filter">&times;</button>`;
+    chip.querySelector('.email-filter-chip-clear').addEventListener('click', () => _clearCategoryFilter());
+    list.appendChild(chip);
+  }
 
   if (_emails.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'email-loading';
-    empty.textContent = _senderFilter ? `No emails from ${_senderFilterLabel || _senderFilter}` : 'No emails';
+    const filterLabel = _senderFilter ? ` from ${_senderFilterLabel || _senderFilter}` : _categoryFilter ? ` in category "${_categoryFilter}"` : '';
+    empty.textContent = `No emails${filterLabel}`;
     list.appendChild(empty);
     return;
   }
@@ -449,6 +459,18 @@ function _setSenderFilter(addr, label) {
 function _clearSenderFilter() {
   _senderFilter = null;
   _senderFilterLabel = null;
+  _offset = 0;
+  loadEmails(false);
+}
+
+function _setCategoryFilter(cat) {
+  _categoryFilter = cat;
+  _offset = 0;
+  loadEmails(false);
+}
+
+function _clearCategoryFilter() {
+  _categoryFilter = null;
   _offset = 0;
   loadEmails(false);
 }
@@ -511,6 +533,10 @@ function _createEmailItem(em) {
     ? `<span class="email-tags">${tags.map(t => `<span class="email-tag email-tag-${_esc(t)}">${_esc(t)}</span>`).join('')}</span>`
     : '';
 
+  const catPill = em.category
+    ? `<span class="email-tag email-tag-${_esc(em.category)}" title="AI category: ${_esc(em.category)}">${_esc(em.category)}</span>`
+    : '';
+
   const spamTag = em.is_spam_verdict
     ? `<span class="email-tag email-tag-spam" title="AI flagged as spam — click ✓ to unflag">spam <button class="email-spam-unflag" data-uid="${em.uid}" title="Not spam">\u2713</button></span>`
     : '';
@@ -523,7 +549,7 @@ function _createEmailItem(em) {
         <span class="email-sender email-sender-clickable" style="color:${color}" data-from-addr="${_esc(senderAddr)}" data-from-name="${_esc(senderName)}" title="Show all emails from ${_esc(senderName)}">${_esc(senderName)}</span>
         <span class="email-date">${_esc(dateStr)}</span>
       </div>
-      <div class="email-subject">${_esc(em.subject)}${unreadIcon}${attachIcon}${tagPills}${spamTag}</div>
+      <div class="email-subject">${_esc(em.subject)}${unreadIcon}${attachIcon}${tagPills}${catPill}${spamTag}</div>
     </div>
     <div class="email-menu-wrap">
       <button class="hamburger email-menu-btn" title="Actions">
@@ -540,6 +566,15 @@ function _createEmailItem(em) {
       const addr = senderEl.dataset.fromAddr || '';
       const name = senderEl.dataset.fromName || addr;
       if (addr) _setSenderFilter(addr, name);
+    });
+  }
+
+  // Click category pill → filter list to that category
+  const catEl = item.querySelector('.email-tag[title^="AI category:"]');
+  if (catEl && em.category) {
+    catEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _setCategoryFilter(em.category);
     });
   }
 

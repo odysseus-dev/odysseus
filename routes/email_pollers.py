@@ -1089,6 +1089,269 @@ async def _scheduled_email_poller():
 _poller_task = None
 _summarize_task = None
 
+# ── Email sender analysis (called from scheduled task) ──
+
+async def run_email_analysis(owner: str, account_id: str | None = None,
+                              folder: str = "INBOX", progress_cb=None) -> str:
+    """Scan unread inbox emails, categorize senders, store results.
+    Returns a human-readable summary string."""
+    import sqlite3 as _sql3
+    import asyncio
+    import json, re
+    from datetime import datetime, timezone
+    from email import message_from_bytes, utils as email_utils
+
+    await _emit_progress(progress_cb, "Connecting to mail…")
+    conn = _sql3.connect(SCHEDULED_DB)
+    try:
+        _c = _imap_connect(account_id, owner=owner)
+        try:
+            _c.select(_q(folder), readonly=True)
+            st, data = _c.uid("SEARCH", None, "UNSEEN")
+            uids = []
+            if st == "OK" and data[0]:
+                for u in reversed(data[0].split()[-20:]):
+                    uids.append(u)
+            if not uids:
+                return "No unread emails to analyze"
+
+            analyzed = 0
+            cached = 0
+            failed = 0
+            total = len(uids)
+
+            for i, uid in enumerate(uids):
+                uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
+                await _emit_progress(progress_cb, f"Analyzing email {i+1} of {total} (UID {uid_str})…")
+
+                # Quick UID-based dedup before any IMAP/LLM work
+                dup = conn.execute(
+                    "SELECT 1 FROM email_message_analysis WHERE uid=? AND folder=? AND owner=?",
+                    (uid_str, folder, owner),
+                ).fetchone()
+                if dup:
+                    cached += 1
+                    continue
+
+                import hashlib as _hl
+                try:
+                    _c2 = _imap_connect(account_id, owner=owner)
+                    try:
+                        _c2.select(_q(folder), readonly=True)
+                        st2, d2 = _c2.uid("FETCH", uid, "(RFC822)")
+                        if st2 != "OK":
+                            failed += 1
+                            continue
+                        raw = d2[0][1]
+                    finally:
+                        try: _c2.logout()
+                        except: pass
+
+                    msg = message_from_bytes(raw)
+                    message_id = (msg.get("Message-ID", "") or "").strip()
+                    if not message_id:
+                        seed = f"{folder}|{uid_str}|{msg.get('From','')}|{msg.get('Date','')}|{msg.get('Subject','')}"
+                        message_id = f"<synth-{_hl.sha256(seed.encode()).hexdigest()[:16]}@local>"
+
+                    existing = conn.execute(
+                        "SELECT category FROM email_message_analysis WHERE message_id=? AND owner=?",
+                        (message_id, owner),
+                    ).fetchone()
+                    if existing:
+                        cached += 1
+                        continue
+
+                    sender_raw = _decode_header(msg.get("From", ""))
+                    sender_name, sender_addr = email_utils.parseaddr(sender_raw)
+                    if not sender_addr:
+                        sender_addr = sender_raw
+                    subject = _decode_header(msg.get("Subject", ""))
+                    body = _extract_text(msg)
+
+                    if not body and not subject:
+                        failed += 1
+                        continue
+
+                    from src.endpoint_resolver import resolve_endpoint
+                    url, model, headers = resolve_endpoint("utility", owner=owner)
+                    if not url or not model:
+                        url, model, headers = resolve_endpoint("default", owner=owner)
+                    if not url or not model:
+                        failed += 1
+                        continue
+
+                    req_headers = {"Content-Type": "application/json"}
+                    if headers:
+                        req_headers.update(headers)
+
+                    sys_prompt = (
+                        "You are classifying emails for theme/category analysis. "
+                        "Return ONLY a JSON object, no prose, no markdown fences.\n"
+                        'Schema: {"category": "category_name", "is_spam": false, "reason": "short reason"}\n\n'
+                        "Choose the SINGLE best category from:\n"
+                        "- work: Job-related, colleagues, projects, meetings\n"
+                        "- personal: Friends, family, personal correspondence\n"
+                        "- finance: Banking, investments, billing, invoices, receipts\n"
+                        "- shopping: Purchases, orders, delivery notifications\n"
+                        "- travel: Flights, hotels, bookings, itineraries\n"
+                        "- newsletter: Subscriptions, digests, mailing lists\n"
+                        "- promo: Marketing, promotions, discounts, offers\n"
+                        "- security: Password resets, login alerts, 2FA codes\n"
+                        "- social: Social media notifications, forum activity\n"
+                        "- calendar: Calendar invites, event confirmations\n"
+                        "- notification: Automated notifications, service updates\n"
+                        "- spam: Bulk/unsolicited/irrelevant\n\n"
+                        "Set is_spam=true for: phishing, scams, unsolicited marketing, "
+                        "generic bulk mail with no personal action needed. "
+                        "Reason should be 5-10 words."
+                    )
+                    import requests as _req
+                    from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
+                    tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
+                    payload = {
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": sys_prompt},
+                            {"role": "user", "content": f"From: {sender_raw}\nSubject: {subject}\n\n{body[:4000]}"},
+                        ],
+                        tok_key: 512,
+                        "temperature": 0.1,
+                        "stream": False,
+                    }
+                    if _restricts_temperature(model):
+                        payload.pop("temperature", None)
+
+                    from core.database import SessionLocal as _SL, ModelEndpoint as _ME
+                    _endpoints = [(url, model, req_headers)]
+                    try:
+                        _db = _SL()
+                        try:
+                            for _ep in _db.query(_ME).filter(_ME.is_enabled == True).all():
+                                if _ep.base_url and _ep.id not in ("0b2cfed5",):
+                                    _endpoints.append((
+                                        _ep.base_url.rstrip("/") + "/chat/completions",
+                                        "qwen3:8b",
+                                        {"Content-Type": "application/json"},
+                                    ))
+                                    break
+                        finally:
+                            _db.close()
+                    except: pass
+
+                    resp = None
+                    for ep_url, ep_model, ep_headers in _endpoints:
+                        for retry in range(3):
+                            resp = await asyncio.to_thread(
+                                _req.post, ep_url, json={
+                                    "model": ep_model,
+                                    "messages": payload["messages"],
+                                    "max_tokens": 512,
+                                    "temperature": 0.1,
+                                    "stream": False,
+                                }, headers=ep_headers, timeout=120
+                            )
+                            if resp.ok:
+                                break
+                            if resp.status_code == 429 and retry < 2:
+                                await asyncio.sleep(2)
+                                continue
+                            break
+                        if resp and resp.ok:
+                            break
+
+                    if not resp or not resp.ok:
+                        failed += 1
+                        continue
+
+                    rdata = resp.json()
+                    m = (rdata.get("choices") or [{}])[0].get("message", {})
+                    raw_out = (m.get("content") or "").strip()
+                    raw_out = _strip_think(raw_out)
+                    raw_out = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_out, flags=re.MULTILINE).strip()
+                    jm = re.search(r'\{.*\}', raw_out, re.DOTALL)
+                    if not jm:
+                        failed += 1
+                        continue
+
+                    parsed = json.loads(jm.group(0))
+                    category = str(parsed.get("category") or "uncategorized").strip().lower().replace("_", "-")
+                    allowed = {"work","personal","finance","shopping","travel","newsletter","promo","security","social","calendar","notification","spam","uncategorized"}
+                    if category not in allowed:
+                        category = "uncategorized"
+                    is_spam = bool(parsed.get("is_spam"))
+
+                    now = datetime.utcnow().isoformat()
+                    conn.execute(
+                        "INSERT OR REPLACE INTO email_message_analysis "
+                        "(message_id, owner, uid, folder, sender, sender_name, subject, category, is_spam, analyzed_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (message_id, owner, uid_str, folder, sender_addr, sender_name or sender_addr,
+                         subject, category, 1 if is_spam else 0, now),
+                    )
+                    existing_sender = conn.execute(
+                        "SELECT category, email_count, spam_count FROM email_sender_analysis "
+                        "WHERE sender=? AND owner=?", (sender_addr, owner),
+                    ).fetchone()
+                    if existing_sender:
+                        conn.execute(
+                            "UPDATE email_sender_analysis SET category=?, email_count=?, spam_count=?, "
+                            "last_seen=?, last_subject=? WHERE sender=? AND owner=?",
+                            (category, existing_sender[1] + 1, existing_sender[2] + (1 if is_spam else 0),
+                             now, subject, sender_addr, owner),
+                        )
+                    else:
+                        conn.execute(
+                            "INSERT INTO email_sender_analysis "
+                            "(sender, owner, sender_name, category, email_count, spam_count, first_seen, last_seen, last_subject) "
+                            "VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)",
+                            (sender_addr, owner, sender_name or sender_addr, category,
+                             1 if is_spam else 0, now, now, subject),
+                        )
+                    existing_cat = conn.execute(
+                        "SELECT name FROM email_categories WHERE name=? AND owner=?",
+                        (category, owner),
+                    ).fetchone()
+                    if not existing_cat:
+                        cat_colors = {
+                            "work": "var(--accent-primary)", "personal": "var(--color-save-green)",
+                            "finance": "var(--color-brand-blue)", "shopping": "var(--color-blind-orange)",
+                            "travel": "var(--color-agent-active)", "newsletter": "var(--color-muted)",
+                            "promo": "var(--color-muted-alt)", "security": "var(--color-error)",
+                            "social": "var(--color-link-hover)", "calendar": "var(--color-accent)",
+                            "notification": "var(--color-subheader)", "spam": "var(--color-warning)",
+                            "uncategorized": "var(--color-muted)",
+                        }
+                        conn.execute(
+                            "INSERT OR IGNORE INTO email_categories (name, owner, color, description) VALUES (?, ?, ?, ?)",
+                            (category, owner, cat_colors.get(category, "var(--color-muted)"), ""),
+                        )
+                    conn.commit()
+                    analyzed += 1
+
+                except Exception:
+                    failed += 1
+                    continue
+
+            await _emit_progress(progress_cb, f"Done: {analyzed} analyzed, {cached} cached, {failed} failed")
+            parts = []
+            if analyzed:
+                parts.append(f"{analyzed} analyzed")
+            if cached:
+                parts.append(f"{cached} already cached")
+            if failed:
+                parts.append(f"{failed} failed")
+            return f"Scanned {total} unread email(s): {', '.join(parts)}" if parts else "No emails processed"
+
+        finally:
+            try: _c.logout()
+            except: pass
+    except Exception as e:
+        logger.error(f"Email analysis scan failed: {e}")
+        return f"Analysis failed: {e}"
+    finally:
+        conn.close()
+
+
 def _inprocess_pollers_enabled() -> bool:
     """Honour `ODYSSEUS_INPROCESS_POLLERS` — set to `0`/`false`/`no`/`off`
     to disable the asyncio tasks so a cron / systemd-timer setup driving

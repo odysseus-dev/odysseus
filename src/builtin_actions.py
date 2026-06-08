@@ -2195,6 +2195,23 @@ async def action_cookbook_serve(
     return f"Launched {repo_id} (session {sid})", True
 
 
+async def action_analyze_email_senders(owner: str, **kwargs) -> Tuple[str, bool]:
+    """Scan unread inbox emails, categorize senders, and store results."""
+    try:
+        from routes.email_pollers import run_email_analysis
+        progress_cb = kwargs.get("progress_cb")
+        result = await run_email_analysis(owner=owner, progress_cb=progress_cb)
+        low = (result or "").lower()
+        if "no unread" in low or ("0 analyzed" in low and "0 cached" in low):
+            raise TaskNoop(f"analyze_senders: {result}")
+        return result, True
+    except TaskNoop:
+        raise
+    except Exception as e:
+        logger.error(f"analyze_email_senders action failed: {e}")
+        return str(e), False
+
+
 BUILTIN_ACTIONS = {
     "tidy_sessions": action_tidy_sessions,
     "tidy_documents": action_tidy_documents,
@@ -2214,6 +2231,7 @@ BUILTIN_ACTIONS = {
     "test_skills": action_test_skills,
     "audit_skills": action_audit_skills,
     "check_email_urgency": action_check_email_urgency,
+    "analyze_email_senders": action_analyze_email_senders,
     "cookbook_serve": action_cookbook_serve,
     # ping_notes removed from the registry — runs only inside `_note_pings_loop`.
 }
@@ -2235,4 +2253,5 @@ BUILTIN_ACTION_INFO = {
     "test_skills": "Run the per-skill Test on every skill: agent run + LLM judge → records verdict on the skill (pass/needs_work/fail/inconclusive). Advisory only — never rewrites or demotes anything.",
     "audit_skills": "Audit unaudited skills after enough new skills are added: test, narrow metadata, self-edit/retry, optional teacher rewrite, tag duplicates/trivial skills, and publish/draft using the auto-approve threshold.",
     "check_email_urgency": "Scan unread emails hourly, tag urgent/reply-soon/newsletter/marketing/spam, and send a reminder when a new email needs a fast reply.",
+    "analyze_email_senders": "Scan unread inbox emails, categorize senders (work/personal/finance/etc), and build a sender analysis chart.",
 }

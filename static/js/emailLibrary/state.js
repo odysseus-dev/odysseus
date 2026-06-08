@@ -31,4 +31,6 @@ export const state = {
   _libEscHandler: null,
   _selectMode: false,
   _selectedUids: new Set(),
+  _libSplitPane: false,
+  _unreadUids: new Set(),          // set of UIDs that are truly unread (from UNSEEN query)
 };

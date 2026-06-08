@@ -6,6 +6,9 @@ services:
     volumes:
       - ./data:/app/data:z
       - ./logs:/app/logs:z
+      # Dev: live-reload mounts so JS/Python edits take effect immediately
+      - ./static:/app/static:z
+      - ./routes:/app/routes:z
       # Cookbook remote-server SSH identity. Odysseus can generate a key here;
       # add the shown public key to each remote server's authorized_keys.
       - ./data/ssh:/app/.ssh:z
@@ -63,6 +66,8 @@ services:
       # Find yours with:  id -u  /  id -g
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+    # Dev: auto-reload on Python changes (routes, etc.)
+    command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7000", "--reload"]
     depends_on:
       searxng:
         condition: service_healthy

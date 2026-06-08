@@ -540,6 +540,50 @@ def _init_scheduled_db():
             source TEXT
         )
     """)
+    # Email analysis tables: sender categorization and message-level analysis.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS email_categories (
+            name TEXT NOT NULL,
+            owner TEXT DEFAULT '',
+            color TEXT DEFAULT '#888',
+            description TEXT DEFAULT '',
+            PRIMARY KEY (name, owner)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS email_sender_analysis (
+            sender TEXT NOT NULL,
+            owner TEXT DEFAULT '',
+            sender_name TEXT DEFAULT '',
+            category TEXT DEFAULT '',
+            email_count INTEGER DEFAULT 0,
+            spam_count INTEGER DEFAULT 0,
+            first_seen TEXT,
+            last_seen TEXT,
+            last_subject TEXT DEFAULT '',
+            notes TEXT DEFAULT '',
+            PRIMARY KEY (sender, owner)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS email_message_analysis (
+            message_id TEXT NOT NULL,
+            owner TEXT DEFAULT '',
+            uid TEXT,
+            folder TEXT,
+            sender TEXT,
+            sender_name TEXT DEFAULT '',
+            subject TEXT,
+            category TEXT DEFAULT '',
+            is_spam INTEGER DEFAULT 0,
+            analyzed_at TEXT NOT NULL,
+            PRIMARY KEY (message_id, owner)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_email_analysis_uid
+        ON email_message_analysis (uid, folder, owner)
+    """)
     conn.commit()
     conn.close()
 

@@ -14674,11 +14674,77 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
    (which is the non-fullscreen default). Use `auto` basis + a sensible
    `min-height` floor so it shows ~400px naturally and absorbs more when
    the modal is resized / fullscreened. */
-#email-lib-modal .doclib-grid {
+#email-lib-modal .email-split-wrap {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+}
+
+#email-lib-modal .email-split-wrap > .doclib-grid {
   max-height: none;
   height: auto;
   flex: 1 1 auto;
   min-height: 400px;
+}
+
+/* Split-pane mode: grid takes left half, preview takes right half */
+#email-lib-modal.email-split-pane .email-split-wrap > .doclib-grid {
+  flex: 0 0 50% !important;
+  min-width: 0;
+}
+#email-lib-modal.email-split-pane .email-preview-panel {
+  display: flex !important;
+  flex-direction: column;
+  flex: 0 0 50%;
+  min-width: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+}
+#email-lib-modal.email-split-pane .modal-content {
+  width: min(1020px, 95vw);
+}
+@media (max-width: 768px) {
+  #email-lib-modal.email-split-pane .email-split-wrap {
+    flex-direction: column;
+  }
+  #email-lib-modal.email-split-pane .email-split-wrap > .doclib-grid,
+  #email-lib-modal.email-split-pane .email-preview-panel {
+    flex: 1 1 auto !important;
+    max-height: 50%;
+  }
+}
+
+/* Selected card highlight in split-pane mode */
+#email-lib-modal .doclib-card.email-card-selected {
+  background: color-mix(in srgb, var(--accent, #2563eb) 10%, transparent);
+  border-color: var(--accent, #2563eb);
+  box-shadow: 0 0 0 1px var(--accent, #2563eb);
+}
+
+/* Preview panel styles */
+.email-preview-panel {
+  position: relative;
+}
+.email-preview-panel .email-reader-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 12px;
+}
+.email-preview-panel .email-reader-header {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.email-preview-panel .email-reader-atts-wrap {
+  flex-shrink: 0;
+}
+
+/* Split toggle button active state */
+#email-lib-split-toggle.active {
+  background: var(--accent, #2563eb);
+  color: #fff;
 }
 
 /* ── Mobile compose FAB (email) ──
@@ -15099,8 +15165,8 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
 .doclib-grid:has(.doclib-card-expanded) > .doclib-card:not(.doclib-card-expanded) {
   display: none;
 }
-/* Hide everything except the grid when a card is expanded */
-.admin-card:has(.doclib-card-expanded) > *:not(.doclib-grid):not(.hwfit-cached-list) {
+/* Hide everything except the split-wrap (which contains the grid) when a card is expanded */
+.admin-card:has(.doclib-card-expanded) > *:not(.email-split-wrap):not(.hwfit-cached-list) {
   opacity: 0;
   max-height: 0;
   overflow: hidden;
@@ -15112,7 +15178,8 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
 .admin-card:has(.doclib-card-expanded) > .memory-bulk-bar {
   display: none;
 }
-.admin-card:has(.doclib-card-expanded) > .doclib-grid,
+.admin-card:has(.doclib-card-expanded) .email-split-wrap > .doclib-grid,
+.admin-card:has(.doclib-card-expanded) .email-split-wrap > .hwfit-cached-list,
 .admin-card:has(.doclib-card-expanded) > .hwfit-cached-list {
   max-height: none !important;
   min-height: 0 !important;
@@ -15122,7 +15189,7 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
    list-mode chrome (accounts row, toolbar, bulk bar, desc) — display:none so no
    residual flex-gap leaves an empty strip above the reader — and zero the
    admin-card gap so the grid/reader starts flush at the top. */
-#email-lib-modal.email-reading .admin-card > *:not(.doclib-grid):not(.hwfit-cached-list) {
+#email-lib-modal.email-reading .admin-card > *:not(.email-split-wrap):not(.hwfit-cached-list) {
   display: none !important;
 }
 #email-lib-modal.email-reading .admin-card { gap: 0 !important; }
@@ -15140,8 +15207,8 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
    instead of letting the expanded reader fill via flex:1. We keep the same
    max-height:none + min-height:0 but flip overflow back so the reader
    actually fills the modal. */
-#email-lib-modal .admin-card:has(.doclib-card-expanded) > .doclib-grid,
-#email-lib-modal.email-reading .admin-card > .doclib-grid {
+#email-lib-modal .admin-card:has(.doclib-card-expanded) .email-split-wrap > .doclib-grid,
+#email-lib-modal.email-reading .admin-card .email-split-wrap > .doclib-grid {
   overflow: hidden !important;
   display: flex !important;
   flex: 1 1 auto !important;
@@ -27621,6 +27688,12 @@ button .spinner-whirlpool {
 @media (prefers-reduced-motion: reduce) {
   .email-card-unread-dot { animation: none; }
 }
+
+/* Unread email cards get a subtle left border accent */
+#email-lib-modal .doclib-card.email-card-unread {
+  border-left: 3px solid var(--accent, #2563eb);
+}
+
 .email-reader-header {
   display: flex;
   flex-direction: row;
