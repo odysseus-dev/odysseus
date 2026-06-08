@@ -47,6 +47,7 @@ from routes.cookbook_helpers import (
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
     _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
     _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
+    _append_pip_install_runner_lines,
     _diagnose_serve_output, run_ssh_command_async,
     ModelDownloadRequest, ServeRequest,
 )
@@ -435,7 +436,7 @@ def setup_cookbook_routes() -> APIRouter:
             # Install hf CLI + optional hf_transfer best-effort. Retries disable
             # hf_transfer because the Rust parallel path is fast but has been
             # flaky near the end of very large multi-file downloads.
-            # Use --break-system-packages on PEP-668 systems (Arch, newer Debian) so it doesn't bail.
+            # The helper tries active pip first, then guarded user-site fallbacks.
             runner_lines.append(f"command -v hf >/dev/null 2>&1 || {_pip_install_fallback_chain('huggingface_hub', python_cmd='pip', upgrade=True)}")
             if req.disable_hf_transfer:
                 runner_lines.append("export HF_HUB_ENABLE_HF_TRANSFER=0")
@@ -1177,7 +1178,10 @@ def setup_cookbook_routes() -> APIRouter:
                     runner_lines,
                     keep_shell_open=not local_windows,
                 )
-                runner_lines.append(req.cmd)
+                if is_pip_install:
+                    _append_pip_install_runner_lines(runner_lines, req.cmd)
+                else:
+                    runner_lines.append(req.cmd)
                 if local_windows:
                     # Detached background process — no interactive shell to keep open.
                     # Print the exit marker the status poller looks for, then stop.
@@ -1338,8 +1342,8 @@ def setup_cookbook_routes() -> APIRouter:
             cmd = f"ssh {pf}{host} '{setup_script}'"
         else:
             # Linux: auto-install tmux (via whichever package manager is available)
-            # and huggingface_hub + hf_transfer (falling back to --user/--break-system-packages
-            # on PEP-668 locked distros like Arch / newer Debian).
+            # and huggingface_hub + hf_transfer (falling back to --user, then
+            # guarded --break-system-packages on PEP-668 locked distros).
             setup_script = (
                 # Install tmux if missing — try common package managers; skip if no sudo
                 "if ! command -v tmux >/dev/null 2>&1; then "
@@ -1351,10 +1355,15 @@ def setup_cookbook_routes() -> APIRouter:
                 "  fi; "
                 "fi; "
                 "command -v tmux >/dev/null 2>&1 || echo 'WARNING: tmux missing and auto-install failed (need passwordless sudo). Install manually.'; "
-                # Install Python bits. Try system install first; fall back to --user --break-system-packages on PEP 668 systems.
+                # Install Python bits. Try system install first; fall back to --user,
+                # then use --break-system-packages only when pip supports it.
                 "pip install -q huggingface_hub hf_transfer 2>/dev/null || "
-                "pip install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null || "
-                "pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null; "
+                "pip install --user -q huggingface_hub hf_transfer 2>/dev/null || "
+                "( pip install --help 2>/dev/null | grep -q -- --break-system-packages && "
+                "pip install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null ) || "
+                "pip3 install --user -q huggingface_hub hf_transfer 2>/dev/null || "
+                "( pip3 install --help 2>/dev/null | grep -q -- --break-system-packages && "
+                "pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null ); "
                 "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
             )
             cmd = f"ssh {pf}{host} '{setup_script}'"
