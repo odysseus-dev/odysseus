@@ -143,8 +143,10 @@ def _discover_calendars(client):
 
 def _writeback_blocking(local_cal_id, ev, delete, url, username, password,
                         owner="", account_id="") -> dict:
-    import caldav
-    client = caldav.DAVClient(url=url, username=username, password=password)
+    from src.caldav_sync import _build_dav_client
+    # Redirects disabled here too: the write-back path opens its own DAVClient,
+    # so it needs the same SSRF-via-redirect protection as the pull path.
+    client = _build_dav_client(url, username, password)
     calendars = _discover_calendars(client)
     if not calendars:
         return {"ok": False, "error": "no remote calendars discovered"}

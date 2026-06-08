@@ -1,5 +1,7 @@
 # Odysseus
 
+> **Branch note:** `dev` is the default branch and contains the latest development changes, but it may be unstable. For the more stable curated branch, use [`main`](https://github.com/pewdiepie-archdaemon/odysseus/tree/main).
+
 ```
 ───────────────────────────────────────────────
  ⊹ ࣪ ˖ ૮( ˶ᵔ ᵕ ᵔ˶ )っ  Odysseus vers. 1.0
@@ -331,6 +333,12 @@ To expose Odysseus on a local network or Tailscale with HTTPS:
 | `PyMuPDF` | PDF page rendering in the side viewer panel and form-filling. (Note: AGPL-3.0) |
 | `markitdown` | Office/EPUB document text extraction (converts .docx/.xlsx/.pptx/.xls/.epub to Markdown). |
 
+### Outlook / Office 365 email
+Odysseus email accounts currently use IMAP/SMTP username-password auth. Outlook
+and Microsoft 365 generally require OAuth instead, so normal Microsoft mailbox
+passwords will fail. See [docs/email-outlook.md](docs/email-outlook.md) for the
+current limitation and the planned integration direction.
+
 ## Security Notes
 Odysseus is a self-hosted workspace with powerful local tools: shell access, file uploads, model downloads, web research, email/calendar integrations, and API tokens. Treat it like an admin console.
 
@@ -394,6 +402,7 @@ Key settings:
 | `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |
 | `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |
 | `EMBEDDING_URL` | -- | OpenAI-compatible embeddings endpoint |
+| `ODYSSEUS_CHAT_UPLOAD_MAX_BYTES` | `10485760` | Chat/agent attachment cap in bytes. Raise for larger local PDFs or text documents. |
 
 ### Built-in MCP servers (optional setup)
 

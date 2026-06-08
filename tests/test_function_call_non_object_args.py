@@ -35,3 +35,27 @@ def test_non_object_arguments_do_not_crash(arguments):
     assert block is not None
     assert block.tool_type == "bash"
     assert block.content == ""
+
+
+def test_edit_document_skips_non_object_edit_items():
+    block = function_call_to_tool_block(
+        "edit_document",
+        '{"edits": ["bad", 42, null, {"find": "old", "replace": "new"}]}',
+    )
+
+    assert block is not None
+    assert block.tool_type == "edit_document"
+    assert block.content == "<<<FIND>>>\nold\n<<<REPLACE>>>\nnew\n<<<END>>>"
+
+
+def test_suggest_document_skips_non_object_suggestion_items():
+    block = function_call_to_tool_block(
+        "suggest_document",
+        '{"suggestions": ["bad", 42, null, {"find": "old", "replace": "new", "reason": "clearer"}]}',
+    )
+
+    assert block is not None
+    assert block.tool_type == "suggest_document"
+    assert block.content == (
+        "<<<FIND>>>\nold\n<<<SUGGEST>>>\nnew\n<<<REASON>>>\nclearer\n<<<END>>>"
+    )

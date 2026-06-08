@@ -49,6 +49,16 @@ def test_google_pse_cx_is_public():
     assert scrub_settings({"google_pse_cx": "cx123"})["google_pse_cx"] == "cx123"
 
 
+def test_webhook_integration_handle_blanked():
+    out = scrub_settings({
+        "reminder_webhook_integration_id": "global-webhook",
+        "reminder_webhook_payload_template": '{"content":"{{message}}"}',
+    })
+    assert is_secret_key("reminder_webhook_integration_id") is True
+    assert out["reminder_webhook_integration_id"] == ""
+    assert out["reminder_webhook_payload_template"] == '{"content":"{{message}}"}'
+
+
 def test_empty_and_nonstring_secret_values_untouched():
     out = scrub_settings({"api_key": "", "feature_key": 7, "x_token": None})
     assert out["api_key"] == ""     # already empty
