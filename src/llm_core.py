@@ -277,13 +277,21 @@ def _is_ollama_native_url(url: str) -> bool:
 
 
 def _is_ollama_openai_compat_url(url: str) -> bool:
-    """Return True for local Ollama's OpenAI-compatible /v1 surface (port 11434, path /v1...)."""
+    """Return True for local Ollama's OpenAI-compatible /v1 surface.
+
+    Mirrors the host detection used by ``_is_ollama_native_url`` so that the
+    two helpers stay in lockstep: a localhost Ollama on a non-default port
+    (custom ``OLLAMA_HOST``, reverse proxy, container port remap) is treated
+    the same way here as it is on the native ``/api`` path.
+    """
     try:
         parsed = urlparse(url or "")
     except Exception:
         return False
+    host = parsed.hostname or ""
     path = (parsed.path or "").rstrip("/")
-    return parsed.port == 11434 and (path == "/v1" or path.startswith("/v1/"))
+    local_ollama_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or parsed.port == 11434
+    return local_ollama_host and (path == "/v1" or path.startswith("/v1/"))
 
 
 def _ollama_api_root(url: str) -> str:
