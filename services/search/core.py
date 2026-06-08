@@ -32,6 +32,7 @@ from .providers import (
     _get_search_settings,
     _get_provider_key,
     _get_result_count,
+    get_provider_availability,
 )
 from .content import (
     fetch_webpage_content,
@@ -175,6 +176,13 @@ def searxng_search_results(query: str, count: int = 10, time_filter: str = None)
 
     results: List[dict] = []
     for provider_name in provider_chain:
+        availability = get_provider_availability(provider_name)
+        if not availability.ok:
+            detail = f" ({availability.detail})" if availability.detail else ""
+            logger.warning(
+                f"Skipping {provider_name} search: {availability.reason}{detail}"
+            )
+            continue
         for attempt in range(2):
             try:
                 logger.info(f"Attempting {provider_name} search (attempt {attempt + 1})")
@@ -281,6 +289,15 @@ def comprehensive_web_search(
     search_results = []
     provider_attempts = {}
     for provider_name in provider_chain:
+        availability = get_provider_availability(provider_name)
+        if not availability.ok:
+            detail = f" ({availability.detail})" if availability.detail else ""
+            provider_attempts[provider_name] = f"{availability.reason}{detail}"
+            logger.warning(
+                f"Comprehensive search: skipping {provider_name}: "
+                f"{availability.reason}{detail}"
+            )
+            continue
         last_err = None
         empty = False
         for attempt in range(2):
