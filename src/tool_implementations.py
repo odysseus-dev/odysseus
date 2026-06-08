@@ -3669,8 +3669,7 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
                 ep_result = await do_manage_endpoints(json.dumps({
                     "action": "add",
                     "name": display_name,
-                    "endpoint_url": endpoint_url,
-                    "is_local": False,
+                    "base_url": endpoint_url,
                 }), owner=owner)
                 if isinstance(ep_result, dict) and not ep_result.get("error"):
                     endpoint_msg = f" Endpoint {endpoint_url} added as {display_name!r}."
