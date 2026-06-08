@@ -142,8 +142,9 @@ async def dispatch_reminder(
             import json as _json
             from datetime import datetime as _dt, timezone as _tz, timedelta as _td
             from pathlib import Path as _P
+            from core.constants import DATA_DIR as _DD
             _slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
-            cache_path = _P(f"data/note_pings_{_slug}.json")
+            cache_path = _P(_DD) / f"note_pings_{_slug}.json"
             if cache_path.exists():
                 cache = _json.loads(cache_path.read_text(encoding="utf-8"))
             last = cache.get(cache_key)
@@ -420,12 +421,13 @@ async def dispatch_reminder(
             import json as _json
             from datetime import datetime as _dt, timezone as _tz
             from pathlib import Path as _P
+            from core.constants import DATA_DIR as _DD
             # Per-owner cache so the scanner's prune step on user A's run
             # doesn't drop user B's just-fired entry (review C4).
             _STATE = cache_path
             if _STATE is None:
                 _slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
-                _STATE = _P(f"data/note_pings_{_slug}.json")
+                _STATE = _P(_DD) / f"note_pings_{_slug}.json"
             _STATE.parent.mkdir(parents=True, exist_ok=True)
             try:
                 _cache = cache or (_json.loads(_STATE.read_text(encoding="utf-8")) if _STATE.exists() else {})
