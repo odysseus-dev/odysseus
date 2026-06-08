@@ -87,6 +87,24 @@ def test_supports_diagnostics_requires_loopback_and_config():
     assert _endpoint_diagnostics_sections(remote_cfg) == []
 
 
+def test_supports_diagnostics_survives_docker_loopback_rewrite():
+    # _rewrite_loopback_for_docker remaps a loopback wrapper URL to
+    # host.docker.internal and STORES that host, so diagnostics eligibility must
+    # follow the rewrite — otherwise an admin's configured diagnostics silently
+    # disappear in Docker. host.docker.internal is the local Docker host, never an
+    # arbitrary external host, and the route is admin-only.
+    docker_cfg = SimpleNamespace(
+        base_url="http://host.docker.internal:1234/v1",
+        diagnostics_paths='{"health": "/health"}',
+    )
+    docker_none = SimpleNamespace(
+        base_url="http://host.docker.internal:1234/v1", diagnostics_paths=None
+    )
+    assert _endpoint_supports_diagnostics(docker_cfg) is True
+    assert _endpoint_supports_diagnostics(docker_none) is False
+    assert _endpoint_diagnostics_sections(docker_cfg) == ["health"]
+
+
 def test_diagnostic_fetch_caps_response_body(monkeypatch):
     from routes import model_routes
 

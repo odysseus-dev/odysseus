@@ -1033,6 +1033,7 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
     from routes.model_routes import (
         _endpoint_diagnostics_sections,
         _parse_diagnostics_paths,
+        find_endpoint_for_dedupe,
         invalidate_model_endpoint_caches,
     )
     try:
@@ -1113,8 +1114,11 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
             skip_probe = _bool_arg(args.get("skip_probe"), default=False)
             if not base_url:
                 return {"error": "base_url is required", "exit_code": 1}
-            existing_q = db.query(ModelEndpoint).filter(ModelEndpoint.base_url == base_url)
-            existing = existing_q.first()
+            # Dedupe identically to the admin add-endpoint route: owner-scoped and
+            # key-aware. Matching base_url alone (the old behaviour) ignored both
+            # the owner scope and the api_key, so the tool could update the wrong
+            # endpoint and could never add a second credential for the same URL.
+            existing = find_endpoint_for_dedupe(db, base_url, owner, api_key)
             if existing:
                 changed = False
                 if "supports_tools" in args:
@@ -1122,6 +1126,12 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
                     changed = True
                 if "diagnostics_paths" in args:
                     existing.diagnostics_paths = json.dumps(diagnostics) if diagnostics else None
+                    changed = True
+                # Fill a key-less existing row with the incoming credential
+                # (mirrors the route). A *different* non-empty key would not have
+                # matched, so this only ever completes a previously key-less row.
+                if api_key.strip() and not existing.api_key:
+                    existing.api_key = api_key.strip()
                     changed = True
                 if changed:
                     db.commit()

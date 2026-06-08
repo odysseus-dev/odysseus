@@ -145,8 +145,16 @@ async def test_manage_endpoints_existing_add_updates_local_metadata(monkeypatch)
     commits = {"n": 0}
 
     class _Query:
+        # Dedupe now resolves the existing row owner-scoped and key-aware via
+        # find_endpoint_for_dedupe, i.e. .filter().filter().order_by().all().
         def filter(self, *args, **kwargs):
             return self
+
+        def order_by(self, *args, **kwargs):
+            return self
+
+        def all(self):
+            return [existing]
 
         def first(self):
             return existing
@@ -181,6 +189,82 @@ async def test_manage_endpoints_existing_add_updates_local_metadata(monkeypatch)
     assert json.loads(existing.diagnostics_paths) == {"health": "/health"}
     assert commits["n"] == 1
     assert invalidations == ["cleared"]
+
+
+def test_find_endpoint_for_dedupe_is_owner_scoped_and_key_aware(monkeypatch):
+    """The shared dedupe helper (used by both the admin add route and the
+    manage_endpoints tool) is owner-scoped AND key-aware. The tool previously
+    matched base_url alone, so it could return another owner's row and could
+    never add a second credential for the same provider URL."""
+    import routes.model_routes as mr
+
+    # Minimal SQLAlchemy-expression stand-ins so the helper's real query runs.
+    class _Pred:
+        def __init__(self, fn):
+            self.fn = fn
+
+        def __or__(self, other):
+            return _Pred(lambda r: self.fn(r) or other.fn(r))
+
+    class _Col:
+        def __init__(self, name):
+            self.name = name
+
+        def __eq__(self, value):
+            return _Pred(lambda r: getattr(r, self.name, None) == value)
+
+        def is_(self, value):
+            return _Pred(lambda r: getattr(r, self.name, None) is value)
+
+        def desc(self):
+            return self
+
+    class _FakeME:
+        base_url = _Col("base_url")
+        owner = _Col("owner")
+
+    class _Query:
+        def __init__(self, rows):
+            self.rows = list(rows)
+
+        def filter(self, *preds):
+            self.rows = [r for r in self.rows if all(p.fn(r) for p in preds)]
+            return self
+
+        def order_by(self, *args):
+            self.rows.sort(key=lambda r: r.owner is None)  # owned before shared
+            return self
+
+        def all(self):
+            return list(self.rows)
+
+    class _DB:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def query(self, model):
+            assert model is _FakeME
+            return _Query(self.rows)
+
+    monkeypatch.setattr(mr, "ModelEndpoint", _FakeME)
+    URL = "http://127.0.0.1:8000/v1"
+
+    def ep(owner, key):
+        return SimpleNamespace(base_url=URL, owner=owner, api_key=key)
+
+    # Same URL + same key → reuse the row.
+    keyed = ep("admin", "sk-a")
+    assert mr.find_endpoint_for_dedupe(_DB([keyed]), URL, "admin", "sk-a") is keyed
+    # Same URL + a DIFFERENT non-empty key → no match (a new credential row).
+    assert mr.find_endpoint_for_dedupe(_DB([keyed]), URL, "admin", "sk-b") is None
+    # Same URL + incoming key fills a key-less existing row.
+    keyless = ep("admin", None)
+    assert mr.find_endpoint_for_dedupe(_DB([keyless]), URL, "admin", "sk-b") is keyless
+    # Owner scope: another user's private row is invisible → no match.
+    assert mr.find_endpoint_for_dedupe(_DB([ep("bob", "sk-a")]), URL, "alice", "sk-a") is None
+    # Legacy null-owner shared row is visible to anyone.
+    shared = ep(None, "sk-a")
+    assert mr.find_endpoint_for_dedupe(_DB([shared]), URL, "alice", "sk-a") is shared
 
 
 async def test_adopt_served_model_registers_with_base_url(monkeypatch):

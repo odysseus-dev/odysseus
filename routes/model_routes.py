@@ -55,6 +55,44 @@ def invalidate_model_endpoint_caches() -> None:
         logger.warning("model endpoint cache invalidation failed: %s", exc)
 
 
+def find_endpoint_for_dedupe(db, base_url, owner, incoming_api_key):
+    """Return the ModelEndpoint an add/upsert should reuse for (base_url, key),
+    or None to create a new row.
+
+    Matching is owner-scoped (the caller's own rows + legacy null-owner shared
+    rows, owned preferred) AND key-aware:
+
+    * same URL + same key      -> reuse the row
+    * same URL + a non-empty incoming key and a key-less existing row -> reuse
+      that row (its key gets filled in by the caller)
+    * same URL + a *different* non-empty key -> NOT a match (return None), so one
+      provider URL can be grouped under multiple credentials
+
+    Shared by the admin add-endpoint route and the manage_endpoints tool so both
+    dedupe identically. The tool previously matched base_url alone, which ignored
+    owner scope and the api_key — it could return/update the wrong endpoint and
+    couldn't add a second credential for the same provider URL.
+    """
+    incoming = (incoming_api_key or "").strip()
+    rows = (
+        db.query(ModelEndpoint)
+        .filter(ModelEndpoint.base_url == base_url)
+        .filter((ModelEndpoint.owner.is_(None)) | (ModelEndpoint.owner == owner))
+        .order_by(ModelEndpoint.owner.desc())  # prefer owned over shared
+        .all()
+    )
+    empty_key_existing = None
+    for candidate in rows:
+        candidate_key = (getattr(candidate, "api_key", None) or "").strip()
+        if candidate_key == incoming:
+            return candidate
+        if incoming and not candidate_key and empty_key_existing is None:
+            empty_key_existing = candidate
+    if incoming and empty_key_existing is not None:
+        return empty_key_existing
+    return None
+
+
 def _parse_diagnostics_paths(raw: Any) -> Dict[str, str]:
     """Normalize a stored/submitted diagnostics map into {section: "/path"}.
 
@@ -146,6 +184,31 @@ def _is_loopback_url(base: str) -> bool:
     return (parsed.hostname or "").lower() in {"127.0.0.1", "localhost", "::1"}
 
 
+# The Docker host gateway. _rewrite_loopback_for_docker remaps an admin's
+# loopback wrapper URL (e.g. http://localhost:1234/v1) to this host so the probe
+# reaches the model server on the Docker *host* rather than the Odysseus
+# container. The endpoint is then STORED with this host, so the diagnostics
+# eligibility check below must accept it or the admin's configured diagnostics
+# silently vanish in Docker.
+_DOCKER_HOST_GATEWAY = "host.docker.internal"
+
+
+def _is_diagnostics_local_host(base: str) -> bool:
+    """True for endpoints eligible for the admin-only diagnostics fetch: native
+    loopback, plus host.docker.internal — the loopback wrapper that
+    _rewrite_loopback_for_docker remapped onto the Docker host. Both are local,
+    admin-configured targets (the rewrite only ever produces host.docker.internal
+    from a loopback URL, and the diagnostics route is admin-only), so this does
+    not widen the SSRF surface to arbitrary external hosts."""
+    if _is_loopback_url(base):
+        return True
+    try:
+        parsed = urlparse(base or "")
+    except Exception:
+        return False
+    return (parsed.hostname or "").lower() == _DOCKER_HOST_GATEWAY
+
+
 def _root_from_openai_base(base: str) -> str:
     base = (base or "").strip().rstrip("/")
     parsed = urlparse(base)
@@ -165,17 +228,18 @@ def _endpoint_diagnostics(ep: Any) -> Dict[str, str]:
 
 
 def _endpoint_supports_diagnostics(ep: Any) -> bool:
-    """Diagnostics are offered only for loopback endpoints that registered at
-    least one diagnostic section. Loopback is required so the admin-only fetch
-    can never be pointed at an arbitrary host (SSRF)."""
-    if not _is_loopback_url(ep.base_url or ""):
+    """Diagnostics are offered only for local endpoints (loopback, or the
+    host.docker.internal the Docker rewrite produces from one) that registered at
+    least one diagnostic section. Restricting to local hosts keeps the admin-only
+    fetch from being pointed at an arbitrary host (SSRF)."""
+    if not _is_diagnostics_local_host(ep.base_url or ""):
         return False
     return bool(_endpoint_diagnostics(ep))
 
 
 def _endpoint_diagnostics_sections(ep: Any) -> List[str]:
     """Return visible diagnostics sections only when the endpoint is eligible."""
-    if not _is_loopback_url(getattr(ep, "base_url", "") or ""):
+    if not _is_diagnostics_local_host(getattr(ep, "base_url", "") or ""):
         return []
     return sorted(_endpoint_diagnostics(ep).keys())
 
@@ -1741,24 +1805,9 @@ def setup_model_routes(model_discovery):
         _incoming_api_key = api_key.strip()
         _db_dedup = SessionLocal()
         try:
-            _same_url_rows = (
-                _db_dedup.query(ModelEndpoint)
-                .filter(ModelEndpoint.base_url == base_url)
-                .filter((ModelEndpoint.owner.is_(None)) | (ModelEndpoint.owner == _caller))
-                .order_by(ModelEndpoint.owner.desc())  # prefer owned over shared
-                .all()
+            existing = find_endpoint_for_dedupe(
+                _db_dedup, base_url, _caller, _incoming_api_key
             )
-            existing = None
-            _empty_key_existing = None
-            for _candidate in _same_url_rows:
-                _candidate_key = (getattr(_candidate, "api_key", None) or "").strip()
-                if _candidate_key == _incoming_api_key:
-                    existing = _candidate
-                    break
-                if _incoming_api_key and not _candidate_key and _empty_key_existing is None:
-                    _empty_key_existing = _candidate
-            if existing is None and _incoming_api_key and _empty_key_existing is not None:
-                existing = _empty_key_existing
             if existing:
                 changed = False
                 # Persist any incoming pinned IDs / supports_tools / diagnostics
@@ -1983,7 +2032,7 @@ def setup_model_routes(model_discovery):
 
         ep_view = SimpleNamespace(**ep_data)
         if not _endpoint_supports_diagnostics(ep_view):
-            raise HTTPException(400, "Endpoint has no diagnostics configured or is not loopback")
+            raise HTTPException(400, "Endpoint has no diagnostics configured or is not a local endpoint")
 
         diagnostics = _endpoint_diagnostics(ep_view)
         if not section:
