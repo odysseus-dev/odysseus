@@ -335,6 +335,22 @@ def setup_cookbook_routes() -> APIRouter:
             return await _remote_binary_available(remote, ssh_port, binary, windows=windows)
         return shutil.which(binary) is not None
 
+    async def _run_sequential_execs(cmds: list[list[str]], cwd: str | None = None) -> asyncio.subprocess.Process:
+        """Run a sequence of commands via exec (bypassing shell). Fails fast on the first error."""
+        proc = None
+        for argv in cmds:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+            )
+            await proc.wait()
+            if proc.returncode != 0:
+                return proc
+        return proc
+
+
     def _launch_local_detached(session_id: str, bash_lines: list[str]) -> dict:
         """Windows-native stand-in for a LOCAL tmux session (tmux doesn't exist
         on Windows). Mirrors shell_routes._generate_win_detached / bg_jobs.launch:
@@ -507,20 +523,20 @@ def setup_cookbook_routes() -> APIRouter:
 
             # scp the .ps1 script, then launch it as a detached process with log + pid files
             _port = req.ssh_port
-            _Pf = f"-P {_port} " if _port and _port != "22" else ""
-            _pf = f"-p {_port} " if _port and _port != "22" else ""
+            scp_port = ["-P", str(_port)] if _port and str(_port) != "22" else []
+            ssh_port = ["-p", str(_port)] if _port and str(_port) != "22" else []
             # Start-Process creates a fully detached process that survives SSH disconnect
             launch_ps = (
-                "$sd = \\\"$env:TEMP\\odysseus-sessions\\\"; "
+                "$sd = \"$env:TEMP\\odysseus-sessions\"; "
                 f"Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','$HOME\\{remote_runner}' "
-                f"-RedirectStandardOutput \\\"$sd\\{session_id}.log\\\" "
-                f"-RedirectStandardError \\\"$sd\\{session_id}.err.log\\\" "
-                f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \\\"$sd\\{session_id}.pid\\\" }}"
+                f"-RedirectStandardOutput \"$sd\\{session_id}.log\" "
+                f"-RedirectStandardError \"$sd\\{session_id}.err.log\" "
+                f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \"$sd\\{session_id}.pid\" }}"
             )
-            setup_cmd = (
-                f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                f'ssh {_pf}{remote} "powershell -Command \\"{launch_ps}\\""'
-            )
+            setup_cmds = [
+                ["scp", "-O", "-q"] + scp_port + [str(runner_path), f"{remote}:{remote_runner}"],
+                ["ssh"] + ssh_port + [remote, f'powershell -Command "{launch_ps}"']
+            ]
 
         elif remote:
             # ── Linux/Termux remote: create tmux session ON the remote host ──
@@ -587,12 +603,12 @@ def setup_cookbook_routes() -> APIRouter:
 
             # scp the runner script, then create tmux session on the remote
             _port = req.ssh_port
-            _pf = f"-P {_port} " if _port and _port != "22" else ""
-            _spf = f"-p {_port} " if _port and _port != "22" else ""
-            setup_cmd = (
-                f"scp -O {_pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                f"ssh {_spf}{remote} 'chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
-            )
+            scp_port = ["-P", str(_port)] if _port and str(_port) != "22" else []
+            ssh_port = ["-p", str(_port)] if _port and str(_port) != "22" else []
+            setup_cmds = [
+                ["scp", "-O", "-q"] + scp_port + [str(runner_path), f"{remote}:{remote_runner}"],
+                ["ssh"] + ssh_port + [remote, f"chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\""]
+            ]
         else:
             # Local: run hf download in the background (tmux on POSIX, a detached
             # process + logfile on Windows where tmux doesn't exist).
@@ -616,12 +632,12 @@ def setup_cookbook_routes() -> APIRouter:
                 lines.append('exec "${SHELL:-/bin/bash}"')
                 wrapper_script.write_text("\n".join(lines) + "\n", encoding="utf-8")
                 wrapper_script.chmod(0o755)
-            setup_cmd = None if IS_WINDOWS else f"tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))}"
+            setup_cmds = None if IS_WINDOWS else [["tmux", "new-session", "-d", "-s", session_id, str(wrapper_script)]]
 
         logger.info(f"Model download: {req.repo_id} (include={req.include}, session={session_id}, remote={remote})")
-        logger.info(f"Download setup_cmd: {setup_cmd}")
+        logger.info(f"Download setup_cmds: {setup_cmds}")
 
-        if setup_cmd is None:
+        if setup_cmds is None:
             # LOCAL Windows: launch the bash wrapper detached; no tmux setup_cmd.
             try:
                 _launch_local_detached(session_id, lines)
@@ -629,14 +645,9 @@ def setup_cookbook_routes() -> APIRouter:
                 logger.error(f"Local detached download launch failed: {e}")
                 return {"ok": False, "error": str(e), "session_id": session_id}
         else:
-            proc = await asyncio.create_subprocess_shell(
-                setup_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await proc.wait()
+            proc = await _run_sequential_execs(setup_cmds)
 
-            if proc.returncode != 0:
+            if proc is not None and proc.returncode != 0:
                 stderr = (await proc.stderr.read()).decode(errors="replace")
                 logger.error(f"Download failed (rc={proc.returncode}): {stderr}")
                 return {"ok": False, "error": stderr, "session_id": session_id}
@@ -680,18 +691,19 @@ def setup_cookbook_routes() -> APIRouter:
         scan_py.write_text(paths_code, encoding="utf-8")
 
         if host:
-            _pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
+            ssh_port_args = ["-p", str(ssh_port)] if ssh_port and str(ssh_port) != "22" else []
             if platform == "windows":
-                # Windows: use 'python' and pipe via stdin with double-quote wrapping
-                cmd = f'ssh {_pf}{host} "python -" < \'{scan_py}\''
+                ssh_args = ["ssh"] + ssh_port_args + [host, "python -"]
             else:
-                cmd = f"ssh {_pf}{host} 'python3 -' < '{scan_py}'"
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
+                ssh_args = ["ssh"] + ssh_port_args + [host, "python3 -"]
+            proc = await asyncio.create_subprocess_exec(
+                *ssh_args,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(Path.home()),
             )
+            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(input=paths_code.encode("utf-8")), timeout=60)
         else:
             # LOCAL scan: use sys.executable (the venv Python Odysseus is already
             # running under) — it's guaranteed real Python on all platforms.
@@ -710,7 +722,7 @@ def setup_cookbook_routes() -> APIRouter:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(Path.home()),
             )
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=60)
+            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=60)
 
         models = []
         try:
@@ -1060,19 +1072,19 @@ def setup_cookbook_routes() -> APIRouter:
             runner_path.write_text("\r\n".join(ps_lines) + "\r\n", encoding="utf-8")
 
             _port = req.ssh_port
-            _Pf = f"-P {_port} " if _port and _port != "22" else ""
-            _pf = f"-p {_port} " if _port and _port != "22" else ""
+            scp_port = ["-P", str(_port)] if _port and str(_port) != "22" else []
+            ssh_port = ["-p", str(_port)] if _port and str(_port) != "22" else []
             launch_ps = (
-                "$sd = \\\"$env:TEMP\\odysseus-sessions\\\"; "
+                "$sd = \"$env:TEMP\\odysseus-sessions\"; "
                 f"Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','$HOME\\{remote_runner}' "
-                f"-RedirectStandardOutput \\\"$sd\\{session_id}.log\\\" "
-                f"-RedirectStandardError \\\"$sd\\{session_id}.err.log\\\" "
-                f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \\\"$sd\\{session_id}.pid\\\" }}"
+                f"-RedirectStandardOutput \"$sd\\{session_id}.log\" "
+                f"-RedirectStandardError \"$sd\\{session_id}.err.log\" "
+                f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \"$sd\\{session_id}.pid\" }}"
             )
-            setup_cmd = (
-                f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                f'ssh {_pf}{remote} "powershell -Command \\"{launch_ps}\\""'
-            )
+            setup_cmds = [
+                ["scp", "-O", "-q"] + scp_port + [str(runner_path), f"{remote}:{remote_runner}"],
+                ["ssh"] + ssh_port + [remote, f'powershell -Command "{launch_ps}"']
+            ]
         else:
             # ── Linux/Termux: bash + tmux (existing flow) ──
             runner_lines = ["#!/bin/bash"]
@@ -1265,30 +1277,29 @@ def setup_cookbook_routes() -> APIRouter:
             elif remote:
                 remote_runner = f".{session_id}_run.sh"
                 # If command references scripts/, scp those too
-                scp_extras = ""
+                scp_extras = []
                 _port = req.ssh_port
-                _Pf = f"-P {_port} " if _port and _port != "22" else ""
-                _pf = f"-p {_port} " if _port and _port != "22" else ""
+                scp_port = ["-P", str(_port)] if _port and str(_port) != "22" else []
+                ssh_port = ["-p", str(_port)] if _port and str(_port) != "22" else []
                 if "scripts/diffusion_server.py" in req.cmd:
                     from core.constants import BASE_DIR
                     diff_script = Path(BASE_DIR) / "scripts" / "diffusion_server.py"
                     if diff_script.exists():
-                        scp_extras = f"scp -O {_Pf}-q '{diff_script}' {remote}:.diffusion_server.py && "
+                        scp_extras = [["scp", "-O", "-q"] + scp_port + [str(diff_script), f"{remote}:.diffusion_server.py"]]
                         runner_path.write_text(
                             runner_path.read_text(encoding="utf-8").replace(
                                 "scripts/diffusion_server.py", ".diffusion_server.py"
                             ),
                             encoding="utf-8",
                         )
-                setup_cmd = (
-                    f"{scp_extras}"
-                    f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                    f"ssh {_pf}{remote} 'chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
-                )
+                setup_cmds = scp_extras + [
+                    ["scp", "-O", "-q"] + scp_port + [str(runner_path), f"{remote}:{remote_runner}"],
+                    ["ssh"] + ssh_port + [remote, f"chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\""]
+                ]
             else:
-                setup_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(runner_path))}"
+                setup_cmds = [["tmux", "new-session", "-d", "-s", session_id, str(runner_path)]]
 
-        if setup_cmd is None:
+        if setup_cmds is None:
             # LOCAL Windows: launch the bash runner detached; no tmux setup_cmd.
             try:
                 _launch_local_detached(session_id, runner_lines)
@@ -1296,14 +1307,9 @@ def setup_cookbook_routes() -> APIRouter:
                 logger.error(f"Local detached serve launch failed: {e}")
                 return {"ok": False, "error": str(e), "session_id": session_id}
         else:
-            proc = await asyncio.create_subprocess_shell(
-                setup_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await proc.wait()
+            proc = await _run_sequential_execs(setup_cmds)
 
-            if proc.returncode != 0:
+            if proc is not None and proc.returncode != 0:
                 stderr = (await proc.stderr.read()).decode(errors="replace")
                 return {"ok": False, "error": stderr, "session_id": session_id}
 
@@ -1351,14 +1357,13 @@ def setup_cookbook_routes() -> APIRouter:
         port = req.ssh_port
         if port is not None and port != "" and not re.fullmatch(r"\d{1,5}", port):
             raise HTTPException(400, "Invalid ssh_port")
-        pf = f"-p {port} " if port and port != "22" else ""
-
+        ssh_port_args = ["-p", str(port)] if port and str(port) != "22" else []
         # Detect platform: Windows first (echo %OS% → Windows_NT), then Termux, then Linux
-        detect_cmd = f'ssh {pf}{host} "echo %OS%"'
         platform = "linux"
         try:
-            proc = await asyncio.create_subprocess_shell(
-                detect_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            proc = await asyncio.create_subprocess_exec(
+                "ssh", *ssh_port_args, host, "echo %OS%",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
             out = stdout.decode().strip()
@@ -1366,9 +1371,9 @@ def setup_cookbook_routes() -> APIRouter:
                 platform = "windows"
             else:
                 # Check for Termux
-                detect_cmd2 = f"ssh {pf}{host} 'test -d /data/data/com.termux && echo termux || echo linux'"
-                proc2 = await asyncio.create_subprocess_shell(
-                    detect_cmd2, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                proc2 = await asyncio.create_subprocess_exec(
+                    "ssh", *ssh_port_args, host, "test -d /data/data/com.termux && echo termux || echo linux",
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
                 stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=10)
                 platform = stdout2.decode().strip()
@@ -1379,14 +1384,13 @@ def setup_cookbook_routes() -> APIRouter:
             # Windows setup: ensure Python + pip + huggingface-hub via PowerShell
             # Also create the session directory for background tasks
             setup_script = (
-                'powershell -Command "'
-                "New-Item -ItemType Directory -Force -Path $env:TEMP\\odysseus-sessions | Out-Null; "
+                "powershell -Command "
+                "\"New-Item -ItemType Directory -Force -Path $env:TEMP\\odysseus-sessions | Out-Null; "
                 "try { python --version } catch { Write-Host 'ERROR: Python not found — install from python.org'; exit 1 }; "
                 "python -m pip install -q huggingface-hub 2>$null; "
-                "python -c \\\"from huggingface_hub import snapshot_download; print('OK')\\\""
-                '"'
+                "python -c \\\"from huggingface_hub import snapshot_download; print('OK')\\\"\""
             )
-            cmd = f'ssh {pf}{host} {setup_script}'
+            setup_args = ["ssh"] + ssh_port_args + [host, setup_script]
         elif platform == "termux":
             setup_script = (
                 "pkg install -y python tmux 2>/dev/null; "
@@ -1394,7 +1398,7 @@ def setup_cookbook_routes() -> APIRouter:
                 "pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests 2>/dev/null; "
                 "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
             )
-            cmd = f"ssh {pf}{host} '{setup_script}'"
+            setup_args = ["ssh"] + ssh_port_args + [host, setup_script]
         else:
             # Linux: auto-install tmux (via whichever package manager is available)
             # and huggingface_hub + hf_transfer (falling back to --user/--break-system-packages
@@ -1416,11 +1420,11 @@ def setup_cookbook_routes() -> APIRouter:
                 "pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null; "
                 "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
             )
-            cmd = f"ssh {pf}{host} '{setup_script}'"
+            setup_args = ["ssh"] + ssh_port_args + [host, setup_script]
 
         try:
-            proc = await asyncio.create_subprocess_shell(
-                cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            proc = await asyncio.create_subprocess_exec(
+                *setup_args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
             output = stdout.decode() + stderr.decode()
@@ -1436,10 +1440,10 @@ def setup_cookbook_routes() -> APIRouter:
     async def _run_nvidia_smi(query: str, host: str | None, ssh_port: str | None, timeout: int = 8):
         """Run nvidia-smi locally or over SSH. Returns (stdout, error_or_None)."""
         if host:
-            pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
-            cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} '{query}'"
-            proc = await asyncio.create_subprocess_shell(
-                cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            ssh_port_args = ["-p", str(ssh_port)] if ssh_port and str(ssh_port) != "22" else []
+            proc = await asyncio.create_subprocess_exec(
+                "ssh", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no", *ssh_port_args, host, query,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
         else:
             proc = await asyncio.create_subprocess_exec(
@@ -1459,7 +1463,7 @@ def setup_cookbook_routes() -> APIRouter:
     async def _run_gpu_shell(cmd_text: str, host: str | None, ssh_port: str | None, timeout: int = 8):
         """Run a small GPU probe shell command locally or over SSH."""
         if host:
-            pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
+            ssh_port_args = ["-p", str(ssh_port)] if ssh_port and str(ssh_port) != "22" else []
             quoted_cmd = shlex.quote(cmd_text)
             remote_cmd = (
                 f"if command -v sh >/dev/null 2>&1; then sh -lc {quoted_cmd}; "
@@ -1467,9 +1471,9 @@ def setup_cookbook_routes() -> APIRouter:
                 f"elif command -v zsh >/dev/null 2>&1; then zsh -lc {quoted_cmd}; "
                 "else echo 'No POSIX shell found for GPU probe' >&2; exit 127; fi"
             )
-            cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} {shlex.quote(remote_cmd)}"
-            proc = await asyncio.create_subprocess_shell(
-                cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            proc = await asyncio.create_subprocess_exec(
+                "ssh", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no", *ssh_port_args, host, remote_cmd,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
         else:
             proc = await asyncio.create_subprocess_shell(
@@ -1759,10 +1763,10 @@ def setup_cookbook_routes() -> APIRouter:
         kill_cmd = f"kill -{sig} {req.pid}"
         try:
             if host:
-                pf = f"-p {req.ssh_port} " if req.ssh_port and req.ssh_port != "22" else ""
-                cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} '{kill_cmd}'"
-                proc = await asyncio.create_subprocess_shell(
-                    cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                ssh_port_args = ["-p", str(req.ssh_port)] if req.ssh_port and str(req.ssh_port) != "22" else []
+                proc = await asyncio.create_subprocess_exec(
+                    "ssh", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no", *ssh_port_args, host, kill_cmd,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
             elif IS_WINDOWS:
                 # No `kill` binary / POSIX signals on Windows. taskkill /F /T tears
