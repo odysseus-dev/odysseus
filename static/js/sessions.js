@@ -2655,6 +2655,7 @@ export function openLibrary(defaultTab) {
             <option value="recent">Recent</option>
             <option value="oldest">Oldest</option>
             <option value="most-messages">Most messages</option>
+            <option value="most-tokens">Most tokens</option>
             <option value="alpha">A\u2013Z</option>
           </select>
           <input type="text" class="memory-search-input" id="lib-search" placeholder="Filter\u2026" style="flex:1;" />
@@ -2798,6 +2799,7 @@ function _renderLibChats(grid) {
   }
   if (_lib.sort === 'oldest') filtered.sort((a, b) => (a.created_at || '') > (b.created_at || '') ? 1 : -1);
   else if (_lib.sort === 'most-messages') filtered.sort((a, b) => (b.message_count || 0) - (a.message_count || 0));
+  else if (_lib.sort === 'most-tokens') filtered.sort((a, b) => (b.total_tokens || 0) - (a.total_tokens || 0));
   else if (_lib.sort === 'alpha') filtered.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   else filtered.sort((a, b) => (b.updated_at || '') > (a.updated_at || '') ? 1 : -1);
 
@@ -2807,7 +2809,7 @@ function _renderLibChats(grid) {
   if (!filtered.length) { grid.innerHTML = '<div class="doclib-empty">No chats found</div>'; return; }
   grid.innerHTML = '';
   for (const s of filtered) {
-    const card = _buildLibCard(s.id, s.name || 'Untitled', s.message_count || 0, (s.model || '').split('/').pop(), s.updated_at, s.id === currentSessionId);
+    const card = _buildLibCard(s.id, s.name || 'Untitled', s.message_count || 0, (s.model || '').split('/').pop(), s.updated_at, s.id === currentSessionId, false, s.total_tokens || 0);
     card.addEventListener('click', (e) => {
       if (e.target.closest('.archive-menu-btn,.memory-select-cb')) return;
       if (_lib.selectMode) { _toggleLibSelect(card, s.id); return; }
@@ -2953,7 +2955,7 @@ async function _renderLibResearch(grid) {
   } catch (e) { console.error('Library research error:', e); grid.innerHTML = '<div class="doclib-empty">Failed to load research</div>'; }
 }
 
-function _buildLibCard(id, title, count, meta, time, isActive, isDoc) {
+function _buildLibCard(id, title, count, meta, time, isActive, isDoc, tokens) {
   const card = document.createElement('div');
   card.className = 'memory-item';
   card.dataset.sessionId = id;
@@ -2962,6 +2964,7 @@ function _buildLibCard(id, title, count, meta, time, isActive, isDoc) {
   const metaParts = [];
   if (meta) metaParts.push(uiModule.esc(meta));
   metaParts.push(isDoc ? 'v' + count : count + ' msg' + (count !== 1 ? 's' : ''));
+  if (tokens > 0) metaParts.push(tokens >= 1000 ? Math.round(tokens / 1000) + 'k tok' : tokens + ' tok');
   if (time) metaParts.push(_arcRelativeTime(time));
   card.innerHTML = `
     ${cbHtml}
