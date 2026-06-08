@@ -1132,13 +1132,17 @@ def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num
         # have a reliable structured channel for real tool invocations. When such
         # a model emits no native tool_calls, any ```bash/```python/```json fence
         # in its prose is virtually always an illustrative example for the user
-        # (e.g. "here's the command you'd run"), not an attempted tool call.
-        # Falling back to the textual fenced-block parser for these models causes
-        # accidental execution of guide-only examples and clarification loops
-        # (issue #3222). Only non-native models — which rely entirely on the
-        # fenced-block convention as their *only* tool channel — need the
-        # textual fallback to invoke tools at all.
-        tool_blocks = [] if is_api_model else parse_tool_blocks(round_response)
+        # (e.g. "here's the command you'd run"), not an attempted tool call —
+        # executing it causes accidental runs and clarification loops (#3222).
+        #
+        # Gate ONLY that fenced-block pattern for native models, not the whole
+        # parser: explicit [TOOL_CALL]/<invoke>/<tool_code>/DSML markup that
+        # leaks into content as text is never illustrative — it's a real call
+        # the model couldn't emit on its structured channel (e.g. DeepSeek-V
+        # falling back to DSML). Dropping the whole parser would silently lose
+        # those too. Non-native / textual-only models keep every pattern,
+        # fenced blocks included, since that's their *only* tool channel.
+        tool_blocks = parse_tool_blocks(round_response, skip_fenced=is_api_model)
         if tool_blocks:
             logger.info(f"Agent round {round_num}: {len(tool_blocks)} fenced tool block(s) detected")
 
@@ -2142,7 +2146,12 @@ async def stream_agent_loop(
 
         # Save cleaned round text for history persistence
         # Keep <think> blocks so they render in the thinking section on reload
-        cleaned_round = strip_tool_blocks(round_response).strip()
+        # Mirror the same fenced-pattern gate used to resolve tool_blocks above:
+        # an illustrative fence that wasn't executed (because this is a native
+        # model with no real native_tool_calls) must not be stripped from the
+        # persisted text either — otherwise it streams once and then disappears
+        # on reload (#3222 follow-up).
+        cleaned_round = strip_tool_blocks(round_response, skip_fenced=(_is_api_model and not used_native)).strip()
         round_texts.append(cleaned_round)
 
         if not tool_blocks:

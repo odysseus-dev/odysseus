@@ -197,3 +197,95 @@ def test_resolve_tool_blocks_native_path_untouched_when_native_calls_present():
     assert used_native is True
     assert len(blocks) == 1
     assert blocks[0].tool_type == "bash"
+
+
+# ---------------------------------------------------------------------------
+# Booyaka101's review on #3356: short-circuiting the *whole* parser for native
+# models (`tool_blocks = [] if is_api_model else parse_tool_blocks(...)`) also
+# silently dropped explicit [TOOL_CALL]/<invoke>/<tool_code>/DSML markup that
+# leaked into content as text — a real regression for e.g. DeepSeek-V falling
+# back to DSML when it can't emit structured tool_calls. The fix gates ONLY
+# the fenced-code pattern (via `skip_fenced=`) so Patterns 2-5 stay active.
+# ---------------------------------------------------------------------------
+from src.tool_parsing import parse_tool_blocks, strip_tool_blocks  # noqa: E402
+
+
+def test_skip_fenced_still_recovers_xml_invoke_markup():
+    leaked = (
+        "Sure, I'll look that up.\n"
+        '<invoke name="web_search"><parameter name="query">latest python release</parameter></invoke>'
+    )
+    blocks = parse_tool_blocks(leaked, skip_fenced=True)
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "web_search"
+    assert "latest python release" in blocks[0].content
+
+
+def test_skip_fenced_still_recovers_dsml_markup():
+    dsml = (
+        "Let me search for that.\n"
+        "<｜｜DSML｜｜tool_calls>"
+        '<｜｜DSML｜｜invoke name="web_search">'
+        '<｜｜DSML｜｜parameter name="query" string="true">latest python release</｜｜DSML｜｜parameter>'
+        "</｜｜DSML｜｜invoke>"
+        "</｜｜DSML｜｜tool_calls>"
+    )
+    blocks = parse_tool_blocks(dsml, skip_fenced=True)
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "web_search"
+    assert "latest python release" in blocks[0].content
+
+
+def test_skip_fenced_ignores_only_the_fenced_pattern():
+    text = "```bash\nnpm run plan:articles\n```"
+    assert parse_tool_blocks(text, skip_fenced=True) == []
+    assert len(parse_tool_blocks(text, skip_fenced=False)) == 1
+
+
+def test_resolve_tool_blocks_recovers_invoke_markup_for_native_model_with_no_native_calls():
+    """End-to-end: a native model (is_api_model=True) that emitted no
+    structured tool_calls but leaked an <invoke> call into its text content
+    must still have that real call recovered — not dropped alongside the
+    fenced-example gating."""
+    leaked = (
+        "I'll search for that now.\n"
+        '<invoke name="web_search"><parameter name="query">odysseus changelog</parameter></invoke>'
+    )
+    blocks, used_native = al._resolve_tool_blocks(leaked, [], round_num=1, is_api_model=True)
+    assert used_native is False
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "web_search"
+    assert "odysseus changelog" in blocks[0].content
+
+
+# ---------------------------------------------------------------------------
+# strip_tool_blocks must mirror the same fenced-pattern gate so persisted text
+# matches what was (not) executed: an illustrative fence that wasn't run for a
+# native model shouldn't vanish from saved/reloaded history either — otherwise
+# it streams once and then disappears on reload (Booyaka101's point #2).
+# ---------------------------------------------------------------------------
+def test_strip_tool_blocks_preserves_fence_when_skip_fenced():
+    text = "Here's an example:\n\n```bash\nnpm run plan:articles\n```\n\nJust copy that."
+    cleaned = strip_tool_blocks(text, skip_fenced=True)
+    assert "```bash" in cleaned
+    assert "npm run plan:articles" in cleaned
+
+
+def test_strip_tool_blocks_still_strips_fence_by_default():
+    text = "Here's an example:\n\n```bash\nnpm run plan:articles\n```\n\nJust copy that."
+    cleaned = strip_tool_blocks(text, skip_fenced=False)
+    assert "```bash" not in cleaned
+    assert "npm run plan:articles" not in cleaned
+
+
+def test_strip_tool_blocks_always_strips_invoke_and_dsml_regardless_of_skip_fenced():
+    leaked = (
+        "Searching now.\n"
+        '<invoke name="web_search"><parameter name="query">q</parameter></invoke>'
+        "\nDone."
+    )
+    for skip in (True, False):
+        cleaned = strip_tool_blocks(leaked, skip_fenced=skip)
+        assert "<invoke" not in cleaned
+        assert "Searching now." in cleaned
+        assert "Done." in cleaned
