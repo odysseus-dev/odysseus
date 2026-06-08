@@ -249,6 +249,8 @@
 </head>
 <body>
 <main class="card">
+  <div id="language-switcher-container" style="display:flex;justify-content:flex-end;margin-bottom:1rem;"></div>
+  
   <h1 class="logo">
     <svg class="logo-boat" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M16 4L16 22L6 22Z" fill="currentColor"/><path d="M16 8L16 22L24 22Z" fill="currentColor" opacity="0.6"/><path d="M4 24Q10 20 16 24Q22 28 28 24" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg><span>Odysseus</span>
   </h1>
@@ -257,16 +259,16 @@
   <div class="error" id="error" role="alert" aria-live="assertive"></div>
 
   <form id="authForm" autocomplete="on">
-    <label for="username">Username</label>
+    <label for="username" data-i18n="login.username">Username</label>
     <div class="pw-wrapper">
       <input id="username" name="username" type="text" required autofocus autocomplete="username">
-      <label class="remember-toggle" id="rememberToggle" title="Remember me">
+      <label class="remember-toggle" id="rememberToggle" data-i18n-title="login.remember_me" title="Remember me">
         <input type="checkbox" class="remember-check" id="remember" checked aria-label="Remember me">
         <span class="remember-dot" aria-hidden="true"></span>
       </label>
     </div>
 
-    <label for="password">Password</label>
+    <label for="password" data-i18n="login.password">Password</label>
     <div class="pw-wrapper">
       <input id="password" name="password" type="password" required autocomplete="current-password">
       <button type="button" class="pw-toggle" id="pwToggle" tabindex="-1" aria-label="Show password">
@@ -275,7 +277,7 @@
     </div>
 
     <div id="confirmGroup" style="display:none">
-      <label for="confirmPassword">Confirm Password</label>
+      <label for="confirmPassword" data-i18n="login.password">Confirm Password</label>
       <div class="pw-wrapper">
         <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password">
         <button type="button" class="pw-toggle" id="pwToggleConfirm" tabindex="-1" aria-label="Show password">
@@ -284,11 +286,11 @@
       </div>
     </div>
 
-    <button type="submit" id="submitBtn">Sign In</button>
+    <button type="submit" id="submitBtn" data-i18n="login.login_button">Sign In</button>
   </form>
 
   <div class="toggle" id="toggleArea" style="display:none">
-    <span id="toggleText">Don't have an account? </span>
+    <span id="toggleText" data-i18n="login.signup_prompt">Don't have an account? </span>
     <a id="toggleLink" href="#">Sign up</a>
   </div>
 </main>
@@ -559,6 +561,11 @@ if (window.visualViewport) {
 }
 </script>
 <script type="module" nonce="{{CSP_NONCE}}">
+// Initialize internationalization for login page
+import loginI18n from '/static/js/loginI18n.js';
+loginI18n.init();
+loginI18n.createLanguageSwitcher();
+
 // Drive the login page's bg effect off the user's saved theme. The
 // sync bootstrap above already set the body class + effect CSS vars so
 // the static-gradient patterns (dots, synapse) paint immediately; this

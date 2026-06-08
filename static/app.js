@@ -45,6 +45,8 @@ import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
+// Internationalization support
+import languageSwitcher, { i18nModule } from './js/languageSwitcher.js';
 
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;
@@ -52,6 +54,9 @@ window.sessionModule = sessionModule;
 window.uiModule = uiModule;
 window.adminModule = adminModule;
 window.cookbookModule = cookbookModule;
+// Expose i18n for use throughout the app
+window.i18nModule = i18nModule;
+window.languageSwitcher = languageSwitcher;
 
 // Redirect to login on 401 from any fetch
 const _origFetch = window.fetch;
