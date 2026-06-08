@@ -35,8 +35,8 @@ function _buildModal() {
 
   const panel = document.createElement('div');
   panel.style.cssText = [
-    'background:var(--bg-primary,#1e1e1e)',
-    'color:var(--text-primary,#e0e0e0)',
+    'background:var(--bg)',
+    'color:var(--fg)',
     'border-radius:10px',
     'width:min(600px,100%)',
     'max-height:85vh',
@@ -49,7 +49,7 @@ function _buildModal() {
   // Close button
   const closeBtn = document.createElement('button');
   closeBtn.textContent = '×';
-  closeBtn.style.cssText = 'position:absolute;top:10px;right:14px;font-size:20px;background:none;border:none;cursor:pointer;color:var(--text-secondary);';
+  closeBtn.style.cssText = 'position:absolute;top:10px;right:14px;font-size:20px;background:none;border:none;cursor:pointer;color:color-mix(in srgb, var(--fg) 55%, transparent);';
   closeBtn.addEventListener('click', _closeModal);
   panel.appendChild(closeBtn);
 
@@ -64,13 +64,13 @@ function _buildModal() {
     row.style.cssText = 'margin-bottom:12px;';
     const lbl = document.createElement('label');
     lbl.textContent = labelText;
-    lbl.style.cssText = 'display:block;font-size:12px;color:var(--text-secondary);margin-bottom:4px;';
+    lbl.style.cssText = 'display:block;font-size:12px;color:color-mix(in srgb, var(--fg) 55%, transparent);margin-bottom:4px;';
     row.appendChild(lbl);
     row.appendChild(inputEl);
     return row;
   }
 
-  const _inputStyle = 'width:100%;box-sizing:border-box;background:var(--bg-secondary,#2a2a2a);color:var(--text-primary);border:1px solid var(--border,#444);border-radius:6px;padding:6px 8px;font-size:13px;';
+  const _inputStyle = 'width:100%;box-sizing:border-box;background:var(--panel);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:13px;';
 
   const nameInput = document.createElement('input');
   nameInput.id = 'pm-name';
@@ -94,7 +94,7 @@ function _buildModal() {
   // Save button
   const saveBtn = document.createElement('button');
   saveBtn.textContent = 'Save changes';
-  saveBtn.style.cssText = 'background:var(--accent-primary,#5b8abf);color:#fff;border:none;border-radius:6px;padding:7px 16px;cursor:pointer;font-size:13px;margin-bottom:20px;';
+  saveBtn.style.cssText = 'background:var(--accent-primary, var(--red));color:#fff;border:none;border-radius:6px;padding:7px 16px;cursor:pointer;font-size:13px;margin-bottom:20px;';
   saveBtn.addEventListener('click', async () => {
     const fd = new FormData();
     fd.append('name', nameInput.value.trim());
@@ -115,19 +115,19 @@ function _buildModal() {
   panel.appendChild(saveBtn);
 
   const statusEl = document.createElement('span');
-  statusEl.style.cssText = 'font-size:12px;color:var(--accent-primary);margin-left:8px;';
+  statusEl.style.cssText = 'font-size:12px;color:var(--accent-primary, var(--red));margin-left:8px;';
   panel.appendChild(statusEl);
 
   // Pinned documents section
   const docSection = document.createElement('div');
-  docSection.style.cssText = 'margin-top:8px;border-top:1px solid var(--border,#444);padding-top:12px;';
+  docSection.style.cssText = 'margin-top:8px;border-top:1px solid var(--border);padding-top:12px;';
   const docTitle = document.createElement('div');
   docTitle.style.cssText = 'font-weight:bold;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:8px;';
   docTitle.textContent = 'Pinned Documents';
 
   const pinBtn = document.createElement('button');
   pinBtn.textContent = '+ Pin by ID';
-  pinBtn.style.cssText = 'background:none;border:1px solid var(--border,#444);border-radius:4px;color:var(--text-secondary);cursor:pointer;font-size:11px;padding:2px 6px;';
+  pinBtn.style.cssText = 'background:none;border:1px solid var(--border);border-radius:4px;color:color-mix(in srgb, var(--fg) 55%, transparent);cursor:pointer;font-size:11px;padding:2px 6px;';
   pinBtn.addEventListener('click', async () => {
     const docId = window.prompt('Enter document ID to pin:');
     if (!docId || !docId.trim()) return;
@@ -149,14 +149,14 @@ function _buildModal() {
 
   // Synthesize memories section
   const synthSection = document.createElement('div');
-  synthSection.style.cssText = 'margin-top:12px;border-top:1px solid var(--border,#444);padding-top:12px;';
+  synthSection.style.cssText = 'margin-top:12px;border-top:1px solid var(--border);padding-top:12px;';
   const synthTitle = document.createElement('div');
   synthTitle.style.cssText = 'font-weight:bold;font-size:13px;margin-bottom:8px;';
   synthTitle.textContent = 'Synthesized Memory';
 
   const synthBtn = document.createElement('button');
   synthBtn.textContent = 'Synthesize from sessions';
-  synthBtn.style.cssText = 'background:var(--accent-primary,#5b8abf);color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px;';
+  synthBtn.style.cssText = 'background:var(--accent-primary, var(--red));color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:12px;';
   synthBtn.addEventListener('click', async () => {
     synthBtn.disabled = true;
     synthBtn.textContent = 'Synthesizing...';
@@ -201,7 +201,7 @@ async function _refreshDocList(docList) {
     const docs = await res.json();
     if (!docs.length) {
       docList.textContent = 'No pinned documents.';
-      docList.style.color = 'var(--text-secondary)';
+      docList.style.color = 'color-mix(in srgb, var(--fg) 55%, transparent)';
       docList.style.fontSize = '12px';
       return;
     }
@@ -213,7 +213,7 @@ async function _refreshDocList(docList) {
       name.style.flex = '1';
       const unpinBtn = document.createElement('button');
       unpinBtn.textContent = 'Unpin';
-      unpinBtn.style.cssText = 'background:none;border:1px solid var(--border,#444);border-radius:4px;color:var(--text-secondary);cursor:pointer;font-size:10px;padding:1px 6px;';
+      unpinBtn.style.cssText = 'background:none;border:1px solid var(--border);border-radius:4px;color:color-mix(in srgb, var(--fg) 55%, transparent);cursor:pointer;font-size:10px;padding:1px 6px;';
       unpinBtn.addEventListener('click', async () => {
         await fetch(`${API_BASE}/api/projects/${_currentProjectId}/documents/${d.id}`, { method: 'DELETE' });
         await _refreshDocList(docList);
@@ -235,15 +235,15 @@ async function _refreshMemories(memList) {
     const mems = await res.json();
     if (!mems.length) {
       memList.textContent = 'No memories yet. Use "Synthesize from sessions" to create one.';
-      memList.style.cssText = 'color:var(--text-secondary);font-size:12px;margin-top:8px;';
+      memList.style.cssText = 'color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:12px;margin-top:8px;';
       return;
     }
     mems.forEach(m => {
       const card = document.createElement('div');
-      card.style.cssText = 'background:var(--bg-secondary,#2a2a2a);border-radius:6px;padding:10px;margin-top:8px;font-size:12px;';
+      card.style.cssText = 'background:var(--panel);border-radius:6px;padding:10px;margin-top:8px;font-size:12px;';
       const meta = document.createElement('div');
       const dt = m.synthesized_at ? new Date(m.synthesized_at).toLocaleString() : '';
-      meta.style.cssText = 'color:var(--text-secondary);font-size:10px;margin-bottom:6px;';
+      meta.style.cssText = 'color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:10px;margin-bottom:6px;';
       meta.textContent = `${dt} · ${m.session_count} session(s)`;
       const content = document.createElement('div');
       content.style.whiteSpace = 'pre-wrap';

@@ -131,7 +131,7 @@ function _mountOverlay() {
     'position:fixed', 'top:0', 'bottom:0', 'right:0',
     'left:calc(var(--icon-rail-w,48px) + var(--sidebar-w,0px))',
     'z-index:900', 'display:flex', 'flex-direction:column',
-    'overflow:hidden', 'background:var(--bg-primary,#1e1e1e)',
+    'overflow:hidden', 'background:var(--bg)',
   ].join(';');
   const wrapper = document.createElement('div');
   wrapper.id = 'projects-view-wrapper';
@@ -192,7 +192,7 @@ export async function openProjectsListView() {
   _activeProjectId = null;
   const wrapper = _mountOverlay();
   const tok = ++_navToken;
-  wrapper.innerHTML = `<div style="padding:40px;color:var(--text-secondary);font-size:13px;">${T.loadingProjects}</div>`;
+  wrapper.innerHTML = `<div style="padding:40px;color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:13px;">${T.loadingProjects}</div>`;
   _projectsCache = await _fetchProjects();
   if (_navToken !== tok) return;
   _renderListPage(wrapper);
@@ -204,7 +204,7 @@ export async function openProjectView(projectId) {
   _activeProjectId = projectId;
   const wrapper = _mountOverlay();
   const tok = ++_navToken;
-  wrapper.innerHTML = `<div style="padding:40px;color:var(--text-secondary);font-size:13px;">${T.loadingProject}</div>`;
+  wrapper.innerHTML = `<div style="padding:40px;color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:13px;">${T.loadingProject}</div>`;
   try {
     const [proj, sessions, docs, mems] = await Promise.all([
       _fetchProject(projectId),
@@ -216,7 +216,7 @@ export async function openProjectView(projectId) {
     _renderProjectPage(wrapper, proj, sessions, docs, mems);
   } catch {
     if (_navToken !== tok) return;
-    wrapper.innerHTML = `<div style="padding:40px;color:var(--text-secondary);">${T.errorProject}</div>`;
+    wrapper.innerHTML = `<div style="padding:40px;color:color-mix(in srgb, var(--fg) 55%, transparent);">${T.errorProject}</div>`;
   }
 }
 
@@ -238,17 +238,17 @@ function _renderListPage(wrapper) {
 
   const title = document.createElement('h1');
   title.textContent = T.projects;
-  title.style.cssText = 'margin:0;font-size:30px;font-weight:700;color:var(--text-primary,#e0e0e0);';
+  title.style.cssText = 'margin:0;font-size:30px;font-weight:700;color:var(--fg);';
 
   const controls = document.createElement('div');
   controls.style.cssText = 'display:flex;align-items:center;gap:10px;';
 
   // Sort selector
   const sortWrap = document.createElement('div');
-  sortWrap.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);white-space:nowrap;';
+  sortWrap.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:13px;color:color-mix(in srgb, var(--fg) 55%, transparent);white-space:nowrap;';
   sortWrap.innerHTML = `<span>${T.sortBy}</span>`;
   const sortSel = document.createElement('select');
-  sortSel.style.cssText = 'background:var(--bg-secondary,#2a2a2a);color:var(--text-primary);border:1px solid var(--border,#444);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;outline:none;font-weight:600;';
+  sortSel.style.cssText = 'background:var(--panel);color:var(--fg);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;outline:none;font-weight:600;';
   [['activity', T.sortActivity], ['name', T.sortName], ['created', T.sortCreated]].forEach(([v, l]) => {
     const o = Object.assign(document.createElement('option'), { value: v, textContent: l });
     if (v === _sortOrder) o.selected = true;
@@ -259,7 +259,7 @@ function _renderListPage(wrapper) {
 
   const newBtn = document.createElement('button');
   newBtn.textContent = T.newProject;
-  newBtn.style.cssText = 'background:var(--text-primary,#e0e0e0);color:var(--bg-primary,#1e1e1e);border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;';
+  newBtn.style.cssText = 'background:var(--fg);color:var(--bg);border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;';
   newBtn.addEventListener('click', () => _showCreateDialog(wrapper));
 
   controls.appendChild(sortWrap);
@@ -271,14 +271,14 @@ function _renderListPage(wrapper) {
   // Search bar
   const searchWrap = document.createElement('div');
   searchWrap.style.cssText = 'position:relative;margin-bottom:28px;';
-  searchWrap.innerHTML = `<svg style="position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--text-secondary);pointer-events:none;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="M21 21l-4.35-4.35"/></svg>`;
+  searchWrap.innerHTML = `<svg style="position:absolute;left:14px;top:50%;transform:translateY(-50%);color:color-mix(in srgb, var(--fg) 55%, transparent);pointer-events:none;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="M21 21l-4.35-4.35"/></svg>`;
   const searchInp = document.createElement('input');
   searchInp.type = 'text';
   searchInp.placeholder = T.searchPlaceholder;
   searchInp.value = _searchQuery;
-  searchInp.style.cssText = 'width:100%;box-sizing:border-box;background:var(--bg-secondary,#2a2a2a);color:var(--text-primary);border:1.5px solid var(--border,#444);border-radius:10px;padding:12px 14px 12px 40px;font-size:14px;outline:none;transition:border-color 0.15s;';
-  searchInp.addEventListener('focus',  () => { searchInp.style.borderColor = 'var(--accent-primary,#5b8abf)'; });
-  searchInp.addEventListener('blur',   () => { searchInp.style.borderColor = 'var(--border,#444)'; });
+  searchInp.style.cssText = 'width:100%;box-sizing:border-box;background:var(--panel);color:var(--fg);border:1.5px solid var(--border);border-radius:10px;padding:12px 14px 12px 40px;font-size:14px;outline:none;transition:border-color 0.15s;';
+  searchInp.addEventListener('focus',  () => { searchInp.style.borderColor = 'var(--accent-primary, var(--red))'; });
+  searchInp.addEventListener('blur',   () => { searchInp.style.borderColor = 'var(--border)'; });
   let dbTimer;
   searchInp.addEventListener('input', () => {
     clearTimeout(dbTimer);
@@ -311,34 +311,34 @@ function _renderGrid(grid, projects) {
   grid.innerHTML = '';
   if (!projects.length) {
     const empty = document.createElement('div');
-    empty.style.cssText = 'grid-column:1/-1;text-align:center;padding:60px 0;color:var(--text-secondary);font-size:14px;';
+    empty.style.cssText = 'grid-column:1/-1;text-align:center;padding:60px 0;color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:14px;';
     empty.textContent = _searchQuery ? T.noProjectsSearch : T.noProjectsEmpty;
     grid.appendChild(empty);
     return;
   }
   projects.forEach(p => {
     const card = document.createElement('div');
-    card.style.cssText = 'background:var(--bg-secondary,#2a2a2a);border:1px solid var(--border,#444);border-radius:12px;padding:20px;cursor:pointer;transition:border-color 0.15s,background 0.15s;display:flex;flex-direction:column;min-height:130px;';
-    card.addEventListener('mouseenter', () => { card.style.borderColor='var(--accent-primary,#5b8abf)'; card.style.background='var(--bg-hover,#333)'; });
-    card.addEventListener('mouseleave', () => { card.style.borderColor='var(--border,#444)'; card.style.background='var(--bg-secondary,#2a2a2a)'; });
+    card.style.cssText = 'background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px;cursor:pointer;transition:border-color 0.15s,background 0.15s;display:flex;flex-direction:column;min-height:130px;';
+    card.addEventListener('mouseenter', () => { card.style.borderColor='var(--accent-primary, var(--red))'; card.style.background='color-mix(in srgb, var(--red) 8%, transparent)'; });
+    card.addEventListener('mouseleave', () => { card.style.borderColor='var(--border)'; card.style.background='var(--panel)'; });
     card.addEventListener('click', () => openProjectView(p.id));
 
     const name = document.createElement('div');
     name.textContent = p.name;
-    name.style.cssText = 'font-weight:700;font-size:15px;color:var(--text-primary);margin-bottom:6px;';
+    name.style.cssText = 'font-weight:700;font-size:15px;color:var(--fg);margin-bottom:6px;';
     card.appendChild(name);
 
     if (p.description) {
       const desc = document.createElement('div');
       desc.textContent = p.description;
-      desc.style.cssText = 'font-size:12px;color:var(--text-secondary);flex:1;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;';
+      desc.style.cssText = 'font-size:12px;color:color-mix(in srgb, var(--fg) 55%, transparent);flex:1;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;';
       card.appendChild(desc);
     } else {
       card.appendChild(Object.assign(document.createElement('div'), { style: 'flex:1' }));
     }
 
     const meta = document.createElement('div');
-    meta.style.cssText = 'font-size:11px;color:var(--text-secondary);margin-top:auto;padding-top:12px;border-top:1px solid color-mix(in srgb,var(--border) 50%,transparent);';
+    meta.style.cssText = 'font-size:11px;color:color-mix(in srgb, var(--fg) 55%, transparent);margin-top:auto;padding-top:12px;border-top:1px solid color-mix(in srgb,var(--border) 50%,transparent);';
     meta.textContent = T.updatedAt + ' ' + _relDate(p.updated_at);
     card.appendChild(meta);
     grid.appendChild(card);
@@ -358,7 +358,7 @@ function _renderProjectPage(wrapper, proj, sessions, docs, mems) {
 
   const back = document.createElement('button');
   back.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg> ${T.allProjects}`;
-  back.style.cssText = 'background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:13px;padding:0;margin-bottom:18px;display:inline-flex;align-items:center;gap:6px;';
+  back.style.cssText = 'background:none;border:none;color:color-mix(in srgb, var(--fg) 55%, transparent);cursor:pointer;font-size:13px;padding:0;margin-bottom:18px;display:inline-flex;align-items:center;gap:6px;';
   back.addEventListener('click', () => openProjectsListView());
   topBar.appendChild(back);
 
@@ -368,11 +368,11 @@ function _renderProjectPage(wrapper, proj, sessions, docs, mems) {
   const projTitle = document.createElement('h1');
   projTitle.textContent = proj.name;
   projTitle.id = 'pv-proj-title';
-  projTitle.style.cssText = 'margin:0;font-size:28px;font-weight:700;color:var(--text-primary);flex:1;';
+  projTitle.style.cssText = 'margin:0;font-size:28px;font-weight:700;color:var(--fg);flex:1;';
 
   const menuBtn = document.createElement('button');
   menuBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>';
-  menuBtn.style.cssText = 'background:none;border:none;color:var(--text-secondary);cursor:pointer;padding:4px 8px;border-radius:6px;';
+  menuBtn.style.cssText = 'background:none;border:none;color:color-mix(in srgb, var(--fg) 55%, transparent);cursor:pointer;padding:4px 8px;border-radius:6px;';
   menuBtn.title = T.projectOptions;
   menuBtn.addEventListener('click', e => _showProjectMenu(e, proj));
 
@@ -412,8 +412,8 @@ function _renderProjectPage(wrapper, proj, sessions, docs, mems) {
 function _buildNewChatBox(container, projectId) {
   const box = document.createElement('div');
   box.style.cssText = [
-    'background:var(--bg-secondary,#2a2a2a)',
-    'border:1.5px solid var(--border,#444)',
+    'background:var(--panel)',
+    'border:1.5px solid var(--border)',
     'border-radius:14px',
     'padding:18px 20px 14px',
     'margin-bottom:28px',
@@ -424,7 +424,7 @@ function _buildNewChatBox(container, projectId) {
   const inp = document.createElement('input');
   inp.type = 'text';
   inp.placeholder = T.newConvPlaceholder;
-  inp.style.cssText = 'background:none;border:none;outline:none;color:var(--text-primary);font-size:15px;width:100%;';
+  inp.style.cssText = 'background:none;border:none;outline:none;color:var(--fg);font-size:15px;width:100%;';
 
   inp.addEventListener('keydown', async e => {
     if (e.key !== 'Enter') return;
@@ -433,8 +433,8 @@ function _buildNewChatBox(container, projectId) {
     await _startNewProjectChat(projectId, msg);
   });
 
-  box.addEventListener('mouseenter', () => { box.style.borderColor = 'var(--accent-primary,#5b8abf)'; });
-  box.addEventListener('mouseleave', () => { box.style.borderColor = 'var(--border,#444)'; });
+  box.addEventListener('mouseenter', () => { box.style.borderColor = 'var(--accent-primary, var(--red))'; });
+  box.addEventListener('mouseleave', () => { box.style.borderColor = 'var(--border)'; });
   box.addEventListener('click', () => inp.focus());
   box.appendChild(inp);
   container.appendChild(box);
@@ -487,47 +487,43 @@ function _buildSessionsList(container, sessions, projectId, proj) {
 
   if (!sessions.length) {
     const empty = document.createElement('div');
-    empty.style.cssText = 'color:var(--text-secondary);font-size:13px;padding:8px 0;';
+    empty.style.cssText = 'color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:13px;padding:8px 0;';
     empty.textContent = T.noConversations;
     wrap.appendChild(empty);
     container.appendChild(wrap);
     return;
   }
 
-  sessions.forEach((s, idx) => {
+  sessions.forEach(s => {
+    // Use the same .list-item pattern as the sidebar session list
     const row = document.createElement('div');
-    row.style.cssText = [
-      'display:flex', 'align-items:center', 'padding:13px 6px',
-      'cursor:pointer', 'gap:10px', 'border-radius:6px', 'transition:background 0.1s',
-      'border-bottom:1px solid color-mix(in srgb,var(--border) 35%,transparent)',
-    ].join(';');
-    if (idx === 0) row.style.borderTop = '1px solid color-mix(in srgb,var(--border) 35%,transparent)';
+    row.className = 'list-item session-item';
 
-    const info = document.createElement('div');
-    info.style.cssText = 'flex:1;min-width:0;';
+    // Session type icon — matches sidebar .session-icon convention
+    const icon = document.createElement('span');
+    icon.className = 'session-icon';
+    icon.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+    row.appendChild(icon);
 
-    const sName = document.createElement('div');
-    sName.textContent = s.name || T.untitledConv;
-    sName.style.cssText = 'font-weight:600;font-size:14px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    // Session name — .grow matches sidebar convention
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'grow';
+    const label = s.name || T.untitledConv;
+    nameSpan.textContent = label;
+    nameSpan.title = label + ' · ' + _relDate(s.last_accessed || s.updated_at);
+    row.appendChild(nameSpan);
 
-    const sMeta = document.createElement('div');
-    sMeta.style.cssText = 'font-size:11px;color:var(--text-secondary);margin-top:3px;';
-    sMeta.textContent = T.lastMessage + ' ' + _relDate(s.last_accessed || s.updated_at);
-
-    info.appendChild(sName);
-    info.appendChild(sMeta);
-
+    // Context-menu button — hidden until hover (matches sidebar .session-menu-btn opacity pattern)
     const moreBtn = document.createElement('button');
     moreBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>';
-    moreBtn.style.cssText = 'background:none;border:none;color:var(--text-secondary);cursor:pointer;padding:4px 6px;border-radius:4px;flex-shrink:0;opacity:0;transition:opacity 0.1s;';
+    moreBtn.style.cssText = 'background:none;border:none;color:color-mix(in srgb, var(--fg) 55%, transparent);cursor:pointer;padding:2px 4px;border-radius:4px;flex-shrink:0;opacity:0;transition:opacity 0.1s;min-height:0;height:auto;';
+    row.appendChild(moreBtn);
 
-    row.addEventListener('mouseenter', () => { row.style.background = 'var(--bg-secondary,#2a2a2a)'; moreBtn.style.opacity = '1'; });
-    row.addEventListener('mouseleave', () => { row.style.background = ''; moreBtn.style.opacity = '0'; });
+    row.addEventListener('mouseenter', () => { moreBtn.style.opacity = '1'; });
+    row.addEventListener('mouseleave', () => { moreBtn.style.opacity = '0'; });
     moreBtn.addEventListener('click', e => { e.stopPropagation(); _showSessionMenu(e, s, projectId, proj); });
     row.addEventListener('click', e => { if (moreBtn.contains(e.target)) return; closeProjectsView(); selectSession(s.id); });
 
-    row.appendChild(info);
-    row.appendChild(moreBtn);
     wrap.appendChild(row);
   });
 
@@ -544,15 +540,15 @@ function _buildMemoryCard(panel, proj, initialMems) {
 
   // "Only you" badge
   const badge = document.createElement('div');
-  badge.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--text-secondary);background:var(--bg-primary,#1e1e1e);border:1px solid var(--border,#444);border-radius:20px;padding:2px 8px;margin-bottom:10px;';
+  badge.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:10px;color:color-mix(in srgb, var(--fg) 55%, transparent);background:var(--bg);border:1px solid var(--border);border-radius:20px;padding:2px 8px;margin-bottom:10px;';
   badge.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> ${T.onlyYou}`;
   cardBody.appendChild(badge);
 
   const preview = document.createElement('div');
-  preview.style.cssText = 'font-size:12px;color:var(--text-secondary);line-height:1.55;';
+  preview.style.cssText = 'font-size:12px;color:color-mix(in srgb, var(--fg) 55%, transparent);line-height:1.55;';
 
   const meta = document.createElement('div');
-  meta.style.cssText = 'font-size:10px;color:var(--text-secondary);margin-top:6px;opacity:0.6;';
+  meta.style.cssText = 'font-size:10px;color:color-mix(in srgb, var(--fg) 55%, transparent);margin-top:6px;opacity:0.6;';
 
   const _render = (mems) => {
     if (!mems || !mems.length) {
@@ -584,7 +580,7 @@ function _openMemoryEditor(proj, card) {
   actions.style.cssText = 'display:flex;gap:8px;margin-bottom:12px;';
 
   const synthBtn = document.createElement('button');
-  synthBtn.style.cssText = 'background:var(--accent-primary,#5b8abf);color:#fff;border:none;border-radius:7px;padding:7px 14px;font-size:12px;cursor:pointer;font-weight:600;';
+  synthBtn.style.cssText = 'background:var(--accent-primary, var(--red));color:#fff;border:none;border-radius:7px;padding:7px 14px;font-size:12px;cursor:pointer;font-weight:600;';
   synthBtn.textContent = T.synthesize;
 
   actions.appendChild(synthBtn);
@@ -595,32 +591,32 @@ function _openMemoryEditor(proj, card) {
   dialog.appendChild(memList);
 
   const statusEl = document.createElement('div');
-  statusEl.style.cssText = 'font-size:11px;color:var(--accent-primary);min-height:16px;margin-top:6px;';
+  statusEl.style.cssText = 'font-size:11px;color:var(--accent-primary, var(--red));min-height:16px;margin-top:6px;';
   dialog.appendChild(statusEl);
 
   overlay.appendChild(dialog);
   document.body.appendChild(overlay);
 
   const loadMems = async () => {
-    memList.innerHTML = '<div style="color:var(--text-secondary);font-size:12px;padding:4px;">Loading…</div>';
+    memList.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:12px;padding:4px;">Loading…</div>';
     const mems = await _fetchProjectMemories(proj.id);
     memList.innerHTML = '';
     if (!mems.length) {
-      memList.innerHTML = `<div style="color:var(--text-secondary);font-size:12px;">${T.noMemory}</div>`;
+      memList.innerHTML = `<div style="color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:12px;">${T.noMemory}</div>`;
       return;
     }
     mems.forEach(m => {
       const card2 = document.createElement('div');
-      card2.style.cssText = 'background:var(--bg-secondary,#2a2a2a);border-radius:8px;padding:12px;';
+      card2.style.cssText = 'background:var(--panel);border-radius:8px;padding:12px;';
       const header = document.createElement('div');
       header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;';
       const dt = document.createElement('div');
-      dt.style.cssText = 'font-size:10px;color:var(--text-secondary);';
+      dt.style.cssText = 'font-size:10px;color:color-mix(in srgb, var(--fg) 55%, transparent);';
       dt.textContent = _relDate(m.synthesized_at) + (m.session_count ? ` · ${m.session_count} session(s)` : '');
       header.appendChild(dt);
       card2.appendChild(header);
       const content = document.createElement('div');
-      content.style.cssText = 'font-size:12px;color:var(--text-primary);white-space:pre-wrap;line-height:1.55;';
+      content.style.cssText = 'font-size:12px;color:var(--fg);white-space:pre-wrap;line-height:1.55;';
       content.textContent = m.content;
       card2.appendChild(content);
       memList.appendChild(card2);
@@ -651,22 +647,22 @@ function _buildInstructionsCard(panel, proj) {
   const { card, body: cardBody } = _sideCard(T.instructions, () => _toggleInstrEdit());
 
   const preview = document.createElement('div');
-  preview.style.cssText = 'font-size:12px;color:var(--text-secondary);line-height:1.55;max-height:90px;overflow:hidden;';
+  preview.style.cssText = 'font-size:12px;color:color-mix(in srgb, var(--fg) 55%, transparent);line-height:1.55;max-height:90px;overflow:hidden;';
 
   const ta = document.createElement('textarea');
   ta.rows = 6;
   ta.placeholder = T.instrPlaceholder;
   ta.value = proj.instructions || '';
-  ta.style.cssText = 'display:none;width:100%;box-sizing:border-box;background:var(--bg-primary,#1e1e1e);color:var(--text-primary);border:1px solid var(--accent-primary,#5b8abf);border-radius:8px;padding:8px 10px;font-size:12px;font-family:inherit;resize:vertical;outline:none;line-height:1.5;';
+  ta.style.cssText = 'display:none;width:100%;box-sizing:border-box;background:var(--bg);color:var(--fg);border:1px solid var(--accent-primary, var(--red));border-radius:8px;padding:8px 10px;font-size:12px;font-family:inherit;resize:vertical;outline:none;line-height:1.5;';
 
   const saveBtn = document.createElement('button');
   saveBtn.textContent = T.save;
-  saveBtn.style.cssText = 'display:none;margin-top:8px;background:var(--accent-primary,#5b8abf);color:#fff;border:none;border-radius:7px;padding:6px 16px;cursor:pointer;font-size:12px;font-weight:600;';
+  saveBtn.style.cssText = 'display:none;margin-top:8px;background:var(--accent-primary, var(--red));color:#fff;border:none;border-radius:7px;padding:6px 16px;cursor:pointer;font-size:12px;font-weight:600;';
 
   const _setPreview = () => {
     const txt = proj.instructions;
     preview.textContent = txt ? txt.substring(0, 160) + (txt.length > 160 ? '…' : '') : T.noInstructions;
-    preview.style.color = txt ? 'var(--text-secondary)' : 'var(--text-secondary)';
+    preview.style.color = txt ? 'color-mix(in srgb, var(--fg) 55%, transparent)' : 'color-mix(in srgb, var(--fg) 55%, transparent)';
     preview.style.fontStyle = txt ? '' : 'italic';
   };
   _setPreview();
@@ -724,15 +720,15 @@ function _buildFilesCard(panel, projectId, initialDocs) {
     if (!docs.length) {
       // Empty state with dashed border + illustration (matches Claude.ai)
       const empty = document.createElement('div');
-      empty.style.cssText = 'border:1.5px dashed var(--border,#444);border-radius:10px;padding:22px 14px;text-align:center;margin-top:4px;';
+      empty.style.cssText = 'border:1.5px dashed var(--border);border-radius:10px;padding:22px 14px;text-align:center;margin-top:4px;';
       empty.innerHTML = `
-        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" style="opacity:0.28;margin:0 auto 10px;display:block;color:var(--text-secondary);">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" style="opacity:0.28;margin:0 auto 10px;display:block;color:color-mix(in srgb, var(--fg) 55%, transparent);">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
           <polyline points="14 2 14 8 20 8"/>
           <line x1="12" y1="12" x2="12" y2="18"/>
           <line x1="9" y1="15" x2="15" y2="15"/>
         </svg>
-        <div style="font-size:11px;color:var(--text-secondary);line-height:1.55;">${T.addFilesHint}</div>`;
+        <div style="font-size:11px;color:color-mix(in srgb, var(--fg) 55%, transparent);line-height:1.55;">${T.addFilesHint}</div>`;
       fileList.appendChild(empty);
       return;
     }
@@ -742,11 +738,11 @@ function _buildFilesCard(panel, projectId, initialDocs) {
       row.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink:0;opacity:0.45;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
       const nm = document.createElement('span');
       nm.textContent = d.title || d.id;
-      nm.style.cssText = 'flex:1;font-size:11px;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      nm.style.cssText = 'flex:1;font-size:11px;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
       const rm = document.createElement('button');
       rm.textContent = '×';
       rm.title = T.remove;
-      rm.style.cssText = 'background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:15px;padding:0 3px;line-height:1;opacity:0.6;';
+      rm.style.cssText = 'background:none;border:none;color:color-mix(in srgb, var(--fg) 55%, transparent);cursor:pointer;font-size:15px;padding:0 3px;line-height:1;opacity:0.6;';
       rm.addEventListener('click', async () => {
         await _api('DELETE', `/api/projects/${projectId}/documents/${d.id}`);
         renderDocs(await _fetchProjectDocuments(projectId));
@@ -774,8 +770,8 @@ async function _openLibraryForProject(projectId, renderFn) {
 
   const panel = document.createElement('div');
   panel.style.cssText = [
-    'background:var(--bg-primary,#1e1e1e)',
-    'border:1px solid var(--border,#444)',
+    'background:var(--bg)',
+    'border:1px solid var(--border)',
     'border-radius:12px',
     'width:min(720px,92vw)',
     'height:80vh',
@@ -787,7 +783,7 @@ async function _openLibraryForProject(projectId, renderFn) {
 
   // ── Header ───────────────────────────────────────────────────────────────
   const hdr = document.createElement('div');
-  hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border,#444);flex-shrink:0;';
+  hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);flex-shrink:0;';
 
   const hdrTitle = document.createElement('h3');
   hdrTitle.textContent = 'Project Files';
@@ -798,7 +794,7 @@ async function _openLibraryForProject(projectId, renderFn) {
 
   const closeBtn = document.createElement('button');
   closeBtn.textContent = '×';
-  closeBtn.style.cssText = 'background:none;border:none;color:var(--text-secondary);font-size:22px;cursor:pointer;padding:0 4px;line-height:1;';
+  closeBtn.style.cssText = 'background:none;border:none;color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:22px;cursor:pointer;padding:0 4px;line-height:1;';
   closeBtn.addEventListener('click', () => { overlay.remove(); renderFn && _fetchProjectDocuments(projectId).then(renderFn); });
 
   hdrRight.appendChild(closeBtn);
@@ -813,16 +809,16 @@ async function _openLibraryForProject(projectId, renderFn) {
   const sortSel = document.createElement('select');
   sortSel.className = 'memory-sort-select';
   sortSel.innerHTML = '<option value="recent">Recent</option><option value="oldest">Oldest</option><option value="alpha">A–Z</option>';
-  sortSel.style.cssText = 'font-size:12px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border,#444);border-radius:6px;padding:5px 8px;cursor:pointer;';
+  sortSel.style.cssText = 'font-size:12px;background:var(--panel);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;cursor:pointer;';
 
   const searchInp = document.createElement('input');
   searchInp.type = 'text';
   searchInp.placeholder = 'Search documents…';
-  searchInp.style.cssText = 'flex:1;background:var(--bg-secondary,#2a2a2a);color:var(--text-primary);border:1px solid var(--border,#444);border-radius:6px;padding:6px 10px;font-size:13px;outline:none;';
+  searchInp.style.cssText = 'flex:1;background:var(--panel);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;outline:none;';
 
   const newDocBtn = document.createElement('button');
   newDocBtn.textContent = '+ New';
-  newDocBtn.style.cssText = 'background:var(--bg-secondary,#2a2a2a);border:1px solid var(--border,#444);color:var(--text-primary);border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;font-weight:600;';
+  newDocBtn.style.cssText = 'background:var(--panel);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;font-weight:600;';
   newDocBtn.addEventListener('click', async () => {
     if (window.documentModule && window.documentModule.newDocument) {
       overlay.remove();
@@ -834,7 +830,7 @@ async function _openLibraryForProject(projectId, renderFn) {
 
   const importBtn = document.createElement('button');
   importBtn.textContent = '↑ Import';
-  importBtn.style.cssText = 'background:var(--bg-secondary,#2a2a2a);border:1px solid var(--border,#444);color:var(--text-primary);border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;font-weight:600;';
+  importBtn.style.cssText = 'background:var(--panel);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;font-weight:600;';
   importBtn.addEventListener('click', async () => {
     // Open a hidden file input
     const fi = document.createElement('input');
@@ -847,7 +843,7 @@ async function _openLibraryForProject(projectId, renderFn) {
     fi.addEventListener('change', async () => {
       if (!fi.files.length) { fi.remove(); return; }
       const uploadStatus = document.createElement('div');
-      uploadStatus.style.cssText = 'position:absolute;bottom:16px;left:50%;transform:translateX(-50%);background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-size:12px;color:var(--text-primary);z-index:10;';
+      uploadStatus.style.cssText = 'position:absolute;bottom:16px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-size:12px;color:var(--fg);z-index:10;';
       uploadStatus.textContent = `Uploading ${fi.files.length} file(s)…`;
       panel.style.position = 'relative';
       panel.appendChild(uploadStatus);
@@ -871,7 +867,7 @@ async function _openLibraryForProject(projectId, renderFn) {
 
   // ── Hint ─────────────────────────────────────────────────────────────────
   const hint = document.createElement('div');
-  hint.style.cssText = 'padding:8px 20px 0;font-size:11px;color:var(--text-secondary);flex-shrink:0;';
+  hint.style.cssText = 'padding:8px 20px 0;font-size:11px;color:color-mix(in srgb, var(--fg) 55%, transparent);flex-shrink:0;';
   hint.textContent = 'Check a document to pin it to this project. Pinned documents are injected as context into every conversation.';
   panel.appendChild(hint);
 
@@ -887,7 +883,7 @@ async function _openLibraryForProject(projectId, renderFn) {
   let allDocs = [], pinnedIds = new Set(), _sort = 'recent', _search = '';
 
   const _reloadDocs = async () => {
-    listWrap.innerHTML = '<div style="padding:20px;color:var(--text-secondary);font-size:13px;">Loading…</div>';
+    listWrap.innerHTML = '<div style="padding:20px;color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:13px;">Loading…</div>';
     const [docs, pinned] = await Promise.all([_fetchUserDocuments(_search), _fetchProjectDocuments(projectId)]);
     allDocs = docs;
     pinnedIds = new Set(pinned.map(d => d.id));
@@ -904,7 +900,7 @@ async function _openLibraryForProject(projectId, renderFn) {
 
     if (!filtered.length) {
       const empty = document.createElement('div');
-      empty.style.cssText = 'padding:32px 20px;color:var(--text-secondary);font-size:13px;text-align:center;';
+      empty.style.cssText = 'padding:32px 20px;color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:13px;text-align:center;';
       empty.textContent = _search ? 'No documents found.' : 'No documents in your library yet.';
       listWrap.appendChild(empty);
       return;
@@ -917,17 +913,17 @@ async function _openLibraryForProject(projectId, renderFn) {
         'display:flex', 'align-items:center', 'gap:12px',
         'padding:10px 20px', 'cursor:pointer', 'transition:background 0.1s',
         'border-bottom:1px solid color-mix(in srgb,var(--border) 30%,transparent)',
-        pinned ? 'background:color-mix(in srgb,var(--accent-primary,#5b8abf) 8%,transparent)' : '',
+        pinned ? 'background:color-mix(in srgb,var(--accent-primary, var(--red)) 8%,transparent)' : '',
       ].join(';');
 
-      row.addEventListener('mouseenter', () => { if (!pinnedIds.has(d.id)) row.style.background = 'var(--bg-secondary,#2a2a2a)'; });
-      row.addEventListener('mouseleave', () => { row.style.background = pinnedIds.has(d.id) ? 'color-mix(in srgb,var(--accent-primary,#5b8abf) 8%,transparent)' : ''; });
+      row.addEventListener('mouseenter', () => { if (!pinnedIds.has(d.id)) row.style.background = 'var(--panel)'; });
+      row.addEventListener('mouseleave', () => { row.style.background = pinnedIds.has(d.id) ? 'color-mix(in srgb,var(--accent-primary, var(--red)) 8%,transparent)' : ''; });
 
       // Checkbox
       const chk = document.createElement('input');
       chk.type = 'checkbox';
       chk.checked = pinned;
-      chk.style.cssText = 'width:15px;height:15px;flex-shrink:0;cursor:pointer;accent-color:var(--accent-primary,#5b8abf);';
+      chk.style.cssText = 'width:15px;height:15px;flex-shrink:0;cursor:pointer;accent-color:var(--accent-primary, var(--red));';
 
       // Doc icon — SVG that matches the Documents library style
       const icon = document.createElement('div');
@@ -937,12 +933,12 @@ async function _openLibraryForProject(projectId, renderFn) {
       const extColor = extColors[rawExt] || '#888';
       icon.innerHTML = `
         <svg width="28" height="34" viewBox="0 0 28 34" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect x="1" y="1" width="26" height="32" rx="3" fill="var(--bg-secondary,#2a2a2a)" stroke="var(--border,#555)" stroke-width="1.2"/>
+          <rect x="1" y="1" width="26" height="32" rx="3" fill="var(--panel)" stroke="var(--border,#555)" stroke-width="1.2"/>
           <path d="M17 1v7h9" fill="none" stroke="var(--border,#555)" stroke-width="1.2" stroke-linecap="round"/>
           <path d="M17 1l9 7" fill="${extColor}" opacity="0.25"/>
-          <rect x="5" y="14" width="14" height="1.5" rx="0.75" fill="var(--text-secondary,#888)" opacity="0.6"/>
-          <rect x="5" y="18" width="18" height="1.5" rx="0.75" fill="var(--text-secondary,#888)" opacity="0.4"/>
-          <rect x="5" y="22" width="11" height="1.5" rx="0.75" fill="var(--text-secondary,#888)" opacity="0.3"/>
+          <rect x="5" y="14" width="14" height="1.5" rx="0.75" fill="color-mix(in srgb, var(--fg) 55%, transparent)" opacity="0.6"/>
+          <rect x="5" y="18" width="18" height="1.5" rx="0.75" fill="color-mix(in srgb, var(--fg) 55%, transparent)" opacity="0.4"/>
+          <rect x="5" y="22" width="11" height="1.5" rx="0.75" fill="color-mix(in srgb, var(--fg) 55%, transparent)" opacity="0.3"/>
         </svg>
         <span style="position:absolute;bottom:1px;right:0;font-size:7px;font-weight:800;color:${extColor};text-transform:uppercase;line-height:1;">${rawExt || 'doc'}</span>
       `;
@@ -952,13 +948,13 @@ async function _openLibraryForProject(projectId, renderFn) {
       info.style.cssText = 'flex:1;min-width:0;';
       const titleEl = document.createElement('div');
       titleEl.textContent = d.title || 'Untitled document';
-      titleEl.style.cssText = 'font-size:13px;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;';
+      titleEl.style.cssText = 'font-size:13px;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;';
       const meta = document.createElement('div');
       const metaParts = [];
       if (d.language && d.language !== 'text') metaParts.push(d.language);
       if (d.created_at) metaParts.push(_relDate(d.created_at));
       meta.textContent = metaParts.join(' · ') || 'document';
-      meta.style.cssText = 'font-size:10px;color:var(--text-secondary);margin-top:2px;';
+      meta.style.cssText = 'font-size:10px;color:color-mix(in srgb, var(--fg) 55%, transparent);margin-top:2px;';
       info.appendChild(titleEl);
       info.appendChild(meta);
 
@@ -966,7 +962,7 @@ async function _openLibraryForProject(projectId, renderFn) {
       if (pinned) {
         const badge = document.createElement('span');
         badge.textContent = 'Pinned';
-        badge.style.cssText = 'font-size:10px;color:var(--accent-primary,#5b8abf);border:1px solid var(--accent-primary,#5b8abf);border-radius:10px;padding:1px 7px;flex-shrink:0;';
+        badge.style.cssText = 'font-size:10px;color:var(--accent-primary, var(--red));border:1px solid var(--accent-primary, var(--red));border-radius:10px;padding:1px 7px;flex-shrink:0;';
         row.appendChild(chk);
         row.appendChild(icon);
         row.appendChild(info);
@@ -1021,7 +1017,7 @@ async function _showDocPicker(projectId, renderFn) {
   dialog.appendChild(searchInp);
 
   const listEl = document.createElement('div');
-  listEl.style.cssText = 'overflow-y:auto;flex:1;min-height:0;border:1px solid var(--border,#444);border-radius:8px;';
+  listEl.style.cssText = 'overflow-y:auto;flex:1;min-height:0;border:1px solid var(--border);border-radius:8px;';
   dialog.appendChild(listEl);
 
   overlay.appendChild(dialog);
@@ -1036,26 +1032,26 @@ async function _showDocPicker(projectId, renderFn) {
   const renderList = items => {
     listEl.innerHTML = '';
     if (!items.length) {
-      listEl.innerHTML = `<div style="padding:16px;color:var(--text-secondary);font-size:13px;">${T.noDocuments}</div>`;
+      listEl.innerHTML = `<div style="padding:16px;color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:13px;">${T.noDocuments}</div>`;
       return;
     }
     items.forEach(d => {
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer;border-bottom:1px solid color-mix(in srgb,var(--border) 30%,transparent);transition:background 0.1s;';
-      row.addEventListener('mouseenter', () => { row.style.background = 'var(--bg-secondary,#2a2a2a)'; });
+      row.addEventListener('mouseenter', () => { row.style.background = 'var(--panel)'; });
       row.addEventListener('mouseleave', () => { row.style.background = ''; });
       const chk = document.createElement('input');
       chk.type = 'checkbox';
       chk.checked = pinnedIds.has(d.id);
-      chk.style.cssText = 'width:14px;height:14px;flex-shrink:0;cursor:pointer;accent-color:var(--accent-primary,#5b8abf);';
+      chk.style.cssText = 'width:14px;height:14px;flex-shrink:0;cursor:pointer;accent-color:var(--accent-primary, var(--red));';
       const info = document.createElement('div');
       info.style.cssText = 'flex:1;min-width:0;';
       const nm = document.createElement('div');
       nm.textContent = d.title || d.id;
-      nm.style.cssText = 'font-size:13px;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      nm.style.cssText = 'font-size:13px;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
       const sub = document.createElement('div');
       sub.textContent = (d.language || 'text') + (d.session_name ? ' · ' + d.session_name : '');
-      sub.style.cssText = 'font-size:10px;color:var(--text-secondary);margin-top:1px;';
+      sub.style.cssText = 'font-size:10px;color:color-mix(in srgb, var(--fg) 55%, transparent);margin-top:1px;';
       info.appendChild(nm);
       info.appendChild(sub);
       row.appendChild(chk);
@@ -1137,7 +1133,7 @@ function _showProjectMenu(e, proj) {
     loadProjects().catch(() => {});
     openProjectsListView();
   });
-  del.style.color = 'var(--danger,#e05252)';
+  del.style.color = 'var(--danger, var(--red))';
   _positionMenu(menu, e);
 }
 
@@ -1233,18 +1229,18 @@ function _renameDialog(label, currentValue, onSave) {
  */
 function _sideCard(title, onEdit) {
   const card = document.createElement('div');
-  card.style.cssText = 'background:var(--bg-secondary,#2a2a2a);border:1px solid var(--border,#444);border-radius:12px;padding:14px 16px;';
+  card.style.cssText = 'background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;';
 
   const hdr = document.createElement('div');
   hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;';
 
   const ttl = document.createElement('div');
   ttl.textContent = title;
-  ttl.style.cssText = 'font-weight:700;font-size:13px;color:var(--text-primary);';
+  ttl.style.cssText = 'font-weight:700;font-size:13px;color:var(--fg);';
 
   const editBtn = document.createElement('button');
   editBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>';
-  editBtn.style.cssText = 'background:none;border:none;color:var(--text-secondary);cursor:pointer;padding:2px 4px;border-radius:4px;display:flex;align-items:center;';
+  editBtn.style.cssText = 'background:none;border:none;color:color-mix(in srgb, var(--fg) 55%, transparent);cursor:pointer;padding:2px 4px;border-radius:4px;display:flex;align-items:center;';
   if (onEdit) editBtn.addEventListener('click', onEdit);
 
   hdr.appendChild(ttl);
@@ -1267,7 +1263,7 @@ function _makeDialogOverlay() {
 
 function _makeDialogBox(w = 'min(400px,90vw)', h = 'auto') {
   const d = document.createElement('div');
-  d.style.cssText = `background:var(--bg-primary,#1e1e1e);border:1px solid var(--border,#444);border-radius:12px;padding:24px;width:${w};max-height:${h};box-shadow:0 8px 32px rgba(0,0,0,0.4);overflow:hidden;box-sizing:border-box;`;
+  d.style.cssText = `background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:24px;width:${w};max-height:${h};box-shadow:0 8px 32px rgba(0,0,0,0.4);overflow:hidden;box-sizing:border-box;`;
   return d;
 }
 
@@ -1279,7 +1275,7 @@ function _dialogHdr(title, onClose) {
   t.style.cssText = 'margin:0;font-size:15px;font-weight:700;';
   const x = document.createElement('button');
   x.textContent = '×';
-  x.style.cssText = 'background:none;border:none;color:var(--text-secondary);font-size:20px;cursor:pointer;padding:0 4px;line-height:1;';
+  x.style.cssText = 'background:none;border:none;color:color-mix(in srgb, var(--fg) 55%, transparent);font-size:20px;cursor:pointer;padding:0 4px;line-height:1;';
   x.addEventListener('click', onClose);
   hdr.appendChild(t);
   hdr.appendChild(x);
@@ -1290,7 +1286,7 @@ function _makeInput(type, placeholder) {
   const i = document.createElement('input');
   i.type = type;
   i.placeholder = placeholder;
-  i.style.cssText = 'width:100%;box-sizing:border-box;background:var(--bg-secondary,#2a2a2a);color:var(--text-primary);border:1px solid var(--border,#444);border-radius:8px;padding:9px 12px;font-size:14px;outline:none;margin-bottom:10px;display:block;';
+  i.style.cssText = 'width:100%;box-sizing:border-box;background:var(--panel);color:var(--fg);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:14px;outline:none;margin-bottom:10px;display:block;';
   return i;
 }
 
@@ -1304,8 +1300,8 @@ function _makeBtn(label, primary) {
   const b = document.createElement('button');
   b.textContent = label;
   b.style.cssText = primary
-    ? 'background:var(--text-primary,#e0e0e0);color:var(--bg-primary,#1e1e1e);border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;'
-    : 'background:none;border:1px solid var(--border,#444);color:var(--text-secondary);border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;';
+    ? 'background:var(--fg);color:var(--bg);border:none;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;'
+    : 'background:none;border:1px solid var(--border);color:color-mix(in srgb, var(--fg) 55%, transparent);border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;';
   return b;
 }
 
