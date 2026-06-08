@@ -19,14 +19,15 @@ import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
-from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES
+from src.tool_policy import ToolPolicy
+from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
 
 # Persistent working directory for agent subprocesses.
 # Resolves to <repo_root>/data, which is the bind-mounted volume in Docker
 # (/app/data) and the local data directory for manual installs.
 # Using this as cwd and HOME prevents the agent from silently creating files
 # in ephemeral container layers that are lost on the next rebuild.
-_AGENT_WORKDIR = str(pathlib.Path(__file__).parent.parent / "data")
+_AGENT_WORKDIR = DATA_DIR
 
 
 def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
@@ -1128,6 +1129,7 @@ async def execute_tool_block(
     block: Any,
     session_id: Optional[str] = None,
     disabled_tools: Optional[set] = None,
+    tool_policy: Optional[ToolPolicy] = None,
     owner: Optional[str] = None,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     workspace: Optional[str] = None,
@@ -1186,6 +1188,12 @@ async def execute_tool_block(
             pass
 
     # Reject tools that the user has disabled for this request
+    if tool_policy and tool_policy.blocks(tool):
+        desc = f"{tool}: BLOCKED"
+        result = {"error": tool_policy.reason_for(tool), "exit_code": 1}
+        logger.info("Tool blocked by policy: %s", tool)
+        return desc, result
+
     if disabled_tools and tool in disabled_tools:
         desc = f"{tool}: BLOCKED"
         result = {"error": f"Tool '{tool}' is disabled by user.", "exit_code": 1}

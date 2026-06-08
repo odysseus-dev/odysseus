@@ -4,8 +4,10 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from src.constants import GENERATED_IMAGES_DIR
 
-GENERATED_IMAGE_DIR = Path("data/generated_images")
+
+GENERATED_IMAGE_DIR = Path(GENERATED_IMAGES_DIR)
 GENERATED_IMAGE_RE = re.compile(
     r"^[a-f0-9]{8,64}\.(png|jpg|jpeg|webp|gif|mp4|mov|webm|mkv|m4v)$"
 )
