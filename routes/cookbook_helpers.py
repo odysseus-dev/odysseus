@@ -197,6 +197,20 @@ def _pip_install_attempt(pip_cmd: str) -> str:
     )
 
 
+def _pip_command(python_cmd: str) -> str:
+    """Return a pip command for either a pip executable or a Python executable."""
+    cmd = python_cmd.strip()
+    if " -m pip" in cmd or cmd in {"pip", "pip3"}:
+        return python_cmd
+    if cmd in {"python", "python3", "python.exe"} or cmd.endswith(("/python", "/python3", "\\python.exe")):
+        return f"{python_cmd} -m pip"
+    return python_cmd
+
+
+def _pip_break_system_packages_check(pip_cmd: str) -> str:
+    return f"{pip_cmd} install --help 2>/dev/null | grep -q -- --break-system-packages"
+
+
 def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m pip", upgrade: bool = False) -> str:
     """Build a bash pip install fallback chain that surfaces errors.
 
@@ -221,27 +235,31 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     if "llama-cpp-python" in package:
         pkg += " --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
 
-    base = _pip_install_attempt(f"{python_cmd} install -q{upgrade_flag} {pkg}")
-    user = _pip_install_attempt(f"{python_cmd} install --user --break-system-packages -q{upgrade_flag} {pkg}")
+    pip_cmd = _pip_command(python_cmd)
+    base = _pip_install_attempt(f"{pip_cmd} install -q{upgrade_flag} {pkg}")
+    user = _pip_install_attempt(f"{pip_cmd} install --user -q{upgrade_flag} {pkg}")
+    user_break_system = _pip_install_attempt(f"{pip_cmd} install --user --break-system-packages -q{upgrade_flag} {pkg}")
+    user_fallback = f"( {user} || {{ {_pip_break_system_packages_check(pip_cmd)} && {user_break_system}; }} )"
     # Derive the python executable for the venv detection check.
     # Must use the same interpreter that pip belongs to; hardcoding
     # python3 breaks when pip lives in a venv that only has "python".
-    if " -m pip" in python_cmd:
-        python_exe = python_cmd.replace(" -m pip", "")
-    elif python_cmd.strip() == "pip":
+    if " -m pip" in pip_cmd:
+        python_exe = pip_cmd.replace(" -m pip", "")
+    elif pip_cmd.strip() == "pip":
         python_exe = "python"
-    elif python_cmd.strip() == "pip3":
+    elif pip_cmd.strip() == "pip3":
         python_exe = "python3"
     else:
         python_exe = "python3"
     venv_check = f'{python_exe} -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"'
-    # Negated: `! venv_check` succeeds (exit 0) when NOT in a venv → `&&` tries
-    # --user.  When IN a venv `! venv_check` fails → `&&` skips --user and the
+    # Negated: `! venv_check` succeeds (exit 0) when NOT in a venv -> `&&` tries
+    # --user. When IN a venv `! venv_check` fails -> `&&` skips --user and the
     # group exits non-zero, propagating the base-install failure instead of
     # masking it as success (the `|| { venv_check || … }` shape from #903
     # swallowed the exit code because venv_check's exit-0 became the group's
-    # result).
-    return f"{base} || {{ ! {venv_check} && {user}; }}"
+    # result). `--break-system-packages` is only attempted when the active pip
+    # supports it; older pip versions abort with "no such option" otherwise.
+    return f"{base} || {{ ! {venv_check} && {user_fallback}; }}"
 
 
 def _venv_safe_local_pip_install_cmd(cmd: str, *, local: bool, in_venv: bool) -> str:
@@ -270,6 +288,55 @@ def _venv_safe_local_pip_install_cmd(cmd: str, *, local: bool, in_venv: bool) ->
         if part not in {"--user", "--break-system-packages"}
     ]
     return shlex.join(stripped)
+
+
+def _pip_install_command_without_break_system_packages(cmd: str) -> str:
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        return cmd
+    stripped = [part for part in parts if part != "--break-system-packages"]
+    return shlex.join(stripped)
+
+
+def _pip_install_help_check_from_cmd(cmd: str) -> str | None:
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        return None
+    try:
+        install_index = parts.index("install")
+    except ValueError:
+        return None
+    if install_index <= 0:
+        return None
+    pip_prefix = parts[:install_index]
+    return f"{shlex.join(pip_prefix + ['install', '--help'])} 2>/dev/null | grep -q -- --break-system-packages"
+
+
+def _append_pip_install_runner_lines(runner_lines: list[str], cmd: str) -> None:
+    """Append a pip install command, guarding --break-system-packages support.
+
+    The Dependencies UI may submit ``python3 -m pip install --user
+    --break-system-packages ...`` for non-venv installs. That flag is useful on
+    PEP-668-locked distros, but older pip (including Ubuntu 22.04's apt pip in
+    the NVIDIA CUDA base image) aborts with "no such option". Branch at runner
+    time so stale browser JS and remote targets are handled by the server too.
+    """
+    if "--break-system-packages" not in (cmd or ""):
+        runner_lines.append(cmd)
+        return
+    help_check = _pip_install_help_check_from_cmd(cmd)
+    without_break = _pip_install_command_without_break_system_packages(cmd)
+    if not help_check or without_break == cmd:
+        runner_lines.append(cmd)
+        return
+    runner_lines.append(f"if {help_check}; then")
+    runner_lines.append(f"  {cmd}")
+    runner_lines.append("else")
+    runner_lines.append('  echo "[odysseus] pip does not support --break-system-packages; installing without it."')
+    runner_lines.append(f"  {without_break}")
+    runner_lines.append("fi")
 
 
 def _user_shell_path_bootstrap() -> list[str]:
