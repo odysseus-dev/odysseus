@@ -9,7 +9,9 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Form
 from pydantic import BaseModel, Field
 
-from core.database import SessionLocal, Webhook
+from core.database import SessionLocal, Webhook, ModelEndpoint
+from src.auth_helpers import owner_filter
+from src.url_security import validate_public_http_url
 from src.webhook_manager import WebhookManager, validate_webhook_url, validate_events
 
 logger = logging.getLogger(__name__)
@@ -26,23 +28,19 @@ MAX_MESSAGE_LEN = 32_000
 from core.middleware import require_admin as _require_admin
 
 
-def _first_enabled_endpoint(db, owner):
-    """First enabled ModelEndpoint VISIBLE to `owner` — their own rows plus
-    legacy null-owner ("shared") rows. Owner-scoped on purpose: ModelEndpoint
-    is per-user (core/database.py — "when non-null, the model picker only shows
-    the endpoint to that user"), and the sync-chat fallback uses the row's
-    decrypted `api_key`. An unscoped ``.first()`` would let a chat-scoped token
-    (e.g. a paired mobile device) fall back onto ANOTHER user's private
-    endpoint and silently spend that owner's API key / quota — and reach
-    whatever internal base_url they configured. Mirrors the owner_filter scoping
-    in routes/model_routes.py and companion/routes.py. A null/empty owner is a
-    no-op (single-user / legacy mode), preserving the original behaviour.
+def _select_api_chat_fallback_endpoint(db, token_owner: Optional[str]):
+    """First enabled ModelEndpoint visible to token_owner — their own rows plus
+    legacy null-owner ("shared") rows. Owner-scoped: an unscoped .first() would
+    let a chat-scoped token fall back onto another user's private endpoint and
+    silently spend that owner's API key/quota. Prefer owner rows before shared
+    rows. Fails closed to null-owner rows only when token_owner is absent.
+    Does not validate base_url — admin-configured local/LAN endpoints remain allowed.
     """
-    from core.database import ModelEndpoint
-    from src.auth_helpers import owner_filter
-    q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
-    q = owner_filter(q, ModelEndpoint, owner)
-    return q.first()
+    query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
+    if token_owner:
+        query = owner_filter(query, ModelEndpoint, token_owner)
+        return query.order_by(ModelEndpoint.owner.desc(), ModelEndpoint.created_at).first()
+    return query.filter(ModelEndpoint.owner == None).order_by(ModelEndpoint.created_at).first()  # noqa: E711
 
 
 def _caller_owns_session(sess_owner, caller) -> bool:
@@ -196,6 +194,8 @@ def setup_webhook_routes(
         "together": "https://api.together.xyz/v1",
         "openrouter": "https://openrouter.ai/api/v1",
         "ollama": "https://ollama.com/api",
+        "opencode-zen": "https://opencode.ai/zen/v1",
+        "opencode-go": "https://opencode.ai/zen/go/v1",
         "fireworks": "https://api.fireworks.ai/inference/v1",
         "venice": "https://api.venice.ai/api/v1",
     }
@@ -278,15 +278,21 @@ def setup_webhook_routes(
             api_key = body.api_key.strip()
             model = body.model or "deepseek-chat"
 
-            # Resolve base_url: explicit > provider name > model prefix auto-detect
-            base_url = body.base_url.strip().rstrip("/") if body.base_url else None
-            if not base_url:
+            # Validate only token-supplied direct base_url; auto-resolved known-provider
+            # URLs are not subject to extra local/LAN blocking beyond existing provider logic.
+            direct_base_url = body.base_url.strip().rstrip("/") if body.base_url else None
+            if direct_base_url:
+                try:
+                    base_url = validate_public_http_url(direct_base_url)
+                except ValueError as e:
+                    detail = str(e).replace("URL", "base_url", 1)
+                    raise HTTPException(400, detail)
+            else:
                 base_url = _resolve_base_url(model, body.provider)
             if not base_url:
                 raise HTTPException(400,
                     "Could not auto-detect provider. Pass base_url (e.g. 'https://api.deepseek.com/v1') "
                     "or provider ('deepseek', 'openai', 'groq', etc.)")
-
             base_url = normalize_base(base_url)
             endpoint_url = build_chat_url(base_url)
 
@@ -306,9 +312,7 @@ def setup_webhook_routes(
         if not sess:
             db = SessionLocal()
             try:
-                # Owner-scoped: only THIS token owner's endpoints + legacy
-                # shared rows, never another user's private endpoint/api_key.
-                ep = _first_enabled_endpoint(db, token_owner)
+                ep = _select_api_chat_fallback_endpoint(db, token_owner)
             finally:
                 db.close()
 
@@ -321,22 +325,33 @@ def setup_webhook_routes(
             endpoint_url = build_chat_url(base_url)
             model = body.model or "auto"
             api_key = ep.api_key
+            if getattr(ep, "provider_auth_id", None):
+                try:
+                    from src.endpoint_resolver import resolve_endpoint_runtime
+                    base_url, api_key = resolve_endpoint_runtime(ep, owner=token_owner)
+                    endpoint_url = build_chat_url(base_url)
+                except Exception:
+                    raise HTTPException(500, "Could not resolve endpoint credentials")
 
             if model == "auto":
                 try:
                     async with httpx.AsyncClient(timeout=5) as client:
                         models_url = build_models_url(base_url)
                         hdrs = build_headers(api_key, base_url)
-                        resp = await client.get(models_url, headers=hdrs)
-                        resp.raise_for_status()
-                        data = resp.json()
-                        ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
-                        if not ids:
-                            ids = [
-                                m.get("name") or m.get("model")
-                                for m in (data.get("models") or [])
-                                if m.get("name") or m.get("model")
-                            ]
+                        if models_url:
+                            resp = await client.get(models_url, headers=hdrs)
+                            resp.raise_for_status()
+                            data = resp.json()
+                            ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+                            if not ids:
+                                ids = [
+                                    m.get("name") or m.get("model")
+                                    for m in (data.get("models") or [])
+                                    if m.get("name") or m.get("model")
+                                ]
+                        else:
+                            import json as _json
+                            ids = _json.loads(ep.cached_models or "[]")
                         model = ids[0] if ids else "auto"
                 except Exception:
                     raise HTTPException(500, "Could not discover models from endpoint")

@@ -4,6 +4,7 @@
 import Storage from './storage.js';
 import uiModule from './ui.js';
 import { initColorPickers, attachColorPicker } from './colorPicker.js';
+import { hexToRgb } from './color/hex.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 
@@ -128,10 +129,10 @@ function _syncCustomThemesToServer(ct) {
 
 // --- Syntax color derivation from theme base colors ---
 function hexToHSL(hex) {
-  hex = hex.replace('#', '');
-  const r = parseInt(hex.substring(0, 2), 16) / 255;
-  const g = parseInt(hex.substring(2, 4), 16) / 255;
-  const b = parseInt(hex.substring(4, 6), 16) / 255;
+  const rgb = hexToRgb(hex) || { r: 0, g: 0, b: 0 };
+  const r = rgb.r / 255;
+  const g = rgb.g / 255;
+  const b = rgb.b / 255;
   const max = Math.max(r, g, b), min = Math.min(r, g, b);
   let h, s, l = (max + min) / 2;
   if (max === min) { h = s = 0; }
@@ -1797,8 +1798,7 @@ function _initPerlinFlow() {
     if (bg !== _cachedBg) {
       _cachedBg = bg;
       // Parse hex to rgb for rgba fade
-      const h = bg.replace('#', '');
-      const r = parseInt(h.substring(0, 2), 16), g = parseInt(h.substring(2, 4), 16), b = parseInt(h.substring(4, 6), 16);
+      const { r, g, b } = hexToRgb(bg) || { r: 0, g: 0, b: 0 };
       _fadeStyle = `rgba(${r},${g},${b},0.02)`;
     }
     return _fadeStyle;
@@ -1982,9 +1982,8 @@ function _initEmbers() {
     return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#c9a95a';
   }
   function rgba(hex, a) {
-    const h = hex.replace('#', '');
-    const n = parseInt(h, 16);
-    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+    const { r, g, b } = hexToRgb(hex) || { r: 0, g: 0, b: 0 };
+    return `rgba(${r},${g},${b},${a})`;
   }
   function draw() {
     if (!document.body.classList.contains('bg-pattern-embers')) {

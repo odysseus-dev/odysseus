@@ -78,6 +78,42 @@ function _deselectCurrentSession(sid) {
   if (window._updateSendBtnIcon) window._updateSendBtnIcon();
 }
 
+function _removeSessionFromLocalState(sid) {
+  if (!sid) return;
+  const id = String(sid);
+  sessions = sessions.filter(s => String(s.id) !== id);
+  _selectedIds.delete(id);
+  try {
+    const savedOrder = Storage.get('session-order');
+    if (savedOrder) {
+      const orderIds = JSON.parse(savedOrder);
+      if (Array.isArray(orderIds) && orderIds.some(x => String(x) === id)) {
+        Storage.set('session-order', JSON.stringify(orderIds.filter(x => String(x) !== id)));
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to prune deleted session order:', e);
+  }
+  document.querySelectorAll('.list-item[data-session-id]').forEach(el => {
+    if (String(el.dataset.sessionId) === id) el.remove();
+  });
+  _deselectCurrentSession(id);
+}
+
+function _normalizeSessionsList(fetched) {
+  if (!Array.isArray(fetched)) return [];
+  const seen = new Set();
+  const unique = [];
+  for (const session of fetched) {
+    if (!session || session.id == null) continue;
+    const id = String(session.id);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    unique.push(session);
+  }
+  return unique;
+}
+
 // Initialize dependencies from app.js (no-op: dependencies now imported directly)
 export function initDependencies() {}
 
@@ -620,15 +656,13 @@ function createSessionItem(s) {
       _forceSidebarOpen();
       return;
     }
-    // Optimistic: remove from UI immediately
-    const sessionEl = document.querySelector(`.list-item[data-session-id="${s.id}"]`);
-    if (sessionEl) sessionEl.remove();
     const wasCurrentSession = currentSessionId === s.id;
     // If streaming, abort it before deleting
     if (wasCurrentSession && window.chatModule && window.chatModule.abortCurrentRequest) {
       window.chatModule.abortCurrentRequest();
     }
     _deselectCurrentSession(s.id);
+    _removeSessionFromLocalState(s.id);
     _skipAutoSelect = true;
     // Clean up persistent chat mapping
     try {
@@ -644,10 +678,11 @@ function createSessionItem(s) {
     } else {
       _forceSidebarOpen();
     }
-    // Fire API and reload in background
-    fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' })
-      .then(() => loadSessions())
-      .catch(() => loadSessions());
+    // Await API deletion, then reload the authoritative list from the server
+    try {
+      await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE' });
+    } catch (e) { /* network error — session may still exist server-side */ }
+    await loadSessions();
   });
 
   archiveItem.addEventListener('click', async () => {
@@ -1321,7 +1356,7 @@ export async function loadSessions() {
       const res = await fetch(`${API_BASE}/api/sessions`);
       fetched = await res.json();
     }
-    sessions = fetched;
+    sessions = _normalizeSessionsList(fetched);
     renderSessionList();
 
     const sessionsSection = uiModule.el('sessions-section');
@@ -1964,9 +1999,13 @@ export function initDragSort() {
   });
 }
 
-// Hash-based routing: navigate between sessions with browser back/forward
+// Hash-based routing: navigate between sessions with browser back/forward.
+// Skip entity-prefixed hashes (document-, note-, etc.) — those are handled
+// by their own click handlers in chatRenderer.js and must not trigger
+// session navigation (which would reset the active chat).
 window.addEventListener('hashchange', () => {
   const hashId = window.location.hash.replace('#', '');
+  if (/^(document|note|image|email|event|task|skill|research)-/.test(hashId)) return;
   if (hashId && hashId !== currentSessionId) {
     const target = sessions.find(s => s.id === hashId && !s.archived);
     if (target) selectSession(hashId);
@@ -2122,7 +2161,14 @@ async function _checkServerStream(sessionId) {
     // Skip if this is a research stream — research has its own progress UI
     if (info.mode === 'research' || info.is_research) return;
 
-    // Server is still streaming — show spinner and poll
+    // Live-resume the detached run: replay its buffer then stream live tokens
+    // (#2539). Falls back to the spinner+poll path below if unavailable.
+    if (window.chatModule && window.chatModule.resumeStream) {
+      const attached = await window.chatModule.resumeStream(sessionId);
+      if (attached) return;
+    }
+
+    // Fallback: server is still streaming, show spinner and poll.
     const box = document.getElementById('chat-history');
     if (!box) return;
 
@@ -2138,12 +2184,26 @@ async function _checkServerStream(sessionId) {
     box.appendChild(holder);
     uiModule.scrollHistory();
 
+    // sessions.js executes before chat.js in module order, so window.chatModule
+    // may not be set yet when _checkServerStream first runs. Retry resumeStream
+    // on the first poll tick where it becomes available.
+    let _resumeRetried = false;
     const pollId = setInterval(async () => {
       if (getCurrentSessionId() !== sessionId) {
         clearInterval(pollId);
         spinner.destroy();
         if (holder.parentNode) holder.remove();
         return;
+      }
+      if (!_resumeRetried && window.chatModule && window.chatModule.resumeStream) {
+        _resumeRetried = true;
+        const attached = await window.chatModule.resumeStream(sessionId);
+        if (attached) {
+          clearInterval(pollId);
+          spinner.destroy();
+          if (holder.parentNode) holder.remove();
+          return;
+        }
       }
       try {
         const r = await fetch(`${API_BASE}/api/chat/stream_status/${sessionId}`);

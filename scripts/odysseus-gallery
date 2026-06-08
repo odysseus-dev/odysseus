@@ -30,11 +30,19 @@ except ModuleNotFoundError as e:
     sys.exit(2)
 
 
+def _preview_text(value, limit: int = 200) -> str:
+    """Truncated preview tolerant of non-string values. A gallery row whose
+    ``prompt`` is a non-string would crash ``(value or "")[:200]`` with a
+    TypeError; coerce non-strings to ""."""
+    text = value if isinstance(value, str) else ""
+    return text[:limit]
+
+
 def _serialize_image(i: "GalleryImage") -> dict:
     return {
         "id": i.id,
         "filename": i.filename,
-        "prompt": (i.prompt or "")[:200],
+        "prompt": _preview_text(i.prompt),
         "model": i.model or "",
         "size": i.size or "",
         "tags": i.tags or "",
@@ -49,6 +57,14 @@ def _serialize_image(i: "GalleryImage") -> dict:
         "camera_model": i.camera_model or "",
         "created_at": i.created_at.isoformat() if i.created_at else "",
     }
+
+
+def _album_image_count(album) -> int:
+    images = getattr(album, "images", None)
+    try:
+        return len(images) if images is not None else 0
+    except TypeError:
+        return 0
 
 
 def cmd_list(args):
@@ -92,7 +108,7 @@ def cmd_albums(args):
     try:
         rows = db.query(GalleryAlbum).order_by(GalleryAlbum.name.asc()).all()
         emit([
-            {"id": a.id, "name": a.name, "image_count": len(a.images)}
+            {"id": a.id, "name": a.name, "image_count": _album_image_count(a)}
             for a in rows
         ], args)
     finally:

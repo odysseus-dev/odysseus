@@ -97,9 +97,9 @@ html, body { overflow-x: hidden; height: 100%; margin: 0; overscroll-behavior: n
 body {
   background-color: var(--bg);
   color: var(--fg);
-  /* Animate the dock push BOTH ways. Keeping the transition on the base body
-     (not on .right/left-dock-active) means removing the class on undock also
-     animates padding back to 0 — otherwise the chat snapped back instantly. */
+  /* Keep the base padding transition for older layout paths that still adjust
+     the body directly. Edge docks reserve workspace room on the flex panes
+     below so left + right docks can coexist without skewing the whole body. */
   transition: padding-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
               padding-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
   font-family: var(--font-family, 'Fira Code', monospace);
@@ -838,11 +838,11 @@ body.bg-pattern-sparkles {
     #tile-ghost.visible { opacity: 1; transform: scale(1); }
     /* Bottom dock — chip per minimized modal */
     #minimized-dock {
-      position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+      position: fixed; bottom: var(--composer-clearance, 12px); left: 50%; transform: translateX(-50%);
       display: flex; gap: 6px; flex-wrap: wrap;
       max-width: calc(100vw - 24px);
       padding: 4px;
-      z-index: 10020;
+      z-index: 100;
       pointer-events: none;
     }
     .minimized-dock-chip {
@@ -1008,6 +1008,16 @@ body.bg-pattern-sparkles {
       opacity: 1;
       animation: whirlpool-burst 0.36s cubic-bezier(0.4, 0, 0.2, 1) forwards;
     }
+    /* When a chip is swirling into the trash X, its inline `rotate(720deg)`
+       drags every child + ::after badge along with it — the count/dot pill
+       spinning looks chaotic. Fade those out fast at the start of the close
+       so visually only the icon glyph rotates. */
+    .minimized-dock-chip.chip-trashing > :not(svg),
+    .minimized-dock-chip.chip-trashing::after,
+    .minimized-dock-chip.chip-trashing::before {
+      opacity: 0 !important;
+      transition: opacity 0.16s ease-out !important;
+    }
     @keyframes whirlpool-spin { to { transform: rotate(360deg); } }
     @keyframes whirlpool-burst {
       0%   { transform: rotate(0deg) scale(1);   opacity: 1; }
@@ -1141,7 +1151,10 @@ body.bg-pattern-sparkles {
       display: flex; align-items: center; gap: 6px;
       margin: 0; padding: 0; border: none;
       font-size: 10px; font-weight: 400; font-family: inherit;
-      line-height: 1; letter-spacing: 0; text-transform: none;
+      /* 1.3 (not 1) so Fira Code's tall glyph box isn't vertically clipped in
+         Chromium/Edge — mirrors the .list-item fix. The title is flex-centred
+         in a fixed-height (29px) header, so this adds headroom without reflow. */
+      line-height: 1.3; letter-spacing: 0; text-transform: none;
       color: var(--fg);
     }
     .section-icon,
@@ -1760,6 +1773,8 @@ body.bg-pattern-sparkles {
       min-width:0;
       margin-top:8px;
       margin-bottom: 0;
+      transition: margin-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
+                  margin-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
     }
     .chat-meta { font-size:12px; color:color-mix(in srgb, var(--fg) 60%, transparent); margin-bottom:6px; }
     .chat-history {
@@ -1800,6 +1815,15 @@ body.bg-pattern-sparkles {
       transition: opacity 0.25s ease, max-height 0.25s ease, margin 0.25s ease;
       max-height: 60px;
       overflow: hidden;
+    }
+    /* The tip is a full sentence that wraps to 4-5 lines on narrow phones,
+       where the welcome block shrink-wraps small; the shared 60px ceiling
+       (sized for the one-line sub/version) clipped its last line. Give the tip
+       a taller ceiling so it isn't truncated. Kept above the max-height:650px
+       block below so that rule's max-height:0 still collapses it on short
+       viewports. */
+    #welcome-screen .welcome-tip {
+      max-height: 120px;
     }
     @media (max-height: 650px) {
       #welcome-screen { top: 28%; }
@@ -2282,6 +2306,104 @@ body.bg-pattern-sparkles {
       opacity: 1;
       color: var(--fg);
       background: color-mix(in srgb, var(--fg) 9%, transparent);
+    }
+    /* Plan mode: "Approve & Run" affordance under a proposed plan */
+    .plan-approve-bar {
+      margin: 8px 0 2px;
+    }
+    .plan-approve-btn {
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+      border: 1px solid var(--accent);
+      transition: background 0.15s, transform 0.1s;
+    }
+    .plan-approve-btn:hover {
+      background: color-mix(in srgb, var(--accent) 22%, transparent);
+    }
+    .plan-approve-btn:active {
+      transform: scale(0.97);
+    }
+    .plan-approve-bar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .plan-open-btn {
+      font: inherit;
+      font-size: 13px;
+      padding: 6px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      color: var(--fg);
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+      border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
+      transition: background 0.15s;
+    }
+    .plan-open-btn:hover {
+      background: color-mix(in srgb, var(--fg) 15%, transparent);
+    }
+    /* GitHub-style task lists (- [ ] / - [x]) — used by plan-mode checklists */
+    li.task-item {
+      list-style: none;
+      margin-left: -1.2em;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    li.task-item .task-check {
+      flex: 0 0 auto;
+      width: 15px;
+      height: 15px;
+      margin-top: 3px;
+      border-radius: 4px;
+      border: 1.5px solid color-mix(in srgb, var(--fg) 45%, transparent);
+      box-sizing: border-box;
+      position: relative;
+    }
+    li.task-item.task-done .task-check {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    li.task-item.task-done .task-check::after {
+      content: '';
+      position: absolute;
+      left: 4px;
+      top: 1px;
+      width: 4px;
+      height: 8px;
+      border: solid var(--bg);
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
+    li.task-item.task-done .task-text {
+      opacity: 0.6;
+      text-decoration: line-through;
+    }
+    /* Plan window: a draggable/dockable modal (shares .modal framework) */
+    .plan-window-content {
+      width: 520px;
+      max-width: 92vw;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .plan-window-body {
+      overflow-y: auto;
+      padding: 14px 18px;
+      flex: 1 1 auto;
+      line-height: 1.55;
+    }
+    .plan-window-footer {
+      padding: 10px 18px;
+      border-top: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+      display: flex;
+      justify-content: flex-end;
     }
     /* While the menu is open the chevron stays in its highlighted state
        — don't run the opacity fade transition so we never flash from
@@ -3455,6 +3577,38 @@ body.bg-pattern-sparkles {
     }
     .continue-btn:hover {
       opacity:0.8;
+    }
+
+    /* Round-cap "Continue" affordance — a cohesive centered pill at the chat
+       bottom (not the bare red in-message stopped style). */
+    .rounds-exhausted {
+      justify-content:center;
+      gap:12px;
+      width:fit-content;
+      max-width:90%;
+      margin:14px auto 4px;
+      padding:7px 8px 7px 16px;
+      border:1px solid var(--border);
+      border-radius:999px;
+      background:color-mix(in srgb, var(--fg) 4%, transparent);
+      opacity:1;
+    }
+    .rounds-exhausted .rounds-exhausted-label {
+      color:color-mix(in srgb, var(--fg) 60%, transparent);
+      font-size:0.95em;
+    }
+    .rounds-exhausted .continue-btn {
+      font-size:0.9em;
+      font-weight:600;
+      opacity:1;
+      color:var(--bg);
+      background:var(--accent, var(--red));
+      border-radius:999px;
+      padding:4px 14px;
+      line-height:1.3;
+    }
+    .rounds-exhausted .continue-btn:hover {
+      opacity:0.88;
     }
     .ctx-indicator {
       display:inline-flex; align-items:center; gap:1px;
@@ -4787,6 +4941,15 @@ body.bg-pattern-sparkles {
       pointer-events:auto;
       animation: modal-enter 0.25s ease-out both;
     }
+    .memory-modal-content,
+    .tasks-modal-content,
+    .preset-modal-content,
+    #cookbook-modal .modal-content,
+    #theme-popup,
+    .doclib-modal-content,
+    .gallery-modal-content {
+      container-type: inline-size;
+    }
     .modal-header {
       display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;
       cursor:grab; user-select:none;
@@ -4901,7 +5064,7 @@ body.bg-pattern-sparkles {
     /* Bottom dock for minimized modals */
     #modal-dock {
       position:fixed;
-      bottom:0;
+      bottom:var(--composer-clearance, 0px);
       left:0;
       right:0;
       display:flex;
@@ -7559,7 +7722,13 @@ button.hamburger {
   border-collapse: collapse;
   margin: 0.5em 0;
   font-size: 0.9em;
-  width: auto;
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  table-layout: auto;
 }
 .msg th {
   background: color-mix(in srgb, var(--fg) 7%, transparent);
@@ -7568,10 +7737,16 @@ button.hamburger {
   padding: 6px 12px;
   border: 1px solid var(--border);
   text-align: left;
+  min-width: 9ch;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 .msg td {
   padding: 5px 12px;
   border: 1px solid var(--border);
+  min-width: 9ch;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 /* Agent UI Styling */
@@ -8813,6 +8988,57 @@ body.hide-thinking .thinking-section { display: none !important; }
   list-style: none;
 }
 .agent-tool-output summary::-webkit-details-marker { display: none; }
+/* File-write diff — neutral chrome (not the red error tint) + colored lines */
+.agent-tool-diff {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 18%, transparent);
+}
+.agent-tool-diff summary {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.agent-tool-diff .diff-stat {
+  font-weight: 600;
+  opacity: 0.7;
+  font-family: var(--mono, monospace);
+}
+/* Collapsed diff summary: filename + +adds/−dels (theme green/red). */
+.agent-tool-diff summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.agent-tool-diff .diff-file {
+  font-family: var(--mono, monospace);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-tool-diff .diff-summary-stats {
+  margin-left: auto;
+  font-family: var(--mono, monospace);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.agent-tool-diff .diff-summary-stats .diff-stat-add { color: var(--green, #2ecc71); }
+.agent-tool-diff .diff-summary-stats .diff-stat-del { color: var(--red, #e74c3c); }
+.agent-tool-diff .diff-summary-stats .diff-stat-new { color: var(--accent, var(--red)); opacity: 0.85; }
+.diff-pre {
+  margin: 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-family: var(--mono, monospace);
+  font-size: 0.82em;
+  line-height: 1.45;
+}
+.diff-pre span { display: block; white-space: pre; }
+.diff-pre .diff-add { background: color-mix(in srgb, #2ecc71 22%, transparent); }
+.diff-pre .diff-del { background: color-mix(in srgb, #e74c3c 22%, transparent); }
+.diff-pre .diff-hunk { color: var(--accent); opacity: 0.85; }
+.diff-pre .diff-meta { opacity: 0.55; }
+.diff-pre .diff-ctx { opacity: 0.8; }
 /* Suppress the global `summary::before { content: '▶' }` left arrow — this
    section uses a right-side chevron instead. */
 .agent-tool-output summary::before { content: none; }
@@ -9912,6 +10138,15 @@ details a:hover {
   height: 32px;
 }
 
+/* Skill Import beside URL field — match input height; cancel modal-body button margin. */
+.memory-add-row .theme-io-btn {
+  flex: none;
+  height: 28px;
+  box-sizing: border-box;
+  margin-top: 0;
+  padding: 5px 10px;
+}
+
 .memory-add-input {
   flex: 1;
   height: 28px;
@@ -10015,8 +10250,9 @@ textarea.memory-add-input {
 }
 
 .memory-toolbar-btn:disabled {
-  opacity: 1;
+  opacity: 0.35;
   cursor: default;
+  outline: none;
 }
 .memory-toolbar-btn.spinning {
   border-color: transparent;
@@ -10314,7 +10550,7 @@ textarea.memory-add-input {
 }
 .task-state-badge svg {
   position: relative;
-  top: -1px;
+  top: 0;
 }
 .task-status-badge:hover {
   filter: brightness(1.08) saturate(1.15);
@@ -12063,9 +12299,46 @@ textarea.memory-add-input {
   background: var(--bg);
   overflow: hidden;
   white-space: pre;
+  tab-size: 4;
+  font-variant-ligatures: none !important;
+  font-feature-settings: "kern" 0, "liga" 0, "calt" 0, "dlig" 0 !important;
+  font-kerning: none !important;
+  text-rendering: geometricPrecision !important;
   z-index: 2;
   pointer-events: none;
   user-select: none;
+}
+.doc-line-number-content {
+  display: block;
+  will-change: transform;
+}
+.doc-line-number-row {
+  position: relative;
+  box-sizing: border-box;
+}
+.doc-line-number-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 36px;
+  text-align: right;
+}
+.doc-line-number-measure {
+  position: absolute !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  left: -9999px !important;
+  top: 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  border: 0 !important;
+  resize: none !important;
+  box-sizing: content-box !important;
+  color: transparent !important;
+  background: transparent !important;
 }
 /* Find marks live in the syntax-highlight overlay, which sits at
    z-index:0 under a transparent textarea — so they're always visible
@@ -12197,11 +12470,11 @@ mark.doc-find-mark.current {
      area — caret stays right, but typed text appears on a different row
      than the caret. */
   scrollbar-gutter: stable;
-  /* The highlight overlay hides its scrollbar, so the textarea must too —
-     otherwise the scrollbar shrinks the textarea's text-area width and
-     wraps lines earlier than the overlay, putting the caret on the wrong
-     line entirely. */
-  scrollbar-width: none;
+  /* Show a real scrollbar for long documents. scrollbar-gutter above keeps
+     the text column stable so the gutter, textarea, and find overlay stay
+     metrically aligned while the scrollbar is present. */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--fg) 28%, transparent) transparent;
   -webkit-overflow-scrolling: touch;
   tab-size: 4;
   white-space: pre-wrap;
@@ -12219,7 +12492,15 @@ mark.doc-find-mark.current {
   font-kerning: none !important;
   text-rendering: geometricPrecision !important;
 }
-.doc-editor-textarea::-webkit-scrollbar { display: none; }
+.doc-editor-textarea::-webkit-scrollbar { width: 8px; }
+.doc-editor-textarea::-webkit-scrollbar-track { background: transparent; }
+.doc-editor-textarea::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 24%, transparent);
+  border-radius: 999px;
+}
+.doc-editor-textarea::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--fg) 36%, transparent);
+}
 .doc-editor-textarea:hover,
 .doc-editor-textarea:focus,
 .doc-editor-textarea:active {
@@ -13233,6 +13514,13 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   padding: 12px;
   margin-bottom: 10px;
 }
+/* When the integrations editor opens, the inner admin-card should match the
+   listed integration cards (subtle tint, same border) instead of reverting
+   to the solid-panel admin-card surface used elsewhere. */
+#unified-intg-form .admin-card,
+#integrations-form .admin-card {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
 .admin-card h2 {
   font-size: 14px;
   font-weight: 600;
@@ -13902,8 +14190,28 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 .admin-model-form-row {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;       /* let buttons drop to a new row on narrow widths
+                             instead of overflowing the modal */
+  align-items: center;
 }
-.admin-model-form-row input { flex: 1; }
+.admin-model-form-row input {
+  flex: 1 1 180px;       /* api-key input takes the long axis but allows
+                             dropping below the buttons at small widths */
+  min-width: 0;          /* don't refuse to shrink past content width */
+}
+.admin-model-form-row select {
+  flex: 0 0 auto;
+}
+.admin-model-form-row button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+/* On narrow screens, give buttons their own row + push the Add button
+   to the right so it remains the obvious primary action. */
+@media (max-width: 540px) {
+  .admin-model-form-row input { flex-basis: 100%; }
+  .admin-model-form-row .admin-btn-add { margin-left: auto; }
+}
 .adm-ep-inline-msg {
   min-height: 16px;
   margin-top: 5px;
@@ -14568,7 +14876,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   body.email-doc-split-active.doc-view .doc-editor-pane {
     position: fixed !important;
     left: var(--email-doc-split-right-x, 420px) !important;
-    right: 0 !important;
+    right: var(--right-dock-w, 0px) !important;
     top: 0 !important;
     bottom: 0 !important;
     width: auto !important;
@@ -14577,6 +14885,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
     z-index: 260 !important;
     margin-top: 0 !important;
     transform: none !important;
+    border-left: none !important;
   }
 }
 
@@ -14588,15 +14897,21 @@ body [data-act="from-sender"] {
   display: none !important;
 }
 
-/* Snap-to-right docking. A modal dragged to the right edge becomes a
-   docked side panel (mirrors Notes/Doc panels). Body reserves space via
-   padding-right so the chat / notes / doc panel underneath shrinks to
-   fit instead of being hidden behind the panel. */
+/* Edge docking. Docked panels are fixed to the viewport edge; the workspace
+   panes reserve room with margins so left + right docks can be active at the
+   same time without skewing the entire body box. */
 body.right-dock-active {
-  padding-right: var(--right-dock-w, 0px);
+  padding-right: 0;
 }
 body.left-dock-active {
-  padding-left: var(--left-dock-w, 0px);
+  padding-left: 0;
+}
+body.left-dock-active:not(.email-doc-split-active) .chat-container {
+  margin-left: var(--left-dock-w, 0px);
+}
+body.right-dock-active .chat-container,
+body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
+  margin-right: var(--right-dock-w, 0px);
 }
 .modal.modal-right-docked {
   align-items: stretch;
@@ -14873,6 +15188,7 @@ body.left-dock-active {
 /* Cookbook's cached-model list should scale with viewport height, not be capped at 400px */
 .hwfit-cached-list {
   max-height: min(75vh, 900px) !important;
+  overflow-y: auto;
 }
 /* Drag-and-drop visual hint for the email compose pane. Subtle accent
    outline + tinted overlay so it's obvious files will attach if dropped. */
@@ -18060,8 +18376,12 @@ body.gallery-selecting .gallery-dl-btn,
   color: var(--fg-muted);
   letter-spacing: 0.2px;
 }
-/* "running" pill on a Serve-tab card when the model has a live serve task. */
-.cookbook-serve-running-pill {
+/* Status pills shown inline in a Serve-tab card title (next to the model
+   name) when the model has a live serve / download task. Shared base
+   class so "running" and "downloading" sit on the same row with the
+   same chrome; only color varies. */
+.cookbook-serve-running-pill,
+.cookbook-serve-downloading-pill {
   display: inline-block;
   margin-left: 6px;
   padding: 1px 7px;
@@ -18072,10 +18392,49 @@ body.gallery-selecting .gallery-dl-btn,
   letter-spacing: 0.3px;
   vertical-align: 2px;
   position: relative;
-  top: -1px;
+  top: 1px;          /* nudged down 2px from the old -1px so it sits
+                        flush with the cap-height of the title text */
+}
+.cookbook-serve-running-pill {
   color: var(--accent, var(--red));
   background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
+}
+.cookbook-serve-downloading-pill {
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
+  opacity: 0.85;
+}
+.cookbook-serve-downloading-pill.is-stalled {
+  /* Stalled downloads stay visible but read as warning, not progress. */
+  color: var(--fg-muted, #888);
+  background: color-mix(in srgb, var(--fg-muted, #888) 10%, transparent);
+  border-color: color-mix(in srgb, var(--fg-muted, #888) 30%, transparent);
+  opacity: 1;
+}
+.cookbook-serve-running-pill.is-clickable {
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.cookbook-serve-running-pill.is-clickable:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+}
+/* Brief highlight on the matched task card when jumping from the
+   running pill, so the user can spot it among a long list. */
+.cookbook-task-flash {
+  animation: cookbook-task-flash-anim 1.6s ease-out;
+}
+@keyframes cookbook-task-flash-anim {
+  0%   { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+
+/* Cookbook header "downloading" status label sits 2px too far left
+   against the rest of the cookbook chrome — nudge it right. */
+#cookbook-bg-status {
+  left: 2px;
 }
 .cookbook-serve-dir-edit {
   font-size: 9px;
@@ -18569,16 +18928,41 @@ body.gallery-selecting .gallery-dl-btn,
   background: color-mix(in srgb, var(--fg) 10%, transparent);
   color: color-mix(in srgb, var(--fg) 60%, transparent);
 }
+/* Rebuild tag — same look as the LLM category tag, sits to its left. */
+.cookbook-dep-rebuild {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  color: color-mix(in srgb, var(--fg) 75%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fg) 20%, transparent);
+  cursor: pointer;
+  font-family: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+.cookbook-dep-rebuild:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  color: var(--accent, var(--red));
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 45%, transparent);
+}
 .cookbook-dep-installed {
   background: color-mix(in srgb, var(--green, #50fa7b) 18%, transparent);
   color: var(--green, #50fa7b);
   border: 1px solid color-mix(in srgb, var(--green, #50fa7b) 35%, transparent);
+  /* Match the Install button + Installed ▾ split width so all three variants
+     align in a mixed row. */
+  min-width: 75.85px;
+  padding: 0 10px;
+  box-sizing: border-box;
 }
 .cookbook-dep-na {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: color-mix(in srgb, var(--fg) 60%, transparent);
   border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
   cursor: help;
+  /* Match other dep tag widths so N/A rows line up with Install / Installed. */
+  min-width: 75.85px;
+  padding: 0 10px;
+  box-sizing: border-box;
 }
 .cookbook-dep-install {
   background: var(--accent, var(--red));
@@ -18589,11 +18973,29 @@ body.gallery-selecting .gallery-dl-btn,
   font-weight: 500;
   position: relative;
   top: -3px;
+  /* Width matches the measured Installed ▾ split button (75.85px) so a row of
+     mixed Install / Installed deps lines up. */
+  min-width: 75.85px;
+  padding: 0 10px;
   /* Strip the native button box so it's the same height as the sibling tags
      (Firefox renders <button> taller otherwise); height comes from .cookbook-dep-tag. */
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
+}
+/* Conditional line under the Download h2: only when the section is folded
+   (collapsed). When expanded, the body content provides separation; the
+   underline reads as clutter. */
+#cookbook-dl-tab-fold { border-bottom: none !important; padding-bottom: 0 !important; }
+#cookbook-dl-tab-fold.is-folded {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent) !important;
+  padding-bottom: 6px !important;
+}
+/* Center the "?" glyph inside the help chip. Without text-align it sits 0.5px
+   left of true center because of the character's natural baseline offset. */
+.hwfit-help-chip {
+  text-align: center;
+  padding-left: 0.5px;
 }
 .cookbook-dep-install:hover { opacity: 0.85; }
 /* Installed split button: "Installed" label + separator + ▾ caret; clicking it
@@ -18636,6 +19038,94 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-serve-row label input {
   display: block;
   margin-top: 2px;
+}
+/* Ctx slider — ported from origin/main. Sits in the Scan/Download toolbar
+   next to the quant dropdown. Drives _ctxValue() in cookbook-hwfit.js. */
+.hwfit-ctx-control {
+  height: 28px;
+  min-width: 134px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  font-size: 12px;  /* match .cookbook-field-input so Context reads same size as Engine/Quant */
+}
+.hwfit-ctx-control span {
+  /* Match Quant/Engine select label style: no uppercase, no letter-spacing. */
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.9;
+}
+/* Editor-style slider (same look as the gallery editor sliders): thin pill
+   rail that fattens on interaction, circular red thumb that grows on hover. */
+.hwfit-ctx-control input[type="range"] {
+  width: 64px;
+  min-width: 64px;
+  height: 4px;
+  padding: 0;
+  border: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  /* Hard-coded grey so the rail is GUARANTEED visible regardless of theme —
+     every theme-derived color we tried (--fg-muted, --border, accent-bg mix)
+     kept blending into the panel background on at least one theme. */
+  background: rgba(150, 150, 150, 0.65);
+  border-radius: 999px;
+  accent-color: var(--red);
+  cursor: pointer;
+  transition: height 0.15s ease, background 0.15s ease;
+}
+.hwfit-ctx-control input[type="range"]:hover,
+.hwfit-ctx-control input[type="range"]:focus,
+.hwfit-ctx-control input[type="range"]:active {
+  background: var(--fg);
+}
+.hwfit-ctx-control input[type="range"]:hover,
+.hwfit-ctx-control input[type="range"]:focus,
+.hwfit-ctx-control input[type="range"]:active {
+  height: 10px;
+}
+.hwfit-ctx-control input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.hwfit-ctx-control input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.hwfit-ctx-control input[type="range"]:hover::-webkit-slider-thumb,
+.hwfit-ctx-control input[type="range"]:focus::-webkit-slider-thumb,
+.hwfit-ctx-control input[type="range"]:active::-webkit-slider-thumb {
+  width: 18px;
+  height: 18px;
+}
+.hwfit-ctx-control input[type="range"]:hover::-moz-range-thumb,
+.hwfit-ctx-control input[type="range"]:focus::-moz-range-thumb,
+.hwfit-ctx-control input[type="range"]:active::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+}
+.hwfit-ctx-control output {
+  min-width: 28px;
+  text-align: right;
+  color: var(--fg);
+  font-weight: 600;
 }
 .hwfit-sf {
   background: var(--bg);
@@ -19074,6 +19564,11 @@ body.gallery-selecting .gallery-dl-btn,
   background: color-mix(in srgb, var(--fg) 7%, transparent);
   font-size: 12px;
   border-bottom: 1px solid color-mix(in srgb, var(--fg) 6%, transparent);
+  /* Pin the row so flex parents + Firefox mobile can't squeeze its height to 0,
+     which hides the type pill + model name and leaves only the sub-line +
+     output visible. */
+  flex-shrink: 0;
+  min-height: 32px;
 }
 .cookbook-task-type {
   text-transform: uppercase;
@@ -19186,9 +19681,12 @@ body.gallery-selecting .gallery-dl-btn,
   position: relative;
   top: -4px;
   cursor: pointer;
-  padding: 1px 6px 1px 4px;
+  /* Tightened vertical padding so the hover-background isn't disproportionately
+     tall vs the icon+label. */
+  padding: 0 6px 0 4px;
+  height: 14px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 7px;
   background: transparent;
   color: var(--fg);
   font-family: inherit;
@@ -19890,6 +20388,17 @@ body.gallery-selecting .gallery-dl-btn,
   border-color: var(--color-error);
   background: color-mix(in srgb, var(--color-error) 12%, transparent);
 }
+/* Icons on the left of diagnosis action buttons (Retry / Copy / Edit / etc.). */
+.cookbook-diag-btn,
+.cookbook-diag-menu button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.cookbook-diag-btn-ico {
+  flex-shrink: 0;
+  opacity: 0.9;
+}
 
 /* ── What Fits? (hardware model fitting tab in cookbook) ── */
 .cookbook-group.hidden { display: none !important; }
@@ -20362,6 +20871,40 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-toolbar .hwfit-usecase { min-width: 70px; flex-shrink: 0; }
 .hwfit-toolbar .hwfit-quant { min-width: 50px; flex-shrink: 0; }
 .hwfit-toolbar .hwfit-search { flex: 1; min-width: 80px; }
+/* Lower-opacity "Search models..." placeholder so it reads as a hint, not
+   a label — matches the muted form-field feel of the inline filters. */
+.hwfit-search::placeholder { opacity: 0.5; }
+.hwfit-search::-webkit-input-placeholder { opacity: 0.5; }
+.hwfit-search::-moz-placeholder { opacity: 0.5; }
+
+/* Dot inside the Fit column header — click to toggle the fit-only filter
+   (off = show too-tight rows; on = hide them). */
+.hwfit-fit-dot {
+  display: inline-block;
+  margin-right: 4px;
+  font-size: 8px;
+  line-height: 1;
+  color: color-mix(in srgb, var(--fg) 35%, transparent);
+  cursor: pointer;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;  /* nudge 1px up so the small dot sits centered with the "Fit" caps */
+  transition: color 0.12s ease, text-shadow 0.12s ease;
+}
+/* Quant suffix appended to model names when the storage format isn't in the
+   repo id — e.g. "(FP4-MoE-Mixed)" after DeepSeek-V4-Flash. Muted to read as
+   metadata, not part of the name. */
+.hwfit-name-quant {
+  font-size: 0.78em;
+  opacity: 0.55;
+  font-weight: 400;
+  margin-left: 4px;
+}
+.hwfit-fit-dot:hover { color: var(--accent, var(--red)); }
+.hwfit-fit-dot.active {
+  color: var(--green, #50fa7b);
+  text-shadow: 0 0 4px color-mix(in srgb, var(--green, #50fa7b) 55%, transparent);
+}
 .hwfit-help-chip {
   width: 14px;
   height: 14px;
@@ -20388,6 +20931,28 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-help-chip-inline {
   margin-left: -2px;
   margin-right: 0;
+  top: 0;  /* parent rule sets top:-1px; nudge inline variant 1px lower */
+}
+/* Quant select + inline ? wrapper — the ? sits inside the dropdown's bordered
+   box, anchored on the right just left of the chevron. */
+.hwfit-quant-wrap, .hwfit-engine-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.hwfit-quant-wrap .hwfit-quant,
+.hwfit-engine-wrap .hwfit-engine {
+  /* Make room for the ? on the right edge, in addition to the native chevron. */
+  padding-right: 32px;
+}
+.hwfit-quant-wrap .hwfit-quant-help,
+.hwfit-engine-wrap .hwfit-engine-help {
+  position: absolute;
+  right: 20px;   /* sits just left of the native select chevron */
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: auto;
+  margin: 0;
 }
 .hwfit-ctx-control {
   height: 28px;
@@ -20401,21 +20966,27 @@ body.gallery-selecting .gallery-dl-btn,
   border-radius: 4px;
   color: var(--fg-muted);
   background: var(--bg);
-  font-size: 10px;
+  font-size: 12px;  /* match .cookbook-field-input — was 10px and read smaller than siblings */
   box-sizing: border-box;
 }
 .hwfit-ctx-control span {
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  opacity: 0.75;
+  /* Match Quant/Engine select label style: no uppercase, no letter-spacing. */
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.9;
 }
 .hwfit-ctx-control input[type="range"] {
-  width: 54px;
-  min-width: 54px;
-  height: 16px;
+  width: 64px;
+  min-width: 64px;
+  height: 4px;
   padding: 0;
   border: 0;
-  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  /* Hardcoded grey rail — was background:transparent here, which was the
+     LATER-in-cascade override that kept making the rail invisible. */
+  background: rgba(150, 150, 150, 0.65) !important;
+  border-radius: 999px;
   accent-color: var(--accent, var(--red));
 }
 .hwfit-ctx-control output {
@@ -21278,9 +21849,11 @@ body:not(.welcome-ready) #welcome-screen {
   position: relative;
   top: -1px;
 }
-.task-log-force-run svg {
+.task-log-force-run svg,
+.task-log-stop svg {
   display: block;
   flex-shrink: 0;
+  transform: translateY(1px);
 }
 .task-log-force-run:hover {
   opacity: 1;
@@ -21652,13 +22225,14 @@ a.chat-link[href^="#research-"] {
     padding-right: 0;
     box-sizing: border-box;
     justify-content: center;
+    top: 2px !important;
   }
   .task-card .task-state-badge .task-state-label {
     display: none;
   }
   .task-card .task-card-run-btn {
     margin-right: 1px !important;
-    top: 0;
+    top: 2px;
   }
 }
 
@@ -22656,6 +23230,89 @@ input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, tr
 .gallery-tab.active {
   opacity: 1;
   border-bottom-color: var(--red);
+}
+
+/* Narrow modal tab strips should stay on one row. Resized docked windows can
+   be much narrower than the viewport, so this cannot live only in mobile media
+   queries. */
+.cookbook-tabs,
+.memory-tabs,
+.admin-tabs,
+.lib-tabs,
+.gallery-tabs,
+.preset-tabs {
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.cookbook-tabs::-webkit-scrollbar,
+.memory-tabs::-webkit-scrollbar,
+.admin-tabs::-webkit-scrollbar,
+.lib-tabs::-webkit-scrollbar,
+.gallery-tabs::-webkit-scrollbar,
+.preset-tabs::-webkit-scrollbar {
+  display: none;
+}
+.cookbook-tabs > *,
+.memory-tabs > *,
+.admin-tabs > *,
+.lib-tabs > *,
+.gallery-tabs > *,
+.preset-tabs > * {
+  flex: 0 0 auto;
+}
+.cookbook-tab,
+.memory-tab,
+.admin-tab,
+.lib-tab,
+.gallery-tab,
+.preset-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  line-height: 1;
+}
+.gallery-tab {
+  gap: 6px;
+}
+
+@container (max-width: 360px) {
+  .cookbook-tab:has(svg),
+  .memory-tab:has(svg),
+  .admin-tab:has(svg),
+  .lib-tab:has(svg),
+  .gallery-tab:has(svg),
+  .preset-tab:has(svg) {
+    width: 34px;
+    min-width: 34px;
+    padding-left: 0;
+    padding-right: 0;
+    font-size: 0;
+  }
+
+  .cookbook-tab:has(svg) svg,
+  .memory-tab:has(svg) svg,
+  .admin-tab:has(svg) svg,
+  .lib-tab:has(svg) svg,
+  .gallery-tab:has(svg) svg,
+  .preset-tab:has(svg) svg {
+    width: 14px;
+    height: 14px;
+    margin-right: 0 !important;
+    vertical-align: middle !important;
+  }
+
+  .memory-tab:has(svg) .memory-count,
+  .gallery-tab:has(svg) .gallery-tab-label,
+  .gallery-tab:has(svg) .gallery-tab-close,
+  .cookbook-tab:has(svg) .cookbook-tab-count,
+  .preset-tab:has(svg) .preset-count {
+    display: none !important;
+  }
 }
 /* Icon + label layout inside each tab. */
 .gallery-tab {
@@ -27025,6 +27682,20 @@ button .spinner-whirlpool {
     max-width: 100%;
   }
 }
+/* Mobile: long recipient lists (To/Cc with many addresses) shouldn't wrap to
+   N rows and push the body down. Keep them on one row, horizontally scrollable,
+   no scrollbar chrome. */
+@media (max-width: 768px) {
+  .recipient-chips {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .recipient-chips::-webkit-scrollbar { display: none; }
+  .recipient-chip { flex-shrink: 0; }
+}
 .email-reader-actions {
   display: flex; gap: 4px; flex-wrap: nowrap; align-items: center;
   flex-shrink: 0;
@@ -30571,6 +31242,20 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   margin-top: -2px;
 }
 /* Reminder bell button */
+/* Mobile-only: bell icon in the note editor is accent-coloured so it pops as
+   the primary "set a reminder" affordance. The Archive button is hidden — the
+   Update (✓) button morphs into an Archive action when the user opens a note
+   and clicks without making any edits (see notes.js `archive-mode` toggle). */
+@media (max-width: 768px) {
+  .note-form-remind-btn { color: var(--accent, var(--red)) !important; }
+  .note-form-remind-btn > svg { color: var(--accent, var(--red)); }
+  .note-form-archive-btn { display: none !important; }
+  .note-form-save.archive-mode {
+    color: var(--accent, var(--red)) !important;
+    border-color: color-mix(in srgb, var(--accent, var(--red)) 50%, transparent) !important;
+    background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent) !important;
+  }
+}
 .note-form-remind-btn {
   flex: 0 0 auto;
   background: transparent;
@@ -32908,6 +33593,18 @@ button.cal-add-btn.cal-add-btn-text.cal-add-btn-sm:hover .cal-add-label {
 .email-attach-toggle-inline,
 .email-undone-toggle-inline,
 .email-reminder-toggle-inline { border-radius: 50% !important; opacity: 1 !important; }
+/* Mobile: enlarge the icons inside the inline search-bar toggles
+   (done / attachment / reminders) — buttons themselves stay the same,
+   only the SVG glyph scales up so it's tappable + visible. */
+@media (max-width: 768px) {
+  .email-attach-toggle-inline svg,
+  .email-undone-toggle-inline svg,
+  .email-reminder-toggle-inline svg,
+  .email-filter-refresh-btn svg {
+    width: 15px !important;
+    height: 15px !important;
+  }
+}
 .email-attach-toggle:not(.email-attach-toggle-inline):hover svg {
   animation: email-undone-jiggle 0.45s ease-in-out;
   transform-origin: 50% 50%;
@@ -33121,8 +33818,15 @@ button.cal-view-btn {
    of days it covers within the row, --slot stacks parallel bars. */
 .cal-multiday {
   position: absolute;
-  left: calc(var(--col, 0) * (100% / 7));
-  width: calc(var(--span, 1) * (100% / 7));
+  /* Fractional offsets let timed events that cross midnight render at
+     true proportional width. start-frac shifts the left edge into the
+     first day; end-frac trims the right edge inside the last day.
+     All-day events default to (0, 1) and still fill whole columns. */
+  left: calc((var(--col, 0) + var(--start-frac, 0)) * (100% / 7));
+  width: calc(
+    (var(--span, 1) - var(--start-frac, 0) - (1 - var(--end-frac, 1)))
+    * (100% / 7)
+  );
   top: calc(2px + var(--slot, 0) * 12px);
   height: 11px;
   font-size: 8px;
@@ -35355,3 +36059,380 @@ body.theme-frosted .modal {
   font-family: 'Fira Code', ui-monospace, monospace;
   color: var(--accent, var(--red));
 }
+
+/* ══ iOS focus-zoom fix — touch devices only; desktop sizes untouched ══
+   16px is the threshold below which iOS Safari auto-zooms on focus.
+   Selects and date/time inputs are excluded on purpose — they open native
+   pickers and never zoom. */
+@media (hover: none) and (pointer: coarse) {
+
+  /* 1 ── Catch-all: every text-entry control NOT pinned with its own
+     !important. !important here beats any non-important rule regardless of
+     specificity, so this clears the long tail (settings, admin, memory,
+     notes, calendar, email, gallery, tasks, model picker, etc.). */
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="url"],
+  input[type="tel"],
+  input[type="password"],
+  input[type="number"],
+  input:not([type]),
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* 2 ── Fields that pin their own !important at specificity our catch-all
+     can't beat. Each is matched at equal-or-higher specificity and, being
+     later in the file, wins the tie. */
+  #message { font-size: 16px !important; }                                  /* chat composer (was 13px !important) */
+  .cookbook-dl-repo,
+  .hwfit-search { font-size: 16px !important; }                             /* cookbook repo path + hardware search */
+  .ge-topbar input { font-size: 16px !important; }                          /* image-editor topbar input */
+  .ge-transform-field > input.ge-transform-popup-input {                    /* image-editor transform values */
+    font-size: 16px !important;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  /* Only the sub-16px tiers need bumping; large lands ABOVE 16 so it
+     stays zoom-safe AND visibly larger than medium (otherwise L collapses
+     onto M on touch). All three editor layers move together so the
+     highlight/line-number overlay stays metrically aligned with the textarea. */
+  .doc-font-m .doc-editor-textarea, .doc-font-m .doc-editor-highlight, .doc-font-m .doc-line-numbers {
+    font-size: 16px !important;   /* was 13px */
+  }
+  .doc-font-l .doc-editor-textarea, .doc-font-l .doc-editor-highlight, .doc-font-l .doc-line-numbers {
+    font-size: 18px !important;   /* was 15px — keep L > M */
+  }
+  /* Email compose rich-body. Medium (15px) zooms, so bump it; large (17px)
+     is already ≥16px and never zoomed — leave it so we don't shrink it. */
+  .doc-email-richbody.doc-font-m { font-size: 16px !important; }
+}
+
+/* GitHub Copilot device-flow connect block (model endpoints → API) */
+.adm-copilot-connect {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.adm-copilot-connect #adm-copilotStatus { flex-basis: 100%; margin-top: 0; }
+.adm-copilot-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.adm-copilot-wait {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+}
+.adm-copilot-coderow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.adm-copilot-code-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.adm-copilot-code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  padding: 4px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  user-select: all;
+}
+.adm-copilot-copy { margin-left: auto; }
+.adm-copilot-auth {
+  text-align: center;
+  text-decoration: none;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+.adm-copilot-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+/* ── Workspace picker ───────────────────────────────────────────── */
+/* Layout (width/flex column/max-height) inherited from base .modal-content. */
+/* Editable path/address bar: reuses .styled-prompt-input for border/bg/radius/
+   focus ring (set in the element's class list). Overrides only the deltas:
+   mono font, and full-bleed via flex stretch with no horizontal margin (the
+   modal-content's 10px padding is the gutter) instead of the base width:100%,
+   which overflowed against the overflow:auto scrollbar. */
+.workspace-cur {
+  align-self: stretch;
+  width: auto;
+  min-width: 0;
+  margin: 4px 0 8px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+}
+/* flex/overflow inherited from base .modal-body; only the padding differs. */
+.workspace-body { padding: 6px 0; }
+.workspace-row {
+  padding: 7px 18px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.workspace-row > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workspace-row-icon { flex-shrink: 0; opacity: 0.75; }
+.workspace-row:hover {
+  background: color-mix(in srgb, var(--border) 20%, transparent);
+}
+.workspace-up { opacity: 0.7; }
+.workspace-empty { padding: 14px 18px; opacity: 0.5; font-size: 13px; }
+.workspace-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+}
+/* Cookbook serve panel: Launch + ^ split button pair */
+.hwfit-serve-launch-group {
+  display: inline-flex;
+  align-items: stretch;
+  vertical-align: middle;
+}
+.hwfit-serve-launch-group .hwfit-serve-launch {
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  margin-right: 0 !important;
+}
+.hwfit-serve-launch-group .hwfit-serve-schedule-arrow {
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-left: 1px solid var(--border) !important;
+  padding: 0 8px !important;
+  min-width: 26px;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Schedule form — mounted inside the cookbook serve panel. Uses the
+   theme tokens (--bg, --panel, --border, --accent, --red) so it
+   matches the rest of the cookbook chrome instead of inline whites. */
+.hwfit-schedule-form {
+  margin: 10px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hwfit-schedule-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.95;
+  flex-wrap: wrap;
+}
+.hwfit-schedule-title svg { opacity: 0.7; flex-shrink: 0; }
+.hwfit-schedule-title-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hwfit-schedule-title-spacer { flex: 1; min-width: 8px; }
+.hwfit-schedule-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.hwfit-schedule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.hwfit-schedule-field input[type="time"] {
+  font: inherit;
+  min-width: 90px;
+}
+.hwfit-schedule-label {
+  font-size: 11px;
+  opacity: 0.75;
+}
+.hwfit-sched-days {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.hwfit-sched-day-chip {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.hwfit-sched-day-chip:hover { border-color: var(--accent, var(--red)); }
+.hwfit-sched-day-chip.is-on {
+  background: var(--accent, var(--red));
+  color: var(--panel, #fff);
+  border-color: var(--accent, var(--red));
+}
+.hwfit-schedule-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.hwfit-schedule-actions-spacer { flex: 1; }
+
+/* Days row hosts the day-chip strip on the left and the Cancel / Save
+   action buttons on the right. The spacer between them pushes the
+   actions to the right edge. */
+.hwfit-schedule-days-row {
+  align-items: center;
+}
+/* Cancel + Save sit on the right side of the days row with matching
+   icon-plus-label chrome. */
+.hwfit-sched-cancel,
+.hwfit-sched-save {
+  display: inline-flex !important;
+  align-items: center;
+}
+.hwfit-schedule-mirror-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  opacity: 0.9;
+  cursor: pointer;
+  user-select: none;
+}
+.hwfit-schedule-mirror-label { white-space: nowrap; }
+.hwfit-schedule-mirror-switch { transform: scale(0.85); transform-origin: left center; }
+.hwfit-sched-err {
+  font-size: 12px;
+  color: var(--red, #ff6b6b);
+  display: none;
+}
+.hwfit-sched-err.is-visible { display: block; }
+@media (max-width: 600px) {
+  .hwfit-schedule-row { gap: 8px; }
+  .hwfit-sched-day-chip { width: 36px; height: 36px; font-size: 11px; }
+}
+
+/* Brief outline flash on a note card when it's the target of a
+   #note-<id> link click from chat — same pattern as the cookbook
+   task flash, just scoped to .note-card. */
+.note-card-flash {
+  animation: note-card-flash-anim 1.6s ease-out;
+}
+@keyframes note-card-flash-anim {
+  0%   { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+/* ── ask_user: multiple-choice question card ─────────────────────────────
+   The agent posed a question and ended its turn. The user clicks an option,
+   types a free-text "Other" answer, or dismisses (×) to just type in the
+   composer. Reuses theme vars (and .modal-close for the ×) so it reads as
+   part of the conversation, not a modal. */
+.ask-user-card {
+  /* Left-align like an assistant message (.msg-ai), not centered. */
+  align-self: flex-start;
+  margin: 10px auto 10px 8px;
+  width: 85%;
+  max-width: 680px;
+  padding: 12px 16px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--fg) 4%, var(--panel));
+}
+/* Focused only programmatically (tabIndex -1) to move SR/keyboard position; no
+   visible outline on the whole card box. */
+.ask-user-card:focus { outline: none; }
+.ask-user-head {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+.ask-user-close { font-size: 15px; }
+.ask-user-question {
+  margin: -2px 0 10px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--fg);
+}
+.ask-user-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ask-user-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  /* Match the height of the free-text input below (.styled-prompt-input). */
+  min-height: 39px;
+  text-align: left;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.ask-user-option:hover:not(:disabled) {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, var(--panel));
+}
+.ask-user-option:disabled { cursor: default; }
+.ask-user-option-label { font-weight: 500; }
+.ask-user-option-desc { opacity: 0.65; font-size: 12px; }
+/* Free-text "Other" row: input + send, on one line. */
+.ask-user-other {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+/* Reuses .styled-prompt-input; override its full-width + top margin so it
+   sits inline in the flex row next to the send button. */
+.ask-user-other-input { flex: 1; min-width: 0; width: auto; margin-top: 0; }
+/* Reuses .confirm-btn .confirm-btn-primary; flex-row deltas + height match to
+   the input beside it (.confirm-btn won't stretch on its own). */
+.ask-user-other-send { flex-shrink: 0; white-space: nowrap; min-height: 39px; }
+.ask-user-other-send:disabled { opacity: 0.5; cursor: default; }

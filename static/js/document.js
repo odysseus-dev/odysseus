@@ -2246,7 +2246,9 @@ import * as Modals from './modalManager.js';
     // WYSIWYG body — use it verbatim. (Checking a leading '<' isn't enough: a
     // rich body often starts with plain text, e.g. "Hi <b>there</b>".)
     if (/<\/?(b|i|u|s|strong|em|del|strike|a|p|div|br|ul|ol|li|h[1-3]|blockquote|span|code|pre)\b[^>]*>/i.test(t)) return t;
-    try { return markdownModule.mdToHtml(text); }
+    // Email body: keep author-typed `:shortcode:` text literal. Issue #345
+    // (shortcode → emoji) is scoped to chat; do not rewrite colons in mail.
+    try { return markdownModule.mdToHtml(text, { shortcodes: false }); }
     catch (_) {
       const d = document.createElement('div'); d.textContent = text;
       return d.innerHTML.replace(/\n/g, '<br>');
@@ -3726,15 +3728,15 @@ import * as Modals from './modalManager.js';
       _minimizedDocId = null;
       Modals.unregister('doc-panel');
     }
+    const container = document.getElementById('chat-container');
+    if (!container) return;
+
     isOpen = true;
     // Doc was opened last → it goes in front of the email windows (clears the
     // email-front flag; the doc/email z-index alternation lives in CSS).
     document.body.classList.remove('email-front');
     _ensureAgentMode();
     _markDocVisibleState(_lastSessionId, 'open');
-
-    const container = document.getElementById('chat-container');
-    if (!container) return;
 
     document.body.classList.add('doc-view');
 
@@ -6322,13 +6324,170 @@ import * as Modals from './modalManager.js';
   }
 
   /** Update the line number gutter */
-  function updateLineNumbers(text) {
+  let _lineNumberResizeObserver = null;
+  let _lineNumberObservedTextarea = null;
+  let _lineNumberResizeRaf = null;
+
+  function _lineNumberContentEl(gutter) {
+    let inner = gutter.querySelector('.doc-line-number-content');
+    if (!inner) {
+      inner = document.createElement('div');
+      inner.className = 'doc-line-number-content';
+      gutter.textContent = '';
+      gutter.appendChild(inner);
+    }
+    return inner;
+  }
+
+  function _lineNumberStyleSignature(style) {
+    return [
+      style.fontFamily,
+      style.fontSize,
+      style.fontWeight,
+      style.fontStyle,
+      style.lineHeight,
+      style.letterSpacing,
+      style.tabSize,
+      style.fontFeatureSettings,
+      style.fontVariantLigatures,
+      style.fontKerning,
+    ].join('|');
+  }
+
+  function _textareaTextWidth(textarea, style) {
+    const paddingLeft = parseFloat(style.paddingLeft) || 0;
+    const paddingRight = parseFloat(style.paddingRight) || 0;
+    return Math.max(0, textarea.clientWidth - paddingLeft - paddingRight);
+  }
+
+  function _lineHeightPx(style) {
+    const parsed = parseFloat(style.lineHeight);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    const fontSize = parseFloat(style.fontSize) || 11;
+    return fontSize * 1.45;
+  }
+
+  function _lineNumberMeasureEl(textarea) {
+    const wrap = document.getElementById('doc-editor-wrap') || textarea.parentElement || document.body;
+    let probe = wrap.querySelector('.doc-line-number-measure');
+    if (!probe) {
+      probe = document.createElement('textarea');
+      probe.className = 'doc-line-number-measure';
+      probe.setAttribute('aria-hidden', 'true');
+      probe.tabIndex = -1;
+      probe.readOnly = true;
+      probe.wrap = 'soft';
+      wrap.appendChild(probe);
+    }
+    return probe;
+  }
+
+  function _syncLineNumberMeasureStyle(probe, style, textWidth) {
+    probe.style.width = textWidth + 'px';
+    probe.style.fontFamily = style.fontFamily;
+    probe.style.fontSize = style.fontSize;
+    probe.style.fontWeight = style.fontWeight;
+    probe.style.fontStyle = style.fontStyle;
+    probe.style.lineHeight = style.lineHeight;
+    probe.style.letterSpacing = style.letterSpacing;
+    probe.style.tabSize = style.tabSize;
+    probe.style.fontFeatureSettings = style.fontFeatureSettings;
+    probe.style.fontVariantLigatures = style.fontVariantLigatures;
+    probe.style.fontKerning = style.fontKerning;
+    probe.style.textRendering = style.textRendering;
+    probe.style.whiteSpace = style.whiteSpace;
+    probe.style.wordWrap = style.wordWrap;
+    probe.style.overflowWrap = style.overflowWrap;
+  }
+
+  function _measureLineNumberHeights(textarea, lines, textWidth, style) {
+    const probe = _lineNumberMeasureEl(textarea);
+    _syncLineNumberMeasureStyle(probe, style, textWidth);
+    const lineHeight = _lineHeightPx(style);
+    return lines.map(line => {
+      probe.value = line || ' ';
+      const visualRows = Math.max(1, Math.round(probe.scrollHeight / lineHeight));
+      return visualRows * lineHeight;
+    });
+  }
+
+  function _renderLineNumberRows(inner, heights) {
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < heights.length; i++) {
+      const row = document.createElement('div');
+      row.className = 'doc-line-number-row';
+      row.style.height = `${heights[i]}px`;
+
+      const label = document.createElement('span');
+      label.className = 'doc-line-number-label';
+      label.textContent = String(i + 1);
+      row.appendChild(label);
+      frag.appendChild(row);
+    }
+    inner.textContent = '';
+    inner.appendChild(frag);
+  }
+
+  function _scheduleLineNumberRerender() {
+    if (_lineNumberResizeRaf) return;
+    const run = () => {
+      _lineNumberResizeRaf = null;
+      const textarea = document.getElementById('doc-editor-textarea');
+      if (textarea) updateLineNumbers(textarea.value, true);
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      _lineNumberResizeRaf = requestAnimationFrame(run);
+    } else {
+      run();
+    }
+  }
+
+  function _ensureLineNumberResizeObserver(textarea) {
+    if (typeof ResizeObserver === 'undefined') return;
+    if (!_lineNumberResizeObserver) {
+      _lineNumberResizeObserver = new ResizeObserver(_scheduleLineNumberRerender);
+    }
+    if (_lineNumberObservedTextarea === textarea) return;
+    if (_lineNumberObservedTextarea) {
+      _lineNumberResizeObserver.unobserve(_lineNumberObservedTextarea);
+    }
+    _lineNumberObservedTextarea = textarea;
+    _lineNumberResizeObserver.observe(textarea);
+  }
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', _scheduleLineNumberRerender);
+  }
+
+  function updateLineNumbers(text, force = false) {
+    const textarea = document.getElementById('doc-editor-textarea');
     const gutter = document.getElementById('doc-line-numbers');
-    if (!gutter) return;
-    const count = (text || '').split('\n').length;
-    let html = '';
-    for (let i = 1; i <= count; i++) html += i + '\n';
-    gutter.textContent = html;
+    if (!textarea || !gutter) return;
+
+    const value = text || '';
+    const lines = value.split('\n');
+    const inner = _lineNumberContentEl(gutter);
+    const style = getComputedStyle(textarea);
+    const textWidth = _textareaTextWidth(textarea, style);
+    const styleSig = _lineNumberStyleSignature(style);
+
+    _ensureLineNumberResizeObserver(textarea);
+    if (
+      !force &&
+      inner._lineNumberText === value &&
+      inner._lineNumberWidth === textWidth &&
+      inner._lineNumberStyleSig === styleSig
+    ) {
+      syncGutterScroll();
+      return;
+    }
+
+    const heights = _measureLineNumberHeights(textarea, lines, textWidth, style);
+    _renderLineNumberRows(inner, heights);
+    inner._lineNumberText = value;
+    inner._lineNumberWidth = textWidth;
+    inner._lineNumberStyleSig = styleSig;
+    syncGutterScroll();
   }
 
   /** Sync line number gutter scroll with textarea */
@@ -6336,7 +6495,7 @@ import * as Modals from './modalManager.js';
     const textarea = document.getElementById('doc-editor-textarea');
     const gutter = document.getElementById('doc-line-numbers');
     if (textarea && gutter) {
-      gutter.scrollTop = textarea.scrollTop;
+      _lineNumberContentEl(gutter).style.transform = `translateY(${-textarea.scrollTop}px)`;
     }
   }
 
@@ -8229,7 +8388,7 @@ import * as Modals from './modalManager.js';
     const text = textarea.value || '';
     let body;
     if (lang === 'markdown' && markdownModule?.mdToHtml) {
-      body = markdownModule.mdToHtml(text);
+      body = markdownModule.mdToHtml(text, { shortcodes: false }); // export: keep :shortcodes: literal
     } else {
       body = '<pre style="white-space:pre-wrap;font-size:12px;font-family:monospace;">' +
         text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
@@ -8260,7 +8419,7 @@ import * as Modals from './modalManager.js';
     // Render content as HTML for PDF
     let html;
     if (lang === 'markdown' && markdownModule?.mdToHtml) {
-      html = markdownModule.mdToHtml(text);
+      html = markdownModule.mdToHtml(text, { shortcodes: false }); // export: keep :shortcodes: literal
     } else {
       html = '<pre style="white-space:pre-wrap;font-size:11px;font-family:monospace;color:#000;background:#fff;">' +
         text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
@@ -8390,12 +8549,15 @@ import * as Modals from './modalManager.js';
     if (active) {
       const md = textarea.value || '';
       if (markdownModule && markdownModule.mdToHtml) {
-        preview.innerHTML = markdownModule.mdToHtml(md);
+        preview.innerHTML = markdownModule.mdToHtml(md, { shortcodes: false }); // doc preview: keep :shortcodes: literal
       } else {
         preview.innerHTML = md.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g, '<br>');
       }
       if (window.hljs) {
         preview.querySelectorAll('pre code').forEach(b => window.hljs.highlightElement(b));
+      }
+      if (markdownModule && markdownModule.renderMermaid) {
+        markdownModule.renderMermaid(preview);
       }
       preview.style.display = '';
       wrap.style.display = 'none';
@@ -8816,6 +8978,14 @@ import * as Modals from './modalManager.js';
 
   /** Open the document panel immediately for a doc being streamed in */
   export function streamDocOpen(title, language) {
+    // Discard any pending AI-edit diff before this stream changes the active
+    // document. When the AI streams a NEW document while an unapproved diff is
+    // open on the current one, streamDocOpen reassigns activeDocId below; if the
+    // stale diff isn't cleared first, a later exitDiffMode applies the old doc's
+    // content to the new one and overwrites it (issue #2467). activeDocId still
+    // points at the previously-active doc here, so exitDiffMode(true) restores
+    // and saves THAT doc — same guard handleDocUpdate/switchToDoc use.
+    if (_diffModeActive) exitDiffMode(true);
     // If already streaming a doc, reuse it (don't create a second temp doc)
     if (_streamDocId && docs.has(_streamDocId)) {
       const existing = docs.get(_streamDocId);
@@ -9034,9 +9204,36 @@ import * as Modals from './modalManager.js';
     return oldId;
   }
 
+  function _isMarkdownPreviewVisible() {
+    const preview = document.getElementById('doc-md-preview');
+    return !!(preview && preview.style.display !== 'none');
+  }
+
+  function _refreshMarkdownPreviewIfVisible(docId, content) {
+    if (!_isMarkdownPreviewVisible()) return false;
+    const doc = docs.get(docId);
+    const lang = ((doc && doc.language) || document.getElementById('doc-language-select')?.value || '').toLowerCase();
+    if (lang !== 'markdown') return false;
+    const textarea = document.getElementById('doc-editor-textarea');
+    if (textarea) textarea.value = content;
+    syncHighlighting();
+    _setMarkdownPreviewActive(true, { remember: false });
+    return true;
+  }
+
   /** Handle SSE doc_update event from AI */
   export function handleDocUpdate(data) {
     const streamingId = streamDocFinalize();
+    // Discard any pending AI-edit diff before this update changes the active
+    // document. The diff state (_diffModeActive/_diffOldContent/...) is a
+    // module-global singleton bound to whatever doc was active when the diff
+    // opened; if we switch documents without clearing it, a later tab switch or
+    // Accept/Reject-All flushes the stale diff's content into the now-active
+    // doc and silently overwrites it (issue #2467). activeDocId still points at
+    // the previously-active doc here, so exitDiffMode(true) restores and saves
+    // THAT doc before we reassign activeDocId below — mirroring switchToDoc()
+    // and enterDiffMode().
+    if (_diffModeActive) exitDiffMode(true);
     let docId = data.doc_id;
     const newContent = data.content || '';
 
@@ -9143,6 +9340,7 @@ import * as Modals from './modalManager.js';
     if (docLang && langSelect) langSelect.value = docLang;
     if (!docLang) attemptAutoDetect();
     const isEmailUpdate = (docLang || '').toLowerCase() === 'email';
+    const markdownPreviewWasVisible = _isMarkdownPreviewVisible();
 
     // Animate content update for edits; apply directly for creates/streaming
     const isEdit = !isEmailUpdate && isExistingDoc && oldContent && oldContent !== newContent && !streamingId;
@@ -9156,7 +9354,10 @@ import * as Modals from './modalManager.js';
         if (oldLines[li] !== newLines[li]) changedLines++;
       }
       if (changedLines >= DIFF_MODE_THRESHOLD) {
+        if (markdownPreviewWasVisible) _setMarkdownPreviewActive(false, { remember: false });
         enterDiffMode(oldContent, newContent);
+      } else if (markdownPreviewWasVisible && _refreshMarkdownPreviewIfVisible(docId, newContent)) {
+        // Preview is the visible surface, so refresh it instead of animating a hidden editor.
       } else {
         _animateDocEdit(textarea, newContent);
       }
@@ -9170,6 +9371,7 @@ import * as Modals from './modalManager.js';
       } else {
         if (textarea) textarea.value = newContent;
         syncHighlighting();
+        _refreshMarkdownPreviewIfVisible(docId, newContent);
       }
     }
 

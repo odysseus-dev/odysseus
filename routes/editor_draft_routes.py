@@ -67,6 +67,14 @@ def _summary(d: EditorDraft) -> Dict[str, Any]:
     }
 
 
+def _load_payload(raw: Optional[str]) -> Dict[str, Any]:
+    try:
+        payload = json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def setup_editor_draft_routes() -> APIRouter:
     router = APIRouter(tags=["editor-drafts"])
 
@@ -93,13 +101,9 @@ def setup_editor_draft_routes() -> APIRouter:
             ).first()
             if not d or not _owns(d, user):
                 raise HTTPException(404, "Draft not found")
-            try:
-                payload = json.loads(d.payload) if d.payload else {}
-            except Exception:
-                payload = {}
             return {
                 **_summary(d),
-                "payload": payload,
+                "payload": _load_payload(d.payload),
             }
         finally:
             db.close()

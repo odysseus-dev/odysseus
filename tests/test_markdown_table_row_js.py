@@ -45,3 +45,20 @@ def test_rows_without_outer_pipes():
 @pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
 def test_header_row_unaffected():
     assert _split("| h1 | h2 | h3 |") == ["h1", "h2", "h3"]
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node binary not on PATH")
+def test_non_string_row_falls_back_to_empty_cell():
+    js = f"""
+    import {{ splitTableRow }} from '{_HELPER.as_posix()}';
+    console.log(JSON.stringify([
+      splitTableRow(null),
+      splitTableRow({{"bad": "row"}})
+    ]));
+    """
+    proc = subprocess.run(
+        ["node", "--input-type=module"],
+        input=js, capture_output=True, text=True, cwd=str(_REPO), timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout.strip()) == [[""], [""]]

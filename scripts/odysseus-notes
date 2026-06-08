@@ -29,12 +29,22 @@ except ModuleNotFoundError as e:
     sys.exit(2)
 
 
+def _load_items(raw) -> list:
+    if not raw:
+        return []
+    try:
+        items = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return items if isinstance(items, list) else []
+
+
 def _serialize(n: "Note") -> dict:
     return {
         "id": n.id,
         "title": n.title or "",
         "content": n.content or "",
-        "items": json.loads(n.items) if n.items else [],
+        "items": _load_items(n.items),
         "note_type": n.note_type or "note",
         "color": n.color or "",
         "label": n.label or "",

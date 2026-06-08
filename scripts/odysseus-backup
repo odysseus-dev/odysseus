@@ -56,6 +56,16 @@ def _sqlite_safe_copy(src: Path, dst: Path) -> None:
         dst.write_bytes(src.read_bytes())
 
 
+def _reject_output_inside_data(out_path: Path) -> None:
+    try:
+        resolved = out_path.resolve()
+        data_root = _DATA_DIR.resolve()
+        resolved.relative_to(data_root)
+    except ValueError:
+        return
+    fail("backup output path must be outside data/")
+
+
 def cmd_snapshot(args):
     """Write a tar.gz of the entire data/ directory.
 
@@ -68,6 +78,7 @@ def cmd_snapshot(args):
     out_path = Path(args.out) if args.out else (
         _BACKUP_DIR / f"odysseus-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.tar.gz"
     )
+    _reject_output_inside_data(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     sqlite_dbs = [p for p in _DATA_DIR.rglob("*.db") if p.is_file() and not p.is_symlink()]

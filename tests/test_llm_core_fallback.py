@@ -55,6 +55,44 @@ def test_no_fallback_event_when_primary_succeeds(monkeypatch):
     assert not any('"fallback"' in c for c in chunks)
 
 
+def test_dedupe_candidates_keeps_first_of_each_route():
+    """(url, model) is the route key; later repeats are dropped, order preserved,
+    the first tuple (with its headers) kept, malformed entries filtered."""
+    cands = [
+        ("u1", "m1", {"h": 1}),   # first u1/m1 — kept
+        ("u1", "m1", {"h": 2}),   # repeat route — dropped (first headers win)
+        ("u2", "m2", {}),         # distinct — kept
+        ("u1", "m1", {}),         # repeat again — dropped
+        (None, "x", {}),          # malformed (no url) — dropped
+        ("u3", "", {}),           # malformed (no model) — dropped
+    ]
+    assert llm_core._dedupe_candidates(cands) == [("u1", "m1", {"h": 1}), ("u2", "m2", {})]
+    assert llm_core._dedupe_candidates([]) == []
+    assert llm_core._dedupe_candidates(None) == []
+
+
+def test_duplicate_route_is_attempted_only_once(monkeypatch):
+    """A fallback that repeats the primary's (url, model) must NOT make the chain
+    sail back into the same dead route — each distinct route is tried once."""
+    calls = []
+
+    async def fake_stream(url, model, messages, **kw):
+        calls.append((url, model))
+        yield 'event: error\ndata: {"status": 503, "text": "down"}\n\n'
+
+    monkeypatch.setattr(llm_core, "stream_llm", fake_stream)
+
+    async def run():
+        out = []
+        cands = [("u1", "m1", {}), ("u1", "m1", {}), ("u2", "m2", {})]
+        async for c in llm_core.stream_llm_with_fallback(cands, [{"role": "user", "content": "hi"}]):
+            out.append(c)
+        return out
+
+    asyncio.run(run())
+    assert calls == [("u1", "m1"), ("u2", "m2")], f"duplicate route re-attempted: {calls}"
+
+
 def test_summarize_stream_error():
     assert "400" in llm_core._summarize_stream_error('event: error\ndata: {"status": 400, "text": "nope"}\n\n')
     assert llm_core._summarize_stream_error(None) == "primary model failed"

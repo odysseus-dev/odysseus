@@ -77,6 +77,9 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
         try:
             with open(self.presets_file, 'r', encoding="utf-8") as f:
                 presets = json.load(f)
+            if not isinstance(presets, dict):
+                logger.error("Error loading presets: expected an object")
+                return self.DEFAULT_PRESETS.copy()
             custom = presets.get("custom") if isinstance(presets, dict) else None
             if isinstance(custom, dict) and "enabled" not in custom:
                 legacy_prompt = "You are a helpful, balanced assistant. Match your response style to the user's needs."

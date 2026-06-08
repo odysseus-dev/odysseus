@@ -12,6 +12,10 @@ import threading
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from fastapi import HTTPException, UploadFile
+
+from src.upload_limits import format_byte_limit, get_chat_upload_max_bytes
+
+
 def secure_filename(filename: str) -> str:
     """Sanitize a filename (replaces werkzeug.utils.secure_filename)."""
     import unicodedata
@@ -31,7 +35,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-UPLOAD_ID_RE = re.compile(r"^[0-9a-fA-F]{32}\.[A-Za-z0-9]+$")
+# The extension is optional: save_upload builds the id as `{uuid.hex}{ext}`,
+# and a file with no extension (Dockerfile, README, ...) yields a bare 32-hex
+# id. Requiring `.ext` made those ids fail validation, so the stored file
+# could never be resolved or downloaded again.
+UPLOAD_ID_RE = re.compile(r"^[0-9a-fA-F]{32}(?:\.[A-Za-z0-9]+)?$")
 
 
 def is_valid_upload_id(upload_id: str) -> bool:
@@ -39,14 +47,46 @@ def is_valid_upload_id(upload_id: str) -> bool:
     return UPLOAD_ID_RE.fullmatch(upload_id or "") is not None
 
 
+def _build_upload_id(safe_filename: str) -> str:
+    """Build a unique upload id whose extension matches UPLOAD_ID_RE.
+
+    secure_filename keeps '_' and '-', so an extension like '.jpg-1' (the
+    suffix browsers append to duplicate downloads) or '.v1_final' produced an
+    id that failed is_valid_upload_id, making the saved file permanently
+    unreadable (every read path gates on validate_upload_id). Sanitize the
+    extension to the single-alnum shape the id contract requires.
+    """
+    _, ext = os.path.splitext(safe_filename or "")
+    ext = re.sub(r"[^A-Za-z0-9]", "", ext)
+    return uuid.uuid4().hex + (("." + ext) if ext else "")
+
+
+def count_recent_uploads(timestamps, now: float, window: float = 10.0) -> int:
+    """Number of upload events in *timestamps* within the last *window* seconds.
+
+    Used by the per-IP concurrency guard. The count is of genuine prior upload
+    events — it must NOT scale with how many files are in the *current* request,
+    or a single multi-file batch would reject itself (issue #1346)."""
+    if not timestamps:
+        return 0
+    cutoff = now - window
+    return sum(1 for t in timestamps if t > cutoff)
+
+
 class UploadHandler:
     def __init__(self, base_dir: str, upload_dir: str):
         self.base_dir = base_dir
         self.upload_dir = upload_dir
-        self.max_upload_size = 10 * 1024 * 1024  # 10MB
+        self.max_upload_size = get_chat_upload_max_bytes()
         self.max_concurrent_uploads = 3
         self.cleanup_days = 30
-        self.upload_rate_limit = 5  # Max 5 uploads per minute per IP
+        # Per-IP per-minute cap. save_upload() counts EACH file, and the chat
+        # composer lets a user attach up to MAX_FILES (10, static/js/fileHandler.js)
+        # in one batch — so this must comfortably exceed 10, or a single 6+ file
+        # attach is rejected mid-batch (issue #1346: "5 work, 6 fail"). Burst abuse
+        # is separately bounded by max_concurrent_uploads. Headroom for a few full
+        # batches per minute.
+        self.upload_rate_limit = 60  # max 60 file-uploads per minute per IP
         self.upload_rate_window = 60  # 60 seconds
         
         # Track upload rates
@@ -139,8 +179,8 @@ class UploadHandler:
         document_extensions = {
             '.pdf', '.docx', '.xlsx', '.pptx', '.xls', '.epub',
             '.txt', '.py', '.js', '.html', '.htm',
-            '.css', '.json', '.md', '.csv', '.log', '.xml', '.yml', 
-            '.yaml', '.sql', '.sh', '.bash', '.c', '.cpp', '.h', 
+            '.css', '.json', '.md', '.csv', '.log', '.xml', '.yml',
+            '.yaml', '.nix', '.sql', '.sh', '.bash', '.c', '.cpp', '.h',
             '.java', '.go', '.rs', '.php', '.rb', '.ts', '.jsx', '.tsx'
         }
         document_mime_types = {
@@ -482,7 +522,7 @@ class UploadHandler:
         if file_size > self.max_upload_size:
             raise HTTPException(
                 status_code=400,
-                detail=f"File size exceeds {self.max_upload_size/1024/1024}MB limit"
+                detail=f"File size exceeds {format_byte_limit(self.max_upload_size)} limit"
             )
         
         # Get original filename and sanitize it
@@ -512,11 +552,23 @@ class UploadHandler:
         existing_key = None
         with self._index_lock:
             existing_files = self._load_upload_index()
+            stale_keys = []
             for key, info in existing_files.items():
                 if info.get("hash") == file_hash and info.get("owner") == owner:
-                    existing_key = key
-                    existing_file = info
-                    break
+                    stored_path = info.get("path")
+                    if stored_path and os.path.exists(stored_path) and self._inside_upload_dir(stored_path):
+                        existing_key = key
+                        existing_file = info
+                        break
+                    stale_keys.append(key)
+            if stale_keys:
+                for key in stale_keys:
+                    existing_files.pop(key, None)
+                try:
+                    self._atomic_write_json(uploads_db_path, existing_files)
+                    logger.info("Removed %d stale upload index entries for missing duplicates", len(stale_keys))
+                except Exception as e:
+                    logger.warning(f"Failed to remove stale upload index entries: {e}")
         if existing_file:
             logger.info(f"Duplicate file upload detected: {original_filename} -> {existing_file['id']}")
 
@@ -562,8 +614,7 @@ class UploadHandler:
                 }
         
         # Generate unique ID and determine save location
-        _, ext = os.path.splitext(safe_filename)
-        file_id = f"{uuid.uuid4().hex}{ext}"
+        file_id = _build_upload_id(safe_filename)
         
         # Create date-based directory structure
         upload_dir = self.get_upload_dir()

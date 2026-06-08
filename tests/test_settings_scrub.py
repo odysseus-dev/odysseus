@@ -49,6 +49,16 @@ def test_google_pse_cx_is_public():
     assert scrub_settings({"google_pse_cx": "cx123"})["google_pse_cx"] == "cx123"
 
 
+def test_webhook_integration_handle_blanked():
+    out = scrub_settings({
+        "reminder_webhook_integration_id": "global-webhook",
+        "reminder_webhook_payload_template": '{"content":"{{message}}"}',
+    })
+    assert is_secret_key("reminder_webhook_integration_id") is True
+    assert out["reminder_webhook_integration_id"] == ""
+    assert out["reminder_webhook_payload_template"] == '{"content":"{{message}}"}'
+
+
 def test_empty_and_nonstring_secret_values_untouched():
     out = scrub_settings({"api_key": "", "feature_key": 7, "x_token": None})
     assert out["api_key"] == ""     # already empty
@@ -59,3 +69,8 @@ def test_empty_and_nonstring_secret_values_untouched():
 def test_exact_name_matches():
     out = scrub_settings({"password": "p", "token": "t", "secret": "s", "apikey": "a", "key": "k"})
     assert all(v == "" for v in out.values()), out
+
+
+def test_non_object_settings_return_empty_mapping():
+    assert scrub_settings(["not", "settings"]) == {}
+    assert scrub_settings("not settings") == {}

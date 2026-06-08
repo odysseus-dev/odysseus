@@ -112,7 +112,7 @@ def evaluate_turn_regex(
                     return ("failure", f"tool result matched error pattern {pat.pattern!r}: {snippet!r}")
 
     # Agent verbally gave up?
-    if agent_reply:
+    if isinstance(agent_reply, str) and agent_reply:
         for pat in _REPLY_GIVE_UP_PATTERNS:
             m = pat.search(agent_reply)
             if m:
@@ -327,7 +327,7 @@ def _extract_skill_json(teacher_response: str) -> Optional[Dict[str, Any]]:
     treated as "teacher declined to write a skill", per the prompt
     contract.
     """
-    if not teacher_response:
+    if not isinstance(teacher_response, str) or not teacher_response:
         return None
     import json
     m = re.search(r"```(?:json)?\s*\n(\{[\s\S]*?\})\s*\n```", teacher_response)

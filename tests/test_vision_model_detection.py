@@ -28,3 +28,21 @@ def test_text_only_models_not_flagged():
 
 def test_none_is_safe():
     assert is_vision_model(None) is False
+
+
+def test_recognizes_multimodal_families_without_vision_in_name():
+    # issue #1274: these are vision-capable but their names don't contain
+    # "vision"/"vl", so they were dropped and the model never saw the image.
+    for name in [
+        "gemma3:4b", "gemma3", "gemma-3-27b-it",
+        "llama4:scout", "llama4", "llama-4-maverick",
+        "mistral-small3.1", "mistral-small-3.2",
+        "phi-4-multimodal", "phi4-multimodal",
+    ]:
+        assert is_vision_model(name), f"{name!r} should be detected as vision-capable"
+
+
+def test_new_keywords_do_not_overmatch_text_models():
+    # The added families must not flag their text-only siblings.
+    for name in ["gemma2:9b", "gemma:7b", "llama3.3", "mistral-small", "phi-3-mini"]:
+        assert not is_vision_model(name), f"{name!r} should not be flagged as vision"
