@@ -132,6 +132,56 @@ def _shell_path(p: str) -> str:
     return '"' + p + '"'
 
 
+def _is_hf_hub_cache_dir(path: str | None) -> bool:
+    if not path:
+        return False
+    norm = path.rstrip("/").replace("\\", "/")
+    return norm == "~/.cache/huggingface/hub" or norm.endswith("/.cache/huggingface/hub")
+
+
+def _hf_download_target(repo_id: str, local_dir: str | None) -> dict[str, str | None]:
+    """Resolve Cookbook's download target into HF cache/local-dir arguments.
+
+    A configured download directory normally means "put this model in a
+    per-model flat folder". The Hugging Face hub cache itself is the exception:
+    passing ``--local-dir`` inside ``.../.cache/huggingface/hub`` creates a
+    local-dir layout under the cache and confuses later scans/resumes. In that
+    case, use the normal hub cache layout via cache_dir/--cache-dir instead.
+    """
+    if not local_dir:
+        return {"cache_dir": None, "local_dir": None}
+    if _is_hf_hub_cache_dir(local_dir):
+        return {"cache_dir": local_dir, "local_dir": None}
+    short = repo_id.split("/")[-1] if "/" in repo_id else repo_id
+    return {"cache_dir": None, "local_dir": local_dir.rstrip("/") + "/" + short}
+
+
+def _hf_download_retry_bash_lines(command: str, *, stdin_redirect: bool = False,
+                                  attempts: int = 5, sleep_seconds: int = 30) -> list[str]:
+    """Build bash lines that retry an HF download command and let HF resume.
+
+    ``hf download`` and ``snapshot_download`` resume from existing
+    ``.incomplete`` blobs when invoked with the same cache/local directory. The
+    wrapper treats transient transport failures as retryable by rerunning the
+    exact same command after a short delay.
+    """
+    run_cmd = f"{command} < /dev/null" if stdin_redirect else command
+    return [
+        "_odysseus_hf_attempt=1",
+        f"_odysseus_hf_max={int(attempts)}",
+        "while true; do",
+        '  echo "[odysseus] HF download attempt ${_odysseus_hf_attempt}/${_odysseus_hf_max}"',
+        f"  {run_cmd}",
+        "  _ec=$?",
+        "  if [ $_ec -eq 0 ]; then break; fi",
+        "  if [ $_odysseus_hf_attempt -ge $_odysseus_hf_max ]; then break; fi",
+        '  echo "[odysseus] Download failed/interrupted (exit $_ec). Sleeping, then resuming from the existing cache..."',
+        "  _odysseus_hf_attempt=$((_odysseus_hf_attempt + 1))",
+        f"  sleep {int(sleep_seconds)}",
+        "done",
+    ]
+
+
 def _local_tooling_path_export(executable: str) -> str:
     """Bash line prepending the running interpreter's bin dir to PATH.
 

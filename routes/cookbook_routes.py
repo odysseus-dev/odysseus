@@ -48,7 +48,7 @@ from routes.cookbook_helpers import (
     _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
     _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     _append_pip_install_runner_lines,
-    _diagnose_serve_output, run_ssh_command_async,
+    _diagnose_serve_output, _hf_download_retry_bash_lines, _hf_download_target, run_ssh_command_async,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -297,13 +297,19 @@ def setup_cookbook_routes() -> APIRouter:
         session_id = f"cookbook-{uuid.uuid4().hex[:8]}"
         wrapper_script = TMUX_LOG_DIR / f"{session_id}.sh"
 
-        # When a download directory is set, target a per-model subfolder under it
-        # (<dir>/<name>) so the flat-directory cache scan lists it as its own
-        # model. Without it, hf/snapshot_download falls back to the HF cache.
-        _dl_short = req.repo_id.split("/")[-1] if "/" in req.repo_id else req.repo_id
-        _dl_base = (req.local_dir.rstrip("/") + "/" + _dl_short) if req.local_dir else None
-        _dl_shell = _shell_path(_dl_base) if _dl_base else None      # for hf CLI / bash
-        _dl_pyarg = (", local_dir=os.path.expanduser(" + repr(_dl_base) + ")") if _dl_base else ""
+        # Custom download dirs become per-model local-dir folders. If the
+        # selected dir is the HF hub cache itself, use cache_dir instead so HF
+        # keeps the normal models--org--repo/snapshots layout and resumes cleanly.
+        _dl_target = _hf_download_target(req.repo_id, req.local_dir)
+        _dl_local = _dl_target["local_dir"]
+        _dl_cache = _dl_target["cache_dir"]
+        _dl_shell_local = _shell_path(_dl_local) if _dl_local else None
+        _dl_shell_cache = _shell_path(_dl_cache) if _dl_cache else None
+        _dl_pyarg = ""
+        if _dl_cache:
+            _dl_pyarg = ", cache_dir=os.path.expanduser(" + repr(_dl_cache) + ")"
+        elif _dl_local:
+            _dl_pyarg = ", local_dir=os.path.expanduser(" + repr(_dl_local) + ")"
 
         # Build the hf download command. Redirection to suppress the interactive
         # "update available? [Y/n]" prompt is added per-platform further down
@@ -311,8 +317,10 @@ def setup_cookbook_routes() -> APIRouter:
         hf_cmd = f"hf download {req.repo_id}"
         if req.include:
             hf_cmd += f" --include '{req.include}'"
-        if _dl_shell:
-            hf_cmd += f" --local-dir {_dl_shell}"
+        if _dl_shell_cache:
+            hf_cmd += f" --cache-dir {_dl_shell_cache}"
+        elif _dl_shell_local:
+            hf_cmd += f" --local-dir {_dl_shell_local}"
 
         # Build the shell wrapper — runs hf download directly in tmux (which is a TTY)
         # No script/tee needed — we'll use tmux capture-pane to read output
@@ -451,8 +459,7 @@ def setup_cookbook_routes() -> APIRouter:
             runner_lines.append(_HF_TOKEN_STATUS_SNIPPET)
             # Try hf CLI first, fall back to Python huggingface_hub, then auto-install
             runner_lines.append('if command -v hf &>/dev/null; then')
-            # < /dev/null suppresses interactive "update available? [Y/n]" prompt
-            runner_lines.append(f'  {hf_cmd} < /dev/null')
+            runner_lines.extend("  " + line for line in _hf_download_retry_bash_lines(hf_cmd, stdin_redirect=True))
             runner_lines.append('elif python3 -c "import huggingface_hub" 2>/dev/null; then')
             runner_lines.append('  echo "hf CLI not found, using Python huggingface_hub..."')
             runner_lines.append(f'  python3 -c "import os; from huggingface_hub import snapshot_download; snapshot_download(\'{req.repo_id}\'{_dl_pyarg}, max_workers={4 if req.disable_hf_transfer else 8})"')
@@ -500,8 +507,7 @@ def setup_cookbook_routes() -> APIRouter:
                 lines.append(hf_cmd)
                 lines.append('_ec=$?; if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec)"; fi')
             else:
-                # < /dev/null suppresses interactive "update available? [Y/n]" prompt
-                lines.append(f"{hf_cmd} < /dev/null")
+                lines.extend(_hf_download_retry_bash_lines(hf_cmd, stdin_redirect=True))
                 lines.append('_ec=$?; if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec)"; fi')
                 lines.append(f"rm -f '{wrapper_script}'")
                 lines.append('exec "${SHELL:-/bin/bash}"')

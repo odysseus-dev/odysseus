@@ -15,6 +15,8 @@ from routes.cookbook_helpers import (
     _llama_cpp_rebuild_cmd,
     _append_vllm_linux_preflight_lines,
     _local_tooling_path_export,
+    _hf_download_retry_bash_lines,
+    _hf_download_target,
     _pip_install_attempt,
     _pip_install_fallback_chain,
     _ollama_bind_from_cmd,
@@ -142,6 +144,40 @@ def test_local_tooling_path_export_preserves_spaces_and_expands_path():
     line = _local_tooling_path_export("/Users/John Smith/.venv/bin/python3")
     assert line == 'export PATH="/Users/John Smith/.venv/bin:$PATH"'
     assert line.endswith(':$PATH"')  # $PATH stays expandable in double quotes
+
+
+def test_hf_download_target_uses_cache_dir_for_hub_cache():
+    target = _hf_download_target("cyankiwi/Qwen3.5-9B-AWQ-BF16-INT4", "/app/.cache/huggingface/hub")
+
+    assert target == {
+        "cache_dir": "/app/.cache/huggingface/hub",
+        "local_dir": None,
+    }
+
+
+def test_hf_download_target_keeps_custom_dirs_as_per_model_local_dir():
+    target = _hf_download_target("cyankiwi/Nemotron-Cascade-8B-AWQ-4bit", "/models")
+
+    assert target == {
+        "cache_dir": None,
+        "local_dir": "/models/Nemotron-Cascade-8B-AWQ-4bit",
+    }
+
+
+def test_hf_download_retry_loop_reruns_same_command_for_resume():
+    script = "\n".join(
+        _hf_download_retry_bash_lines(
+            'hf download cyankiwi/Qwen3.5-9B-AWQ-BF16-INT4 --cache-dir "/app/.cache/huggingface/hub"',
+            stdin_redirect=True,
+            attempts=3,
+            sleep_seconds=5,
+        )
+    )
+
+    assert "_odysseus_hf_max=3" in script
+    assert 'hf download cyankiwi/Qwen3.5-9B-AWQ-BF16-INT4 --cache-dir "/app/.cache/huggingface/hub" < /dev/null' in script
+    assert "Sleeping, then resuming from the existing cache" in script
+    assert "sleep 5" in script
 
 
 def test_pip_install_fallback_chain_prefers_venv_safe_install():

@@ -120,7 +120,13 @@ export function _buildDownloadCmd(model, backend) {
       // Reflect the server's download target in the preview (matches the real
       // download path built server-side). '' = default HF cache.
       const _dlDir = (_serverByVal?.(_envState.remoteServerKey || _envState.remoteHost || '') || {}).downloadDir || '';
-      const _localDirArg = _dlDir ? `, local_dir=os.path.expanduser('${_dlDir.replace(/\/$/, '')}/${repo.split('/').pop()}')` : '';
+      const _dlNorm = _dlDir.replace(/\/$/, '');
+      const _isHubCache = _dlNorm === '~/.cache/huggingface/hub' || _dlNorm.endsWith('/.cache/huggingface/hub');
+      const _downloadDirArg = _dlDir
+        ? (_isHubCache
+          ? `, cache_dir=os.path.expanduser('${_dlNorm}')`
+          : `, local_dir=os.path.expanduser('${_dlNorm}/${repo.split('/').pop()}')`)
+        : '';
       const _py = _isWindows() ? 'python' : 'python3';
       cmd = `${_py} -u -c "
 import sys, time, os
@@ -171,7 +177,7 @@ from huggingface_hub import snapshot_download
 repo='${repo}'
 print(f'START {repo}',flush=True)
 try:
- path=snapshot_download(repo${includeArg}${_localDirArg})
+ path=snapshot_download(repo${includeArg}${_downloadDirArg})
  print(f'DONE {path}',flush=True)
 except Exception as e:
  print(f'ERROR {e}',file=sys.stderr,flush=True);sys.exit(1)
