@@ -508,8 +508,8 @@ async function initUtilityModel() {
   var msg = el('set-utilityChatMsg');
   var _endpoints = [];
   var fallbackWidget = null;
-  if (epSel && epSel.options[0]) epSel.options[0].textContent = 'Same as chat';
-  if (modelSel && modelSel.options[0]) modelSel.options[0].textContent = 'Same as chat';
+  if (epSel && epSel.options[0]) epSel.options[0].textContent = window.t ? window.t('settings.sameAsChat') : 'Same as chat';
+  if (modelSel && modelSel.options[0]) modelSel.options[0].textContent = window.t ? window.t('settings.sameAsChat') : 'Same as chat';
 
   try {
     _endpoints = await _fetchModelEndpoints();
@@ -645,7 +645,7 @@ async function initTeacherModel() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ teacher_enabled: enabled, teacher_model: spec })
       });
-      msg.textContent = enabled ? (spec ? 'Saved' : 'Pick an endpoint + model') : 'Disabled';
+      msg.textContent = enabled ? (spec ? (window.t ? window.t('settings.saved') : 'Saved') : (window.t ? window.t('settings.pickEndpointModel') : 'Pick an endpoint + model')) : (window.t ? window.t('settings.disabled') : 'Disabled');
       msg.style.color = enabled && !spec ? 'var(--red)' : 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
@@ -920,7 +920,7 @@ async function initTtsSettings() {
         setTimeout(function() { ttsMsg.textContent = ''; }, 2000); return;
       }
       var testText = 'Hello, this is a test of text to speech.';
-      previewPlaying = true; previewBtn.textContent = 'Loading...';
+      previewPlaying = true; previewBtn.textContent = window.t ? window.t('settings.tts.loadingTest') : 'Loading...';
       try {
         if (prov === 'browser') {
           if (!('speechSynthesis' in window)) throw new Error('Browser TTS not supported');
@@ -946,14 +946,14 @@ async function initTtsSettings() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: testText, format: 'audio' })
           });
-          if (!res.ok) { var err = await res.json().catch(function() { return {}; }); throw new Error(err.detail?.message || 'Synthesis failed'); }
+          if (!res.ok) { var err = await res.json().catch(function() { return {}; }); throw new Error(err.detail?.message || (window.t ? window.t('settings.tts.synthFailed') : 'Synthesis failed')); }
           var blob = await res.blob();
           var url = URL.createObjectURL(blob);
           previewAudio = new Audio(url);
           previewBtn.textContent = 'Stop'; previewBtn.style.borderColor = 'var(--red, #e55)';
           await new Promise(function(resolve, reject) {
             previewAudio.onended = function() { URL.revokeObjectURL(url); previewAudio = null; resolve(); };
-            previewAudio.onerror = function() { URL.revokeObjectURL(url); previewAudio = null; reject(new Error('Playback failed')); };
+            previewAudio.onerror = function() { URL.revokeObjectURL(url); previewAudio = null; reject(new Error(window.t ? window.t('settings.tts.playbackFailed') : 'Playback failed')); };
             previewAudio.play().catch(reject);
           });
         }
@@ -1057,15 +1057,19 @@ async function initSttSettings() {
    SEARCH TAB
    ═══════════════════════════════════════════ */
 
-var _searchProviderHints = {
-  searxng: 'Self-hosted SearXNG instance. Leave URL empty to use the SEARXNG_INSTANCE env var.',
-  duckduckgo: 'Free search — no API key required. Works out of the box.',
-  brave: 'Get your API key from brave.com/search/api',
-  google_pse: 'Requires a Google API key and a Programmable Search Engine ID (CX). Create one at programmablesearchengine.google.com',
-  tavily: 'AI-optimized search. 1,000 free credits/month at tavily.com',
-  serper: 'Google results via API. 2,500 free queries at serper.dev',
-  disabled: 'Web search and deep research tools will be unavailable.',
-};
+function _getSearchProviderHints() {
+  var _t = window.t;
+  return {
+    searxng: _t ? _t('settings.search.searxng.desc') : 'Self-hosted SearXNG instance. Leave URL empty to use the SEARXNG_INSTANCE env var.',
+    duckduckgo: _t ? _t('settings.search.duckduckgo.desc') : 'Free search — no API key required. Works out of the box.',
+    brave: _t ? _t('settings.search.brave.desc') : 'Get your API key from brave.com/search/api',
+    google_pse: _t ? _t('settings.search.google.desc') : 'Requires a Google API key and a Programmable Search Engine ID (CX). Create one at programmablesearchengine.google.com',
+    tavily: 'AI-optimized search. 1,000 free credits/month at tavily.com',
+    serper: _t ? _t('settings.search.serper.desc') : 'Google results via API. 2,500 free queries at serper.dev',
+    disabled: _t ? _t('settings.search.disabled.desc') : 'Web search and deep research tools will be unavailable.',
+  };
+}
+var _searchProviderHints = {};
 var _searchNeedsKey = { brave: 1, google_pse: 1, tavily: 1, serper: 1 };
 var _searchLabels = {
   searxng: 'SearXNG', duckduckgo: 'DuckDuckGo', brave: 'Brave Search',
@@ -1102,7 +1106,7 @@ async function initSearchSettings() {
     urlRow.style.display = prov === 'searxng' ? 'flex' : 'none';
     keyRow.style.display = _searchNeedsKey[prov] ? 'flex' : 'none';
     cxRow.style.display = prov === 'google_pse' ? 'flex' : 'none';
-    hint.textContent = _searchProviderHints[prov] || '';
+    hint.textContent = _getSearchProviderHints()[prov] || '';
     if (prov === 'brave') keyInput.placeholder = 'Brave API key';
     else if (prov === 'google_pse') keyInput.placeholder = 'Google API key';
     else if (prov === 'tavily') keyInput.placeholder = 'Tavily API key';
@@ -1160,7 +1164,7 @@ async function initSearchSettings() {
         extra = ' (' + s.search_url + ')';
       }
       var count = s.search_result_count || 5;
-      msg.textContent = 'Active: ' + label + extra + ' \u00b7 ' + count + ' results';
+      msg.textContent = window.t ? window.t('settings.active', {label, extra, count}) : ('Active: ' + label + extra + ' \u00b7 ' + count + ' results');
       msg.style.color = active === 'disabled' ? 'var(--red)' : (_searchNeedsKey[active] && !hasKey) ? 'var(--red)' : 'var(--fg)';
     } catch (e) { /* ignore */ }
   }

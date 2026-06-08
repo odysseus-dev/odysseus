@@ -2,6 +2,7 @@
 // Odysseus UI — Main Application Orchestrator
 // ES6 module — entry point, no exports (wires all modules together)
 // ============================================
+import i18n from './js/i18n.js';
 import Storage from './js/storage.js';
 import uiModule from './js/ui.js';
 import workspaceModule from './js/workspace.js';
@@ -52,6 +53,22 @@ window.sessionModule = sessionModule;
 window.uiModule = uiModule;
 window.adminModule = adminModule;
 window.cookbookModule = cookbookModule;
+
+// Expose i18n globally so all modules can call window.t() without importing
+window.i18n = i18n;
+window.t = i18n.t.bind(i18n);
+
+// Initialise translations and sync the language toggle button label
+i18n.init().then(() => {
+  const langBtn = document.getElementById('user-bar-lang');
+  if (langBtn) langBtn.textContent = i18n.getLang() === 'zh' ? 'EN' : '中';
+});
+
+// Keep the lang button label in sync when language is changed at runtime
+i18n.onLangChange(lang => {
+  const langBtn = document.getElementById('user-bar-lang');
+  if (langBtn) langBtn.textContent = lang === 'zh' ? 'EN' : '中';
+});
 
 // Redirect to login on 401 from any fetch
 const _origFetch = window.fetch;
