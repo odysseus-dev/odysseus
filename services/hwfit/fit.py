@@ -517,6 +517,44 @@ SORT_KEYS = {
     "newest": lambda r: r.get("release_date") or "",
 }
 
+_AA_SEARCH_SUFFIXES = (
+    "-instruct-reasoning", "-instruct", "-non-reasoning",
+    "-thinking", "-it", "-chat",
+)
+
+_DEEPSEEK_QWEN_DISTILL_RE = re.compile(r"deepseek-r1-\d{4}-qwen", re.IGNORECASE)
+
+
+def _search_needles(search: str) -> tuple[str, ...]:
+    """Expand AA-style slugs so qwen3-8b-instruct also matches qwen3-8b in HF ids."""
+    s = search.lower().strip()
+    if not s:
+        return ()
+    needles = [s]
+    for suffix in _AA_SEARCH_SUFFIXES:
+        if s.endswith(suffix) and len(s) > len(suffix):
+            base = s[: -len(suffix)].rstrip("-")
+            if base and base not in needles:
+                needles.append(base)
+    return tuple(needles)
+
+
+def _model_matches_search(model: dict, search: str) -> bool:
+    needles = _search_needles(search)
+    if not needles:
+        return True
+    name = model.get("name", "").lower()
+    provider = model.get("provider", "").lower()
+    matched = any(n in name or n in provider for n in needles)
+    if not matched:
+        return False
+    # DeepSeek-R1-0528-Qwen3-8B embeds "qwen3-8b" as a distill suffix — not a
+    # Qwen catalog entry. Exclude unless the user is searching for DeepSeek.
+    if any(n.startswith("qwen") for n in needles) and "deepseek" not in search.lower():
+        if _DEEPSEEK_QWEN_DISTILL_RE.search(name):
+            return False
+    return True
+
 
 def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None, target_context=None, fit_only=False):
     """Rank all models against detected hardware. Returns sorted list of fit results.
@@ -638,11 +676,8 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
             if quant in ("INT4", "INT8", "W4A16", "W8A8", "W8A16") and native_q != quant:
                 continue
 
-        if search:
-            name = m.get("name", "").lower()
-            provider = m.get("provider", "").lower()
-            if search.lower() not in name and search.lower() not in provider:
-                continue
+        if search and not _model_matches_search(m, search):
+            continue
 
         result = analyze_model(m, system, target_quant=quant, scoring_use_case=(use_case or "general"), target_context=target_context)
         if result is None:

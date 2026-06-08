@@ -89,11 +89,88 @@ const _PROVIDERS = [
     '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.948 8.798v-1.43a6.7 6.7 0 0 1 .424-.018c3.922-.124 6.493 3.374 6.493 3.374s-2.774 3.851-5.75 3.851c-.398 0-.787-.062-1.158-.185v-4.346c1.528.185 1.837.857 2.747 2.385l2.04-1.714s-1.492-1.952-4-1.952a6.016 6.016 0 0 0-.796.035m0-4.735v2.138l.424-.027c5.45-.185 9.01 4.47 9.01 4.47s-4.08 4.964-8.33 4.964c-.37 0-.733-.035-1.095-.097v1.325c.3.035.61.062.91.062 3.957 0 6.82-2.023 9.593-4.408.459.371 2.34 1.263 2.73 1.652-2.633 2.208-8.772 3.984-12.253 3.984-.335 0-.653-.018-.971-.053v1.864H24V4.063zm0 10.326v1.131c-3.657-.654-4.673-4.46-4.673-4.46s1.758-1.944 4.673-2.262v1.237H8.94c-1.528-.186-2.73 1.245-2.73 1.245s.68 2.412 2.739 3.11M2.456 10.9s2.164-3.197 6.5-3.533V6.201C4.153 6.59 0 10.653 0 10.653s2.35 6.802 8.948 7.42v-1.237c-4.84-.6-6.492-5.936-6.492-5.936z"/></svg>'],
 ];
 
+// HF org slug -> brand key used for logo lookup (checked before regex on full id).
+const _HF_ORG_BRAND = {
+  'deepseek-ai': 'deepseek',
+  'qwen': 'qwen',
+  'meta-llama': 'meta',
+  'google': 'google',
+  'mistralai': 'mistral',
+  'microsoft': 'microsoft',
+  'nvidia': 'nvidia',
+  'zhipuai': 'zhipu',
+  'moonshotai': 'kimi',
+  'nousresearch': 'nous',
+  'allenai': 'meta',
+};
+
+const _BRAND_PROBE = {
+  deepseek: 'deepseek-r1',
+  qwen: 'qwen3-8b',
+  meta: 'meta-llama',
+  google: 'gemma-2',
+  mistral: 'mixtral',
+  openai: 'gpt-4',
+  microsoft: 'phi-3',
+  nvidia: 'nvidia-nemotron',
+  zhipu: 'glm-4',
+  kimi: 'kimi-k2',
+  nous: 'nous-hermes',
+};
+
+const _BRAND_SVG = (() => {
+  const out = {};
+  for (const [brand, probe] of Object.entries(_BRAND_PROBE)) {
+    for (const [re, svg] of _PROVIDERS) {
+      if (re.test(probe)) {
+        out[brand] = svg;
+        break;
+      }
+    }
+  }
+  return out;
+})();
+
+function _logoForBrand(brand) {
+  return brand ? (_BRAND_SVG[brand] || null) : null;
+}
+
+function _brandFromShortName(short) {
+  if (!short) return null;
+  if (/^DeepSeek-/i.test(short)) return 'deepseek';
+  if (/^Qwen/i.test(short)) return 'qwen';
+  if (/^Llama-/i.test(short) || /^Meta-/i.test(short)) return 'meta';
+  if (/^gemma-/i.test(short)) return 'google';
+  if (/^Mistral|^Mixtral|^Ministral/i.test(short)) return 'mistral';
+  if (/^Phi-/i.test(short)) return 'microsoft';
+  if (/^glm-/i.test(short)) return 'zhipu';
+  if (/^kimi-/i.test(short)) return 'kimi';
+  if (/Nemotron/i.test(short)) return 'nvidia';
+  return null;
+}
+
 // Returns an SVG string for the given model ID, or null if no match
 export function providerLogo(modelId) {
   if (!modelId) return null;
+  const id = String(modelId);
+  const slash = id.indexOf('/');
+  const org = slash >= 0 ? id.slice(0, slash).toLowerCase() : '';
+  const short = slash >= 0 ? id.slice(slash + 1) : id;
+
+  // Quant/publisher forks (nvidia/Qwen3-8B-NVFP4) keep the base model family icon.
+  const familyBrand = _brandFromShortName(short);
+  if (familyBrand) {
+    const svg = _logoForBrand(familyBrand);
+    if (svg) return svg;
+  }
+
+  if (org && _HF_ORG_BRAND[org]) {
+    const svg = _logoForBrand(_HF_ORG_BRAND[org]);
+    if (svg) return svg;
+  }
+
   for (const [re, svg] of _PROVIDERS) {
-    if (re.test(modelId)) return svg;
+    if (re.test(id)) return svg;
   }
   return null;
 }
@@ -119,6 +196,7 @@ const _ENDPOINT_LABELS = [
   [/(^|\.)fireworks\.ai$/i, "Fireworks"],
   [/(^|\.)perplexity\.ai$/i, "Perplexity"],
   [/(^|\.)x\.ai$/i, "xAI"],
+  [/(^|\.)kimi\.com$/i, "Kimi Code"],
 ];
 
 /**

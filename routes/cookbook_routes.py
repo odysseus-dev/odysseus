@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi.responses import JSONResponse
 
 from src.auth_helpers import require_user
 from src.constants import COOKBOOK_STATE_FILE
@@ -1876,6 +1877,27 @@ def setup_cookbook_routes() -> APIRouter:
             return {"ok": True, "preserved": len(preserved)}
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    @router.get("/api/cookbook/aa-index")
+    async def aa_model_index(owner: str = Depends(require_user)):
+        """Serve bundled Artificial Analysis slug index for Cookbook deep links."""
+        index_path = Path(os.environ.get("DATA_DIR", "data")) / "aa_model_index.json"
+        if not index_path.is_file():
+            index_path = Path(__file__).resolve().parent.parent / "data" / "aa_model_index.json"
+        if not index_path.is_file():
+            return JSONResponse(
+                {"version": 1, "aliases": {}, "error": "index not found"},
+                headers={"Cache-Control": "public, max-age=300"},
+            )
+        try:
+            payload = json.loads(index_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("Failed to read AA model index: %s", exc)
+            return JSONResponse(
+                {"version": 1, "aliases": {}, "error": "index unreadable"},
+                headers={"Cache-Control": "public, max-age=60"},
+            )
+        return JSONResponse(payload, headers={"Cache-Control": "public, max-age=86400"})
 
     @router.get("/api/cookbook/hf-latest")
     async def hf_latest(vram_gb: float = 0, limit: int = 10, pipeline: str = "text-generation", owner: str = Depends(require_user)):

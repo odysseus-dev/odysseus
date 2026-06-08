@@ -23,6 +23,13 @@ const PROMOTED_ALIASES = new Set([
   'memories','forget',
 ]);
 
+// Top-level command aliases that deserve their own row in the popup
+// (e.g. /docs → library, not buried as a secondary alias on /library).
+const PROMOTED_CMD_ALIASES = {
+  docs: 'library',
+  documents: 'library',
+};
+
 function _flatten() {
   const out = [];
   const seen = new Set();
@@ -58,7 +65,23 @@ function _flatten() {
     }
   }
 
-  // 2. Promoted legacy aliases (/new, /clear, /web …) as convenient short rows
+  // 2. Promoted top-level aliases (/docs, /documents …)
+  for (const [alias, parent] of Object.entries(PROMOTED_CMD_ALIASES)) {
+    const tok = `/${alias}`;
+    if (seen.has(tok)) continue;
+    const def = COMMANDS[parent];
+    if (!def?.handler || def.hidden) continue;
+    seen.add(tok);
+    out.push({
+      token: tok,
+      aliases: [],
+      category: def.category || '',
+      help: def.help || '',
+      usage: tok,
+    });
+  }
+
+  // 3. Promoted legacy aliases (/new, /clear, /web …) as convenient short rows
   if (LEGACY_ALIASES) {
     for (const [alias, { parent, sub }] of Object.entries(LEGACY_ALIASES)) {
       if (!PROMOTED_ALIASES.has(alias)) continue;
