@@ -11,49 +11,51 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from tests.helpers.import_state import clear_fake_endpoint_resolver_modules
+from tests.helpers.import_state import clear_fake_endpoint_resolver_modules, preserve_import_state
 
-# Other tests stub this module during collection. These helper tests need
-# the real URL normalization helpers so Anthropic /v1 handling is covered.
-clear_fake_endpoint_resolver_modules()
+with preserve_import_state("core.database", "src.database", "core.session_manager", "routes.model_routes"):
+    # Other tests stub this module during collection. These helper tests need
+    # the real URL normalization helpers so Anthropic /v1 handling is covered.
+    clear_fake_endpoint_resolver_modules()
 
-if "core.database" not in sys.modules:
-    _core_db = types.ModuleType("core.database")
-    for _name in [
-        "SessionLocal", "ModelEndpoint", "Session", "ChatMessage", "Document",
-        "DocumentVersion", "GalleryImage", "GalleryAlbum", "Note",
-        "CalendarCal", "CalendarEvent", "ScheduledTask", "TaskRun",
-        "McpServer",
-    ]:
-        setattr(_core_db, _name, MagicMock())
-    sys.modules["core.database"] = _core_db
+    if "core.database" not in sys.modules:
+        _core_db = types.ModuleType("core.database")
+        for _name in [
+            "SessionLocal", "ModelEndpoint", "Session", "ChatMessage", "Document",
+            "DocumentVersion", "GalleryImage", "GalleryAlbum", "Note",
+            "CalendarCal", "CalendarEvent", "ScheduledTask", "TaskRun",
+            "McpServer", "ProviderAuthSession", "Base",
+        ]:
+            setattr(_core_db, _name, MagicMock())
+        _core_db.utcnow_naive = MagicMock()
+        sys.modules["core.database"] = _core_db
 
-import routes.model_routes as model_routes
-import src.database as src_database
-import src.endpoint_resolver as endpoint_resolver
-import src.llm_core as llm_core
-from routes.model_routes import (
-    _match_provider_curated,
-    _curate_models,
-    _visible_models,
-    _normalize_model_ids,
-    _api_key_fingerprint,
-    _is_chat_model,
-    _classify_endpoint,
-    _effective_endpoint_kind,
-    _probe_endpoint,
-    _ping_endpoint,
-    _parse_model_list,
-    _normalize_refresh_mode,
-    _truthy,
-    _speech_settings_using_endpoint,
-    _clear_speech_settings_for_endpoint,
-    _endpoint_settings_using_endpoint,
-    _clear_endpoint_settings_for_endpoint,
-    _clear_user_pref_endpoint_refs,
-    _PROVIDER_CURATED,
-)
-from src.llm_core import ANTHROPIC_MODELS
+    import routes.model_routes as model_routes
+    import src.database as src_database
+    import src.endpoint_resolver as endpoint_resolver
+    import src.llm_core as llm_core
+    from routes.model_routes import (
+        _match_provider_curated,
+        _curate_models,
+        _visible_models,
+        _normalize_model_ids,
+        _api_key_fingerprint,
+        _is_chat_model,
+        _classify_endpoint,
+        _effective_endpoint_kind,
+        _probe_endpoint,
+        _ping_endpoint,
+        _parse_model_list,
+        _normalize_refresh_mode,
+        _truthy,
+        _speech_settings_using_endpoint,
+        _clear_speech_settings_for_endpoint,
+        _endpoint_settings_using_endpoint,
+        _clear_endpoint_settings_for_endpoint,
+        _clear_user_pref_endpoint_refs,
+        _PROVIDER_CURATED,
+    )
+    from src.llm_core import ANTHROPIC_MODELS
 
 
 # ── speech endpoint settings ──
@@ -687,8 +689,7 @@ class _PinnedFakeRequest:
 
 
 def _get_route(path, method):
-    from routes.model_routes import setup_model_routes
-    router = setup_model_routes(model_discovery=None)
+    router = model_routes.setup_model_routes(model_discovery=None)
     for route in router.routes:
         if getattr(route, "path", "") == path and method in getattr(route, "methods", set()):
             return route.endpoint
@@ -785,6 +786,55 @@ def test_reprobe_preserves_pinned_models(monkeypatch):
     # Probe rewrites cached/hidden but must never touch admin-pinned IDs.
     assert json.loads(ep.pinned_models) == ["deploy-1"]
     assert json.loads(ep.cached_models) == ["m1"]
+
+
+def test_reprobe_chatgpt_subscription_does_not_hide_models(monkeypatch):
+    # The whole point of the _probe_single_model short-circuit is that re-probing
+    # a chatgpt-subscription endpoint must NOT mark every (un-probeable) model as
+    # failed and write them all into hidden_models. Assert that end-to-end at the
+    # route level, with the REAL _probe_single_model doing the skip.
+    ep = _make_endpoint(
+        base_url="https://chatgpt.com/backend-api/codex",
+        api_key=None,
+        hidden_models=json.dumps(["stale-hidden"]),
+    )
+    db = _PinnedFakeDb([ep])
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+    monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+    monkeypatch.setattr(model_routes, "_probe_endpoint", lambda *a, **k: ["gpt-5.1-codex", "gpt-5.1"])
+    monkeypatch.setattr(model_routes, "_is_chat_model", lambda m: True)
+    # Any completion probe would be a bug for this provider.
+    monkeypatch.setattr(
+        model_routes.httpx, "post",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not probe chatgpt-subscription")),
+    )
+    endpoint = _get_route("/api/model-endpoints/{ep_id}/probe", "GET")
+
+    response = endpoint("ep1", _PinnedFakeRequest())
+    chunks = []
+
+    async def _drain():
+        async for chunk in response.body_iterator:
+            chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+
+    asyncio.run(_drain())
+
+    events = []
+    for chunk in chunks:
+        for line in chunk.splitlines():
+            if line.startswith("data: "):
+                events.append(json.loads(line[len("data: "):]))
+
+    done = next(e for e in events if e.get("type") == "probe_done")
+    results = [e for e in events if e.get("type") == "probe_result"]
+
+    # Every model was skipped as ok; none failed → nothing hidden.
+    assert done["hidden"] == 0
+    assert done["ok"] == len(results) == 2
+    assert all(r["status"] == "ok" and r.get("skipped") is True for r in results)
+    # The stale hidden_models is cleared, not repopulated with every model.
+    assert ep.hidden_models is None
 
 
 def test_visible_models_handles_malformed_strings():

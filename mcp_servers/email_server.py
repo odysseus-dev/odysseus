@@ -31,7 +31,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 server = Server("email")
 EMAIL_SOCKET_TIMEOUT = float(os.environ.get("EMAIL_SOCKET_TIMEOUT", "20"))
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+from src.constants import DATA_DIR as _DATA_DIR, APP_DB, EMAIL_CACHE_DB, SETTINGS_FILE as _SETTINGS_FILE, MAIL_ATTACHMENTS_DIR
+DATA_DIR = Path(_DATA_DIR)
 
 
 def _b(value) -> bytes:
@@ -63,7 +64,7 @@ def _clean_header_value(value) -> str:
 
 
 def _db_path() -> Path:
-    return DATA_DIR / "app.db"
+    return Path(APP_DB)
 
 
 def _list_accounts_raw() -> list:
@@ -162,7 +163,7 @@ def _load_config(account: str | None = None) -> dict:
         "trash_folder": os.environ.get("TRASH_FOLDER", "Trash"),
         "cache_db": os.environ.get(
             "EMAIL_CACHE_DB",
-            str(DATA_DIR / "email_cache.db"),
+            EMAIL_CACHE_DB,
         ),
         "account_id": None,
         "account_name": None,
@@ -204,7 +205,7 @@ def _load_config(account: str | None = None) -> dict:
     else:
         # Legacy fallback: settings.json flat keys
         try:
-            settings_path = Path(__file__).resolve().parent.parent / "data" / "settings.json"
+            settings_path = Path(_SETTINGS_FILE)
             if settings_path.exists():
                 settings = json.loads(settings_path.read_text(encoding="utf-8"))
                 for key in (
@@ -1061,7 +1062,7 @@ def _download_attachment(uid, index, folder="INBOX", account=None):
     raw = msg_data[0][1]
     msg = email.message_from_bytes(raw)
 
-    target_dir = DATA_DIR / "mail-attachments" / f"{folder}_{uid}"
+    target_dir = Path(MAIL_ATTACHMENTS_DIR) / f"{folder}_{uid}"
     filepath = _extract_attachment_to_disk(msg, index, target_dir)
     if not filepath:
         return {"error": f"Attachment index {index} not found"}

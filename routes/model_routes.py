@@ -283,6 +283,7 @@ _HOST_TO_CURATED = (
     ("fireworks.ai", "fireworks"),
     ("googleapis.com", "google"),
     ("x.ai", "xai"),
+
     ("openrouter.ai", "openrouter"),
     ("ollama.com", "ollama"),
     ("opencode.ai/zen/go", "opencode-go"),
@@ -493,6 +494,8 @@ _NON_CHAT_EXACT_PREFIXES = (
 def _is_chat_model(model_id: str) -> bool:
     """Return True if the model ID looks like a chat/completions-capable model."""
     mid = model_id.lower()
+    if mid in {"gpt-5.1-codex"}:
+        return True
     for prefix in _NON_CHAT_PREFIXES:
         if mid.startswith(prefix):
             return False
@@ -505,9 +508,67 @@ def _is_chat_model(model_id: str) -> bool:
     return True
 
 
-def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 10, with_tools: bool = False) -> dict:
+def _delete_orphaned_provider_auth(db, auth_id: Optional[str], exclude_ep_id: Optional[str] = None) -> bool:
+    """Delete a ProviderAuthSession once no endpoint still references it.
+
+    Subscription providers (e.g. ChatGPT Subscription) keep their refresh token
+    in ProviderAuthSession rather than ModelEndpoint.api_key. When the last
+    endpoint backed by that auth row is removed, the stored credentials should
+    be cleared instead of lingering. Returns True if a row was deleted.
+    ``exclude_ep_id`` drops the endpoint currently being deleted from the
+    reference count so it does not keep its own auth alive.
+    """
+    if not auth_id:
+        return False
+    from core.database import ProviderAuthSession
+    still_referenced = db.query(ModelEndpoint.id).filter(
+        ModelEndpoint.provider_auth_id == auth_id,
+        ModelEndpoint.id != exclude_ep_id,
+    ).first()
+    if still_referenced is not None:
+        return False
+    auth_row = db.query(ProviderAuthSession).filter(ProviderAuthSession.id == auth_id).first()
+    if auth_row is None:
+        return False
+    db.delete(auth_row)
+    return True
+
+
+def _is_discovery_only_provider(provider: str) -> bool:
+    """Provider that only supports model discovery, not live probing.
+
+    ChatGPT Subscription speaks the Responses/Codex API and has no
+    chat-completions or general health endpoint, so completion probes and
+    reachability pings are skipped — status is derived from cached models.
+    """
+    return provider == "chatgpt-subscription"
+
+
+def _resolve_probe_key(ep) -> Optional[str]:
+    """API key/bearer to probe an endpoint with.
+
+    Delegates to ``resolve_endpoint_runtime``, which already returns the static
+    ``ModelEndpoint.api_key`` for keyed endpoints and resolves (and refreshes)
+    the runtime bearer for session-backed providers (e.g. ChatGPT Subscription).
+    Returns None if resolution fails (e.g. re-auth required) so probing skips
+    rather than raising. Reads only already-loaded scalar attributes of ``ep``.
+    """
+    try:
+        from src.endpoint_resolver import resolve_endpoint_runtime
+        _base, key = resolve_endpoint_runtime(ep, owner=getattr(ep, "owner", None))
+        return key
+    except Exception as e:
+        logger.warning("Probe key resolution failed for %s: %s", getattr(ep, "id", "?"), e)
+        return None
+
+
+def _probe_single_model(base: str, api_key: Optional[str], model_id: str, timeout: int = 10, with_tools: bool = False) -> dict:
     """Send a realistic completion request to a single model. Returns {status, latency_ms, error?}."""
     provider = _detect_provider(base)
+    if _is_discovery_only_provider(provider):
+        # Responses/Codex API, not chat-completions: a completion probe would
+        # 400 and the re-probe flow would then hide every model. Discovery-only.
+        return {"status": "ok", "latency_ms": 0, "skipped": True}
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "Say OK"},
@@ -621,6 +682,11 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
+    if _detect_provider(base) == "chatgpt-subscription":
+        from src.chatgpt_subscription import fetch_available_models
+        if api_key:
+            return fetch_available_models(api_key, timeout=timeout)
+        return []
     if _detect_provider(base) == "anthropic":
         # Try Anthropic's /v1/models endpoint first
         url = build_models_url(base)
@@ -647,6 +713,10 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
             logger.warning(f"Anthropic /v1/models failed, using hardcoded list: {e}")
         return list(ANTHROPIC_MODELS)
     url = build_models_url(base)
+    if not url:
+        curated_key = _match_provider_curated(base, None)
+        fallback = _PROVIDER_CURATED.get(curated_key) if curated_key else None
+        return list(fallback or [])
     headers = build_headers(api_key, base)
     try:
         r = httpx.get(url, headers=headers, timeout=timeout, verify=llm_verify())
@@ -998,6 +1068,17 @@ def setup_model_routes(model_discovery):
                         ok, info = _should_refresh_endpoint(ep, now, force=force)
                         if not ok:
                             continue
+                        if getattr(ep, "provider_auth_id", None):
+                            try:
+                                from src.endpoint_resolver import resolve_endpoint_runtime
+                                info["base"], info["api_key"] = resolve_endpoint_runtime(
+                                    ep,
+                                    owner=getattr(ep, "owner", None),
+                                )
+                                info["key"] = _refresh_key(info["base"], info["api_key"])
+                            except Exception as e:
+                                logger.warning("Skipping model refresh for %s: could not resolve provider auth: %s", getattr(ep, "name", ep.id), e)
+                                continue
                         groups.setdefault(info["key"], {
                             "base": info["base"],
                             "api_key": info["api_key"],
@@ -1266,12 +1347,20 @@ def setup_model_routes(model_discovery):
                 "endpoint_kind": kind,
             }
             try:
-                t0 = _time.time()
-                ping = _ping_endpoint(base, ep.api_key, timeout=1.5)
-                entry["latency_ms"] = round((_time.time() - t0) * 1000)
-                entry["status"] = "online" if ping.get("reachable") or cached_count else "offline"
-                entry["error"] = ping.get("error")
-                entry["model_count"] = cached_count or (len(ANTHROPIC_MODELS) if provider == "anthropic" else 0)
+                if _is_discovery_only_provider(provider):
+                    # No general health endpoint — an unauthenticated GET just
+                    # 401s. Report status from cached models instead of pinging.
+                    entry["latency_ms"] = None
+                    entry["status"] = "online" if cached_count else "offline"
+                    entry["error"] = None
+                    entry["model_count"] = cached_count
+                else:
+                    t0 = _time.time()
+                    ping = _ping_endpoint(base, ep.api_key, timeout=1.5)
+                    entry["latency_ms"] = round((_time.time() - t0) * 1000)
+                    entry["status"] = "online" if ping.get("reachable") or cached_count else "offline"
+                    entry["error"] = ping.get("error")
+                    entry["model_count"] = cached_count or (len(ANTHROPIC_MODELS) if provider == "anthropic" else 0)
             except Exception as e:
                 entry["latency_ms"] = None
                 entry["status"] = "online" if cached_count else "offline"
@@ -1304,7 +1393,7 @@ def setup_model_routes(model_discovery):
                 if ep_id and ep_id not in endpoints_cache:
                     ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
                     if ep:
-                        endpoints_cache[ep_id] = {"base_url": ep.base_url, "api_key": ep.api_key}
+                        endpoints_cache[ep_id] = {"base_url": ep.base_url, "api_key": _resolve_probe_key(ep)}
                 ep_data = endpoints_cache.get(ep_id)
                 if not ep_data:
                     # Try to find by base_url from the model's endpoint field
@@ -1343,7 +1432,7 @@ def setup_model_routes(model_discovery):
                     "id": ep.id,
                     "name": ep.name,
                     "base_url": ep.base_url,
-                    "api_key": ep.api_key,
+                    "api_key": _resolve_probe_key(ep),
                 })
         finally:
             db.close()
@@ -1432,12 +1521,14 @@ def setup_model_routes(model_discovery):
                 # Endpoint counts as reachable if it has any model — including
                 # admin-pinned IDs that a probe would never surface.
                 status = "online" if (all_models or pinned) else "offline"
+                base = _normalize_base(r.base_url)
                 ping = None
-                if not all_models and not pinned and r.is_enabled:
+                # Discovery-only providers have no health endpoint — an
+                # unauthenticated ping just 401s, so don't bother.
+                if not all_models and not pinned and r.is_enabled and not _is_discovery_only_provider(_detect_provider(base)):
                     ping = _ping_endpoint(r.base_url, r.api_key, timeout=1.0)
                     if ping.get("reachable"):
                         status = "empty"
-                base = _normalize_base(r.base_url)
                 kind = _effective_endpoint_kind(r, base)
                 results.append({
                     "id": r.id,
@@ -1713,7 +1804,7 @@ def setup_model_routes(model_discovery):
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
             if not ep:
                 raise HTTPException(404, "Endpoint not found")
-            ep_data = {"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": ep.api_key}
+            ep_data = {"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": _resolve_probe_key(ep)}
         finally:
             db.close()
 
@@ -1777,7 +1868,7 @@ def setup_model_routes(model_discovery):
                 category = _classify_endpoint(base, kind)
                 timeout = _manual_refresh_timeout(ep, category, refresh_timeout)
                 try:
-                    probed = _probe_endpoint(base, ep.api_key, timeout=timeout)
+                    probed = _probe_endpoint(base, _resolve_probe_key(ep), timeout=timeout)
                 except Exception as exc:
                     logger.warning("Manual model refresh failed for endpoint %s at %s: %s", ep_id, base, exc)
                     probed = []
@@ -2116,7 +2207,9 @@ def setup_model_routes(model_discovery):
             cleared_user_preferences = _clear_user_prefs_for_endpoint(ep_id)
             cleared_sessions = _clear_sessions_for_endpoint(db, ep.base_url)
             cleared_loaded_sessions = _clear_loaded_sessions_for_endpoint(ep.base_url)
+            auth_id = getattr(ep, "provider_auth_id", None)
             db.delete(ep)
+            cleared_provider_auth = _delete_orphaned_provider_auth(db, auth_id, exclude_ep_id=ep_id)
             db.commit()
             _invalidate_models_cache()
             _local_probe_cache["data"] = None
@@ -2126,6 +2219,7 @@ def setup_model_routes(model_discovery):
                 "cleared_user_preferences": cleared_user_preferences,
                 "cleared_sessions": cleared_sessions,
                 "cleared_loaded_sessions": cleared_loaded_sessions,
+                "cleared_provider_auth": cleared_provider_auth,
             }
         finally:
             db.close()

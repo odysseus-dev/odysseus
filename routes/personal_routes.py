@@ -6,13 +6,13 @@ import uuid
 from typing import List, Tuple
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Depends
 from src.request_models import DirectoryRequest
-from core.constants import BASE_DIR, PERSONAL_DIR
+from core.constants import BASE_DIR, PERSONAL_DIR, PERSONAL_UPLOADS_DIR
 from src.rag_singleton import get_rag_manager
 from src.auth_helpers import require_privilege, require_user
 from core.middleware import require_admin
 from src.upload_handler import secure_filename
 
-UPLOADS_DIR = os.path.join(BASE_DIR, "data", "personal_uploads")
+UPLOADS_DIR = PERSONAL_UPLOADS_DIR
 MAX_PERSONAL_UPLOAD_BYTES = int(
     os.getenv("ODYSSEUS_PERSONAL_UPLOAD_MAX_BYTES", str(25 * 1024 * 1024))
 )
