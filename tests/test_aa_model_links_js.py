@@ -50,13 +50,12 @@ def test_render_includes_aa_link_when_mapped(node_available):
     result = _run_node(textwrap.dedent("""
         import { renderModelNameLink } from './static/js/aaModelLinks.js';
         const esc = (s) => String(s);
-        const aliases = { 'qwen3-8b': 'qwen3-8b-instruct' };
-        const valid = new Set(['qwen3-8b-instruct']);
-        const html = renderModelNameLink('Qwen/Qwen3-8B', 'Qwen3-8B-Instruct', esc, aliases);
+        const aliases = { 'deepseek-v3': 'deepseek-v3' };
+        const html = renderModelNameLink('deepseek-ai/DeepSeek-V3', 'DeepSeek-V3', esc, aliases);
         console.log(JSON.stringify({
           hasBadge: html.includes('cookbook-aa-badge'),
           nameIsSpan: html.includes('<span class="cookbook-model-name">'),
-          href: html.includes('https://artificialanalysis.ai/models/qwen3-8b-instruct'),
+          href: html.includes('https://artificialanalysis.ai/models/deepseek-v3'),
         }));
     """))
     assert result["hasBadge"] is True
@@ -67,15 +66,17 @@ def test_render_includes_aa_link_when_mapped(node_available):
 def test_resolve_known_alias(node_available):
     result = _run_node(textwrap.dedent("""
         import { resolveAaSlug } from './static/js/aaModelLinks.js';
-        const aliases = { 'qwen3-8b': 'qwen3-8b-instruct', 'deepseek-v3': 'deepseek-v3' };
+        const aliases = { 'deepseek-v3': 'deepseek-v3', 'qwen3-8b-instruct': 'qwen3-8b-instruct' };
         console.log(JSON.stringify({
-          qwen: resolveAaSlug('Qwen/Qwen3-8B', aliases),
           deepseek: resolveAaSlug('deepseek-ai/DeepSeek-V3', aliases),
+          qwenExact: resolveAaSlug('qwen3-8b-instruct', aliases),
+          qwenHfBase: resolveAaSlug('Qwen/Qwen3-8B', aliases),
           unknown: resolveAaSlug('peft-internal-testing/tiny-random-gpt2', aliases),
         }));
     """))
-    assert result["qwen"] == "qwen3-8b-instruct"
     assert result["deepseek"] == "deepseek-v3"
+    assert result["qwenExact"] == "qwen3-8b-instruct"
+    assert result["qwenHfBase"] is None
     assert result["unknown"] is None
 
 
@@ -93,16 +94,16 @@ def test_render_omits_link_when_unmapped(node_available):
     assert result["hasSpan"] is True
 
 
-def test_aa_index_file_has_aliases():
+def test_aa_index_file_has_valid_slugs_and_exact_aliases():
     index_path = _REPO / "data" / "aa_model_index.json"
     assert index_path.is_file(), "data/aa_model_index.json should exist"
     payload = json.loads(index_path.read_text(encoding="utf-8"))
     assert payload.get("aliases")
     assert payload.get("valid_slugs")
-    assert "qwen3-8b" in payload["aliases"]
-    assert payload["aliases"]["qwen3-8b"] == "qwen3-8b-instruct"
+    assert payload.get("source") in {"sitemap-slugs", "sitemap+api"}
+    assert "deepseek-v3" in payload["valid_slugs"]
+    assert payload["aliases"]["deepseek-v3"] == "deepseek-v3"
     assert "deepseek-r1-0528-qwen3-8b" not in payload["aliases"]
-    assert "deepseek-r1-0528" not in payload["aliases"]
     assert "gemma-2-9b-it" not in payload["aliases"]
 
 
@@ -112,8 +113,6 @@ def test_no_aa_link_for_unsupported_gemma2(node_available):
         import { resolveAaSlug, resolveModelIdentity, renderModelNameLink } from './static/js/aaModelLinks.js';
         const payload = JSON.parse(readFileSync('./data/aa_model_index.json', 'utf8'));
         const aliases = payload.aliases;
-        const valid = new Set(payload.valid_slugs || []);
-        // simulate loaded valid slugs via exact alias only path
         const id = resolveModelIdentity('solidrust/gemma-2-9b-it-AWQ', aliases);
         const html = renderModelNameLink('solidrust/gemma-2-9b-it-AWQ', id.displayName, s => s, aliases);
         console.log(JSON.stringify({
