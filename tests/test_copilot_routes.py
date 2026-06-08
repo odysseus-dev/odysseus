@@ -78,3 +78,20 @@ def test_provision_handles_model_fetch_failure(monkeypatch):
         assert ep is not None and ep.api_key == "GHTOK"
     finally:
         db.close()
+
+
+def test_provision_invalidates_model_cache(monkeypatch):
+    # Regression: the refresh used to import the NESTED _invalidate_models_cache
+    # at module scope, which always raised ImportError and was swallowed — so the
+    # newly provisioned endpoint never showed up until the cache TTL expired. It
+    # must now call the public invalidate_model_endpoint_caches.
+    _mem_db(monkeypatch)
+    monkeypatch.setattr(cr.copilot, "fetch_models", lambda base, token: [{"id": "gpt-4o"}])
+
+    import routes.model_routes as mr
+
+    calls = []
+    monkeypatch.setattr(mr, "invalidate_model_endpoint_caches", lambda: calls.append(1))
+
+    cr._provision_endpoint("TOK", "https://api.githubcopilot.com", "dave")
+    assert calls == [1]

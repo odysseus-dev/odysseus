@@ -104,11 +104,11 @@ def _provision_endpoint(token: str, base: str, owner: Optional[str]) -> Dict:
         db.close()
 
     # Best-effort: refresh the model cache so the new endpoint shows up.
-    try:
-        from routes.model_routes import _invalidate_models_cache
-        _invalidate_models_cache()
-    except Exception:
-        pass
+    # Use the public invalidator: _invalidate_models_cache is a nested function
+    # inside setup_models_routes, so importing it here always raised ImportError
+    # and this refresh silently never ran.
+    from routes.model_routes import invalidate_model_endpoint_caches
+    invalidate_model_endpoint_caches()
     return result
 
 
