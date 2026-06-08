@@ -254,16 +254,17 @@ def _cleanup_compose_uploads(tokens) -> None:
             pass
 
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-SETTINGS_FILE = DATA_DIR / "settings.json"
+from src.constants import DATA_DIR as _DATA_DIR, MAIL_ATTACHMENTS_DIR, SETTINGS_FILE as _SETTINGS_FILE, SCHEDULED_EMAILS_DB
+DATA_DIR = Path(_DATA_DIR)
+SETTINGS_FILE = Path(_SETTINGS_FILE)
 # Override at deploy time via ODYSSEUS_MAIL_ATTACHMENTS_DIR. Defaults to a
 # subdir of the install's data/ tree so the app works out-of-the-box without
 # a hardcoded /home/<user>/ path.
-ATTACHMENTS_DIR = Path(os.environ.get("ODYSSEUS_MAIL_ATTACHMENTS_DIR", str(DATA_DIR / "mail-attachments")))
+ATTACHMENTS_DIR = Path(MAIL_ATTACHMENTS_DIR)
 ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 COMPOSE_UPLOADS_DIR = ATTACHMENTS_DIR / "_compose"
 COMPOSE_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-SCHEDULED_DB = DATA_DIR / "scheduled_emails.db"
+SCHEDULED_DB = Path(SCHEDULED_EMAILS_DB)
 
 
 OWNER_SCOPED_EMAIL_CACHE_TABLES = {
@@ -802,20 +803,28 @@ def _imap(account_id: str | None = None, owner: str = ""):
 def _decode_header(raw):
     if not raw:
         return ""
-    parts = email.header.decode_header(raw)
-    decoded = []
-    for data, charset in parts:
-        if isinstance(data, bytes):
-            try:
-                decoded.append(data.decode(charset or "utf-8", errors="replace"))
-            except (LookupError, ValueError):
-                # Unknown/invalid MIME charset (e.g. a malformed or spam header
-                # like =?x-unknown-charset?B?...?=). errors="replace" only covers
-                # byte-decode errors, not codec lookup, so fall back to utf-8.
-                decoded.append(data.decode("utf-8", errors="replace"))
-        else:
-            decoded.append(data)
-    return " ".join(decoded)
+    try:
+        # make_header concatenates per RFC 2047: no spurious space between an
+        # encoded-word and adjacent plain text (plain runs keep their own
+        # whitespace), and the whitespace between two adjacent encoded-words is
+        # dropped. The old " ".join produced "Re:  Jose"-style double spaces on
+        # every non-ASCII subject or sender.
+        return str(email.header.make_header(email.header.decode_header(raw)))
+    except Exception:
+        # Malformed header or unknown/invalid MIME charset (e.g. a spam header
+        # like =?x-unknown-charset?B?...?=) makes make_header raise LookupError;
+        # fall back to a lossy per-part decode. errors="replace" only covers
+        # byte-decode errors, not codec lookup, hence the explicit utf-8 retry.
+        decoded = []
+        for data, charset in email.header.decode_header(raw):
+            if isinstance(data, bytes):
+                try:
+                    decoded.append(data.decode(charset or "utf-8", errors="replace"))
+                except (LookupError, ValueError):
+                    decoded.append(data.decode("utf-8", errors="replace"))
+            else:
+                decoded.append(data)
+        return "".join(decoded)
 
 
 def _detect_sent_folder(conn):

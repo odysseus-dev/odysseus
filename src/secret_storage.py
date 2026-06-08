@@ -25,10 +25,11 @@ from pathlib import Path
 from cryptography.fernet import Fernet, InvalidToken
 
 from core.platform_compat import safe_chmod
+from src.constants import APP_KEY_FILE
 
 logger = logging.getLogger(__name__)
 
-_KEY_PATH = Path(__file__).resolve().parent.parent / "data" / ".app_key"
+_KEY_PATH = Path(APP_KEY_FILE)
 _PREFIX = "enc:"
 _fernet: Fernet | None = None
 
