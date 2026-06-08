@@ -24,6 +24,8 @@ import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
+import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
+
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -217,6 +219,19 @@ import { createStreamRenderer } from './streamingRenderer.js';
       const ta = document.getElementById('message');
       if (ta && mod.initSlashAutocomplete) mod.initSlashAutocomplete(ta);
     }).catch(() => {});
+
+    // ArrowUp on empty composer recalls last user message (like many chat apps).
+    const _wireArrowUpRecall = (composer) =>
+      wireArrowUpRecall(composer, () => getLastUserMessageFromChatHistory(), {
+        autoResize: uiModule?.autoResize,
+      });
+
+    const composer = document.getElementById('message');
+    if (!_wireArrowUpRecall(composer)) {
+      // Init can run before #message exists (templated UI); short retries only.
+      try { requestAnimationFrame(() => _wireArrowUpRecall(document.getElementById('message'))); } catch (_) {}
+      setTimeout(() => _wireArrowUpRecall(document.getElementById('message')), 250);
+    }
   }
 
   // addMessage, createMsgFooter, displayMetrics, hideWelcomeScreen, showWelcomeScreen

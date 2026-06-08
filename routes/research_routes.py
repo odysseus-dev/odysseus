@@ -38,9 +38,9 @@ def _first_chat_model(models) -> str:
     return (models[0] if models else "")
 
 
-def _resolve_research_endpoint(sess) -> tuple:
+def _resolve_research_endpoint(sess, owner: Optional[str] = None) -> tuple:
     """Return (endpoint_url, model, headers) for Deep Research, checking admin overrides."""
-    owner = getattr(sess, "owner", None) or None
+    owner = owner or getattr(sess, "owner", None) or None
     url, model, headers = resolve_endpoint(
         "research",
         fallback_url=sess.endpoint_url,
