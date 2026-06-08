@@ -201,7 +201,7 @@ async function syncPrefSlider(elementId, prefKey, labelId, defaultVal) {
           body: JSON.stringify({ value: pref })
         });
         if (!res.ok) { showError('Failed to save preference'); return; }
-        showToast(pref === 0 ? 'Skill confidence: All' : `Skill confidence ≥ ${Math.round(pref * 100)}%`);
+        showToast(pref===0?(window.t?window.t('memory.skillConfidenceAll'):'Skill confidence: All'):(window.t?window.t('memory.skillConfidence',{pct:Math.round(pref*100)}):`Skill confidence ≥ ${Math.round(pref*100)}%`));
       } catch (e) {
         console.error(`Failed to save ${prefKey} pref:`, e);
         showError('Failed to save preference');
@@ -243,7 +243,7 @@ async function syncPrefNumber(elementId, prefKey, defaultVal) {
           body: JSON.stringify({ value: v })
         });
         if (!res.ok) { showError('Failed to save preference'); return; }
-        showToast(v === 0 ? 'No skills injected' : `Max injected skills: ${v}`);
+        showToast(v===0?(window.t?window.t('memory.noSkillsInjected'):'No skills injected'):(window.t?window.t('memory.maxSkills',{n:v}):`Max injected skills: ${v}`));
       } catch (e) {
         console.error(`Failed to save ${prefKey} pref:`, e);
         showError('Failed to save preference');
@@ -369,7 +369,7 @@ function toggleSelectItem(id) {
 function updateBulkCount() {
   const countEl = document.getElementById('memory-selected-count');
   const deleteBtn = document.getElementById('memory-bulk-delete');
-  if (countEl) countEl.textContent = `${selectedIds.size} Selected`;
+  if (countEl) countEl.textContent = window.t?window.t("memory.selected",{n:selectedIds.size}):`${selectedIds.size} Selected`;
   if (deleteBtn) deleteBtn.disabled = selectedIds.size === 0;
 }
 
@@ -410,7 +410,7 @@ async function bulkDelete() {
   await animateMemoryRemoval(deletedIds);
   exitSelectMode();
   await loadMemories();
-  showToast(`Deleted ${deleted} ${deleted === 1 ? 'memory' : 'memories'}`);
+  showToast(window.t?window.t('memory.deleted',{n:deleted,word:deleted===1?'memory':'memories'}):`Deleted ${deleted} ${deleted===1?'memory':'memories'}`);
 }
 
 // ---- Tidy (audit) ----
@@ -450,7 +450,7 @@ export async function tidyMemories() {
     if ((data.removed || 0) === 0) {
       if (tidySpinner) tidySpinner.destroy();
       if (tidyBtn) { tidyBtn.disabled = false; tidyBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Tidy'; }
-      showToast('Already clean');
+      showToast(window.t?window.t('memory.alreadyClean'):'Already clean');
       return;
     }
 
@@ -672,7 +672,7 @@ export function renderMemoryList() {
     if (memory.pinned) {
       const pinBadge = document.createElement('span');
       pinBadge.className = 'memory-cat-badge memory-cat-pinned';
-      pinBadge.textContent = 'pinned';
+      pinBadge.textContent = window.t?window.t('memory.pinned.badge'):'pinned';
       meta.appendChild(pinBadge);
     }
 
@@ -684,7 +684,7 @@ export function renderMemoryList() {
 
     const srcSpan = document.createElement('span');
     srcSpan.className = 'memory-item-source';
-    srcSpan.textContent = memory.source === 'auto' ? 'auto' : 'manual';
+    srcSpan.textContent = memory.source === 'auto' ? (window.t?window.t('memory.auto'):'auto') : (window.t?window.t('memory.manual'):'manual');
     meta.appendChild(srcSpan);
 
     const uses = Number(memory.uses || 0);
@@ -743,12 +743,12 @@ export function renderMemoryList() {
 
       const editItem = document.createElement('div');
       editItem.className = 'dropdown-item-compact';
-      editItem.textContent = '✎ Edit';
+      editItem.textContent = window.t?window.t('memory.edit'):'✎ Edit';
       editItem.addEventListener('click', () => { dropdown.style.display = 'none'; startInlineEdit(item, memory); });
 
       const deleteItem = document.createElement('div');
       deleteItem.className = 'dropdown-item-compact memory-dropdown-delete';
-      deleteItem.textContent = '✕ Delete';
+      deleteItem.textContent = window.t?window.t('memory.delete'):'✕ Delete';
       deleteItem.addEventListener('click', () => { dropdown.style.display = 'none'; deleteMemory(memory.id); });
 
       // Select — enters bulk-select mode and pre-selects this memory. Same
@@ -770,7 +770,7 @@ export function renderMemoryList() {
       // dismisses cleanly.
       const cancelItem = document.createElement('div');
       cancelItem.className = 'dropdown-item-compact dropdown-cancel-mobile';
-      cancelItem.textContent = '✕ Cancel';
+      cancelItem.textContent = window.t?window.t('sessions.cancel'):'✕ Cancel';
       cancelItem.addEventListener('click', (e) => { e.stopPropagation(); if (dropdown.parentNode) dropdown.remove(); });
 
       dropdown.appendChild(pinItem);
@@ -917,12 +917,12 @@ function startInlineEdit(item, memory) {
 
   const saveBtn = document.createElement('button');
   saveBtn.className = 'memory-item-btn save';
-  saveBtn.textContent = 'save';
+  saveBtn.textContent = window.t?window.t('memory.save'):'save';
   saveBtn.addEventListener('click', () => saveInlineEdit(memory.id, input.value, catSelect.value));
 
   const cancelBtn = document.createElement('button');
   cancelBtn.className = 'memory-item-btn';
-  cancelBtn.textContent = 'cancel';
+  cancelBtn.textContent = window.t?window.t('memory.cancel'):'cancel';
   cancelBtn.addEventListener('click', () => renderMemoryList());
 
   actions.appendChild(saveBtn);
@@ -966,7 +966,7 @@ async function saveInlineEdit(id, newText, newCategory) {
 
     if (response.ok) {
       await loadMemories();
-      showToast('Memory updated');
+      showToast(window.t?window.t('memory.updated'):'Memory updated');
     } else {
       const errorData = await response.json();
       throw new Error(errorData.detail || 'Failed to update memory');
@@ -997,7 +997,7 @@ export function updateMemoryCount() {
   const num = visible.length === scopeTotal ? `${scopeTotal}` : `${visible.length}/${scopeTotal}`;
   // Header (next to the "Memories" title) reads "N memories", like the
   // Documents header. The bare number still feeds any tab badge if present.
-  if (h2Count) h2Count.textContent = `${num} ${scopeTotal === 1 && visible.length === scopeTotal ? 'memory' : 'memories'}`;
+  if (h2Count) h2Count.textContent = window.t?window.t('memory.count',{n:num,word:scopeTotal===1&&visible.length===scopeTotal?'memory':'memories'}):`${num} ${scopeTotal===1&&visible.length===scopeTotal?'memory':'memories'}`;
   if (tabCount) tabCount.textContent = num;
 }
 
@@ -1026,7 +1026,7 @@ export async function addNewMemory() {
     if (response.ok) {
       input.value = '';
       await loadMemories();
-      showToast('Memory added');
+      showToast(window.t?window.t('memory.added'):'Memory added');
     } else {
       const errorData = await response.json();
       console.error('Server error details:', errorData);
@@ -1058,7 +1058,7 @@ async function togglePin(id, pinned) {
       const mem = memories.find(m => m.id === id);
       if (mem) mem.pinned = pinned;
       renderMemoryList();
-      showToast(pinned ? 'Pinned — always in context' : 'Unpinned — RAG only');
+      showToast(window.t?(pinned?window.t('memory.pinned'):window.t('memory.unpinned')):(pinned?'Pinned — always in context':'Unpinned — RAG only'));
     }
   } catch (e) {
     console.error('Failed to toggle pin:', e);

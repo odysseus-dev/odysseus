@@ -335,7 +335,7 @@ async function _handleGalleryDrop(e) {
   if (looksLikeFolderUri) {
     uiModule.showError('Browsers can’t read folders dropped from native file managers (Thunar/Nautilus). Use the "Upload album" tile in the Albums tab instead.');
   } else if (entries.length || dtItems.length) {
-    uiModule.showToast('No images found in that drop');
+    uiModule.showToast(window.t?window.t('gallery.noImagesInDrop'):'No images found in that drop');
   }
 }
 
@@ -489,7 +489,7 @@ function _ensureAlbumsToolbar(container) {
   });
   container.querySelector('#gallery-albums-bulk-delete').addEventListener('click', (e) => {
     e.stopPropagation();
-    if (!_albumSelected.size) { uiModule.showToast('Select albums first'); return; }
+    if (!_albumSelected.size) { uiModule.showToast(window.t?window.t('gallery.selectAlbumsFirst'):'Select albums first'); return; }
     _bulkDeleteAlbums([..._albumSelected]);
   });
 }
@@ -704,7 +704,7 @@ function _wireAlbumsEvents(scope) {
       if (r.ok) {
         await _fetchAlbums();
         _renderAlbumsTab();
-        if (uiModule) uiModule.showToast('Album renamed');
+        if (uiModule) uiModule.showToast(window.t?window.t('gallery.albumRenamed'):'Album renamed');
       } else if (uiModule) {
         uiModule.showError('Rename failed');
       }
@@ -726,7 +726,7 @@ function _wireAlbumsEvents(scope) {
         await _fetchAlbums();
         _renderAlbumsTab();
         _renderAlbums();
-        if (uiModule) uiModule.showToast('Album deleted');
+        if (uiModule) uiModule.showToast(window.t?window.t('gallery.albumDeleted'):'Album deleted');
       } else if (uiModule) {
         uiModule.showError('Delete failed');
       }
@@ -759,7 +759,7 @@ function _wireAlbumsEvents(scope) {
       const images = all.filter(_isMediaFile);
       picker.remove();
       if (!images.length) {
-        if (uiModule) uiModule.showToast('No images or videos in that folder');
+        if (uiModule) uiModule.showToast(window.t?window.t('gallery.noImages'):'No images or videos in that folder');
         return;
       }
       // Derive folder name from the first file's relative path (e.g.
@@ -812,7 +812,7 @@ async function _bulkDeleteAlbums(ids) {
     else if (_activeAlbum === id) _activeAlbum = null;
   }
   if (failed) uiModule.showError(`Failed to delete ${failed} of ${ids.length} albums`);
-  else if (uiModule) uiModule.showToast(`Deleted ${ids.length} album${ids.length > 1 ? 's' : ''}`);
+  else if (uiModule) uiModule.showToast(window.t?window.t('gallery.deletedAlbums',{n:ids.length,s:ids.length>1?'s':''}):`Deleted ${ids.length} album${ids.length > 1 ? 's' : ''}`);
   _setAlbumSelectMode(false);
   await _fetchAlbums();
   _renderAlbumsTab();
@@ -836,7 +836,7 @@ function _draftsShowLoading(section) {
       _draftsSpinner.element.style.cssText = 'width:28px;height:28px;margin:0;';
       ov.appendChild(_draftsSpinner.element);
     } catch (_) {
-      ov.textContent = 'Loading…';
+      ov.textContent = window.t?window.t('gallery.loading'):'Loading…';
     }
     section.appendChild(ov);
   }
@@ -981,7 +981,7 @@ function _draftsSyncBulkBar() {
   if (bar) bar.classList.toggle('hidden', !_draftsSelectMode);
   if (countEl) countEl.textContent = `${_draftsSelected.size} selected`;
   if (selectBtn) {
-    selectBtn.textContent = _draftsSelectMode ? 'Cancel' : 'Select';
+    selectBtn.textContent = _draftsSelectMode?(window.t?window.t('gallery.cancel'):'Cancel'):(window.t?window.t('gallery.select'):'Select');
     selectBtn.classList.toggle('active', _draftsSelectMode);
   }
   // "All" checkbox state — checked when all visible drafts are selected,
@@ -1541,7 +1541,7 @@ function _openDetail(img) {
         spinner.element.style.cssText = 'width:36px;height:36px;margin:0;';
         overlay.appendChild(spinner.element);
         const label = document.createElement('div');
-        label.textContent = clearMode ? 'Clearing…' : 'AI tagging…';
+        label.textContent = clearMode?(window.t?window.t('gallery.clearingTags'):'Clearing…'):(window.t?window.t('gallery.aiTagging'):'AI tagging…');
         label.style.cssText = 'font-size:11px;opacity:0.7;';
         overlay.appendChild(label);
       } catch (_) { overlay.textContent = clearMode ? 'Clearing…' : 'AI tagging…'; }
@@ -1558,7 +1558,7 @@ function _openDetail(img) {
       cleanup();
       if (data.ok) {
         img.ai_tags = clearMode ? '' : data.ai_tags;
-        uiModule.showToast(clearMode ? 'AI tags cleared' : 'AI tags added');
+        uiModule.showToast(clearMode?(window.t?window.t('gallery.aiTagsCleared'):'AI tags cleared'):(window.t?window.t('gallery.aiTagsAdded'):'AI tags added'));
         _openDetail(img); // re-render detail
       } else {
         uiModule.showError(data.error || (clearMode ? 'Clear failed' : 'AI tagging failed'));
@@ -1693,7 +1693,7 @@ function _openDetail(img) {
         spinner = spinnerModule.createWhirlpool(36);
         spinner.element.style.cssText = 'width:36px;height:36px;margin:0;';
         overlay.appendChild(spinner.element);
-      } catch (_) { overlay.textContent = 'Rotating…'; }
+      } catch (_) { overlay.textContent = window.t?window.t('gallery.rotating'):'Rotating…'; }
       if (getComputedStyle(stage).position === 'static') stage.style.position = 'relative';
       stage.appendChild(overlay);
     }
