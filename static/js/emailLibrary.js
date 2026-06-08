@@ -768,6 +768,42 @@ export function openEmailLibrary(opts = {}) {
   const modal = document.createElement('div');
   modal.className = 'modal';
   modal.id = 'email-lib-modal';
+
+  // Forward wheel events to chat and suppress hover effects while typing
+  modal.addEventListener('wheel', (e) => {
+    const ae = document.activeElement;
+    if (ae && ae.id === 'message' && ae.tagName === 'TEXTAREA') {
+      if (modal.classList.contains('email-snap-left') || modal.classList.contains('modal-left-docked')) {
+        e.preventDefault();
+        e.stopPropagation();
+        const chatScroller = document.getElementById('chat-history') || document.body;
+        chatScroller.scrollTop += e.deltaY;
+      }
+    }
+  }, { passive: false, capture: true });
+
+  modal.addEventListener('pointermove', (e) => {
+    const ae = document.activeElement;
+    if (ae && ae.id === 'message' && ae.tagName === 'TEXTAREA') {
+      if (modal.classList.contains('email-snap-left') || modal.classList.contains('modal-left-docked')) {
+        e.stopPropagation();
+        if (!modal.classList.contains('email-typing-ignore')) {
+          modal.classList.add('email-typing-ignore');
+        }
+      }
+    } else {
+      if (modal.classList.contains('email-typing-ignore')) {
+        modal.classList.remove('email-typing-ignore');
+      }
+    }
+  }, { capture: true });
+
+  modal.addEventListener('pointerout', () => {
+    if (modal.classList.contains('email-typing-ignore')) {
+      modal.classList.remove('email-typing-ignore');
+    }
+  });
+
   modal.innerHTML = `
     <div class="modal-content doclib-modal-content" style="width:min(720px, 92vw);max-height:85vh;background:var(--bg);">
       <div class="modal-header">
