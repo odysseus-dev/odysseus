@@ -1281,10 +1281,10 @@ export function restore(id) {
 }
 
 /**
- * If the modal is currently MINIMIZED, restore it and return true.
- * Otherwise return false so the caller falls through to its own
- * open/close handling. We deliberately do NOT minimize on toggle —
- * that's the `_` button's job, not the rail/sidebar button's job.
+ * Sidebar / rail toggle for a registered modal:
+ *   - minimized → restore, return true
+ *   - visible   → close, return true
+ *   - otherwise → return false so the caller opens it
  */
 export function toggle(id) {
   const s = _state.get(id);
@@ -1292,6 +1292,12 @@ export function toggle(id) {
   const modal = document.getElementById(id);
   if (!modal) { _state.delete(id); return false; }
   if (s.isMinimized) return restore(id);
+  const visible = !modal.classList.contains('hidden')
+    && getComputedStyle(modal).display !== 'none';
+  if (visible) {
+    close(id);
+    return true;
+  }
   return false;
 }
 

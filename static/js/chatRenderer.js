@@ -9,6 +9,7 @@ import settingsModule from './settings.js';
 import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import { matchModelKey } from './model/matchKey.js';
+import { modelDisplayName } from './modelAliases.js';
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
@@ -521,7 +522,7 @@ const IMAGE_PRICING = {
 export function shortModel(name) {
   if (!name) return '...';
   if (typeof name !== 'string') name = String(name);
-  let short = name.split('/').pop();
+  let short = name.includes('/') ? modelDisplayName(name) : modelDisplayName(name, name);
   // Strip .gguf extension
   short = short.replace(/\.gguf$/i, '');
   // Strip quantization suffixes (Q4_K_M, Q8_0, etc.) and shard numbers
@@ -860,6 +861,36 @@ export function stripToolBlocks(text) {
   cleaned = cleaned.replace(TOOL_NARRATION_RE, '');
   cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
   return cleaned.trim();
+}
+
+/** Human-readable agent tool name for thread headers (live + restored). */
+export function agentToolLabel(toolName) {
+  const lower = String(toolName || '').toLowerCase();
+  const labels = {
+    web_search: 'Web Search',
+    bash: 'Terminal',
+    python: 'Python',
+    create_document: 'Write Document',
+    update_document: 'Write Document',
+    read_document: 'Read Document',
+    edit_file: 'Edit File',
+    read_file: 'Read File',
+    write_file: 'Write File',
+    list_files: 'Browse Files',
+    image_gen: 'Generate Image',
+    generate_image: 'Generate Image',
+    manage_memory: 'Memory',
+    save_memory: 'Memory',
+    search_memory: 'Memory',
+    manage_session: 'Sessions',
+    deep_research: 'Deep Research',
+    list_models: 'Models',
+    ui_control: 'UI Control',
+  };
+  if (labels[lower]) return labels[lower];
+  return String(toolName || 'tool')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /**
@@ -2087,7 +2118,8 @@ export function addMessage(role, content, modelName, metadata) {
             node.className = 'agent-thread-node' + (ok ? '' : ' error');
             // Hide the raw JSON command when a diff says it better (same as live).
             const evCmdHtml = (ev.command && !(ev.diff && ev.diff.text)) ? `<pre class="agent-thread-cmd">${esc(ev.command)}</pre>` : '';
-            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(ev.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}${evDiffHtml}</div>`;
+            const evToolLabel = agentToolLabel(ev.tool);
+            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(evToolLabel)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}${evDiffHtml}</div>`;
             // Click handling is delegated globally \u2014 see chat.js init.
             threadWrap.appendChild(node);
           }
