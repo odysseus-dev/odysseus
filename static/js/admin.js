@@ -199,7 +199,7 @@ async function loadUsers() {
 
       list.appendChild(row);
     });
-  } catch (e) { list.innerHTML = '<div class="admin-error">Failed to load users</div>'; }
+  } catch (e) { list.innerHTML = `<div class="admin-error">${window.t ? window.t('admin.loadFailed') : 'Failed to load users'}</div>`; }
 }
 
 async function _loadModelsForUser(username, allowedSet, modelsRestricted, privPanel) {
@@ -287,12 +287,12 @@ function initAddUser() {
     const password = el('adm-newPassword').value;
     const is_admin = el('adm-newIsAdmin').checked;
     if (!username) { msg.textContent = 'Username required'; msg.className = 'admin-error'; return; }
-    if (password.length < 8) { msg.textContent = 'Password must be at least 8 characters'; msg.className = 'admin-error'; return; }
+    if (password.length < 8) { msg.textContent = window.t ? window.t('admin.passwordTooShort') : 'Password must be at least 8 characters'; msg.className = 'admin-error'; return; }
     el('adm-addBtn').disabled = true;
     try {
       const res = await fetch('/api/auth/users', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, is_admin }) });
       const data = await res.json();
-      if (res.ok) { msg.textContent = 'User created'; msg.className = 'admin-success'; el('adm-newUsername').value = ''; el('adm-newPassword').value = ''; el('adm-newIsAdmin').checked = false; loadUsers(); }
+      if (res.ok) { msg.textContent = window.t ? window.t('admin.userCreated') : 'User created'; msg.className = 'admin-success'; el('adm-newUsername').value = ''; el('adm-newPassword').value = ''; el('adm-newIsAdmin').checked = false; loadUsers(); }
       else { msg.textContent = data.detail || 'Failed'; msg.className = 'admin-error'; }
     } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
     el('adm-addBtn').disabled = false;
