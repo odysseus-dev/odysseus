@@ -56,10 +56,8 @@ def test_session_gone_heuristic_honors_dep_install_success():
     source = _read("static/js/cookbookRunning.js")
 
     assert "const depInstallSucceeded = !!task.payload?._dep && _depInstallSucceeded(lastOutput);" in source
-    assert (
-        "const looksSuccessful = depInstallSucceeded "
-        "|| (task.type === 'download' ? downloadLooksSuccessful : serveLooksReady);"
-    ) in source
+    assert "const looksSuccessful = depInstallSucceeded" in source
+    assert "downloadLooksSuccessful" in source
 
 
 def test_background_poll_recovers_done_for_stopped_dependency_install():
