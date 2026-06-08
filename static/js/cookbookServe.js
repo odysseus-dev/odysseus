@@ -9,7 +9,6 @@ import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
 import { modelColor } from './chatRenderer.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
-import { renderModelNameLink, resolveModelIdentity } from './aaModelLinks.js';
 
 // Shared state/functions injected by init()
 let _envState;
@@ -309,10 +308,8 @@ function _rerenderCachedModels() {
     if (activeTag && m._tag !== activeTag) continue;
     if (searchVal && !(m.repo_id || '').toLowerCase().includes(searchVal)) continue;
     visibleCount++;
-    const _identity = resolveModelIdentity(m.repo_id);
-    const shortName = _identity.displayName || m.repo_id.split('/').pop() || m.repo_id;
-    const hfRepo = _identity.hfRepo || m.repo_id;
-    const hfLink = hfRepo.includes('/') ? `https://huggingface.co/${hfRepo}` : '';
+    const shortName = m.repo_id.split('/').pop() || m.repo_id;
+    const hfLink = m.repo_id.includes('/') ? `https://huggingface.co/${m.repo_id}` : '';
     const metaParts = [];
     if (m.repo_id.includes('/')) metaParts.push(m.repo_id.split('/')[0]);
     metaParts.push(m.size);
@@ -337,7 +334,7 @@ function _rerenderCachedModels() {
     const _downloadingPill = _isDownloading
       ? ` <span class="cookbook-serve-downloading-pill${_isDlActive ? '' : ' is-stalled'}" title="${_isDlActive ? 'Download in progress' : 'Download stalled — retry to resume'}">${_isDlActive ? 'downloading' : 'stalled'}</span>`
       : '';
-    html += `<div class="memory-item-title"${_mc ? ` style="color:${_mc}"` : ''}>${modelLogo(m.repo_id)}${renderModelNameLink(m.repo_id, shortName, esc)}${hfLink ? ` <a href="${esc(hfLink)}" target="_blank" rel="noopener" class="cookbook-hf-link">HF ↗</a>` : ''}${_runningPill}${_downloadingPill}</div>`;
+    html += `<div class="memory-item-title"${_mc ? ` style="color:${_mc}"` : ''}>${modelLogo(m.repo_id)}${esc(shortName)}${hfLink ? ` <a href="${esc(hfLink)}" target="_blank" rel="noopener" class="cookbook-hf-link">HF ↗</a>` : ''}${_runningPill}${_downloadingPill}</div>`;
     html += `<div class="memory-item-meta" style="font-size:10px;opacity:0.4;margin-top:2px;">${metaParts.join(' \u00b7 ')}</div>`;
     html += `</div>`;
     const _bk = _detectBackend(m).backend;

@@ -16,8 +16,7 @@ venv/
 !.env.example
 
 # Data — all user data stays local
-data/*
-!data/aa_model_index.json
+data/
 !services/hwfit/data/
 !services/hwfit/data/hf_models.json
 logs/

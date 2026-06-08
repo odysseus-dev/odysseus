@@ -27,7 +27,6 @@ import {
   // importer uses. A query mismatch loads cookbook.js twice as two separate modules
   // (two _envState objects), which silently sent downloads to the wrong server.
 } from './cookbook.js';
-import { renderModelNameLink, resolveModelIdentity } from './aaModelLinks.js';
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
 
@@ -862,7 +861,6 @@ export const _hwfitColumns = [
 
 export function _hwfitRenderList(el, models) {
   if (!el) return;
-  _wireHwfitListClicks(el);
   models = models || [];
   if (!models.length) {
     // Disambiguate WHY the list is empty so capable servers don't read as "too weak":
@@ -934,8 +932,7 @@ export function _hwfitRenderList(el, models) {
     // QuantTrio/MiniMax-M2-AWQ + quant=AWQ-4bit we just show "(4bit)", not
     // "(AWQ-4bit)". DeepSeek-V4-Flash + FP4-MoE-Mixed keeps the full tag
     // (none of those parts are in the repo id).
-    const _identity = resolveModelIdentity(m.name);
-    const _short = _identity.displayName || m.name || '';
+    const _short = m.name?.split('/').pop() || m.name || '';
     const _quantTag = (m.quant || '').trim();
     const _lowerShort = _short.toLowerCase();
     let _quantSuffix = '';
@@ -948,7 +945,7 @@ export function _hwfitRenderList(el, models) {
         _quantSuffix = ` <span class="hwfit-name-quant" title="${esc(_quantTag)} — full storage format">(${esc(_display)})</span>`;
       }
     }
-    html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${renderModelNameLink(m.name, _short, esc)}${_quantSuffix}${moeBadge}${imgBadge}${dlDot}</span>`;
+    html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(_short)}${_quantSuffix}${moeBadge}${imgBadge}${dlDot}</span>`;
     html += `<span class="hwfit-col hwfit-c-params">${esc(pcount)}</span>`;
     // Truncate the Quant cell to 9 chars + ellipsis so long tags like
     // "FP4-MoE-Mixed" don't push neighboring columns. Full tag stays in title.
@@ -963,25 +960,20 @@ export function _hwfitRenderList(el, models) {
     html += `</div>`;
   }
   el.innerHTML = html;
-}
-
-function _wireHwfitListClicks(list) {
-  if (!list || list.dataset.hwfitClickWired === '1') return;
-  list.dataset.hwfitClickWired = '1';
-  list.addEventListener('click', (e) => {
-    if (e.target.closest('.cookbook-aa-badge, .cookbook-aa-name-link')) return;
-    const row = e.target.closest('.hwfit-row:not(.hwfit-header)');
-    if (!row) return;
-    const name = row.dataset.model;
-    if (!name) return;
-    const modelData = (_hwfitCache?.models || []).find(m => m.name === name);
-    if (!modelData) return;
-    _expandModelRow(row, modelData);
+  // Click row → expand inline action panel
+  el.querySelectorAll('.hwfit-row:not(.hwfit-header)').forEach(row => {
+    row.addEventListener('click', () => {
+      const name = row.dataset.model;
+      if (!name) return;
+      // Find model data from cache
+      const modelData = (_hwfitCache?.models || []).find(m => m.name === name);
+      if (!modelData) return;
+      _expandModelRow(row, modelData);
+    });
   });
   // Clickable header columns → sort (click again to toggle direction)
-  list.addEventListener('click', (e) => {
-    const col = e.target.closest('.hwfit-header .hwfit-sortable');
-    if (!col) return;
+  el.querySelectorAll('.hwfit-header .hwfit-sortable').forEach(col => {
+    col.addEventListener('click', (e) => {
       // The little dot inside the Fit header is its own toggle (fit-only
       // filter), don't let it fall through to a sort click.
       if (e.target.closest('[data-fit-dot]')) {
@@ -1013,6 +1005,7 @@ function _wireHwfitListClicks(list) {
         sel.dataset.reverse = '0';
       }
       _hwfitFetch();
+    });
   });
 }
 
@@ -1066,11 +1059,10 @@ export function _expandModelRow(row, modelData) {
   const ctx = modelData.context || 8192;
 
   const dlSource = _downloadSourceRepo(modelData, backend);
-  const _panelIdentity = resolveModelIdentity(modelData.name);
-  const hfUrl = `https://huggingface.co/${_panelIdentity.hfRepo || dlSource.repo}`;
+  const hfUrl = `https://huggingface.co/${dlSource.repo}`;
   let html = `<div class="hwfit-action-panel" data-model-name="${esc(modelData.name)}">`;
   html += `<div class="hwfit-panel-header">`;
-  html += `<span class="hwfit-panel-model">${renderModelNameLink(modelData.name, _panelIdentity.displayName, esc)}${dlSource.kind ? ` <span style="opacity:0.5;font-size:10px;">(${esc(dlSource.kind)} ${esc(modelData.quant || '')})</span>` : (modelData.quant_repo ? ` <span style="opacity:0.5;font-size:10px;">(${esc(modelData.quant)})</span>` : '')}</span>`;
+  html += `<span class="hwfit-panel-model">${esc(modelData.name)}${dlSource.kind ? ` <span style="opacity:0.5;font-size:10px;">(${esc(dlSource.kind)} ${esc(modelData.quant || '')})</span>` : (modelData.quant_repo ? ` <span style="opacity:0.5;font-size:10px;">(${esc(modelData.quant)})</span>` : '')}</span>`;
   html += `<span class="hwfit-panel-badge">${esc(label)}</span>`;
   html += `<a href="${esc(hfUrl)}" target="_blank" rel="noopener" class="hwfit-panel-hf-link" title="View download source on HuggingFace">HF \u2197</a>`;
   html += `</div>`;
