@@ -1453,6 +1453,31 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
 
+    # ── Batch normalization ──
+    # Some models (e.g. deepseek-v4-flash) emit {"events": [{...}, ...]}
+    # instead of individual create_event calls. Iterate and create each.
+    if isinstance(args.get("events"), list) and not args.get("action"):
+        results = []
+        for ev in args["events"]:
+            if not isinstance(ev, dict):
+                continue
+            # Normalize start/end from {dateTime: "..."} object to flat string
+            for field, target in [("start", "dtstart"), ("end", "dtend")]:
+                val = ev.pop(field, None)
+                if val and target not in ev:
+                    ev[target] = val.get("dateTime", val) if isinstance(val, dict) else val
+            ev.setdefault("action", "create_event")
+            r = await do_manage_calendar(json.dumps(ev), owner=owner)
+            results.append(r)
+        created = [r for r in results if r.get("exit_code") == 0 and not r.get("error")]
+        errors = [r for r in results if r.get("error")]
+        if created:
+            summaries = [r.get("response", "") for r in created]
+            return {"response": f"Created {len(created)} event(s):\n" + "\n".join(summaries), "exit_code": 0}
+        if errors:
+            return {"error": errors[0].get("error", "Unknown error"), "exit_code": 1}
+        return {"error": "No events to create", "exit_code": 1}
+
     # Normalize action — some models emit hyphens ("list-calendars") instead
     # of underscores. Treat them as equivalent so we don't bounce a
     # cosmetic typo back to the model and waste a round-trip. Also accept
