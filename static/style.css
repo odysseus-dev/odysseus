@@ -109,6 +109,42 @@ body {
   overflow: hidden;
 }
 
+/* Electron custom title bar — injected dynamically by electron/preload.js */
+body.electron { padding-top: 32px; }
+body.electron .icon-rail { padding-top: 48px; }
+body.electron .hamburger-btn { top: 44px; }
+
+/* Shift all fixed-position overlays down by title-bar height so nothing clips */
+body.electron .modal {
+  top: 32px;
+  height: calc(100dvh - 32px);
+}
+body.electron #app-loader {
+  top: 32px;
+  height: calc(100dvh - 32px);
+}
+body.electron .shard-modal-content {
+  max-height: calc(100dvh - 32px);
+}
+body.electron #shard-modal.shard-fullscreen .shard-modal-content {
+  height: calc(100dvh - 32px);
+}
+/* Docked modals / panes get inline fixed positioning — override with !important */
+body.electron .modal.modal-right-docked .modal-content,
+body.electron .modal.modal-left-docked .modal-content,
+body.electron .notes-pane.modal-right-docked,
+body.electron .notes-pane.modal-left-docked,
+body.electron .notes-pane.notes-window-fullscreen,
+body.electron .notes-pane[style*="position: fixed"] {
+  top: 32px !important;
+  height: calc(100dvh - 32px) !important;
+  max-height: calc(100dvh - 32px) !important;
+}
+body.electron .notes-pane-backdrop {
+  top: 32px;
+  height: calc(100dvh - 32px);
+}
+
 /* Self-hosted Fira Code font */
 @font-face { font-family: 'Fira Code'; font-weight: 300; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Light.woff2') format('woff2'); }
 @font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Regular.woff2') format('woff2'); }

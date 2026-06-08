@@ -44,7 +44,7 @@ function injectTitleBar() {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      z-index: 2147483647;
+      z-index: 5000;
       user-select: none;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       -webkit-app-region: drag;
