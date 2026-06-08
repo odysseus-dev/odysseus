@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import SessionLocal, ScheduledTask, TaskRun
+from core.constants import internal_api_base
 from src.auth_helpers import get_current_user
 from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
 from routes.prefs_routes import _load_for_user, _save_for_user
@@ -56,7 +57,7 @@ def _maybe_cascade_calendar_event(task) -> None:
         try:
             with httpx.Client(timeout=10) as client:
                 r = client.delete(
-                    f"http://localhost:7000/api/calendar/events/{uid}",
+                    f"{internal_api_base()}/api/calendar/events/{uid}",
                     headers=headers,
                 )
                 if r.status_code >= 400:
@@ -81,7 +82,7 @@ def _maybe_cascade_calendar_event(task) -> None:
     try:
         with httpx.Client(timeout=10) as client:
             # Find the Cookbook calendar.
-            cal_r = client.get("http://localhost:7000/api/calendar/calendars", headers=headers)
+            cal_r = client.get(f"{internal_api_base()}/api/calendar/calendars", headers=headers)
             if cal_r.status_code >= 400:
                 return
             cals = (cal_r.json() or {}).get("calendars", [])
@@ -98,7 +99,7 @@ def _maybe_cascade_calendar_event(task) -> None:
             start = (now - _td(days=30)).isoformat()
             end = (now + _td(days=365)).isoformat()
             ev_r = client.get(
-                "http://localhost:7000/api/calendar/events",
+                f"{internal_api_base()}/api/calendar/events",
                 params={"start": start, "end": end, "calendar": cal_href},
                 headers=headers,
             )

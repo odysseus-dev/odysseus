@@ -94,6 +94,18 @@ Before submitting any change that affects what the app looks like — buttons, i
 
 If you are unsure whether a change is "visual," it is. Default to attaching a screenshot.
 
+## Code conventions
+
+Don't hardcode values that the project already exposes through a constant or a helper. Hardcoded literals drift out of sync, break on non-default deployments, and reintroduce bugs we've already fixed.
+
+- **Filesystem paths:** never build writable paths from `Path(__file__)...` into the source tree or hardcode `/app/...`. Use `DATA_DIR` (and the other path constants) from `core.constants`, e.g. `Path(DATA_DIR) / "logs" / "x.log"`. The source tree is read-only in Docker, and `/app/...` does not exist on native runs. Guard directory creation so an unwritable path degrades gracefully instead of crashing at import.
+- **Internal API / loopback URLs:** don't hardcode `http://localhost:7000`. Use `internal_api_base()` from `core.constants` (it honors `ODYSSEUS_INTERNAL_BASE` / `APP_PORT`).
+- **Ports, limits, model lists, and similar:** reuse the existing constant if one exists; if it doesn't and the value is used in more than one place, add a constant rather than copying the literal.
+
+If you need a value that has no constant or helper yet, add one in the appropriate module (usually `core/constants.py` or `src/constants.py`) and import it, rather than repeating a literal across files.
+
+**Commits:** use [Conventional Commits](https://www.conventionalcommits.org), `type(scope): summary` (e.g. `fix(search): ...`, `feat(notes): ...`, `docs(contributing): ...`). Common types: `fix`, `feat`, `refactor`, `docs`, `test`, `chore`, `ci`. Keep the subject short and imperative; put the "why" in the body when it isn't obvious.
+
 ## Issue Reports
 
 For bugs, include:

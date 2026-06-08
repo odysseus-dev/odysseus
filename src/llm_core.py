@@ -270,8 +270,10 @@ def _is_ollama_native_url(url: str) -> bool:
     path = (parsed.path or "").rstrip("/")
     if _host_match(url, "ollama.com"):
         return True
+    if path.startswith("/v1"):
+        return False
     local_ollama_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or parsed.port == 11434
-    return local_ollama_host and (path == "/api" or path.startswith("/api/"))
+    return local_ollama_host and (path == "" or path == "/api" or path.startswith("/api/"))
 
 
 def _ollama_api_root(url: str) -> str:
@@ -287,6 +289,8 @@ def _ollama_api_root(url: str) -> str:
         return url[: -len("/generate")]
     if path.endswith("/api"):
         return url
+    if path == "":
+        return url + "/api"
     if _host_match(url, "ollama.com"):
         root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
         return root.rstrip("/") + "/api"
@@ -414,6 +418,10 @@ def _detect_provider(url: str) -> str:
         return "ollama"
     if _host_match(url, "anthropic.com"):
         return "anthropic"
+    if _host_match(url, "opencode.ai/zen/go"):
+        return "opencode-go"
+    if _host_match(url, "opencode.ai/zen"):
+        return "opencode-zen"
     if _host_match(url, "openrouter.ai"):
         return "openrouter"
     if _host_match(url, "groq.com"):
@@ -451,6 +459,8 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "x.ai"): return "xAI"
     if _host_match(url, "openai.com"): return "OpenAI"
     if _host_match(url, "openrouter.ai"): return "OpenRouter"
+    if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
+    if _host_match(url, "opencode.ai/zen"): return "OpenCode Zen"
     if _host_match(url, "groq.com"): return "Groq"
     from src.copilot import is_copilot_base
     if is_copilot_base(url): return "GitHub Copilot"

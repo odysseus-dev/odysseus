@@ -802,20 +802,28 @@ def _imap(account_id: str | None = None, owner: str = ""):
 def _decode_header(raw):
     if not raw:
         return ""
-    parts = email.header.decode_header(raw)
-    decoded = []
-    for data, charset in parts:
-        if isinstance(data, bytes):
-            try:
-                decoded.append(data.decode(charset or "utf-8", errors="replace"))
-            except (LookupError, ValueError):
-                # Unknown/invalid MIME charset (e.g. a malformed or spam header
-                # like =?x-unknown-charset?B?...?=). errors="replace" only covers
-                # byte-decode errors, not codec lookup, so fall back to utf-8.
-                decoded.append(data.decode("utf-8", errors="replace"))
-        else:
-            decoded.append(data)
-    return " ".join(decoded)
+    try:
+        # make_header concatenates per RFC 2047: no spurious space between an
+        # encoded-word and adjacent plain text (plain runs keep their own
+        # whitespace), and the whitespace between two adjacent encoded-words is
+        # dropped. The old " ".join produced "Re:  Jose"-style double spaces on
+        # every non-ASCII subject or sender.
+        return str(email.header.make_header(email.header.decode_header(raw)))
+    except Exception:
+        # Malformed header or unknown/invalid MIME charset (e.g. a spam header
+        # like =?x-unknown-charset?B?...?=) makes make_header raise LookupError;
+        # fall back to a lossy per-part decode. errors="replace" only covers
+        # byte-decode errors, not codec lookup, hence the explicit utf-8 retry.
+        decoded = []
+        for data, charset in email.header.decode_header(raw):
+            if isinstance(data, bytes):
+                try:
+                    decoded.append(data.decode(charset or "utf-8", errors="replace"))
+                except (LookupError, ValueError):
+                    decoded.append(data.decode("utf-8", errors="replace"))
+            else:
+                decoded.append(data)
+        return "".join(decoded)
 
 
 def _detect_sent_folder(conn):

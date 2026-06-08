@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 
 from src.auth_helpers import require_authenticated_request, require_user
 from src.tool_implementations import do_manage_notes
+from core.constants import DATA_DIR
 
 
 COOKBOOK_READ_SCOPES = {"cookbook:read", "cookbook:launch"}
@@ -425,7 +426,7 @@ def setup_codex_routes(
     def _read_cookbook_state() -> dict:
         from pathlib import Path as _Path
         import os as _os, json as _json
-        p = _Path(_os.environ.get("DATA_DIR", "data")) / "cookbook_state.json"
+        p = _Path(DATA_DIR) / "cookbook_state.json"
         if not p.exists():
             return {}
         try:
@@ -733,7 +734,7 @@ def setup_codex_routes(
         import time as _t, json as _json
         from core.atomic_io import atomic_write_json
         from pathlib import Path as _Path
-        cookbook_state_path = _Path("/app/data/cookbook_state.json")
+        cookbook_state_path = _Path(DATA_DIR) / "cookbook_state.json"
         try:
             state = _json.loads(cookbook_state_path.read_text(encoding="utf-8"))
         except Exception:
