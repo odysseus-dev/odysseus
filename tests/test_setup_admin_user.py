@@ -13,7 +13,7 @@ def _load_setup_module():
 
 def test_create_default_admin_normalizes_env_username(tmp_path, monkeypatch):
     setup_module = _load_setup_module()
-    monkeypatch.setattr(setup_module, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(setup_module, "AUTH_FILE", str(tmp_path / "auth.json"))
     monkeypatch.setenv("ODYSSEUS_ADMIN_USER", " AdminUser ")
     monkeypatch.setenv("ODYSSEUS_ADMIN_PASSWORD", "temporary-password")
 

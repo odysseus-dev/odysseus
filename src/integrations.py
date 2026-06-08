@@ -10,10 +10,11 @@ import httpx
 from core.atomic_io import atomic_write_json
 from core.platform_compat import safe_chmod
 from src.secret_storage import decrypt, encrypt, is_encrypted
+from src.constants import DATA_DIR, INTEGRATIONS_FILE, SETTINGS_FILE
 
 log = logging.getLogger(__name__)
 
-DATA_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "integrations.json")
+DATA_FILE = INTEGRATIONS_FILE
 
 # ---------------------------------------------------------------------------
 # Presets
@@ -98,6 +99,19 @@ INTEGRATION_PRESETS: Dict[str, Dict[str, Any]] = {
             "    Headers: Title (notification title), Priority (1-5), Tags (comma-separated emoji tags)\n"
             "  POST / — send JSON notification {\"topic\": \"...\", \"message\": \"...\", \"title\": \"...\", \"priority\": N}\n"
             "  GET /{topic}/json?poll=1 — poll for messages"
+        ),
+    },
+    "discord_webhook": {
+        "name": "Discord Webhook",
+        "auth_type": "none",
+        "description": (
+            "Discord Incoming Webhook. Paste the full webhook URL (including the token) as the Base URL.\n"
+            "To get a URL: Discord server -> Server Settings -> Integrations -> Webhooks -> New Webhook -> Copy Webhook URL.\n"
+            "The secret is embedded in the URL — leave auth type as None.\n\n"
+            "Use this integration as the target in Settings -> Reminders -> Webhook channel.\n"
+            "Payload template examples:\n"
+            "  Simple:  {\"content\": \"{{title}}: {{message}}\"}\n"
+            "  Embed:   {\"embeds\": [{\"title\": \"{{title}}\", \"description\": \"{{message}}\", \"color\": 5793266}]}"
         ),
     },
     "vaultwarden": {
@@ -458,7 +472,7 @@ def get_integrations_prompt() -> str:
 def migrate_from_settings() -> None:
     """If data/settings.json has miniflux_url and miniflux_api_key, create a
     Miniflux integration and clear those keys from settings."""
-    settings_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "settings.json")
+    settings_path = SETTINGS_FILE
     if not os.path.exists(settings_path):
         return
 

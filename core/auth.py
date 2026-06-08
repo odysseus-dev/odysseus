@@ -30,14 +30,24 @@ DEFAULT_PRIVILEGES = {
     "can_manage_memory": True,
     "max_messages_per_day": 0,
     "allowed_models": [],
+    "allowed_models_restricted": False,
+    # Explicit "block every model" sentinel. An empty `allowed_models` list is
+    # ambiguous — it's also what gets sent when the admin clicks "[All]" — so
+    # we need a dedicated flag to express "this user may use no models at all"
+    # distinctly from "this user has no restriction".
+    "block_all_models": False,
 }
 
 # Admins get everything
 ADMIN_PRIVILEGES = {k: (True if isinstance(v, bool) else (0 if isinstance(v, int) else [])) for k, v in DEFAULT_PRIVILEGES.items()}
+ADMIN_PRIVILEGES["allowed_models_restricted"] = False
+# Admins must never be blocked from using models — the generic dict
+# comprehension above flips every boolean default to True, which would be
+# backwards for this sentinel.
+ADMIN_PRIVILEGES["block_all_models"] = False
 
-DEFAULT_AUTH_PATH = os.path.join(
-    Path(__file__).parent.parent, "data", "auth.json"
-)
+from src.constants import AUTH_FILE
+DEFAULT_AUTH_PATH = AUTH_FILE
 TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 
 # Usernames the auth + middleware layer reserve as internal "synthetic owner"
@@ -445,6 +455,12 @@ class AuthManager:
         username = username.strip().lower()
         if not self.verify_password(username, password):
             return None
+        return self.create_session_trusted(username)
+
+    def create_session_trusted(self, username: str) -> str:
+        """Issue a session token for an already-verified user.
+        Call only after verify_password (and TOTP if enabled) have passed."""
+        username = username.strip().lower()
         token = secrets.token_hex(32)
         with self._sessions_lock:
             self._sessions[token] = {

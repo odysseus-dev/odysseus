@@ -13,7 +13,6 @@ import chatStream from './chatStream.js';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
 import { svgifyEmoji } from './markdown.js';
-import planWindowModule from './planWindow.js';
 import spinnerModule from './spinner.js';
 import presetsModule from './presets.js';
 import fileHandlerModule from './fileHandler.js';
@@ -23,6 +22,9 @@ import * as emailInbox from './emailInbox.js';
 import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
 import createResearchSynapse from './researchSynapse.js';
+import { createStreamRenderer } from './streamingRenderer.js';
+import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
+
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -52,7 +54,27 @@ import createResearchSynapse from './researchSynapse.js';
 
   // shortModel and modelColor are now in chatRenderer.js
   var _shortModel = chatRenderer.shortModel;
+  var _modelRouteLabel = chatRenderer.modelRouteLabel;
+  var _sameModelName = chatRenderer.sameModelName;
   var _applyModelColor = chatRenderer.applyModelColor;
+  function _setRoleModelLabel(roleEl, requestedModel, actualModel, opts) {
+    if (!roleEl) return;
+    opts = opts || {};
+    const tsSpan = roleEl.querySelector('.role-timestamp');
+    const req = requestedModel || actualModel || '';
+    const actual = actualModel || requestedModel || '';
+    let label = _modelRouteLabel(req, actual);
+    if (opts.suffix) label += ' (' + opts.suffix + ')';
+    if (opts.characterName) label = opts.characterName;
+    roleEl.textContent = label + ' ';
+    _applyModelColor(roleEl, actual || req);
+    if (req && actual && !_sameModelName(req, actual)) {
+      roleEl.title = req + ' -> ' + actual + (opts.reason ? ': ' + opts.reason : '');
+    } else if (!opts.reason) {
+      roleEl.removeAttribute('title');
+    }
+    if (tsSpan) roleEl.appendChild(tsSpan);
+  }
   // Per-session research tracking (supports concurrent research across sessions)
   const _researchingStreamIds = new Set();
   let _researchTimerEl = null, _researchTimerInterval = null;
@@ -88,35 +110,6 @@ import createResearchSynapse from './researchSynapse.js';
   let _streamSessionId = null; // Session ID for the currently active reader loop
   let _lastReaderActivity = 0; // Timestamp of last reader.read() success — used to detect frozen streams
   let _webLockRelease = null;  // Function to release the Web Lock held during streaming
-  let _forcePlanOff = false;   // One-shot: suppress plan_mode for the next send (Approve & Run)
-
-  // ── Plan store: the latest proposed/approved checklist for the CURRENT chat ──
-  // Kept so (a) it can be sent back each turn and pinned in context (a long plan
-  // on a weak model survives history truncation), and (b) the plan window can be
-  // re-opened/docked at any time via the plan-button menu. Stored per session in
-  // localStorage so it survives a reload mid-execution.
-  function _setStoredPlan(text) {
-    const sid = sessionModule.getCurrentSessionId();
-    if (!sid || !text || !text.trim()) return;
-    Storage.setJSON(Storage.KEYS.PLAN, { sid, text });
-    // Live-refresh the plan window if it's open (shows progress as the agent
-    // restates the checklist with [x]).
-    try {
-      if (planWindowModule.isPlanWindowOpen && planWindowModule.isPlanWindowOpen()) {
-        planWindowModule.openPlanWindow(text, null);
-      }
-    } catch (_) {}
-  }
-  function _getStoredPlan() {
-    const sid = sessionModule.getCurrentSessionId();
-    const rec = Storage.getJSON(Storage.KEYS.PLAN, null);
-    return (rec && rec.sid === sid && rec.text) ? rec.text : '';
-  }
-  // A line like "- [ ] step" / "- [x] step" marks a GitHub-style checklist.
-  const _CHECKLIST_RE = /^\s*[-*]\s+\[[ xX]\]\s+/m;
-  // Exposed for app.js (plan-button menu) — re-open the stored plan window.
-  window._getStoredPlan = _getStoredPlan;
-  window.planWindowModule = planWindowModule;
 
   /** Check if an SSE reader is still actively connected for a session. */
   function hasActiveStream(sessionId) {
@@ -196,6 +189,19 @@ import createResearchSynapse from './researchSynapse.js';
       const ta = document.getElementById('message');
       if (ta && mod.initSlashAutocomplete) mod.initSlashAutocomplete(ta);
     }).catch(() => {});
+
+    // ArrowUp on empty composer recalls last user message (like many chat apps).
+    const _wireArrowUpRecall = (composer) =>
+      wireArrowUpRecall(composer, () => getLastUserMessageFromChatHistory(), {
+        autoResize: uiModule?.autoResize,
+      });
+
+    const composer = document.getElementById('message');
+    if (!_wireArrowUpRecall(composer)) {
+      // Init can run before #message exists (templated UI); short retries only.
+      try { requestAnimationFrame(() => _wireArrowUpRecall(document.getElementById('message'))); } catch (_) {}
+      setTimeout(() => _wireArrowUpRecall(document.getElementById('message')), 250);
+    }
   }
 
   // addMessage, createMsgFooter, displayMetrics, hideWelcomeScreen, showWelcomeScreen
@@ -555,7 +561,6 @@ import createResearchSynapse from './researchSynapse.js';
     let _thinkOpen = false;
     let holder = null;
     let finalMeta = null;
-    let finalModelName = null;
     let spinner = null;
     let timedOut = false;
     let processingProbeTimer = null;
@@ -804,22 +809,6 @@ import createResearchSynapse from './researchSynapse.js';
       if (el('bash-toggle').checked) {
         fd.append('allow_bash', 'true');
       }
-      // Plan mode: agent investigates read-only and proposes a plan to approve.
-      // Only meaningful in agent mode, and never alongside deep research.
-      // _forcePlanOff is a one-shot set by "Approve & Run" so the execution turn
-      // runs with full tools even though the Plan toggle is still on.
-      const _planToggle = el('plan-toggle');
-      const planTurn = !_forcePlanOff && isAgentMode && _planToggle && _planToggle.checked && !el('research-toggle').checked;
-      _forcePlanOff = false;
-      if (planTurn) {
-        fd.append('plan_mode', 'true');
-        fd.set('mode', 'agent');
-      } else if (isAgentMode) {
-        // Executing (not proposing): send the stored plan back so the backend
-        // pins it in context and the agent can always re-reference it.
-        const _sp = _getStoredPlan();
-        if (_sp) fd.append('approved_plan', _sp);
-      }
       const ragChk = el('rag-toggle');
       if (ragChk && !ragChk.checked) {
         fd.append('use_rag', 'false');
@@ -827,10 +816,6 @@ import createResearchSynapse from './researchSynapse.js';
       const incognitoChk = el('incognito-toggle');
       if (incognitoChk && incognitoChk.checked) {
         fd.append('incognito', 'true');
-      }
-      const _ws = (Storage.KEYS && Storage.get(Storage.KEYS.WORKSPACE, '')) || '';
-      if (_ws) {
-        fd.append('workspace', _ws);
       }
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
@@ -891,11 +876,13 @@ import createResearchSynapse from './researchSynapse.js';
         loadingText = 'Processing request...';
       }
 
-      var roleLabel = _shortModel(modelName);
+      var roleLabel = _modelRouteLabel(modelName, modelName);
       var _charNameInit = presetsModule.getCharacterName ? presetsModule.getCharacterName() : '';
       if (_charNameInit) roleLabel = _charNameInit;
       const roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
       holder.innerHTML = `<div class="role">${uiModule.esc(roleLabel)} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
+      holder._requestedModel = modelName;
+      holder._actualModel = modelName;
       _applyModelColor(holder.querySelector('.role'), modelName);
       holder.style.position = 'relative';
       
@@ -1167,9 +1154,6 @@ import createResearchSynapse from './researchSynapse.js';
       let _liveThinkToggle = null;
       let _liveThinkDomId = null;
 
-      // Offscreen measurement div — reused across renders
-      let _measureDiv = null;
-
       function _replyAfterClosedThinking(text) {
         const closeRe = /<\/(?:think(?:ing)?|thought)>|<channel\|>/gi;
         let match = null;
@@ -1224,19 +1208,18 @@ import createResearchSynapse from './researchSynapse.js';
             }
           }
           if (replyTrimmed) {
-            const replyHtml = markdownModule.mdToHtml(markdownModule.squashOutsideCode(replyTrimmed));
-            const prevLen = liveReply._prevTextLen || 0;
-            liveReply.innerHTML = replyHtml;
-            _fadeNewTokens(liveReply, prevLen);
-            liveReply._prevTextLen = liveReply.textContent.length;
-            if (window.hljs) liveReply.querySelectorAll('pre code').forEach((b) => window.hljs.highlightElement(b));
+            const r = liveReply._streamRenderer ||
+              (liveReply._streamRenderer = createStreamRenderer(liveReply, {
+                render: (t) => markdownModule.mdToHtml(markdownModule.squashOutsideCode(t)),
+                hljs: window.hljs,
+              }));
+            r.update(replyTrimmed);
           }
           // Reply empty or not — preserve thinking bar, don't fall through to full re-render
           uiModule.scrollHistory();
           return;
         }
 
-        const prevLen = contentEl._prevTextLen || 0;
         // If thinking is still streaming (unclosed <think>), show indicator instead of raw text
         if (markdownModule.hasUnclosedThinkTag && markdownModule.hasUnclosedThinkTag(dt)) {
           const thinkStart = dt.search(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought/i);
@@ -1250,65 +1233,25 @@ import createResearchSynapse from './researchSynapse.js';
           contentEl.innerHTML =
             '<div class="thinking-section"><div class="thinking-header"><div class="thinking-header-left">Thinking' +
             (lines > 1 ? ` (${lines} lines)` : '') + '</div></div></div>';
-          contentEl._prevTextLen = 0;
+          // The stream renderer self-heals when it next sees this overwritten
+          // container (streamingRenderer.js), so no explicit reset is needed here.
           uiModule.scrollHistory();
           return;
         }
-        const html = markdownModule.processWithThinking(markdownModule.squashOutsideCode(dt));
 
-        // Smooth expand only for regular chat text (not thinking/agent blocks)
-        const _hasThinking = html.includes('thinking-section');
-        const _isAgentRound = roundHolder !== holder;
-        if (!_hasThinking && !_isAgentRound) {
-          // Render into offscreen clone to measure new height before swapping
-          if (!_measureDiv) {
-            _measureDiv = document.createElement('div');
-            _measureDiv.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;z-index:-1;';
-          }
-          _measureDiv.style.width = contentEl.offsetWidth + 'px';
-          _measureDiv.className = contentEl.className;
-          _measureDiv.innerHTML = html;
-          contentEl.parentNode.appendChild(_measureDiv);
-          const measuredH = _measureDiv.offsetHeight;
-          _measureDiv.remove();
-          const curMin = parseFloat(contentEl.style.minHeight) || 0;
-          contentEl.style.minHeight = Math.max(curMin, measuredH) + 'px';
-        } else {
-          contentEl.style.minHeight = '';
-        }
-
-        contentEl.innerHTML = html;
-        _fadeNewTokens(contentEl, prevLen);
-        contentEl._prevTextLen = contentEl.textContent.length;
-        if (window.hljs) contentEl.querySelectorAll('pre code').forEach((b) => window.hljs.highlightElement(b));
+        // Incremental streaming render: freeze finalized blocks, re-render only the
+        // growing tail, and highlight each code block once on completion. This is
+        // what keeps code-block hover buttons from flickering and avoids the O(N^2)
+        // re-parse/re-highlight of the whole message on every token.
+        // See streamingRenderer.js / streamingSegmenter.js.
+        const renderer = contentEl._streamRenderer ||
+          (contentEl._streamRenderer = createStreamRenderer(contentEl, {
+            render: (t) => markdownModule.processWithThinking(markdownModule.squashOutsideCode(t)),
+            hljs: window.hljs,
+          }));
+        renderer.update(dt);
         uiModule.scrollHistory();
       };
-
-      // Walk text nodes, skip past `prevLen` characters of old text,
-      // wrap everything after that in <span class="token-new"> for fade-in
-      function _fadeNewTokens(container, prevLen) {
-        if (!prevLen) return; // First chunk — skip, whole msg already has entrance anim
-        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-        let charCount = 0;
-        const toWrap = [];
-        while (walker.nextNode()) {
-          const node = walker.currentNode;
-          const len = node.textContent.length;
-          if (charCount + len <= prevLen) { charCount += len; continue; }
-          const splitAt = charCount < prevLen ? prevLen - charCount : 0;
-          toWrap.push({ node, splitAt });
-          charCount += len;
-        }
-        for (const { node, splitAt } of toWrap) {
-          const parent = node.parentNode;
-          if (!parent || parent.closest('pre, .think-content')) continue;
-          const target = splitAt > 0 ? node.splitText(splitAt) : node;
-          const span = document.createElement('span');
-          span.className = 'token-new';
-          parent.replaceChild(span, target);
-          span.appendChild(target);
-        }
-      }
 
       let _nextIsError = false;
       let _streamSawDone = false;
@@ -1850,21 +1793,16 @@ import createResearchSynapse from './researchSynapse.js';
                 if (!_isBg && holder) {
                   const roleEl = holder.querySelector('.role');
                   if (roleEl) {
-                    const tsSpan = roleEl.querySelector('.role-timestamp');
-                    var _modelLabel = _shortModel(json.model);
-                    if (json.suffix) {
-                      _modelLabel += ' (' + json.suffix + ')';
-                      holder._roleSuffix = json.suffix;
-                    }
+                    holder._requestedModel = json.requested_model || json.model || holder._requestedModel;
+                    holder._actualModel = json.model || holder._actualModel || holder._requestedModel;
+                    if (json.suffix) holder._roleSuffix = json.suffix;
                     // Prepend character name if sent by server or set locally
                     var _charName = json.character_name || (presetsModule.getCharacterName ? presetsModule.getCharacterName() : '');
-                    if (_charName) {
-                      _modelLabel = _charName;
-                      holder._characterName = _charName;
-                    }
-                    roleEl.textContent = _modelLabel + ' ';
-                    _applyModelColor(roleEl, json.model);
-                    if (tsSpan) roleEl.appendChild(tsSpan);
+                    if (_charName) holder._characterName = _charName;
+                    _setRoleModelLabel(roleEl, holder._requestedModel, holder._actualModel, {
+                      suffix: holder._roleSuffix,
+                      characterName: holder._characterName,
+                    });
                   }
                 }
               } else if (json.type === 'fallback') {
@@ -1884,6 +1822,14 @@ import createResearchSynapse from './researchSynapse.js';
                         (json.reason ? ': ' + json.reason : '') + ' — answered by ' + (json.answered_by || '');
                       _applyModelColor(_rEl, json.answered_by);
                       if (_tsS) _rEl.appendChild(_tsS);
+                      holder._requestedModel = json.selected_model || holder._requestedModel || modelName;
+                      const _hasResolvedActual = holder._actualModel && !_sameModelName(holder._actualModel, holder._requestedModel);
+                      holder._actualModel = _hasResolvedActual ? holder._actualModel : (json.answered_by || holder._actualModel || holder._requestedModel);
+                      _setRoleModelLabel(_rEl, holder._requestedModel, holder._actualModel, {
+                        suffix: holder._roleSuffix,
+                        characterName: holder._characterName,
+                        reason: json.reason,
+                      });
                     }
                   }
                 }
@@ -1924,6 +1870,15 @@ import createResearchSynapse from './researchSynapse.js';
                   note.appendChild(contBtn);
                   _chatBox.appendChild(note);
                   try { note.scrollIntoView({ block: 'end', behavior: 'smooth' }); } catch (_) { uiModule.scrollHistory && uiModule.scrollHistory(); }
+                }
+              } else if (json.type === 'model_actual') {
+                if (!_isBg && holder) {
+                  holder._requestedModel = json.requested_model || holder._requestedModel || modelName;
+                  holder._actualModel = json.model || holder._actualModel || holder._requestedModel;
+                  _setRoleModelLabel(holder.querySelector('.role'), holder._requestedModel, holder._actualModel, {
+                    suffix: holder._roleSuffix,
+                    characterName: holder._characterName,
+                  });
                 }
               } else if (json.type === 'attachments') {
                 if (_isBg) continue;
@@ -2002,6 +1957,10 @@ import createResearchSynapse from './researchSynapse.js';
                 }
               } else if (json.type === 'metrics') {
                 metrics = json.data;
+                if (!_isBg && holder && metrics) {
+                  holder._requestedModel = metrics.requested_model || holder._requestedModel || modelName;
+                  holder._actualModel = metrics.model || holder._actualModel || holder._requestedModel;
+                }
                 if (_isBg) {
                   var bgM = _backgroundStreams.get(streamSessionId);
                   if (bgM) bgM.metrics = json.data;
@@ -2484,8 +2443,10 @@ import createResearchSynapse from './researchSynapse.js';
                 const newRole = document.createElement('div');
                 newRole.className = 'role';
                 const metaS = sessionModule.getSessions().find(s => s.id === streamSessionId);
-                newRole.textContent = _shortModel(metaS?.model) || '';
-                _applyModelColor(newRole, metaS?.model);
+                const _roundRequested = holder?._requestedModel || metaS?.model;
+                const _roundActual = holder?._actualModel || _roundRequested;
+                newRole.textContent = _modelRouteLabel(_roundRequested, _roundActual) || '';
+                _applyModelColor(newRole, _roundActual);
                 newWrap.appendChild(newRole);
                 const newBody = document.createElement('div');
                 newBody.className = 'body';
@@ -2591,18 +2552,16 @@ import createResearchSynapse from './researchSynapse.js';
       const _isBgFinal = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
       if (!_isBgFinal) {
         finalMeta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
-        finalModelName = _shortModel(metrics?.model || finalMeta?.model);
-        // Preserve suffix (e.g. "Research") if set by model_info event
-        if (holder._roleSuffix) finalModelName += ' (' + holder._roleSuffix + ')';
+        const _finalActualModel = metrics?.model || holder._actualModel || finalMeta?.model;
+        const _finalRequestedModel = metrics?.requested_model || holder._requestedModel || finalMeta?.model || _finalActualModel;
         // Prepend character name if set
         var _charNameFinal = presetsModule.getCharacterName ? presetsModule.getCharacterName() : '';
-        if (_charNameFinal) finalModelName = _charNameFinal;
         const roleEl = holder.querySelector('.role');
         if (roleEl) {
-          const tsSpan = roleEl.querySelector('.role-timestamp');
-          roleEl.textContent = finalModelName + ' ';
-          _applyModelColor(roleEl, metrics?.model || finalMeta?.model);
-          if (tsSpan) roleEl.appendChild(tsSpan);
+          _setRoleModelLabel(roleEl, _finalRequestedModel, _finalActualModel, {
+            suffix: holder._roleSuffix,
+            characterName: _charNameFinal || holder._characterName,
+          });
         }
         holder.dataset.raw = accumulated;
 
@@ -2761,61 +2720,6 @@ import createResearchSynapse from './researchSynapse.js';
         // Attach footer to the last visible bubble (roundHolder for multi-round agent, holder for single)
         const footerTarget = (roundHolder && roundHolder !== holder && roundHolder.style.display !== 'none') ? roundHolder : holder;
         footerTarget.appendChild(createMsgFooter(footerTarget));
-        // Capture any checklist this message produced as the current plan — both
-        // the initial proposal AND restated progress during execution. Keeps the
-        // stored plan (and the docked plan window) in sync with the latest state.
-        if (accumulated && _CHECKLIST_RE.test(accumulated)) {
-          _setStoredPlan(accumulated);
-        }
-        // Plan mode: the agent has proposed a plan — offer to approve & execute it.
-        // Approving re-sends with plan_mode suppressed (full tools) for one turn.
-        if (planTurn && accumulated.trim()) {
-          const _planText = accumulated;
-          const _runApproved = () => {
-            _approveWrap.remove();
-            _forcePlanOff = true;
-            // Persist the approved plan for THIS chat so it's (a) re-sent and
-            // pinned in context every execution turn, and (b) re-openable via the
-            // plan-button menu. Do this BEFORE flipping the toggle, since the menu
-            // intercept keys off a stored plan existing.
-            _setStoredPlan(_planText);
-            // Approving exits plan mode for good — turn it OFF directly (NOT via
-            // the button's click, which would now open the plan menu instead of
-            // toggling) so execution and every follow-up keep full write tools.
-            try { if (window._setPlanMode) window._setPlanMode(false); } catch (_) {}
-            const _inp = el('message');
-            if (_inp) {
-              _inp.value = 'Approved — execute the plan. The full approved checklist is pinned '
-                + 'for you under "## ACTIVE PLAN"; do NOT go looking for it in tasks, notes, or '
-                + 'memory. Work through it in order, and after each step call the update_plan tool '
-                + 'with the full checklist and that step marked `- [x]`. Do the next unchecked item '
-                + 'until all are done.';
-              _inp.dispatchEvent(new Event('input'));
-            }
-            // Show a clean bubble; the full instruction still goes to the model.
-            _displayOverride = 'Approved the plan.';
-            handleChatSubmit({ preventDefault() {} });
-          };
-          var _approveWrap = document.createElement('div');
-          _approveWrap.className = 'plan-approve-bar';
-          const _approveBtn = document.createElement('button');
-          _approveBtn.type = 'button';
-          _approveBtn.className = 'plan-approve-btn';
-          _approveBtn.textContent = 'Approve & Run';
-          _approveBtn.addEventListener('click', _runApproved);
-          // Open the plan in a draggable, side-dockable window (reuses the
-          // shared modal framework). Approving from the window runs it too.
-          const _openBtn = document.createElement('button');
-          _openBtn.type = 'button';
-          _openBtn.className = 'plan-open-btn';
-          _openBtn.textContent = 'Open in window';
-          _openBtn.addEventListener('click', () => {
-            planWindowModule.openPlanWindow(_planText, _runApproved);
-          });
-          _approveWrap.appendChild(_approveBtn);
-          _approveWrap.appendChild(_openBtn);
-          footerTarget.appendChild(_approveWrap);
-        }
         // Add "View Report" link for completed research
         if (_researchingStreamIds.has(streamSessionId)) {
           _appendViewReportLink(footerTarget, streamSessionId);

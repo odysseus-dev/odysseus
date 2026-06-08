@@ -98,6 +98,7 @@ class ChatHandler:
         att_ids: List[str],
         sess,
         auto_opened_docs: Optional[List[Dict[str, Any]]] = None,
+        allow_tool_preprocessing: bool = True,
     ) -> tuple:
         """
         Common preprocessing for both chat endpoints.
@@ -112,7 +113,7 @@ class ChatHandler:
         attachment_meta: List[Dict[str, Any]] = []
 
         # Extract URLs and process YouTube transcripts
-        urls = extract_urls(enhanced_message)
+        urls = extract_urls(enhanced_message) if allow_tool_preprocessing else []
         youtube_transcripts: List[str] = []
 
         has_youtube = False
@@ -143,24 +144,18 @@ class ChatHandler:
         if has_youtube:
             youtube_transcripts.insert(0, YOUTUBE_INSTRUCTION_PROMPT)
 
-        # Analyze images — skip if vision disabled, or if main model is vision-capable
-        from src.settings import get_setting
-        vision_enabled = get_setting("vision_enabled", True)
-        main_is_vision = await asyncio.to_thread(
-            model_supports_vision, sess.model or "", getattr(sess, "endpoint_url", "") or ""
-        )
-
         # Resolve uploads once with the session owner. Attachment IDs are
         # bearer-like references; never trust them without an owner check.
         files_by_id: Dict[str, Dict] = {}
         owner = getattr(sess, "owner", None)
-        if att_ids:
-            for att_id in att_ids:
+        effective_att_ids = att_ids if allow_tool_preprocessing else []
+        if effective_att_ids:
+            for att_id in effective_att_ids:
                 fi = self.upload_handler.resolve_upload(att_id, owner=owner)
                 if fi:
                     files_by_id[att_id] = fi
 
-            for att_id in att_ids:
+            for att_id in effective_att_ids:
                 fi = files_by_id.get(att_id)
                 if fi:
                     attachment_meta.append({
@@ -172,9 +167,24 @@ class ChatHandler:
                         "height": fi.get("height"),
                     })
 
-        if att_ids and vision_enabled:
+        # Analyze images only when attachment preprocessing is actually
+        # allowed. The vision capability check can probe local model endpoints,
+        # so guide-only/no-tools turns must not reach it.
+        vision_enabled = False
+        main_is_vision = False
+        if effective_att_ids:
+            from src.settings import get_setting
+            vision_enabled = get_setting("vision_enabled", True)
+            if vision_enabled:
+                main_is_vision = await asyncio.to_thread(
+                    model_supports_vision,
+                    sess.model or "",
+                    getattr(sess, "endpoint_url", "") or "",
+                )
+
+        if effective_att_ids and vision_enabled:
             meta_by_id = {m["id"]: m for m in attachment_meta}
-            for att_id in att_ids:
+            for att_id in effective_att_ids:
                 file_info = files_by_id.get(att_id)
                 if file_info and self.upload_handler.is_image_file(
                     file_info["name"], file_info.get("mime", "")
@@ -219,7 +229,7 @@ class ChatHandler:
                             except Exception:
                                 vl_desc = None
                         if not vl_desc:
-                            vl_result = analyze_image_with_vl_result(file_info["path"])
+                            vl_result = analyze_image_with_vl_result(file_info["path"], owner=owner)
                             vl_desc = vl_result.get("text", "")
                             vl_model = vl_result.get("model", "")
                             if vl_desc and not vl_desc.startswith("["):
@@ -239,7 +249,7 @@ class ChatHandler:
                             _m["vision_model"] = vl_model
 
         user_content = build_user_content(
-            enhanced_message, att_ids, UPLOAD_DIR, self.upload_handler,
+            enhanced_message, effective_att_ids, UPLOAD_DIR, self.upload_handler,
             session_id=getattr(sess, "id", None),
             auto_opened_docs=auto_opened_docs,
             owner=owner,

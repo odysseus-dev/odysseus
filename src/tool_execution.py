@@ -19,17 +19,16 @@ import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
+from src.tool_policy import ToolPolicy
+from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
+from src.tool_utils import _truncate, get_mcp_manager
 
 # Persistent working directory for agent subprocesses.
 # Resolves to <repo_root>/data, which is the bind-mounted volume in Docker
 # (/app/data) and the local data directory for manual installs.
 # Using this as cwd and HOME prevents the agent from silently creating files
 # in ephemeral container layers that are lost on the next rebuild.
-_AGENT_WORKDIR = str(pathlib.Path(__file__).parent.parent / "data")
-
-MAX_OUTPUT_CHARS = 10_000
-MAX_READ_CHARS = 20_000
-MAX_DIFF_LINES = 400  # cap unified-diff size returned to the UI
+_AGENT_WORKDIR = DATA_DIR
 
 
 def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
@@ -50,8 +49,8 @@ def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
         fromfile=f"a/{label}", tofile=f"b/{label}",
         lineterm="",
     ))
-    added = sum(1 for l in diff_lines if l.startswith("+") and not l.startswith("+++"))
-    removed = sum(1 for l in diff_lines if l.startswith("-") and not l.startswith("---"))
+    added = sum(1 for line in diff_lines if line.startswith("+") and not line.startswith("+++"))
+    removed = sum(1 for line in diff_lines if line.startswith("-") and not line.startswith("---"))
     truncated = False
     if len(diff_lines) > MAX_DIFF_LINES:
         diff_lines = diff_lines[:MAX_DIFF_LINES]
@@ -328,12 +327,6 @@ PROGRESS_INTERVAL_S = 2.0
 # snippet without dragging the whole output along.
 PROGRESS_TAIL_LINES = 12
 
-
-def get_mcp_manager():
-    from src import agent_tools
-    return agent_tools.get_mcp_manager()
-
-
 # Directories ignored by the code-nav tools' Python fallbacks so results aren't
 # polluted by VCS internals / dependency trees / build caches. ripgrep already
 # honours .gitignore; this is the parity floor for the no-rg path (and the
@@ -365,12 +358,6 @@ def _resolve_search_root(raw_path: str, workspace: Optional[str] = None) -> str:
         roots = _tool_path_roots()
         return roots[0] if roots else os.path.realpath(".")
     return _resolve_tool_path(raw)
-
-
-def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
-    if len(text) > limit:
-        return text[:limit] + f"\n... (truncated, {len(text)} chars total)"
-    return text
 
 logger = logging.getLogger(__name__)
 
@@ -555,7 +542,7 @@ def _parse_write_file(content: str) -> Dict:
     return {"path": lines[0].strip(), "content": lines[1] if len(lines) > 1 else ""}
 
 
-_MCP_ARG_PARSERS: Dict[str, callable] = {
+_MCP_ARG_PARSERS: Dict[str, Callable[[str], Dict[str, str]]] = {
     "bash":           lambda c: {"command": c},
     "python":         lambda c: {"code": c},
     "web_search":     lambda c: {"query": c.split("\n")[0].strip()},
@@ -660,8 +647,6 @@ async def _direct_fallback(
     are still running, with `{elapsed_s, tail}` payloads. Other tools
     ignore it.
     """
-    import json as _json
-
     # Inherit env + force a sane terminal so subprocesses that touch
     # terminfo (anything calling `clear`, `tput`, `os.system("clear")`,
     # or scripts that probe $TERM) don't spam "TERM environment variable
@@ -735,11 +720,11 @@ async def _direct_fallback(
             _stripped = content.strip()
             if _stripped.startswith("{"):
                 try:
-                    _a = _json.loads(_stripped)
+                    _a = json.loads(_stripped)
                     raw_path = str(_a.get("path", "")).strip()
                     offset = int(_a.get("offset") or 0)
                     limit = int(_a.get("limit") or 0)
-                except (_json.JSONDecodeError, TypeError, ValueError):
+                except (json.JSONDecodeError, TypeError, ValueError):
                     pass
             try:
                 path = (_resolve_tool_path_in_workspace(workspace, raw_path)
@@ -824,8 +809,8 @@ async def _direct_fallback(
             _s = (content or "").strip()
             if _s.startswith("{"):
                 try:
-                    args = _json.loads(_s)
-                except _json.JSONDecodeError:
+                    args = json.loads(_s)
+                except json.JSONDecodeError:
                     args = {}
             else:
                 args = {"pattern": _s}
@@ -915,8 +900,8 @@ async def _direct_fallback(
             _s = (content or "").strip()
             if _s.startswith("{"):
                 try:
-                    args = _json.loads(_s)
-                except _json.JSONDecodeError:
+                    args = json.loads(_s)
+                except json.JSONDecodeError:
                     args = {}
             else:
                 args = {"pattern": _s}
@@ -965,8 +950,8 @@ async def _direct_fallback(
             _s = (content or "").strip()
             if _s.startswith("{"):
                 try:
-                    raw_path = str(_json.loads(_s).get("path", "")).strip()
-                except _json.JSONDecodeError:
+                    raw_path = str(json.loads(_s).get("path", "")).strip()
+                except json.JSONDecodeError:
                     raw_path = ""
             else:
                 raw_path = _s.split("\n", 1)[0].strip()
@@ -1016,7 +1001,7 @@ async def _direct_fallback(
             # Allow JSON-shaped args: {"query": "...", "time_filter": "day", "max_pages": 7}
             if raw.startswith("{"):
                 try:
-                    parsed = _json.loads(raw)
+                    parsed = json.loads(raw)
                     if isinstance(parsed, dict) and "query" in parsed:
                         query = str(parsed.get("query", "")).strip()
                         tf = parsed.get("time_filter") or parsed.get("freshness")
@@ -1025,7 +1010,7 @@ async def _direct_fallback(
                         mp = parsed.get("max_pages")
                         if isinstance(mp, int) and 1 <= mp <= 10:
                             max_pages = mp
-                except _json.JSONDecodeError:
+                except json.JSONDecodeError:
                     pass
             if not query:
                 query = raw.split("\n")[0].strip()
@@ -1055,7 +1040,7 @@ async def _direct_fallback(
             )
             output = text[:MAX_OUTPUT_CHARS] if len(text) > MAX_OUTPUT_CHARS else text
             if sources:
-                output += "\n\n<!-- SOURCES:" + _json.dumps(sources) + " -->"
+                output += "\n\n<!-- SOURCES:" + json.dumps(sources) + " -->"
             return {"output": output, "exit_code": 0}
 
         if tool == "web_fetch":
@@ -1068,10 +1053,10 @@ async def _direct_fallback(
             # Accept either a JSON arg ({"url": "..."}) or a plain URL/domain.
             if raw.startswith("{"):
                 try:
-                    parsed = _json.loads(raw)
+                    parsed = json.loads(raw)
                     if isinstance(parsed, dict):
                         url = str(parsed.get("url") or "").strip()
-                except _json.JSONDecodeError:
+                except json.JSONDecodeError:
                     url = ""
             if not url:
                 # Non-JSON (or JSON without a usable url): take the first line
@@ -1133,6 +1118,7 @@ async def execute_tool_block(
     block: Any,
     session_id: Optional[str] = None,
     disabled_tools: Optional[set] = None,
+    tool_policy: Optional[ToolPolicy] = None,
     owner: Optional[str] = None,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     workspace: Optional[str] = None,
@@ -1169,8 +1155,7 @@ async def execute_tool_block(
     # Return a helpful error so the model retries with the correct format.
     if tool in ("python", "json", "xml") and content.strip().startswith("{") and content.strip().endswith("}"):
         try:
-            import json as _json
-            parsed = _json.loads(content.strip())
+            parsed = json.loads(content.strip())
             if isinstance(parsed, dict):
                 desc = f"{tool}: misformatted tool call"
                 result = {
@@ -1192,6 +1177,12 @@ async def execute_tool_block(
             pass
 
     # Reject tools that the user has disabled for this request
+    if tool_policy and tool_policy.blocks(tool):
+        desc = f"{tool}: BLOCKED"
+        result = {"error": tool_policy.reason_for(tool), "exit_code": 1}
+        logger.info("Tool blocked by policy: %s", tool)
+        return desc, result
+
     if disabled_tools and tool in disabled_tools:
         desc = f"{tool}: BLOCKED"
         result = {"error": f"Tool '{tool}' is disabled by user.", "exit_code": 1}
@@ -1222,11 +1213,10 @@ async def execute_tool_block(
     # into an `ask_user` SSE event and then ENDS the turn, so the chat waits for
     # the user's selection (their choice arrives as the next message).
     if tool == "ask_user":
-        import json as _json
         question, options, multi = "", [], False
         raw = (content or "").strip()
         try:
-            parsed = _json.loads(raw) if raw else {}
+            parsed = json.loads(raw) if raw else {}
         except (ValueError, TypeError):
             parsed = {}
         if isinstance(parsed, dict):
