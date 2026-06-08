@@ -22,10 +22,12 @@ from routes.cookbook_helpers import (
     _user_shell_path_bootstrap,
     _venv_safe_local_pip_install_cmd,
     _validate_gpus,
+    _validate_local_dir,
     _validate_repo_id,
     _validate_serve_cmd,
     _validate_serve_model_id,
     _validate_ssh_port,
+    _shell_path,
     run_ssh_command_async,
 )
 
@@ -108,6 +110,46 @@ def test_validate_ssh_port_rejects_shell_payload():
     with pytest.raises(HTTPException):
         _validate_ssh_port("22; touch /tmp/pwned")
     assert _validate_ssh_port("2222") == "2222"
+
+
+def test_validate_local_dir_accepts_external_drive_paths_with_spaces():
+    path = "/Volumes/T7 2TB/AI Models/llamacpp"
+
+    assert _validate_local_dir(path) == path
+    assert _validate_local_dir(f'"{path}"') == path
+    assert _shell_path(f"{path}/Qwen3-8B") == '"/Volumes/T7 2TB/AI Models/llamacpp/Qwen3-8B"'
+
+
+def test_validate_local_dir_accepts_windows_drive_paths_with_spaces():
+    backslash_path = r"D:\AI Models\llamacpp"
+    slash_path = "D:/AI Models/llamacpp"
+
+    assert _validate_local_dir(backslash_path) == backslash_path
+    assert _validate_local_dir(f"'{backslash_path}'") == backslash_path
+    assert _validate_local_dir(slash_path) == slash_path
+    assert _shell_path(backslash_path + r"\Qwen3-8B") == '"D:\\AI Models\\llamacpp\\Qwen3-8B"'
+
+
+def test_validate_local_dir_still_rejects_shell_metacharacters():
+    for path in [
+        "/Volumes/T7 2TB/AI Models; touch /tmp/pwned",
+        "/Volumes/T7 2TB/AI Models/$(touch pwned)",
+        "/Volumes/T7 2TB/AI Models/`touch pwned`",
+        "/Volumes/T7 2TB/AI Models/model\nnext",
+    ]:
+        with pytest.raises(HTTPException):
+            _validate_local_dir(path)
+
+
+def test_validate_local_dir_rejects_windows_shell_metacharacters():
+    for path in [
+        r"D:\AI Models\llamacpp; touch C:\pwned",
+        r"D:\AI Models\llamacpp\$(touch pwned)",
+        r"D:\AI Models\llamacpp\`touch pwned`",
+        "D:\\AI Models\\llamacpp\nnext",
+    ]:
+        with pytest.raises(HTTPException):
+            _validate_local_dir(path)
 
 
 def test_validate_gpus_accepts_indexes_only():
