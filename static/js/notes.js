@@ -148,7 +148,10 @@ function _notesFullscreenSafeRect() {
 
   left = Math.max(0, Math.min(left, vw - 80));
   right = Math.max(left + 80, Math.min(right, vw));
-  return { left, top: 0, width: right - left, height: vh };
+  // In Electron, start below the custom title bar (hidden in OS fullscreen).
+  const b = document.body;
+  const tb = (b && b.classList.contains('electron') && !b.classList.contains('electron-fullscreen')) ? 32 : 0;
+  return { left, top: tb, width: right - left, height: vh - tb };
 }
 
 function _wireNotesWindow(pane) {

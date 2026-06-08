@@ -94,6 +94,14 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+
+  // Notify renderer of fullscreen state changes so the custom title bar can be hidden
+  mainWindow.on('enter-full-screen', () => {
+    mainWindow.webContents.send('window-fullscreen', true);
+  });
+  mainWindow.on('leave-full-screen', () => {
+    mainWindow.webContents.send('window-fullscreen', false);
+  });
 }
 
 // ── IPC window controls ──

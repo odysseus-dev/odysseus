@@ -121,6 +121,13 @@ function injectTitleBar() {
   bar.querySelector('.etb-close')   .addEventListener('click', () => ipcRenderer.send('window-close'));
 }
 
+// Hide title bar and adjust body padding in OS fullscreen
+ipcRenderer.on('window-fullscreen', (_, isFullscreen) => {
+  document.body.classList.toggle('electron-fullscreen', isFullscreen);
+  const titleBar = document.getElementById('electron-custom-titlebar');
+  if (titleBar) titleBar.style.display = isFullscreen ? 'none' : '';
+});
+
 // Inject as soon as body is available
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', injectTitleBar);

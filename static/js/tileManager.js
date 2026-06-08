@@ -78,8 +78,18 @@ function _showGhost(rect) {
   g.classList.add('visible');
 }
 
+// Height of the Electron custom title bar (preload.js injects a 32px bar).
+// Only present when running in Electron and NOT in OS fullscreen.
+function _electronTitlebarOffset() {
+  const b = document.body;
+  if (!b || !b.classList.contains('electron')) return 0;
+  if (b.classList.contains('electron-fullscreen')) return 0;
+  return 32;
+}
+
 function _viewportSafeRect() {
-  // Account for the icon rail / sidebar on the left side of the viewport.
+  // Account for the icon rail / sidebar on the left side of the viewport,
+  // and the Electron custom title bar at the top.
   const sidebar = document.getElementById('sidebar');
   const rail = document.querySelector('.icon-rail') || document.querySelector('#icon-rail');
   let leftEdge = 0;
@@ -87,9 +97,10 @@ function _viewportSafeRect() {
   if (sb && sb.right > 0 && !sidebar.classList.contains('hidden')) leftEdge = Math.max(leftEdge, sb.right);
   const rr = rail?.getBoundingClientRect();
   if (rr && rr.right > 0) leftEdge = Math.max(leftEdge, rr.right);
+  const tb = _electronTitlebarOffset();
   return {
     left: leftEdge + 4,
-    top: 4,
+    top: 4 + tb,
     right: window.innerWidth - 4,
     bottom: window.innerHeight - 4,
   };
@@ -103,7 +114,8 @@ function _zoneForPointer(x, y) {
   // Dragged OVER the top edge (cursor at/past the very top) → TRUE fullscreen
   // that covers everything, including the sidebar.
   if (y <= 0) {
-    return { name: 'fullscreen', rect: { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight } };
+    const tb = _electronTitlebarOffset();
+    return { name: 'fullscreen', rect: { left: 0, top: tb, width: window.innerWidth, height: window.innerHeight - tb } };
   }
   // Near the top edge (but not over it) → "maximize": fill the safe area,
   // which sits NEXT TO the sidebar/rail rather than covering it.
@@ -170,6 +182,13 @@ function _clearEdgeDockResidue(modal, content) {
 }
 
 function _applySnap(content, rect, zoneName) {
+  // In Electron, nudge any top-touching snap below the custom title bar so
+  // it isn't clipped. Clone so we never mutate the caller's rect.
+  const _tb = _electronTitlebarOffset();
+  if (_tb > 0 && rect && rect.top < _tb) {
+    const delta = _tb - rect.top;
+    rect = { ...rect, top: _tb, height: Math.max(0, rect.height - delta) };
+  }
   // A tile-snap supersedes any edge-dock on this same modal. The two
   // systems (windowDrag→modalSnap edge-dock, and this tile manager) both
   // fire on a left/right-edge drag-release. If we leave modalSnap's
@@ -302,7 +321,7 @@ function _reclampAll(animate = false) {
     const W = safe.right - safe.left, H = safe.bottom - safe.top;
     let r;
     switch (name) {
-      case 'fullscreen':     r = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight }; break;
+      case 'fullscreen':     { const tb = _electronTitlebarOffset(); r = { left: 0, top: tb, width: window.innerWidth, height: window.innerHeight - tb }; } break;
       case 'maximize':       r = { left: safe.left, top: safe.top, width: W, height: H }; break;
       case 'left-half':      r = { left: safe.left, top: safe.top, width: W/2, height: H }; break;
       case 'right-half':     r = { left: safe.left + W/2, top: safe.top, width: W/2, height: H }; break;

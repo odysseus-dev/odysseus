@@ -145,6 +145,39 @@ body.electron .notes-pane-backdrop {
   height: calc(100dvh - 32px);
 }
 
+/* Fullscreen overrides — remove custom title-bar offsets in OS fullscreen */
+body.electron-fullscreen { padding-top: 0 !important; }
+body.electron-fullscreen .icon-rail { padding-top: 16px !important; }
+body.electron-fullscreen .hamburger-btn { top: 12px !important; }
+body.electron-fullscreen .modal {
+  top: 0 !important;
+  height: 100dvh !important;
+}
+body.electron-fullscreen #app-loader {
+  top: 0 !important;
+  height: 100dvh !important;
+}
+body.electron-fullscreen .shard-modal-content {
+  max-height: 100dvh !important;
+}
+body.electron-fullscreen #shard-modal.shard-fullscreen .shard-modal-content {
+  height: 100dvh !important;
+}
+body.electron-fullscreen .modal.modal-right-docked .modal-content,
+body.electron-fullscreen .modal.modal-left-docked .modal-content,
+body.electron-fullscreen .notes-pane.modal-right-docked,
+body.electron-fullscreen .notes-pane.modal-left-docked,
+body.electron-fullscreen .notes-pane.notes-window-fullscreen,
+body.electron-fullscreen .notes-pane[style*="position: fixed"] {
+  top: 0 !important;
+  height: 100dvh !important;
+  max-height: 100dvh !important;
+}
+body.electron-fullscreen .notes-pane-backdrop {
+  top: 0 !important;
+  height: 100dvh !important;
+}
+
 /* Self-hosted Fira Code font */
 @font-face { font-family: 'Fira Code'; font-weight: 300; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Light.woff2') format('woff2'); }
 @font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Regular.woff2') format('woff2'); }

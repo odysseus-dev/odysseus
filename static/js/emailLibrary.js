@@ -1354,15 +1354,18 @@ function _makeDraggable(content, modal, fsClass) {
   const enterFullscreen = () => {
     if (!fsClass || modal.classList.contains(fsClass)) return;
     modal.classList.add(fsClass);
+    // In Electron, start below the 32px custom title bar (hidden in OS fullscreen).
+    const _b = document.body;
+    const tb = (_b && _b.classList.contains('electron') && !_b.classList.contains('electron-fullscreen')) ? 32 : 0;
     content.style.position = 'fixed';
     content.style.left = '0';
-    content.style.top = '0';
+    content.style.top = tb + 'px';
     content.style.right = '0';
     content.style.bottom = '0';
     content.style.width = '100vw';
     content.style.maxWidth = '100vw';
-    content.style.height = '100vh';
-    content.style.maxHeight = '100vh';
+    content.style.height = `calc(100vh - ${tb}px)`;
+    content.style.maxHeight = `calc(100vh - ${tb}px)`;
     content.style.borderRadius = '0';
     content.style.transform = 'none';
   };
