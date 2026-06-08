@@ -2,6 +2,17 @@
 
 Thanks for helping. The project is moving quickly, so the best contributions are focused, easy to review, and easy to test.
 
+## Branch model
+
+Odysseus has two branches:
+
+- **`dev`** — where all PRs land. Things can be in flux here; the merge button gets used freely.
+- **`main`** — what users run. Curated and tested by the maintainer. Fast-forwarded to a stable `dev` commit at each release.
+
+**Open your PR against `dev`, not `main`.** The GitHub "base" dropdown defaults to `dev`. If you opened a PR against `main` by accident, click "Edit" on the PR and change the base — no rebase needed.
+
+End-users cloning the repo will land on `dev` by default. To run the curated/stable version: `git checkout main` after clone.
+
 ## Before You Start
 
 - Search existing issues and pull requests before opening a new one.
@@ -82,6 +93,18 @@ Before submitting any change that affects what the app looks like — buttons, i
 4. **Don't add parallel components.** If a similar widget already exists in the app, extend it instead of writing a new one.
 
 If you are unsure whether a change is "visual," it is. Default to attaching a screenshot.
+
+## Code conventions
+
+Don't hardcode values that the project already exposes through a constant or a helper. Hardcoded literals drift out of sync, break on non-default deployments, and reintroduce bugs we've already fixed.
+
+- **Filesystem paths:** never build writable paths from `Path(__file__)...` into the source tree or hardcode `/app/...`. Use `DATA_DIR` (and the other path constants) from `core.constants`, e.g. `Path(DATA_DIR) / "logs" / "x.log"`. The source tree is read-only in Docker, and `/app/...` does not exist on native runs. Guard directory creation so an unwritable path degrades gracefully instead of crashing at import.
+- **Internal API / loopback URLs:** don't hardcode `http://localhost:7000`. Use `internal_api_base()` from `core.constants` (it honors `ODYSSEUS_INTERNAL_BASE` / `APP_PORT`).
+- **Ports, limits, model lists, and similar:** reuse the existing constant if one exists; if it doesn't and the value is used in more than one place, add a constant rather than copying the literal.
+
+If you need a value that has no constant or helper yet, add one in the appropriate module (usually `core/constants.py` or `src/constants.py`) and import it, rather than repeating a literal across files.
+
+**Commits:** use [Conventional Commits](https://www.conventionalcommits.org), `type(scope): summary` (e.g. `fix(search): ...`, `feat(notes): ...`, `docs(contributing): ...`). Common types: `fix`, `feat`, `refactor`, `docs`, `test`, `chore`, `ci`. Keep the subject short and imperative; put the "why" in the body when it isn't obvious.
 
 ## Issue Reports
 

@@ -371,7 +371,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                 tmp.write(content)
                 tmp_path = tmp.name
             try:
-                text = _process_pdf(tmp_path)
+                text = _process_pdf(tmp_path, owner=_owner(request))
             finally:
                 os.unlink(tmp_path)
         else:

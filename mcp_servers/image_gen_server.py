@@ -115,6 +115,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
             img = images[0]
             image_url = None
+            # Prefix the instance's public base URL (existing app_public_url setting) so the
+            # link is fully-qualified and clickable when the model echoes it. Empty = relative
+            # same-origin path (unchanged default).
+            _pub_base = (get_setting("app_public_url", "") or "").rstrip("/")
 
             if img.get("b64_json"):
                 img_dir = Path("data/generated_images")
@@ -122,7 +126,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 filename = f"{uuid.uuid4().hex[:12]}.png"
                 img_path = img_dir / filename
                 img_path.write_bytes(base64.b64decode(img["b64_json"]))
-                image_url = f"/api/generated-image/{filename}"
+                image_url = f"{_pub_base}/api/generated-image/{filename}"
 
                 # Save to gallery
                 try:
@@ -146,7 +150,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             else:
                 return [TextContent(type="text", text="Error: Unexpected image API response format")]
 
-            result = f"Generated image for: {prompt[:100]}\nimage_url: {image_url}\nmodel: {model_id}\nsize: {size}"
+            # "Direct link:" rather than an "image_url:" label — small models copied the
+            # label token ("image_url") into the link href, producing a broken link.
+            result = (
+                f"Generated image for: {prompt[:100]}\n"
+                f"Direct link: {image_url}\n"
+                f"model: {model_id}\nsize: {size}"
+            )
             return [TextContent(type="text", text=result)]
 
     except httpx.TimeoutException:

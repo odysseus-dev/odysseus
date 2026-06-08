@@ -7,6 +7,7 @@ import os
 
 from .memory import MemoryManager
 from .memory_vector import MemoryVectorStore
+from src.memory_provider import MemoryRecord, NativeMemoryProvider
 
 
 @dataclass
@@ -42,6 +43,10 @@ class MemoryService:
         self.vector_store = MemoryVectorStore(data_dir) if os.path.exists(
             os.path.join(data_dir, "memory_vectors")
         ) else None
+        self.provider = NativeMemoryProvider(self.manager, self.vector_store)
+
+    def _sync_provider(self) -> None:
+        self.provider.memory_vector = self.vector_store
 
     @staticmethod
     def _to_memory(entry: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None) -> Memory:
@@ -51,6 +56,19 @@ class MemoryService:
             timestamp=entry.get("timestamp", 0),
             session_id=entry.get("session_id"),
             metadata=metadata or {},
+        )
+
+    @staticmethod
+    def _record_to_memory(record: MemoryRecord, metadata: Optional[Dict[str, Any]] = None) -> Memory:
+        merged_metadata = dict(record.metadata)
+        if metadata:
+            merged_metadata.update(metadata)
+        return Memory(
+            id=record.id,
+            text=record.text,
+            timestamp=record.timestamp,
+            session_id=record.session_id,
+            metadata=merged_metadata,
         )
 
     async def remember(self, text: str, session_id: Optional[str] = None) -> Memory:
@@ -64,19 +82,9 @@ class MemoryService:
         Returns:
             Created Memory object
         """
-        entry = self.manager.add_entry(text)
-        if session_id:
-            entry["session_id"] = session_id
-
-        memories = self.manager.load_all()
-        memories.append(entry)
-        self.manager.save(memories)
-
-        # Also add to vector store if available
-        if self.vector_store and self.vector_store.healthy:
-            self.vector_store.add(entry["id"], entry["text"])
-
-        return self._to_memory(entry)
+        self._sync_provider()
+        record = await self.provider.remember(text, session_id=session_id)
+        return self._record_to_memory(record)
 
     async def recall(self, query: str, top_k: int = 5) -> MemorySearchResult:
         """
@@ -89,28 +97,20 @@ class MemoryService:
         Returns:
             MemorySearchResult with matching memories
         """
-        # Try vector search first
-        all_memories = self.manager.load_all()
-        by_id = {m.get("id"): m for m in all_memories}
-        if self.vector_store and self.vector_store.healthy:
-            results = self.vector_store.search(query, k=top_k)
-            found = []
-            for result in results:
-                entry = by_id.get(result.get("memory_id"))
-                if entry:
-                    found.append(self._to_memory(entry, metadata={"score": result.get("score")}))
-            if found:
-                return MemorySearchResult(memories=found, query=query, total=len(found))
-
-        # Fallback to keyword search
-        results = self.manager.get_relevant_memories(query, all_memories, max_items=top_k)
-        memories = [self._to_memory(m) for m in results]
+        self._sync_provider()
+        results = await self.provider.recall(query, top_k=top_k)
+        memories = [
+            self._record_to_memory(hit.memory, metadata={"score": hit.score})
+            if hit.score is not None
+            else self._record_to_memory(hit.memory)
+            for hit in results
+        ]
         return MemorySearchResult(memories=memories, query=query, total=len(memories))
 
     def get_all(self, limit: int = 100) -> List[Memory]:
         """Get all memories."""
-        memories = self.manager.load_all()[:limit]
-        return [self._to_memory(m) for m in memories]
+        records = self.manager.load_all()[:limit]
+        return [self._to_memory(m) for m in records]
 
     def delete(self, memory_id: str) -> bool:
         """Delete a memory by ID."""

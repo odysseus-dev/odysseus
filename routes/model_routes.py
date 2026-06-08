@@ -5,6 +5,7 @@ import re
 import uuid
 import json
 import socket
+import hashlib
 import time as _time
 import logging
 import httpx
@@ -17,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from core.database import SessionLocal, ModelEndpoint, Session as DbSession
 from core.middleware import require_admin
 from src.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS
+from src.tls_overrides import llm_verify
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
 from src.endpoint_resolver import (
     normalize_base as _normalize_base,
@@ -283,6 +285,8 @@ _HOST_TO_CURATED = (
     ("x.ai", "xai"),
     ("openrouter.ai", "openrouter"),
     ("ollama.com", "ollama"),
+    ("opencode.ai/zen/go", "opencode-go"),
+    ("opencode.ai/zen", "opencode-zen"),
 )
 
 
@@ -624,7 +628,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         if api_key:
             headers["x-api-key"] = api_key
         try:
-            r = httpx.get(url, headers=headers, timeout=timeout)
+            r = httpx.get(url, headers=headers, timeout=timeout, verify=llm_verify())
             r.raise_for_status()
             data = r.json()
             models = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
@@ -645,7 +649,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     url = build_models_url(base)
     headers = build_headers(api_key, base)
     try:
-        r = httpx.get(url, headers=headers, timeout=timeout)
+        r = httpx.get(url, headers=headers, timeout=timeout, verify=llm_verify())
         r.raise_for_status()
         data = r.json()
         # OpenAI format: {"data": [{"id": "model-name"}]}
@@ -680,7 +684,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         parsed = urlparse(base)
         if parsed.port == 11434 or "ollama" in (parsed.hostname or "").lower():
             root = base[:-3].rstrip("/") if base.endswith("/v1") else base
-            r = httpx.get(root + "/api/tags", timeout=timeout)
+            r = httpx.get(root + "/api/tags", timeout=timeout, verify=llm_verify())
             r.raise_for_status()
             data = r.json()
             models = [m.get("name") or m.get("model") for m in (data.get("models") or []) if m.get("name") or m.get("model")]
@@ -696,7 +700,6 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         return list(fallback)
     return []
 
-
 def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> Dict[str, Any]:
     """Reachability probe that does not require installed/listed models."""
     from src.endpoint_resolver import resolve_url
@@ -711,6 +714,10 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
         parsed_base.port == 11434
         or "ollama" in (parsed_base.hostname or "").lower()
     )
+
+    # APFEL-specific detection
+    host = (parsed_base.hostname or "").lower()
+    looks_like_apfel = "apfel" in host or parsed_base.port == 11435
 
     def _result_from_response(r) -> Dict[str, Any]:
         if 300 <= r.status_code < 400:
@@ -733,7 +740,23 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
     last_error: Optional[str] = None
 
     try:
-        if looks_like_ollama:
+        # APFEL does not behave like Ollama; use its health endpoint.
+        if looks_like_apfel:
+            root = base
+            for suffix in ("/v1", "/api"):
+                if root.endswith(suffix):
+                    root = root[: -len(suffix)].rstrip("/")
+                    break
+            try:
+                r = httpx.get(root + "/health", timeout=timeout, verify=llm_verify())
+                result = _result_from_response(r)
+                if result["reachable"]:
+                    return result
+                last_error = result.get("error")
+            except Exception as e:
+                last_error = str(e)[:120]
+
+        elif looks_like_ollama:
             root = base
             for suffix in ("/v1", "/api"):
                 if root.endswith(suffix):
@@ -741,7 +764,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
                     break
             for path in ("/api/version", "/api/tags"):
                 try:
-                    r = httpx.get(root + path, timeout=timeout)
+                    r = httpx.get(root + path, timeout=timeout, verify=llm_verify())
                     result = _result_from_response(r)
                     if result["reachable"]:
                         return result
@@ -752,14 +775,31 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
         pass
 
     try:
-        r = httpx.get(base, headers=headers, timeout=timeout)
-        return _result_from_response(r)
+        r = httpx.get(base, headers=headers, timeout=timeout, verify=llm_verify())
+        result = _result_from_response(r)
+        # If the bare base URL returns a non-auth 4xx (e.g. 404), try /models
+        # as a fallback. OpenAI-compatible servers like llama-swap return 404
+        # on the base /v1 prefix but 200 on /v1/models.  Auth failures (401/403)
+        # are definitive — probing /models would just repeat the same rejection.
+        if (
+            not result["reachable"]
+            and result.get("status_code") is not None
+            and 400 <= result["status_code"] < 500
+            and result["status_code"] not in (401, 403)
+        ):
+            models_url = base.rstrip("/") + "/models"
+            try:
+                r2 = httpx.get(models_url, headers=headers, timeout=timeout, verify=llm_verify())
+                result2 = _result_from_response(r2)
+                if result2["reachable"]:
+                    return result2
+            except Exception:
+                pass
+        return result
     except Exception as e:
         last_error = str(e)[:120]
 
     return {"reachable": False, "status_code": None, "error": last_error}
-
-
 
 def _model_endpoint_error_message(base_url: str, ping: Dict[str, Any] = None) -> str:
     """Return a provider-aware error message for failed endpoint probes."""
@@ -847,6 +887,14 @@ def _visible_models(cached_models, hidden_models, pinned_models=None):
         return merged
     hidden = set(_normalize_model_ids(hidden_models))
     return [m for m in merged if m not in hidden]
+
+
+def _api_key_fingerprint(api_key: Optional[str]) -> str:
+    """Stable, non-secret label for distinguishing same-URL credentials."""
+    key = (api_key or "").strip()
+    if not key:
+        return ""
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
 
 
 def setup_model_routes(model_discovery):
@@ -993,8 +1041,8 @@ def setup_model_routes(model_discovery):
                     db.close()
                 if changed:
                     _invalidate_models_cache()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning('Background endpoint refresh failed: %s', e)
             finally:
                 for st in _refresh_state.values():
                     st["inflight"] = False
@@ -1028,12 +1076,13 @@ def setup_model_routes(model_discovery):
         for ep in endpoints:
             base = _normalize_base(ep.base_url)
             provider = _detect_provider(base)
-            # Use cached models — background refresh keeps them updated
-            model_ids = _cached_model_ids(ep)
+            # Merge cached + pinned models, then filter out hidden ones
             ep_model_type = getattr(ep, "model_type", None) or "llm"
-            # Filter out hidden (probe-failed) models
-            hidden = _hidden_model_ids(ep)
-            model_ids = [m for m in model_ids if m not in hidden]
+            model_ids = _visible_models(
+                _cached_model_ids(ep),
+                ep.hidden_models,
+                getattr(ep, "pinned_models", None),
+            )
             # Build correct URL based on provider
             chat_url = build_chat_url(base)
             kind = _effective_endpoint_kind(ep, base)
@@ -1042,6 +1091,13 @@ def setup_model_routes(model_discovery):
             if model_ids:
                 curated_key = _match_provider_curated(base, None)
                 curated, extra = _curate_models(model_ids, curated_key)
+                # Pinned models are admin-selected — they always belong in the
+                # primary curated list, not buried in extras.
+                pinned = _normalize_model_ids(getattr(ep, "pinned_models", None))
+                for m in pinned:
+                    if m not in curated:
+                        curated.append(m)
+                extra = [m for m in extra if m not in pinned]
                 items.append({
                     "host": "custom",
                     "port": 0,
@@ -1388,6 +1444,7 @@ def setup_model_routes(model_discovery):
                     "name": r.name,
                     "base_url": r.base_url,
                     "has_key": bool(r.api_key),
+                    "api_key_fingerprint": _api_key_fingerprint(r.api_key),
                     "is_enabled": r.is_enabled,
                     "models": visible,
                     "pinned_models": pinned,
@@ -1454,21 +1511,34 @@ def setup_model_routes(model_discovery):
         )
         explicit_timeout = _explicit_model_list_timeout(base_url, requested_kind, refresh_timeout)
 
-        # Dedupe: if an endpoint with the same base_url already exists and
-        # is reachable by the caller (shared or owned by them), return it
-        # instead of creating a duplicate row. Fixes "Scan for Servers"
-        # re-adding manually-added endpoints under their host:port name.
+        # Dedupe: if an endpoint with the same base_url and compatible
+        # credentials already exists and is reachable by the caller (shared or
+        # owned by them), return it instead of creating a duplicate row. Keep
+        # same-url/different-key rows distinct so users can group the same
+        # provider URL under multiple credentials.
         from src.auth_helpers import get_current_user as _gcu_dedup
         _caller = _gcu_dedup(request) or None
+        _incoming_api_key = api_key.strip()
         _db_dedup = SessionLocal()
         try:
-            existing = (
+            _same_url_rows = (
                 _db_dedup.query(ModelEndpoint)
                 .filter(ModelEndpoint.base_url == base_url)
                 .filter((ModelEndpoint.owner.is_(None)) | (ModelEndpoint.owner == _caller))
                 .order_by(ModelEndpoint.owner.desc())  # prefer owned over shared
-                .first()
+                .all()
             )
+            existing = None
+            _empty_key_existing = None
+            for _candidate in _same_url_rows:
+                _candidate_key = (getattr(_candidate, "api_key", None) or "").strip()
+                if _candidate_key == _incoming_api_key:
+                    existing = _candidate
+                    break
+                if _incoming_api_key and not _candidate_key and _empty_key_existing is None:
+                    _empty_key_existing = _candidate
+            if existing is None and _incoming_api_key and _empty_key_existing is not None:
+                existing = _empty_key_existing
             if existing:
                 changed = False
                 # Persist any incoming pinned IDs onto the existing row. An
@@ -1517,6 +1587,8 @@ def setup_model_routes(model_discovery):
                     "id": existing.id,
                     "name": existing.name,
                     "base_url": existing.base_url,
+                    "has_key": bool(existing.api_key),
+                    "api_key_fingerprint": _api_key_fingerprint(existing.api_key),
                     "models": _visible_models(
                         existing_models,
                         getattr(existing, "hidden_models", None),
@@ -1590,6 +1662,8 @@ def setup_model_routes(model_discovery):
             "id": ep_id,
             "name": name.strip(),
             "base_url": base_url,
+            "has_key": bool(api_key.strip()),
+            "api_key_fingerprint": _api_key_fingerprint(api_key),
             "models": _merge_model_ids(model_ids, _pinned),
             "pinned_models": _pinned,
             "online": bool(model_ids) or bool(_pinned) or bool(ping.get("reachable")),
@@ -1890,9 +1964,10 @@ def setup_model_routes(model_discovery):
             if body:
                 if "supports_tools" in body:
                     v = body["supports_tools"]
-                    ep.supports_tools = bool(v) if v in (True, False, "true", "false", 1, 0) else None
+                    ep.supports_tools = {True: True, False: False, 'true': True, 'false': False, 1: True, 0: False}.get(v)
                 if "is_enabled" in body:
-                    ep.is_enabled = bool(body["is_enabled"])
+                    v_ie = body['is_enabled']
+                    ep.is_enabled = v_ie.lower() in ('true', '1', 'yes') if isinstance(v_ie, str) else bool(v_ie)
                 if "name" in body and isinstance(body["name"], str):
                     ep.name = body["name"].strip() or ep.name
                 if "model_type" in body and isinstance(body["model_type"], str):
@@ -1938,6 +2013,8 @@ def setup_model_routes(model_discovery):
                 "name": ep.name,
                 "model_type": ep.model_type,
                 "base_url": ep.base_url,
+                "has_key": bool(ep.api_key),
+                "api_key_fingerprint": _api_key_fingerprint(ep.api_key),
                 "pinned_models": _normalize_model_ids(getattr(ep, "pinned_models", None)),
                 "endpoint_kind": getattr(ep, "endpoint_kind", None) or "auto",
                 "model_refresh_mode": getattr(ep, "model_refresh_mode", None) or "auto",

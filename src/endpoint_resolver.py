@@ -11,8 +11,8 @@ import subprocess
 from typing import Optional, Tuple, Dict
 from urllib.parse import urlparse, urlunparse
 
-from src.database import SessionLocal, ModelEndpoint
-from src.llm_core import _detect_provider, _host_match
+from core.database import SessionLocal, ModelEndpoint
+from src.llm_core import _detect_provider, _host_match, _ollama_api_root
 
 logger = logging.getLogger(__name__)
 
@@ -150,19 +150,6 @@ def _anthropic_api_root(base: str) -> str:
     return base
 
 
-def _ollama_api_root(base: str) -> str:
-    """Return the native Ollama API root, adding /api for ollama.com hosts."""
-    base = (base or "").strip().rstrip("/")
-    parsed = urlparse(base)
-    path = (parsed.path or "").rstrip("/")
-    if path.endswith("/api"):
-        return base
-    if _host_match(base, "ollama.com"):
-        root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
-        return root.rstrip("/") + "/api"
-    return base
-
-
 def build_chat_url(base: str) -> str:
     """Return the correct chat endpoint URL for a given base."""
     base = resolve_url(base)
@@ -194,6 +181,9 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
             headers["x-api-key"] = api_key
         headers["anthropic-version"] = "2023-06-01"
         return headers
+    if provider == "copilot":
+        from src.copilot import copilot_headers
+        return copilot_headers(api_key)
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     if provider == "openrouter":
@@ -285,6 +275,8 @@ def resolve_endpoint(
         # If no (usable) model specified, pick the first enabled chat model.
         if not model:
             model = _first_chat_model(_endpoint_enabled_models(ep)) or ""
+        if not model and not fallback_model:
+            logger.warning('[resolve_endpoint] no usable model (all models hidden or list empty)')
 
         return chat_url, model or fallback_model, headers
     except Exception as e:
