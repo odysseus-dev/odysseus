@@ -3,6 +3,10 @@
 // All SVGs use viewBox="0 0 24 24" fill="currentColor"
 
 const _PROVIDERS = [
+  // OpenCode Zen
+  [/opencode/i,
+    '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15l-5-5 1.41-1.41L11 14.17l7.59-7.59L20 8l-9 9z"/></svg>'],
+
   // Ollama
   [/ollama|:11434/i,
     '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5c-3.1 0-5.65 2.43-5.86 5.48A6.62 6.62 0 0 0 3 13.62C3 18 6.8 21.5 12 21.5s9-3.5 9-7.88a6.62 6.62 0 0 0-3.14-5.64C17.65 4.93 15.1 2.5 12 2.5Zm-2.7 8.25a1.15 1.15 0 1 1 0 2.3 1.15 1.15 0 0 1 0-2.3Zm5.4 0a1.15 1.15 0 1 1 0 2.3 1.15 1.15 0 0 1 0-2.3Zm-5.15 5.15c.75.7 1.55 1.04 2.45 1.04s1.7-.34 2.45-1.04c.26-.24.66-.23.9.03.24.26.23.66-.03.9-.98.91-2.08 1.37-3.32 1.37s-2.34-.46-3.32-1.37a.64.64 0 0 1-.03-.9.64.64 0 0 1 .9-.03Z"/></svg>'],
@@ -114,6 +118,7 @@ const _ENDPOINT_LABELS = [
   [/(^|\.)fireworks\.ai$/i, "Fireworks"],
   [/(^|\.)perplexity\.ai$/i, "Perplexity"],
   [/(^|\.)x\.ai$/i, "xAI"],
+  [/(^|\.)opencode\.ai$/i, "OpenCode Zen"],
 ];
 
 /**

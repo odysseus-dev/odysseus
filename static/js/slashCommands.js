@@ -47,6 +47,7 @@ const PROVIDER_PATTERNS = [
 const SETUP_PROVIDER_URLS = {
   deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/v1' },
   openai: { name: 'OpenAI', url: 'https://api.openai.com/v1' },
+  opencode: { name: 'OpenCode Zen', url: 'https://opencode.ai/zen/v1' },
   openrouter: { name: 'OpenRouter', url: 'https://openrouter.ai/api/v1' },
   ollama: { name: 'Ollama Cloud', url: 'https://ollama.com/api' },
   xai: { name: 'xAI', url: 'https://api.x.ai/v1' },
@@ -73,6 +74,10 @@ function _setupProviderFromInput(input) {
     openrouter: 'openrouter',
     ollama: 'ollama',
     ollamacloud: 'ollama',
+    opencode: 'opencode-zen',
+    opencodezen: 'opencode-zen',
+    zen: 'opencode-zen',
+    opencodego: 'opencode-go',
     anthropic: 'anthropic',
     claude: 'anthropic',
     groq: 'groq',

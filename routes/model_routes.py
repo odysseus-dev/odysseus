@@ -265,6 +265,14 @@ _PROVIDER_CURATED = {
     "xai": [
         "grok-4.3", "grok-4", "grok-4-fast", "grok-3", "grok-3-fast",
     ],
+    "opencode-zen": [
+        "big-pickle", "qwen3-coder", "deepseek-v4-flash",
+        "minimax-m2.5", "minimax-m2.1", "glm-4.7", "glm-4.6",
+        "kimi-k2.5", "kimi-k2", "an-gbt", "grok-code", "grok-code-preview",
+    ],
+    "opencode-go": [
+        "grok-code", "grok-code-preview",
+    ],
 }
 
 # Map hostnames → curated-list keys for providers whose _detect_provider()
