@@ -1105,6 +1105,7 @@ async def do_list_models(content: str, session_id: Optional[str] = None, owner: 
     from src.database import SessionLocal, ModelEndpoint
     from src.llm_core import _detect_provider, ANTHROPIC_MODELS
     from src.auth_helpers import owner_filter
+    from src.model_context import _is_local_endpoint, LOCAL_REQUEST_TIMEOUT
 
     keyword = content.strip().lower() if content.strip() else None
 
@@ -1130,7 +1131,8 @@ async def do_list_models(content: str, session_id: Optional[str] = None, owner: 
                 model_ids = list(ANTHROPIC_MODELS)
             else:
                 try:
-                    r = httpx.get(build_models_url(base), headers=headers, timeout=5)
+                    timeout = LOCAL_REQUEST_TIMEOUT if _is_local_endpoint(str(ep.base_url)) else 5
+                    r = httpx.get(build_models_url(base), headers=headers, timeout=timeout)
                     r.raise_for_status()
                     data = r.json()
                     model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]

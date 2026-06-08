@@ -82,6 +82,7 @@ def _is_local_endpoint(url: str) -> bool:
 # ---------------------------------------------------------------------------
 DEFAULT_CONTEXT = 128000
 REQUEST_TIMEOUT = 5
+LOCAL_REQUEST_TIMEOUT = 30  # local llama.cpp can be slow on consumer hardware
 
 # Known context windows for major API models (used as fallback when /models
 # endpoint doesn't report context_length).
@@ -276,7 +277,7 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
     if _is_local_endpoint(endpoint_url):
         try:
             base = endpoint_url.split("/v1")[0] if "/v1" in endpoint_url else endpoint_url.rsplit("/", 1)[0]
-            r = httpx.get(f"{base}/slots", timeout=REQUEST_TIMEOUT)
+            r = httpx.get(f"{base}/slots", timeout=LOCAL_REQUEST_TIMEOUT)
             if r.is_success:
                 slots = r.json()
                 if isinstance(slots, list) and slots:
@@ -299,7 +300,8 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
 
     models_url = endpoint_url.replace("/chat/completions", "/models")
     try:
-        r = httpx.get(models_url, timeout=REQUEST_TIMEOUT)
+        timeout = LOCAL_REQUEST_TIMEOUT if _is_local_endpoint(endpoint_url) else REQUEST_TIMEOUT
+        r = httpx.get(models_url, timeout=timeout)
         if r.is_success:
             data = r.json()
             models_list = data.get("data") or []
