@@ -837,12 +837,18 @@ def setup_email_routes():
                 _cc = _sql3c.connect(SCHEDULED_DB)
                 _oc, _op = _email_cache_owner_clause(owner)
                 _crows = _cc.execute(
-                    f"SELECT uid, category, is_spam FROM email_message_analysis "
+                    f"SELECT uid, category, is_spam, tags FROM email_message_analysis "
                     f"WHERE folder=? AND {_oc} AND uid IN ({','.join('?'*len(_uid_strs))})",
                     [folder, *_op, *_uid_strs],
                 ).fetchall()
                 for r in _crows:
-                    _cat_by_uid[r[0]] = {"category": r[1] or "", "analysis_spam": bool(r[2])}
+                    try:
+                        tg = json.loads(r[3] or "[]")
+                    except Exception:
+                        tg = []
+                    if not isinstance(tg, list):
+                        tg = []
+                    _cat_by_uid[r[0]] = {"category": r[1] or "", "analysis_spam": bool(r[2]), "tags": tg}
                 _cc.close()
             except Exception as e:
                 logger.warning(f"Category preload failed: {e}")
@@ -952,6 +958,22 @@ def setup_email_routes():
                         has_attachments = "multipart/mixed" in ct.lower() or "multipart/related" in ct.lower()
                         tag_entry = _tag_by_message_id.get(message_id.strip()) or _tag_by_uid.get(uid_num, {})
                         cat_entry = _cat_by_uid.get(uid_num, {})
+                        # Merge tags from both sources (email_tags + email_message_analysis)
+                        _tags_from_tags_tbl = tag_entry.get("tags", [])
+                        _tags_from_analysis = cat_entry.get("tags", [])
+                        if isinstance(_tags_from_tags_tbl, list) and isinstance(_tags_from_analysis, list):
+                            _merged = _tags_from_tags_tbl + _tags_from_analysis
+                        elif isinstance(_tags_from_tags_tbl, list):
+                            _merged = _tags_from_tags_tbl
+                        else:
+                            _merged = _tags_from_analysis if isinstance(_tags_from_analysis, list) else []
+                        _merged = ["marketing" if t == "promo" else t for t in _merged]
+                        _seen = set()
+                        _all_tags = []
+                        for t in _merged:
+                            if t not in _seen:
+                                _seen.add(t)
+                                _all_tags.append(t)
                         emails.append({
                             "uid": uid_num,
                             "message_id": message_id.strip(),
@@ -969,7 +991,7 @@ def setup_email_routes():
                             "is_flagged": is_flagged,
                             "flags": flags,
                             "has_attachments": has_attachments,
-                            "tags": tag_entry.get("tags", []),
+                            "tags": _all_tags,
                             "is_spam_verdict": tag_entry.get("spam", False),
                             "category": cat_entry.get("category", ""),
                             "analysis_spam": cat_entry.get("analysis_spam", False),
@@ -1128,6 +1150,7 @@ def setup_email_routes():
         q: str = Query(""),
         folder: str = Query("INBOX"),
         limit: int = Query(50),
+        offset: int = Query(0),
         account_id: str | None = Query(None),
         owner: str = Depends(require_owner),
     ):
@@ -1151,7 +1174,7 @@ def setup_email_routes():
 
                 uid_list = data[0].split()
                 total = len(uid_list)
-                uid_list = list(reversed(uid_list))[:limit]
+                uid_list = list(reversed(uid_list))[offset:offset + limit]
 
                 emails = []
                 for uid in uid_list:
@@ -3292,25 +3315,36 @@ def setup_email_routes():
 
             # Quick UID-based dedup before any IMAP/LLM work
             dup = conn.execute(
-                "SELECT category, is_spam FROM email_message_analysis WHERE uid=? AND folder=? AND owner=?",
+                "SELECT category, is_spam, is_read, tags FROM email_message_analysis WHERE uid=? AND folder=? AND owner=?",
                 (uid_str, folder, owner),
             ).fetchone()
             if dup:
+                try:
+                    tags = json.loads(dup[3] or "[]")
+                except Exception:
+                    tags = []
+                if not isinstance(tags, list):
+                    tags = []
                 return {
                     "message_id": f"<uid-{uid_str}@{folder}>",
                     "category": dup[0] or "",
+                    "tags": tags,
                     "is_spam": bool(dup[1]),
+                    "is_read": bool(dup[2]) if len(dup) > 2 else False,
                     "cached": True,
                 }
 
+            is_read = False
             if msg_data is None:
                 _c, acct_owner = _imap_connect(account_id, owner=owner), owner
                 try:
                     _c.select(_q(folder), readonly=True)
-                    st, d = _c.uid("FETCH", uid, "(RFC822)")
+                    st, d = _c.uid("FETCH", uid, "(FLAGS RFC822)")
                     if st != "OK":
                         return {"error": "IMAP fetch failed"}
                     raw = d[0][1]
+                    flags_part = d[0][0] if isinstance(d[0][0], bytes) else str(d[0][0]).encode()
+                    is_read = b'\\Seen' in flags_part
                 finally:
                     try:
                         _c.logout()
@@ -3328,13 +3362,20 @@ def setup_email_routes():
 
             # Dedup: check if we've already analyzed this message
             existing = conn.execute(
-                "SELECT category, is_spam FROM email_message_analysis WHERE message_id=? AND owner=?",
+                "SELECT category, is_spam, tags FROM email_message_analysis WHERE message_id=? AND owner=?",
                 (message_id, owner),
             ).fetchone()
             if existing:
+                try:
+                    tags = json.loads(existing[2] or "[]")
+                except Exception:
+                    tags = []
+                if not isinstance(tags, list):
+                    tags = []
                 return {
                     "message_id": message_id,
                     "category": existing[0] or "",
+                    "tags": tags,
                     "is_spam": bool(existing[1]),
                     "cached": True,
                 }
@@ -3364,8 +3405,8 @@ def setup_email_routes():
             sys_prompt = (
                 "You are classifying emails for theme/category analysis. "
                 "Return ONLY a JSON object, no prose, no markdown fences.\n"
-                'Schema: {"category": "category_name", "is_spam": false, "reason": "short reason"}\n\n'
-                "Choose the SINGLE best category from:\n"
+                'Schema: {"category": "category_name", "tags": ["tag1", "tag2"], "is_spam": false, "reason": "short reason"}\n\n'
+                "Choose the SINGLE best primary category from:\n"
                 "- work: Job-related, colleagues, projects, meetings\n"
                 "- personal: Friends, family, personal correspondence\n"
                 "- finance: Banking, investments, billing, invoices, receipts\n"
@@ -3378,6 +3419,14 @@ def setup_email_routes():
                 "- calendar: Calendar invites, event confirmations\n"
                 "- notification: Automated notifications, service updates\n"
                 "- spam: Bulk/unsolicited/irrelevant\n\n"
+                "IMPORTANT: Assign one or more TAGS in the \"tags\" array. "
+                "Emails often belong to MULTIPLE categories — e.g. a travel "
+                "booking promo is both \"travel\" and \"promo\"; a bank "
+                "statement notification is both \"finance\" and "
+                "\"notification\"; a flight receipt is \"travel\" and "
+                "\"receipt\". The primary \"category\" should be the main "
+                "theme, and \"tags\" should include ALL relevant labels "
+                "from the list above. Return 1-4 tags per email.\n\n"
                 "Set is_spam=true for: phishing, scams, unsolicited marketing, "
                 "generic bulk mail with no personal action needed. "
                 "Reason should be 5-10 words."
@@ -3466,14 +3515,38 @@ def setup_email_routes():
                 category = "uncategorized"
             is_spam = bool(parsed.get("is_spam"))
 
+            # Parse multi-tags from the response
+            raw_tags = parsed.get("tags", [])
+            if not isinstance(raw_tags, list):
+                raw_tags = []
+            ALLOWED_TAGS = {"work", "personal", "finance", "bills", "receipt", "travel",
+                            "newsletter", "marketing", "promo", "notification", "security",
+                            "social", "shopping", "calendar"}
+            normalized_tags = []
+            for t in raw_tags:
+                t = str(t).strip().lower().replace("_", "-").replace(" ", "-")
+                if t == "promo":
+                    t = "marketing"
+                if t in ALLOWED_TAGS:
+                    normalized_tags.append(t)
+            # Deduplicate preserving order
+            seen = set()
+            tags_deduped = []
+            for t in normalized_tags:
+                if t not in seen:
+                    seen.add(t)
+                    tags_deduped.append(t)
+            tags_json = json.dumps(tags_deduped)
+
             # Store message-level analysis
             now = datetime.utcnow().isoformat()
             conn.execute(
                 "INSERT OR REPLACE INTO email_message_analysis "
-                "(message_id, owner, uid, folder, sender, sender_name, subject, category, is_spam, analyzed_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(message_id, owner, uid, folder, sender, sender_name, subject, category, is_spam, is_read, analyzed_at, tags) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (message_id, owner, uid.decode() if isinstance(uid, bytes) else str(uid),
-                 folder, sender_addr, sender_name or sender_addr, subject, category, 1 if is_spam else 0, now),
+                 folder, sender_addr, sender_name or sender_addr, subject, category, 1 if is_spam else 0,
+                 1 if is_read else 0, now, tags_json),
             )
 
             # Upsert sender-level analysis
@@ -3528,6 +3601,7 @@ def setup_email_routes():
             return {
                 "message_id": message_id,
                 "category": category,
+                "tags": tags_deduped,
                 "is_spam": is_spam,
                 "sender": sender_addr,
                 "cached": False,
@@ -3655,9 +3729,9 @@ def setup_email_routes():
                     if r and not r.get("error"):
                         _analysis_tasks[task_id].setdefault("results", []).append(r)
                         _analysis_tasks[task_id].setdefault("email_logs", []).append(
-                            f"{display}: ✓ {r.get('category','?')} (spam={r.get('is_spam',False)})"
+                            f"{display}: ✓ {r.get('category','?')} tags={r.get('tags',[])} (spam={r.get('is_spam',False)})"
                         )
-                        _log(f"✓ {r.get('sender','?')} → {r.get('category','?')}")
+                        _log(f"✓ {r.get('sender','?')} → {r.get('category','?')} tags={r.get('tags',[])}")
                     else:
                         err = (r or {}).get("error", "unknown")
                         _analysis_tasks[task_id].setdefault("email_logs", []).append(
@@ -3810,5 +3884,177 @@ def setup_email_routes():
             return {"ok": False, "error": str(e)}
         finally:
             conn.close()
+
+    @router.get("/analysis/messages")
+    async def analysis_messages(
+        owner: str = Depends(require_user),
+        filter: str = Query("all"),
+        account_id: str | None = Query(None),
+    ):
+        """Get analyzed messages grouped by category. Supports filter=all|unread."""
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            rows = conn.execute(
+                "SELECT m.uid, m.folder, m.sender, m.sender_name, m.subject, "
+                "m.category, m.is_spam, m.is_read, m.analyzed_at, m.tags, "
+                "COALESCE(c.color, 'var(--color-muted)') as color "
+                "FROM email_message_analysis m "
+                "LEFT JOIN email_categories c ON c.name = m.category AND c.owner = ? "
+                "WHERE m.owner = ? AND m.category != '' AND m.uid IS NOT NULL "
+                "ORDER BY m.analyzed_at DESC",
+                (owner, owner),
+            ).fetchall()
+            messages = []
+            for r in rows:
+                uid, folder, sender, sender_name, subject = r[0], r[1], r[2], r[3], r[4]
+                category, is_spam, is_read, analyzed_at = r[5], r[6], r[7], r[8]
+                tags_raw, color = r[9], r[10]
+                is_read_val = bool(is_read) if is_read is not None else False
+                try:
+                    tags = json.loads(tags_raw or "[]")
+                except Exception:
+                    tags = []
+                if not isinstance(tags, list):
+                    tags = []
+                msg = {
+                    "uid": uid,
+                    "folder": folder or "INBOX",
+                    "sender": sender or "",
+                    "sender_name": sender_name or "",
+                    "subject": subject or "",
+                    "category": category or "uncategorized",
+                    "tags": tags,
+                    "is_spam": bool(is_spam),
+                    "is_read": is_read_val,
+                    "analyzed_at": analyzed_at or "",
+                    "color": color,
+                }
+                messages.append(msg)
+            # Group by category
+            cat_map = {}
+            cat_order = []
+            for m in messages:
+                cat = m["category"]
+                if filter == "unread" and m["is_read"]:
+                    continue
+                if cat not in cat_map:
+                    cat_map[cat] = []
+                    cat_order.append(cat)
+                cat_map[cat].append(m)
+            categories_out = []
+            for cat in cat_order:
+                msgs = cat_map[cat]
+                total = len(msgs)
+                unread_count = sum(1 for m in msgs if not m["is_read"])
+                categories_out.append({
+                    "name": cat,
+                    "color": msgs[0]["color"] if msgs else "var(--color-muted)",
+                    "total": total,
+                    "unread": unread_count,
+                    "messages": msgs,
+                })
+            return {"ok": True, "categories": categories_out}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        finally:
+            conn.close()
+
+    @router.post("/analysis/mark-category-read")
+    async def mark_category_read(
+        request: Request,
+        owner: str = Depends(require_user),
+        account_id: str | None = Query(None),
+    ):
+        """Mark all unread emails in a category as read."""
+        body = await request.json()
+        category = (body.get("category") or "").strip().lower()
+        if not category:
+            return {"ok": False, "error": "category required"}
+        conn = _sql3.connect(SCHEDULED_DB)
+        try:
+            rows = conn.execute(
+                "SELECT uid, folder FROM email_message_analysis "
+                "WHERE owner=? AND category=? AND (is_read IS NULL OR is_read = 0) "
+                "AND uid IS NOT NULL",
+                (owner, category),
+            ).fetchall()
+            if not rows:
+                return {"ok": True, "marked": 0}
+            marked = 0
+            errors = []
+            # Group by folder for batch IMAP ops
+            folder_map = {}
+            for r in rows:
+                uid_str = r[0]
+                fld = r[1] or "INBOX"
+                folder_map.setdefault(fld, []).append(uid_str)
+            for fld, uids in folder_map.items():
+                with _imap(account_id, owner=owner) as _c:
+                    _c.select(_q(fld))
+                    for uid_str in uids:
+                        try:
+                            if _store_email_flag(_c, uid_str, "\\Seen", add=True):
+                                marked += 1
+                                conn.execute(
+                                    "UPDATE email_message_analysis SET is_read = 1 "
+                                    "WHERE uid=? AND folder=? AND owner=?",
+                                    (uid_str, fld, owner),
+                                )
+                        except Exception as e:
+                            errors.append(f"UID {uid_str}: {e}")
+                _invalidate_list_cache(account_id, fld)
+            conn.commit()
+            result = {"ok": True, "marked": marked}
+            if errors:
+                result["errors"] = errors
+            return result
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        finally:
+            conn.close()
+
+    @router.post("/analysis/mark-read")
+    async def mark_analysis_messages_read(
+        request: Request,
+        owner: str = Depends(require_user),
+        account_id: str | None = Query(None),
+    ):
+        """Mark specific UIDs as read."""
+        body = await request.json()
+        uids = body.get("uids", [])
+        folder = body.get("folder", "INBOX")
+        if not uids:
+            return {"ok": False, "error": "uids list required"}
+        if isinstance(uids, str):
+            uids = [uids]
+        marked = 0
+        errors = []
+        try:
+            with _imap(account_id, owner=owner) as _c:
+                _c.select(_q(folder))
+                for uid_str in uids:
+                    try:
+                        if _store_email_flag(_c, uid_str, "\\Seen", add=True):
+                            marked += 1
+                    except Exception as e:
+                        errors.append(f"UID {uid_str}: {e}")
+            _invalidate_list_cache(account_id, folder)
+            conn = _sql3.connect(SCHEDULED_DB)
+            try:
+                for uid_str in uids:
+                    conn.execute(
+                        "UPDATE email_message_analysis SET is_read = 1 "
+                        "WHERE uid=? AND folder=? AND owner=?",
+                        (uid_str, folder, owner),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+            result = {"ok": True, "marked": marked}
+            if errors:
+                result["errors"] = errors
+            return result
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     return router

@@ -1187,8 +1187,8 @@ async def run_email_analysis(owner: str, account_id: str | None = None,
                     sys_prompt = (
                         "You are classifying emails for theme/category analysis. "
                         "Return ONLY a JSON object, no prose, no markdown fences.\n"
-                        'Schema: {"category": "category_name", "is_spam": false, "reason": "short reason"}\n\n'
-                        "Choose the SINGLE best category from:\n"
+                        'Schema: {"category": "category_name", "tags": ["tag1", "tag2"], "is_spam": false, "reason": "short reason"}\n\n'
+                        "Choose the SINGLE best primary category from:\n"
                         "- work: Job-related, colleagues, projects, meetings\n"
                         "- personal: Friends, family, personal correspondence\n"
                         "- finance: Banking, investments, billing, invoices, receipts\n"
@@ -1201,6 +1201,14 @@ async def run_email_analysis(owner: str, account_id: str | None = None,
                         "- calendar: Calendar invites, event confirmations\n"
                         "- notification: Automated notifications, service updates\n"
                         "- spam: Bulk/unsolicited/irrelevant\n\n"
+                        "IMPORTANT: Assign one or more TAGS in the \"tags\" array. "
+                        "Emails often belong to MULTIPLE categories — e.g. a travel "
+                        "booking promo is both \"travel\" and \"promo\"; a bank "
+                        "statement notification is both \"finance\" and "
+                        "\"notification\"; a flight receipt is \"travel\" and "
+                        "\"receipt\". The primary \"category\" should be the main "
+                        "theme, and \"tags\" should include ALL relevant labels "
+                        "from the list above. Return 1-4 tags per email.\n\n"
                         "Set is_spam=true for: phishing, scams, unsolicited marketing, "
                         "generic bulk mail with no personal action needed. "
                         "Reason should be 5-10 words."
@@ -1280,13 +1288,35 @@ async def run_email_analysis(owner: str, account_id: str | None = None,
                         category = "uncategorized"
                     is_spam = bool(parsed.get("is_spam"))
 
+                    # Parse multi-tags from the response
+                    raw_tags = parsed.get("tags", [])
+                    if not isinstance(raw_tags, list):
+                        raw_tags = []
+                    ALLOWED_TAGS = {"work", "personal", "finance", "bills", "receipt", "travel",
+                                    "newsletter", "marketing", "promo", "notification", "security",
+                                    "social", "shopping", "calendar"}
+                    normalized_tags = []
+                    for t in raw_tags:
+                        t = str(t).strip().lower().replace("_", "-").replace(" ", "-")
+                        if t == "promo":
+                            t = "marketing"
+                        if t in ALLOWED_TAGS:
+                            normalized_tags.append(t)
+                    seen = set()
+                    tags_deduped = []
+                    for t in normalized_tags:
+                        if t not in seen:
+                            seen.add(t)
+                            tags_deduped.append(t)
+                    tags_json = json.dumps(tags_deduped)
+
                     now = datetime.utcnow().isoformat()
                     conn.execute(
                         "INSERT OR REPLACE INTO email_message_analysis "
-                        "(message_id, owner, uid, folder, sender, sender_name, subject, category, is_spam, analyzed_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "(message_id, owner, uid, folder, sender, sender_name, subject, category, is_spam, analyzed_at, tags) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (message_id, owner, uid_str, folder, sender_addr, sender_name or sender_addr,
-                         subject, category, 1 if is_spam else 0, now),
+                         subject, category, 1 if is_spam else 0, now, tags_json),
                     )
                     existing_sender = conn.execute(
                         "SELECT category, email_count, spam_count FROM email_sender_analysis "

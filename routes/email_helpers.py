@@ -584,6 +584,20 @@ def _init_scheduled_db():
         CREATE INDEX IF NOT EXISTS idx_email_analysis_uid
         ON email_message_analysis (uid, folder, owner)
     """)
+    # Lazy migration: add is_read column for tracking read/unread status
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(email_message_analysis)").fetchall()]
+        if "is_read" not in cols:
+            conn.execute("ALTER TABLE email_message_analysis ADD COLUMN is_read INTEGER DEFAULT 0")
+    except Exception:
+        pass
+    # Lazy migration: add tags column for multi-tag support in analysis
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(email_message_analysis)").fetchall()]
+        if "tags" not in cols:
+            conn.execute("ALTER TABLE email_message_analysis ADD COLUMN tags TEXT DEFAULT '[]'")
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 

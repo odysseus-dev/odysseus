@@ -138,51 +138,240 @@ async function _runAnalysis() {
 // ── Analysis Modal (full-size, like email library) ──
 
 let _analysisModal = null;
+let _modalFilter = 'all';
+let _modalCategories = [];
+let _expandedSections = new Set();
 
-function _modalChart(categories) {
-  if (!categories || categories.length === 0) return '<div style="padding:12px;opacity:0.6;font-size:12px;">No data yet</div>';
+async function _fetchMessages(filter) {
+  try {
+    const r = await fetch(`${API_BASE}/api/email/analysis/messages?_=${Date.now()}${_acct()}&filter=${filter}`);
+    return await r.json();
+  } catch { return null; }
+}
+
+async function _markCategoryRead(category) {
+  try {
+    const r = await fetch(`${API_BASE}/api/email/analysis/mark-category-read?_=${Date.now()}${_acct()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category }),
+    });
+    const data = await r.json();
+    if (data.ok) {
+      // Refetch and re-render
+      const body = document.getElementById('email-analysis-modal')?.querySelector('.modal-body');
+      if (body) await _renderModalBody(body);
+    }
+    return data;
+  } catch { return { ok: false, error: 'Request failed' }; }
+}
+
+async function _markEmailRead(uid, folder) {
+  try {
+    const r = await fetch(`${API_BASE}/api/email/analysis/mark-read?_=${Date.now()}${_acct()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uids: [uid], folder: folder || 'INBOX' }),
+    });
+    const data = await r.json();
+    if (data.ok) {
+      const body = document.getElementById('email-analysis-modal')?.querySelector('.modal-body');
+      if (body) await _renderModalBody(body);
+    }
+    return data;
+  } catch { return { ok: false, error: 'Request failed' }; }
+}
+
+function _modalMiniChart(categories) {
+  if (!categories || categories.length === 0) return '';
   const maxCount = Math.max(...categories.map(c => c.count), 1);
-  const barH = 20;
-  const gap = 6;
+  const barH = 10;
+  const gap = 3;
   const totalH = categories.length * (barH + gap);
-  const w = 260;
+  const w = 120;
 
   let bars = '';
-  let labels = '';
   categories.forEach((cat, i) => {
     const pct = (cat.count / maxCount) * 100;
     const y = i * (barH + gap);
     const color = cat.color || 'var(--color-muted)';
-    bars += `<rect x="0" y="${y}" width="${Math.max(pct * 0.7, 2)}" height="${barH}" fill="${color}" rx="3" opacity="0.85"/>`;
-    labels += `<text x="${w + 6}" y="${y + barH - 3}" fill="var(--fg)" font-size="12" font-family="Fira Code,monospace">${_esc(cat.name)} ${cat.count}</text>`;
+    bars += `<rect x="0" y="${y}" width="${Math.max(pct * 0.7, 2)}" height="${barH}" fill="${color}" rx="2" opacity="0.85"/>`;
   });
 
-  return `<svg width="${w + 100}" height="${totalH}" viewBox="0 0 ${w + 100} ${totalH}" fill="none" style="display:block;margin:8px 0;">${bars}${labels}</svg>`;
+  return `<svg width="${w}" height="${totalH}" viewBox="0 0 ${w} ${totalH}" fill="none" style="display:block;margin:0;" aria-label="Category distribution chart">${bars}</svg>`;
 }
 
-function _modalSenderList(senders) {
-  if (!senders || senders.length === 0) return '<div style="padding:12px;opacity:0.6;font-size:12px;">No senders analyzed</div>';
-  const catMap = {};
-  senders.forEach(s => {
-    const cat = s.category || 'uncategorized';
-    if (!catMap[cat]) catMap[cat] = [];
-    catMap[cat].push(s);
-  });
+function _modalCategorySection(cat) {
+  const name = cat.name;
+  const color = cat.color || 'var(--color-muted)';
+  const total = cat.total || 0;
+  const unread = cat.unread || 0;
+  const msgs = cat.messages || [];
+  const sectionId = `cat-${name.replace(/[^a-z0-9-]/gi, '-')}`;
 
-  let html = '';
-  for (const [cat, list] of Object.entries(catMap)) {
-    const color = list[0].color || 'var(--color-muted)';
-    html += `<div style="margin-top:10px;"><span style="color:${color};font-size:12px;font-weight:600;text-transform:uppercase;">${_esc(cat)}</span> <span style="opacity:0.5;font-size:11px;">(${list.length})</span></div>`;
-    list.forEach(s => {
-      html += `<div style="display:flex;align-items:center;gap:6px;padding:4px 6px;font-size:12px;border-radius:4px;transition:background 0.15s;" onmouseover="this.style.background='var(--hover-bg)'" onmouseout="this.style.background=''">`;
-      html += `<span style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span>`;
-      html += `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(s.sender_name || s.sender)}</span>`;
-      html += `<span style="font-size:11px;opacity:0.5;font-family:Fira Code,monospace;">${_esc(s.sender)}</span>`;
-      html += `<span style="opacity:0.5;flex-shrink:0;font-size:11px;">${s.email_count} emails${s.spam_count ? ` · ${s.spam_count} spam` : ''}</span>`;
-      html += `</div>`;
+  const unreadLabel = unread > 0
+    ? `<span style="color:var(--color-warning);font-size:11px;font-weight:600;">${unread} unread</span>`
+    : `<span style="opacity:0.4;font-size:11px;">all read</span>`;
+
+  const markAllBtn = unread > 0
+    ? `<button class="analysis-mark-cat-read" data-category="${_esc(name)}" type="button" style="font-size:10px;padding:1px 8px;border:1px solid var(--color-save-green);border-radius:3px;background:transparent;color:var(--color-save-green);cursor:pointer;white-space:nowrap;">Mark all read</button>`
+    : '';
+
+  let msgsHtml = '';
+  if (msgs.length === 0) {
+    msgsHtml = `<div style="padding:4px 8px;font-size:11px;opacity:0.4;">No emails</div>`;
+  } else {
+    msgs.forEach(m => {
+      const isRead = m.is_read;
+      const uid = m.uid;
+      const folder = m.folder || 'INBOX';
+      const subject = m.subject || '(no subject)';
+      const senderName = m.sender_name || m.sender || 'unknown';
+      const dotColor = isRead ? 'var(--color-muted)' : color;
+      const dotOpacity = isRead ? '0.3' : '1';
+      const rowOpacity = isRead ? '0.55' : '1';
+      const markBtn = isRead
+        ? `<span style="font-size:10px;opacity:0.3;">✓ read</span>`
+        : `<button class="analysis-mark-read" data-uid="${_esc(uid)}" data-folder="${_esc(folder)}" type="button" style="font-size:10px;padding:1px 6px;border:1px solid var(--border);border-radius:3px;background:transparent;color:var(--fg);cursor:pointer;opacity:0.7;">Mark read</button>`;
+      // Show extra tags (skip the primary category since it's the section header)
+      const _tags = Array.isArray(m.tags) ? m.tags : [];
+      const _extraTags = _tags.filter(t => t !== name);
+      const _tagPills = _extraTags.length
+        ? `<span style="display:inline-flex;gap:2px;flex-shrink:0;margin:0 4px;">${_extraTags.map(t => `<span class="email-tag email-tag-${_esc(t)}" style="font-size:9px;padding:0 4px;line-height:16px;">${_esc(t)}</span>`).join('')}</span>`
+        : '';
+      msgsHtml += `
+        <div style="display:flex;align-items:center;gap:6px;padding:3px 8px 3px 12px;font-size:11px;border-radius:3px;transition:background 0.15s;opacity:${rowOpacity};" onmouseover="this.style.background='var(--hover-bg)'" onmouseout="this.style.background=''">
+          <span style="width:7px;height:7px;border-radius:50%;background:${dotColor};opacity:${dotOpacity};flex-shrink:0;"></span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(subject)}</span>
+          ${_tagPills}
+          <span style="opacity:0.5;font-size:10px;flex-shrink:0;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(senderName)}</span>
+          ${markBtn}
+        </div>`;
     });
   }
-  return html;
+
+  return `
+    <div class="analysis-cat-section" style="border:1px solid var(--border);border-radius:5px;margin-bottom:6px;overflow:hidden;">
+      <div class="analysis-cat-header" data-target="${sectionId}" style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;user-select:none;transition:background 0.15s;" onmouseover="this.style.background='var(--hover-bg)'" onmouseout="this.style.background=''">
+        <span style="width:10px;height:10px;border-radius:50%;background:${color};flex-shrink:0;"></span>
+        <span style="font-size:12px;font-weight:600;text-transform:uppercase;color:${color};">${_esc(name)}</span>
+        <span style="opacity:0.5;font-size:11px;">${total}</span>
+        ${unreadLabel}
+        <span style="flex:1;"></span>
+        ${markAllBtn}
+        <span class="analysis-cat-arrow" style="font-size:10px;opacity:0.5;transition:transform 0.2s;">▶</span>
+      </div>
+      <div id="${sectionId}" class="analysis-cat-body" style="display:none;border-top:1px solid var(--border);padding:4px 0;">
+        ${msgsHtml}
+      </div>
+    </div>`;
+}
+
+async function _renderModalBody(body) {
+  const filter = _modalFilter;
+  const data = await _fetchMessages(filter);
+
+  if (!data || data.ok === false) {
+    body.innerHTML = `<div style="padding:16px;color:var(--color-warning);font-size:12px;">Error loading messages</div>`;
+    return;
+  }
+
+  _modalCategories = data.categories || [];
+
+  let totalMsgs = 0;
+  let totalUnread = 0;
+  for (const cat of _modalCategories) {
+    totalMsgs += cat.total || 0;
+    totalUnread += cat.unread || 0;
+  }
+
+  const filterActive = filter === 'unread' ? 'unread' : 'all';
+
+  // Compute chart from filtered categories instead of global stats
+  const chartData = _modalCategories.map(c => ({ name: c.name, count: filter === 'unread' ? c.unread : c.total, color: c.color }));
+  const miniChart = _modalMiniChart(chartData);
+
+  let sectionsHtml = '';
+  for (const cat of _modalCategories) {
+    sectionsHtml += _modalCategorySection(cat);
+  }
+
+  if (!sectionsHtml) {
+    sectionsHtml = `<div style="padding:16px;text-align:center;opacity:0.5;font-size:12px;">${filter === 'unread' ? 'No unread emails' : 'No analyzed emails yet. Click Scan to analyze.'}</div>`;
+  }
+
+  body.innerHTML = `
+    <div style="display:flex;gap:12px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);margin-bottom:8px;flex-wrap:wrap;">
+      <span style="font-size:12px;opacity:0.7;">${totalMsgs} messages</span>
+      ${totalUnread > 0 ? `<span style="font-size:12px;color:var(--color-warning);font-weight:600;">${totalUnread} unread</span>` : ''}
+      <span style="flex:1;"></span>
+      <div class="memory-category-filters">
+        <button class="memory-cat-chip ${filterActive === 'all' ? 'active' : ''}" data-filter="all" type="button">all</button>
+        <button class="memory-cat-chip ${filterActive === 'unread' ? 'active' : ''}" data-filter="unread" type="button">unread</button>
+      </div>
+    </div>
+    ${miniChart ? `<div style="margin-bottom:6px;">${miniChart}</div>` : ''}
+    ${sectionsHtml}
+  `;
+
+  // Restore expanded sections from saved state
+  body.querySelectorAll('.analysis-cat-body').forEach(el => {
+    if (_expandedSections.has(el.id)) {
+      el.style.display = '';
+      const header = el.closest('.analysis-cat-section')?.querySelector('.analysis-cat-header');
+      if (header) {
+        const arrow = header.querySelector('.analysis-cat-arrow');
+        if (arrow) arrow.style.transform = 'rotate(90deg)';
+      }
+    }
+  });
+
+  // Attach event listeners
+  body.querySelectorAll('.analysis-cat-header').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.analysis-mark-cat-read')) return;
+      const targetId = el.dataset.target;
+      const target = document.getElementById(targetId);
+      if (!target) return;
+      const isVisible = target.style.display !== 'none';
+      target.style.display = isVisible ? 'none' : '';
+      const arrow = el.querySelector('.analysis-cat-arrow');
+      if (arrow) arrow.style.transform = isVisible ? 'rotate(0deg)' : 'rotate(90deg)';
+      if (isVisible) {
+        _expandedSections.delete(targetId);
+      } else {
+        _expandedSections.add(targetId);
+      }
+    });
+  });
+
+  body.querySelectorAll('.analysis-mark-cat-read').forEach(el => {
+    el.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      el.disabled = true;
+      el.textContent = 'marking…';
+      const category = el.dataset.category;
+      await _markCategoryRead(category);
+    });
+  });
+
+  body.querySelectorAll('.analysis-mark-read').forEach(el => {
+    el.addEventListener('click', async () => {
+      el.disabled = true;
+      el.textContent = '…';
+      const uid = el.dataset.uid;
+      const folder = el.dataset.folder;
+      await _markEmailRead(uid, folder);
+    });
+  });
+
+  body.querySelectorAll('.memory-cat-chip[data-filter]').forEach(el => {
+    el.addEventListener('click', async () => {
+      if (el.classList.contains('active')) return;
+      _modalFilter = el.dataset.filter;
+      await _renderModalBody(body);
+    });
+  });
 }
 
 async function _renderModal() {
@@ -190,29 +379,7 @@ async function _renderModal() {
   if (!modal) return;
   const body = modal.querySelector('.modal-body');
   if (!body) return;
-  const stats = await _fetchStats();
-  const senders = await _fetchSenders();
-  _analysisData = { stats, senders };
-
-  if (stats && stats.ok === false) {
-    body.innerHTML = `<div style="padding:16px;color:var(--color-warning);font-size:12px;">Stats error: ${_esc(stats.error || 'unknown')}</div>`;
-    return;
-  }
-  if (senders && senders.ok === false) {
-    body.innerHTML = `<div style="padding:16px;color:var(--color-warning);font-size:12px;">Senders error: ${_esc(senders.error || 'unknown')}</div>`;
-    return;
-  }
-
-  const totalSenders = stats?.total_senders || 0;
-  const totalSpam = stats?.total_spam || 0;
-  body.innerHTML = `
-    <div style="display:flex;gap:12px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);margin-bottom:8px;">
-      <span style="font-size:12px;opacity:0.7;">${totalSenders} senders</span>
-      <span style="font-size:12px;opacity:0.7;">${totalSpam} spam</span>
-    </div>
-    <div class="analysis-modal-chart">${_modalChart(stats?.categories || [])}</div>
-    <div class="analysis-modal-senders" style="margin-top:8px;">${_modalSenderList(senders?.senders || [])}</div>
-  `;
+  await _renderModalBody(body);
 }
 
 export function openAnalysisModal() {
@@ -241,7 +408,8 @@ export function openAnalysisModal() {
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <span style="opacity:0.7;">Scan read emails (history):</span>
           <label style="opacity:0.6;font-size:11px;">Max <input type="number" id="batch-limit-input" value="500" min="1" max="5000" style="width:70px;font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);"></label>
-          <label style="opacity:0.6;font-size:11px;">Since <input type="date" id="batch-date-input" style="font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);"></label>
+          <label style="opacity:0.6;font-size:11px;">From <input type="date" id="batch-date-from" style="font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);"></label>
+          <label style="opacity:0.6;font-size:11px;">To <input type="date" id="batch-date-to" style="font-size:11px;padding:2px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg);color:var(--fg);"></label>
           <button id="start-batch-btn" type="button" style="font-size:11px;padding:3px 10px;border:1px solid var(--border);border-radius:4px;background:var(--color-save-green);color:#fff;cursor:pointer;">Start Batch</button>
         </div>
       </div>
@@ -304,28 +472,27 @@ export function openAnalysisModal() {
     const opts = document.getElementById('batch-options');
     if (opts) opts.style.display = 'none';
     const btn = document.getElementById('email-analysis-modal-scan-btn');
-    const chartArea = body?.querySelector('.analysis-modal-chart') || body;
     if (btn) { btn.textContent = 'scanning…'; btn.disabled = true; }
     const reset = () => { if (btn) { btn.disabled = false; btn.textContent = 'Scan'; } };
     if (body && !body.contains(debugLog)) body.appendChild(debugLog);
     _debug('Starting scan...');
     try {
       const res = await fetch(`${API_BASE}/api/email/analysis/run?_=${Date.now()}${_acct()}`, { method: 'POST' });
-      if (!res.ok) { _showError(`HTTP ${res.status}`, chartArea); _debug(`HTTP ${res.status}`); reset(); return; }
+      if (!res.ok) { _showError(`HTTP ${res.status}`, body); _debug(`HTTP ${res.status}`); reset(); return; }
       const data = await res.json();
-      if (!data.ok) { _showError(data.error || 'Scan failed', chartArea); _debug(data.error || 'Scan failed'); reset(); return; }
+      if (!data.ok) { _showError(data.error || 'Scan failed', body); _debug(data.error || 'Scan failed'); reset(); return; }
       if (data.task_id) {
         _debug(`Task ${data.task_id} launched — ${data.total} email(s) to scan`);
         if (body) body.innerHTML = `<div style="padding:16px;opacity:0.6;font-size:12px;">Scanning ${data.total} emails…</div>`;
         let pollCount = 0;
-        const MAX_POLLS = 120; // 120 × 1.5s = 3 min timeout
+        const MAX_POLLS = 120;
         const poll = setInterval(async () => {
           pollCount++;
           try {
             const pr = await fetch(`${API_BASE}/api/email/analysis/progress/${data.task_id}?_=${Date.now()}${_acct()}`);
-            if (!pr.ok) { _debug(`Progress HTTP ${pr.status}`); if (pollCount > MAX_POLLS) { clearInterval(poll); _showError('Scan timed out', chartArea); reset(); } return; }
+            if (!pr.ok) { _debug(`Progress HTTP ${pr.status}`); if (pollCount > MAX_POLLS) { clearInterval(poll); _showError('Scan timed out', body); reset(); } return; }
             const p = await pr.json();
-            if (!p.ok) { _debug(`Progress error: ${p.error}`); if (pollCount > MAX_POLLS) { clearInterval(poll); _showError(p.error, chartArea); reset(); } return; }
+            if (!p.ok) { _debug(`Progress error: ${p.error}`); if (pollCount > MAX_POLLS) { clearInterval(poll); _showError(p.error, body); reset(); } return; }
             if (p.status === 'running') {
               if (btn) btn.textContent = `${p.completed} of ${p.total}`;
               if (body) body.innerHTML = `<div style="padding:16px;opacity:0.6;font-size:12px;">${_esc(p.current)}</div>`;
@@ -344,7 +511,7 @@ export function openAnalysisModal() {
               }
               reset();
               if (p.analyzed === 0) {
-                _showError(`Scan done — ${p.analyzed} of ${p.total} analyzed`, chartArea);
+                _showError(`Scan done — ${p.analyzed} of ${p.total} analyzed`, body);
               } else {
                 await _renderModal();
               }
@@ -352,24 +519,24 @@ export function openAnalysisModal() {
               clearInterval(poll);
               _debug(`Error: ${p.error}`);
               reset();
-              _showError(p.error || 'Scan failed', chartArea);
+              _showError(p.error || 'Scan failed', body);
             }
           } catch (e) {
             _debug(`Poll error: ${e?.message}`);
-            if (pollCount > MAX_POLLS) { clearInterval(poll); _showError('Scan timed out', chartArea); reset(); }
+            if (pollCount > MAX_POLLS) { clearInterval(poll); _showError('Scan timed out', body); reset(); }
           }
         }, 1500);
       } else {
         _debug(`No task — ${data.analyzed} analyzed`);
         reset();
         if (data.analyzed === 0) {
-          _showError('No emails to analyze', chartArea);
+          _showError('No emails to analyze', body);
         } else {
           await _renderModal();
         }
       }
     } catch (e) {
-      _showError(e?.message || 'Request failed', chartArea);
+      _showError(e?.message || 'Request failed', body);
       _debug(e?.message || 'Request failed');
       reset();
     }
@@ -385,21 +552,22 @@ export function openAnalysisModal() {
   document.getElementById('start-batch-btn').addEventListener('click', async () => {
     const btn = document.getElementById('start-batch-btn');
     const body = document.getElementById('email-analysis-modal')?.querySelector('.modal-body');
-    const chartArea = body?.querySelector('.analysis-modal-chart') || body;
     if (!btn || !body) return;
     const limit = parseInt(document.getElementById('batch-limit-input')?.value || '500', 10);
-    const dateVal = document.getElementById('batch-date-input')?.value || '';
+    const dateFrom = document.getElementById('batch-date-from')?.value || '';
+    const dateTo = document.getElementById('batch-date-to')?.value || '';
     btn.textContent = 'starting…';
     btn.disabled = true;
     const reset = () => { btn.disabled = false; btn.textContent = 'Start Batch'; };
     _debug('Starting batch scan...');
     try {
       let url = `${API_BASE}/api/email/analysis/run?_=${Date.now()}${_acct()}&mode=batch&batch_limit=${limit}`;
-      if (dateVal) url += `&batch_date=${encodeURIComponent(dateVal)}`;
+      if (dateFrom) url += `&batch_start_date=${encodeURIComponent(dateFrom)}`;
+      if (dateTo) url += `&batch_end_date=${encodeURIComponent(dateTo)}`;
       const res = await fetch(url, { method: 'POST' });
-      if (!res.ok) { _showError(`HTTP ${res.status}`, chartArea); _debug(`HTTP ${res.status}`); reset(); return; }
+      if (!res.ok) { _showError(`HTTP ${res.status}`, body); _debug(`HTTP ${res.status}`); reset(); return; }
       const data = await res.json();
-      if (!data.ok) { _showError(data.error || 'Batch scan failed', chartArea); _debug(data.error || 'Batch scan failed'); reset(); return; }
+      if (!data.ok) { _showError(data.error || 'Batch scan failed', body); _debug(data.error || 'Batch scan failed'); reset(); return; }
       if (data.task_id) {
         _debug(`Batch task ${data.task_id} — ${data.total} email(s)`);
         if (body) body.innerHTML = `<div style="padding:16px;opacity:0.6;font-size:12px;">Batch scanning ${data.total} emails…</div>`;
@@ -409,9 +577,9 @@ export function openAnalysisModal() {
           pollCount++;
           try {
             const pr = await fetch(`${API_BASE}/api/email/analysis/progress/${data.task_id}?_=${Date.now()}${_acct()}`);
-            if (!pr.ok) { _debug(`Progress HTTP ${pr.status}`); if (pollCount > MAX_POLLS) { clearInterval(poll); _showError('Batch scan timed out', chartArea); reset(); } return; }
+            if (!pr.ok) { _debug(`Progress HTTP ${pr.status}`); if (pollCount > MAX_POLLS) { clearInterval(poll); _showError('Batch scan timed out', body); reset(); } return; }
             const p = await pr.json();
-            if (!p.ok) { _debug(`Progress error: ${p.error}`); if (pollCount > MAX_POLLS) { clearInterval(poll); _showError(p.error, chartArea); reset(); } return; }
+            if (!p.ok) { _debug(`Progress error: ${p.error}`); if (pollCount > MAX_POLLS) { clearInterval(poll); _showError(p.error, body); reset(); } return; }
             if (p.status === 'running') {
               btn.textContent = `${p.completed} of ${p.total}`;
               if (body) body.innerHTML = `<div style="padding:16px;opacity:0.6;font-size:12px;">${_esc(p.current)}</div>`;
@@ -424,7 +592,7 @@ export function openAnalysisModal() {
               if (p.logs && p.logs.length) p.logs.forEach(l => _debug(`  ${l}`));
               reset();
               if (p.analyzed === 0) {
-                _showError(`Batch done — ${p.analyzed} of ${p.total} analyzed`, chartArea);
+                _showError(`Batch done — ${p.analyzed} of ${p.total} analyzed`, body);
               } else {
                 await _renderModal();
               }
@@ -432,24 +600,24 @@ export function openAnalysisModal() {
               clearInterval(poll);
               _debug(`Error: ${p.error}`);
               reset();
-              _showError(p.error || 'Batch scan failed', chartArea);
+              _showError(p.error || 'Batch scan failed', body);
             }
           } catch (e) {
             _debug(`Poll error: ${e?.message}`);
-            if (pollCount > MAX_POLLS) { clearInterval(poll); _showError('Batch scan timed out', chartArea); reset(); }
+            if (pollCount > MAX_POLLS) { clearInterval(poll); _showError('Batch scan timed out', body); reset(); }
           }
         }, 1500);
       } else {
         _debug(`No task — ${data.analyzed} analyzed`);
         reset();
         if (data.analyzed === 0) {
-          _showError('No emails to analyze', chartArea);
+          _showError('No emails to analyze', body);
         } else {
           await _renderModal();
         }
       }
     } catch (e) {
-      _showError(e?.message || 'Request failed', chartArea);
+      _showError(e?.message || 'Request failed', body);
       _debug(e?.message || 'Request failed');
       reset();
     }

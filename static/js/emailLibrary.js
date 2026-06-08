@@ -30,6 +30,10 @@ let _libFolderSeq = 0;
 let _libSearchSeq = 0;
 let _libSearchHadResults = false;
 let _activeEmailReaderForSelectAll = null;
+const _libPageCache = new Map();
+const _libSearchPageCache = new Map();
+const _LIB_PAGE_CACHE_MAX = 18;
+let _libPrefetchTimer = null;
 
 function _isEmailTypingTarget(t) {
   return !!(t && (
@@ -652,10 +656,21 @@ function _libCachePut(key, value) {
 
 function _resetEmailListForFreshLoad() {
   state._libOffset = 0;
+  state._libSearchOffset = 0;
+  state._libSearchTotal = 0;
   state._libEmails = [];
   state._libTotal = 0;
+  state._libSearch = '';
+  state._libFilterText = '';
   state._unreadUids = new Set();
+  _libSearchHadResults = false;
   _libLoadSeq += 1;
+  _libPageCache.clear();
+  _libSearchPageCache.clear();
+  const searchEl = document.getElementById('email-lib-search');
+  if (searchEl) searchEl.value = '';
+  const pagEl = document.getElementById('email-lib-pagination');
+  if (pagEl) pagEl.style.display = 'none';
   const grid = document.getElementById('email-lib-grid');
   if (grid) _renderEmailLoading(grid);
   const stats = document.getElementById('email-lib-stats');
@@ -782,6 +797,9 @@ export function openEmailLibrary(opts = {}) {
   state._libEmails = [];
   state._libOffset = 0;
   state._libSearch = '';
+  state._libFilterText = '';
+  state._libSearchOffset = 0;
+  state._libSearchTotal = 0;
   state._libFilter = 'all';
   state._libHasAttachments = false;
   // Animate the very first card render with a domino cascade (same as the
@@ -808,6 +826,7 @@ export function openEmailLibrary(opts = {}) {
           </svg>
           Email
           <span id="email-lib-unread-badge" class="email-lib-unread-badge" role="button" tabindex="0" title="Show unread emails" style="display:none"></span>
+          <span id="email-pag-prefetch-dot" class="email-pag-prefetch-dot" style="display:none;"></span>
           <span id="email-lib-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal;margin-left:8px;position:relative;top:-2px"></span>
         </h4>
         <div class="email-lib-header-actions" style="display:flex;align-items:center;gap:8px;">
@@ -862,7 +881,10 @@ export function openEmailLibrary(opts = {}) {
             </div>
             <div class="email-search-row" style="display:flex;gap:6px;align-items:flex-start;">
             <div class="email-search-wrap" style="position:relative;flex:1;min-width:140px;">
-              <input type="text" id="email-lib-search" placeholder="Search emails\u2026" class="memory-search-input" style="width:100%;padding-right:96px;" />
+              <input type="text" id="email-lib-search" placeholder="Filter emails\u2026 (Enter to search old)" class="memory-search-input" style="width:100%;padding-right:130px;" />
+              <button class="memory-toolbar-btn" id="email-lib-search-btn" title="Search old emails on server (Enter)" style="position:absolute;right:72px;top:50%;transform:translateY(-50%);padding:2px 6px;font-size:10px;line-height:1.4;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              </button>
               <button class="memory-toolbar-btn email-undone-toggle email-undone-toggle-inline" id="email-undone-btn" title="Show only emails not marked as done (undone)">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
               </button>
@@ -885,6 +907,11 @@ export function openEmailLibrary(opts = {}) {
           <div class="email-split-wrap" style="flex:1;display:flex;overflow:hidden;min-height:0;">
             <div id="email-lib-grid" class="doclib-grid" style="flex:1;min-width:0;max-height:none;"></div>
             <div id="email-lib-preview" class="email-preview-panel" style="display:none;flex:0 0 50%;min-width:0;overflow-y:auto;border-left:1px solid var(--border);"></div>
+          </div>
+          <div id="email-lib-pagination" class="email-lib-pagination" style="display:none;flex-shrink:0;padding:8px 0 4px;text-align:center;user-select:none;">
+            <button class="email-pag-btn" id="email-pag-prev" type="button" disabled style="display:none;">‹ Prev</button>
+            <span id="email-pag-info" style="margin:0 12px;font-size:11px;opacity:0.7;"></span>
+            <button class="email-pag-btn" id="email-pag-next" type="button" style="display:none;">Next ›</button>
           </div>
           <button class="email-lib-fab" id="email-lib-fab" type="button" aria-label="New email">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/><path d="M3 6.5l9 6 9-6"/></svg>
@@ -1093,11 +1120,38 @@ export function openEmailLibrary(opts = {}) {
   // \Flagged search). _libSort stays at its 'recent' default so the grid keeps
   // the API's newest-first order.
 
-  let searchTimer = null;
   document.getElementById('email-lib-search').addEventListener('input', (e) => {
-    state._libSearch = e.target.value;
-    if (searchTimer) clearTimeout(searchTimer);
-    searchTimer = setTimeout(_doSearch, 350);
+    state._libFilterText = e.target.value;
+    if (state._libSearch) {
+      state._libSearch = '';
+      state._libSearchOffset = 0;
+      state._libSearchTotal = 0;
+      _libSearchHadResults = false;
+      _libSearchPageCache.clear();
+      state._libOffset = 0;
+      _loadEmails({ useCache: true });
+      return;
+    }
+    if (!state._libFilterText.trim()) {
+      const g = document.getElementById('email-lib-grid');
+      if (g) g.querySelectorAll('.doclib-card[data-uid]').forEach(card => { card.style.display = ''; });
+      const stats = document.getElementById('email-lib-stats');
+      if (stats && !state._libSearch) stats.textContent = `${state._libEmails.length} / ${state._libTotal} emails`;
+      _renderPagination();
+      return;
+    }
+    _applyLocalFilter();
+  });
+
+  document.getElementById('email-lib-search').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      _commitServerSearch();
+    }
+  });
+
+  document.getElementById('email-lib-search-btn').addEventListener('click', () => {
+    _commitServerSearch();
   });
 
   document.getElementById('email-lib-refresh-btn').addEventListener('click', async () => {
@@ -1127,6 +1181,8 @@ export function openEmailLibrary(opts = {}) {
     }
   });
 
+  document.getElementById('email-pag-prev').addEventListener('click', () => _goToPage(-1));
+  document.getElementById('email-pag-next').addEventListener('click', () => _goToPage(1));
 
   const _composeNew = () => {
     // Desktop: keep Email open when there is enough room for it plus the
@@ -1575,15 +1631,60 @@ function _crossFolderCandidates() {
   return Array.from(new Set(candidates.filter(Boolean)));
 }
 
-async function _doSearch() {
+function _applyLocalFilter() {
+  const q = state._libFilterText.trim().toLowerCase();
+  const grid = document.getElementById('email-lib-grid');
+  if (!grid) return;
+  if (!q) {
+    grid.querySelectorAll('.doclib-card[data-uid]').forEach(card => { card.style.display = ''; });
+    const stats = document.getElementById('email-lib-stats');
+    if (stats && !state._libSearch) stats.textContent = `${state._libEmails.length} / ${state._libTotal} emails`;
+    _renderPagination();
+    return;
+  }
+  let matchCount = 0;
+  grid.querySelectorAll('.doclib-card[data-uid]').forEach(card => {
+    const em = state._libEmails.find(e => String(e.uid) === card.dataset.uid);
+    const matches = em && (
+      (em.subject || '').toLowerCase().includes(q) ||
+      (em.from_name || '').toLowerCase().includes(q) ||
+      (em.from_address || '').toLowerCase().includes(q)
+    );
+    card.style.display = matches ? '' : 'none';
+    if (matches) matchCount++;
+  });
+  const stats = document.getElementById('email-lib-stats');
+  if (stats) {
+    if (matchCount === 0 && q.length >= 2) {
+      stats.textContent = `0 filtered — press Enter to search all mail`;
+    } else {
+      stats.textContent = `${matchCount} / ${state._libEmails.length} filtered`;
+    }
+  }
+  const pagEl = document.getElementById('email-lib-pagination');
+  if (pagEl) pagEl.style.display = 'none';
+}
+
+function _commitServerSearch() {
+  const q = state._libFilterText.trim();
+  if (!q || q.length < 2) return;
+  state._libSearch = q;
+  state._libSearchOffset = 0;
+  state._libSearchTotal = 0;
+  _libSearchPageCache.clear();
+  _doSearch();
+}
+
+async function _doSearch({ append = false, skipCache = false } = {}) {
   const seq = ++_libSearchSeq;
   const q = state._libSearch.trim();
   if (q.length < 2) {
-    // Empty or too short — restore the normal folder if a previous search
-    // had replaced the grid contents.
     if (_libSearchHadResults) {
       _libSearchHadResults = false;
       state._libOffset = 0;
+      state._libSearchOffset = 0;
+      state._libSearchTotal = 0;
+      _libSearchPageCache.clear();
       await _loadEmails({ useCache: true });
       return;
     }
@@ -1592,15 +1693,35 @@ async function _doSearch() {
   }
   const grid = document.getElementById('email-lib-grid');
   if (!grid) return;
-  const sp = _renderEmailLoading(grid);
   const accountAtStart = state._libAccountId || '';
   const folderAtStart = state._libFolder || 'INBOX';
+  const offset = append ? (state._libSearchOffset || 0) : 0;
+
+  const searchPrefix = `${accountAtStart}|${folderAtStart}|${q}`;
+  const pageCk = _pageCacheKey(searchPrefix, offset);
+  const pageCached = !skipCache && !append ? _pageCacheGet(_libSearchPageCache, pageCk) : null;
+
+  if (!append) {
+    state._libSearchOffset = offset;
+  }
+
+  let sp = null;
+  if (pageCached) {
+    state._libEmails = pageCached.emails.slice();
+    state._libSearchTotal = pageCached.total || 0;
+    _libSearchHadResults = true;
+    _renderGrid();
+  } else {
+    if (!append) sp = _renderEmailLoading(grid);
+  }
 
   try {
+    const controller = new AbortController();
+    const to = setTimeout(() => controller.abort(), 15000);
     const accountQS = accountAtStart ? `&account_id=${encodeURIComponent(accountAtStart)}` : '';
-    const res = await fetch(`${API_BASE}/api/email/search?folder=${encodeURIComponent(folderAtStart)}${accountQS}&q=${encodeURIComponent(q)}&limit=100`);
-    const data = await res.json();
-    sp.destroy();
+    const res = await fetch(`${API_BASE}/api/email/search?folder=${encodeURIComponent(folderAtStart)}${accountQS}&q=${encodeURIComponent(q)}&limit=100&offset=${offset}`, { signal: controller.signal });
+    clearTimeout(to);
+    if (sp) sp.destroy();
     if (
       seq !== _libSearchSeq ||
       q !== state._libSearch.trim() ||
@@ -1609,18 +1730,35 @@ async function _doSearch() {
     ) {
       return;
     }
-    if (data.error) throw new Error(data.error);
+    if (!res.ok) {
+      throw new Error(`Search returned ${res.status}`);
+    }
+    const data = await res.json();
+    if (data.detail) throw new Error(data.detail);
 
     const results = data.emails || [];
+    const newTotal = data.total || results.length;
     _libSearchHadResults = true;
-    state._libEmails = results;  // temporarily replace with search results
+    state._libSearchTotal = newTotal;
+    if (append) {
+      state._libEmails.push(...results);
+    } else {
+      state._libEmails = results;
+    }
     _renderGrid();
+    if (results.length) {
+      _pageCachePut(_libSearchPageCache, pageCk, { emails: results, total: newTotal });
+      _prefetchPages(offset);
+    }
 
     const stats = document.getElementById('email-lib-stats');
-    if (stats) stats.textContent = `${data.total || results.length} match${(data.total || results.length) === 1 ? '' : 'es'}`;
+    if (stats) stats.textContent = `${state._libEmails.length} / ${state._libSearchTotal} match${state._libSearchTotal === 1 ? '' : 'es'}`;
   } catch (e) {
-    sp.destroy();
-    grid.innerHTML = '<div class="email-loading">Search failed</div>';
+    if (sp) sp.destroy();
+    if (!append && !pageCached) {
+      const msg = e?.name === 'AbortError' ? 'Search timed out' : (e?.message || 'Search failed');
+      grid.innerHTML = `<div class="email-loading" style="color:var(--color-warning);">${_esc(msg)}</div>`;
+    }
   }
 }
 
@@ -1682,7 +1820,7 @@ async function _refreshUnreadBadge() {
   } catch (_) { _syncUnreadTabBadge(0); }
 }
 
-async function _loadEmails({ force = false, useCache = true } = {}) {
+async function _loadEmails({ force = false, useCache = true, append = false } = {}) {
   const seq = ++_libLoadSeq;
   state._libLoading = true;
   const accountAtStart = state._libAccountId || '';
@@ -1695,6 +1833,10 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
   const grid = document.getElementById('email-lib-grid');
   if (!grid) { if (seq === _libLoadSeq) state._libLoading = false; return; }
 
+  const pagePrefix = `${accountAtStart}|${folderAtStart}|${filterAtStart}|${hasAttachmentsAtStart ? 1 : 0}`;
+  const pageCk = _pageCacheKey(pagePrefix, offsetAtStart);
+  const pageCached = _pageCacheGet(_libPageCache, pageCk);
+
   // SWR: when loading the first page of a real folder with no search,
   // paint the cached list immediately (no spinner, no blank grid) and
   // then quietly refetch behind it. Pagination, search, and the
@@ -1706,19 +1848,21 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
   const cacheable =
     offsetAtStart === 0 &&
     !searchAtStart &&
-    folderAtStart !== '__scheduled__';
+    folderAtStart !== '__scheduled__' &&
+    !append;
   const ck = cacheable ? _libCacheKey() : null;
-  const cached = (useCache && cacheable) ? _libCacheGet(ck) : null;
+  const cached = (useCache && cacheable && !pageCached) ? _libCacheGet(ck) : null;
 
   let sp = null;
-  if (cached) {
+  if (pageCached) {
+    state._libEmails = pageCached.emails.slice();
+    state._libTotal = pageCached.total || 0;
+    state._libJustOpened = false;
+    _renderGrid();
+    _prefetchPages(offsetAtStart);
+  } else if (cached) {
     state._libEmails = cached.emails || [];
     state._libTotal = cached.total || 0;
-    // Suppress the open-cascade animation when we're painting from
-    // cache — the data was already on screen a moment ago, so sliding
-    // each card in fresh feels janky. Also prevents the cascade from
-    // re-firing when the bg refetch lands within the 900ms cleanup
-    // window and appends new card nodes into the still-classed grid.
     state._libJustOpened = false;
     const grid2 = document.getElementById('email-lib-grid');
     if (grid2) grid2.classList.remove('email-lib-just-opened');
@@ -1746,28 +1890,188 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
       const [mainData, unreadData] = await Promise.all([mainRes.json(), unreadRes.json()]);
       if (seq !== _libLoadSeq || accountAtStart !== (state._libAccountId || '')) return;
       if (mainData.error) throw new Error(mainData.error);
-      state._libEmails = mainData.emails || [];
-      state._libTotal = mainData.total || 0;
+      const newEmails = mainData.emails || [];
+      const newTotal = mainData.total || 0;
+      state._libTotal = newTotal;
+      if (append) {
+        state._libEmails.push(...newEmails);
+      } else {
+        state._libEmails = newEmails;
+      }
       state._unreadUids = new Set((unreadData.emails || []).map(e => String(e.uid)));
       if (sp) sp.destroy();
       _renderGrid();
       const stats = document.getElementById('email-lib-stats');
-      if (stats) stats.textContent = `${state._libTotal} emails`;
+      if (stats) stats.textContent = `${state._libEmails.length} / ${state._libTotal} emails`;
       _refreshUnreadBadge();
-      if (cacheable) _libCachePut(ck, { emails: state._libEmails.slice(), total: state._libTotal });
+      _pageCachePut(_libPageCache, pageCk, { emails: newEmails, total: newTotal });
+      _prefetchPages(offsetAtStart);
+      if (cacheable && !append) _libCachePut(ck, { emails: state._libEmails.slice(), total: state._libTotal });
     }
   } catch (e) {
     if (seq !== _libLoadSeq || accountAtStart !== (state._libAccountId || '')) return;
     if (sp) sp.destroy();
     // If we already painted the cached list, leave it on screen — beats
     // wiping it for "Failed to load" when there's still readable content.
-    if (!cached) {
+    if (!cached && !pageCached) {
       const msg = e && e.message ? `Failed to load: ${e.message}` : 'Failed to load';
       grid.innerHTML = `<div class="email-loading">${_esc(msg)}${_emailSetupHintHtml()}</div>`;
       _wireEmailSetupHint(grid);
     }
   } finally {
     if (seq === _libLoadSeq) state._libLoading = false;
+  }
+}
+
+const _PAGE_LIMIT = 100;
+
+function _pageCacheKey(prefix, offset) {
+  return `${prefix}|${offset}`;
+}
+
+function _pageCachePut(cache, key, value) {
+  cache.delete(key);
+  cache.set(key, value);
+  if (cache.size > _LIB_PAGE_CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    cache.delete(oldest);
+  }
+}
+
+function _pageCacheGet(cache, key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  return entry;
+}
+
+function _pageFromOffset(offset) {
+  return Math.floor(offset / _PAGE_LIMIT) + 1;
+}
+
+function _totalPages(total) {
+  return Math.max(1, Math.ceil((total || 0) / _PAGE_LIMIT));
+}
+
+function _renderPagination() {
+  const pagEl = document.getElementById('email-lib-pagination');
+  const prevBtn = document.getElementById('email-pag-prev');
+  const nextBtn = document.getElementById('email-pag-next');
+  const infoEl = document.getElementById('email-pag-info');
+  if (!pagEl || !prevBtn || !nextBtn || !infoEl) return;
+
+  const isSearch = !!state._libSearch.trim();
+  const currentOffset = isSearch ? (state._libSearchOffset || 0) : (state._libOffset || 0);
+  const total = isSearch ? (state._libSearchTotal || 0) : state._libTotal;
+  const currentPage = _pageFromOffset(currentOffset);
+  const pages = _totalPages(total);
+
+  if (total === 0 || pages <= 1) {
+    pagEl.style.display = 'none';
+    return;
+  }
+
+  pagEl.style.display = '';
+  prevBtn.style.display = '';
+  nextBtn.style.display = '';
+  prevBtn.disabled = currentPage <= 1;
+  nextBtn.disabled = currentPage >= pages;
+  infoEl.textContent = `${currentPage} / ${pages}`;
+}
+
+let _libLastPrefetchAt = 0;
+function _setPrefetchDot(active) {
+  const dot = document.getElementById('email-pag-prefetch-dot');
+  if (dot) dot.style.display = active ? 'inline-block' : 'none';
+}
+async function _prefetchPages(currentOffset) {
+  const now = Date.now();
+  if (now - _libLastPrefetchAt < 3000) return;
+  if (_libPrefetchTimer) return;
+  _libPrefetchTimer = setTimeout(async () => {
+    _libPrefetchTimer = null;
+    _libLastPrefetchAt = Date.now();
+    const isSearch = !!state._libSearch.trim();
+    const cache = isSearch ? _libSearchPageCache : _libPageCache;
+    const prefix = isSearch
+      ? `${state._libAccountId || ''}|${state._libFolder || 'INBOX'}|${state._libSearch.trim()}`
+      : `${state._libAccountId || ''}|${state._libFolder || 'INBOX'}|${state._libFilter || 'all'}|${state._libHasAttachments ? 1 : 0}`;
+    const total = isSearch ? (state._libSearchTotal || 0) : state._libTotal;
+
+    const offsets = [currentOffset + _PAGE_LIMIT, currentOffset + _PAGE_LIMIT * 2];
+    let anyFetched = false;
+    for (const nextOffset of offsets) {
+      if (nextOffset <= 0 || nextOffset >= total) continue;
+      const ck = _pageCacheKey(prefix, nextOffset);
+      if (_pageCacheGet(cache, ck)) continue;
+      anyFetched = true;
+      _setPrefetchDot(true);
+      try {
+        const controller = new AbortController();
+        const to = setTimeout(() => controller.abort(), 8000);
+        const accountQS = state._libAccountId ? `&account_id=${encodeURIComponent(state._libAccountId)}` : '';
+        const url = isSearch
+          ? `${API_BASE}/api/email/search?folder=${encodeURIComponent(state._libFolder || 'INBOX')}${accountQS}&q=${encodeURIComponent(state._libSearch.trim())}&limit=${_PAGE_LIMIT}&offset=${nextOffset}`
+          : `${API_BASE}/api/email/list?folder=${encodeURIComponent(state._libFolder || 'INBOX')}${accountQS}&limit=${_PAGE_LIMIT}&offset=${nextOffset}&filter=${state._libFilter || 'all'}${state._libHasAttachments ? '&has_attachments=1' : ''}`;
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(to);
+        if (res.ok) {
+          const data = await res.json();
+          if (!data.error) {
+            _pageCachePut(cache, ck, { emails: data.emails || [], total: data.total || 0 });
+          }
+        }
+      } catch (_) {}
+    }
+    _setPrefetchDot(false);
+  }, 2500);
+}
+
+async function _goToPage(delta) {
+  if (state._libLoading) return;
+  const isSearch = !!state._libSearch.trim();
+  const currentOffset = isSearch ? (state._libSearchOffset || 0) : (state._libOffset || 0);
+  const newOffset = currentOffset + delta * _PAGE_LIMIT;
+  const total = isSearch ? (state._libSearchTotal || 0) : state._libTotal;
+  if (newOffset < 0 || newOffset >= total) return;
+
+  const cache = isSearch ? _libSearchPageCache : _libPageCache;
+  const prefix = isSearch
+    ? `${state._libAccountId || ''}|${state._libFolder || 'INBOX'}|${state._libSearch.trim()}`
+    : `${state._libAccountId || ''}|${state._libFolder || 'INBOX'}|${state._libFilter || 'all'}|${state._libHasAttachments ? 1 : 0}`;
+  const ck = _pageCacheKey(prefix, newOffset);
+  const cached = _pageCacheGet(cache, ck);
+
+  if (cached) {
+    state._libEmails = cached.emails.slice();
+    if (isSearch) {
+      state._libSearchTotal = cached.total || total;
+      state._libSearchOffset = newOffset;
+    } else {
+      state._libTotal = cached.total || total;
+      state._libOffset = newOffset;
+    }
+    _renderGrid();
+    _prefetchPages(newOffset);
+    return;
+  }
+
+  const prevOffset = currentOffset;
+  if (isSearch) {
+    state._libSearchOffset = newOffset;
+    try {
+      await _doSearch({ append: false, skipCache: true });
+    } catch (_) {
+      state._libSearchOffset = prevOffset;
+      _renderPagination();
+    }
+  } else {
+    state._libOffset = newOffset;
+    try {
+      await _loadEmails({ append: false, useCache: false });
+    } catch (_) {
+      state._libOffset = prevOffset;
+      _renderPagination();
+    }
   }
 }
 
@@ -1914,6 +2218,8 @@ function _renderGrid() {
       }
     }
   }
+
+  _renderPagination();
 }
 
 function _createCard(em) {

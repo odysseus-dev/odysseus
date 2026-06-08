@@ -21,7 +21,10 @@ export const state = {
   _libAccountId: null,           // null = backend default account
   _libAccounts: [],              // list of accounts for the chip strip
   _libPendingExpandUid: null,
-  _libSearch: '',
+  _libSearch: '',              // committed server-side search query
+  _libFilterText: '',           // realtime local filter text
+  _libSearchOffset: 0,
+  _libSearchTotal: 0,
   _libFilter: 'all',             // all, unread, unanswered
   _libSort: 'recent',            // recent, unread, favorites
   _libHasAttachments: false,
