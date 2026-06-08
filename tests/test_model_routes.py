@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from fastapi import HTTPException
 
 from tests.helpers.import_state import clear_fake_endpoint_resolver_modules, preserve_import_state
 
@@ -1271,6 +1272,24 @@ def test_background_refresh_failure_keeps_existing_cached_models(monkeypatch):
     assert _wait_for(lambda: db.commits > 0)
     assert result["items"][0]["models"] == ["cached-model"]
     assert json.loads(ep.cached_models) == ["cached-model"]
+
+
+def test_api_models_auth_gate_fails_closed_on_unexpected_error(monkeypatch):
+    """A non-HTTPException raised while checking auth must yield 500, not a
+    silent pass-through that leaks the model list to an unauthenticated caller."""
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "_auth_disabled", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user=None),
+        app=SimpleNamespace(state=SimpleNamespace(auth_manager=SimpleNamespace(is_configured=True))),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        _route_endpoint(router, "/api/models")(request)
+
+    assert exc.value.status_code == 500
 
 
 def test_llm_core_list_model_ids_uses_cached_configured_proxy(monkeypatch):
