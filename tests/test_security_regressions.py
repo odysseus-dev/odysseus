@@ -946,7 +946,7 @@ def _import_mcp_routes():
 
 def test_mcp_oauth_paths_resolve_under_data_dir(tmp_path, monkeypatch):
     mcp_routes = _import_mcp_routes()
-    monkeypatch.setattr(mcp_routes, "DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(mcp_routes, "MCP_OAUTH_DIR", str(tmp_path / "data" / "mcp_oauth"))
 
     resolved = Path(mcp_routes._resolve_mcp_oauth_path("gmail/credentials.json", "token_file"))
 
@@ -963,7 +963,7 @@ def test_mcp_oauth_paths_reject_escapes(tmp_path, monkeypatch, raw_path):
     from fastapi import HTTPException
 
     mcp_routes = _import_mcp_routes()
-    monkeypatch.setattr(mcp_routes, "DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(mcp_routes, "MCP_OAUTH_DIR", str(tmp_path / "data" / "mcp_oauth"))
 
     with pytest.raises(HTTPException) as exc:
         mcp_routes._resolve_mcp_oauth_path(raw_path, "token_file")
@@ -974,7 +974,7 @@ def test_mcp_oauth_filename_join_cannot_escape_base(tmp_path, monkeypatch):
     from fastapi import HTTPException
 
     mcp_routes = _import_mcp_routes()
-    monkeypatch.setattr(mcp_routes, "DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(mcp_routes, "MCP_OAUTH_DIR", str(tmp_path / "data" / "mcp_oauth"))
 
     safe_dir = mcp_routes._resolve_mcp_oauth_path("gmail", "dir")
     with pytest.raises(HTTPException):
@@ -983,7 +983,7 @@ def test_mcp_oauth_filename_join_cannot_escape_base(tmp_path, monkeypatch):
 
 def test_mcp_oauth_config_sanitizes_paths_and_env(tmp_path, monkeypatch):
     mcp_routes = _import_mcp_routes()
-    monkeypatch.setattr(mcp_routes, "DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(mcp_routes, "MCP_OAUTH_DIR", str(tmp_path / "data" / "mcp_oauth"))
 
     cfg = mcp_routes._sanitize_mcp_oauth_config({
         "provider": "google",

@@ -9,25 +9,15 @@ Tokyo user) and left is_utc inconsistent. The do_manage_notes update path
 was already fixed for the analogous issue.
 """
 import json
-import tempfile
 import uuid
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import NullPool
 
 import core.database as cdb
 from core.database import CalendarEvent
+from tests.helpers.sqlite_db import make_temp_sqlite
 
-_TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-_ENGINE = create_engine(
-    f"sqlite:///{_TMPDB.name}",
-    connect_args={"check_same_thread": False},
-    poolclass=NullPool,
-)
-cdb.Base.metadata.create_all(_ENGINE)
-_TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
+_TS, _ENGINE, _TMPDB = make_temp_sqlite(cdb.Base.metadata)
 
 
 @pytest.fixture(autouse=True)

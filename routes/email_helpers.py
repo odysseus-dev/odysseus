@@ -254,16 +254,17 @@ def _cleanup_compose_uploads(tokens) -> None:
             pass
 
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-SETTINGS_FILE = DATA_DIR / "settings.json"
+from src.constants import DATA_DIR as _DATA_DIR, MAIL_ATTACHMENTS_DIR, SETTINGS_FILE as _SETTINGS_FILE, SCHEDULED_EMAILS_DB
+DATA_DIR = Path(_DATA_DIR)
+SETTINGS_FILE = Path(_SETTINGS_FILE)
 # Override at deploy time via ODYSSEUS_MAIL_ATTACHMENTS_DIR. Defaults to a
 # subdir of the install's data/ tree so the app works out-of-the-box without
 # a hardcoded /home/<user>/ path.
-ATTACHMENTS_DIR = Path(os.environ.get("ODYSSEUS_MAIL_ATTACHMENTS_DIR", str(DATA_DIR / "mail-attachments")))
+ATTACHMENTS_DIR = Path(MAIL_ATTACHMENTS_DIR)
 ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 COMPOSE_UPLOADS_DIR = ATTACHMENTS_DIR / "_compose"
 COMPOSE_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-SCHEDULED_DB = DATA_DIR / "scheduled_emails.db"
+SCHEDULED_DB = Path(SCHEDULED_EMAILS_DB)
 
 
 OWNER_SCOPED_EMAIL_CACHE_TABLES = {
@@ -714,6 +715,10 @@ def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int 
         conn.sock.settimeout(timeout)
     except Exception:
         pass
+    # Raise the IMAP line-length limit from the default 1 MB to 50 MB so that
+    # large mailboxes (tens of thousands of messages) don't crash with
+    # "got more than 1000000 bytes" on UID SEARCH ALL.  (#2883)
+    imaplib._MAXLINE = 50_000_000
     return conn
 
 def _imap_connect(account_id: str | None = None, owner: str = ""):
@@ -798,20 +803,28 @@ def _imap(account_id: str | None = None, owner: str = ""):
 def _decode_header(raw):
     if not raw:
         return ""
-    parts = email.header.decode_header(raw)
-    decoded = []
-    for data, charset in parts:
-        if isinstance(data, bytes):
-            try:
-                decoded.append(data.decode(charset or "utf-8", errors="replace"))
-            except (LookupError, ValueError):
-                # Unknown/invalid MIME charset (e.g. a malformed or spam header
-                # like =?x-unknown-charset?B?...?=). errors="replace" only covers
-                # byte-decode errors, not codec lookup, so fall back to utf-8.
-                decoded.append(data.decode("utf-8", errors="replace"))
-        else:
-            decoded.append(data)
-    return " ".join(decoded)
+    try:
+        # make_header concatenates per RFC 2047: no spurious space between an
+        # encoded-word and adjacent plain text (plain runs keep their own
+        # whitespace), and the whitespace between two adjacent encoded-words is
+        # dropped. The old " ".join produced "Re:  Jose"-style double spaces on
+        # every non-ASCII subject or sender.
+        return str(email.header.make_header(email.header.decode_header(raw)))
+    except Exception:
+        # Malformed header or unknown/invalid MIME charset (e.g. a spam header
+        # like =?x-unknown-charset?B?...?=) makes make_header raise LookupError;
+        # fall back to a lossy per-part decode. errors="replace" only covers
+        # byte-decode errors, not codec lookup, hence the explicit utf-8 retry.
+        decoded = []
+        for data, charset in email.header.decode_header(raw):
+            if isinstance(data, bytes):
+                try:
+                    decoded.append(data.decode(charset or "utf-8", errors="replace"))
+                except (LookupError, ValueError):
+                    decoded.append(data.decode("utf-8", errors="replace"))
+            else:
+                decoded.append(data)
+        return "".join(decoded)
 
 
 def _detect_sent_folder(conn):
@@ -1136,13 +1149,9 @@ def _fetch_sender_thread_context(sender_addr: str,
     if exclude_uid:
         seen_uids.add((exclude_folder or "INBOX", str(exclude_uid)))
 
+    conn = None
     try:
         conn = _imap_connect(account_id, owner=owner)
-    except Exception as e:
-        logger.warning(f"sender-thread-context: imap connect failed: {e}")
-        return ""
-
-    try:
         for folder in ["INBOX", "Sent", "Archive", "Drafts"]:
             if len(blocks) >= limit:
                 break
@@ -1209,11 +1218,14 @@ def _fetch_sender_thread_context(sender_addr: str,
                 if atts_text:
                     lines.append(atts_text)
                 blocks.append("\n".join(lines))
+    except Exception as e:
+        logger.warning(f"sender-thread-context: imap failed: {e}")
     finally:
-        try: conn.close()
-        except Exception: pass
-        try: conn.logout()
-        except Exception: pass
+        if conn:
+            try: conn.close()
+            except Exception: pass
+            try: conn.logout()
+            except Exception: pass
 
     if not blocks:
         return ""
@@ -1316,6 +1328,7 @@ def _pre_retrieve_context(
         if not terms_list:
             return context_snippets, terms_list
 
+        ctx_conn = None
         try:
             ctx_conn = _imap_connect(account_id, owner=owner)
             for folder in ["INBOX", "Sent", "Archive", "Drafts"]:
@@ -1352,12 +1365,12 @@ def _pre_retrieve_context(
                     except Exception as _e:
                         logger.warning(f"  search {folder} {term!r} failed: {_e}")
                         continue
-            try:
-                ctx_conn.logout()
-            except Exception:
-                pass
         except Exception as _e:
             logger.warning(f"IMAP context search failed: {_e}")
+        finally:
+            if ctx_conn:
+                try: ctx_conn.logout()
+                except Exception: pass
 
         try:
             from routes.contacts_routes import _fetch_contacts

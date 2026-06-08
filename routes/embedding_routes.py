@@ -7,12 +7,12 @@ import logging
 import asyncio
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Form, Depends
-from core.constants import BASE_DIR
+from core.constants import EMBEDDING_ENDPOINT_FILE, FASTEMBED_CACHE_DIR
 from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
 
-_ENDPOINT_FILE = os.path.join(BASE_DIR, "data", "embedding_endpoint.json")
+_ENDPOINT_FILE = EMBEDDING_ENDPOINT_FILE
 
 # Track in-progress downloads
 _downloading: dict = {}
@@ -35,13 +35,7 @@ def _cache_dir() -> str:
     default lived in /tmp, which many systems wipe on reboot — forcing a
     full re-download of the embedding model after every restart.
     """
-    env = os.environ.get("FASTEMBED_CACHE_PATH")
-    if env:
-        return env
-    return os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "data", "fastembed_cache",
-    )
+    return FASTEMBED_CACHE_DIR
 
 
 def _model_cache_name(hf_source: str) -> str:
@@ -316,6 +310,16 @@ def setup_embedding_routes():
             reset_http_embed_state()
         except Exception:
             pass
+        try:
+            from src.embedding_lanes import reset_embedding_lane_state
+            reset_embedding_lane_state()
+        except Exception:
+            pass
+        try:
+            from src.tool_index import reset_tool_index
+            reset_tool_index()
+        except Exception:
+            pass
 
         # Reset ChromaDB client (collections will be recreated with new embeddings)
         try:
@@ -345,6 +349,16 @@ def setup_embedding_routes():
         try:
             from src.embeddings import reset_http_embed_state
             reset_http_embed_state()
+        except Exception:
+            pass
+        try:
+            from src.embedding_lanes import reset_embedding_lane_state
+            reset_embedding_lane_state()
+        except Exception:
+            pass
+        try:
+            from src.tool_index import reset_tool_index
+            reset_tool_index()
         except Exception:
             pass
 
