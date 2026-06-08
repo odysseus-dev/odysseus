@@ -105,6 +105,77 @@ def test_ollama_payload_leaves_plain_messages_untouched():
     assert payload["messages"][0] == {"role": "user", "content": "hello"}
 
 
+# ---------------------------------------------------------------------------
+# Multimodal (vision) content shaping for native Ollama (issue #3313)
+#
+# A vision turn arrives as an OpenAI-style content *array*
+# ([{type:text,...}, {type:image_url, image_url:{url:"data:image/png;base64,XXX"}}]).
+# Native Ollama /api/chat wants `content` as a plain string with images carried
+# in a sibling `images` array of raw base64; given the array it 400s with
+# "cannot unmarshal array into Go struct field ChatRequest.messages.content of
+# type string", so _build_ollama_payload must flatten it.
+# ---------------------------------------------------------------------------
+
+def test_ollama_payload_flattens_multimodal_to_string_and_images():
+    msgs = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "What is in this image?"},
+            {"type": "image_url",
+             "image_url": {"url": "data:image/png;base64,AAAABBBB"}},
+        ],
+    }]
+    payload = llm_core._build_ollama_payload(
+        "qwen3-vl", msgs, temperature=0.0, max_tokens=0,
+    )
+    msg = payload["messages"][0]
+    # content must be a plain string, not the OpenAI array.
+    assert msg["content"] == "What is in this image?"
+    assert not isinstance(msg["content"], list)
+    # image moves to a sibling `images` array, data-URI prefix stripped.
+    assert msg["images"] == ["AAAABBBB"]
+
+
+def test_ollama_payload_joins_multiple_text_blocks_keeps_images():
+    msgs = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "first"},
+            {"type": "image_url",
+             "image_url": {"url": "data:image/jpeg;base64,IMG"}},
+            {"type": "text", "text": "second"},
+        ],
+    }]
+    payload = llm_core._build_ollama_payload("m", msgs, temperature=0.0, max_tokens=0)
+    msg = payload["messages"][0]
+    assert msg["content"] == "first\nsecond"
+    assert msg["images"] == ["IMG"]
+
+
+def test_ollama_payload_image_only_message_has_empty_content():
+    msgs = [{
+        "role": "user",
+        "content": [
+            {"type": "image_url",
+             "image_url": {"url": "data:image/webp;base64,ONLYIMG"}},
+        ],
+    }]
+    payload = llm_core._build_ollama_payload("m", msgs, temperature=0.0, max_tokens=0)
+    msg = payload["messages"][0]
+    assert msg["content"] == ""
+    assert msg["images"] == ["ONLYIMG"]
+
+
+def test_ollama_payload_text_only_array_collapses_without_images_key():
+    # A content array carrying only text collapses to a string; no images key is
+    # added (Ollama rejects an empty images array on some server versions).
+    msgs = [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]
+    payload = llm_core._build_ollama_payload("m", msgs, temperature=0.0, max_tokens=0)
+    msg = payload["messages"][0]
+    assert msg["content"] == "hi"
+    assert "images" not in msg
+
+
 def test_ollama_payload_tolerates_malformed_arguments():
     msgs = [{
         "role": "assistant",
