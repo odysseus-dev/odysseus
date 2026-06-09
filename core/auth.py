@@ -244,6 +244,22 @@ class AuthManager:
                 return False
             if not self.users.get(requesting_user, {}).get("is_admin"):
                 return False
+            # Revoke API bearer tokens before removing the auth row. The bearer
+            # path authenticates from ApiToken rows and does not require the
+            # owner to still exist, so a successful delete must not leave active
+            # rows behind. If the token store is unavailable, fail closed and
+            # keep the user/session state intact so the admin can retry.
+            try:
+                from core.database import get_db_session, ApiToken
+                with get_db_session() as db:
+                    removed_tokens = db.query(ApiToken).filter(ApiToken.owner == username).delete()
+                if removed_tokens:
+                    logger.info(
+                        f"Revoked {removed_tokens} API token(s) owned by deleted user '{username}'"
+                    )
+            except Exception:
+                logger.warning(f"Failed to revoke API tokens for deleted user '{username}'")
+                return False
             del self._config["users"][username]
             self._save()
         # Purge all sessions belonging to this user. validate_token doesn't
@@ -258,18 +274,6 @@ class AuthManager:
                 revoked += 1
         if revoked:
             self._save_sessions()
-        # Also revoke API bearer tokens owned by this user. The bearer auth
-        # path authenticates straight against ApiToken rows and never
-        # re-checks that the owner still exists, so leaving the rows behind
-        # would let a deleted user keep full API access indefinitely.
-        try:
-            from core.database import get_db_session, ApiToken
-            with get_db_session() as db:
-                removed = db.query(ApiToken).filter(ApiToken.owner == username).delete()
-            if removed:
-                logger.info(f"Revoked {removed} API token(s) owned by deleted user '{username}'")
-        except Exception:
-            logger.warning(f"Failed to revoke API tokens for deleted user '{username}'")
         logger.info(f"Deleted user '{username}' (by {requesting_user}); revoked {revoked} active session(s)")
         return True
 
