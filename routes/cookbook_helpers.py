@@ -109,6 +109,14 @@ def _validate_local_dir(v: str | None) -> str | None:
     v = v.rstrip("/") or "/"
     if not (_LOCAL_DIR_RE.match(v) or _WINDOWS_LOCAL_DIR_RE.match(v)):
         raise HTTPException(400, "Invalid local_dir — must be an absolute or ~ path with no shell metacharacters")
+    # Reject path segments that start with '-' (option injection). '-' is in the
+    # allowlist, so a dir like ``/models/-rf`` or ``D:\models\-rf`` could be read
+    # as a CLI flag by hf/etc. — and quoting does NOT stop a value from being
+    # parsed as an option. This is the one residual that command-build-time
+    # quoting can't cover, so the guard lives here, keeping the safety wholly
+    # inside the validator rather than relying on consumers.
+    if any(seg.startswith("-") for seg in re.split(r"[\\/]", v) if seg):
+        raise HTTPException(400, "Invalid local_dir — path segments cannot start with '-'")
     return v
 
 

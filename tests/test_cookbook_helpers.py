@@ -180,6 +180,21 @@ def test_validate_local_dir_rejects_metacharacters_in_unicode_paths():
             _validate_local_dir(path)
 
 
+def test_validate_local_dir_rejects_leading_dash_segments():
+    # A path segment starting with '-' could be parsed as a CLI option by hf/etc.
+    # (option injection) even when quoted, since quoting doesn't stop a value from
+    # being read as a flag. The validator must reject it on every platform.
+    for path in [
+        "/models/-rf",
+        "/models/-rf/llamacpp",
+        "/-oStrictHostKeyChecking=no",
+        r"D:\models\-rf",
+        "D:/models/-rf",
+    ]:
+        with pytest.raises(HTTPException):
+            _validate_local_dir(path)
+
+
 def test_validate_gpus_accepts_indexes_only():
     assert _validate_gpus("0,1,2") == "0,1,2"
     with pytest.raises(HTTPException):
