@@ -11,6 +11,7 @@ import shlex
 from fastapi import HTTPException
 from pydantic import BaseModel
 
+from routes._validators import validate_remote_host, validate_ssh_port
 from core.platform_compat import _ssh_exec_argv
 
 logger = logging.getLogger(__name__)
@@ -30,16 +31,12 @@ _LOCAL_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _OLLAMA_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,200}$")
 # Include pattern is a glob: allow typical safe glyphs only.
 _INCLUDE_RE = re.compile(r"^[A-Za-z0-9._\-*?/\[\]]+$")
-# Remote host: either `user@host` or plain `host` (alias is allowed), where host
-# is a safe DNS-like token or a short SSH config alias.
-_REMOTE_HOST_RE = re.compile(r"^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+$")
 # HF tokens and API tokens are url-safe base64-like.
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9._~+/=-]+$")
 # Session IDs we mint look like "cookbook-deadbeef" or "serve-deadbeef".
 # Anything beyond plain alphanumerics + dash + underscore could break out
 # of the shell/PowerShell contexts the value lands in.
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-_SSH_PORT_RE = re.compile(r"^\d{1,5}$")
 _GPU_LIST_RE = re.compile(r"^\d+(?:,\d+)*$")
 # A download target directory. Absolute or ~-relative path; safe path glyphs
 # only (no quotes or shell metacharacters). Spaces are allowed because command
@@ -85,14 +82,6 @@ def _validate_include(v: str | None) -> str | None:
     return v
 
 
-def _validate_remote_host(v: str | None) -> str | None:
-    if v is None or v == "":
-        return None
-    if not _REMOTE_HOST_RE.match(v):
-        raise HTTPException(400, "Invalid remote_host — must be host or user@host, no SSH option syntax")
-    return v
-
-
 def _validate_token(v: str | None) -> str | None:
     if v is None or v == "":
         return None
@@ -118,17 +107,6 @@ def _validate_local_dir(v: str | None) -> str | None:
     if any(seg.startswith("-") for seg in re.split(r"[\\/]", v) if seg):
         raise HTTPException(400, "Invalid local_dir — path segments cannot start with '-'")
     return v
-
-
-def _validate_ssh_port(v: str | None) -> str | None:
-    if v is None or v == "":
-        return None
-    if not _SSH_PORT_RE.fullmatch(str(v)):
-        raise HTTPException(400, "Invalid ssh_port")
-    port = int(v)
-    if port < 1 or port > 65535:
-        raise HTTPException(400, "Invalid ssh_port")
-    return str(port)
 
 
 def _validate_gpus(v: str | None) -> str | None:
