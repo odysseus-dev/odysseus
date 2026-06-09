@@ -311,3 +311,91 @@ Odysseus employs standard and GPU-accelerated Docker builds along with native OS
 - **Docker Compose Profiles (`docker-compose.gpu-nvidia.yml`, `docker-compose.gpu-amd.yml`)**: Extend the base deployment with passthrough configuration for hardware acceleration.
 - **Native Launchers (`launch-windows.ps1`, `start-macos.sh`)**: Automate Venv creation, dependency installation, and server binding on native OSes.
 - **Task Scheduler (`src/task_scheduler.py`, `src/bg_jobs.py`)**: Background loops that execute delayed actions, background research runs, ping reminders, and cron-scheduled tasks.
+
+---
+
+## 18. Deep Dive: Core Utilities (`core/`)
+
+The core utilities manage foundational backend state, security, and process infrastructure.
+
+```mermaid
+graph TD
+    App[FastAPI application] --> Auth[core/auth.py]
+    App --> SessionMan[core/session_manager.py]
+    App --> Security[core/middleware.py]
+    SessionMan --> DB[(SQLite Database core/database.py)]
+    Auth --> DB
+    Security --> Headers[SecurityHeadersMiddleware]
+```
+
+### Components
+- **Session Management (`core/session_manager.py`)**: A centralized state machine holding in-memory references to user chat sessions and synchronizing them with SQLite. This module guarantees the transaction lifecycle, archiving inactive chats, tracking history, and purging deleted threads gracefully.
+- **Authentication (`core/auth.py`)**: Provides security logic for the web application and external integrations. It handles Bearer tokens for API integrations and user TOTP secrets.
+- **Security Middleware (`core/middleware.py`)**: Applies the `SecurityHeadersMiddleware`, issuing strict CSP boundaries, denying framing unless accessing specific isolated endpoints (like PDF previewers), and handling loopback agent requests securely.
+- **Platform Compatibility & Atomic IO (`core/platform_compat.py`, `core/atomic_io.py`)**: Tools for writing files atomically, safely spawning processes across Windows/Linux, translating paths over WSL boundaries, and resolving execution environments.
+
+---
+
+## 19. Deep Dive: Background Services (`services/`)
+
+The internal architecture separates discrete background jobs into standalone, stateless modules. These modules serve external integration requests triggered by the agent loop or via direct route access.
+
+```mermaid
+graph TD
+    Agent[Agent Loop] --> Shell[services/shell/service.py]
+    Agent --> Youtube[services/youtube/youtube_handler.py]
+    Client[Web Client] --> AudioIn[services/stt/stt_service.py]
+    Client --> AudioOut[services/tts/tts_service.py]
+    AudioOut --> Kokoro[Local Kokoro-82M model]
+    AudioIn --> Whisper[Local faster-whisper model]
+    Youtube --> YTDLP[yt-dlp]
+```
+
+### Components
+- **Shell Executor (`services/shell/`)**: Provides controlled subprocess execution capabilities complete with streaming outputs and rigid execution timeouts. Used to implement the "bash" native tool.
+- **Speech Processing (`services/stt/`, `services/tts/`)**: Wraps speech-to-text (Whisper/Browser API) and text-to-speech (Kokoro-82M on GPU/API endpoints). Integrates transparent fallback if models fail to load or aren't installed locally.
+- **YouTube Handler (`services/youtube/`)**: Employs `youtube_transcript_api` and `yt-dlp` to asynchronously pull video transcripts and high-voted comments for deep content context injection into the LLM.
+
+---
+
+## 20. Deep Dive: Built-in MCP Servers (`mcp_servers/`)
+
+Odysseus uses the **Model Context Protocol (MCP)** to register native functionalities into the LLM prompt. These servers act directly on the local database and API, standardizing internal functions as tools.
+
+```mermaid
+graph TD
+    Loop[Agent Loop] --> MCPManager[src/mcp_manager.py]
+    MCPManager --> Memory[mcp_servers/memory_server.py]
+    MCPManager --> RAG[mcp_servers/rag_server.py]
+    MCPManager --> Email[mcp_servers/email_server.py]
+    MCPManager --> Image[mcp_servers/image_gen_server.py]
+    Memory --> MemoryService[services/memory/memory.py]
+    RAG --> RAGManager[src/rag_manager.py]
+    Image --> ImageProvider[OpenAI Compatible API]
+```
+
+### Components
+- **Memory Server (`mcp_servers/memory_server.py`)**: Exposes facts, preferences, and events. Directly bridges to `MemoryManager` to index new vectors or delete outdated recollections.
+- **RAG Server (`mcp_servers/rag_server.py`)**: Gives the agent control over the semantic store, enabling it to add or remove paths from its own search index based on user instructions.
+- **Email Server (`mcp_servers/email_server.py`)**: A massive suite of endpoints allowing the AI to query IMAP folders, download file attachments, and compose replies over SMTP.
+- **Image Generation (`mcp_servers/image_gen_server.py`)**: Proxies image generation commands to configured models (e.g., Dall-E 3, SDXL endpoints), resolving the image and inserting a URL response right back into the chat context.
+
+---
+
+## 21. Deep Dive: Testing and Tooling (`tests/`, `scripts/`)
+
+A robust local environment requires automated regression assurance and operations tooling.
+
+```mermaid
+graph TD
+    TestRunner[Pytest] --> PythonTests[tests/test_*.py]
+    TestRunnerNode[Node.js test] --> StreamingTests[tests/streaming/*.test.mjs]
+    StreamingTests --> Segmenter[static/js/streamingSegmenter.js]
+    CLI[scripts/_lib/cli.py] --> OdyScripts[scripts/odysseus-*]
+    OdyScripts --> Core[Core Python Application]
+```
+
+### Components
+- **Pytest Suite (`tests/`)**: High-coverage Python testing logic isolating the agent, session, search, and uploading modules.
+- **Streaming Invariants (`tests/streaming/`)**: Node.js harness scripts ensuring the Server-Sent Event boundary (`streamingSegmenter.js`) accurately matches equivalent static Markdown rendering paths without leaking mid-generation tags.
+- **Operational CLI (`scripts/`)**: Repositories for standalone CLI ops, from database maintenance (`update_database.py`), headless model indexing (`index_documents.py`), hardware profiling scripts, and GitHub action analyzers (`pr_blocker_audit.py`).
