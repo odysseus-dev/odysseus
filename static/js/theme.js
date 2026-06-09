@@ -35,6 +35,15 @@ export const THEMES = {
   catppuccin_mocha:      { bg:'#1e1e2e', fg:'#cdd6f4', panel:'#181825', border:'#6c7086', red:'#f38ba8' },
 };
 
+const THEME_DISPLAY_NAME_MAP = {
+  dark: 'original',
+  gpt: 'GPT',
+  catppuccin_latte: 'catppuccin latte',
+  catppuccin_frappe: 'catppuccin frappe',
+  catppuccin_macchiato: 'catppuccin macchiato',
+  catppuccin_mocha: 'catppuccin mocha',
+};
+
 const DEFAULT_THEME = 'dark';
 const LS_KEY = 'odysseus-theme';
 const CUSTOM_THEMES_KEY = 'odysseus-custom-themes';
@@ -642,7 +651,7 @@ export function initThemeUI() {
         <span style="background:${c.fg}"></span>
         <span style="background:${c.red}"></span>
       </div>
-      ${name === 'dark' ? 'original' : (name === 'gpt' ? 'GPT' : name)}
+      ${THEME_DISPLAY_NAME_MAP.hasOwnProperty(name) ? THEME_DISPLAY_NAME_MAP[name] : name}
     </div>
   `).join('');
 
