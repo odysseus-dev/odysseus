@@ -55,6 +55,10 @@ if "src.database" not in sys.modules:
     _db.ModelEndpoint = MagicMock()
     sys.modules["src.database"] = _db
 
+# Pre-import core.models before test_agent_loop.py's module-level stubs
+# run (it replaces sys.modules['core.models'] with a MagicMock during
+# collection, which breaks session import in subsequent tests).
+import core.models  # noqa: E402
 
 def pytest_configure(config):
     """Register the dynamic taxonomy ``sub_*`` markers before collection.

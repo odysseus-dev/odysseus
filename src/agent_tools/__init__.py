@@ -18,6 +18,23 @@ from src.tool_utils import _truncate, get_mcp_manager, set_mcp_manager
 
 logger = logging.getLogger(__name__)
 
+from .subprocess_tools import BashTool, PythonTool
+from .web_tools import WebSearchTool, WebFetchTool
+from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool
+
+TOOL_HANDLERS = {
+    "bash": BashTool().execute,
+    "python": PythonTool().execute,
+    "web_search": WebSearchTool().execute,
+    "web_fetch": WebFetchTool().execute,
+    "read_file": ReadFileTool().execute,
+    "write_file": WriteFileTool().execute,
+    "edit_file": EditFileTool().execute,
+    "ls": LsTool().execute,
+    "glob": GlobTool().execute,
+    "grep": GrepTool().execute,
+}
+
 # ---------------------------------------------------------------------------
 # Constants (re-exported for backward compatibility — single source of truth
 # is src.constants; always prefer importing from there for new code)
