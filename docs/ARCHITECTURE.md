@@ -583,18 +583,648 @@ graph TD
 For maintenance, debugging, and offline operations, Odysseus includes a suite of Python CLI tools.
 
 ### Components
-- **CLI Abstraction (`scripts/_lib/cli.py`)**: A generalized module that bootstraps the necessary environment (handling `sys.path` injection and `.env` loading) so scripts can run cleanly without `python -m`.
-- **Maintenance Tools (`odysseus-*`)**: Functional shortcuts for admins to view and modify the database directly from the terminal. Examples include `odysseus-backup`, `odysseus-logs`, `odysseus-mcp`, and `odysseus-preset`.
-- **Headless Migrations & Indexing**: Scripts like `update_database.py` manage Alembic-style ORM schema upgrades automatically. `index_documents.py` forces a headless re-embedding of personal docs into ChromaDB.
-- **CI / Quality Checks (`pr_blocker_audit.py`)**: An automated audit script run during GitHub Actions to statically analyze code for forbidden patterns (like raw `print` statements in production routes or unauthorized global state mutations).
+## 34. Deep Dive: Action Intents & Chat Routing (`src/action_intents.py`)
+
+Odysseus employs a lightweight routing heuristic to determine when a standard chat prompt should be promoted to full "agent mode" (invoking the agent loop and tools).
+
+```mermaid
+graph TD
+    Input[User Prompt] --> Regex[Regex Intent Detection]
+    Regex --> |"can you search...", "read this..."| Agent[Promote to Agent Mode]
+    Regex --> |General question| Chat[Standard Chat Completion]
+    Agent --> LoadTools[Load Tools & System Prompt]
+    Chat --> LLM[LLM Generation]
+```
+
+### Purpose
+To avoid unnecessary LLM overhead, the system uses deterministic regex patterns to detect when a user is explicitly asking the assistant to take an action (e.g., "can you search...", "please read this file...") rather than simply asking a question.
+
+### Mechanics
+- **`ToolIntent`**: A dataclass that evaluates `needs_tools`, `category`, and `reason`.
+- **Patterns**: Scans for phrases like "can you", "would you", or specific verbs ("search", "read", "run") combined with action requests.
+- **Outcome**: If an action intent is detected, the frontend is signaled or the backend automatically escalates the chat into the agent loop, loading the necessary tools and system prompts.
 
 ---
 
-## 33. Deep Dive: Embedding Strategy (`src/embeddings.py`, `src/chroma_client.py`)
+## 35. Deep Dive: Context Compaction (`src/context_compactor.py`)
 
-Odysseus handles vector embeddings (used for RAG and semantic memory) gracefully, balancing API endpoints with local fail-safes.
+To prevent the LLM context window from overflowing during long sessions, Odysseus implements an automatic context compaction mechanism.
 
-### Components
-- **Priority Resolution (`src/embeddings.py`)**: The system first attempts to connect to an external HTTP API (like Ollama, vLLM, or llama.cpp) if `EMBEDDING_URL` is defined in the `.env`. If no external URL is provided, it falls back to a zero-config, embedded ONNX runtime (`fastembed`), using a ~50MB local model (`all-MiniLM-L6-v2` or similar).
-- **Windows Symlink Mitigations**: HuggingFace's caching mechanism relies heavily on symlinks, which often fail on Windows environments (especially network drives/UNC paths) resulting in `[WinError 1463]`. `src/embeddings.py` intercepts this at the top level and forces `HF_HUB_DISABLE_SYMLINKS=1` to ensure ONNX models load reliably on Windows natively.
-- **Chroma Client (`src/chroma_client.py`)**: Abstract client logic ensuring collections exist, configuring the HTTP transport layer, and routing queries either to the standalone Docker ChromaDB instance or an ephemeral client.
+```mermaid
+graph TD
+    History[Conversation History] --> Check[Estimate Token Count]
+    Check --> |Exceeds Threshold| Isolate[Isolate Oldest Messages]
+    Isolate --> Summarize[LLM Summarization Call]
+    Summarize --> DBUpdate[Replace Messages with Summary System Message]
+    DBUpdate --> NewHistory[Compacted Conversation History]
+    Check --> |Within Threshold| Proceed[Continue Normally]
+```
+
+### Purpose
+It ensures that long-running conversations do not crash due to token limits while preserving essential context and historical facts.
+
+### Mechanics
+- **Token Estimation**: Monitors the token count of the conversation history.
+- **Compaction Trigger**: When the context approaches a predefined limit, it isolates the oldest messages.
+- **Summarization**: It uses a fast LLM call (often a smaller model or the current one) to generate a dense summary of the oldest interactions.
+- **State Update**: Replaces the summarized block in the SQLite database with a single "system" message containing the summary, significantly reducing token usage while maintaining narrative continuity.
+
+---
+
+## 36. Deep Dive: Built-in Actions & Scheduled Tasks (`src/builtin_actions.py`)
+
+Odysseus features a registry of native automation actions that can be executed periodically by the task scheduler without needing to spin up an LLM.
+
+```mermaid
+graph TD
+    Scheduler[src/task_scheduler.py] --> Dequeue[Dequeue TaskRun from DB]
+    Dequeue --> Lookup[Lookup Action in builtin_actions.py Registry]
+    Lookup --> Execute[Execute Native Python Function]
+    Execute --> |Success| Mark[Mark Last Run / Next Run]
+    Execute --> |TaskNoop| Skip[Skip Silently]
+```
+
+### Purpose
+Provides reliable, zero-cost execution for routine system maintenance and user-defined scheduled tasks.
+
+### Mechanics
+- **Registry**: Houses predefined python functions mapped to string identifiers (e.g., `system.tidy_calendar`, `system.poll_email`).
+- **`TaskNoop` Exception**: A silent exception used by actions to indicate there was nothing to do (e.g., no new emails, calendar already synced), preventing log spam.
+- **Execution**: The scheduler (`src/task_scheduler.py`) dequeues pending tasks from the database and invokes the corresponding function in `builtin_actions.py`.
+
+---
+
+## 37. Deep Dive: Copilot Provider Support (`src/copilot.py`)
+
+Odysseus integrates natively with GitHub Copilot, allowing users with Copilot subscriptions to use Copilot's backing models as their LLM provider.
+
+```mermaid
+graph LR
+    User[User] --> |Authorizes Device Code| GH[GitHub OAuth]
+    GH --> |access_token| Odysseus
+    Odysseus --> |Headers + Token| CopilotAPI[api.githubcopilot.com/chat/completions]
+```
+
+### Purpose
+To leverage existing Copilot subscriptions without needing a separate OpenAI or Anthropic API key.
+
+### Mechanics
+- **Device Flow Auth**: Implements the GitHub OAuth Device Flow. The user authorizes a device code in their browser, and Odysseus receives a long-lived `access_token`.
+- **API Emulation**: Copilot exposes an OpenAI-compatible endpoint (`/chat/completions`). `copilot.py` manages the injection of required, provider-specific headers (e.g., API version, editor-style User-Agent, and `x-initiator`).
+- **No Exchange Required**: Unlike some integrations, the bearer token is sent directly to the Copilot API without a secondary token exchange.
+
+---
+
+## 38. Known Issues & Future Improvements
+
+While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
+
+### Frontend Monoliths
+- **Large Files**: Core modules like `chat.js` and `document.js` have grown significantly. Refactoring these into smaller, dedicated state machines or leveraging a lightweight reactive store would improve maintainability.
+- **Censoring (`censor.js`)**: The frontend uses regex to detect and blur sensitive information (API keys, passwords) in LLM responses. This is a heuristic approach and could be improved with more robust parsing or moved to a backend middleware for unified enforcement.
+
+### Testing & Stability
+- **Test Coverage**: While critical paths are covered, edge cases in streaming and hardware discovery (`hwfit`) could benefit from deeper integration tests across different OS environments.
+- **Background Jobs**: The `bg_jobs.py` system relies on writing exit-code files to track detached processes. A more robust IPC (Inter-Process Communication) or lightweight queue (like Redis or Celery, though contrary to the zero-config ethos) might be necessary if workloads increase.
+
+### Database Abstraction
+- Currently tightly coupled to SQLite. While SQLite is fantastic for single-user self-hosting, abstracting the ORM to easily support PostgreSQL would enable multi-user scaling or team deployments.
+
+## 34. Deep Dive: Action Intents & Chat Routing (`src/action_intents.py`)
+
+Odysseus employs a lightweight routing heuristic to determine when a standard chat prompt should be promoted to full "agent mode" (invoking the agent loop and tools).
+
+```mermaid
+graph TD
+    Input[User Prompt] --> Regex[Regex Intent Detection]
+    Regex --> |"can you search...", "read this..."| Agent[Promote to Agent Mode]
+    Regex --> |General question| Chat[Standard Chat Completion]
+    Agent --> LoadTools[Load Tools & System Prompt]
+    Chat --> LLM[LLM Generation]
+```
+
+### Purpose
+To avoid unnecessary LLM overhead, the system uses deterministic regex patterns to detect when a user is explicitly asking the assistant to take an action (e.g., "can you search...", "please read this file...") rather than simply asking a question.
+
+### Mechanics
+- **`ToolIntent`**: A dataclass that evaluates `needs_tools`, `category`, and `reason`.
+- **Patterns**: Scans for phrases like "can you", "would you", or specific verbs ("search", "read", "run") combined with action requests.
+- **Outcome**: If an action intent is detected, the frontend is signaled or the backend automatically escalates the chat into the agent loop, loading the necessary tools and system prompts.
+
+---
+
+## 35. Deep Dive: Context Compaction (`src/context_compactor.py`)
+
+To prevent the LLM context window from overflowing during long sessions, Odysseus implements an automatic context compaction mechanism.
+
+```mermaid
+graph TD
+    History[Conversation History] --> Check[Estimate Token Count]
+    Check --> |Exceeds Threshold| Isolate[Isolate Oldest Messages]
+    Isolate --> Summarize[LLM Summarization Call]
+    Summarize --> DBUpdate[Replace Messages with Summary System Message]
+    DBUpdate --> NewHistory[Compacted Conversation History]
+    Check --> |Within Threshold| Proceed[Continue Normally]
+```
+
+### Purpose
+It ensures that long-running conversations do not crash due to token limits while preserving essential context and historical facts.
+
+### Mechanics
+- **Token Estimation**: Monitors the token count of the conversation history.
+- **Compaction Trigger**: When the context approaches a predefined limit, it isolates the oldest messages.
+- **Summarization**: It uses a fast LLM call (often a smaller model or the current one) to generate a dense summary of the oldest interactions.
+- **State Update**: Replaces the summarized block in the SQLite database with a single "system" message containing the summary, significantly reducing token usage while maintaining narrative continuity.
+
+---
+
+## 36. Deep Dive: Built-in Actions & Scheduled Tasks (`src/builtin_actions.py`)
+
+Odysseus features a registry of native automation actions that can be executed periodically by the task scheduler without needing to spin up an LLM.
+
+```mermaid
+graph TD
+    Scheduler[src/task_scheduler.py] --> Dequeue[Dequeue TaskRun from DB]
+    Dequeue --> Lookup[Lookup Action in builtin_actions.py Registry]
+    Lookup --> Execute[Execute Native Python Function]
+    Execute --> |Success| Mark[Mark Last Run / Next Run]
+    Execute --> |TaskNoop| Skip[Skip Silently]
+```
+
+### Purpose
+Provides reliable, zero-cost execution for routine system maintenance and user-defined scheduled tasks.
+
+### Mechanics
+- **Registry**: Houses predefined python functions mapped to string identifiers (e.g., `system.tidy_calendar`, `system.poll_email`).
+- **`TaskNoop` Exception**: A silent exception used by actions to indicate there was nothing to do (e.g., no new emails, calendar already synced), preventing log spam.
+- **Execution**: The scheduler (`src/task_scheduler.py`) dequeues pending tasks from the database and invokes the corresponding function in `builtin_actions.py`.
+
+---
+
+## 37. Deep Dive: Copilot Provider Support (`src/copilot.py`)
+
+Odysseus integrates natively with GitHub Copilot, allowing users with Copilot subscriptions to use Copilot's backing models as their LLM provider.
+
+```mermaid
+graph LR
+    User[User] --> |Authorizes Device Code| GH[GitHub OAuth]
+    GH --> |access_token| Odysseus
+    Odysseus --> |Headers + Token| CopilotAPI[api.githubcopilot.com/chat/completions]
+```
+
+### Purpose
+To leverage existing Copilot subscriptions without needing a separate OpenAI or Anthropic API key.
+
+### Mechanics
+- **Device Flow Auth**: Implements the GitHub OAuth Device Flow. The user authorizes a device code in their browser, and Odysseus receives a long-lived `access_token`.
+- **API Emulation**: Copilot exposes an OpenAI-compatible endpoint (`/chat/completions`). `copilot.py` manages the injection of required, provider-specific headers (e.g., API version, editor-style User-Agent, and `x-initiator`).
+- **No Exchange Required**: Unlike some integrations, the bearer token is sent directly to the Copilot API without a secondary token exchange.
+
+---
+
+## 38. Known Issues & Future Improvements
+
+While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
+
+### Frontend Monoliths
+- **Large Files**: Core modules like `chat.js` and `document.js` have grown significantly. Refactoring these into smaller, dedicated state machines or leveraging a lightweight reactive store would improve maintainability.
+- **Censoring (`censor.js`)**: The frontend uses regex to detect and blur sensitive information (API keys, passwords) in LLM responses. This is a heuristic approach and could be improved with more robust parsing or moved to a backend middleware for unified enforcement.
+
+### Testing & Stability
+- **Test Coverage**: While critical paths are covered, edge cases in streaming and hardware discovery (`hwfit`) could benefit from deeper integration tests across different OS environments.
+- **Background Jobs**: The `bg_jobs.py` system relies on writing exit-code files to track detached processes. A more robust IPC (Inter-Process Communication) or lightweight queue (like Redis or Celery, though contrary to the zero-config ethos) might be necessary if workloads increase.
+
+### Database Abstraction
+- Currently tightly coupled to SQLite. While SQLite is fantastic for single-user self-hosting, abstracting the ORM to easily support PostgreSQL would enable multi-user scaling or team deployments.
+
+## 34. Deep Dive: Action Intents & Chat Routing (`src/action_intents.py`)
+
+Odysseus employs a lightweight routing heuristic to determine when a standard chat prompt should be promoted to full "agent mode" (invoking the agent loop and tools).
+
+```mermaid
+graph TD
+    Input[User Prompt] --> Regex[Regex Intent Detection]
+    Regex --> |"can you search...", "read this..."| Agent[Promote to Agent Mode]
+    Regex --> |General question| Chat[Standard Chat Completion]
+    Agent --> LoadTools[Load Tools & System Prompt]
+    Chat --> LLM[LLM Generation]
+```
+
+### Purpose
+To avoid unnecessary LLM overhead, the system uses deterministic regex patterns to detect when a user is explicitly asking the assistant to take an action (e.g., "can you search...", "please read this file...") rather than simply asking a question.
+
+### Mechanics
+- **`ToolIntent`**: A dataclass that evaluates `needs_tools`, `category`, and `reason`.
+- **Patterns**: Scans for phrases like "can you", "would you", or specific verbs ("search", "read", "run") combined with action requests.
+- **Outcome**: If an action intent is detected, the frontend is signaled or the backend automatically escalates the chat into the agent loop, loading the necessary tools and system prompts.
+
+---
+
+## 35. Deep Dive: Context Compaction (`src/context_compactor.py`)
+
+To prevent the LLM context window from overflowing during long sessions, Odysseus implements an automatic context compaction mechanism.
+
+```mermaid
+graph TD
+    History[Conversation History] --> Check[Estimate Token Count]
+    Check --> |Exceeds Threshold| Isolate[Isolate Oldest Messages]
+    Isolate --> Summarize[LLM Summarization Call]
+    Summarize --> DBUpdate[Replace Messages with Summary System Message]
+    DBUpdate --> NewHistory[Compacted Conversation History]
+    Check --> |Within Threshold| Proceed[Continue Normally]
+```
+
+### Purpose
+It ensures that long-running conversations do not crash due to token limits while preserving essential context and historical facts.
+
+### Mechanics
+- **Token Estimation**: Monitors the token count of the conversation history.
+- **Compaction Trigger**: When the context approaches a predefined limit, it isolates the oldest messages.
+- **Summarization**: It uses a fast LLM call (often a smaller model or the current one) to generate a dense summary of the oldest interactions.
+- **State Update**: Replaces the summarized block in the SQLite database with a single "system" message containing the summary, significantly reducing token usage while maintaining narrative continuity.
+
+---
+
+## 36. Deep Dive: Built-in Actions & Scheduled Tasks (`src/builtin_actions.py`)
+
+Odysseus features a registry of native automation actions that can be executed periodically by the task scheduler without needing to spin up an LLM.
+
+```mermaid
+graph TD
+    Scheduler[src/task_scheduler.py] --> Dequeue[Dequeue TaskRun from DB]
+    Dequeue --> Lookup[Lookup Action in builtin_actions.py Registry]
+    Lookup --> Execute[Execute Native Python Function]
+    Execute --> |Success| Mark[Mark Last Run / Next Run]
+    Execute --> |TaskNoop| Skip[Skip Silently]
+```
+
+### Purpose
+Provides reliable, zero-cost execution for routine system maintenance and user-defined scheduled tasks.
+
+### Mechanics
+- **Registry**: Houses predefined python functions mapped to string identifiers (e.g., `system.tidy_calendar`, `system.poll_email`).
+- **`TaskNoop` Exception**: A silent exception used by actions to indicate there was nothing to do (e.g., no new emails, calendar already synced), preventing log spam.
+- **Execution**: The scheduler (`src/task_scheduler.py`) dequeues pending tasks from the database and invokes the corresponding function in `builtin_actions.py`.
+
+---
+
+## 37. Deep Dive: Copilot Provider Support (`src/copilot.py`)
+
+Odysseus integrates natively with GitHub Copilot, allowing users with Copilot subscriptions to use Copilot's backing models as their LLM provider.
+
+```mermaid
+graph LR
+    User[User] --> |Authorizes Device Code| GH[GitHub OAuth]
+    GH --> |access_token| Odysseus
+    Odysseus --> |Headers + Token| CopilotAPI[api.githubcopilot.com/chat/completions]
+```
+
+### Purpose
+To leverage existing Copilot subscriptions without needing a separate OpenAI or Anthropic API key.
+
+### Mechanics
+- **Device Flow Auth**: Implements the GitHub OAuth Device Flow. The user authorizes a device code in their browser, and Odysseus receives a long-lived `access_token`.
+- **API Emulation**: Copilot exposes an OpenAI-compatible endpoint (`/chat/completions`). `copilot.py` manages the injection of required, provider-specific headers (e.g., API version, editor-style User-Agent, and `x-initiator`).
+- **No Exchange Required**: Unlike some integrations, the bearer token is sent directly to the Copilot API without a secondary token exchange.
+
+---
+
+## 38. Known Issues & Future Improvements
+
+While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
+
+### Frontend Monoliths
+- **Large Files**: Core modules like `chat.js` and `document.js` have grown significantly. Refactoring these into smaller, dedicated state machines or leveraging a lightweight reactive store would improve maintainability.
+- **Censoring (`censor.js`)**: The frontend uses regex to detect and blur sensitive information (API keys, passwords) in LLM responses. This is a heuristic approach and could be improved with more robust parsing or moved to a backend middleware for unified enforcement.
+
+### Testing & Stability
+- **Test Coverage**: While critical paths are covered, edge cases in streaming and hardware discovery (`hwfit`) could benefit from deeper integration tests across different OS environments.
+- **Background Jobs**: The `bg_jobs.py` system relies on writing exit-code files to track detached processes. A more robust IPC (Inter-Process Communication) or lightweight queue (like Redis or Celery, though contrary to the zero-config ethos) might be necessary if workloads increase.
+
+### Database Abstraction
+- Currently tightly coupled to SQLite. While SQLite is fantastic for single-user self-hosting, abstracting the ORM to easily support PostgreSQL would enable multi-user scaling or team deployments.
+
+## 34. Deep Dive: Action Intents & Chat Routing (`src/action_intents.py`)
+
+Odysseus employs a lightweight routing heuristic to determine when a standard chat prompt should be promoted to full "agent mode" (invoking the agent loop and tools).
+
+```mermaid
+graph TD
+    Input[User Prompt] --> Regex[Regex Intent Detection]
+    Regex --> |"can you search...", "read this..."| Agent[Promote to Agent Mode]
+    Regex --> |General question| Chat[Standard Chat Completion]
+    Agent --> LoadTools[Load Tools & System Prompt]
+    Chat --> LLM[LLM Generation]
+```
+
+### Purpose
+To avoid unnecessary LLM overhead, the system uses deterministic regex patterns to detect when a user is explicitly asking the assistant to take an action (e.g., "can you search...", "please read this file...") rather than simply asking a question.
+
+### Mechanics
+- **`ToolIntent`**: A dataclass that evaluates `needs_tools`, `category`, and `reason`.
+- **Patterns**: Scans for phrases like "can you", "would you", or specific verbs ("search", "read", "run") combined with action requests.
+- **Outcome**: If an action intent is detected, the frontend is signaled or the backend automatically escalates the chat into the agent loop, loading the necessary tools and system prompts.
+
+---
+
+## 35. Deep Dive: Context Compaction (`src/context_compactor.py`)
+
+To prevent the LLM context window from overflowing during long sessions, Odysseus implements an automatic context compaction mechanism.
+
+```mermaid
+graph TD
+    History[Conversation History] --> Check[Estimate Token Count]
+    Check --> |Exceeds Threshold| Isolate[Isolate Oldest Messages]
+    Isolate --> Summarize[LLM Summarization Call]
+    Summarize --> DBUpdate[Replace Messages with Summary System Message]
+    DBUpdate --> NewHistory[Compacted Conversation History]
+    Check --> |Within Threshold| Proceed[Continue Normally]
+```
+
+### Purpose
+It ensures that long-running conversations do not crash due to token limits while preserving essential context and historical facts.
+
+### Mechanics
+- **Token Estimation**: Monitors the token count of the conversation history.
+- **Compaction Trigger**: When the context approaches a predefined limit, it isolates the oldest messages.
+- **Summarization**: It uses a fast LLM call (often a smaller model or the current one) to generate a dense summary of the oldest interactions.
+- **State Update**: Replaces the summarized block in the SQLite database with a single "system" message containing the summary, significantly reducing token usage while maintaining narrative continuity.
+
+---
+
+## 36. Deep Dive: Built-in Actions & Scheduled Tasks (`src/builtin_actions.py`)
+
+Odysseus features a registry of native automation actions that can be executed periodically by the task scheduler without needing to spin up an LLM.
+
+```mermaid
+graph TD
+    Scheduler[src/task_scheduler.py] --> Dequeue[Dequeue TaskRun from DB]
+    Dequeue --> Lookup[Lookup Action in builtin_actions.py Registry]
+    Lookup --> Execute[Execute Native Python Function]
+    Execute --> |Success| Mark[Mark Last Run / Next Run]
+    Execute --> |TaskNoop| Skip[Skip Silently]
+```
+
+### Purpose
+Provides reliable, zero-cost execution for routine system maintenance and user-defined scheduled tasks.
+
+### Mechanics
+- **Registry**: Houses predefined python functions mapped to string identifiers (e.g., `system.tidy_calendar`, `system.poll_email`).
+- **`TaskNoop` Exception**: A silent exception used by actions to indicate there was nothing to do (e.g., no new emails, calendar already synced), preventing log spam.
+- **Execution**: The scheduler (`src/task_scheduler.py`) dequeues pending tasks from the database and invokes the corresponding function in `builtin_actions.py`.
+
+---
+
+## 37. Deep Dive: Copilot Provider Support (`src/copilot.py`)
+
+Odysseus integrates natively with GitHub Copilot, allowing users with Copilot subscriptions to use Copilot's backing models as their LLM provider.
+
+```mermaid
+graph LR
+    User[User] --> |Authorizes Device Code| GH[GitHub OAuth]
+    GH --> |access_token| Odysseus
+    Odysseus --> |Headers + Token| CopilotAPI[api.githubcopilot.com/chat/completions]
+```
+
+### Purpose
+To leverage existing Copilot subscriptions without needing a separate OpenAI or Anthropic API key.
+
+### Mechanics
+- **Device Flow Auth**: Implements the GitHub OAuth Device Flow. The user authorizes a device code in their browser, and Odysseus receives a long-lived `access_token`.
+- **API Emulation**: Copilot exposes an OpenAI-compatible endpoint (`/chat/completions`). `copilot.py` manages the injection of required, provider-specific headers (e.g., API version, editor-style User-Agent, and `x-initiator`).
+- **No Exchange Required**: Unlike some integrations, the bearer token is sent directly to the Copilot API without a secondary token exchange.
+
+---
+
+## 38. Known Issues & Future Improvements
+
+While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
+
+### Frontend Monoliths
+- **Large Files**: Core modules like `chat.js` and `document.js` have grown significantly. Refactoring these into smaller, dedicated state machines or leveraging a lightweight reactive store would improve maintainability.
+- **Censoring (`censor.js`)**: The frontend uses regex to detect and blur sensitive information (API keys, passwords) in LLM responses. This is a heuristic approach and could be improved with more robust parsing or moved to a backend middleware for unified enforcement.
+
+### Testing & Stability
+- **Test Coverage**: While critical paths are covered, edge cases in streaming and hardware discovery (`hwfit`) could benefit from deeper integration tests across different OS environments.
+- **Background Jobs**: The `bg_jobs.py` system relies on writing exit-code files to track detached processes. A more robust IPC (Inter-Process Communication) or lightweight queue (like Redis or Celery, though contrary to the zero-config ethos) might be necessary if workloads increase.
+
+### Database Abstraction
+- Currently tightly coupled to SQLite. While SQLite is fantastic for single-user self-hosting, abstracting the ORM to easily support PostgreSQL would enable multi-user scaling or team deployments.
+
+---
+
+## 34. Deep Dive: Action Intents & Chat Routing (`src/action_intents.py`)
+
+Odysseus employs a lightweight routing heuristic to determine when a standard chat prompt should be promoted to full "agent mode" (invoking the agent loop and tools).
+
+```mermaid
+graph TD
+    Input[User Prompt] --> Regex[Regex Intent Detection]
+    Regex --> |"can you search...", "read this..."| Agent[Promote to Agent Mode]
+    Regex --> |General question| Chat[Standard Chat Completion]
+    Agent --> LoadTools[Load Tools & System Prompt]
+    Chat --> LLM[LLM Generation]
+```
+
+### Purpose
+To avoid unnecessary LLM overhead, the system uses deterministic regex patterns to detect when a user is explicitly asking the assistant to take an action (e.g., "can you search...", "please read this file...") rather than simply asking a question.
+
+### Mechanics
+- **`ToolIntent`**: A dataclass that evaluates `needs_tools`, `category`, and `reason`.
+- **Patterns**: Scans for phrases like "can you", "would you", or specific verbs ("search", "read", "run") combined with action requests.
+- **Outcome**: If an action intent is detected, the frontend is signaled or the backend automatically escalates the chat into the agent loop, loading the necessary tools and system prompts.
+
+---
+
+## 35. Deep Dive: Context Compaction (`src/context_compactor.py`)
+
+To prevent the LLM context window from overflowing during long sessions, Odysseus implements an automatic context compaction mechanism.
+
+```mermaid
+graph TD
+    History[Conversation History] --> Check[Estimate Token Count]
+    Check --> |Exceeds Threshold| Isolate[Isolate Oldest Messages]
+    Isolate --> Summarize[LLM Summarization Call]
+    Summarize --> DBUpdate[Replace Messages with Summary System Message]
+    DBUpdate --> NewHistory[Compacted Conversation History]
+    Check --> |Within Threshold| Proceed[Continue Normally]
+```
+
+### Purpose
+It ensures that long-running conversations do not crash due to token limits while preserving essential context and historical facts.
+
+### Mechanics
+- **Token Estimation**: Monitors the token count of the conversation history.
+- **Compaction Trigger**: When the context approaches a predefined limit, it isolates the oldest messages.
+- **Summarization**: It uses a fast LLM call (often a smaller model or the current one) to generate a dense summary of the oldest interactions.
+- **State Update**: Replaces the summarized block in the SQLite database with a single "system" message containing the summary, significantly reducing token usage while maintaining narrative continuity.
+
+---
+
+## 36. Deep Dive: Built-in Actions & Scheduled Tasks (`src/builtin_actions.py`)
+
+Odysseus features a registry of native automation actions that can be executed periodically by the task scheduler without needing to spin up an LLM.
+
+```mermaid
+graph TD
+    Scheduler[src/task_scheduler.py] --> Dequeue[Dequeue TaskRun from DB]
+    Dequeue --> Lookup[Lookup Action in builtin_actions.py Registry]
+    Lookup --> Execute[Execute Native Python Function]
+    Execute --> |Success| Mark[Mark Last Run / Next Run]
+    Execute --> |TaskNoop| Skip[Skip Silently]
+```
+
+### Purpose
+Provides reliable, zero-cost execution for routine system maintenance and user-defined scheduled tasks.
+
+### Mechanics
+- **Registry**: Houses predefined python functions mapped to string identifiers (e.g., `system.tidy_calendar`, `system.poll_email`).
+- **`TaskNoop` Exception**: A silent exception used by actions to indicate there was nothing to do (e.g., no new emails, calendar already synced), preventing log spam.
+- **Execution**: The scheduler (`src/task_scheduler.py`) dequeues pending tasks from the database and invokes the corresponding function in `builtin_actions.py`.
+
+---
+
+## 37. Deep Dive: Copilot Provider Support (`src/copilot.py`)
+
+Odysseus integrates natively with GitHub Copilot, allowing users with Copilot subscriptions to use Copilot's backing models as their LLM provider.
+
+```mermaid
+graph LR
+    User[User] --> |Authorizes Device Code| GH[GitHub OAuth]
+    GH --> |access_token| Odysseus
+    Odysseus --> |Headers + Token| CopilotAPI[api.githubcopilot.com/chat/completions]
+```
+
+### Purpose
+To leverage existing Copilot subscriptions without needing a separate OpenAI or Anthropic API key.
+
+### Mechanics
+- **Device Flow Auth**: Implements the GitHub OAuth Device Flow. The user authorizes a device code in their browser, and Odysseus receives a long-lived `access_token`.
+- **API Emulation**: Copilot exposes an OpenAI-compatible endpoint (`/chat/completions`). `copilot.py` manages the injection of required, provider-specific headers (e.g., API version, editor-style User-Agent, and `x-initiator`).
+- **No Exchange Required**: Unlike some integrations, the bearer token is sent directly to the Copilot API without a secondary token exchange.
+
+---
+
+## 38. Known Issues & Future Improvements
+
+While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
+
+### Frontend Monoliths
+- **Large Files**: Core modules like `chat.js` and `document.js` have grown significantly. Refactoring these into smaller, dedicated state machines or leveraging a lightweight reactive store would improve maintainability.
+- **Censoring (`censor.js`)**: The frontend uses regex to detect and blur sensitive information (API keys, passwords) in LLM responses. This is a heuristic approach and could be improved with more robust parsing or moved to a backend middleware for unified enforcement.
+
+### Testing & Stability
+- **Test Coverage**: While critical paths are covered, edge cases in streaming and hardware discovery (`hwfit`) could benefit from deeper integration tests across different OS environments.
+- **Background Jobs**: The `bg_jobs.py` system relies on writing exit-code files to track detached processes. A more robust IPC (Inter-Process Communication) or lightweight queue (like Redis or Celery, though contrary to the zero-config ethos) might be necessary if workloads increase.
+
+### Database Abstraction
+- Currently tightly coupled to SQLite. While SQLite is fantastic for single-user self-hosting, abstracting the ORM to easily support PostgreSQL would enable multi-user scaling or team deployments.
+
+---
+
+## 34. Deep Dive: Action Intents & Chat Routing (`src/action_intents.py`)
+
+Odysseus employs a lightweight routing heuristic to determine when a standard chat prompt should be promoted to full "agent mode" (invoking the agent loop and tools).
+
+```mermaid
+graph TD
+    Input[User Prompt] --> Regex[Regex Intent Detection]
+    Regex --> |"can you search...", "read this..."| Agent[Promote to Agent Mode]
+    Regex --> |General question| Chat[Standard Chat Completion]
+    Agent --> LoadTools[Load Tools & System Prompt]
+    Chat --> LLM[LLM Generation]
+```
+
+### Purpose
+To avoid unnecessary LLM overhead, the system uses deterministic regex patterns to detect when a user is explicitly asking the assistant to take an action (e.g., "can you search...", "please read this file...") rather than simply asking a question.
+
+### Mechanics
+- **`ToolIntent`**: A dataclass that evaluates `needs_tools`, `category`, and `reason`.
+- **Patterns**: Scans for phrases like "can you", "would you", or specific verbs ("search", "read", "run") combined with action requests.
+- **Outcome**: If an action intent is detected, the frontend is signaled or the backend automatically escalates the chat into the agent loop, loading the necessary tools and system prompts.
+
+---
+
+## 35. Deep Dive: Context Compaction (`src/context_compactor.py`)
+
+To prevent the LLM context window from overflowing during long sessions, Odysseus implements an automatic context compaction mechanism.
+
+```mermaid
+graph TD
+    History[Conversation History] --> Check[Estimate Token Count]
+    Check --> |Exceeds Threshold| Isolate[Isolate Oldest Messages]
+    Isolate --> Summarize[LLM Summarization Call]
+    Summarize --> DBUpdate[Replace Messages with Summary System Message]
+    DBUpdate --> NewHistory[Compacted Conversation History]
+    Check --> |Within Threshold| Proceed[Continue Normally]
+```
+
+### Purpose
+It ensures that long-running conversations do not crash due to token limits while preserving essential context and historical facts.
+
+### Mechanics
+- **Token Estimation**: Monitors the token count of the conversation history.
+- **Compaction Trigger**: When the context approaches a predefined limit, it isolates the oldest messages.
+- **Summarization**: It uses a fast LLM call (often a smaller model or the current one) to generate a dense summary of the oldest interactions.
+- **State Update**: Replaces the summarized block in the SQLite database with a single "system" message containing the summary, significantly reducing token usage while maintaining narrative continuity.
+
+---
+
+## 36. Deep Dive: Built-in Actions & Scheduled Tasks (`src/builtin_actions.py`)
+
+Odysseus features a registry of native automation actions that can be executed periodically by the task scheduler without needing to spin up an LLM.
+
+```mermaid
+graph TD
+    Scheduler[src/task_scheduler.py] --> Dequeue[Dequeue TaskRun from DB]
+    Dequeue --> Lookup[Lookup Action in builtin_actions.py Registry]
+    Lookup --> Execute[Execute Native Python Function]
+    Execute --> |Success| Mark[Mark Last Run / Next Run]
+    Execute --> |TaskNoop| Skip[Skip Silently]
+```
+
+### Purpose
+Provides reliable, zero-cost execution for routine system maintenance and user-defined scheduled tasks.
+
+### Mechanics
+- **Registry**: Houses predefined python functions mapped to string identifiers (e.g., `system.tidy_calendar`, `system.poll_email`).
+- **`TaskNoop` Exception**: A silent exception used by actions to indicate there was nothing to do (e.g., no new emails, calendar already synced), preventing log spam.
+- **Execution**: The scheduler (`src/task_scheduler.py`) dequeues pending tasks from the database and invokes the corresponding function in `builtin_actions.py`.
+
+---
+
+## 37. Deep Dive: Copilot Provider Support (`src/copilot.py`)
+
+Odysseus integrates natively with GitHub Copilot, allowing users with Copilot subscriptions to use Copilot's backing models as their LLM provider.
+
+```mermaid
+graph LR
+    User[User] --> |Authorizes Device Code| GH[GitHub OAuth]
+    GH --> |access_token| Odysseus
+    Odysseus --> |Headers + Token| CopilotAPI[api.githubcopilot.com/chat/completions]
+```
+
+### Purpose
+To leverage existing Copilot subscriptions without needing a separate OpenAI or Anthropic API key.
+
+### Mechanics
+- **Device Flow Auth**: Implements the GitHub OAuth Device Flow. The user authorizes a device code in their browser, and Odysseus receives a long-lived `access_token`.
+- **API Emulation**: Copilot exposes an OpenAI-compatible endpoint (`/chat/completions`). `copilot.py` manages the injection of required, provider-specific headers (e.g., API version, editor-style User-Agent, and `x-initiator`).
+- **No Exchange Required**: Unlike some integrations, the bearer token is sent directly to the Copilot API without a secondary token exchange.
+
+---
+
+## 38. Known Issues & Future Improvements
+
+While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
+
+### Frontend Monoliths
+- **Large Files**: Core modules like `chat.js` and `document.js` have grown significantly. Refactoring these into smaller, dedicated state machines or leveraging a lightweight reactive store would improve maintainability.
+- **Censoring (`censor.js`)**: The frontend uses regex to detect and blur sensitive information (API keys, passwords) in LLM responses. This is a heuristic approach and could be improved with more robust parsing or moved to a backend middleware for unified enforcement.
+
+### Testing & Stability
+- **Test Coverage**: While critical paths are covered, edge cases in streaming and hardware discovery (`hwfit`) could benefit from deeper integration tests across different OS environments.
+- **Background Jobs**: The `bg_jobs.py` system relies on writing exit-code files to track detached processes. A more robust IPC (Inter-Process Communication) or lightweight queue (like Redis or Celery, though contrary to the zero-config ethos) might be necessary if workloads increase.
+
+### Database Abstraction
+- Currently tightly coupled to SQLite. While SQLite is fantastic for single-user self-hosting, abstracting the ORM to easily support PostgreSQL would enable multi-user scaling or team deployments.
