@@ -8,7 +8,6 @@ Stores the BW_SESSION key in data/vault.json with restrictive permissions.
 import json
 import logging
 import os
-import shutil
 import asyncio
 from pathlib import Path
 from datetime import datetime
