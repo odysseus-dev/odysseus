@@ -12,3 +12,13 @@ def test_non_string_fails_closed():
     assert ok is False
     ok2, _ = check_outbound_url(None)
     assert ok2 is False
+
+
+def test_resolver_with_no_valid_ip_fails_closed():
+    ok, reason = check_outbound_url(
+        "https://example.test",
+        resolver=lambda _host: ["not-an-ip-address"],
+    )
+
+    assert ok is False
+    assert "valid IP" in reason

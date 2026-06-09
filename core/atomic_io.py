@@ -15,29 +15,57 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from typing import Any, Optional
+
+
+def _fsync_parent_dir(path: str) -> None:
+    """Best-effort fsync of the containing directory after an atomic replace."""
+    parent = os.path.dirname(os.path.abspath(path)) or "."
+    try:
+        fd = os.open(parent, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _atomic_write(path: str, writer) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    parent = os.path.dirname(os.path.abspath(path)) or "."
+    prefix = f".{os.path.basename(path)}.tmp."
+    fd, tmp = tempfile.mkstemp(prefix=prefix, dir=parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            writer(f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        _fsync_parent_dir(path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> None:
     """Atomically persist `data` as JSON at `path`.
 
-    The temp file uses the live PID as a suffix so two processes saving the
-    same file (e.g. unit tests) don't collide on the rename target.
+    The temp file is created with ``mkstemp`` in the target directory, so
+    concurrent writes in the same process or across processes cannot collide.
     """
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = f"{path}.tmp.{os.getpid()}"
-    with open(tmp, "w", encoding="utf-8") as f:
+    def write_json(f):
         json.dump(data, f, indent=indent)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+
+    _atomic_write(path, write_json)
 
 
 def atomic_write_text(path: str, text: str) -> None:
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = f"{path}.tmp.{os.getpid()}"
-    with open(tmp, "w", encoding="utf-8") as f:
+    def write_text(f):
         f.write(text)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+
+    _atomic_write(path, write_text)

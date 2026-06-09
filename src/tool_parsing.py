@@ -23,6 +23,14 @@ _TOOL_BLOCK_RE = re.compile(
     r"```(" + "|".join(TOOL_TAGS) + r")\s*\n([\s\S]*?)```",
     re.IGNORECASE,
 )
+_FENCED_TOOL_PREAMBLE_RE = re.compile(
+    r"^(?:"
+    r"i(?:'ll| will| am going to)?\s*(?:use|run|call|execute)\s+(?:the\s+)?(?:tool|command)|"
+    r"(?:using|running|calling|executing)\s+(?:the\s+)?(?:tool|command)|"
+    r"(?:tool|command)\s*(?:call|use|execution)?"
+    r")\s*[:.\-]*\s*$",
+    re.IGNORECASE,
+)
 
 # Pattern 2: [TOOL_CALL] ... [/TOOL_CALL] blocks (some models use this format)
 # Matches: {tool => "shell", args => {--command "ls -la"}} etc.
@@ -180,6 +188,27 @@ _TOOL_NAME_MAP = {
 # ---------------------------------------------------------------------------
 # Parsing functions
 # ---------------------------------------------------------------------------
+
+def _is_executable_fenced_context(text: str, spans: List[tuple]) -> bool:
+    """Return True when fenced tool blocks look like tool calls, not prose.
+
+    Local models are prompted to call tools by emitting bare fenced blocks, while
+    normal assistant answers frequently include Markdown examples such as
+    `````bash`````. Executing those examples is surprising and unsafe, so prose
+    outside the fences must either be absent or be a tiny explicit tool preamble.
+    Structured formats like [TOOL_CALL], <invoke>, and <tool_code> remain
+    unaffected by this heuristic.
+    """
+    outside = []
+    cursor = 0
+    for start, end in spans:
+        outside.append(text[cursor:start])
+        cursor = end
+    outside.append(text[cursor:])
+    remainder = "\n".join(part.strip() for part in outside if part.strip()).strip()
+    if not remainder:
+        return True
+    return bool(_FENCED_TOOL_PREAMBLE_RE.fullmatch(remainder))
 
 def _parse_tool_call_block(raw: str) -> Optional[ToolBlock]:
     """Parse a [TOOL_CALL] block into a ToolBlock.
@@ -345,24 +374,29 @@ def parse_tool_blocks(text: str) -> List[ToolBlock]:
     # XML patterns below catch it.
     text = _normalize_dsml(text)
 
-    # Pattern 1: fenced code blocks
-    for m in _TOOL_BLOCK_RE.finditer(text):
-        tag = m.group(1).lower()
-        content = m.group(2).strip()
-        if not content:
-            continue
-        # If a code block's content is an <invoke> XML call (some models wrap
-        # tool calls in ```python or ```xml fences), parse the invoke instead.
-        if '<invoke' in content:
-            invoked = False
-            for inv in _XML_INVOKE_RE.finditer(content):
-                block = _parse_xml_invoke(inv)
-                if block:
-                    blocks.append(block)
-                    invoked = True
-            if invoked:
+    # Pattern 1: fenced code blocks. Only execute fenced blocks that are
+    # presented as tool calls; preserve ordinary Markdown code examples.
+    fenced_matches = list(_TOOL_BLOCK_RE.finditer(text))
+    if fenced_matches and _is_executable_fenced_context(
+        text, [(m.start(), m.end()) for m in fenced_matches]
+    ):
+        for m in fenced_matches:
+            tag = m.group(1).lower()
+            content = m.group(2).strip()
+            if not content:
                 continue
-        blocks.append(ToolBlock(tag, content))
+            # If a code block's content is an <invoke> XML call (some models wrap
+            # tool calls in ```python or ```xml fences), parse the invoke instead.
+            if '<invoke' in content:
+                invoked = False
+                for inv in _XML_INVOKE_RE.finditer(content):
+                    block = _parse_xml_invoke(inv)
+                    if block:
+                        blocks.append(block)
+                        invoked = True
+                if invoked:
+                    continue
+            blocks.append(ToolBlock(tag, content))
 
     # Pattern 2: [TOOL_CALL] blocks (only if no fenced blocks found)
     if not blocks:
@@ -401,7 +435,15 @@ def strip_tool_blocks(text: str) -> str:
     # Normalize DSML first so its markup gets stripped by the <invoke>
     # / <tool_call> removers below instead of leaking to the user.
     text = _normalize_dsml(text)
-    cleaned = _TOOL_BLOCK_RE.sub('', text)
+    fenced_matches = list(_TOOL_BLOCK_RE.finditer(text))
+    if fenced_matches and _is_executable_fenced_context(
+        text, [(m.start(), m.end()) for m in fenced_matches]
+    ):
+        cleaned = _TOOL_BLOCK_RE.sub('', text)
+        if _FENCED_TOOL_PREAMBLE_RE.fullmatch(cleaned.strip()):
+            cleaned = ""
+    else:
+        cleaned = text
     cleaned = _TOOL_CALL_RE.sub('', cleaned)
     cleaned = _XML_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _TOOL_CODE_RE.sub('', cleaned)

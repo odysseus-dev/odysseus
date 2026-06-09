@@ -12,6 +12,7 @@ replace, and when ``os.replace`` itself fails.
 """
 import importlib.util
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -30,8 +31,8 @@ atomic_write_text = atomic_io.atomic_write_text
 
 
 def _tmp_siblings(directory: Path, name: str) -> list:
-    """Return any ``<name>.tmp.*`` files the helpers may have left behind."""
-    return list(directory.glob(f"{name}.tmp.*"))
+    """Return any tmp files the helpers may have left behind."""
+    return list(directory.glob(f"{name}.tmp.*")) + list(directory.glob(f".{name}.tmp.*"))
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +99,22 @@ def test_atomic_write_json_preserves_target_when_serialization_fails(tmp_path):
         atomic_write_json(str(target), {"bad": {1, 2, 3}})
 
     assert target.read_text(encoding="utf-8") == before
+    assert _tmp_siblings(tmp_path, "data.json") == []
+
+
+def test_atomic_write_json_concurrent_writes_do_not_share_tmp_path(tmp_path):
+    target = tmp_path / "data.json"
+
+    def write_one(i):
+        atomic_write_json(str(target), {"i": i, "payload": "x" * 1000})
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(write_one, range(24)))
+
+    final = json.loads(target.read_text(encoding="utf-8"))
+    assert final["i"] in range(24)
+    assert final["payload"] == "x" * 1000
+    assert _tmp_siblings(tmp_path, "data.json") == []
 
 
 # ---------------------------------------------------------------------------
@@ -155,3 +172,4 @@ def test_atomic_write_text_preserves_target_when_replace_fails(tmp_path, monkeyp
         atomic_write_text(str(target), "new content that never lands")
 
     assert target.read_text(encoding="utf-8") == before
+    assert _tmp_siblings(tmp_path, "note.txt") == []
