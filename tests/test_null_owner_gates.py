@@ -153,11 +153,20 @@ def test_document_owner_filter_applies_owner_clause():
 # gallery._owner_filter
 # ---------------------------------------------------------------------------
 
-def test_gallery_owner_filter_allows_single_user_mode():
+def test_gallery_owner_filter_blocks_anonymous(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
     from routes.gallery_routes import _owner_filter
     fake_q = MagicMock()
     out = _owner_filter(fake_q, user=None)
-    # user=None means single-user/auth-disabled mode: return q unchanged, no filter.
+    fake_q.filter.assert_called_once_with(False)
+    assert out is fake_q.filter.return_value
+
+
+def test_gallery_owner_filter_allows_single_user_mode(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    from routes.gallery_routes import _owner_filter
+    fake_q = MagicMock()
+    out = _owner_filter(fake_q, user=None)
     fake_q.filter.assert_not_called()
     assert out is fake_q
 
