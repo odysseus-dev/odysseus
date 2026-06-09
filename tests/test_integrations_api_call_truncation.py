@@ -130,3 +130,67 @@ async def test_small_json_list_not_truncated():
     assert not any(
         isinstance(item, dict) and item.get("_truncated") for item in parsed
     )
+
+
+@pytest.mark.asyncio
+async def test_large_json_dict_actually_truncated():
+    """A JSON dict response that exceeds 12000 chars must be truncated to fit,
+    with _truncated: true marking presence — not just marked without removal."""
+    # Build a dict with enough entries to exceed 12000 chars when serialized.
+    # Each value is ~200 chars; 100 entries ~ 22000 chars.
+    big_dict = {f"key_{i}": "v" * 200 for i in range(100)}
+
+    result = await _call(big_dict)
+
+    assert result.get("exit_code") == 0
+    body = result["output"].split(chr(10), 1)[1]
+    parsed = json.loads(body)  # must be valid JSON
+
+    assert isinstance(parsed, dict)
+    assert parsed.get("_truncated") is True
+    # The body must be within the 12000-char limit
+    assert len(body) <= 12000
+    # Some entries must have been dropped (not all 100 keys present)
+    original_keys = set(big_dict.keys())
+    kept_keys = set(parsed.keys()) - {"_truncated"}
+    assert len(kept_keys) < len(original_keys), (
+        "Dict truncation should have removed entries to fit within the limit"
+    )
+    # Keys that were kept must match the original values
+    for k in kept_keys:
+        assert parsed[k] == big_dict[k]
+
+
+@pytest.mark.asyncio
+async def test_small_json_dict_not_truncated():
+    """A JSON dict whose serialized form is under 12000 chars is returned as-is."""
+    small_dict = {"key_a": "value_a", "key_b": 42, "key_c": [1, 2, 3]}
+
+    result = await _call(small_dict)
+
+    assert result.get("exit_code") == 0
+    body = result["output"].split(chr(10), 1)[1]
+    parsed = json.loads(body)
+    assert parsed == small_dict
+    assert "_truncated" not in parsed
+
+
+@pytest.mark.asyncio
+async def test_list_truncation_respects_limit_including_sentinel():
+    """After list truncation the total serialized body must not exceed 12000 chars,
+    including the appended sentinel object."""
+    # Items sized so the prefix alone would be just under the limit but
+    # adding a sentinel would push it over without the overhead fix.
+    big_list = [{"id": i, "name": f"item_{i}", "data": "x" * 80} for i in range(120)]
+
+    result = await _call(big_list)
+
+    assert result.get("exit_code") == 0
+    body = result["output"].split(chr(10), 1)[1]
+    assert len(body) <= 12000, (
+        f"Truncated list body is {len(body)} chars, must be <= 12000"
+    )
+    parsed = json.loads(body)
+    assert isinstance(parsed, list)
+    sentinel = parsed[-1]
+    assert sentinel.get("_truncated") is True

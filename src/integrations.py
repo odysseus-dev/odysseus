@@ -414,14 +414,28 @@ async def execute_api_call(
                 full = json.dumps(data, indent=2, ensure_ascii=False)
                 if len(full) > 12000:
                     if isinstance(data, list):
-                        # Binary-search for the largest prefix that fits within the limit
+                        # Binary-search for the largest prefix such that the
+                        # final array (prefix + sentinel) fits within the limit.
+                        # Pre-compute the sentinel so we know its serialized size.
+                        sentinel_placeholder = {
+                            "_truncated": True,
+                            "total_items": len(data),
+                            "shown_items": 0,
+                        }
+                        # Overhead: the sentinel appears as an extra array element.
+                        # Add a conservative padding for the separating comma,
+                        # newline, and indentation characters (~6 chars).
+                        sentinel_overhead = len(
+                            json.dumps(sentinel_placeholder, indent=2, ensure_ascii=False)
+                        ) + 6
+                        budget = 12000 - sentinel_overhead
                         lo, hi = 0, len(data)
                         while lo < hi:
                             mid = (lo + hi + 1) // 2
                             candidate = json.dumps(
                                 data[:mid], indent=2, ensure_ascii=False
                             )
-                            if len(candidate) < 12000:
+                            if len(candidate) < budget:
                                 lo = mid
                             else:
                                 hi = mid - 1
@@ -434,8 +448,22 @@ async def execute_api_call(
                             data[:lo] + [sentinel], indent=2, ensure_ascii=False
                         )
                     elif isinstance(data, dict):
+                        # Truncate dict entries until the result fits, then add
+                        # the _truncated marker.  Walk keys in insertion order.
+                        DICT_LIMIT = 12000
+                        kept: dict = {}
+                        for k, v in data.items():
+                            candidate = json.dumps(
+                                {**kept, k: v, "_truncated": True},
+                                indent=2,
+                                ensure_ascii=False,
+                            )
+                            if len(candidate) <= DICT_LIMIT:
+                                kept[k] = v
+                            else:
+                                break
                         formatted = json.dumps(
-                            {**data, "_truncated": True}, indent=2, ensure_ascii=False
+                            {**kept, "_truncated": True}, indent=2, ensure_ascii=False
                         )
                     else:
                         total = len(full)
