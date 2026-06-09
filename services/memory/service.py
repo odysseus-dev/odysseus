@@ -8,6 +8,7 @@ import os
 from .memory import MemoryManager
 from .memory_vector import MemoryVectorStore
 from src.memory_provider import MemoryRecord, NativeMemoryProvider
+from src.constants import DATA_DIR
 
 
 @dataclass
@@ -38,7 +39,7 @@ class MemoryService:
         results = await service.recall("preferences")
     """
 
-    def __init__(self, data_dir: str = "data"):
+    def __init__(self, data_dir: str = DATA_DIR):
         self.manager = MemoryManager(data_dir)
         self.vector_store = MemoryVectorStore(data_dir) if os.path.exists(
             os.path.join(data_dir, "memory_vectors")

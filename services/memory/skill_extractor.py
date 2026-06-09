@@ -210,8 +210,10 @@ async def maybe_extract_skill(
             pass
 
         # Parse JSON. The object may be wrapped in code fences or surrounded by
-        # commentary (and may contain a stray brace before the real object), so
-        # use a tolerant extractor that tries each '{' candidate.
+        # commentary (and may contain a stray/invalid brace fragment before
+        # the real object — including one that makes the response itself look
+        # like it starts with '{'), so use a tolerant extractor that tries the
+        # whole string first and then each '{' candidate left-to-right.
         data = _extract_json_object(response)
         if not data:
             logger.debug("[skill-extract] no JSON object found in response, dropping")
@@ -241,6 +243,20 @@ async def maybe_extract_skill(
             logger.debug("[skill-extract] '%s' already exists — dropped as duplicate", title)
             return None
 
+        # Auto-publish gate: if the user has `auto_approve_skills` on, the
+        # newly-extracted skill is created `published` immediately rather
+        # than waiting for the next audit batch. The audit still runs later
+        # and can demote it back to `draft` (or delete) on failure. Default
+        # ON matches the UI label "Auto-approve skills".
+        _initial_status = "draft"
+        try:
+            from routes.prefs_routes import _load_for_user as _load_prefs
+            _prefs = _load_prefs(owner) or {}
+            if _prefs.get("auto_approve_skills", True):
+                _initial_status = "published"
+        except Exception:
+            pass
+
         entry = skills_manager.add_skill(
             title=title,
             problem=data.get("problem", ""),
@@ -251,6 +267,7 @@ async def maybe_extract_skill(
             confidence=data.get("confidence", 0.7),
             session_id=getattr(session, "session_id", None),
             owner=owner,
+            status=_initial_status,
         )
         try:
             from src.event_bus import fire_event

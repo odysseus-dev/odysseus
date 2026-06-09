@@ -430,7 +430,7 @@ def build_user_content(
                             create_form_markdown_document,
                             create_plain_pdf_document,
                         )
-                        title = os.path.splitext(os.path.basename(path))[0]
+                        title = os.path.splitext(os.path.basename(display_name))[0]
                         # Pull the PDF prose once — used as either intro_text
                         # (form path) or the doc body (plain path).
                         try:

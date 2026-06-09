@@ -5,6 +5,7 @@ import uiModule from './ui.js';
 import settingsModule from './settings.js';
 import { providerLogo } from './providers.js';
 import { sortModelObjects } from './modelSort.js';
+import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
 
 let initialized = false;
 let modalEl = null;
@@ -92,6 +93,7 @@ async function loadUsers() {
           : [];
         const allowedSet = new Set(allowedModels);
         const modelsRestricted = !!(u.privileges && u.privileges.allowed_models_restricted);
+        const blockAllModels = !!(u.privileges && u.privileges.block_all_models);
         html += `<div style="padding:4px 0;">
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <span style="font-size:12px;">Allowed models</span>
@@ -100,7 +102,7 @@ async function loadUsers() {
               <a href="#" class="priv-models-none" data-user="${esc(u.username)}" style="font-size:10px;opacity:0.5;">None</a>
             </div>
           </div>
-          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${!modelsRestricted ? 'All models allowed (no restrictions)' : (allowedSet.size === 0 ? 'No models allowed' : allowedSet.size + ' model(s) allowed')}</div>
+          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${blockAllModels ? 'No models allowed' : (!modelsRestricted ? 'All models allowed (no restrictions)' : (allowedSet.size === 0 ? 'No models allowed' : allowedSet.size + ' model(s) allowed'))}</div>
           <div class="priv-models-list" data-user="${esc(u.username)}">
             <span style="opacity:0.4;font-size:11px;">Loading models...</span>
           </div>
@@ -122,7 +124,7 @@ async function loadUsers() {
           // Load models list on first expand
           if (!_modelsLoaded && !privPanel.classList.contains('hidden')) {
             _modelsLoaded = true;
-            _loadModelsForUser(u.username, allowedSet, modelsRestricted, privPanel);
+            _loadModelsForUser(u.username, allowedSet, modelsRestricted, blockAllModels, privPanel);
           }
         });
 
@@ -202,17 +204,22 @@ async function loadUsers() {
   } catch (e) { list.innerHTML = '<div class="admin-error">Failed to load users</div>'; }
 }
 
-async function _loadModelsForUser(username, allowedSet, modelsRestricted, privPanel) {
+async function _loadModelsForUser(username, allowedSet, modelsRestricted, blockAllModels, privPanel) {
   const listEl = privPanel.querySelector(`.priv-models-list[data-user="${username}"]`);
   if (!listEl) return;
   try {
-    const res = await fetch('/api/models', { credentials: 'same-origin' });
+    // Use /api/model-endpoints rather than /api/models — the latter is
+    // backed by `cached_models`, so endpoints that haven't been probed yet
+    // (e.g. a freshly-added cloud API like DeepSeek) simply don't show up
+    // until some other endpoint happens to trigger a cache refresh. The
+    // endpoints listing always reflects every configured endpoint.
+    const res = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
     const data = await res.json();
     const allModels = [];
-    (data.items || []).forEach(item => {
-      if (item.offline) return;
-      (item.models || []).forEach(mid => {
-        allModels.push({ mid, epName: item.endpoint_name || '', display: mid.split('/').pop() });
+    (Array.isArray(data) ? data : []).forEach(ep => {
+      if (!ep.online) return;
+      (ep.models || []).forEach(mid => {
+        allModels.push({ mid, epName: ep.name || '', display: mid.split('/').pop() });
       });
     });
     if (!allModels.length) {
@@ -220,8 +227,9 @@ async function _loadModelsForUser(username, allowedSet, modelsRestricted, privPa
       return;
     }
     let restricted = modelsRestricted;
+    let blockAll = blockAllModels;
     listEl.innerHTML = sortModelObjects(allModels).map(m => {
-      const checked = !restricted || allowedSet.has(m.mid) ? 'checked' : '';
+      const checked = !blockAll && (!restricted || allowedSet.has(m.mid)) ? 'checked' : '';
       return `<label>
         <input type="checkbox" class="priv-model-cb" data-mid="${esc(m.mid)}" ${checked}>
         <span>${esc(m.display)}</span>
@@ -235,15 +243,33 @@ async function _loadModelsForUser(username, allowedSet, modelsRestricted, privPa
       listEl.querySelectorAll('.priv-model-cb').forEach(cb => {
         if (cb.checked) checked.push(cb.dataset.mid);
       });
-      // All checked means unrestricted; zero checked means explicitly no models.
-      restricted = checked.length !== allModels.length;
-      const value = restricted ? checked : [];
+      // Three distinct states the backend must be able to tell apart:
+      //  - all checked   -> no restriction (allowed_models: [], block_all_models: false)
+      //  - none checked  -> block everything (allowed_models: [], block_all_models: true)
+      //  - some checked  -> allowlist (allowed_models: checked, block_all_models: false)
+      let value, hintText;
+      if (checked.length === allModels.length) {
+        restricted = false;
+        blockAll = false;
+        value = [];
+        hintText = 'All models allowed (no restrictions)';
+      } else if (checked.length === 0) {
+        restricted = true;
+        blockAll = true;
+        value = [];
+        hintText = 'No models allowed';
+      } else {
+        restricted = true;
+        blockAll = false;
+        value = checked;
+        hintText = value.length + ' model(s) allowed';
+      }
       const hint = privPanel.querySelector('.priv-models-list[data-user]')?.previousElementSibling?.querySelector('div[style*="opacity"]');
-      if (hint) hint.textContent = !restricted ? 'All models allowed (no restrictions)' : (value.length === 0 ? 'No models allowed' : value.length + ' model(s) allowed');
+      if (hint) hint.textContent = hintText;
       fetch(`/api/auth/users/${encodeURIComponent(username)}/privileges`, {
         method: 'PUT', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ allowed_models: value, allowed_models_restricted: restricted }),
+        body: JSON.stringify({ allowed_models: value, allowed_models_restricted: restricted, block_all_models: blockAll }),
       }).catch(() => {});
     }
     listEl.querySelectorAll('.priv-model-cb').forEach(cb => cb.addEventListener('change', _saveModels));
@@ -690,6 +716,80 @@ function initEndpointForm() {
   const pickerBtn = el('adm-provider-btn');
   const pickerMenu = el('adm-provider-menu');
   const pickerCurrent = picker ? picker.querySelector('.adm-provider-current') : null;
+  const DEVICE_AUTH_PROVIDER_VALUES = new Set(Object.keys(PROVIDER_DEVICE_FLOWS));
+  let deviceAuthPolling = false;
+  function _selectedProviderOption() {
+    return provider && provider.selectedOptions ? provider.selectedOptions[0] : null;
+  }
+  function _selectedDeviceAuthProvider() {
+    const opt = _selectedProviderOption();
+    const flow = opt && opt.dataset ? opt.dataset.authFlow : '';
+    if (flow && DEVICE_AUTH_PROVIDER_VALUES.has(flow)) return flow;
+    return DEVICE_AUTH_PROVIDER_VALUES.has(provider.value) ? provider.value : '';
+  }
+  function _isDeviceAuthSelected() {
+    return !!_selectedDeviceAuthProvider();
+  }
+  function _setApiFormForProvider() {
+    const deviceAuthProvider = _selectedDeviceAuthProvider();
+    const deviceAuthConfig = PROVIDER_DEVICE_FLOWS[deviceAuthProvider] || null;
+    const apiKey = el('adm-epApiKey');
+    const testBtn = el('adm-epApiTestBtn');
+    const addBtn = el('adm-epAddBtn');
+    const status = el('adm-deviceAuthStatus');
+    const msg = _endpointMsg('api');
+    if (deviceAuthConfig) {
+      urlInput.value = '';
+      urlInput.placeholder = deviceAuthProvider === 'copilot'
+        ? 'GitHub Copilot uses GitHub account sign-in'
+        : 'ChatGPT Subscription uses OpenAI account sign-in';
+      urlInput.readOnly = true;
+      if (apiKey) {
+        apiKey.value = '';
+        apiKey.placeholder = 'No API key needed';
+        apiKey.disabled = true;
+      }
+      if (testBtn) {
+        testBtn.disabled = true;
+        testBtn.style.opacity = '0.45';
+        testBtn.style.cursor = 'not-allowed';
+      }
+      if (addBtn) {
+        addBtn.disabled = false;
+        addBtn.textContent = 'Add';
+        addBtn.style.width = '55px';
+        addBtn.style.display = '';
+      }
+      if (kindSel) kindSel.value = 'api';
+      if (msg) {
+        msg.textContent = '';
+        msg.className = '';
+      }
+    } else {
+      urlInput.placeholder = 'Base URL or pick provider';
+      urlInput.readOnly = false;
+      if (apiKey) {
+        apiKey.placeholder = 'API key';
+        apiKey.disabled = false;
+      }
+      if (testBtn) {
+        testBtn.disabled = false;
+        testBtn.style.opacity = '';
+        testBtn.style.cursor = '';
+      }
+      if (addBtn) {
+        addBtn.disabled = false;
+        addBtn.textContent = 'Add';
+        addBtn.style.width = '55px';
+        addBtn.style.display = '';
+      }
+      if (msg) {
+        msg.textContent = '';
+        msg.className = '';
+      }
+      if (!deviceAuthPolling && status) status.textContent = '';
+    }
+  }
   function _renderPickerMenu() {
     if (!pickerMenu) return;
     pickerMenu.innerHTML = Array.from(provider.options).map(o => {
@@ -731,9 +831,16 @@ function initEndpointForm() {
   }
 
   provider.addEventListener('change', () => {
+    if (_isDeviceAuthSelected()) {
+      _setApiFormForProvider();
+      _renderPickerMenu();
+      _syncPickerCurrent();
+      return;
+    }
     if (provider.value) urlInput.value = provider.value;
     else urlInput.value = '';
     if (kindSel) kindSel.value = provider.value ? 'api' : 'proxy';
+    _setApiFormForProvider();
   });
   urlInput.addEventListener('input', () => {
     if (provider.value && urlInput.value.trim() !== provider.value) {
@@ -821,6 +928,12 @@ function initEndpointForm() {
   const apiCancelTestBtn = el('adm-epApiCancelTestBtn');
   if (apiTestBtn) {
     apiTestBtn.addEventListener('click', async () => {
+      if (_isDeviceAuthSelected()) {
+        const msg = _endpointMsg('api');
+        msg.textContent = '';
+        msg.className = '';
+        return;
+      }
       const msg = _endpointMsg('api');
       msg.textContent = ''; msg.className = '';
       const rawUrl = (urlInput.value || provider.value).trim();
@@ -868,6 +981,11 @@ function initEndpointForm() {
   }
 
   el('adm-epAddBtn').addEventListener('click', async () => {
+    const deviceAuthProvider = _selectedDeviceAuthProvider();
+    if (deviceAuthProvider) {
+      await _startProviderDeviceAuth(deviceAuthProvider, el('adm-epAddBtn'));
+      return;
+    }
     const msg = _endpointMsg('api');
     msg.textContent = ''; msg.className = '';
     const rawUrl = (urlInput.value || provider.value).trim();
@@ -919,77 +1037,255 @@ function initEndpointForm() {
     btn.disabled = false; btn.textContent = 'Add';
   });
 
-  // GitHub Copilot — device-flow login. Starts the flow, shows the user a
-  // code + verification link, and polls until they authorise (or it expires).
-  const copilotBtn = el('adm-copilotConnectBtn');
-  if (copilotBtn) {
-    let copilotPolling = false;
-    copilotBtn.addEventListener('click', async () => {
-      if (copilotPolling) return;
-      const status = el('adm-copilotStatus');
-      const reset = () => { copilotBtn.disabled = false; copilotBtn.textContent = 'Connect GitHub Copilot'; copilotPolling = false; };
-      status.textContent = ''; status.className = 'adm-ep-inline-msg';
-      copilotBtn.disabled = true; copilotBtn.textContent = 'Starting...';
-      copilotPolling = true;
-      let start;
-      try {
-        const res = await fetch('/api/copilot/device/start', { method: 'POST', body: new FormData(), credentials: 'same-origin' });
-        start = await res.json();
-        if (!res.ok) { status.textContent = start.detail || 'Failed to start login'; status.className = 'admin-error'; reset(); return; }
-      } catch (e) { status.textContent = 'Request failed'; status.className = 'admin-error'; reset(); return; }
+  async function _startProviderDeviceAuth(providerKey, triggerEl = null) {
+    if (deviceAuthPolling) return;
+    const config = PROVIDER_DEVICE_FLOWS[providerKey];
+    if (!config) return;
+    const status = el('adm-deviceAuthStatus') || _endpointMsg('api');
+    if (!status) return;
+    const triggerText = triggerEl ? triggerEl.textContent : '';
+    // Render an error with an inline "Try again" (the top button is hidden for
+    // device-auth providers, so retry lives here). Built with DOM methods, not
+    // innerHTML. Call reset() first so the deviceAuthPolling guard is cleared.
+    const showAuthError = (text) => {
+      status.className = 'admin-error';
+      status.textContent = text + ' ';
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'admin-btn-sm';
+      retry.textContent = 'Try again';
+      retry.addEventListener('click', () => { _startProviderDeviceAuth(providerKey, triggerEl); });
+      status.appendChild(retry);
+    };
+    const reset = () => {
+      if (triggerEl) {
+        triggerEl.disabled = false;
+        triggerEl.textContent = triggerText || 'Add';
+      }
+      deviceAuthPolling = false;
+      _setApiFormForProvider();
+    };
+    status.textContent = '';
+    status.className = 'adm-ep-inline-msg';
+    if (triggerEl) {
+      triggerEl.disabled = true;
+      triggerEl.textContent = 'Starting...';
+    }
+    deviceAuthPolling = true;
+    _setApiFormForProvider();
+    status.textContent = `Starting ${config.label} sign-in...`;
 
-      const { poll_id, user_code, verification_uri, verification_uri_complete, interval, expires_in } = start;
-      // Prefer the "complete" URL — it embeds the code so the user only has to
-      // click "Authorize" (no manual code entry).
-      const authUrl = verification_uri_complete || verification_uri || '';
-      const esc = (s) => String(s || '').replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
-      copilotBtn.textContent = 'Waiting…';
-
-      // Cohesive waiting panel: spinner + status line, the device code as a
-      // copyable chip, and a primary "Authorize on GitHub" action.
-      status.className = '';
-      status.innerHTML =
-        '<div class="adm-copilot-panel">' +
-          '<div class="adm-copilot-wait"><span class="admin-spinner"></span>' +
-            '<span>Waiting for GitHub authorization…</span></div>' +
-          '<div class="adm-copilot-coderow">' +
-            '<span class="adm-copilot-code-label">Code</span>' +
-            '<code class="adm-copilot-code">' + esc(user_code) + '</code>' +
-            '<button type="button" class="admin-btn-sm adm-copilot-copy">Copy</button>' +
-          '</div>' +
-          '<a class="admin-btn-add adm-copilot-auth" href="' + encodeURI(authUrl) + '" target="_blank" rel="noopener">Authorize on GitHub ↗</a>' +
-          '<div class="adm-copilot-hint">A new tab opened on GitHub — approve there to finish. Didn\'t open? Use the button above.</div>' +
-        '</div>';
-      const copyBtn = status.querySelector('.adm-copilot-copy');
-      if (copyBtn) copyBtn.addEventListener('click', async () => {
-        try { await navigator.clipboard.writeText(user_code || ''); copyBtn.textContent = 'Copied'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500); } catch (e) {}
+    try {
+      const result = await runProviderDeviceFlow(providerKey, {
+        openWindow: () => {},
+        onStart: ({ start, authUrl }) => {
+          if (triggerEl) triggerEl.textContent = 'Waiting...';
+          status.className = '';
+          const authLabel = providerKey === 'copilot' ? 'Authorize on GitHub' : 'Authorize with OpenAI';
+          const waitLabel = providerKey === 'copilot' ? 'Waiting for GitHub authorization...' : 'Waiting for ChatGPT authorization...';
+          status.innerHTML =
+            '<div class="adm-copilot-panel">' +
+              '<div class="adm-copilot-wait"><span class="admin-spinner"></span>' +
+                '<span>' + esc(waitLabel) + '</span></div>' +
+              '<div class="adm-copilot-coderow">' +
+                '<span class="adm-copilot-code-label">Code</span>' +
+                '<code class="adm-copilot-code">' + esc(start.user_code) + '</code>' +
+                '<button type="button" class="admin-btn-sm adm-device-auth-copy">Copy</button>' +
+              '</div>' +
+              '<a class="admin-btn-add adm-copilot-auth" href="' + encodeURI(authUrl || '') + '" target="_blank" rel="noopener">' + esc(authLabel) + ' ↗</a>' +
+            '</div>';
+          const copyBtn = status.querySelector('.adm-device-auth-copy');
+          if (copyBtn) copyBtn.addEventListener('click', async () => {
+            const code = start.user_code || '';
+            let ok = false;
+            try {
+              if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(code);
+                ok = true;
+              }
+            } catch (e) {}
+            if (!ok) {
+              // navigator.clipboard is unavailable in non-secure contexts (HTTP
+              // self-host over a LAN IP), so fall back to execCommand('copy').
+              const ta = document.createElement('textarea');
+              ta.value = code;
+              ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;';
+              document.body.appendChild(ta);
+              ta.focus();
+              ta.select();
+              try { ta.setSelectionRange(0, code.length); } catch (e) {}
+              try { ok = document.execCommand('copy'); } catch (e) {}
+              ta.remove();
+            }
+            copyBtn.textContent = ok ? 'Copied' : 'Failed';
+            setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+          });
+        },
       });
-      try { if (authUrl) window.open(authUrl, '_blank', 'noopener'); } catch (e) {}
+      if (result.status === 'authorized') {
+        const endpoint = result.endpoint || {};
+        const n = ((endpoint && endpoint.models) || []).length;
+        status.className = 'admin-success';
+        status.textContent = 'Connected - ' + n + ' ' + config.label + ' model' + (n !== 1 ? 's' : '') + ' available.';
+        if (endpoint && endpoint.id) _recentlyAddedEpId = String(endpoint.id);
+        await loadEndpoints();
+        await _selectAddedModelInChat(endpoint || {});
+        reset();
+        return;
+      }
+      if (result.status === 'failed') {
+        reset();
+        showAuthError('Authorization failed (' + (result.error || 'denied') + ').');
+        return;
+      }
+      if (result.status === 'expired') {
+        reset();
+        showAuthError('Authorization expired.');
+        return;
+      }
+    } catch (e) {
+      reset();
+      showAuthError(formatDeviceFlowError(e));
+    }
+  }
 
-      const deadline = Date.now() + (expires_in || 900) * 1000;
-      const stepMs = Math.max((interval || 5), 2) * 1000;
-      const done = (cls, text) => { status.className = cls; status.textContent = text; reset(); };
-      const poll = async () => {
-        if (Date.now() > deadline) { done('admin-error', 'Authorization expired — try again.'); return; }
-        try {
-          const fd = new FormData(); fd.append('poll_id', poll_id);
-          const r = await fetch('/api/copilot/device/poll', { method: 'POST', body: fd, credentials: 'same-origin' });
-          const d = await r.json();
-          if (d.status === 'authorized') {
-            const n = ((d.endpoint && d.endpoint.models) || []).length;
-            done('admin-success', '✓ Connected — ' + n + ' Copilot model' + (n !== 1 ? 's' : '') + ' available.');
-            if (d.endpoint && d.endpoint.id) _recentlyAddedEpId = String(d.endpoint.id);
-            await loadEndpoints();
-            await _selectAddedModelInChat(d.endpoint || {});
-            return;
+  // API Key reveal toggle. The key inputs are hidden by default so the Add
+  // form reads as a single action row; the Key button toggles the input row
+  // and flips aria-expanded for screen readers / CSS pseudo-classes.
+  const _wireKeyToggle = (btnId, rowId) => {
+    const btn = el(btnId);
+    const row = el(rowId);
+    if (!btn || !row) return;
+    btn.addEventListener('click', () => {
+      const showing = row.style.display !== 'none';
+      row.style.display = showing ? 'none' : '';
+      btn.setAttribute('aria-expanded', showing ? 'false' : 'true');
+      btn.style.opacity = showing ? '0.75' : '1';
+      if (!showing) {
+        const inp = row.querySelector('input');
+        if (inp) inp.focus();
+      }
+    });
+  };
+  _wireKeyToggle('adm-epLocalKeyBtn', 'adm-epLocalApiKey-row');
+  _wireKeyToggle('adm-epApiKeyBtn', 'adm-epApiKey-row');
+
+  // ── Added Models toolbar: Probe + Clear offline ────────────────────
+  // Both buttons act over the currently-rendered endpoint list. The
+  // online/offline marker is stamped on each row's [data-adm-ep-online]
+  // attribute by loadEndpoints(), so both buttons just iterate the DOM
+  // without re-fetching anything they don't already have.
+  const _refreshOfflineCount = () => {
+    const lbl = el('adm-epOfflineCount');
+    if (!lbl) return;
+    const n = document.querySelectorAll('[data-adm-ep-id] [data-adm-ep-online="0"]').length;
+    lbl.textContent = n > 0 ? `(${n})` : '';
+    // Keep the button enabled even when there are no offline rows — a
+    // click on the empty case fires a toast instead of feeling dead.
+    const btn = el('adm-epClearOfflineBtn');
+    if (btn) btn.style.opacity = n === 0 ? '0.55' : '0.85';
+  };
+  // Wire after every loadEndpoints() run by patching the render hook —
+  // simplest path: MutationObserver on the two list containers.
+  const _obsRoots = ['adm-epList-local', 'adm-epList-api']
+    .map(id => el(id)).filter(Boolean);
+  if (_obsRoots.length) {
+    const mo = new MutationObserver(_refreshOfflineCount);
+    _obsRoots.forEach(r => mo.observe(r, { childList: true, subtree: true }));
+    _refreshOfflineCount();
+  }
+
+  const probeAllBtn = el('adm-epProbeAllBtn');
+  if (probeAllBtn) {
+    probeAllBtn.addEventListener('click', async () => {
+      probeAllBtn.disabled = true;
+      const origHTML = probeAllBtn.innerHTML;
+      probeAllBtn.innerHTML = '<span style="opacity:0.7;">Probing…</span>';
+      try {
+        // Hit the bulk local probe (same one the model picker uses).
+        await fetch('/api/model-endpoints/probe-local', { credentials: 'same-origin' }).catch(() => {});
+        // Then per-endpoint /probe for the rest so API/cloud endpoints
+        // refresh too. Parallel — capped to 6 at a time so we don't
+        // hammer the backend on a big list.
+        const ids = Array.from(document.querySelectorAll('[data-adm-ep-id]')).map(r => r.getAttribute('data-adm-ep-id')).filter(Boolean);
+        const lane = async (id) => {
+          try { await fetch(`/api/model-endpoints/${id}/probe`, { credentials: 'same-origin' }); } catch (_) {}
+        };
+        const queue = [...ids];
+        const workers = Array.from({length: Math.min(6, queue.length)}, () => (async () => {
+          while (queue.length) {
+            const id = queue.shift();
+            if (id) await lane(id);
           }
-          if (d.status === 'failed') { done('admin-error', 'Authorization failed (' + (d.error || 'denied') + ').'); return; }
-        } catch (e) { /* transient — keep polling */ }
-        setTimeout(poll, stepMs);
-      };
-      setTimeout(poll, stepMs);
+        })());
+        await Promise.all(workers);
+        await loadEndpoints();
+        if (uiModule && uiModule.showToast) uiModule.showToast('Endpoint status refreshed', 1800);
+      } finally {
+        probeAllBtn.innerHTML = origHTML;
+        probeAllBtn.disabled = false;
+      }
     });
   }
+
+  const clearOfflineBtn = el('adm-epClearOfflineBtn');
+  if (clearOfflineBtn) {
+    clearOfflineBtn.addEventListener('click', async () => {
+      const offlineBtns = Array.from(document.querySelectorAll('[data-adm-del-ep][data-adm-ep-online="0"]'));
+      const ids = offlineBtns.map(b => b.getAttribute('data-adm-del-ep')).filter(Boolean);
+      if (!ids.length) {
+        if (uiModule && uiModule.showToast) {
+          uiModule.showToast('No offline endpoints — nothing to clear', 1800);
+        }
+        return;
+      }
+      const confirmMsg = ids.length === 1
+        ? 'Remove 1 offline endpoint?'
+        : `Remove ${ids.length} offline endpoints?`;
+      if (uiModule && uiModule.styledConfirm) {
+        const ok = await uiModule.styledConfirm(confirmMsg, { confirmText: 'Remove', danger: true });
+        if (!ok) return;
+      } else if (!confirm(confirmMsg)) {
+        return;
+      }
+      clearOfflineBtn.disabled = true;
+      // Optimistic UI: pull rows immediately, then fire the DELETEs.
+      offlineBtns.forEach(b => {
+        const row = b.closest('[data-adm-ep-id]');
+        if (row) row.remove();
+      });
+      await Promise.all(ids.map(id =>
+        fetch('/api/model-endpoints/' + id, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {})
+      ));
+      try { await loadEndpoints(); } catch (_) {}
+      _refreshOfflineCount();
+      if (uiModule && uiModule.showToast) uiModule.showToast(`Removed ${ids.length} offline endpoint${ids.length === 1 ? '' : 's'}`, 1800);
+    });
+  }
+
+  // Clear-on-focus for the API key inputs. The fields are type=password so the
+  // value is masked; users can't see what's there to edit it in place, so the
+  // expected gesture is "click in, type new key". Wiping on focus removes the
+  // select-all-and-delete dance.
+  const _wireClearOnFocus = (id) => {
+    const inp = el(id);
+    if (!inp) return;
+    inp.addEventListener('focus', () => {
+      if (inp.value) inp.value = '';
+    });
+  };
+  _wireClearOnFocus('adm-epLocalApiKey');
+  _wireClearOnFocus('adm-epApiKey');
+
+  // Drop the Ollama provider logo into the Ollama Quickstart button. Reuses
+  // the same SVG the provider picker uses, so brand parity stays free.
+  try {
+    const _ollamaLogoSlot = document.querySelector('#adm-epOllamaBtn .adm-ollama-logo');
+    if (_ollamaLogoSlot) {
+      const svg = providerLogo('ollama') || '';
+      if (svg) _ollamaLogoSlot.innerHTML = svg;
+    }
+  } catch (_) {}
 
   // Local "Add" button — sibling form for self-hosted base URLs.
   const localAddBtn = el('adm-epLocalAddBtn');
@@ -1915,17 +2211,28 @@ async function loadTokens() {
 }
 
 function initTokenForm() {
-  el('adm-tokenAddBtn').addEventListener('click', async () => {
+  const addBtn = el('adm-tokenAddBtn');
+  if (!addBtn || addBtn.dataset.bound) return;
+  addBtn.dataset.bound = '1';
+  addBtn.addEventListener('click', async () => {
     const msg = el('adm-tokenMsg');
     const reveal = el('adm-tokenReveal');
     msg.textContent = ''; msg.className = ''; reveal.style.display = 'none';
     const name = el('adm-tokenName').value.trim();
     if (!name) { msg.textContent = 'Token name is required'; msg.className = 'admin-error'; return; }
     const fd = new FormData(); fd.append('name', name);
+    const scopes = (el('adm-tokenScopes')?.value || '').trim();
+    if (scopes) fd.append('scopes', scopes);
     try {
       const res = await fetch('/api/tokens', { method: 'POST', body: fd, credentials: 'same-origin' });
       const data = await res.json();
-      if (res.ok) { el('adm-tokenValue').textContent = data.token; reveal.style.display = ''; el('adm-tokenName').value = ''; loadTokens(); }
+      if (res.ok) {
+        el('adm-tokenValue').textContent = data.token;
+        reveal.style.display = '';
+        el('adm-tokenName').value = '';
+        if (el('adm-tokenScopes')) el('adm-tokenScopes').value = '';
+        loadTokens();
+      }
       else { msg.textContent = data.detail || 'Failed'; msg.className = 'admin-error'; }
     } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
   });
@@ -2186,7 +2493,7 @@ function initDangerZone() {
    ═══════════════════════════════════════════ */
 function initAll() {
   modalEl = el('settings-modal');
-  const inits = [initSignupToggle, initAddUser, initEndpointForm, initMcpForm, initCalDAV, initBackup, initDangerZone, () => settingsModule.initIntegrations()];
+  const inits = [initSignupToggle, initAddUser, initEndpointForm, initMcpForm, initCalDAV, initBackup, initDangerZone, initTokenForm, () => settingsModule.initIntegrations()];
   for (const fn of inits) {
     try { fn(); } catch (e) { console.error('Admin init error in', fn.name || 'anonymous', e); }
   }
@@ -2199,6 +2506,7 @@ function refreshAll() {
   loadEndpoints();
   loadBuiltinTools();
   loadMcpServers();
+  loadTokens();
 }
 
 /* ═══════════════════════════════════════════
