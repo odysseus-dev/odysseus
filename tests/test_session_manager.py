@@ -86,6 +86,18 @@ class TestSessionIsolation:
         )
         assert len(s.history) == 2
 
+    def test_history_reassignment_updates_context_and_legacy_alias(self, sm):
+        """Direct history reassignment must remain authoritative for context reads."""
+        s = Session(id="s1", name="Test", endpoint_url="http://ep", model="model")
+        replacement = [ChatMessage("user", "replacement")]
+
+        s.history = replacement
+
+        assert s._history is replacement
+        assert s.get_context_messages() == [
+            {"role": "user", "content": "replacement"}
+        ]
+
     def test_delete_session_removes_from_cache(self, sm):
         """delete_session must remove session from in-memory cache even when DB lookup fails."""
         s = Session(id="unique-del", name="ToDelete", endpoint_url="http://ep", model="model")

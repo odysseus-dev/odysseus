@@ -56,8 +56,8 @@ class Session:
 
     ``.history`` is the authoritative mutable message list. Callers may
     read, append, pop, or reassign it directly — these changes take
-    effect immediately. ``_history`` is an alias kept for internal use
-    by ``get_context_messages()`` and ``message_count`` tracking.
+    effect immediately. ``_history`` remains a compatibility alias that
+    always resolves to the authoritative ``history`` list.
 
     Each session gets its own unique history list at construction time
     (the dataclass default is never shared between instances).
@@ -79,8 +79,17 @@ class Session:
         if self.headers is None:
             self.headers = {}
         # Ensure each session gets its OWN list (not the shared dataclass default)
-        self._history = self.history if self.history is not None else []
-        self.history = self._history
+        if self.history is None:
+            self.history = []
+
+    @property
+    def _history(self) -> List[ChatMessage]:
+        """Compatibility alias for callers that still reference ``_history``."""
+        return self.history
+
+    @_history.setter
+    def _history(self, messages: List[ChatMessage]):
+        self.history = messages
 
     def add_message(self, message: ChatMessage):
         """
@@ -90,8 +99,8 @@ class Session:
         message_count. Delegates to SessionManager for persistence
         if available.
         """
-        self._history.append(message)
-        self.message_count = len(self._history)
+        self.history.append(message)
+        self.message_count = len(self.history)
 
         # Delegate to session manager for persistence
         if _SESSION_MANAGER_INSTANCE:
@@ -109,7 +118,7 @@ class Session:
         """
         return [
             msg.to_dict()
-            for msg in self._history
+            for msg in self.history
             if (msg.metadata or {}).get("source") != "slash"
         ]
 

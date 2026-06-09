@@ -1420,6 +1420,7 @@ class TaskScheduler:
         task's visible output target.
         """
         from core.database import Session as DbSession, ChatMessage, CrewMember
+        from core.models import ChatMessage as MemChatMessage
 
         output = task.output_target or "session"
         if (
@@ -1492,10 +1493,24 @@ class TaskScheduler:
         # Use SessionManager for persistence so in-memory cache stays in sync
         if self._session_manager and session_id:
             try:
-                self._session_manager.add_message(session_id, ChatMessage("user", task.prompt or f"[Task] {task.name}"))
-                self._session_manager.add_message(session_id, ChatMessage("assistant", result or ""))
+                self._session_manager.add_message(
+                    session_id,
+                    MemChatMessage(
+                        "user",
+                        task.prompt or f"[Task] {task.name}",
+                        metadata=dict(meta),
+                    ),
+                )
+                self._session_manager.add_message(
+                    session_id,
+                    MemChatMessage(
+                        "assistant",
+                        result or "",
+                        metadata=dict(meta),
+                    ),
+                )
             except Exception:
-                pass
+                logger.exception("Failed to deliver task %s through SessionManager", task.id)
         else:
             # Fallback: raw DB write (no session manager available)
             msg_meta = json.dumps(meta)
