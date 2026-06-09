@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Pattern 1: ```bash ... ``` fenced code blocks
 _TOOL_BLOCK_RE = re.compile(
-    r"```(" + "|".join(TOOL_TAGS) + r")\s*\n([\s\S]*?)```",
+    r"```(" + "|".join(TOOL_TAGS) + r")[ \t]*\n?([\s\S]*?)```",
     re.IGNORECASE,
 )
 

@@ -767,6 +767,23 @@ async def execute_tool_block(
     elif tool == "vault_unlock":
         desc = "vault_unlock"
         result = await do_vault_unlock(content, owner=owner)
+    elif tool in {"list_email_accounts", "send_email", "list_emails", "read_email",
+                  "reply_to_email", "bulk_email", "archive_email", "delete_email",
+                  "mark_email_read", "search_emails", "draft_email", "draft_email_reply",
+                  "ai_draft_email_reply", "download_attachment"}:
+        # Bare email tool name from fenced-block models (e.g. Ollama) — route to MCP email server
+        mcp = get_mcp_manager()
+        qualified = f"mcp__email__{tool}"
+        if mcp:
+            try:
+                args = json.loads(content) if content.strip().startswith("{") else {}
+            except (json.JSONDecodeError, TypeError):
+                args = {}
+            desc = f"email: {tool}"
+            result = await mcp.call_tool(qualified, args)
+        else:
+            desc = f"email: {tool}"
+            result = {"error": "MCP manager not available", "exit_code": 1}
     elif tool.startswith("mcp__"):
         # MCP tool dispatch
         mcp = get_mcp_manager()
