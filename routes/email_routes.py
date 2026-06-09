@@ -35,7 +35,7 @@ from fastapi.responses import FileResponse
 from src.constants import DATA_DIR
 
 from src.llm_core import llm_call_async
-from src.upload_limits import read_upload_limited
+from src.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTES
 
 from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
@@ -58,7 +58,6 @@ from routes.email_pollers import _start_poller
 logger = logging.getLogger(__name__)
 
 ODYSSEUS_MAIL_ORIGIN = "odysseus-ui"
-EMAIL_COMPOSE_UPLOAD_MAX_BYTES = 25 * 1024 * 1024
 
 
 def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[str]:
