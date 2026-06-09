@@ -2228,6 +2228,62 @@
             </div>
             <div id="adm-backupMsg" style="margin-top:6px;"></div>
           </div>
+
+<div class="admin-card">
+  <h2>Developer Settings</h2>
+  <div class="admin-toggle-sub" style="margin-bottom:8px">
+    Settings for developers and advanced users.
+  </div>
+
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+
+    <div class="admin-card" style="padding-bottom:6px; width:100%;">
+      <h2>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round"
+             style="vertical-align:-2px;margin-right:5px;opacity:0.6">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33
+                   1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51
+                   1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06
+                   a1.65 1.65 0 0 0 .33-1.82
+                   1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09
+                   a1.65 1.65 0 0 0 1.51-1
+                   1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06
+                   a1.65 1.65 0 0 0 1.82.33H9
+                   a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09
+                   a1.65 1.65 0 0 0 1 1.51
+                   1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06
+                   a1.65 1.65 0 0 0-.33 1.82V9
+                   a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09
+                   a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+        Telemetry & Debugging
+      </h2>
+
+      <div class="vis-toggles">
+
+        <label class="vis-row">
+          <span class="vis-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+          </span>
+          <span class="vis-label">Messages Data Scraping Tool</span>
+          <input type="checkbox" data-ui-key="scraping-toggle-btn">
+          <span class="vis-switch"></span>
+        </label>
+
+      </div>
+    </div>
+
+  </div>
+
+  <div id="adm-backupMsg" style="margin-top:6px;"></div>
+</div>
+
           <div class="admin-card admin-danger-card">
             <h2 style="color:#e55;">Danger Zone</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Irreversible. Each wipe targets one category — pick exactly what you want gone.</div>
