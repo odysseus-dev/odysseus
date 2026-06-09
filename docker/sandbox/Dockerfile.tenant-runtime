@@ -1,0 +1,68 @@
+# syntax=docker/dockerfile:1.7
+#
+# Tenant tool-runtime image for the agent `python` tool (spec §5).
+#
+# Distroless final stage: no shell, no package manager, no apt — a popped tool
+# cannot trivially spawn /bin/sh or install a toolkit. The `bash` tool needs a
+# shell and uses the sibling Dockerfile.tenant-runtime-shell instead; see
+# docker/sandbox/README.md for the bash-vs-distroless rationale.
+#
+# NOTE: this image cannot be built on the Windows dev box. Build on a Linux CI
+# host and publish to your own registry (spec §6 only runs images from a trusted
+# registry):
+#   docker build -f docker/sandbox/Dockerfile.tenant-runtime \
+#     -t registry.internal/tenant-runtime:python-<version> docker/sandbox
+#
+# The future src/tool_sandbox.py wrapper (Phase 1+) runs this image with the
+# full hardened run config from spec §3, e.g.:
+#   docker run --rm --runtime=runsc --user 10001:10001 --read-only \
+#     --tmpfs /tmp:rw,noexec,nosuid,size=64m --cap-drop=ALL \
+#     --security-opt no-new-privileges:true \
+#     --security-opt seccomp=docker/sandbox/seccomp-tenant.json \
+#     --pids-limit 128 --memory 512m --memory-swap 512m --cpus 0.5 \
+#     --ulimit nofile=256:256 --ulimit nproc=64:64 \
+#     --network tenant-<id>-net \
+#     registry.internal/tenant-runtime:python-<version> -I -c "<code>"
+# (ENTRYPOINT is python3, so the wrapper appends `-I -c <code>`.)
+
+# ---------------------------------------------------------------------------
+# Build stage: resolve an (optional) pinned set of third-party deps.
+# Keep this list MINIMAL — every package you add is a bigger toolkit for a
+# popped tool. The stdlib covers most agent `python` use. Uncomment + pin to
+# opt in to specific libraries.
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim AS build
+# CI: pin to a digest, e.g. FROM python:3.12-slim@sha256:<...> AS build  (hadolint DL3006)
+
+WORKDIR /build
+
+# Install third-party deps into a relocatable tree the distroless stage can copy.
+# Default = none (pure stdlib). To enable, drop a pinned requirements.txt next to
+# this Dockerfile and uncomment:
+# COPY requirements.txt .
+# RUN pip install --no-cache-dir --require-hashes --target=/deps -r requirements.txt
+RUN mkdir -p /deps
+
+# ---------------------------------------------------------------------------
+# Final stage: distroless python. No shell, no apt, no pip at runtime.
+# ---------------------------------------------------------------------------
+FROM gcr.io/distroless/python3-debian12:nonroot
+# CI: pin to a digest, e.g. FROM gcr.io/distroless/python3-debian12@sha256:<...>
+
+# Third-party deps (empty by default) on the import path.
+COPY --from=build --chown=10001:10001 /deps /deps
+ENV PYTHONPATH=/deps \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Per-tenant writable data is bind/volume-mounted at /data by the wrapper at run
+# time (spec §4.3). The root fs itself is run --read-only.
+WORKDIR /data
+
+# Non-root. The wrapper also enforces --user 10001:10001 at run time (spec §4.2);
+# this is the in-image fallback. A numeric UID works without an /etc/passwd entry.
+USER 10001:10001
+
+# No long-running ENTRYPOINT/CMD that auto-starts a service — the wrapper passes
+# the command (`-I -c <code>`) on top of the distroless python entrypoint.
+ENTRYPOINT ["/usr/bin/python3"]

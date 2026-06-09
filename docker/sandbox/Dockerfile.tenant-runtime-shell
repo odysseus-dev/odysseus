@@ -1,0 +1,44 @@
+# syntax=docker/dockerfile:1.7
+#
+# Tenant tool-runtime image for the agent `bash` tool (spec §5).
+#
+# The `bash` tool runs asyncio.create_subprocess_shell(...), which executes
+# `/bin/sh -c <command>` on Linux. Distroless has no shell, so the python
+# runtime (Dockerfile.tenant-runtime) cannot serve this tool — hence this
+# separate minimal shell image. See docker/sandbox/README.md.
+#
+# BusyBox static gives a tiny /bin/sh plus the common coreutils applets (ls, cat,
+# grep, sed, awk, find, ...) in a single ~1-5 MB binary — a much smaller toolkit
+# than a full debian shell while still running real shell commands. Isolation
+# comes from --cap-drop=ALL, --read-only, seccomp, the internal (no-egress)
+# network, resource limits, and gVisor at the recommended tier — not from the
+# absence of a shell.
+#
+# If you need bash-specific features beyond POSIX sh, swap the base for a Wolfi /
+# Chainguard image, e.g.:
+#   FROM cgr.dev/chainguard/wolfi-base
+#   RUN apk add --no-cache bash coreutils && rm -rf /var/cache/apk
+#
+# Build on a Linux CI host (not the Windows dev box) and publish to your registry:
+#   docker build -f docker/sandbox/Dockerfile.tenant-runtime-shell \
+#     -t registry.internal/tenant-runtime:shell-<version> docker/sandbox
+#
+# The wrapper (Phase 1+) runs it with the spec §3 hardened config and appends the
+# command, e.g.  docker run ... <image> -c "<command>".
+
+FROM busybox:1.36-musl
+# CI: pin to a digest, e.g. FROM busybox:1.36-musl@sha256:<...>  (hadolint DL3006)
+
+# A non-root account for the in-image fallback USER. The wrapper also enforces
+# --user 10001:10001 at run time (spec §4.2). Tolerate re-runs / read-only quirks.
+RUN adduser -D -u 10001 tool 2>/dev/null || true
+
+# Per-tenant writable data is mounted at /data by the wrapper (spec §4.3); root fs
+# is run --read-only.
+WORKDIR /data
+
+USER 10001:10001
+
+# ENTRYPOINT is the shell so the wrapper can append `-c "<command>"`. No CMD, so
+# nothing runs until a command is passed.
+ENTRYPOINT ["/bin/sh"]

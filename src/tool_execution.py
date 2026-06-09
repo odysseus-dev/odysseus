@@ -665,6 +665,11 @@ async def _direct_fallback(
 
     try:
         if tool == "bash":
+            # Optional per-call container sandbox (opt-in via TOOL_SANDBOX).
+            # Off / desktop / no-docker => falls through to direct exec.
+            from src.tool_sandbox import run_sandboxed, sandbox_enabled
+            if sandbox_enabled():
+                return await run_sandboxed("bash", content, timeout=DEFAULT_BASH_TIMEOUT, progress_cb=progress_cb)
             proc = await asyncio.create_subprocess_shell(
                 content,
                 stdout=asyncio.subprocess.PIPE,
@@ -687,6 +692,11 @@ async def _direct_fallback(
             return {"output": output or "(no output)", "exit_code": rc or 0}
 
         if tool == "python":
+            # Optional per-call container sandbox (opt-in via TOOL_SANDBOX).
+            # Off / desktop / no-docker => falls through to direct exec.
+            from src.tool_sandbox import run_sandboxed, sandbox_enabled
+            if sandbox_enabled():
+                return await run_sandboxed("python", content, timeout=DEFAULT_PYTHON_TIMEOUT, progress_cb=progress_cb)
             # Run user code in a subprocess so an infinite loop or crash
             # can't take the whole server down. -I = isolated mode (skip
             # user site, no PYTHONPATH inheritance) for hygiene.
