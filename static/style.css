@@ -21242,6 +21242,26 @@ body.gallery-selecting .gallery-dl-btn,
   display: flex; align-items: center; justify-content: center;
   color: var(--fg-muted); padding: 16px 0; font-size: 12px;
 }
+.hwfit-hw-visibility-warning {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  margin-top: 8px;
+}
+.hwfit-hw-visibility-warning-title {
+  font-weight: 600;
+}
+.hwfit-hw-visibility-warning-body {
+  opacity: 0.78;
+  line-height: 1.45;
+}
+.hwfit-hw-visibility-warning-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .hwfit-row {
   display: flex; align-items: center; gap: 6px; padding: 5px 8px;
   border-radius: 6px; cursor: pointer; font-size: 11px;
