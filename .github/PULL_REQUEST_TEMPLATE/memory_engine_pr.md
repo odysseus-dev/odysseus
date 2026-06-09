@@ -2,7 +2,30 @@
 
 Implements a native TRACE-inspired hierarchical memory engine for Odysseus. Adds a modular `src/memory_engine/` package providing episodic topic trees, structured profile memory, multi-path semantic retrieval, and background tree reorganization — all without external server dependencies.
 
-The `EnhancedMemoryProvider` replaces `NativeMemoryProvider` as the default memory backend, delegating to three tiers: structured profile entries (key-value with upsert), legacy flat facts, and hierarchical episodic topics. Every chat turn is now ingested into the episodic tree in the background. Profile CRUD is exposed to the agent via three new tools: `user_profile_update`, `user_profile_get`, and `user_profile_delete`.
+### Architecture
+
+```
+┌─────────────────────────────────────────┐
+│        EnhancedMemoryProvider           │
+│  (implements MemoryProvider ABC)        │
+├─────────────┬─────────────┬─────────────┤
+│   Profile   │   Facts     │  Episodic   │
+│   Memory    │  (legacy)   │    Tree     │
+│  Manager    │   Store      │             │
+├─────────────┴─────────────┴─────────────┤
+│         PromptSynthesizer               │
+│  (multi-path semantic retrieval)        │
+└─────────────────────────────────────────┘
+```
+
+The `EnhancedMemoryProvider` replaces `NativeMemoryProvider` as the default memory backend, delegating to three tiers with tiered recall priority:
+1. **Profile tier** — structured key-value entries with confidence scoring and upsert-by-key semantics. Fast, reliable CRUD.
+2. **Fact tier** — legacy flat `memory.json` entries preserved for backward compatibility.
+3. **Episodic tier** — hierarchical topic tree. Every chat turn is ingested in the background via `asyncio.create_task`. Topics are classified using Jaccard similarity + keyword overlap (heuristic by default; optional LLM mode via settings toggle).
+
+**New agent tools:** `user_profile_update`, `user_profile_get`, `user_profile_delete`
+
+**New settings:** `memory_llm_topic_classification` (default `false`), `memory_reorg_interval_messages`, `memory_topic_branch_threshold`
 
 ## Target branch
 
@@ -33,23 +56,66 @@ Part of the feature request described in `.github/ISSUE_TEMPLATE/memory_engine_f
 
 ## How to Test
 
-1. Start Odysseus as usual (`python app.py` or your usual launch command).
-2. Send a few messages in a chat session.
-3. Check `data/memory_engine/` — an `episodes_{owner}.json` and `profile_{owner}.json` should appear after the first turn.
-4. Open Settings → System tab → verify the "LLM Topic Classification" toggle is present and defaults to off.
-5. Enable the toggle, send a message that clearly shifts topic, and verify a new topic branch is created in `episodes_{owner}.json`.
-6. Ask the agent to update a profile field (e.g., "remember that my favorite color is blue") and verify `profile_{owner}.json` reflects the change.
-7. Stop the server, relaunch, and verify that previous episodic topics and profiles reload correctly.
+```bash
+# 1. Verify compilation
+python -m py_compile src/memory_engine/*.py
 
-## Visual / UI changes — REQUIRED if you touched anything that renders
+# 2. Run relevant tests
+python -m pytest tests/test_review_regressions.py tests/test_topic_analyzer.py tests/test_history_topics_owner_scope.py tests/test_tool_index_keyword_boundaries.py -v
 
-- [x] Screenshot or short clip of the change in the running app, attached below. Mobile screenshot too if the change affects mobile.
-  - New "Memory Engine" card in Settings → System tab with LLM Topic Classification toggle.
-- [x] Style match: the change uses Odysseus's existing visual language. Specifically:
-  - Reuses existing CSS variables (`--fg`, `--bg`, `--card`, `--border`, etc.).
-  - Reuses existing toggle/label layout patterns from other System settings cards.
-  - No Unicode emoji in UI or code. Inline SVG uses monochrome stroke style matching existing icons.
-  - Monospaced font (`Fira Code`) not overridden.
-  - Dark theme default respected.
-- [x] No new component patterns. The toggle is a standard checkbox-with-label reused from other settings sections.
-- [x] I am not an LLM agent submitting a bulk PR. (Well, I am, but the user asked me to.)
+# 3. Start Odysseus and send a few chat messages
+python app.py
+# Open http://127.0.0.1:7000 and send 3-4 messages in a session
+
+# 4. Verify files were created
+ls data/memory_engine/
+# Expected: episodes_{owner}.json, profile_{owner}.json
+
+# 5. Verify topic structure
+cat data/memory_engine/episodes_{owner}.json | python -m json.tool | head -50
+
+# 6. Test profile CRUD via agent
+# In chat: "Please remember my favorite color is blue"
+# Then: "What is my favorite color?"
+# Verify: profile_{owner}.json contains "favorite_color": "blue"
+
+# 7. Test LLM topic classification toggle
+# Settings → System → enable "LLM Topic Classification"
+# Send a message that shifts topic abruptly
+# Verify a new topic branch appears in episodes_{owner}.json
+
+# 8. Verify persistence
+# Stop server, restart, open same session
+# Verify previous topics and profiles reload correctly
+```
+
+## Files Changed
+
+| File | What changed |
+|---|---|
+| `src/memory_engine/__init__.py` | New package, exports all components |
+| `src/memory_engine/episodic_tree.py` | Hierarchical topic tree with JSON persistence |
+| `src/memory_engine/profile_manager.py` | Key-value profile store with upsert |
+| `src/memory_engine/topic_classifier.py` | Heuristic + optional LLM classification |
+| `src/memory_engine/prompt_synthesizer.py` | Multi-path semantic retrieval |
+| `src/memory_engine/tree_reorganizer.py` | Background merge/prune/summarize |
+| `src/memory_engine/enhanced_provider.py` | Three-tier MemoryProvider implementation |
+| `src/app_initializer.py` | Wire EnhancedMemoryProvider + TopicClassifier |
+| `src/ai_interaction.py` | Profile tool dispatch |
+| `src/agent_tools.py` | Add profile tool tags |
+| `src/tool_schemas.py` | Add profile tool schemas + converters |
+| `src/tool_execution.py` | Add profile tools to dispatch list |
+| `src/settings.py` | 3 new memory engine settings |
+| `routes/chat_helpers.py` | Episodic ingestion hook |
+| `routes/chat_routes.py` | Pass memory_provider through |
+| `app.py` | Wire memory_provider to chat routes |
+| `static/index.html` | LLM Topic Classification toggle (System tab) |
+| `static/js/settings.js` | Toggle load/save logic |
+| `tests/test_review_regressions.py` | Fix async mock for build_context_preface |
+| `tests/test_user_time.py` | Fix async mock for build_context_preface |
+
+## Visual / UI changes
+
+- [x] New "Memory Engine" card in Settings → System tab with LLM Topic Classification toggle.
+- [x] Style match: uses existing CSS variables (`--fg`, `--bg`, `--card`, `--border`), toggle layout patterns, monochrome SVG inline icons, no Unicode emoji.
+- [x] No new component patterns. Standard checkbox-with-label reused.

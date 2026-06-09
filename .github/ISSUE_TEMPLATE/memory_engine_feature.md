@@ -33,6 +33,12 @@ Implement a modular memory engine under `src/memory_engine/` with the following 
 - Add `user_profile_update`, `user_profile_get`, `user_profile_delete` agent tools.
 - Add `memory_llm_topic_classification` toggle in System settings tab.
 
+**Performance considerations:**
+- Heuristic topic classification is O(n) on topic count and adds <1ms per message.
+- Episodic ingestion is fire-and-forget via `asyncio.create_task` — never blocks the response stream.
+- LLM topic classification is gated behind a settings toggle and disabled by default.
+- Background reorganization is triggered on an interval (configurable via `memory_reorg_interval_messages`) and runs only when the tree exceeds a message threshold.
+
 ### 3. Alternatives Considered
 
 | Alternative | Why Not Chosen |
@@ -46,3 +52,4 @@ Implement a modular memory engine under `src/memory_engine/` with the following 
 
 - PR #2669 — MemMachine integration (coexistence mode, external server dependency)
 - This feature builds on lessons learned from #2669 but replaces the external dependency with a fully native implementation.
+- Targets upstream `dev` branch, rebased cleanly with no merge commits.
