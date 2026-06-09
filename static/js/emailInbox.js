@@ -323,8 +323,10 @@ export async function loadEmails(append = false) {
     console.error('Failed to load emails:', e);
     if (_listSpinner) { _listSpinner.destroy(); _listSpinner = null; }
     if (!append && list) {
-      const msg = e && e.message ? `Failed to load: ${e.message}` : 'Failed to load';
-      list.innerHTML = `<div class="email-loading">${msg.replace(/&/g, '&amp;').replace(/</g, '&lt;')}${_emailSetupHint()}</div>`;
+      const msg = window.__odysseusActiveEmailAccount
+        ? 'Failed to load emails'
+        : 'Connect an email account to view your inbox';
+      list.innerHTML = `<div class="email-loading">${_esc(msg)}${_emailSetupHint()}</div>`;
     }
   } finally {
     _loading = false;
