@@ -58,6 +58,13 @@ class FakeSkillsManager:
     def save(self, rows):
         self.rows = list(rows)
 
+    def add_skill(self, title=None, name=None, owner=None, **kwargs):
+        # Mirrors services.memory.skills.add_skill: persists a SKILL.md row and
+        # returns its identity. source="user" skips auto-dedup, so no _deduped.
+        entry = {"id": f"new-{len(self.rows)}", "title": title, "name": name, "owner": owner}
+        self.rows.append(entry)
+        return {"name": name, "id": entry["id"]}
+
 
 def _make_client(skills_mgr, monkeypatch):
     # Bypass the admin gate and read the importer straight off request.state.
