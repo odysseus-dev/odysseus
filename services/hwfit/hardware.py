@@ -101,12 +101,10 @@ def _detect_nvidia():
     # that may not be in the server process's PATH.
     if not out:
         for _p in NVIDIA_PATH_CANDIDATES:
-            # Use list form so subprocess.run (local) resolves the absolute path
-            # correctly instead of treating the whole string as an executable name.
             if _remote_host:
                 out = _run(f"{_p} --query-gpu=memory.total,name --format=csv,noheader,nounits")
             else:
-                out = _run([_p, "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
+                out = _run([_p, "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])n([_p, "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
             if out:
                 break
     if not out:
