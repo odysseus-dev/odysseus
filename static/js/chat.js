@@ -622,7 +622,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         const rawFiles = fileHandlerModule.getPendingRaw ? fileHandlerModule.getPendingRaw() : [];
         for (let i = 0; i < _pendingAttachInfo.length; i++) {
           const att = _pendingAttachInfo[i];
-          if (IMPORTABLE_EXT.test(att.name) && rawFiles[i]) {
+          if (IMPORTABLE_EXT.test(att.name) && rawFiles[i] && !att.isSkill) {
             _importableFiles.push({ info: att, file: rawFiles[i] });
           }
         }

@@ -36606,3 +36606,40 @@ body.theme-frosted .modal {
    the input beside it (.confirm-btn won't stretch on its own). */
 .ask-user-other-send { flex-shrink: 0; white-space: nowrap; min-height: 39px; }
 .ask-user-other-send:disabled { opacity: 0.5; cursor: default; }
+
+/* Skill Attach Modal and Badge Styles */
+.skill-attach-item {
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.skill-attach-item:hover {
+  border-color: var(--brand-color);
+  background: var(--hover);
+}
+.skill-attach-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.skill-attach-desc {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+  line-height: 1.4;
+}
+.thumb.thumb-skill {
+  border-color: color-mix(in srgb, var(--brand-color) 40%, var(--border));
+  background: color-mix(in srgb, var(--brand-color) 12%, transparent);
+}
+.thumb.thumb-skill .thumb-skill-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 500;
+}

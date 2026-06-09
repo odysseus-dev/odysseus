@@ -1738,6 +1738,129 @@ function initializeEventListeners() {
     });
   }
 
+  // Skill attachment modal triggers and functionality
+  const overflowSkillBtn = el('overflow-skill-btn');
+  const skillAttachModal = el('skill-attach-modal');
+  const closeSkillAttachBtn = el('close-skill-attach-btn');
+  const skillAttachSearch = el('skill-attach-search');
+  const skillAttachList = el('skill-attach-list');
+
+  let activeSkillsList = [];
+
+  if (overflowSkillBtn && skillAttachModal) {
+    overflowSkillBtn.addEventListener('click', async () => {
+      skillAttachModal.classList.remove('hidden');
+      if (skillAttachSearch) {
+        skillAttachSearch.value = '';
+        skillAttachSearch.focus();
+      }
+      await loadSkillsForAttachment();
+    });
+  }
+
+  if (closeSkillAttachBtn && skillAttachModal) {
+    closeSkillAttachBtn.addEventListener('click', () => {
+      dismissModal(skillAttachModal);
+    });
+  }
+
+  if (skillAttachSearch) {
+    skillAttachSearch.addEventListener('input', () => {
+      renderSkillsListForAttachment();
+    });
+  }
+
+  async function loadSkillsForAttachment() {
+    if (skillAttachList) {
+      skillAttachList.innerHTML = '<div style="text-align:center;opacity:0.4;padding:12px 0;font-size:11px;">Loading skills…</div>';
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/skills`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      activeSkillsList = data.skills || [];
+      renderSkillsListForAttachment();
+    } catch (e) {
+      if (skillAttachList) {
+        skillAttachList.innerHTML = `<div style="text-align:center;color:var(--red);padding:12px 0;font-size:11px;">Failed to load skills: ${e.message}</div>`;
+      }
+    }
+  }
+
+  function renderSkillsListForAttachment() {
+    if (!skillAttachList) return;
+    skillAttachList.innerHTML = '';
+    const query = (skillAttachSearch ? skillAttachSearch.value : '').toLowerCase();
+    
+    // Sort skills by name
+    const sorted = [...activeSkillsList].sort((a, b) => {
+      const nameA = (a.name || a.id || '').toLowerCase();
+      const nameB = (b.name || b.id || '').toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+
+    const filtered = sorted.filter(sk => {
+      const name = (sk.name || sk.id || '').toLowerCase();
+      const desc = (sk.description || '').toLowerCase();
+      return name.includes(query) || desc.includes(query);
+    });
+
+    if (filtered.length === 0) {
+      skillAttachList.innerHTML = '<div style="text-align:center;opacity:0.4;padding:12px 0;font-size:11px;">No matching skills found.</div>';
+      return;
+    }
+
+    filtered.forEach(sk => {
+      const name = sk.name || sk.id;
+      const desc = sk.description || 'No description provided.';
+      
+      const item = document.createElement('div');
+      item.className = 'skill-attach-item';
+      
+      const nameEl = document.createElement('div');
+      nameEl.className = 'skill-attach-name';
+      nameEl.textContent = name;
+      
+      const descEl = document.createElement('div');
+      descEl.className = 'skill-attach-desc';
+      descEl.textContent = desc;
+      
+      item.appendChild(nameEl);
+      item.appendChild(descEl);
+      
+      item.addEventListener('click', async () => {
+        dismissModal(skillAttachModal);
+        if (uiModule && uiModule.showToast) {
+          uiModule.showToast(`Attaching skill: ${name}...`, 1500);
+        }
+        try {
+          const res = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(name)}/markdown`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          const markdown = data.markdown || '';
+          
+          // Create File object
+          const file = new File([markdown], `${name}.md`, { type: 'text/markdown' });
+          file.isSkill = true;
+          file.skillName = name;
+          
+          if (fileHandlerModule && fileHandlerModule.addFiles) {
+            fileHandlerModule.addFiles([file]);
+            if (uiModule && uiModule.showToast) {
+              uiModule.showToast(`Skill attached: ${name}`);
+            }
+          }
+        } catch (err) {
+          if (uiModule && uiModule.showError) {
+            uiModule.showError(`Failed to attach skill: ${err.message}`);
+          }
+        }
+      });
+      
+      skillAttachList.appendChild(item);
+    });
+  }
+
   // ── RAG toggle (overflow + indicator) ──
   function _syncRagIndicator(active) {
     const indicator = el('rag-indicator-btn');

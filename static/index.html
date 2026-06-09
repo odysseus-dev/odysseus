@@ -1035,6 +1035,12 @@
                 </svg>
                 <span>Documents</span>
               </button>
+              <button type="button" class="overflow-menu-item" id="overflow-skill-btn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                </svg>
+                <span>Skill</span>
+              </button>
               <button type="button" class="overflow-menu-item" id="overflow-rag-btn">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
@@ -1306,7 +1312,27 @@
       </div>
       <div class="modal-body cookbook-body"></div>
     </div>
+  </div>  <!-- Skill Attach Modal -->
+  <div id="skill-attach-modal" class="modal hidden">
+    <div class="modal-content" role="dialog" aria-label="Attach Skill" style="width: min(400px, 92vw); max-height: 70vh; background: var(--bg); display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <h4 style="margin:0;margin-right:auto;display:flex;align-items:center;gap:6px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--brand-color)">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+          </svg>
+          Attach Skill
+        </h4>
+        <button class="close-btn" id="close-skill-attach-btn" aria-label="Close modal">✖</button>
+      </div>
+      <div class="modal-body" style="padding:16px; overflow-y:auto; display:flex; flex-direction:column; gap:12px; flex:1;">
+        <input type="text" id="skill-attach-search" placeholder="Search skills..." style="width:100%; padding:8px 12px; background:var(--input-bg); border:1px solid var(--input-border); border-radius:6px; color:var(--fg); font-size:13px;" />
+        <div id="skill-attach-list" style="display:flex; flex-direction:column; gap:8px; overflow-y:auto; flex:1; max-height: 40vh;">
+          <!-- Loaded skills list will render here -->
+        </div>
+      </div>
+    </div>
   </div>
+
 
   <!-- Settings Modal (all users) -->
   <div id="settings-modal" class="modal hidden">

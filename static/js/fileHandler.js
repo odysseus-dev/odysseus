@@ -105,18 +105,31 @@ export function renderAttachStrip() {
 function _createChip(f, idx) {
   const chip = document.createElement('div');
   chip.className = 'thumb';
-  const isImage = f.type?.startsWith('image/') || /\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i.test(f.name || '');
-  if (isImage) {
-    chip.classList.add('thumb-image');  // lets CSS overlay the remove-X on the corner (mobile)
-    const img = document.createElement('img');
-    img.className = 'thumb-img';
-    img.src = _getPreviewUrl(f);
-    img.alt = f.name || 'image';
-    chip.appendChild(img);
-  } else {
+  if (f.isSkill) {
+    chip.classList.add('thumb-skill');
     const span = document.createElement('span');
-    span.textContent = f.name || 'pasted-image';
+    span.className = 'thumb-skill-label';
+    span.innerHTML = `
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:2px;color:var(--brand-color)">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+      </svg>
+      Skill: ${f.skillName || f.name}
+    `;
     chip.appendChild(span);
+  } else {
+    const isImage = f.type?.startsWith('image/') || /\.(png|jpg|jpeg|gif|webp|svg|bmp)$/i.test(f.name || '');
+    if (isImage) {
+      chip.classList.add('thumb-image');  // lets CSS overlay the remove-X on the corner (mobile)
+      const img = document.createElement('img');
+      img.className = 'thumb-img';
+      img.src = _getPreviewUrl(f);
+      img.alt = f.name || 'image';
+      chip.appendChild(img);
+    } else {
+      const span = document.createElement('span');
+      span.textContent = f.name || 'pasted-image';
+      chip.appendChild(span);
+    }
   }
   const x = document.createElement('button');
   x.textContent = '\u00d7';
@@ -254,6 +267,8 @@ export function getPendingInfo() {
       size: f.size || 0,
       mime: f.type || '',
       previewUrl: isImage ? _getPreviewUrl(f) : '',
+      isSkill: f.isSkill || false,
+      skillName: f.skillName || '',
     };
   });
 }
