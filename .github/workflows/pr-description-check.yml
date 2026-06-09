@@ -1,26 +1,25 @@
 name: ci / PR checks
 
 on:
-  pull_request_target:
+  # pull_request_target runs in the base-repo context (has secrets) so the check
+  # works on fork PRs. Safe here: the checkout pins to the base branch (no fork
+  # code runs) and the scripts only read context.payload and call the GitHub API.
+  pull_request_target:  # zizmor: ignore[dangerous-triggers]
     types: [opened, edited, synchronize, reopened, ready_for_review]
 
-# pull_request_target runs in the base-repo context (has secrets).
-# The checkout below pins to the base branch so no fork code is executed.
-# The script only reads context.payload and calls the GitHub API.
-# Least privilege: contents:read for the base-ref checkout, pull-requests:write
-# to add/remove labels and post comments on PRs, and issues:write for the same
-# on real issues. NOTE: modifying a *pull request's* labels/comments needs the
-# `pull-requests` scope even though the REST path is under `/issues/{n}/...`;
-# `issues:write` alone returns 403 on PRs.
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
+# Default-deny at the workflow level; each job opts into only the scopes it needs.
+# Note: modifying a PR's labels/comments needs pull-requests:write even though the
+# REST path is under /issues/{n}/...; issues:write alone returns 403 on PRs.
+permissions: {}
 
 jobs:
   check-description:
     name: Check PR description
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
     # Skip bots: they open PRs programmatically and have their own process.
     if: github.event.pull_request.user.type != 'Bot'
     steps:
@@ -28,6 +27,7 @@ jobs:
         with:
           ref: ${{ github.base_ref }}
           sparse-checkout: .github/scripts
+          persist-credentials: false
 
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
         with:
@@ -36,6 +36,7 @@ jobs:
   check-title:
     name: Check PR title (Conventional Commits)
     runs-on: ubuntu-latest
+    permissions: {}
     # Skip bots: they open PRs programmatically and have their own process.
     if: github.event.pull_request.user.type != 'Bot'
     steps:
@@ -59,6 +60,9 @@ jobs:
   check-mergeable:
     name: Flag unmergeable PRs
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
     # Skip bots: they open PRs programmatically and have their own process.
     if: github.event.pull_request.user.type != 'Bot'
     steps:

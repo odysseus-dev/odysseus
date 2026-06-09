@@ -2118,6 +2118,28 @@ export function addMessage(role, content, modelName, metadata) {
       return lastWrap;
     }
 
+    // --- Wake-task / supervisor system check-in ---
+    // The self-wake mechanism injects "Did you finish?" as a user message
+    // (or persisted history shows a "[Task] Self-check: <id>" envelope)
+    // so the agent loop re-enters and re-checks status. Render as a
+    // normal user-style bubble — same chrome as a real user message,
+    // just with role "Supervisor" and a short summary body — instead of
+    // a slim system chip. Matches chat style and integrates cleanly
+    // into the conversation flow.
+    let _isWakeCheck = !!(metadata?.wake_check_in || metadata?.hidden_from_user_view);
+    if (!_isWakeCheck && typeof textRaw === 'string') {
+      // Also catch historical messages persisted as "[Task] Self-check: <sid>"
+      // (older wake tasks that didn't set wake_check_in metadata).
+      if (/^\s*\[Task\]\s+Self-check:/i.test(textRaw)) {
+        _isWakeCheck = true;
+      }
+    }
+    if (_isWakeCheck) {
+      // Supervisor self-check messages are an internal control signal —
+      // skip rendering entirely so they don't show up in the conversation.
+      return null;
+    }
+
     // --- Standard single-bubble message ---
     const wrap = document.createElement('div');
     wrap.className = 'msg ' + (role === 'user' ? 'msg-user' : 'msg-ai');

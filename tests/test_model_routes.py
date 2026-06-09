@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from fastapi import HTTPException
 
 from tests.helpers.import_state import clear_fake_endpoint_resolver_modules, preserve_import_state
 
@@ -191,6 +192,87 @@ class TestMatchProviderCurated:
 
     def test_none_url_safe(self):
         assert _match_provider_curated(None, "openai") == "openai"
+
+    # ── Z.AI coding plan path override (#2230) ──
+
+    def test_zai_coding_path_returns_coding_curated(self):
+        """z.ai/api/coding must return 'zai-coding', not the base 'zai' list."""
+        assert _match_provider_curated("https://z.ai/api/coding", "openai") == "zai-coding"
+
+    def test_zai_coding_path_differs_from_base_zai(self):
+        """The coding plan and the base plan must resolve to different curated keys."""
+        base = _match_provider_curated("https://z.ai/v1", "openai")
+        coding = _match_provider_curated("https://z.ai/api/coding", "openai")
+        assert base == "zai"
+        assert coding == "zai-coding"
+        assert base != coding
+
+    def test_zai_coding_with_trailing_slash(self):
+        assert _match_provider_curated("https://z.ai/api/coding/", "openai") == "zai-coding"
+
+    def test_zai_base_does_not_match_coding(self):
+        """z.ai without the /api/coding path must NOT return 'zai-coding'."""
+        assert _match_provider_curated("https://z.ai/v1", "openai") != "zai-coding"
+
+    def test_zai_coding_none_provider(self):
+        """Path-based override fires even when provider is None."""
+        assert _match_provider_curated("https://z.ai/api/coding", None) == "zai-coding"
+
+
+# ── _probe_endpoint: Z.AI coding plan (#2230) ──
+
+class TestProbeZaiCoding:
+    """Regression coverage for the Z.AI coding endpoint probing path."""
+
+    def _patch(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+
+    def test_probe_preserves_models_from_server(self, monkeypatch):
+        """Models returned by /models are kept in the result."""
+        self._patch(monkeypatch)
+        server_models = [{"id": "glm-5.1"}, {"id": "custom-finetune"}]
+
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
+            return httpx.Response(200, json={"data": server_models},
+                                 request=httpx.Request("GET", url))
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        result = _probe_endpoint("https://z.ai/api/coding", "key")
+        assert "glm-5.1" in result
+        assert "custom-finetune" in result
+
+    def test_probe_appends_curated_on_partial_response(self, monkeypatch):
+        """When /models returns a partial list, curated-only models are appended."""
+        self._patch(monkeypatch)
+        # Server only returns one model; the curated list has more
+        server_models = [{"id": "glm-5.1"}]
+
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
+            return httpx.Response(200, json={"data": server_models},
+                                 request=httpx.Request("GET", url))
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        result = _probe_endpoint("https://z.ai/api/coding", "key")
+        assert "glm-5.1" in result
+        # At least one curated model should be appended
+        coding_curated = _PROVIDER_CURATED.get("zai-coding", [])
+        appended = [m for m in coding_curated if m in result and m != "glm-5.1"]
+        assert len(appended) > 0, "curated-only models should be appended"
+
+    def test_probe_does_not_use_base_zai_curated(self, monkeypatch):
+        """The coding endpoint must use zai-coding, NOT the base zai list."""
+        self._patch(monkeypatch)
+
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
+            return httpx.Response(200, json={"data": [{"id": "glm-5.1"}]},
+                                 request=httpx.Request("GET", url))
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        result = _probe_endpoint("https://z.ai/api/coding", "key")
+        base_only = set(_PROVIDER_CURATED.get("zai", [])) - set(_PROVIDER_CURATED.get("zai-coding", []))
+        for model in base_only:
+            assert model not in result, f"base-zai-only model {model} should not appear for coding endpoint"
 
 
 # ── _curate_models ──
@@ -1271,6 +1353,24 @@ def test_background_refresh_failure_keeps_existing_cached_models(monkeypatch):
     assert _wait_for(lambda: db.commits > 0)
     assert result["items"][0]["models"] == ["cached-model"]
     assert json.loads(ep.cached_models) == ["cached-model"]
+
+
+def test_api_models_auth_gate_fails_closed_on_unexpected_error(monkeypatch):
+    """A non-HTTPException raised while checking auth must yield 500, not a
+    silent pass-through that leaks the model list to an unauthenticated caller."""
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "_auth_disabled", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user=None),
+        app=SimpleNamespace(state=SimpleNamespace(auth_manager=SimpleNamespace(is_configured=True))),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        _route_endpoint(router, "/api/models")(request)
+
+    assert exc.value.status_code == 500
 
 
 def test_llm_core_list_model_ids_uses_cached_configured_proxy(monkeypatch):

@@ -1559,6 +1559,7 @@ async function initResearchSearchSettings() {
 async function initAgentSettings() {
   var toolsInput = el('set-agentMaxTools');
   var roundsInput = el('set-agentMaxRounds');
+  var supInput = el('set-agentSupervisorLadder');
   var msg = el('set-agentMsg');
   if (!toolsInput) return;
 
@@ -1567,6 +1568,7 @@ async function initAgentSettings() {
     var settings = await res.json();
     if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
     if (roundsInput && settings.agent_max_rounds) roundsInput.value = settings.agent_max_rounds;
+    if (supInput) supInput.checked = !!settings.agent_supervisor_ladder;
   } catch (e) {}
 
   // Clamp + coerce a raw input to an int in [lo, hi]; falls back to `dflt`
@@ -1584,23 +1586,27 @@ async function initAgentSettings() {
     if (roundsInput) roundsInput.value = rounds;
     var payload = { agent_max_tool_calls: tools };
     if (rounds != null) payload.agent_max_rounds = rounds;
+    if (supInput) payload.agent_supervisor_ladder = !!supInput.checked;
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
       msg.textContent = (tools > 0 ? 'Limit: ' + tools + ' tool calls' : 'Unlimited tool calls') +
-        (rounds != null ? ' · ' + rounds + ' steps/message' : '');
+        (rounds != null ? ' · ' + rounds + ' steps/message' : '') +
+        (supInput && supInput.checked ? ' · supervisor on' : '');
       msg.style.color = 'var(--fg)';
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
   toolsInput.addEventListener('change', save);
   if (roundsInput) roundsInput.addEventListener('change', save);
+  if (supInput) supInput.addEventListener('change', save);
   var cur = parseInt(toolsInput.value, 10) || 0;
   var curR = roundsInput ? (parseInt(roundsInput.value, 10) || 20) : null;
   msg.textContent = (cur > 0 ? 'Limit: ' + cur + ' tool calls' : 'Unlimited tool calls') +
-    (curR != null ? ' · ' + curR + ' steps/message' : '');
+    (curR != null ? ' · ' + curR + ' steps/message' : '') +
+    (supInput && supInput.checked ? ' · supervisor on' : '');
 }
 
 /* ═══════════════════════════════════════════
@@ -2736,13 +2742,14 @@ async function initEmailAccountsSettings() {
       <h3 style="font-size:12px;margin:0 0 8px">${isEdit ? 'Edit Account' : 'New Account'}</h3>
       <div class="settings-col">
         <div class="settings-row"><label class="settings-label">Provider${_hint('Pick a known provider to auto-fill the IMAP and SMTP host/port. Choose Custom to type your own.')}</label><select id="eaf-provider" class="settings-select"><option value="">Custom…</option>${_providerOptions}</select></div>
+        <div id="eaf-provider-note" style="display:none;font-size:11px;line-height:1.5;padding:8px 10px;margin:2px 0 4px;border:1px solid color-mix(in srgb, var(--fg) 15%, transparent);border-left:3px solid var(--accent, var(--red));border-radius:4px;background:color-mix(in srgb, var(--fg) 4%, transparent);"></div>
         <div class="settings-row"><label class="settings-label">Name${_hint('Optional label for this account (e.g. “Work” or “Personal”). Leave blank to use the email address.')}</label><input id="eaf-name" class="settings-input" placeholder="(optional — leave blank to use email)" value="${esc(a.name || '')}"></div>
         <div class="settings-row"><label class="settings-label">Email${_hint('Your email address. Used as the From: header on outgoing mail and as the display label when Name is blank.')}</label><input id="eaf-from" class="settings-input" placeholder="you@example.com" value="${esc(a.from_address || '')}"></div>
         <div style="font-size:11px;font-weight:600;opacity:0.6;margin:6px 0 2px">IMAP (Receiving)</div>
         <div class="settings-row"><label class="settings-label">Host${_hint('Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot.')}</label><input id="eaf-imap-host" class="settings-input" value="${esc(a.imap_host || '')}"></div>
         <div class="settings-row"><label class="settings-label">Port${_hint('993 for IMAPS (most providers), 143 for plain or STARTTLS. Local servers often use a custom port like 31143.')}</label><input id="eaf-imap-port" class="settings-input" type="number" value="${esc(a.imap_port || 993)}" style="max-width:100px"></div>
         <div class="settings-row"><label class="settings-label">Username${_hint('Usually your full email address.')}</label><input id="eaf-imap-user" class="settings-input" value="${esc(a.imap_user || '')}"></div>
-        <div class="settings-row"><label class="settings-label">Password${_hint('Your IMAP login password. Use an app-specific password if your provider requires 2FA (Gmail, iCloud, etc.).')}</label><input id="eaf-imap-pass" class="settings-input" type="password" placeholder="${isEdit && a.has_imap_password ? '(unchanged)' : ''}"></div>
+        <div class="settings-row"><label class="settings-label">Password${_hint('Your IMAP login password. Use an app-specific password if your provider requires 2FA. Outlook / Office 365 generally requires OAuth and will not work with a normal password here.')}</label><input id="eaf-imap-pass" class="settings-input" type="password" placeholder="${isEdit && a.has_imap_password ? '(unchanged)' : ''}"></div>
         <div class="settings-row"><label class="settings-label">STARTTLS${_hint('Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured.')}</label><label class="admin-switch"><input type="checkbox" id="eaf-imap-starttls" ${a.imap_starttls !== false ? 'checked' : ''}><span class="admin-slider"></span></label></div>
         <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px">SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
         <div class="settings-row"><label class="settings-label">Host${_hint('Your outgoing-mail server, e.g. smtp.gmail.com, smtp.migadu.com. Leave blank to make this account read-only.')}</label><input id="eaf-smtp-host" class="settings-input" value="${esc(a.smtp_host || '')}"></div>
@@ -2750,7 +2757,7 @@ async function initEmailAccountsSettings() {
         <div class="settings-row"><label class="settings-label">Security${_hint('SSL for port 465, STARTTLS for port 587, or None for local SMTP bridges such as Proton Mail Bridge.')}</label><select id="eaf-smtp-security" class="settings-select"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option><option value="none">None</option></select></div>
         <div class="settings-row"><label class="settings-label">Same as IMAP${_hint('Use the IMAP username and password for SMTP too (this is right for almost every provider). Turn off to enter separate SMTP credentials.')}</label><label class="admin-switch"><input type="checkbox" id="eaf-smtp-same" ${(!isEdit || (a.smtp_user && a.imap_user && a.smtp_user === a.imap_user)) ? 'checked' : ''}><span class="admin-slider"></span></label></div>
         <div class="settings-row eaf-smtp-creds"><label class="settings-label">Username${_hint('Usually the same as your IMAP username (your email address).')}</label><input id="eaf-smtp-user" class="settings-input" value="${esc(a.smtp_user || '')}"></div>
-        <div class="settings-row eaf-smtp-creds"><label class="settings-label">Password${_hint('Your SMTP password — often the same as your IMAP password.')}</label><input id="eaf-smtp-pass" class="settings-input" type="password" placeholder="${isEdit && a.has_smtp_password ? '(unchanged)' : ''}"></div>
+        <div class="settings-row eaf-smtp-creds"><label class="settings-label">Password${_hint('Your SMTP password — often the same as your IMAP password. Outlook / Office 365 generally requires OAuth and will not work with a normal password here.')}</label><input id="eaf-smtp-pass" class="settings-input" type="password" placeholder="${isEdit && a.has_smtp_password ? '(unchanged)' : ''}"></div>
         <div class="settings-row" style="margin-top:10px;align-items:center;">
           <button class="admin-btn-add" id="eaf-save" style="background:var(--red);border-color:var(--red);color:#fff;display:inline-flex;align-items:center;gap:5px;font-weight:600;">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
@@ -2765,8 +2772,29 @@ async function initEmailAccountsSettings() {
       </div>
     `;
 
+    const eafProviderNotes = {
+      outlook: {
+        title: 'Outlook / Office 365 needs OAuth',
+        body: 'Microsoft disables normal password login for IMAP/SMTP in most Outlook and Microsoft 365 accounts. Odysseus does not support Microsoft OAuth/Graph mail yet, so this preset is only a placeholder for future support.',
+      },
+    };
+    const eafNoteEl = el('eaf-provider-note');
+    const _renderEafProviderNote = (key) => {
+      const n = eafProviderNotes[key];
+      if (!eafNoteEl || !n) {
+        if (eafNoteEl) {
+          eafNoteEl.style.display = 'none';
+          eafNoteEl.innerHTML = '';
+        }
+        return;
+      }
+      eafNoteEl.style.display = '';
+      eafNoteEl.innerHTML = `<div style="font-weight:600;margin-bottom:3px;">${esc(n.title)}</div><div style="opacity:0.8;">${esc(n.body)}</div>`;
+    };
+
     // Provider preset → autofill host/port/STARTTLS for both halves.
     el('eaf-provider').addEventListener('change', (e) => {
+      _renderEafProviderNote(e.target.value);
       const p = PROVIDERS[e.target.value];
       if (!p) return;
       el('eaf-imap-host').value = p.imap.host;
@@ -4071,7 +4099,7 @@ async function initUnifiedIntegrations() {
           <div class="settings-row"><label class="settings-label">Host${_hint('Your IMAP server, e.g. imap.gmail.com, imap.migadu.com, a LAN host, or a Tailscale IP for Dovecot.')}</label><input id="uf-imap-host" class="settings-input" placeholder="imap.example.com"></div>
           <div class="settings-row"><label class="settings-label">Port${_hint('993 for IMAPS (most providers), 143 for plain or STARTTLS. Local servers often use a custom port like 31143.')}</label><input id="uf-imap-port" class="settings-input" type="number" placeholder="993" style="max-width:100px"></div>
           <div class="settings-row"><label class="settings-label">Username${_hint('Yes — your full email address goes here too (e.g. you@gmail.com). Same as the Email field above for almost every provider.')}</label><input id="uf-imap-user" class="settings-input" placeholder="you@example.com"></div>
-          <div class="settings-row"><label class="settings-label">Password${_hint('For Gmail, iCloud, and Yahoo: paste your App Password (NOT your normal account password — those are blocked for IMAP). For Migadu, Fastmail, Outlook, etc.: your regular mailbox password works.')}</label><input id="uf-imap-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
+          <div class="settings-row"><label class="settings-label">Password${_hint('For Gmail, iCloud, and Yahoo: paste your App Password (NOT your normal account password). For Migadu and Fastmail, your mailbox password usually works. Outlook / Office 365 generally requires OAuth and will not work with this password form.')}</label><input id="uf-imap-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
           <div class="settings-row"><label class="settings-label">STARTTLS${_hint('Turn ON for port 143/587 to upgrade plain to TLS. Turn OFF for port 993 (IMAPS — already encrypted) or a local server with no TLS configured.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-imap-starttls" checked><span class="admin-slider"></span></label></div>
           <div style="font-size:11px;font-weight:600;opacity:0.6;margin:8px 0 2px;display:flex;align-items:center;gap:5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent, var(--red));flex-shrink:0;" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>SMTP (Sending) <span style="font-weight:normal;opacity:0.7">— optional, leave blank for read-only</span></div>
           <div class="settings-row"><label class="settings-label">Host${_hint('Your outgoing-mail server, e.g. smtp.gmail.com. Leave blank to make this account read-only.')}</label><input id="uf-smtp-host" class="settings-input" placeholder="smtp.example.com"></div>
@@ -4079,7 +4107,7 @@ async function initUnifiedIntegrations() {
           <div class="settings-row"><label class="settings-label">Security${_hint('SSL for port 465, STARTTLS for port 587, or None for local SMTP bridges such as Proton Mail Bridge.')}</label><select id="uf-smtp-security" class="settings-select"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option><option value="none">None</option></select></div>
           <div class="settings-row"><label class="settings-label">Same as IMAP${_hint('Use the IMAP username and password for SMTP too (right for almost every provider). Turn off to enter separate SMTP credentials.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-smtp-same" checked><span class="admin-slider"></span></label></div>
           <div class="settings-row uf-smtp-creds"><label class="settings-label">Username${_hint('Usually the same as your IMAP username (your email address).')}</label><input id="uf-smtp-user" class="settings-input"></div>
-          <div class="settings-row uf-smtp-creds"><label class="settings-label">Password${_hint('Your SMTP password — often the same as your IMAP password.')}</label><input id="uf-smtp-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
+          <div class="settings-row uf-smtp-creds"><label class="settings-label">Password${_hint('Your SMTP password — often the same as your IMAP password. Outlook / Office 365 generally requires OAuth and will not work with this password form.')}</label><input id="uf-smtp-pass" class="settings-input" type="password" placeholder="${placeholderPass}"></div>
           <div class="settings-row" style="margin-top:4px"><label class="settings-label">Default${_hint('Use this account whenever no specific account is chosen.')}</label><label class="admin-switch" style="margin-left:0"><input type="checkbox" id="uf-email-default"><span class="admin-slider"></span></label><span style="font-size:10px;opacity:0.5;margin-left:6px">Used when nothing else is selected</span></div>
           <div class="settings-row" style="margin-top:10px;align-items:center;">
             <button class="admin-btn-add" id="uf-email-save" style="background:var(--red);border-color:var(--red);color:#fff;display:inline-flex;align-items:center;gap:5px;font-weight:600;">
@@ -4123,6 +4151,12 @@ async function initUnifiedIntegrations() {
         title: 'Yahoo needs an App Password',
         body: 'Generate an App Password from Yahoo Account Security (requires 2-Step Verification enabled) and paste it as the Password.',
         url: 'https://login.yahoo.com/account/security/app-passwords',
+      },
+      outlook: {
+        title: 'Outlook / Office 365 needs OAuth',
+        body: 'Microsoft disables normal password login for IMAP/SMTP in most Outlook and Microsoft 365 accounts. Odysseus does not support Microsoft OAuth/Graph mail yet, so this preset is only a placeholder for future support.',
+        url: 'https://learn.microsoft.com/exchange/clients-and-mobile-in-exchange-online/disable-basic-authentication-in-exchange-online',
+        linkLabel: 'Read Microsoft note',
       },
     };
     const noteEl = el('uf-email-provider-note');
@@ -4181,7 +4215,7 @@ async function initUnifiedIntegrations() {
         <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           <a href="${esc(n.url)}" target="_blank" rel="noopener noreferrer" class="admin-btn-sm" style="background:var(--red);border-color:var(--red);color:#fff;text-decoration:none;display:inline-flex;align-items:center;gap:5px;font-weight:600;">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-            Generate App Password
+            ${esc(n.linkLabel || 'Generate App Password')}
           </a>
           <button type="button" class="admin-btn-sm uf-prov-copy" data-url="${esc(n.url)}" style="opacity:0.7;display:inline-flex;align-items:center;gap:5px;">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -5014,7 +5048,7 @@ async function initUnifiedIntegrations() {
     });
     formEl.querySelectorAll('.uf-codex-revoke').forEach(btn => {
       btn.addEventListener('click', async () => {
-        if (!await window.styledConfirm(`Revoke this ${cfg.word} token? Terminal agents using it will lose access.`, { confirmText: 'Revoke', danger: true })) return;
+        if (!await window.styledConfirm(`Revoke this ${cfg.word} token? Integrations using it will lose access.`, { confirmText: 'Revoke', danger: true })) return;
         await fetch(`/api/tokens/${btn.dataset.tokenId}`, { method: 'DELETE', credentials: 'same-origin' });
         formEl.style.display = 'none';
         await renderList();

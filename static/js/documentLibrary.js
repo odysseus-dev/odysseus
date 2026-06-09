@@ -578,13 +578,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     const pieces = [];
     if (doc.session_name) pieces.push(`<span>${_esc(doc.session_name)}</span>`);
     if (doc.language && doc.language !== 'text') {
-      const ic = langIcon(doc.language, 11, { style: 'vertical-align:-2px;flex-shrink:0;opacity:0.65;color:currentColor;' });
-      pieces.push(`<span style="display:inline-flex;align-items:center;gap:3px;">${ic}${_esc(doc.language)}</span>`);
+      // Per-language icon lives in the title row above; just the language
+      // name here keeps the meta line scannable without duplicating the icon.
+      pieces.push(`<span>${_esc(doc.language)}</span>`);
     }
     pieces.push(`<span>${_esc(libraryRelativeTime(doc.updated_at))}</span>`);
     meta.innerHTML = pieces.join('<span style="opacity:0.5;">\u00b7</span>');
-    // Strip the per-language icon from the meta line \u2014 it now sits next to the
-    // title above, so duplicating it here was redundant.
     content.appendChild(meta);
     card.appendChild(content);
 

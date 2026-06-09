@@ -35,11 +35,6 @@ function _pushRecent(mid) {
   next.unshift(mid);
   _saveList(RECENT_KEY, next.slice(0, RECENT_MAX));
 }
-function _removeRecent(mid) {
-  if (!mid) return;
-  const next = _loadRecent().filter(x => x !== mid);
-  _saveList(RECENT_KEY, next);
-}
 function _loadFavorites() { return _loadList(FAVORITES_KEY); }
 function _toggleFavorite(mid) {
   const favs = _loadFavorites();
@@ -309,7 +304,7 @@ function _initModelPickerDropdown() {
       empty.textContent = text;
       listEl.appendChild(empty);
     }
-    function _addRow(m, onRemove) {
+    function _addRow(m) {
       const row = document.createElement('div');
       row.className = 'model-switch-item';
       if (m.stale) {
@@ -332,13 +327,10 @@ function _initModelPickerDropdown() {
       // hover so the suffix/variant tag is still discoverable (#1982).
       nameSpan.title = m.display;
       row.appendChild(nameSpan);
-      if (m.stale) {
-        const badge = document.createElement('span');
-        badge.className = 'model-switch-stale-badge';
-        badge.textContent = 'offline';
-        badge.style.cssText = 'font-size:10px;opacity:0.7;padding:1px 6px;border:1px solid var(--border);border-radius:8px;margin-left:6px;';
-        row.appendChild(badge);
-      }
+      // Offline state is already conveyed by the row's reduced opacity —
+      // a redundant "offline" pill on top of that just added clutter.
+      // (Class kept on `row` so the opacity rule still applies; the text
+      // badge is gone.)
       const epSpan = document.createElement('span');
       epSpan.className = 'model-switch-ep';
       // Don't show endpoint name if it matches the model name (local self-hosted)
@@ -381,20 +373,6 @@ function _initModelPickerDropdown() {
       });
       row.appendChild(favDot);
 
-      // Remove-from-recent button (shown only for Recent section items).
-      if (onRemove) {
-        const rmBtn = document.createElement('button');
-        rmBtn.type = 'button';
-        rmBtn.className = 'mp-remove-dot';
-        rmBtn.textContent = '×';
-        rmBtn.title = 'Remove from recent';
-        rmBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          onRemove();
-        });
-        row.appendChild(rmBtn);
-      }
-
       row.addEventListener('click', () => _pick(m));
       listEl.appendChild(row);
     }
@@ -411,7 +389,8 @@ function _initModelPickerDropdown() {
       return;
     }
 
-    // ── Browse mode: sections in order: Favorites → Recent (big catalogs only) → All / Providers ──
+    // ── Browse mode: Favorites (manual) + Recent (auto), with dedupe. ──
+    // Rules:
     //   1. Never list the same model twice in the dropdown. Favorites
     //      win over Recent (if you favorited it, that's where it
     //      belongs — Recent shouldn't show it again as duplicate).
@@ -436,13 +415,7 @@ function _initModelPickerDropdown() {
         .slice(0, RECENT_MAX);
       if (recentModels.length) {
         _addSection('Recent');
-        recentModels.forEach(m => {
-          shown.add(m.mid);
-          _addRow(m, () => {
-            _removeRecent(m.mid);
-            _populate('');
-          });
-        });
+        recentModels.forEach(m => { shown.add(m.mid); _addRow(m); });
       }
     }
 
