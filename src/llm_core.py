@@ -832,7 +832,7 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
     (content=None, since Gemini/Ollama reject tool_calls alongside ""). Dropping
     it leaves the tool result dangling and breaks the next round.
     """
-    allowed = {"role", "content", "name", "tool_call_id", "tool_calls", "function_call"}
+    allowed = {"role", "content", "name", "tool_call_id", "tool_calls", "function_call", "reasoning_content"}
     cleaned = []
     for msg in messages or []:
         if not isinstance(msg, dict):
