@@ -11,6 +11,8 @@ Examples:
     tests/run_focus.py --area security
     tests/run_focus.py --area services --sub-area cookbook
     tests/run_focus.py --keyword taxonomy -- --maxfail=1 -q
+    tests/run_focus.py --fast
+    tests/run_focus.py --area services --fast --durations 25
 
 This script imports no production code and changes no test behavior. It only
 constructs and (optionally) executes a pytest invocation.
@@ -70,6 +72,22 @@ def discover_sub_areas(tests_dir: Path = TESTS_DIR) -> frozenset[str]:
     )
 
 
+def non_negative_int(value: str) -> int:
+    """argparse type: a non-negative int (0 means "show all" for --durations)."""
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0, got {value!r}")
+    return number
+
+
+def non_negative_float(value: str) -> float:
+    """argparse type: a non-negative float (seconds threshold for --durations-min)."""
+    number = float(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0, got {value!r}")
+    return number
+
+
 def sub_area_type(valid_sub_areas: frozenset[str]) -> Callable[[str], str]:
     """Build an argparse converter that accepts only discovered sub-areas."""
 
@@ -92,24 +110,42 @@ class FocusSelection:
     sub_area: str | None = None
     keyword: str | None = None
     last_failed: bool = False
+    fast: bool = False
+    durations: int | None = None
+    durations_min: float | None = None
     pytest_args: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def has_focus(self) -> bool:
-        """True when at least one focusing selector (not just pass-through) is set."""
-        return bool(self.area or self.sub_area or self.keyword or self.last_failed)
+        """True when at least one focusing selector (not just pass-through) is set.
+
+        Duration visibility (``durations`` / ``durations_min``) is reporting
+        only, not a selector, so it does not count as focus on its own.
+        """
+        return bool(
+            self.area
+            or self.sub_area
+            or self.keyword
+            or self.last_failed
+            or self.fast
+        )
 
 
-def build_marker_expression(area: str | None, sub_area: str | None) -> str | None:
-    """Build the ``-m`` marker expression from an area and/or sub-area.
+def build_marker_expression(
+    area: str | None, sub_area: str | None, fast: bool = False
+) -> str | None:
+    """Build the ``-m`` marker expression from area, sub-area, and the fast lane.
 
-    Returns ``None`` when neither is given so the caller can omit ``-m``.
+    The fast lane adds ``not slow`` and composes with any area/sub-area with
+    ``and``. Returns ``None`` when nothing is given so the caller can omit ``-m``.
     """
     parts: list[str] = []
     if area:
         parts.append(f"area_{area}")
     if sub_area:
         parts.append(f"sub_{sub_area}")
+    if fast:
+        parts.append("not slow")
     if not parts:
         return None
     return " and ".join(parts)
@@ -125,13 +161,19 @@ def build_pytest_command(
     invoked as ``.venv/bin/python tests/run_focus.py``).
     """
     command = [python or sys.executable, "-m", "pytest"]
-    marker_expression = build_marker_expression(selection.area, selection.sub_area)
+    marker_expression = build_marker_expression(
+        selection.area, selection.sub_area, selection.fast
+    )
     if marker_expression:
         command += ["-m", marker_expression]
     if selection.keyword:
         command += ["-k", selection.keyword]
     if selection.last_failed:
         command += ["--last-failed", "--last-failed-no-failures=none"]
+    if selection.durations is not None:
+        command += [f"--durations={selection.durations}"]
+    if selection.durations_min is not None:
+        command += [f"--durations-min={selection.durations_min}"]
     command += list(selection.pytest_args)
     return command
 
@@ -143,6 +185,9 @@ def selection_from_args(namespace: argparse.Namespace) -> FocusSelection:
         sub_area=namespace.sub_area,
         keyword=namespace.keyword,
         last_failed=namespace.last_failed,
+        fast=namespace.fast,
+        durations=namespace.durations,
+        durations_min=namespace.durations_min,
         pytest_args=tuple(namespace.pytest_args),
     )
 
@@ -186,6 +231,23 @@ def build_parser(
         help="re-run only tests that failed on the last run (pytest --last-failed)",
     )
     parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="fast lane: exclude tests marked slow (adds 'not slow'); composable with --area/--sub-area",
+    )
+    parser.add_argument(
+        "--durations",
+        type=non_negative_int,
+        metavar="N",
+        help="report the N slowest tests (pytest --durations=N, 0 shows all); not a focus selector",
+    )
+    parser.add_argument(
+        "--durations-min",
+        type=non_negative_float,
+        metavar="SECONDS",
+        help="minimum duration to report with --durations (pytest --durations-min)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="print the pytest command without executing it",
@@ -215,7 +277,12 @@ def run(
     if not selection.has_focus:
         parser.error(
             "no focus selected: pass at least one of --area, --sub-area, "
-            "--keyword, or --last-failed"
+            "--keyword, --last-failed, or --fast (--durations is reporting only)"
+        )
+    if selection.durations_min is not None and selection.durations is None:
+        parser.error(
+            "--durations-min has no effect without --durations; pass "
+            "--durations N as well"
         )
     command = build_pytest_command(selection)
     if namespace.dry_run:

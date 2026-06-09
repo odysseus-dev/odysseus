@@ -2684,7 +2684,7 @@ async def _ensure_served_endpoint(
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
-                f"{_COOKBOOK_BASE}/api/model-endpoints",
+                f"{_INTERNAL_BASE}/api/model-endpoints",
                 data=payload,
                 headers=_internal_headers(),
             )
