@@ -172,6 +172,13 @@ DEFAULT_SETTINGS = {
         "admin_panel": "ctrl+shift+u",
         "cancel": "escape",
     },
+    # Memory engine settings (TRACE-style hierarchical memory)
+    # LLM-based topic classification is opt-in; heuristic (fast, local) is default.
+    "memory_llm_topic_classification": False,
+    # Messages between background tree reorganization passes.
+    "memory_reorg_interval_messages": 20,
+    # Jaccard similarity threshold for heuristic topic branching.
+    "memory_topic_branch_threshold": 0.4,
 }
 
 DEFAULT_FEATURES = {

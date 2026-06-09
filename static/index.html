@@ -2229,6 +2229,17 @@
             </div>
             <div id="adm-backupMsg" style="margin-top:6px;"></div>
           </div>
+          <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8Z"/><path d="M12 6v6l4 2"/></svg>Memory Engine</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Advanced memory configuration (heuristic by default, LLM-based is opt-in).</div>
+            <label style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;cursor:pointer;">
+              <div>
+                <div class="admin-toggle-label">LLM Topic Classification</div>
+                <div class="admin-toggle-sub">Use an LLM call for every topic branch decision instead of fast local heuristics.</div>
+              </div>
+              <input type="checkbox" id="set-memory-llm-topics" data-setting-key="memory_llm_topic_classification"><span class="vis-switch"></span>
+            </label>
+          </div>
           <div class="admin-card admin-danger-card">
             <h2 style="color:#e55;">Danger Zone</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Irreversible. Each wipe targets one category — pick exactly what you want gone.</div>

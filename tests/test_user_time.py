@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+import pytest
 from src.chat_processor import ChatProcessor
 from src.user_time import (
     clear_user_time_context,
@@ -37,7 +38,8 @@ def test_timezone_name_is_sanitized_and_ephemeral():
     assert get_user_tz_name() is None
 
 
-def test_chat_preface_excludes_current_time_for_non_agent_chat():
+@pytest.mark.asyncio
+async def test_chat_preface_excludes_current_time_for_non_agent_chat():
     """The dynamic current-time block must NOT be folded into the system
     preface. ``llm_core`` consolidates all system messages into one
     byte-identical-or-not string sent as the prefix; mixing ever-changing
@@ -51,7 +53,7 @@ def test_chat_preface_excludes_current_time_for_non_agent_chat():
     set_user_tz_name("Australia/Brisbane")
     processor = ChatProcessor(memory_manager=_Memory(), personal_docs_manager=_Docs())
 
-    preface, _, _ = processor.build_context_preface(
+    preface, _, _ = await processor.build_context_preface(
         message="What is tomorrow?",
         session=None,
         agent_mode=False,

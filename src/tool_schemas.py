@@ -391,6 +391,50 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "user_profile_update",
+            "description": "Update a structured user profile entry (e.g. name, preference, allergy).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Profile key, e.g. 'name', 'allergy', 'favorite_color'."},
+                    "value": {"type": "string", "description": "Value for this profile key."},
+                    "confidence": {"type": "number", "description": "Confidence level from 0.0 to 1.0."}
+                },
+                "required": ["key", "value"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "user_profile_get",
+            "description": "Retrieve a user profile entry by key.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Profile key to retrieve."}
+                },
+                "required": ["key"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "user_profile_delete",
+            "description": "Delete a user profile entry by key.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Profile key to delete."}
+                },
+                "required": ["key"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_models",
             "description": "List all available AI models across configured endpoints. Optionally filter by keyword.",
             "parameters": {
@@ -1328,6 +1372,12 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
                 content += "\n" + args["category"]
         else:
             content = action
+    elif tool_type == "user_profile_update":
+        content = json.dumps({"key": args.get("key", ""), "value": args.get("value", ""), "confidence": args.get("confidence", 1.0)})
+    elif tool_type == "user_profile_get":
+        content = json.dumps({"key": args.get("key", "")})
+    elif tool_type == "user_profile_delete":
+        content = json.dumps({"key": args.get("key", "")})
     elif tool_type == "list_models":
         content = args.get("filter", "")
     elif tool_type == "ui_control":

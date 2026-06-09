@@ -84,6 +84,9 @@ class MemoryProvider(ABC):
     async def delete(self, memory_id: str, *, owner: Optional[str] = None) -> bool:
         """Delete a memory by ID when allowed by the provider."""
 
+    def increment_uses(self, ids: List[str]) -> None:
+        """Bump usage counters for the given memory IDs. Default no-op."""
+
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         """Return provider-defined tool schemas when this provider is enabled."""
         return []
@@ -243,6 +246,10 @@ class NativeMemoryProvider(MemoryProvider):
         if self._vector_available():
             self.memory_vector.remove(deleted_id)
         return True
+
+    def increment_uses(self, ids: List[str]) -> None:
+        if hasattr(self.memory_manager, "increment_uses"):
+            self.memory_manager.increment_uses(ids)
 
     def _vector_available(self) -> bool:
         return bool(self.memory_vector and getattr(self.memory_vector, "healthy", True))

@@ -1609,6 +1609,27 @@ async function initAgentSettings() {
     (supInput && supInput.checked ? ' · supervisor on' : '');
 }
 
+/* ── Memory Engine Settings (System tab) ── */
+async function initMemoryEngineSettings() {
+  const toggle = el('set-memory-llm-topics');
+  if (!toggle) return;
+
+  try {
+    const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+    const settings = await res.json();
+    toggle.checked = !!settings.memory_llm_topic_classification;
+  } catch (e) {}
+
+  toggle.addEventListener('change', async function() {
+    try {
+      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memory_llm_topic_classification: toggle.checked })
+      });
+    } catch (e) { console.warn('Failed to save memory engine setting', e); }
+  });
+}
+
 /* ═══════════════════════════════════════════
    APPEARANCE TAB
    ═══════════════════════════════════════════ */
@@ -2195,6 +2216,7 @@ function initAll() {
   initResearchSettings();
   initResearchSearchSettings();
   initAgentSettings();
+  initMemoryEngineSettings();
   initAppearance();
   initShortcuts();
   initAccount();

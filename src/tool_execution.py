@@ -657,6 +657,7 @@ async def execute_tool_block(
     elif tool in ("chat_with_model", "create_session", "list_sessions",
                   "send_to_session", "pipeline",
                   "manage_session", "manage_memory", "list_models",
+                  "user_profile_update", "user_profile_get", "user_profile_delete",
                   "ui_control", "ask_teacher"):
         from src.ai_interaction import dispatch_ai_tool
         desc, result = await dispatch_ai_tool(tool, content, session_id, owner=owner)

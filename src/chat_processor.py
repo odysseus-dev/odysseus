@@ -41,12 +41,32 @@ def _content_tokens(text: str) -> list:
     return [w for w in words if len(w) >= 3 and w not in _STOPWORDS]
 
 
+def _record_to_dict(record) -> dict:
+    """Convert a MemoryRecord to the plain dict format used by the rest of chat_processor."""
+    d = {
+        "id": record.id,
+        "text": record.text,
+        "timestamp": record.timestamp,
+        "category": record.category,
+        "source": record.source,
+    }
+    if record.owner is not None:
+        d["owner"] = record.owner
+    if record.session_id is not None:
+        d["session_id"] = record.session_id
+    # Preserve extra fields from metadata (e.g. pinned)
+    if record.metadata:
+        d.update(record.metadata)
+    return d
+
+
 class ChatProcessor:
-    def __init__(self, memory_manager, personal_docs_manager, memory_vector=None, skills_manager=None):
+    def __init__(self, memory_manager, personal_docs_manager, memory_vector=None, skills_manager=None, memory_provider=None):
         self.memory_manager = memory_manager
         self.personal_docs_manager = personal_docs_manager
         self.memory_vector = memory_vector
         self.skills_manager = skills_manager
+        self.memory_provider = memory_provider
 
     # Minimum similarity score for RAG results to be injected
     RAG_SIMILARITY_THRESHOLD = 0.35
@@ -156,7 +176,7 @@ class ChatProcessor:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [mem for _, mem in scored[:k]]
 
-    def build_context_preface(
+    async def build_context_preface(
         self,
         message: str,
         session: Any,
@@ -206,7 +226,11 @@ class ChatProcessor:
         # Memory: pinned (always included) + extended (RAG-retrieved when relevant)
         self._last_used_memories = []  # track what was injected
         if use_memory:
-            mem_entries = self.memory_manager.load(owner=owner)
+            if self.memory_provider is not None:
+                records = await self.memory_provider.list_memories(owner=owner, limit=1000)
+                mem_entries = [_record_to_dict(r) for r in records]
+            else:
+                mem_entries = self.memory_manager.load(owner=owner)
 
             pinned = [m for m in mem_entries if m.get("pinned")]
             extended = [m for m in mem_entries if not m.get("pinned")]
@@ -224,7 +248,11 @@ class ChatProcessor:
                         _used_ids.append(m["id"])
 
             if extended:
-                relevant = self._hybrid_retrieve(message, extended, k=3)
+                if self.memory_provider is not None:
+                    hits = await self.memory_provider.recall(message, owner=owner, top_k=3)
+                    relevant = [_record_to_dict(h.memory) for h in hits]
+                else:
+                    relevant = self._hybrid_retrieve(message, extended, k=3)
                 if relevant:
                     ext_text = "\n".join([f"- {m['text']}" for m in relevant])
                     preface.append(untrusted_context_message(
@@ -240,11 +268,17 @@ class ChatProcessor:
                             _used_ids.append(m["id"])
 
             # Bump usage counters for the memories that were actually injected.
-            if _used_ids and hasattr(self.memory_manager, "increment_uses"):
-                try:
-                    self.memory_manager.increment_uses(_used_ids)
-                except Exception as _e:
-                    logger.warning("Failed to increment memory uses: %s", _e)
+            if _used_ids:
+                if self.memory_provider is not None:
+                    try:
+                        self.memory_provider.increment_uses(_used_ids)
+                    except Exception as _e:
+                        logger.warning("Failed to increment memory uses via provider: %s", _e)
+                elif hasattr(self.memory_manager, "increment_uses"):
+                    try:
+                        self.memory_manager.increment_uses(_used_ids)
+                    except Exception as _e:
+                        logger.warning("Failed to increment memory uses: %s", _e)
 
             # (skills index injection moved out — see below; only fires in
             # agent mode so chat mode and incognito stay clean.)

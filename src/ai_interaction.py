@@ -30,6 +30,7 @@ MAX_PIPELINE_STEPS = 10
 _session_manager = None
 _memory_manager = None
 _memory_vector = None
+_memory_provider = None
 _rag_manager = None
 _personal_docs_manager = None
 
@@ -51,6 +52,11 @@ def set_memory_manager(mgr, vector=None):
     global _memory_manager, _memory_vector
     _memory_manager = mgr
     _memory_vector = vector
+
+
+def set_memory_provider(provider):
+    global _memory_provider
+    _memory_provider = provider
 
 
 def set_rag_manager(rag_mgr, personal_docs_mgr=None):
@@ -956,7 +962,7 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
       delete                  — line 2: memory_id
       search                  — line 2: query
     """
-    if not _memory_manager:
+    if not _memory_manager and not _memory_provider:
         return {"error": "Memory manager not available"}
 
     lines = content.strip().split("\n")
@@ -967,7 +973,18 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
 
     if action == "list":
         category_filter = lines[1].strip().lower() if len(lines) > 1 and lines[1].strip() else None
-        memories = _memory_manager.load(owner=owner)
+        if _memory_provider is not None:
+            records = await _memory_provider.list_memories(owner=owner, limit=1000)
+            memories = []
+            for r in records:
+                d = {"id": r.id, "text": r.text, "timestamp": r.timestamp, "category": r.category, "source": r.source}
+                if r.owner is not None:
+                    d["owner"] = r.owner
+                if r.metadata:
+                    d.update(r.metadata)
+                memories.append(d)
+        else:
+            memories = _memory_manager.load(owner=owner)
         if category_filter:
             memories = [m for m in memories if m.get("category", "").lower() == category_filter]
         if not memories:
@@ -992,24 +1009,31 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         if not text:
             return {"error": "Memory text cannot be empty"}
 
-        entry = _memory_manager.add_entry(text, source="ai_agent", category=category, owner=owner)
-        memories = _memory_manager.load_all()
-        memories.append(entry)
-        _memory_manager.save(memories)
+        if _memory_provider is not None:
+            record = await _memory_provider.remember(
+                text, owner=owner, session_id=session_id, category=category, source="ai_agent"
+            )
+            entry_id = record.id
+        else:
+            entry = _memory_manager.add_entry(text, source="ai_agent", category=category, owner=owner)
+            memories = _memory_manager.load_all()
+            memories.append(entry)
+            _memory_manager.save(memories)
+            entry_id = entry["id"]
 
-        # Update vector index if available
-        if _memory_vector and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
-            try:
-                _memory_vector.add(entry["id"], text)
-            except Exception:
-                pass
+            # Update vector index if available
+            if _memory_vector and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
+                try:
+                    _memory_vector.add(entry["id"], text)
+                except Exception:
+                    pass
         try:
             from src.event_bus import fire_event
             fire_event("memory_added", owner)
         except Exception:
             logger.debug("memory_added event dispatch failed", exc_info=True)
 
-        return {"action": "add", "memory_id": entry["id"],
+        return {"action": "add", "memory_id": entry_id,
                 "results": f"Memory added: [{category}] {text}"}
 
     elif action == "edit":
@@ -1019,6 +1043,25 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         new_text = lines[2].strip()
         if not new_text:
             return {"error": "New text cannot be empty"}
+
+        if _memory_provider is not None:
+            # Provider edit = delete old + remember new
+            records = await _memory_provider.list_memories(owner=owner, limit=1000)
+            full_id = None
+            for r in records:
+                if r.id.startswith(memory_id):
+                    if owner and r.owner != owner:
+                        return {"error": f"Memory '{memory_id}' not found"}
+                    full_id = r.id
+                    break
+            if not full_id:
+                return {"error": f"Memory '{memory_id}' not found"}
+            await _memory_provider.delete(full_id, owner=owner)
+            record = await _memory_provider.remember(
+                new_text, owner=owner, session_id=session_id, category="fact", source="ai_agent"
+            )
+            return {"action": "edit", "memory_id": memory_id,
+                    "results": f"Memory updated: {new_text}"}
 
         memories = _memory_manager.load_all()
         found = False
@@ -1051,6 +1094,21 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
             return {"error": "Delete needs line 2: memory_id"}
         memory_id = lines[1].strip()
 
+        if _memory_provider is not None:
+            records = await _memory_provider.list_memories(owner=owner, limit=1000)
+            full_id = None
+            for r in records:
+                if r.id.startswith(memory_id):
+                    if owner and r.owner != owner:
+                        return {"error": f"Memory '{memory_id}' not found"}
+                    full_id = r.id
+                    break
+            if not full_id:
+                return {"error": f"Memory '{memory_id}' not found"}
+            await _memory_provider.delete(full_id, owner=owner)
+            return {"action": "delete", "memory_id": memory_id,
+                    "results": f"Memory '{memory_id}' deleted"}
+
         memories = _memory_manager.load_all()
         original_len = len(memories)
         full_id = None
@@ -1082,14 +1140,27 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         if len(lines) < 2:
             return {"error": "Search needs line 2: query"}
         query = lines[1].strip()
-        memories = _memory_manager.load(owner=owner)
 
-        if hasattr(_memory_manager, 'get_relevant_memories'):
-            results = _memory_manager.get_relevant_memories(query, memories, threshold=0.05, max_items=20)
+        if _memory_provider is not None:
+            hits = await _memory_provider.recall(query, owner=owner, top_k=20)
+            results = []
+            for h in hits:
+                d = {"id": h.memory.id, "text": h.memory.text, "timestamp": h.memory.timestamp,
+                     "category": h.memory.category, "source": h.memory.source}
+                if h.memory.owner is not None:
+                    d["owner"] = h.memory.owner
+                if h.memory.metadata:
+                    d.update(h.memory.metadata)
+                results.append(d)
         else:
-            # Fallback: simple text search
-            query_lower = query.lower()
-            results = [m for m in memories if query_lower in m.get("text", "").lower()][:20]
+            memories = _memory_manager.load(owner=owner)
+
+            if hasattr(_memory_manager, 'get_relevant_memories'):
+                results = _memory_manager.get_relevant_memories(query, memories, threshold=0.05, max_items=20)
+            else:
+                # Fallback: simple text search
+                query_lower = query.lower()
+                results = [m for m in memories if query_lower in m.get("text", "").lower()][:20]
 
         if not results:
             return {"results": f"No memories found matching '{query}'."}
@@ -1823,6 +1894,39 @@ async def dispatch_ai_tool(
         action = content.split("\n")[0].strip()[:40]
         desc = f"manage_memory: {action}"
         result = await do_manage_memory(content, session_id, owner=owner)
+
+    elif tool == "user_profile_update":
+        desc = "user_profile_update"
+        if _memory_provider is not None:
+            try:
+                args = json.loads(content) if isinstance(content, str) and content.strip().startswith("{") else {"key": content.split("\n")[0].strip(), "value": content.split("\n")[1].strip() if len(content.split("\n")) > 1 else ""}
+                result = await _memory_provider.handle_tool_call("user_profile_update", args)
+            except Exception as e:
+                result = {"error": str(e)}
+        else:
+            result = {"error": "Memory provider not available"}
+
+    elif tool == "user_profile_get":
+        desc = "user_profile_get"
+        if _memory_provider is not None:
+            try:
+                args = json.loads(content) if isinstance(content, str) and content.strip().startswith("{") else {"key": content.strip()}
+                result = await _memory_provider.handle_tool_call("user_profile_get", args)
+            except Exception as e:
+                result = {"error": str(e)}
+        else:
+            result = {"error": "Memory provider not available"}
+
+    elif tool == "user_profile_delete":
+        desc = "user_profile_delete"
+        if _memory_provider is not None:
+            try:
+                args = json.loads(content) if isinstance(content, str) and content.strip().startswith("{") else {"key": content.strip()}
+                result = await _memory_provider.handle_tool_call("user_profile_delete", args)
+            except Exception as e:
+                result = {"error": str(e)}
+        else:
+            result = {"error": "Memory provider not available"}
 
     elif tool == "list_models":
         keyword = content.strip()[:40]
