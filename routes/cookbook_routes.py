@@ -35,7 +35,6 @@ from core.platform_compat import (
 )
 from routes.shell_routes import TMUX_LOG_DIR
 from routes.model_routes import _docker_host_gateway_reachable
-from src.constants import COOKBOOK_STATE_FILE
 
 logger = logging.getLogger(__name__)
 
