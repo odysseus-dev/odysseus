@@ -606,6 +606,67 @@ function _getFilteredSkills() {
   return _sortSkills(filtered);
 }
 
+function _buildSkillExpandedActions(card, name, isPublished = card?.dataset?.skillStatus === 'published') {
+  const actions = document.createElement('div');
+  actions.className = 'doclib-card-expanded-actions';
+
+  const delBtn = document.createElement('button');
+  delBtn.className = 'doclib-card-text-btn doclib-card-action-btn doclib-card-text-btn-danger';
+  delBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Delete';
+  delBtn.addEventListener('click', (e) => { e.stopPropagation(); _deleteSkill(name, card); });
+
+  const editBtn = document.createElement('button');
+  editBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
+  editBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Edit';
+  editBtn.addEventListener('click', (e) => { e.stopPropagation(); _toggleSkillEdit(card, name); });
+
+  const pubBtn = document.createElement('button');
+  pubBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
+  if (isPublished) {
+    pubBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12l5 5L20 7"/></svg>Unpublish';
+    pubBtn.title = 'Move back to draft';
+    pubBtn.addEventListener('click', (e) => { e.stopPropagation(); _setSkillStatus(name, 'draft'); });
+  } else {
+    pubBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>Publish';
+    pubBtn.title = 'Publish — appears in the skills index';
+    pubBtn.style.color = 'var(--color-success, #4caf50)';
+    pubBtn.addEventListener('click', (e) => { e.stopPropagation(); _setSkillStatus(name, 'published'); });
+  }
+
+  const testBtn = document.createElement('button');
+  testBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
+  testBtn.innerHTML = _svg(_ICON.test, { size: 11 }) + 'Test';
+  testBtn.title = 'Test this skill — run it + AI judge';
+  testBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (testBtn.dataset.busy === '1') return;  // also dedupe rapid double-tap
+    testBtn.dataset.busy = '1';
+    testBtn.disabled = true;
+    const _origHTML = testBtn.innerHTML;
+    testBtn.innerHTML = _svg(_ICON.test, { size: 11 }) + 'Starting…';
+    Promise.resolve(_testSkill(card, name)).finally(() => {
+      if (document.body.contains(testBtn)) {
+        testBtn.disabled = false;
+        testBtn.dataset.busy = '';
+        testBtn.innerHTML = _origHTML;
+      }
+    });
+  });
+
+  const rightGroup = document.createElement('div');
+  rightGroup.className = 'doclib-action-group';
+  const btnRow = document.createElement('div');
+  btnRow.className = 'doclib-action-btn-row';
+  btnRow.appendChild(testBtn);
+  btnRow.appendChild(editBtn);
+  btnRow.appendChild(delBtn);
+  rightGroup.appendChild(btnRow);
+
+  actions.appendChild(pubBtn);
+  actions.appendChild(rightGroup);
+  return actions;
+}
+
 function renderSkillsList() {
   const container = document.getElementById('skills-list');
   if (!container) return;
@@ -712,74 +773,7 @@ function renderSkillsList() {
     pre.textContent = '';  // filled on expand
     preview.appendChild(pre);
 
-    // Footer: Approve/Unpublish on the left, destructive delete on the right.
-    const actions = document.createElement('div');
-    actions.className = 'doclib-card-expanded-actions';
-
-    const delBtn = document.createElement('button');
-    delBtn.className = 'doclib-card-text-btn doclib-card-action-btn doclib-card-text-btn-danger';
-    delBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Delete';
-    delBtn.addEventListener('click', (e) => { e.stopPropagation(); _deleteSkill(name, card); });
-
-    const editBtn = document.createElement('button');
-    editBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
-    editBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Edit';
-    editBtn.addEventListener('click', (e) => { e.stopPropagation(); _toggleSkillEdit(card, name); });
-
-    const pubBtn = document.createElement('button');
-    pubBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
-    if (isPublished) {
-      pubBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12l5 5L20 7"/></svg>Unpublish';
-      pubBtn.title = 'Move back to draft';
-      pubBtn.addEventListener('click', (e) => { e.stopPropagation(); _setSkillStatus(name, 'draft'); });
-    } else {
-      pubBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>Publish';
-      pubBtn.title = 'Publish — appears in the skills index';
-      pubBtn.style.color = 'var(--color-success, #4caf50)';
-      pubBtn.addEventListener('click', (e) => { e.stopPropagation(); _setSkillStatus(name, 'published'); });
-    }
-
-    // Test/audit this one skill — same action that's in the kebab, surfaced in
-    // the footer too so it's not buried under the "⋯" menu.
-    const testBtn = document.createElement('button');
-    testBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
-    testBtn.innerHTML = _svg(_ICON.test, { size: 11 }) + 'Test';
-    testBtn.title = 'Test this skill — run it + AI judge';
-    testBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      // Immediate visual feedback: previously the click looked like nothing
-      // happened because _testSkill awaits a status fetch before overwriting
-      // the preview — so users would tap a second time. Mark the button as
-      // pending right away so the first tap is obviously registered.
-      if (testBtn.dataset.busy === '1') return;  // also dedupe rapid double-tap
-      testBtn.dataset.busy = '1';
-      testBtn.disabled = true;
-      const _origHTML = testBtn.innerHTML;
-      testBtn.innerHTML = _svg(_ICON.test, { size: 11 }) + 'Starting…';
-      Promise.resolve(_testSkill(card, name)).finally(() => {
-        // The preview gets overwritten by _testSkill, which removes the
-        // testBtn from the DOM. The cleanup below only matters if the
-        // button still exists (e.g. _testSkill bailed early).
-        if (document.body.contains(testBtn)) {
-          testBtn.disabled = false;
-          testBtn.dataset.busy = '';
-          testBtn.innerHTML = _origHTML;
-        }
-      });
-    });
-
-    const rightGroup = document.createElement('div');
-    rightGroup.className = 'doclib-action-group';
-    const btnRow = document.createElement('div');
-    btnRow.className = 'doclib-action-btn-row';
-    btnRow.appendChild(testBtn);
-    btnRow.appendChild(editBtn);
-    btnRow.appendChild(delBtn);
-    rightGroup.appendChild(btnRow);
-
-    actions.appendChild(pubBtn);
-    actions.appendChild(rightGroup);
-    preview.appendChild(actions);
+    preview.appendChild(_buildSkillExpandedActions(card, name, isPublished));
     card.appendChild(preview);
 
     // Click to expand/collapse (unless in select mode → toggle checkbox).
@@ -1012,6 +1006,30 @@ async function _expandSkillCard(card, name) {
 
 // Swap the read-only <pre> for an editable <textarea> (and back). The
 // Edit button toggles; a Save button commits via the markdown endpoint.
+function _prepareSkillSourceForEdit(card, name) {
+  const preview = card.querySelector('.skill-card-preview');
+  if (!preview) return null;
+
+  const testView = preview.querySelector('.skill-test');
+  if (!testView) {
+    return preview.querySelector('.skill-md-pre');
+  }
+
+  if (card.classList.contains('skill-test-running')) {
+    return null;
+  }
+
+  preview.innerHTML = '';
+
+  const pre = document.createElement('pre');
+  pre.className = 'skill-md-pre';
+  pre.textContent = (card._md != null ? card._md : '') || '(empty)';
+  preview.appendChild(pre);
+  preview.appendChild(_buildSkillExpandedActions(card, name));
+
+  return pre;
+}
+
 function _toggleSkillEdit(card, name) {
   const preview = card.querySelector('.skill-card-preview');
   if (!preview) return;
@@ -1021,7 +1039,8 @@ function _toggleSkillEdit(card, name) {
     _saveSkillEdit(card, name);
     return;
   }
-  const pre = preview.querySelector('.skill-md-pre');
+  const pre = _prepareSkillSourceForEdit(card, name);
+  if (!pre) return;
   const ta = document.createElement('textarea');
   ta.className = 'skill-md-editor';
   ta.spellcheck = false;
