@@ -545,6 +545,10 @@ class SessionManager:
             # 404ing on every operation (issue #1044).
             removed_in_memory = self.sessions.pop(session_id, None) is not None
 
+            # Release the per-session lock entry so _locks does not grow
+            # without bound on long-running servers.
+            self._locks.pop(session_id, None)
+
             if db_session or removed_in_memory:
                 # Commit the document-detach / message-delete above (a no-op when
                 # the ghost had no rows) together with the session delete.

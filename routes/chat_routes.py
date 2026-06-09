@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import time
 import logging
 from datetime import datetime
@@ -1164,6 +1165,7 @@ def setup_chat_routes(
                 try:
                     from src.settings import get_setting
                     _tool_budget = int(get_setting("agent_max_tool_calls", 0))
+                    _max_rounds = max(1, min(200, int(get_setting("agent_max_rounds", 20))))
 
                     async for chunk in stream_agent_loop(
                         sess.endpoint_url,
@@ -1174,6 +1176,7 @@ def setup_chat_routes(
                         max_tokens=ctx.preset.max_tokens,
                         prompt_type=preset_id,
                         max_tool_calls=_tool_budget,
+                        max_rounds=_max_rounds,
                         context_length=ctx.context_length,
                         active_document=active_doc,
                         session_id=session,
