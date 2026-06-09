@@ -56,6 +56,58 @@ class NoteUpdate(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _set_user_time_from_request(request: Request) -> None:
+    """Copy browser timezone headers into the per-request context."""
+    try:
+        from src.user_time import clear_user_time_context, set_user_tz_name, set_user_tz_offset
+
+        clear_user_time_context()
+        tz_offset = request.headers.get("x-tz-offset")
+        tz_name = request.headers.get("x-tz-name")
+        if tz_offset is not None:
+            set_user_tz_offset(tz_offset)
+        if tz_name:
+            set_user_tz_name(tz_name)
+    except Exception:
+        pass
+
+
+def _normalize_due_date(request: Request, due_date: Optional[str]) -> Optional[str]:
+    """Normalize reminder due_date to an absolute UTC ISO string (Z suffix).
+
+    The UI sends naive local wall-clock times. Background scanners must not
+    treat those as server-local when Docker runs in UTC. When X-Tz-Offset is
+    present we anchor via parse_due_for_user; otherwise we fall back to the
+    server's local timezone.
+    """
+    if not due_date:
+        return due_date
+    s = (due_date or "").strip()
+    if not s:
+        return None
+    from datetime import datetime, timezone as tz
+
+    try:
+        parsed = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return due_date
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(tz.utc).isoformat().replace("+00:00", "Z")
+    _set_user_time_from_request(request)
+    from routes.calendar_routes import parse_due_for_user
+
+    normalized = parse_due_for_user(s)
+    if not normalized:
+        return due_date
+    try:
+        tagged = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError:
+        return due_date
+    if tagged.tzinfo is not None:
+        return tagged.astimezone(tz.utc).isoformat().replace("+00:00", "Z")
+    return tagged.astimezone().astimezone(tz.utc).isoformat().replace("+00:00", "Z")
+
+
 def _note_to_dict(note: Note) -> Dict[str, Any]:
     items = None
     if note.items:
@@ -511,7 +563,7 @@ def setup_note_routes(task_scheduler=None):
                 color=body.color,
                 label=body.label,
                 pinned=body.pinned,
-                due_date=body.due_date,
+                due_date=_normalize_due_date(request, body.due_date),
                 source=body.source,
                 session_id=body.session_id,
                 image_url=body.image_url,
@@ -574,7 +626,7 @@ def setup_note_routes(task_scheduler=None):
             if body.archived is not None:
                 note.archived = body.archived
             if body.due_date is not None:
-                note.due_date = body.due_date
+                note.due_date = _normalize_due_date(request, body.due_date)
             if body.image_url is not None:
                 note.image_url = body.image_url
             if body.repeat is not None:

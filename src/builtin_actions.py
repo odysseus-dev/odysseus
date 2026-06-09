@@ -1320,20 +1320,10 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
         REPING_MIN = 25     # don't re-ping same note more often than this
 
         def _parse_due(s: str):
-            """Accept '2026-05-29T16:31' (local) or '...Z' (UTC). Returns UTC datetime."""
-            if not s:
-                return None
-            try:
-                # Handle the JS-style 'Z' suffix.
-                if s.endswith("Z"):
-                    return _dt.fromisoformat(s[:-1]).replace(tzinfo=_tz.utc)
-                # Naive → assume local server time.
-                d = _dt.fromisoformat(s)
-                if d.tzinfo is None:
-                    d = d.astimezone().astimezone(_tz.utc)
-                return d.astimezone(_tz.utc)
-            except Exception:
-                return None
+            """Accept absolute UTC ISO (Z/offset) or legacy naive server-local."""
+            from src.user_time import parse_stored_due_utc
+
+            return parse_stored_due_utc(s)
 
         try:
             cache = _json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else {}

@@ -416,10 +416,12 @@ async function _fetchNotes() {
 async function _saveNote(note) {
   const method = note.id ? 'PUT' : 'POST';
   const url = note.id ? `${API_BASE}/api/notes/${note.id}` : `${API_BASE}/api/notes`;
+  const payload = { ...note };
+  if (payload.due_date) payload.due_date = _dueDateForStorage(payload.due_date);
   const res = await fetch(url, {
     method, credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(note),
+    headers: _noteApiHeaders(),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error('Failed to save note');
   return await res.json();
@@ -433,10 +435,12 @@ async function _deleteNoteApi(id) {
 }
 
 async function _patchNote(id, patch) {
+  const payload = { ...patch };
+  if (payload.due_date) payload.due_date = _dueDateForStorage(payload.due_date);
   const res = await fetch(`${API_BASE}/api/notes/${id}`, {
     method: 'PUT', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
+    headers: _noteApiHeaders(),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error('Failed to update note');
   return await res.json();
@@ -636,6 +640,33 @@ function _toLocalDatetimeStr(d) {
   // Format as YYYY-MM-DDTHH:MM (local, no TZ)
   const pad = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function _dueDateForStorage(dateStr) {
+  // Persist reminders as absolute UTC instants (Z suffix) so the background
+  // scanner fires at the user's wall-clock time even when the server runs in
+  // UTC (Docker default). Mirrors calendar.js reminder creation.
+  if (!dateStr) return null;
+  const ms = new Date(dateStr).getTime();
+  if (isNaN(ms)) return dateStr;
+  return new Date(ms).toISOString();
+}
+
+function _dueDateForInput(dateStr) {
+  // datetime-local and the reminder picker expect naive local YYYY-MM-DDTHH:MM.
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d)) return dateStr;
+  return _toLocalDatetimeStr(d);
+}
+
+function _noteApiHeaders(extra = {}) {
+  const headers = { 'Content-Type': 'application/json', ...extra };
+  try {
+    headers['X-Tz-Offset'] = String(-new Date().getTimezoneOffset());
+    headers['X-Tz-Name'] = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch {}
+  return headers;
 }
 function _formatReminderTag(dateStr) {
   if (!dateStr) return '';
@@ -2810,7 +2841,7 @@ function _buildForm(note = null) {
       <button type="button" class="note-form-icon-btn note-form-remind-btn${note?.due_date ? ' has-date' : ''}" title="Remind me">
         <svg width="31" height="31" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
       </button>
-      <input type="hidden" class="note-form-due" value="${note?.due_date || ''}" />
+      <input type="hidden" class="note-form-due" value="${_esc(_dueDateForInput(note?.due_date || ''))}" />
       <input type="hidden" class="note-form-repeat" value="${note?.repeat || 'none'}" />
     </div>
     ${currentImageUrl && type !== 'draw' ? `<div class="note-form-image-wrap"><img class="note-form-image" src="${_esc(currentImageUrl)}" draggable="false" /><button class="note-form-image-rm" title="Remove">&times;</button></div>` : ''}
