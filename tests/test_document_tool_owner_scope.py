@@ -96,7 +96,7 @@ def test_manage_documents_list_filters_to_calling_owner(monkeypatch):
     _install_database_stub(monkeypatch, "core.database", query)
 
     result = asyncio.run(
-        TOOL_HANDLERS["manage_documents"]('{"action":"list"}', owner="alice")
+        TOOL_HANDLERS["manage_documents"]('{"action":"list"}', {"owner": "alice"})
     )
 
     assert result["documents"] == []
@@ -109,7 +109,7 @@ def test_manage_documents_read_filters_to_calling_owner(monkeypatch):
 
     result = asyncio.run(
         TOOL_HANDLERS["manage_documents"](
-            '{"action":"read","document_id":"doc-bob"}', owner="alice"
+            '{"action":"read","document_id":"doc-bob"}', {"owner": "alice"}
         )
     )
 
@@ -124,7 +124,7 @@ def test_update_document_active_id_filters_to_calling_owner(monkeypatch):
     set_active_document("doc-bob")
     try:
         result = asyncio.run(
-            TOOL_HANDLERS["update_document"]("new content", owner="alice")
+            TOOL_HANDLERS["update_document"]("new content", {"owner": "alice"})
         )
     finally:
         set_active_document(None)
@@ -142,7 +142,7 @@ def test_suggest_document_active_id_filters_to_calling_owner(monkeypatch):
         result = asyncio.run(
             TOOL_HANDLERS["suggest_document"](
                 "<<<FIND>>>\nold\n<<<SUGGEST>>>\nnew\n<<<REASON>>>\nbetter\n<<<END>>>",
-                owner="alice",
+                {"owner": "alice"},
             )
         )
     finally:
@@ -156,10 +156,7 @@ def test_suggest_document_active_id_filters_to_calling_owner(monkeypatch):
 def test_document_tool_dispatch_forwards_owner():
     source = open("src/tool_execution.py", encoding="utf-8").read()
 
-    assert "do_create_document(content, session_id=session_id, owner=owner)" in source
-    assert "do_update_document(content, owner=owner)" in source
-    assert "do_edit_document(content, owner=owner)" in source
-    assert "do_suggest_document(content, owner=owner)" in source
+    assert "_document_tool_dispatch(tool, content, session_id, owner)" in source
 
     # Also verify TOOL_HANDLERS has the expected entries
     for key in ("create_document", "update_document", "edit_document",
