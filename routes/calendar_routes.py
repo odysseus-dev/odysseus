@@ -863,7 +863,7 @@ def setup_calendar_routes() -> APIRouter:
             db.commit()
             return {"ok": True}
         except HTTPException:
-            raise HTTPException(404, "Calendar not found")
+            raise
         except Exception as e:
             db.rollback()
             logger.error("Failed to delete calendar %s: %s", cal_id, e)
