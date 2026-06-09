@@ -13,7 +13,11 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from core.database import SessionLocal, GalleryImage, GalleryAlbum, ModelEndpoint
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user, owner_filter, require_privilege
-from src.upload_limits import read_upload_limited
+from src.upload_limits import (
+    read_upload_limited,
+    GALLERY_UPLOAD_MAX_BYTES,
+    GALLERY_TRANSFORM_UPLOAD_MAX_BYTES,
+)
 from src.constants import GENERATED_IMAGES_DIR
 
 from routes.gallery_helpers import (
@@ -21,9 +25,6 @@ from routes.gallery_helpers import (
 )
 
 logger = logging.getLogger(__name__)
-
-GALLERY_UPLOAD_MAX_BYTES = int(os.getenv("ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES", str(100 * 1024 * 1024)))
-GALLERY_TRANSFORM_UPLOAD_MAX_BYTES = int(os.getenv("ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES", str(25 * 1024 * 1024)))
 
 
 def _current_user_is_admin(request: Request, user: str | None) -> bool:

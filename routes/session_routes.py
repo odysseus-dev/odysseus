@@ -10,8 +10,9 @@ import logging
 from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
-from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
+from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
 from src.auth_helpers import get_current_user, effective_user, _auth_disabled
+from src.session_actions import is_session_recently_active
 
 
 def _sanitize_export_filename(name: str) -> str:
@@ -1028,6 +1029,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db.query(DbMsg.session_id, _sa_func.count(DbMsg.id))
                 .filter(DbMsg.role == "assistant").group_by(DbMsg.session_id).all()
             )
+            cleanup_now = utcnow_naive()
             for row in rows:
                 # Never delete important sessions
                 if getattr(row, 'is_important', False):
@@ -1039,6 +1041,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     db.delete(row)
                     if hasattr(session_manager, 'delete_session'):
                         session_manager.delete_session(row.id)
+                    continue
+                if is_session_recently_active(row, now=cleanup_now):
                     continue
                 msg_count = _counts.get(row.id, 0)
                 should_delete = False
