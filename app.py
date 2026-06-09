@@ -800,7 +800,19 @@ async def serve_backgrounds(request: Request):
 async def serve_login(request: Request):
     if not AUTH_ENABLED:
         return RedirectResponse(url="/", status_code=302)
-    return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
+    # Optional admin-selected login theme. "storm" serves the animated login;
+    # anything else keeps the original. Falls back to the original if the storm
+    # file is missing, so this can never break the login page.
+    login_file = "static/login.html"
+    try:
+        from src.settings import get_setting
+        if get_setting("login_background", "original") == "storm":
+            storm_path = abs_join(BASE_DIR, "static/login-storm.html")
+            if os.path.exists(storm_path):
+                login_file = "static/login-storm.html"
+    except Exception:
+        pass
+    return _serve_html_with_nonce(request, abs_join(BASE_DIR, login_file))
 
 @app.get("/api/version")
 async def get_version():

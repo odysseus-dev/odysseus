@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-visual">
+<title>Odysseus — Login</title>
+<script nonce="{{CSP_NONCE}}">
+(function(){
+  // Per-theme bg-effect defaults — mirrors THEME_DEFAULT_* maps in
+  // static/js/theme.js so login picks the same default pattern as the
+  // main app for users who never explicitly chose one.
+  var THEME_DEFAULT_PATTERN = {
+    dark:'none', light:'dots', midnight:'rain', paper:'dots',
+    cyberpunk:'synapse', retrowave:'embers', forest:'petals',
+    ocean:'constellations', terminal:'perlin-flow', organs:'rain',
+    ume:'petals', cute:'sparkles'
+  };
+  var THEME_DEFAULT_EFFECT_COLOR = {
+    midnight:'#ffffff', organs:'#451616', cute:'#ff8cb8', ume:'#f5a0c0'
+  };
+  var THEME_DEFAULT_INTENSITY = { midnight:0.5, terminal:0.8, organs:0.65 };
+  try {
+    var t = JSON.parse(localStorage.getItem('odysseus-theme'));
+    var s = document.documentElement.style;
+    if (t && t.colors) {
+      var c = t.colors;
+      // Base palette
+      s.setProperty('--bg', c.bg);
+      s.setProperty('--fg', c.fg);
+      s.setProperty('--panel', c.panel);
+      s.setProperty('--border', c.border);
+      if (c.red) s.setProperty('--red', c.red);
+      if (c.green) s.setProperty('--green', c.green);
+      // Advanced overrides (sidebar logo color, input bg, send-button bg, etc.)
+      // — mirrors ADV_KEYS in static/js/theme.js so the login page picks up
+      // every customization the user has on their theme instead of falling
+      // back to defaults that didn't match the main app.
+      var a = c.advanced || {};
+      var ADV = {
+        userBubbleBg:    '--user-bubble-bg',
+        aiBubbleBg:      '--ai-bubble-bg',
+        bubbleBorder:    '--bubble-border',
+        sidebarBg:       '--sidebar-bg',
+        brandColor:      '--brand-color',
+        hamburgerColor:  '--hamburger-color',
+        inputBg:         '--input-bg',
+        inputBorder:     '--input-border',
+        sendBtnBg:       '--send-btn-bg',
+        sendBtnHover:    '--send-btn-hover',
+        codeBg:          '--code-bg',
+        codeFg:          '--code-fg',
+        toggleActive:    '--toggle-active',
+      };
+      for (var k in ADV) { if (a[k]) s.setProperty(ADV[k], a[k]); }
+    }
+    // Background effect — pick ONE at random from the main app's 8
+    // patterns each load (matches the old login behavior, but uses the
+    // same effect implementations the main theme system exposes so the
+    // login feels consistent with the rest of the app). Per-theme
+    // bgEffectColor/Intensity defaults still apply so the random
+    // pattern picks up theme-appropriate tinting.
+    var name = (t && t.name) || '';
+    // Storm login: pin to "embers" so the motes always drift UPWARD (rain
+    // would fall the wrong way) — they read as sparks/ash blown up past the
+    // skyline while the lightning flashes behind it.
+    var pattern = 'embers';
+    // Cool, rain-lit tint by default so the motes match the storm sky
+    // instead of glowing warm-orange — a saved theme bgEffectColor still wins.
+    var effColor = (t && t.bgEffectColor) || THEME_DEFAULT_EFFECT_COLOR[name] || '#bcd6ff';
+    var effInt = (t && t.bgEffectIntensity !== undefined)
+      ? t.bgEffectIntensity
+      : (THEME_DEFAULT_INTENSITY[name] !== undefined ? THEME_DEFAULT_INTENSITY[name] : 1);
+    var effSize = (t && t.bgEffectSize !== undefined) ? t.bgEffectSize : 1;
+    if (effColor) s.setProperty('--bg-effect-color', effColor);
+    s.setProperty('--bg-effect-intensity', String(effInt));
+    s.setProperty('--bg-effect-size', String(effSize));
+    // Stash so the deferred module knows which canvas effect to start.
+    window.__loginBgPattern = pattern;
+    // Apply the body class as soon as <body> exists so static-gradient
+    // patterns (dots, synapse) paint immediately on first frame.
+    var apply = function() { document.body.classList.add('bg-pattern-' + pattern); };
+    if (document.body) apply();
+    else document.addEventListener('DOMContentLoaded', apply, { once: true });
+  } catch(e){}
+})();
+</script>
+<style>
+  @font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Regular.woff2') format('woff2'); }
+  @font-face { font-family: 'Fira Code'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-SemiBold.woff2') format('woff2'); }
+  /* Mirror the main app's :root defaults (static/style.css ~line 18) so an
+     uncustomized theme — or a fresh browser with no `odysseus-theme` in
+     localStorage — renders the login page in the same palette as the rest
+     of the app instead of a different greys+offwhite scheme. */
+  :root {
+    --bg: #282c34; --fg: #9cdef2; --panel: #111; --border: #355a66;
+    --red: #e06c75; --green: #50fa7b;
+    --bg-effect-intensity: 1;
+  }
+  /* Background patterns — mirrors static/style.css "Background Patterns"
+     block so the theme's chosen bgPattern renders on login too. The
+     canvas-based effects (rain, constellations, perlin-flow, petals,
+     sparkles, embers) are spawned by the deferred theme.js import below;
+     the static gradient ones (dots, synapse) need these CSS rules. */
+  #synapse-canvas, #rain-canvas, #constellations-canvas,
+  #perlin-flow-canvas, #petals-canvas, #sparkles-canvas,
+  #embers-canvas { opacity: var(--bg-effect-intensity, 1); }
+  body.bg-pattern-dots {
+    background-image: radial-gradient(color-mix(in srgb, var(--bg-effect-color, var(--fg)) calc(5% * var(--bg-effect-intensity, 1)), transparent) 1px, transparent 1px);
+    background-size: 20px 20px; background-attachment: fixed;
+  }
+  body.bg-pattern-synapse {
+    background-image: linear-gradient(color-mix(in srgb, var(--bg-effect-color, var(--fg)) calc(3.5% * var(--bg-effect-intensity, 1)), transparent) 1px, transparent 1px),
+      linear-gradient(90deg, color-mix(in srgb, var(--bg-effect-color, var(--fg)) calc(3.5% * var(--bg-effect-intensity, 1)), transparent) 1px, transparent 1px);
+    background-size: 24px 24px; background-attachment: fixed;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Fira Code', monospace;
+    background: var(--bg); color: var(--fg);
+    display: flex; justify-content: center; align-items: flex-start;
+    min-height: 100vh; min-height: 100dvh;
+    padding-top: 15vh;
+    transition: padding-top 0.2s ease;
+  }
+  /* Moody, overcast storm sky behind everything — dark, with a faint cool
+     glow low on the horizon (behind the skyline) so the silhouette has
+     something to sit against between flashes. Opaque, so the page reads as
+     night regardless of the user's theme background. */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background:
+      radial-gradient(120% 60% at 50% -8%, color-mix(in srgb, var(--fg) 6%, transparent), transparent 55%),
+      radial-gradient(150% 55% at 50% 100%, color-mix(in srgb, var(--fg) 11%, transparent), transparent 62%),
+      linear-gradient(180deg, #04060a 0%, #070b12 46%, #0a1119 73%, #05080e 100%);
+    /* Furthest parallax layer — barely shifts; scale gives overscan room. */
+    transform: translate3d(calc(var(--mx,0) * -5px), calc(var(--my,0) * -4px), 0) scale(1.05);
+    will-change: transform;
+  }
+  /* Faint CRT scanlines for a terminal/HUD feel. */
+  body::after {
+    content: ""; position: fixed; inset: 0; z-index: 3; pointer-events: none;
+    background: repeating-linear-gradient(0deg,
+      transparent 0 2px, color-mix(in srgb, #000 30%, transparent) 2px 3px);
+    opacity: .10;
+  }
+  /* ── Storm scene ──────────────────────────────────────────────────────
+     A skyline of dark block monoliths that the lightning briefly reveals.
+     Everything here sits at z-index:0, behind the card (z-index:1). */
+  .storm { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+  /* Forked-lightning bolt layer (JS-drawn), frontmost of the storm. */
+  #bolt-canvas { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+  /* When the JS storm engine is live it drives opacity directly each frame —
+     disable the CSS keyframe loop (which stays as the no-JS fallback). */
+  .storm.storm-js .skyline,
+  .storm.storm-js .lightning,
+  .storm.storm-js .easter-logo { animation: none; }
+  /* Easter egg: the Odysseus wordmark, tilted BACK in perspective so it
+     recedes into real depth toward the horizon (not just "small"). Invisible
+     at rest; its contour only surfaces for an instant when lightning strikes. */
+  .easter-logo {
+    position: absolute; left: 50%; top: 70%;
+    width: min(125vmin, 1280px); height: auto;
+    /* THE depth effect: a perspective tilt leans the wordmark backward so it
+       recedes, anchored at its base. Smallest parallax of any layer. */
+    transform: translate(-50%, -100%)
+               translate3d(calc(var(--mx,0) * -4px), calc(var(--my,0) * -3px), 0)
+               perspective(1300px) rotateX(24deg);
+    transform-origin: 50% 100%;
+    opacity: 0; will-change: opacity, transform;
+    filter: grayscale(1) brightness(1.12) contrast(0.78) blur(3px);
+    mix-blend-mode: screen;
+    animation: logo-reveal 9s ease-out infinite;
+    user-select: none;
+  }
+  @keyframes logo-reveal {
+    0%, 80%, 100% { opacity: 0; }
+    81% { opacity: .15; }
+    82% { opacity: .05; }
+    83% { opacity: .19; }
+    85% { opacity: .04; }
+    87% { opacity: .10; }
+    89% { opacity: 0; }
+  }
+  /* Rising binary (0/1) — drifts up alongside the ember "spirits".
+     Explicit width/height: a <canvas> is a replaced element, so with auto
+     sizing it keeps its intrinsic 300x150 (pinned top-left) even under
+     inset:0 — the digits would all cluster in that corner. */
+  #binary-rain { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+  /* The blockhouses: normally barely there (opacity ~.06), the flash pulls
+     their contours up — synced to the lightning timeline below. */
+  .skyline {
+    position: absolute; left: -6%; bottom: 0;
+    width: 112%; height: 44vh; min-height: 240px; display: block;
+    opacity: 0; will-change: opacity, transform;
+    /* Mid-far parallax layer — overscan (width 112% / left -6%) hides the
+       edges as it shifts with the pointer. */
+    transform: translate3d(calc(var(--mx,0) * -15px), calc(var(--my,0) * -9px), 0);
+    animation: skyline-reveal 9s ease-out infinite;
+  }
+  .skyline rect {
+    fill: #0a0f17;
+    stroke: color-mix(in srgb, var(--fg) 38%, #0a0f17);
+    stroke-width: 1;
+  }
+  /* Sheet-lightning flash. Bluish-white, blended onto the dark sky; the
+     flicker burst sits at ~80–89% of the loop so reveals come in irregular,
+     stormy clusters rather than a steady pulse. */
+  .lightning {
+    position: absolute; inset: 0; mix-blend-mode: screen; opacity: 0;
+    will-change: opacity;
+    background: radial-gradient(95% 70% at 36% -10%,
+      color-mix(in srgb, #d6ecff 92%, #fff), transparent 58%);
+    animation: lightning 9s ease-out infinite;
+  }
+  @keyframes lightning {
+    0%, 80%, 100% { opacity: 0; }
+    81% { opacity: .92; }
+    82% { opacity: .14; }
+    83% { opacity: .97; }
+    85% { opacity: .05; }
+    87% { opacity: .5; }
+    89% { opacity: 0; }
+  }
+  @keyframes skyline-reveal {
+    /* Invisible between strikes — the contours only surface during the flash. */
+    0%, 80%, 100% { opacity: 0; }
+    81% { opacity: .52; }
+    82% { opacity: .18; }
+    83% { opacity: .62; }
+    85% { opacity: .10; }
+    87% { opacity: .30; }
+    89% { opacity: 0; }
+  }
+  /* Respect reduced-motion: no flashing — a dim, static skyline instead. */
+  @media (prefers-reduced-motion: reduce) {
+    .lightning { animation: none; opacity: 0; }
+    .skyline { animation: none; opacity: 0; }
+    .easter-logo { animation: none; opacity: 0; }
+  }
+  .card {
+    background: color-mix(in srgb, var(--panel) 90%, transparent);
+    backdrop-filter: blur(16px) saturate(1.2);
+    -webkit-backdrop-filter: blur(16px) saturate(1.2);
+    border: 1px solid color-mix(in srgb, var(--fg) 22%, var(--border));
+    border-radius: 16px;
+    padding: 2rem; width: 360px; max-width: 90vw;
+    /* Sit above the bg-effect canvases (which spawn at z-index:0) so the
+       falling rain / drifting petals / etc. don't streak across the
+       login form. */
+    position: relative; z-index: 1; isolation: isolate;
+    animation: card-rise 0.7s cubic-bezier(.2,.75,.2,1) both,
+               card-glow 6s ease-in-out 0.7s infinite;
+  }
+  /* Clean static HUD accent line at the card's top edge. */
+  .card::before {
+    content: ""; position: absolute; left: 14%; right: 14%; top: -1px; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--red),
+      color-mix(in srgb, var(--fg) 80%, transparent), transparent);
+    filter: drop-shadow(0 0 5px color-mix(in srgb, var(--fg) 55%, transparent));
+    pointer-events: none;
+  }
+  @keyframes card-rise {
+    from { opacity: 0; transform: translateY(16px) scale(.985); }
+    to   { opacity: 1; transform: none; }
+  }
+  @keyframes card-glow {
+    0%, 100% { box-shadow: 0 22px 60px -16px rgba(0,0,0,.65),
+                           0 0 60px -26px color-mix(in srgb, var(--fg) 65%, transparent); }
+    50%      { box-shadow: 0 22px 60px -16px rgba(0,0,0,.65),
+                           0 0 95px -16px color-mix(in srgb, var(--red) 60%, transparent); }
+  }
+  .logo {
+    text-align: center; margin-bottom: 1.5rem;
+  }
+  .login-logo {
+    width: min(320px, 80%);
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+    user-select: none;
+    filter: drop-shadow(0 0 18px color-mix(in srgb, var(--fg) 32%, transparent));
+  }
+  .logo span {
+    font-family: 'Fira Code', monospace;
+    font-size: 2rem; font-weight: 600;
+    letter-spacing: 0.04em;
+    /* Same gradient as the main app's welcome-screen "Odysseus" title
+       (static/style.css #welcome-screen .welcome-name) so the brand
+       wordmark is consistent across login + first-launch screens. */
+    background: linear-gradient(135deg, var(--brand-color, var(--red)), color-mix(in srgb, var(--brand-color, var(--red)) 60%, var(--fg)));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .setup-note { color: color-mix(in srgb, var(--fg) 60%, transparent); font-size: 0.8rem; margin-bottom: 1rem; text-align: center; }
+  label { display: block; font-size: 0.85rem; margin-bottom: 0.3rem; color: color-mix(in srgb, var(--fg) 65%, transparent); }
+  input:not(.remember-check) {
+    width: 100%; padding: 0.6rem 0.8rem; margin-bottom: 1rem;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    color: var(--fg); font-size: 0.95rem; font-family: 'Fira Code', monospace;
+  }
+  input:focus {
+    outline: none; border-color: var(--red);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 20%, transparent),
+                0 0 16px -3px color-mix(in srgb, var(--red) 50%, transparent);
+  }
+  /* On touch devices keep inputs at >=16px so iOS Safari doesn't zoom the whole
+     page when a field is focused (it auto-zooms any focused input under 16px).
+     This page has its own inline styles, so it doesn't inherit the main app's
+     equivalent rule in static/style.css; mirror it here. !important also lifts
+     the dynamically-inserted 2FA input, which pins font-size:14px inline. */
+  @media (hover: none) and (pointer: coarse) {
+    input:not(.remember-check) { font-size: 16px !important; }
+  }
+  /* Clear, visible focus ring for keyboard users on every focusable control. */
+  input:focus-visible, a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--red);
+    outline-offset: 2px;
+  }
+  button {
+    width: 100%;
+    /* Asymmetric vertical padding nudges the label 1px down while keeping
+       the button's total height the same as 0.7rem all-around. */
+    padding: calc(0.7rem + 1px) 0.7rem calc(0.7rem - 1px);
+    border: none; border-radius: 6px;
+    /* Darken the brand red slightly so #fff label text clears the WCAG AA
+       4.5:1 contrast threshold (plain --red #e06c75 only reaches ~3.2:1). */
+    background: color-mix(in srgb, var(--red) 78%, #000); color: #fff; font-size: 1rem; cursor: pointer;
+    font-weight: 600; font-family: 'Fira Code', monospace;
+    box-shadow: 0 0 22px -7px color-mix(in srgb, var(--red) 75%, transparent);
+    transition: background 0.15s ease, box-shadow 0.2s ease, transform 0.08s ease;
+  }
+  button:hover {
+    background: color-mix(in srgb, var(--red) 66%, black);
+    box-shadow: 0 0 30px -4px color-mix(in srgb, var(--red) 90%, transparent);
+  }
+  button:active { transform: translateY(1px); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .error { color: #e55; font-size: 0.85rem; margin-bottom: 0.75rem; display: none; }
+  .toggle { text-align: center; margin-top: calc(1rem + 4px); font-size: 0.85rem; color: color-mix(in srgb, var(--fg) 50%, transparent); }
+  .toggle a { color: var(--red); cursor: pointer; text-decoration: none; }
+  .toggle a:hover { text-decoration: underline; }
+  .pw-wrapper { position: relative; margin-bottom: 1rem; }
+  .pw-wrapper input:not(.remember-check) { padding-right: 2.5rem; margin-bottom: 0; }
+  .pw-toggle {
+    position: absolute; right: 8px; top: 50%;
+    /* +1px on the centering offset nudges the eye icon down 1px so it
+       lines up visually with the input text baseline. */
+    transform: translateY(calc(-50% + 1px));
+    background: none; border: none; padding: 4px; cursor: pointer;
+    color: color-mix(in srgb, var(--fg) 40%, transparent); width: auto;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .pw-toggle:hover { color: var(--fg); background: none; }
+  .pw-toggle svg { display: block; }
+  .remember-toggle {
+    position: absolute !important; right: 13px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; padding: 2px; cursor: pointer;
+    width: 14px !important; height: 14px !important; display: flex !important;
+    align-items: center; justify-content: center;
+    font-size: 0; margin: 0; color: transparent;
+  }
+  /* Visually hide the native checkbox but keep it in the accessibility tree
+     and keyboard-focusable (display:none would drop it from tab order). It
+     overlays the dot so a click/tap still toggles it. */
+  .remember-toggle .remember-check {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 100%; margin: 0;
+    opacity: 0; cursor: pointer;
+  }
+  .remember-toggle .remember-check:focus-visible + .remember-dot {
+    outline: 2px solid var(--red); outline-offset: 2px;
+  }
+  .remember-toggle .remember-dot {
+    display: block; width: 10px; height: 10px; min-width: 10px; min-height: 10px;
+    border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--fg) 25%, transparent);
+    background: transparent;
+    transition: all 0.15s;
+  }
+  .remember-toggle .remember-check:checked + .remember-dot {
+    border-color: transparent;
+    background: color-mix(in srgb, var(--fg) 40%, transparent);
+  }
+  .remember-toggle:hover .remember-dot {
+    border-color: color-mix(in srgb, var(--fg) 40%, transparent);
+  }
+  .logo-boat { width: 1.6rem; height: 1.6rem; margin-right: 0.4rem; vertical-align: -0.15em; color: var(--red); }
+  .version-label {
+    position: fixed; bottom: 12px; right: 16px;
+    font-size: 0.7rem; opacity: 0.25;
+    font-family: 'Fira Code', monospace;
+    pointer-events: none; user-select: none;
+  }
+  /* Whirlpool-style spinner shown in the submit button while login /
+     account-creation work is in flight — replaces the previous "Loading…"
+     text. Two-color ring (muted base + accent arc) rotates continuously. */
+  .login-spinner {
+    display: inline-block;
+    width: 16px; height: 16px;
+    border: 2px solid color-mix(in srgb, var(--fg, #fff) 22%, transparent);
+    border-top-color: var(--accent, var(--red, #e8a830));
+    border-radius: 50%;
+    animation: login-spin 0.7s linear infinite;
+    vertical-align: -3px;
+  }
+  @keyframes login-spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="storm" aria-hidden="true">
+  <img class="easter-logo" src="/static/odysseuslogo.svg" alt="" draggable="false">
+  <svg class="skyline" viewBox="0 0 1440 320" preserveAspectRatio="xMidYMax slice">
+    <rect x="0"    y="150" width="130" height="170"/>
+    <rect x="120"  y="90"  width="95"  height="230"/>
+    <rect x="210"  y="180" width="80"  height="140"/>
+    <rect x="285"  y="50"  width="150" height="270"/>
+    <rect x="430"  y="160" width="85"  height="160"/>
+    <rect x="510"  y="110" width="70"  height="210"/>
+    <rect x="575"  y="30"  width="170" height="290"/>
+    <rect x="740"  y="140" width="95"  height="180"/>
+    <rect x="830"  y="80"  width="80"  height="240"/>
+    <rect x="905"  y="55"  width="140" height="265"/>
+    <rect x="1040" y="170" width="85"  height="150"/>
+    <rect x="1120" y="95"  width="110" height="225"/>
+    <rect x="1225" y="150" width="80"  height="170"/>
+    <rect x="1300" y="40"  width="140" height="280"/>
+  </svg>
+  <div class="lightning"></div>
+  <canvas id="binary-rain" aria-hidden="true"></canvas>
+  <canvas id="bolt-canvas" aria-hidden="true"></canvas>
+</div>
+<main class="card">
+  <h1 class="logo">
+    <img class="login-logo" src="/static/odysseuslogo2.svg" alt="Odysseus — A Sentinel Refactored Edition, by OdWar" draggable="false">
+  </h1>
+  <p class="setup-note" id="setupNote" style="display:none"></p>
+
+  <div class="error" id="error" role="alert" aria-live="assertive"></div>
+
+  <form id="authForm" autocomplete="on">
+    <label for="username">Username</label>
+    <div class="pw-wrapper">
+      <input id="username" name="username" type="text" required autofocus autocomplete="username">
+      <label class="remember-toggle" id="rememberToggle" title="Remember me">
+        <input type="checkbox" class="remember-check" id="remember" checked aria-label="Remember me">
+        <span class="remember-dot" aria-hidden="true"></span>
+      </label>
+    </div>
+
+    <label for="password">Password</label>
+    <div class="pw-wrapper">
+      <input id="password" name="password" type="password" required autocomplete="current-password">
+      <button type="button" class="pw-toggle" id="pwToggle" tabindex="-1" aria-label="Show password">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>
+      </button>
+    </div>
+
+    <div id="confirmGroup" style="display:none">
+      <label for="confirmPassword">Confirm Password</label>
+      <div class="pw-wrapper">
+        <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password">
+        <button type="button" class="pw-toggle" id="pwToggleConfirm" tabindex="-1" aria-label="Show password">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <button type="submit" id="submitBtn">Sign In</button>
+  </form>
+
+  <div class="toggle" id="toggleArea" style="display:none">
+    <span id="toggleText">Don't have an account? </span>
+    <a id="toggleLink" href="#">Sign up</a>
+  </div>
+</main>
+
+<footer class="version-label" id="version-label"></footer>
+
+<script nonce="{{CSP_NONCE}}">
+(async () => {
+  // Load version
+  try {
+    const vr = await fetch('/api/version');
+    if (vr.ok) {
+      const vd = await vr.json();
+      document.getElementById('version-label').textContent = 'v' + vd.version;
+    }
+  } catch(e) {}
+
+  // Prefill last username
+  const usernameInput = document.getElementById('username');
+  const savedUser = localStorage.getItem('odysseus-last-user');
+  if (savedUser && usernameInput) {
+    usernameInput.value = savedUser;
+    document.getElementById('password').focus();
+  }
+
+  const form = document.getElementById('authForm');
+  const errEl = document.getElementById('error');
+  const setupNote = document.getElementById('setupNote');
+  const confirmGroup = document.getElementById('confirmGroup');
+  const submitBtn = document.getElementById('submitBtn');
+  const toggleArea = document.getElementById('toggleArea');
+  const toggleLink = document.getElementById('toggleLink');
+  const toggleText = document.getElementById('toggleText');
+
+  let mode = 'login'; // 'login' | 'signup' | 'setup'
+  let signupAllowed = false;
+
+  const rememberToggle = document.getElementById('rememberToggle');
+
+  function setMode(m) {
+    mode = m;
+    errEl.style.display = 'none';
+    if (m === 'setup') {
+      setupNote.textContent = 'First-time setup — create your admin account';
+      setupNote.style.display = 'block';
+      confirmGroup.style.display = 'block';
+      submitBtn.textContent = 'Create Admin Account';
+      toggleArea.style.display = 'none';
+      rememberToggle.style.display = 'none';
+    } else if (m === 'signup') {
+      setupNote.style.display = 'none';
+      confirmGroup.style.display = 'block';
+      submitBtn.innerHTML = '<span style="position:relative;top:1px;">Create Account</span>';
+      toggleArea.style.display = 'block';
+      toggleText.textContent = 'Already have an account? ';
+      toggleLink.textContent = 'Sign in';
+      rememberToggle.style.display = 'none';
+    } else {
+      setupNote.style.display = 'none';
+      confirmGroup.style.display = 'none';
+      submitBtn.textContent = 'Sign In';
+      toggleArea.style.display = signupAllowed ? 'block' : 'none';
+      toggleText.textContent = "Don't have an account? ";
+      toggleLink.textContent = 'Sign up';
+      rememberToggle.style.display = '';
+    }
+  }
+
+  // Check auth status
+  try {
+    const res = await fetch('/api/auth/status', { credentials: 'same-origin' });
+    const data = await res.json();
+    if (data.authenticated) {
+      window.location.replace('/');
+      return;
+    }
+    signupAllowed = !!data.signup_enabled;
+    if (!data.configured) {
+      setMode('setup');
+    } else {
+      setMode('login');
+    }
+  } catch (e) {
+    setMode('login');
+  }
+
+  toggleLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    setMode(mode === 'login' ? 'signup' : 'login');
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    errEl.style.display = 'none';
+    submitBtn.disabled = true;
+
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value;
+
+    // If in TOTP mode, handle the code submission directly
+    if (form._totpMode) {
+      const totpInput = document.getElementById('totp-input');
+      const code = totpInput ? totpInput.value.trim() : '';
+      if (!code) { totpInput.focus(); submitBtn.disabled = false; return; }
+      const remember = document.getElementById('remember').checked;
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ username, password, remember, totp_code: code })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Invalid code');
+        if (!data.ok) throw new Error('Login failed');
+        form._totpMode = false;
+        finishLogin();
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.style.display = 'block';
+        submitBtn.disabled = false;
+      }
+      return;
+    }
+
+    // Validate confirm password for setup/signup
+    if (mode === 'setup' || mode === 'signup') {
+      const confirm = document.getElementById('confirmPassword').value;
+      if (password !== confirm) {
+        errEl.textContent = 'Passwords do not match';
+        errEl.style.display = 'block';
+        submitBtn.disabled = false;
+        return;
+      }
+      if (password.length < 8) {
+        errEl.textContent = 'Password must be at least 8 characters';
+        errEl.style.display = 'block';
+        submitBtn.disabled = false;
+        return;
+      }
+    }
+
+    // Setup or signup first
+    if (mode === 'setup' || mode === 'signup') {
+      const endpoint = mode === 'setup' ? '/api/auth/setup' : '/api/auth/signup';
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Account creation failed');
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.style.display = 'block';
+        submitBtn.disabled = false;
+        return;
+      }
+    }
+
+    // Login (auto-login after setup/signup too)
+    const remember = document.getElementById('remember').checked;
+    function finishLogin() {
+      const _rem = document.getElementById('remember').checked;
+      if (_rem) localStorage.setItem('odysseus-last-user', username);
+      else localStorage.removeItem('odysseus-last-user');
+      sessionStorage.removeItem('ody-session-active');
+      submitBtn.innerHTML = '<span class="login-spinner" aria-hidden="true"></span>';
+      submitBtn.disabled = true;
+      Promise.all([
+        fetch('/api/sessions', { credentials: 'same-origin' }).then(r => r.json()),
+        fetch('/api/auth/features', { credentials: 'same-origin' }).then(r => r.json()),
+        fetch('/api/auth/settings', { credentials: 'same-origin' }).then(r => r.json()),
+      ]).then(([sess, feat, sett]) => {
+        sessionStorage.setItem('ody-prefetch-sessions', JSON.stringify(sess));
+        sessionStorage.setItem('ody-prefetch-features', JSON.stringify(feat));
+        sessionStorage.setItem('ody-prefetch-settings', JSON.stringify(sett));
+      }).catch(() => {}).finally(() => { window.location.replace('/'); });
+    }
+    async function doLogin(totpCode) {
+      const loginBody = { username, password, remember };
+      if (totpCode) loginBody.totp_code = totpCode;
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(loginBody)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Login failed');
+      return data;
+    }
+    try {
+      let data = await doLogin();
+      // 2FA required — show TOTP input
+      if (data.requires_totp) {
+        submitBtn.disabled = false;
+        // Only add TOTP input once
+        if (document.getElementById('totp-input')) return;
+        form._totpMode = true;
+        const totpWrap = document.createElement('div');
+        totpWrap.style.cssText = 'margin-top:12px;';
+        totpWrap.innerHTML = '<label for="totp-input" style="font-size:0.85em;opacity:0.7;display:block;margin-bottom:4px;">2FA Code</label><input type="text" id="totp-input" placeholder="Enter 6-digit code" aria-label="Two-factor authentication code" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="width:100%;padding:10px 12px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:8px;font-size:14px;box-sizing:border-box;text-align:center;letter-spacing:4px;">';
+        const formEl = submitBtn.parentElement;
+        formEl.insertBefore(totpWrap, submitBtn);
+        const totpInput = document.getElementById('totp-input');
+        totpInput.focus();
+        submitBtn.textContent = 'Verify';
+        return;
+      }
+      finishLogin();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.style.display = 'block';
+      submitBtn.disabled = false;
+      return;
+    }
+  });
+
+  // Password show/hide toggles
+  const eyeOpen = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const eyeClosed = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>';
+
+  function wireToggle(btnId, inputId) {
+    const btn = document.getElementById(btnId);
+    const inp = document.getElementById(inputId);
+    if (!btn || !inp) return;
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const show = inp.type === 'password';
+      inp.type = show ? 'text' : 'password';
+      btn.innerHTML = show ? eyeOpen : eyeClosed;
+      btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+      inp.focus();
+    });
+  }
+  wireToggle('pwToggle', 'password');
+  wireToggle('pwToggleConfirm', 'confirmPassword');
+})();
+
+// Prevent login button and eye toggles from stealing focus on mobile (keeps keyboard open)
+document.querySelectorAll('#submitBtn, .pw-toggle').forEach(btn => {
+  btn.addEventListener('touchstart', (e) => { e.preventDefault(); }, { passive: false });
+  btn.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    btn.click();
+  });
+});
+
+// Mobile keyboard: shift card up when virtual keyboard opens
+if (window.visualViewport) {
+  const card = document.querySelector('.card');
+  window.visualViewport.addEventListener('resize', () => {
+    const vvh = window.visualViewport.height;
+    const wh = window.innerHeight;
+    if (vvh < wh * 0.8) {
+      document.body.style.paddingTop = '5vh';
+      // Keep the active input visible without jumping the whole card to the top
+      if (document.activeElement && document.activeElement.tagName === 'INPUT') {
+        document.activeElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    } else {
+      document.body.style.paddingTop = '';
+    }
+  });
+}
+</script>
+<script nonce="{{CSP_NONCE}}">
+// Rising binary rain — glowing 0/1 digits that drift upward together with
+// the ember "spirits". Self-contained canvas; honours reduced-motion.
+(function(){
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  var canvas = document.getElementById('binary-rain');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  var DPR = Math.min(window.devicePixelRatio || 1, 2);
+  var W = 0, H = 0;
+  function resize(){
+    W = canvas.clientWidth; H = canvas.clientHeight;
+    canvas.width = Math.floor(W * DPR); canvas.height = Math.floor(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  // Pull the theme's cyan so the digits match the rest of the login tint.
+  var fg = (getComputedStyle(document.documentElement).getPropertyValue('--fg') || '').trim() || '#9cdef2';
+  var r = 156, g = 222, b = 242; // #9cdef2 fallback
+  if (fg.charAt(0) === '#') {
+    var h = fg.slice(1);
+    if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+    if (h.length === 6) { var n = parseInt(h, 16); r=(n>>16)&255; g=(n>>8)&255; b=n&255; }
+  }
+  // Brighten toward white so lit digits pop against the dark sky.
+  var lr = Math.round(r + (255-r)*0.4), lg = Math.round(g + (255-g)*0.4), lb = Math.round(b + (255-b)*0.4);
+  var glow = 'rgb('+r+','+g+','+b+')';
+  function rnd(a, bb){ return a + Math.random()*(bb-a); }
+
+  // ── Fire palette: white-hot → yellow → orange → red → smoke → gone ──
+  var FIRE = [
+    {t:0.00, r:255,g:255,b:255, a:1.00, sz:1.00},
+    {t:0.18, r:255,g:232,b:150, a:1.00, sz:1.15},
+    {t:0.38, r:255,g:150,b:60,  a:1.00, sz:1.25},
+    {t:0.55, r:255,g:85, b:40,  a:0.95, sz:1.32},
+    {t:0.78, r:130,g:130,b:135, a:0.50, sz:1.80},
+    {t:1.00, r:90, g:90, b:95,  a:0.00, sz:2.60}
+  ];
+  function fireAt(bv){
+    for (var fi=0;fi<FIRE.length-1;fi++){
+      if (bv>=FIRE[fi].t && bv<=FIRE[fi+1].t){
+        var A=FIRE[fi], B=FIRE[fi+1], f=(bv-A.t)/((B.t-A.t)||1);
+        return { r:(A.r+(B.r-A.r)*f)|0, g:(A.g+(B.g-A.g)*f)|0, b:(A.b+(B.b-A.b)*f)|0,
+                 a:A.a+(B.a-A.a)*f, sz:A.sz+(B.sz-A.sz)*f };
+      }
+    }
+    return FIRE[FIRE.length-1];
+  }
+  function distSeg(px,py,x1,y1,x2,y2){
+    var dx=x2-x1, dy=y2-y1, L2=dx*dx+dy*dy;
+    if (L2===0) return Math.hypot(px-x1,py-y1);
+    var tt=((px-x1)*dx+(py-y1)*dy)/L2; tt=tt<0?0:tt>1?1:tt;
+    return Math.hypot(px-(x1+dx*tt), py-(y1+dy*tt));
+  }
+
+  // ── Lightning writes "pewdiepie" in binary on the ground ──────────────
+  // Each strike pins 1–2 struck digits, red-hot, landing across the WHOLE
+  // bottom in random order and staying until the name is fully written; then
+  // it holds, fades, and the storm writes it again. Progress persists.
+  var BYTES = ['01110000','01100101','01110111','01100100','01101001','01100101','01110000','01101001','01100101'];
+  var SLOTS = 72, targets = [];
+  function srnd(i){ var s = Math.sin(i*12.9898)*43758.5453; return (s - Math.floor(s)) - 0.5; }
+  function layout(){
+    var vw = W || window.innerWidth, vh = H || window.innerHeight;
+    var cells = SLOTS + (BYTES.length - 1), cellW = (vw*0.95)/cells;
+    var startX = vw*0.025 + cellW/2, baseY = vh*0.88;
+    targets = []; var gi = 0, cell = 0;
+    for (var bi=0; bi<BYTES.length; bi++){
+      for (var k=0;k<8;k++){
+        targets.push({ x: startX + cell*cellW + srnd(gi*2)*cellW*0.45,
+                       y: baseY + srnd(gi*2+1)*vh*0.07,
+                       bit: BYTES[bi].charAt(k), cw: cellW });
+        gi++; cell++;
+      }
+      cell++;
+    }
+  }
+
+  var claimed = 0, lockedCount = 0, lockedArr = [], settling = [], fadeAlpha = 1, holdCounter = 0;
+  for (var li=0; li<SLOTS; li++) lockedArr.push(false);
+  var order = [];
+  (function(){
+    for (var i=0;i<SLOTS;i++) order.push(i);
+    var seed = 0x9e3779b9;
+    function rng(){ seed = (seed + 0x6D2B79F5) | 0; var t = Math.imul(seed ^ (seed>>>15), 1 | seed); t = (t + Math.imul(t ^ (t>>>7), 61 | t)) ^ t; return ((t ^ (t>>>14)) >>> 0) / 4294967296; }
+    for (var j=SLOTS-1;j>0;j--){ var k=Math.floor(rng()*(j+1)), tmp=order[j]; order[j]=order[k]; order[k]=tmp; }
+  })();
+  try {
+    var saved = parseInt(localStorage.getItem('ody-felix-bits'), 10);
+    if (saved > 0 && saved <= SLOTS){ claimed = lockedCount = saved; for (var lj=0; lj<saved; lj++) lockedArr[order[lj]] = true; }
+  } catch(e){}
+  function persist(){ try { localStorage.setItem('ody-felix-bits', String(lockedCount)); } catch(e){} }
+  function resetMessage(){ claimed = 0; lockedCount = 0; for (var i=0;i<SLOTS;i++) lockedArr[i]=false; settling = []; fadeAlpha = 1; holdCounter = 0; persist(); }
+
+  // Storm hook: a bolt struck — pin its 1–2 nearest digits into the message.
+  window.__odyIgnite = function(pts){
+    if (!pts || pts.length < 2 || claimed >= SLOTS) return;
+    var ex = pts[pts.length-1].x, ey = pts[pts.length-1].y, cand = [];
+    for (var i=0;i<P.length;i++){
+      var p = P[i], dmin = Math.hypot(p.x-ex, p.y-ey);
+      for (var s=0;s<pts.length-1 && dmin>8;s++){
+        var d = distSeg(p.x,p.y, pts[s].x,pts[s].y, pts[s+1].x,pts[s+1].y);
+        if (d < dmin) dmin = d;
+      }
+      cand.push({ p:p, d:dmin });
+    }
+    cand.sort(function(a,b){ return a.d - b.d; });
+    var count = Math.min(1 + (Math.random()<0.5?1:0), SLOTS - claimed);
+    for (var n=0;n<count;n++){
+      var pc = cand[n].p, idx = order[claimed]; claimed++;
+      var tgY = targets[idx] ? targets[idx].y : H;
+      settling.push({ idx: idx, fx: pc.x, fy: Math.min(pc.y, tgY - (60 + Math.random()*140)), t: 0 });
+      spawn(pc, true);
+    }
+  };
+
+  function renderMessage(gf){
+    if (!targets.length) return;
+    ctx.shadowColor = 'rgba(255,70,55,0.9)'; ctx.shadowBlur = 9;
+    for (var i=0;i<SLOTS;i++){
+      if (!lockedArr[i]) continue;
+      var tg = targets[i]; if (!tg) continue;
+      var pulse = 0.85 + 0.15*Math.sin(gf*0.05 + i);
+      ctx.fillStyle = 'rgba(255,'+(60+((i*7)%28))+',45,'+(fadeAlpha*pulse).toFixed(3)+')';
+      ctx.font = '600 ' + (tg.cw*0.92).toFixed(1) + 'px "Fira Code", monospace';
+      ctx.fillText(tg.bit, tg.x, tg.y);
+    }
+    for (var j=settling.length-1;j>=0;j--){
+      var st = settling[j], tg2 = targets[st.idx]; if (!tg2){ settling.splice(j,1); continue; }
+      st.t += 0.025;
+      var e = st.t<1 ? st.t : 1, ee = e*e;
+      var fc = fireAt(Math.min(0.55, e*0.55));
+      ctx.shadowColor = 'rgba('+fc.r+','+fc.g+','+fc.b+',0.95)'; ctx.shadowBlur = 12;
+      ctx.fillStyle = 'rgba('+fc.r+','+fc.g+','+fc.b+',1)';
+      ctx.font = '600 ' + (tg2.cw*0.92).toFixed(1) + 'px "Fira Code", monospace';
+      ctx.fillText(tg2.bit, st.fx + (tg2.x-st.fx)*ee, st.fy + (tg2.y-st.fy)*ee);
+      if (st.t >= 1){ if (!lockedArr[st.idx]){ lockedArr[st.idx]=true; lockedCount++; persist(); } settling.splice(j,1); }
+    }
+    if (lockedCount >= SLOTS){
+      holdCounter++;
+      if (holdCounter > 1100){ fadeAlpha -= 0.012; if (fadeAlpha <= 0) resetMessage(); }
+    }
+  }
+  function spawn(p, atBottom){
+    p.x = rnd(0, W || window.innerWidth);
+    p.y = atBottom ? rnd(H, H+40) : rnd(0, H || window.innerHeight);
+    p.size = rnd(10, 20);
+    p.vy = -rnd(8, 26)/60;       // px/frame upward (~60fps)
+    p.vx = rnd(-0.15, 0.15);
+    p.char = Math.random() < 0.5 ? '0' : '1';
+    p.base = rnd(0.15, 0.85);    // depth via baseline alpha
+    p.tw = rnd(0, Math.PI*2);    // twinkle phase
+    p.tws = rnd(0.01, 0.04);
+    p.flip = rnd(40, 220) | 0;   // frames until the digit flips
+    p.fc = 0;
+  }
+  resize();
+  layout();
+  var N = Math.round(Math.min(70, Math.max(28, (window.innerWidth*window.innerHeight)/26000)));
+  var P = [];
+  for (var i=0;i<N;i++){ var p={}; spawn(p, false); P.push(p); }
+  var raf = 0, gf = 0;
+  function frame(){
+    ctx.clearRect(0, 0, W, H);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.shadowColor = glow; ctx.shadowBlur = 6;
+    for (var i=0;i<P.length;i++){
+      var p = P[i];
+      p.y += p.vy; p.x += p.vx; p.tw += p.tws; p.fc++;
+      if (p.fc >= p.flip){ p.char = Math.random() < 0.5 ? '0' : '1'; p.fc = 0; p.flip = rnd(40, 220)|0; }
+      if (p.y < -20){ spawn(p, true); }
+      var edge = Math.min((H - p.y)/80, p.y/120);
+      if (edge < 0) edge = 0; if (edge > 1) edge = 1;
+      var a = p.base * (0.55 + 0.45*Math.sin(p.tw)) * edge;
+      var bright = a > 0.55;
+      ctx.fillStyle = 'rgba('+(bright?lr:r)+','+(bright?lg:g)+','+(bright?lb:b)+','+a.toFixed(3)+')';
+      ctx.font = '600 ' + p.size.toFixed(1) + 'px "Fira Code", monospace';
+      ctx.fillText(p.char, p.x, p.y);
+    }
+    renderMessage(gf++);
+    raf = requestAnimationFrame(frame);
+  }
+  raf = requestAnimationFrame(frame);
+  var rt;
+  window.addEventListener('resize', function(){ clearTimeout(rt); rt = setTimeout(function(){ resize(); layout(); }, 150); });
+})();
+</script>
+<script nonce="{{CSP_NONCE}}">
+// ── Storm engine ──────────────────────────────────────────────────────────
+// Turns the passive backdrop into something alive: pointer-driven parallax
+// depth across the sky / skyline / Sentinel ghost, and real forked lightning
+// bolts that strike on an irregular rhythm AND react to the user (focusing a
+// field or hovering Sign In calls a strike toward the card). The CSS keyframe
+// loop stays as a graceful fallback if this script never runs.
+(function(){
+  var storm = document.querySelector('.storm');
+  if (!storm) return;
+  var rootStyle = document.documentElement.style;
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ── Parallax: lerp the pointer position into --mx/--my on :root ──
+  var tmx = 0, tmy = 0, cmx = 0, cmy = 0, praf = 0;
+  function plx(){
+    cmx += (tmx - cmx) * 0.08; cmy += (tmy - cmy) * 0.08;
+    rootStyle.setProperty('--mx', cmx.toFixed(4));
+    rootStyle.setProperty('--my', cmy.toFixed(4));
+    if (Math.abs(tmx - cmx) > 0.0008 || Math.abs(tmy - cmy) > 0.0008) praf = requestAnimationFrame(plx);
+    else praf = 0;
+  }
+  function onMove(e){
+    tmx = (e.clientX / (window.innerWidth || 1)) - 0.5;
+    tmy = (e.clientY / (window.innerHeight || 1)) - 0.5;
+    if (!praf) praf = requestAnimationFrame(plx);
+  }
+  if (!reduce && window.matchMedia('(pointer:fine)').matches) {
+    window.addEventListener('mousemove', onMove, { passive: true });
+  }
+
+  // Reduced-motion: keep the calm, no flashing / no bolts.
+  if (reduce) return;
+  storm.classList.add('storm-js');
+
+  var flash   = storm.querySelector('.lightning');
+  var skyline = storm.querySelector('.skyline');
+  var ghost   = storm.querySelector('.easter-logo');
+  var canvas  = document.getElementById('bolt-canvas');
+  var ctx     = canvas && canvas.getContext('2d');
+  var DPR = Math.min(window.devicePixelRatio || 1, 2);
+  var W = 0, H = 0, rrt;
+  function resize(){
+    if (!canvas) return;
+    W = canvas.clientWidth; H = canvas.clientHeight;
+    canvas.width = Math.floor(W * DPR); canvas.height = Math.floor(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  if (canvas) resize();
+  window.addEventListener('resize', function(){ clearTimeout(rrt); rrt = setTimeout(resize, 150); });
+
+  function rnd(a, b){ return a + Math.random() * (b - a); }
+  // Midpoint-displacement fractal → a jagged bolt polyline.
+  function genBolt(x0, y0, x1, y1, disp){
+    var pts = [{x:x0,y:y0},{x:x1,y:y1}];
+    for (var it=0; it<7; it++){
+      var np = [];
+      for (var i=0; i<pts.length-1; i++){
+        var a=pts[i], b=pts[i+1]; np.push(a);
+        var mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
+        var dx=b.x-a.x, dy=b.y-a.y, L=Math.hypot(dx,dy)||1;
+        var off=(Math.random()-0.5)*disp;
+        np.push({ x: mx + (-dy/L)*off, y: my + (dx/L)*off });
+      }
+      np.push(pts[pts.length-1]); pts = np; disp *= 0.54;
+    }
+    return pts;
+  }
+  function buildStrike(tx, ty){
+    var x0 = rnd(W*0.15, W*0.85), y0 = -12;
+    if (tx == null){ tx = rnd(W*0.2, W*0.8); ty = rnd(H*0.45, H*0.82); }
+    var main = genBolt(x0, y0, tx, ty, W*0.10);
+    var branches = [{ pts: main, w: rnd(1.8, 2.8), a: 1 }];
+    var nb = 1 + (Math.random() < 0.6 ? 1 : 0);
+    for (var k=0; k<nb; k++){
+      var idx = Math.floor(rnd(main.length*0.3, main.length*0.8));
+      var p = main[idx];
+      branches.push({ pts: genBolt(p.x, p.y, p.x + rnd(-W*0.12, W*0.12), p.y + rnd(H*0.08, H*0.22), W*0.05), w: rnd(0.8, 1.5), a: 0.7 });
+    }
+    return branches;
+  }
+  function drawBolt(branches, alpha){
+    if (!ctx) return;
+    ctx.clearRect(0, 0, W, H);
+    if (!branches || alpha <= 0) return;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.shadowColor = '#cfe6ff'; ctx.shadowBlur = 18;
+    for (var j=0; j<branches.length; j++){
+      var br = branches[j], pts = br.pts;
+      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+      for (var i=1; i<pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.globalAlpha = alpha * br.a; ctx.strokeStyle = 'rgba(190,220,255,0.9)'; ctx.lineWidth = br.w; ctx.stroke();
+      ctx.globalAlpha = alpha * br.a; ctx.strokeStyle = 'rgba(255,255,255,0.95)'; ctx.lineWidth = br.w * 0.4; ctx.stroke();
+    }
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+  }
+
+  // Flicker envelope [ms, intensity] — the characteristic double-tap of a strike.
+  var ENV = [[0,1],[55,0.25],[105,0.95],[180,0.12],[250,0.55],[330,0.08],[430,0.28],[560,0]];
+  function envAt(t){
+    if (t <= 0) return 1;
+    for (var i=0; i<ENV.length-1; i++){
+      if (t >= ENV[i][0] && t <= ENV[i+1][0]){
+        var a=ENV[i], b=ENV[i+1];
+        return a[1] + (b[1]-a[1]) * ((t-a[0])/(b[0]-a[0]));
+      }
+    }
+    return 0;
+  }
+
+  var active = null, nowts = 0, lastStrikeAt = -1e9;
+  function strike(tx, ty){ active = { start: nowts, branches: buildStrike(tx, ty) }; lastStrikeAt = nowts; if (window.__odyIgnite) window.__odyIgnite(active.branches[0].pts); }
+  function setOp(el, v){ if (el) el.style.opacity = v.toFixed(3); }
+
+  function loop(ts){
+    nowts = ts;
+    if (active){
+      var t = ts - active.start, inten = envAt(t);
+      setOp(flash, inten * 0.95);
+      setOp(skyline, inten * 0.62);
+      setOp(ghost, inten * 0.19);
+      drawBolt(active.branches, t < 240 ? inten : 0);   // bolt only on the sharp front
+      if (t >= 560){ active = null; setOp(flash,0); setOp(skyline,0); setOp(ghost,0); drawBolt(null,0); }
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // Auto strikes on an irregular rhythm, sometimes a quick double.
+  function schedule(){
+    setTimeout(function(){
+      strike();
+      if (Math.random() < 0.3) setTimeout(function(){ if (!active || nowts - active.start > 120) strike(); }, 220 + Math.random()*260);
+      schedule();
+    }, 3500 + Math.random()*7000);
+  }
+  schedule();
+  setTimeout(function(){ strike(); }, 1100);            // an opening strike to greet
+
+  // Reactive: the storm answers the user.
+  var card = document.querySelector('.card');
+  function cardTarget(){
+    if (!card) return [null, null];
+    var r = card.getBoundingClientRect();
+    return [r.left + r.width * rnd(0.3, 0.7), r.top + rnd(-4, 12)];
+  }
+  function reactive(){ if (nowts - lastStrikeAt < 700) return; var t = cardTarget(); strike(t[0], t[1]); }
+  ['username','password','confirmPassword'].forEach(function(id){
+    var el = document.getElementById(id); if (el) el.addEventListener('focus', reactive);
+  });
+  var sb = document.getElementById('submitBtn'); if (sb) sb.addEventListener('mouseenter', reactive);
+})();
+</script>
+<script type="module" nonce="{{CSP_NONCE}}">
+// Drive the login page's bg effect off the user's saved theme. The
+// sync bootstrap above already set the body class + effect CSS vars so
+// the static-gradient patterns (dots, synapse) paint immediately; this
+// block imports theme.js's canvas implementations for the dynamic
+// patterns (rain, constellations, perlin-flow, petals, sparkles,
+// embers, synapse pulses).
+//
+// IMPORTANT: theme.js's auto-init (`_initWithSync` → `initThemeUI`)
+// early-returns at `#themeGrid` which doesn't exist on this page, so
+// `applyBgPattern` would never fire on its own. We call it directly
+// here against the pattern the bootstrap already chose.
+try {
+  const tm = await import('/static/js/theme.js');
+  const pattern = window.__loginBgPattern;
+  if (pattern && tm.applyBgPattern) tm.applyBgPattern(pattern);
+} catch (e) {
+  console.error('[login-bg] failed:', e);
+}
+</script>
+</body>
+</html>

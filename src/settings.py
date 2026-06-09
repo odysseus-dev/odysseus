@@ -29,6 +29,10 @@ def _invalidate_caches():
 # ── Default values ──
 
 DEFAULT_SETTINGS = {
+    # Login background theme: "original" (default, PewDiePie's login) or "storm"
+    # (the optional animated storm login). Read by the /login route to choose
+    # which HTML to serve. Admin-only; default keeps the original untouched.
+    "login_background": "original",
     "image_gen_enabled": True,
     "image_model": "",
     "image_quality": "medium",

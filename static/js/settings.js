@@ -5260,6 +5260,26 @@ export function close() {
   }
 }
 
+// ── Optional storm login theme (admin-only) ───────────────────────────────
+// Writes the `login_background` server setting; the /login route reads it to
+// serve the animated storm login instead of the original. Self-contained so it
+// touches none of the settings functions above.
+(function initLoginThemeToggle() {
+  const toggle = document.getElementById('login-storm-toggle');
+  if (!toggle) return;
+  fetch('/api/auth/settings', { credentials: 'same-origin' })
+    .then(function (r) { return r.json(); })
+    .then(function (s) { toggle.checked = !!(s && s.login_background === 'storm'); })
+    .catch(function () {});
+  toggle.addEventListener('change', function () {
+    fetch('/api/auth/settings', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login_background: toggle.checked ? 'storm' : 'original' })
+    }).catch(function () {});
+  });
+})();
+
 const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints };
 
 
