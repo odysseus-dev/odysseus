@@ -225,7 +225,7 @@ def setup_upload_routes(upload_handler):
                 logger.warning(f"Vision cache read failed for {file_id}: {e}")
         from src.document_processor import analyze_image_with_vl
         try:
-            text = analyze_image_with_vl(path) or ""
+            text = analyze_image_with_vl(path, owner=current_user) or ""
         except Exception as e:
             logger.error(f"Vision analysis failed for {file_id}: {e}")
             raise HTTPException(500, f"Vision analysis failed: {e}")

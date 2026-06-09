@@ -194,6 +194,8 @@ def setup_webhook_routes(
         "together": "https://api.together.xyz/v1",
         "openrouter": "https://openrouter.ai/api/v1",
         "ollama": "https://ollama.com/api",
+        "opencode-zen": "https://opencode.ai/zen/v1",
+        "opencode-go": "https://opencode.ai/zen/go/v1",
         "fireworks": "https://api.fireworks.ai/inference/v1",
         "venice": "https://api.venice.ai/api/v1",
     }
@@ -323,22 +325,33 @@ def setup_webhook_routes(
             endpoint_url = build_chat_url(base_url)
             model = body.model or "auto"
             api_key = ep.api_key
+            if getattr(ep, "provider_auth_id", None):
+                try:
+                    from src.endpoint_resolver import resolve_endpoint_runtime
+                    base_url, api_key = resolve_endpoint_runtime(ep, owner=token_owner)
+                    endpoint_url = build_chat_url(base_url)
+                except Exception:
+                    raise HTTPException(500, "Could not resolve endpoint credentials")
 
             if model == "auto":
                 try:
                     async with httpx.AsyncClient(timeout=5) as client:
                         models_url = build_models_url(base_url)
                         hdrs = build_headers(api_key, base_url)
-                        resp = await client.get(models_url, headers=hdrs)
-                        resp.raise_for_status()
-                        data = resp.json()
-                        ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
-                        if not ids:
-                            ids = [
-                                m.get("name") or m.get("model")
-                                for m in (data.get("models") or [])
-                                if m.get("name") or m.get("model")
-                            ]
+                        if models_url:
+                            resp = await client.get(models_url, headers=hdrs)
+                            resp.raise_for_status()
+                            data = resp.json()
+                            ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+                            if not ids:
+                                ids = [
+                                    m.get("name") or m.get("model")
+                                    for m in (data.get("models") or [])
+                                    if m.get("name") or m.get("model")
+                                ]
+                        else:
+                            import json as _json
+                            ids = _json.loads(ep.cached_models or "[]")
                         model = ids[0] if ids else "auto"
                 except Exception:
                     raise HTTPException(500, "Could not discover models from endpoint")
