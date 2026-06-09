@@ -36,6 +36,8 @@ docker compose up -d --build
 
 Open `http://localhost:7000` when the containers are healthy. The first admin password is printed in `docker compose logs odysseus`.
 
+> **Applying code changes:** Odysseus code is baked into the Docker image at build time. Editing source files on disk does **not** affect the running container — rebuild with `docker compose up -d --build` to apply changes.
+
 Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration live in the [setup guide](docs/setup.md).
 
 ## Features
