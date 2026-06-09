@@ -334,6 +334,62 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
     except Exception as e:
         logger.debug(f"Failed to query context length for {model}: {e}")
 
+    # If standard endpoint didn't return context, try LM Studio /api/v1/models endpoint
+    # LM Studio uses a different API format with "models:" array and "max_context_length" field
+    if not api_ctx:
+        # Try common LM Studio URL patterns (works for local or remote deployments)
+        lmstudio_urls = [
+            endpoint_url.replace("/v1", "/api/v1").replace("/chat/completions", "/models"),
+            models_url.replace("/v1/models", "/api/v1/models") if "/v1" in models_url else None,
+            f"{endpoint_url.rstrip('/')}/api/v1/models",
+        ]
+        
+        for lmstudio_url in [u for u in lmstudio_urls if u]:
+            try:
+                r = httpx.get(lmstudio_url, timeout=REQUEST_TIMEOUT)
+                if r.is_success:
+                    data = r.json()
+                    
+                    # Check if this is LM Studio format (has "models" array at root level)
+                    models_list = data.get("models")
+                    if not isinstance(models_list, list):
+                        continue
+                    
+                    for m in models_list:
+                        key = m.get("key", "")
+                        if not key:
+                            continue
+                        
+                        # LM Studio uses exact "key" field as model identifier
+                        # Try multiple matching strategies in order of specificity:
+                        
+                        # 1. Exact match (e.g., "qwen/qwen3-next-80b@q4_k_m")
+                        if key == model:
+                            val = m.get("max_context_length")
+                            if val and isinstance(val, (int, float)) and val > 0:
+                                api_ctx = int(val)
+                                logger.info(f"LM Studio exact match: {key} -> max_context_length={api_ctx}")
+                                break
+                        
+                        # 2. Match by base name without quantization suffix
+                        # Split on @ to remove quantization (e.g., "qwen/qwen3-next-80b@q4_k_m" -> "qwen/qwen3-next-80b")
+                        key_base = key.split("@")[0] if "@" in key else key
+                        model_base = model.split("@")[0] if "@" in model else model
+                        
+                        # Only match if base names are identical (not just substring)
+                        if key_base == model_base:
+                            val = m.get("max_context_length")
+                            if val and isinstance(val, (int, float)) and val > 0:
+                                api_ctx = int(val)
+                                logger.info(f"LM Studio base match: {key} ({key_base}) -> max_context_length={api_ctx}")
+                                break
+                    
+                    if api_ctx:
+                        break
+                        
+            except Exception as e:
+                logger.debug(f"Failed to query context length for {model} from LM Studio URL {lmstudio_url}: {e}")
+
     # For local/self-hosted endpoints, trust the API value (user set --max-model-len)
     # For cloud APIs, use the larger value (API can report low defaults)
     if api_ctx and known:
