@@ -105,6 +105,21 @@ def test_ollama_payload_leaves_plain_messages_untouched():
     assert payload["messages"][0] == {"role": "user", "content": "hello"}
 
 
+def test_ollama_payload_converts_multimodal_content_to_native_images():
+    msgs = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "Describe this image"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc123"}},
+        ],
+    }]
+
+    payload = llm_core._build_ollama_payload("qwen3-vl:8b", msgs, temperature=0.0, max_tokens=0)
+
+    assert payload["messages"][0]["content"] == "Describe this image"
+    assert payload["messages"][0]["images"] == ["abc123"]
+
+
 def test_ollama_payload_tolerates_malformed_arguments():
     msgs = [{
         "role": "assistant",

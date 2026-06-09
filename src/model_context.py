@@ -6,6 +6,7 @@ Provides token estimation for context usage tracking.
 """
 
 import logging
+import os
 import sys
 from typing import Dict, List, Optional, Tuple
 
@@ -82,6 +83,7 @@ def _is_local_endpoint(url: str) -> bool:
 # ---------------------------------------------------------------------------
 DEFAULT_CONTEXT = 128000
 REQUEST_TIMEOUT = 5
+LOCAL_OLLAMA_CONTEXT = int(os.environ.get("ODYSSEUS_LOCAL_OLLAMA_CONTEXT", "8192"))
 
 # Known context windows for major API models (used as fallback when /models
 # endpoint doesn't report context_length).
@@ -262,6 +264,19 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
     known = _lookup_known(model)
     api_ctx = None
     configured_kind = _configured_endpoint_kind(endpoint_url)
+    parsed_endpoint = urlparse(endpoint_url or "")
+    is_local_ollama = _is_local_endpoint(endpoint_url) and (
+        parsed_endpoint.port == 11434 or "ollama" in (parsed_endpoint.hostname or "").lower()
+    )
+
+    if is_local_ollama and known and known > LOCAL_OLLAMA_CONTEXT:
+        logger.info(
+            "Capping local Ollama context for %s from known %s to %s",
+            model,
+            known,
+            LOCAL_OLLAMA_CONTEXT,
+        )
+        return LOCAL_OLLAMA_CONTEXT
 
     # Large OpenAI-compatible proxies can make /models expensive. If the
     # endpoint is explicitly configured as API/proxy, prefer known context

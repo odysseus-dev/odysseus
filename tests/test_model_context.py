@@ -249,3 +249,19 @@ class TestGetContextLength:
         assert first == model_context.DEFAULT_CONTEXT
         assert second == model_context.DEFAULT_CONTEXT
         assert calls == []
+
+    def test_local_ollama_known_context_is_capped(self, monkeypatch):
+        calls = []
+
+        def fake_get(*args, **kwargs):
+            calls.append(args)
+            raise AssertionError("local Ollama known context should be capped before probing")
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        monkeypatch.setattr(model_context, "LOCAL_OLLAMA_CONTEXT", 8192)
+
+        assert model_context.get_context_length(
+            "http://host.docker.internal:11434",
+            "qwen3-vl:8b",
+        ) == 8192
+        assert calls == []

@@ -321,6 +321,17 @@ def _normalize_ollama_url(url: str) -> str:
     return base.rstrip("/") + "/chat"
 
 
+def _ollama_data_url_image(url: str) -> Optional[str]:
+    """Return base64 image data from an OpenAI-style data URL, if present."""
+    if not isinstance(url, str) or not url.startswith("data:image/"):
+        return None
+    try:
+        _header, b64_data = url.split(",", 1)
+    except ValueError:
+        return None
+    return b64_data.strip() or None
+
+
 def _ollama_normalize_tool_messages(messages: List[Dict]) -> List[Dict]:
     """Adapt Odysseus' canonical OpenAI-style messages to native Ollama /api/chat.
 
@@ -335,9 +346,38 @@ def _ollama_normalize_tool_messages(messages: List[Dict]) -> List[Dict]:
     """
     out: List[Dict] = []
     for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        nm = dict(m)
+
+        content = nm.get("content")
+        if isinstance(content, list):
+            text_parts: List[str] = []
+            images: List[str] = []
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                ptype = part.get("type")
+                if ptype == "text":
+                    text = part.get("text")
+                    if text:
+                        text_parts.append(str(text))
+                elif ptype in {"image_url", "input_image", "image"}:
+                    image_url = part.get("image_url") or {}
+                    url = image_url.get("url") if isinstance(image_url, dict) else image_url
+                    if not url:
+                        url = part.get("url") or part.get("image")
+                    b64_data = _ollama_data_url_image(url)
+                    if b64_data:
+                        images.append(b64_data)
+            nm["content"] = "\n\n".join(text_parts)
+            if images:
+                existing = nm.get("images")
+                nm["images"] = (existing if isinstance(existing, list) else []) + images
+
         tcs = m.get("tool_calls") if isinstance(m, dict) else None
         if not tcs:
-            out.append(m)
+            out.append(nm)
             continue
         new_calls = []
         for tc in tcs:
@@ -352,7 +392,6 @@ def _ollama_normalize_tool_messages(messages: List[Dict]) -> List[Dict]:
             if tc.get("id"):
                 call["id"] = tc["id"]
             new_calls.append(call)
-        nm = dict(m)
         nm["tool_calls"] = new_calls
         out.append(nm)
     return out
