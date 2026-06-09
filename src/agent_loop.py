@@ -1707,7 +1707,6 @@ async def stream_agent_loop(
     owner: Optional[str] = None,
     relevant_tools: Optional[Set[str]] = None,
     fallbacks: Optional[List[tuple]] = None,
-    workspace: Optional[str] = None,
     plan_mode: bool = False,
     approved_plan: Optional[str] = None,
     tool_policy: Optional[ToolPolicy] = None,
@@ -1935,27 +1934,6 @@ async def stream_agent_loop(
         owner=owner,
         suppress_local_context=guide_only,
     )
-    if workspace and not guide_only:
-        # PREPEND (not append) so it dominates the large base prompt — appended
-        # at the end, small models ignored it and asked the user for code. The
-        # folder IS the project; the agent must explore it, not ask.
-        _ws_note = (
-            f"## ACTIVE WORKSPACE — READ FIRST\n"
-            f"The user is working in this folder: {workspace}\n"
-            f"It IS the project. bash/python run with cwd set here and "
-            f"read_file/write_file are confined to it (paths outside are rejected).\n"
-            f"When the user says \"the code\" / \"this project\" / \"the workspace\" "
-            f"or asks to review/find/edit something WITHOUT a path, they mean THIS "
-            f"folder. Do NOT ask the user for code or a path, and do NOT read a file "
-            f"literally named \"workspace\". ALWAYS start by exploring it yourself: "
-            f"run `bash` → `git ls-files` (or `ls -R`) to see the files, then "
-            f"read_file the relevant ones by path RELATIVE to the workspace."
-        )
-        if messages and messages[0].get("role") == "system":
-            messages[0]["content"] = _ws_note + "\n\n" + (messages[0].get("content") or "")
-        else:
-            messages.insert(0, {"role": "system", "content": _ws_note})
-        logger.info("[workspace] active for this turn: %s", workspace)
     if plan_mode and not guide_only:
         # Steer the model to investigate-then-propose. Hard tool gating handles
         # every write path except shell; this directive is what keeps the
@@ -2649,7 +2627,6 @@ async def stream_agent_loop(
                             tool_policy=tool_policy,
                             owner=owner,
                             progress_cb=_push_progress,
-                            workspace=workspace,
                         )
                     finally:
                         # Sentinel so the drainer knows to stop.
