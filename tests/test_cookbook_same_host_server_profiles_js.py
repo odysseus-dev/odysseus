@@ -40,6 +40,8 @@ def test_cookbook_submodules_resolve_visible_profile_selection():
     assert "_serverByVal?.(val)" in SERVE
     assert "_serverByVal?.(_es.remoteServerKey || _es.remoteHost || '')" in SERVE
     assert "_serverByVal?.(_envState.remoteServerKey || _probeHost)" in SERVE
+    assert "let _serverByVal;" in SERVE
+    assert "_serverByVal = shared._serverByVal;" in SERVE
 
 
 def test_running_tab_resolves_profile_key_not_first_host():
