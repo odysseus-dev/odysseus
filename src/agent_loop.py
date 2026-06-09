@@ -21,7 +21,7 @@ from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, ToolPolicy
-from src.tool_utils import get_mcp_manager
+from src.tool_utils import _truncate, get_mcp_manager
 from src.agent_tools import (
     parse_tool_blocks,
     strip_tool_blocks,
@@ -2751,18 +2751,20 @@ async def stream_agent_loop(
                 # On a bash/python timeout the result carries error + (often
                 # empty) stdout/stderr; fall back to the error so the "timed
                 # out" reason reaches the UI instead of a blank result.
-                output_text = (result["stdout"] or result["stderr"] or result.get("error", ""))[:2000]
+                raw = result["stdout"] or result["stderr"] or result.get("error", "")
+                output_text = _truncate(raw)
             elif "output" in result:
                 # bash / python canonical result: {"output": ..., "exit_code": ...}
-                output_text = (result["output"] or "")[:2000]
+                raw = result["output"] or ""
+                output_text = _truncate(raw)
             elif "response" in result:
                 # AI interaction tools (chat_with_model, send_to_session)
                 label = result.get("model", result.get("session_name", "AI"))
-                output_text = f"{label}: {result['response']}"[:4000]
+                output_text = _truncate(f"{label}: {result['response']}")
             elif "content" in result:
-                output_text = result["content"][:2000]
+                output_text = _truncate(result["content"])
             elif "results" in result:
-                output_text = result["results"][:4000]
+                output_text = _truncate(result["results"])
             elif "session_id" in result and "name" in result:
                 output_text = f"Session created: {result['name']} (id: {result['session_id']})"
             elif "success" in result:
@@ -2772,7 +2774,7 @@ async def stream_agent_loop(
                     else f"Error: {result.get('error', '')}"
                 )
             elif "error" in result:
-                output_text = result["error"][:2000]
+                output_text = _truncate(result["error"])
 
             # Emit tool_output (include ui_event data if present)
             tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code")}
