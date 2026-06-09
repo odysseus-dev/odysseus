@@ -74,7 +74,14 @@ python3 tests/run_focus.py --area services --fast --durations 25 --durations-min
 
 The `slow` marker is opt-in. Mark a test `slow` only with duration evidence
 (from `--durations`), not by guessing - see the fast-lane policy in
-`TESTING_STANDARD.md`.
+`TESTING_STANDARD.md`. `--fast` is for quick reviewer feedback and must not
+replace the full suite before merge. A `slow` mark only excludes a test from the
+fast lane; the test stays runnable directly, e.g.:
+
+```bash
+python3 -m pytest tests/test_auth_config_lock_concurrency.py
+python3 -m pytest -m slow
+```
 
 ## Core principles
 
