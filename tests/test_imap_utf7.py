@@ -30,6 +30,9 @@ def test_decode_bytes_input():
 def test_decode_malformed_is_left_verbatim():
     # An unterminated shift sequence must not raise.
     assert decode_imap_utf7("&BB4") == "&BB4"
+    # A terminated run of non-Base64 chars is kept verbatim, not dropped to "".
+    assert decode_imap_utf7("&!!!-") == "&!!!-"
+    assert decode_imap_utf7("box &@#$- end") == "box &@#$- end"
 
 
 def test_encode_ascii_passthrough():

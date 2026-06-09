@@ -53,7 +53,9 @@ def decode_imap_utf7(name):
             b64 = chunk.replace(",", "/")
             b64 += "=" * (-len(b64) % 4)
             try:
-                out.append(base64.b64decode(b64).decode("utf-16-be"))
+                # validate=True so a run of non-Base64 chars raises rather than
+                # being silently stripped to empty, keeping the verbatim fallback.
+                out.append(base64.b64decode(b64, validate=True).decode("utf-16-be"))
             except (ValueError, UnicodeDecodeError):
                 out.append(name[i:end + 1])  # leave malformed run as-is
         i = end + 1
