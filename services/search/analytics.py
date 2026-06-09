@@ -6,21 +6,29 @@ from collections import Counter
 from pathlib import Path
 from typing import Dict, Any
 
+from core.constants import DATA_DIR
+
 from .cache import cache_metrics
 
 logger = logging.getLogger(__name__)
 
-# Dedicated error logger with file handler
-_error_log_path = Path(__file__).resolve().parent.parent / "search_engine_error.log"
-_error_handler = logging.FileHandler(_error_log_path, encoding="utf-8")
-_error_handler.setLevel(logging.WARNING)
-_error_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+# Dedicated error logger — write to the data logs directory (writable on both
+# native runs and Docker, where DATA_DIR resolves to the bind-mounted volume).
+_log_dir = Path(DATA_DIR) / "logs"
+_error_log_path = _log_dir / "search_engine_error.log"
 error_logger = logging.getLogger("search_engine_error")
-error_logger.addHandler(_error_handler)
 error_logger.propagate = False
+try:
+    _log_dir.mkdir(parents=True, exist_ok=True)
+    _error_handler = logging.FileHandler(_error_log_path, encoding="utf-8")
+    _error_handler.setLevel(logging.WARNING)
+    _error_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    error_logger.addHandler(_error_handler)
+except Exception as _e:
+    logging.getLogger(__name__).warning("search_engine_error log handler unavailable: %s", _e)
 
-# Analytics file
-ANALYTICS_FILE = Path(__file__).resolve().parent.parent / "search_analytics.json"
+# Analytics file — also in the writable logs volume.
+ANALYTICS_FILE = _log_dir / "search_analytics.json"
 
 
 # ----------------------------------------------------------------------
@@ -45,32 +53,36 @@ class RateLimitError(SearchEngineError):
 # ----------------------------------------------------------------------
 # Analytics helpers
 # ----------------------------------------------------------------------
+def _default_analytics() -> Dict[str, Any]:
+    return {
+        "total_queries": 0,
+        "successful_queries": 0,
+        "failed_queries": 0,
+        "cache_hits": 0,
+        "cache_misses": 0,
+        "query_patterns": {},
+    }
+
+
 def _load_analytics() -> Dict[str, Any]:
     """Load analytics data from the JSON file, creating defaults if missing."""
     if not ANALYTICS_FILE.exists():
-        default = {
-            "total_queries": 0,
-            "successful_queries": 0,
-            "failed_queries": 0,
-            "cache_hits": 0,
-            "cache_misses": 0,
-            "query_patterns": {},
-        }
+        default = _default_analytics()
         _save_analytics(default)
         return default
     try:
         with open(ANALYTICS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        # Merge over defaults so a file written by an older schema (or a
+        # partial write) still has every counter — _record_query indexes
+        # these keys directly and would otherwise raise KeyError.
+        merged = _default_analytics()
+        if isinstance(data, dict):
+            merged.update(data)
+        return merged
     except Exception as e:
         logger.warning(f"Failed to load analytics file: {e}")
-        return {
-            "total_queries": 0,
-            "successful_queries": 0,
-            "failed_queries": 0,
-            "cache_hits": 0,
-            "cache_misses": 0,
-            "query_patterns": {},
-        }
+        return _default_analytics()
 
 
 def _save_analytics(data: Dict[str, Any]) -> None:

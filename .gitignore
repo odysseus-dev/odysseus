@@ -12,6 +12,7 @@ venv/
 
 # Environment
 .env
+.env.bak.*
 !.env.example
 
 # Data — all user data stays local
@@ -66,6 +67,11 @@ output.txt.txt
 !docs/*.png
 !docs/*.gif
 !docs/*.webp
+# …and curated docs/ subfolder assets (e.g. accessibility before/after shots).
+!docs/**/*.png
+!docs/**/*.jpg
+!docs/**/*.gif
+!docs/**/*.webp
 
 # Reports and temp files
 reports/

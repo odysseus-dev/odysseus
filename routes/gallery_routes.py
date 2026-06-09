@@ -3,19 +3,110 @@
 import os
 import hashlib
 import logging
+import re
+import uuid
+from pathlib import Path
 from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from core.database import SessionLocal, GalleryImage, GalleryAlbum, ModelEndpoint
 from core.database import Session as DbSession
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, owner_filter, require_privilege
+from src.upload_limits import (
+    read_upload_limited,
+    GALLERY_UPLOAD_MAX_BYTES,
+    GALLERY_TRANSFORM_UPLOAD_MAX_BYTES,
+)
+from src.constants import GENERATED_IMAGES_DIR
 
 from routes.gallery_helpers import (
     GalleryPatch, _extract_exif, _image_to_dict, _owner_filter, _human_size,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _current_user_is_admin(request: Request, user: str | None) -> bool:
+    if not user:
+        return False
+    auth_mgr = getattr(request.app.state, "auth_manager", None)
+    is_admin = getattr(auth_mgr, "is_admin", None)
+    if not callable(is_admin):
+        return False
+    try:
+        return bool(is_admin(user))
+    except Exception:
+        return False
+
+
+def _sanitize_gallery_filename(filename: str) -> str:
+    """Return a local filename safe to join under generated_images."""
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(str(filename or "")).name)[:128]
+    if not safe_name or safe_name in {".", ".."}:
+        safe_name = uuid.uuid4().hex[:12]
+    return safe_name
+
+
+GALLERY_IMAGE_DIR = Path(GENERATED_IMAGES_DIR)
+
+
+def _gallery_image_path(filename: str) -> Path:
+    """Resolve a stored gallery filename without leaving generated_images."""
+    if not isinstance(filename, str):
+        raise HTTPException(400, "Unsafe gallery filename")
+    safe_name = _sanitize_gallery_filename(filename)
+    original = str(filename or "")
+    root = GALLERY_IMAGE_DIR.resolve()
+    path = (GALLERY_IMAGE_DIR / safe_name).resolve()
+    try:
+        if os.path.commonpath([str(root), str(path)]) != str(root):
+            raise ValueError
+    except Exception:
+        raise HTTPException(400, "Unsafe gallery filename")
+    if safe_name != original:
+        raise HTTPException(400, "Unsafe gallery filename")
+    return path
+
+
+def _normalize_image_endpoint_base(url: str) -> str:
+    base = (url or "").strip().rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3].rstrip("/")
+    return base
+
+
+def _visible_image_endpoint_query(db, owner: str | None):
+    from src.auth_helpers import owner_filter
+    q = db.query(ModelEndpoint).filter(
+        ModelEndpoint.model_type == "image",
+        ModelEndpoint.is_enabled == True,  # noqa: E712
+    )
+    return owner_filter(q, ModelEndpoint, owner)
+
+
+def _first_visible_image_endpoint(db, owner: str | None):
+    endpoints = _visible_image_endpoint_query(db, owner).all()
+    if owner:
+        for ep in endpoints:
+            if getattr(ep, "owner", None) == owner:
+                return ep
+    return endpoints[0] if endpoints else None
+
+
+def _visible_image_endpoint_for_base(db, base: str, owner: str | None):
+    target = _normalize_image_endpoint_base(base)
+    if not target:
+        return None
+    fallback = None
+    for ep in _visible_image_endpoint_query(db, owner).all():
+        if _normalize_image_endpoint_base(getattr(ep, "base_url", "")) == target:
+            if owner and getattr(ep, "owner", None) == owner:
+                return ep
+            if fallback is None:
+                fallback = ep
+    return fallback
+
 
 def setup_gallery_routes() -> APIRouter:
     router = APIRouter(tags=["gallery"])
@@ -34,12 +125,15 @@ def setup_gallery_routes() -> APIRouter:
 
         user = get_current_user(request)
         album_id = form.get("album_id") or None
-        content = await file.read()
+        content = await read_upload_limited(file, GALLERY_UPLOAD_MAX_BYTES, "Gallery upload")
 
         # Duplicate detection via SHA-256
         file_hash = hashlib.sha256(content).hexdigest()
         db = SessionLocal()
         try:
+            if album_id and user is not None:
+                _get_or_404_album(db, album_id, user)
+
             # SECURITY: scope the dup-detect to THIS user — otherwise a
             # caller can probe whether someone else uploaded the same
             # file (the response leaks the existing row's id+filename).
@@ -54,7 +148,7 @@ def setup_gallery_routes() -> APIRouter:
                 return {"ok": False, "duplicate": True, "filename": existing.filename,
                         "id": existing.id, "message": "Duplicate photo skipped"}
 
-            img_dir = Path("data/generated_images")
+            img_dir = Path(GENERATED_IMAGES_DIR)
             img_dir.mkdir(parents=True, exist_ok=True)
 
             ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "png"
@@ -119,10 +213,10 @@ def setup_gallery_routes() -> APIRouter:
             if not file or not hasattr(file, 'read'):
                 raise HTTPException(400, "No image provided")
 
-            content = await file.read()
-            img_dir = Path("data/generated_images")
+            content = await read_upload_limited(file, GALLERY_UPLOAD_MAX_BYTES, "Gallery replacement")
+            img_dir = Path(GENERATED_IMAGES_DIR)
             img_dir.mkdir(parents=True, exist_ok=True)
-            img_path = img_dir / img.filename
+            img_path = img_dir / _sanitize_gallery_filename(img.filename)
             img_path.write_bytes(content)
 
             # Refresh dimensions in case the editor resized the canvas.
@@ -196,7 +290,7 @@ def setup_gallery_routes() -> APIRouter:
             if not user or img.owner != user:
                 raise HTTPException(403, "Not your image")
 
-            img_path = Path("data/generated_images") / img.filename
+            img_path = _gallery_image_path(img.filename)
             if not img_path.exists():
                 raise HTTPException(404, "Image file not found")
 
@@ -233,18 +327,19 @@ def setup_gallery_routes() -> APIRouter:
         """AI upscale using img2img with the diffusion server."""
         import base64, httpx
 
+        user = require_privilege(request, "can_generate_images")
         form = await request.form()
         file = form.get("image")
         if not file: raise HTTPException(400, "No image")
         scale = int(form.get("scale", "2"))
 
-        image_bytes = await file.read()
+        image_bytes = await read_upload_limited(file, GALLERY_TRANSFORM_UPLOAD_MAX_BYTES, "Image upload")
         b64 = base64.b64encode(image_bytes).decode()
 
         # Find image endpoint
         db = SessionLocal()
         try:
-            ep = db.query(ModelEndpoint).filter(ModelEndpoint.model_type == "image", ModelEndpoint.is_enabled == True).first()
+            ep = _first_visible_image_endpoint(db, user)
         finally:
             db.close()
 
@@ -275,18 +370,19 @@ def setup_gallery_routes() -> APIRouter:
         """Style transfer using img2img with the diffusion server."""
         import base64, httpx
 
+        user = require_privilege(request, "can_generate_images")
         form = await request.form()
         file = form.get("image")
         prompt = form.get("prompt", "")
         strength = float(form.get("strength", "0.55"))
         if not file: raise HTTPException(400, "No image")
 
-        image_bytes = await file.read()
+        image_bytes = await read_upload_limited(file, GALLERY_TRANSFORM_UPLOAD_MAX_BYTES, "Image upload")
         b64 = base64.b64encode(image_bytes).decode()
 
         db = SessionLocal()
         try:
-            ep = db.query(ModelEndpoint).filter(ModelEndpoint.model_type == "image", ModelEndpoint.is_enabled == True).first()
+            ep = _first_visible_image_endpoint(db, user)
         finally:
             db.close()
 
@@ -488,18 +584,24 @@ def setup_gallery_routes() -> APIRouter:
             albums = q.order_by(GalleryAlbum.created_at.desc()).all()
             result = []
             for a in albums:
-                count = db.query(GalleryImage).filter(
+                _count_q = db.query(GalleryImage).filter(
                     GalleryImage.album_id == a.id, GalleryImage.is_active == True
-                ).count()
+                )
+                if user:
+                    _count_q = _count_q.filter(GalleryImage.owner == user)
+                count = _count_q.count()
                 cover_url = None
                 if a.cover_id:
                     cover = db.query(GalleryImage).filter(GalleryImage.id == a.cover_id).first()
                     if cover:
                         cover_url = f"/api/generated-image/{cover.filename}"
                 elif count > 0:
-                    first = db.query(GalleryImage).filter(
+                    _cover_q = db.query(GalleryImage).filter(
                         GalleryImage.album_id == a.id, GalleryImage.is_active == True
-                    ).order_by(GalleryImage.created_at.desc()).first()
+                    )
+                    if user:
+                        _cover_q = _cover_q.filter(GalleryImage.owner == user)
+                    first = _cover_q.order_by(GalleryImage.created_at.desc()).first()
                     if first:
                         cover_url = f"/api/generated-image/{first.filename}"
                 result.append({
@@ -632,7 +734,14 @@ def setup_gallery_routes() -> APIRouter:
             if req.favorite is not None:
                 img.favorite = req.favorite
             if req.album_id is not None:
-                img.album_id = req.album_id if req.album_id else None
+                if req.album_id:
+                    # Validate the target album belongs to the caller before
+                    # moving the image into it — mirrors add_to_album, so you
+                    # cannot file your image into another user's album.
+                    _get_or_404_album(db, req.album_id, user)
+                    img.album_id = req.album_id
+                else:
+                    img.album_id = None
             db.commit()
             db.refresh(img)
             return _image_to_dict(img)
@@ -675,11 +784,11 @@ def setup_gallery_routes() -> APIRouter:
             used = set()
             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
                 for img in imgs:
-                    src = os.path.join("data", "generated_images", img.filename)
-                    if not os.path.exists(src):
+                    src = _gallery_image_path(img.filename)
+                    if not src.exists():
                         continue
-                    ext = os.path.splitext(img.filename)[1] or ".png"
-                    base = (img.prompt or "").strip() or os.path.splitext(img.filename)[0]
+                    ext = src.suffix or ".png"
+                    base = (img.prompt or "").strip() or src.stem
                     base = re.sub(r"[^\w\-. ]+", "", base)[:60].strip() or img.id
                     name = f"{base}{ext}"
                     i = 1
@@ -801,9 +910,9 @@ def setup_gallery_routes() -> APIRouter:
 
             img_filename = img.filename
             # Remove the file from disk
-            img_path = os.path.join("data", "generated_images", img_filename)
-            if os.path.exists(img_path):
-                os.remove(img_path)
+            img_path = _gallery_image_path(img_filename)
+            if img_path.exists():
+                img_path.unlink()
 
             # Soft-delete the record
             img.is_active = False
@@ -906,22 +1015,30 @@ def setup_gallery_routes() -> APIRouter:
         the request for /v1/images/edits (multipart, inverted mask). Otherwise
         proxy through to a self-hosted diffusion server's /v1/images/inpaint."""
         import httpx
+        user = require_privilege(request, "can_generate_images")
         body = await request.json()
         # Use endpoint from request body (editor dropdown) or fall back to DB lookup
         base = (body.pop("_endpoint", "") or "").rstrip("/")
+        # SSRF hardening: validate a client-supplied endpoint before any
+        # outbound request (mirrors routes/embedding_routes.py).
+        if base:
+            from src.url_safety import check_outbound_url
+            ok, reason = check_outbound_url(
+                base,
+                block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+            )
+            if not ok:
+                raise HTTPException(400, f"Rejected endpoint URL: {reason}")
         chosen_model = (body.pop("_model", "") or "").strip()
         api_key = None
         if not base:
             db = SessionLocal()
             try:
-                eps = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.is_enabled == True,
-                    ModelEndpoint.model_type == "image",
-                ).all()
-                if not eps:
+                ep = _first_visible_image_endpoint(db, user)
+                if not ep:
                     raise HTTPException(400, "No image generation endpoint configured. Serve a diffusion model via Cookbook first.")
-                base = eps[0].base_url.rstrip("/")
-                api_key = eps[0].api_key
+                base = ep.base_url.rstrip("/")
+                api_key = ep.api_key
             finally:
                 db.close()
         else:
@@ -938,10 +1055,12 @@ def setup_gallery_routes() -> APIRouter:
             _target = _norm_url(base)
             db = SessionLocal()
             try:
-                for ep in db.query(ModelEndpoint).all():
-                    if _norm_url(ep.base_url) == _target:
-                        api_key = ep.api_key
-                        break
+                ep = _visible_image_endpoint_for_base(db, _target, user)
+                if ep:
+                    base = (ep.base_url or base).rstrip("/")
+                    api_key = ep.api_key
+                elif user and not _current_user_is_admin(request, user):
+                    raise HTTPException(403, "Choose a registered image endpoint")
             finally:
                 db.close()
 
@@ -1093,6 +1212,7 @@ def setup_gallery_routes() -> APIRouter:
         you get edge blending + lighting unification while keeping the
         composition recognisable."""
         import httpx, base64 as _b64
+        user = require_privilege(request, "can_generate_images")
         body = await request.json()
 
         image_b64 = body.get("image")
@@ -1100,6 +1220,18 @@ def setup_gallery_routes() -> APIRouter:
             raise HTTPException(400, "No image provided")
 
         endpoint = (body.get("_endpoint") or "").rstrip("/")
+        # SSRF hardening: a client-supplied endpoint is fetched server-side
+        # below, so validate it first (mirrors routes/embedding_routes.py).
+        # Local-first means loopback/LAN is allowed by default; the cloud
+        # metadata range and non-HTTP(S) schemes are always rejected.
+        if endpoint:
+            from src.url_safety import check_outbound_url
+            ok, reason = check_outbound_url(
+                endpoint,
+                block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+            )
+            if not ok:
+                raise HTTPException(400, f"Rejected endpoint URL: {reason}")
         model = (body.get("_model") or "").strip()
 
         base = endpoint
@@ -1107,23 +1239,22 @@ def setup_gallery_routes() -> APIRouter:
         if not base:
             db = SessionLocal()
             try:
-                eps = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.is_enabled == True,
-                    ModelEndpoint.model_type == "image",
-                ).all()
-                if not eps:
+                ep = _first_visible_image_endpoint(db, user)
+                if not ep:
                     raise HTTPException(400, "No image generation endpoint configured.")
-                base = eps[0].base_url.rstrip("/")
-                api_key = eps[0].api_key
+                base = ep.base_url.rstrip("/")
+                api_key = ep.api_key
             finally:
                 db.close()
         else:
             db = SessionLocal()
             try:
-                for ep in db.query(ModelEndpoint).all():
-                    if ep.base_url.rstrip("/").rstrip("/v1") == base.rstrip("/v1"):
-                        api_key = ep.api_key
-                        break
+                ep = _visible_image_endpoint_for_base(db, base, user)
+                if ep:
+                    base = (ep.base_url or base).rstrip("/")
+                    api_key = ep.api_key
+                elif user and not _current_user_is_admin(request, user):
+                    raise HTTPException(403, "Choose a registered image endpoint")
             finally:
                 db.close()
 
@@ -1275,6 +1406,7 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/image/sharpen")
     async def sharpen_image(request: Request):
         """Apply unsharp-mask sharpening to an image."""
+        require_privilege(request, "can_generate_images")
         body = await request.json()
         image_b64 = body.get("image")
         amount = body.get("amount", 50) / 100.0
@@ -1298,6 +1430,7 @@ def setup_gallery_routes() -> APIRouter:
     # error so the client can prompt the user to install via Cookbook.
     @router.post("/api/image/denoise")
     async def denoise_image(request: Request):
+        require_privilege(request, "can_generate_images")
         body = await request.json()
         image_b64 = body.get("image")
         if not image_b64:
@@ -1347,6 +1480,7 @@ def setup_gallery_routes() -> APIRouter:
     # server required. Used by the editor's AI Upscale button.
     @router.post("/api/image/upscale-local")
     async def upscale_image_local(request: Request):
+        require_privilege(request, "can_generate_images")
         body = await request.json()
         image_b64 = body.get("image")
         if not image_b64:
@@ -1403,6 +1537,7 @@ def setup_gallery_routes() -> APIRouter:
              outside the hint becomes transparent regardless of what the
              model thought was foreground.
         """
+        require_privilege(request, "can_generate_images")
         body = await request.json()
         image_b64 = body.get("image")
         hint_b64 = body.get("hint_mask")
@@ -1484,6 +1619,7 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/image/enhance-face")
     async def enhance_face(request: Request):
         """Face/portrait enhancement. Uses GFPGAN if available, falls back to PIL."""
+        require_privilege(request, "can_generate_images")
         body = await request.json()
         image_b64 = body.get("image")
         if not image_b64:
@@ -1590,9 +1726,10 @@ def setup_gallery_routes() -> APIRouter:
         db = SessionLocal()
         try:
             album = _get_or_404_album(db, album_id, user)
-            db.query(GalleryImage).filter(GalleryImage.album_id == album_id).update(
-                {"album_id": None}, synchronize_session=False
-            )
+            q = db.query(GalleryImage).filter(GalleryImage.album_id == album_id)
+            if user is not None:
+                q = q.filter(GalleryImage.owner == user)
+            q.update({"album_id": None}, synchronize_session=False)
             db.delete(album)
             db.commit()
             return {"ok": True}
@@ -1663,7 +1800,7 @@ def setup_gallery_routes() -> APIRouter:
         try:
             img = _get_or_404_image(db, image_id, user)
 
-            img_path = Path("data/generated_images") / img.filename
+            img_path = _gallery_image_path(img.filename)
             if not img_path.exists():
                 raise HTTPException(404, "Image file not found")
 
@@ -1681,14 +1818,14 @@ def setup_gallery_routes() -> APIRouter:
                 return {"error": "Vision is disabled — enable it in Settings → Vision"}
             configured = vl_settings.get("vision_model", "")
             try:
-                chat_url, model_name, headers = _resolve_vl_model(configured)
+                chat_url, model_name, headers = _resolve_vl_model(configured, owner=user)
             except ValueError:
                 return {"error": "No vision model configured — set one in Settings → Vision"}
             if not chat_url:
                 return {"error": "No vision-capable endpoint configured"}
 
             # Call vision model — format differs between Anthropic and OpenAI
-            from src.llm_core import _detect_provider
+            from src.llm_core import _detect_provider, _restricts_temperature, _uses_max_completion_tokens
             provider = _detect_provider(chat_url)
             tag_prompt = (
                 "Analyze this photo. Return ONLY a comma-separated list of tags. "
@@ -1713,6 +1850,7 @@ def setup_gallery_routes() -> APIRouter:
                     }],
                 }
             else:
+                _tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model_name) else "max_tokens"
                 payload = {
                     "model": model_name,
                     "messages": [{
@@ -1722,9 +1860,12 @@ def setup_gallery_routes() -> APIRouter:
                             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
                         ],
                     }],
-                    "max_tokens": 200,
+                    _tok_key: 200,
                     "temperature": 0.3,
                 }
+                # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature.
+                if _restricts_temperature(model_name):
+                    payload.pop("temperature", None)
 
             h = {"Content-Type": "application/json"}
             if headers:
@@ -1758,6 +1899,3 @@ def setup_gallery_routes() -> APIRouter:
             db.close()
 
     return router
-
-
-

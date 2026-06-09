@@ -1,6 +1,11 @@
 # NVIDIA GPU overlay. Enable by setting COMPOSE_FILE in .env:
 #   COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml
 #
+# Use scripts/check-docker-gpu.sh to diagnose GPU passthrough, optionally
+# install the NVIDIA Container Toolkit (Ubuntu/Debian), and write COMPOSE_FILE
+# to .env. The script is read-only by default — it installs nothing and never
+# edits .env unless explicitly asked.
+#
 # Requires the NVIDIA Container Toolkit on the host.
 #   Arch:    sudo pacman -S nvidia-container-toolkit
 #   Debian:  sudo apt install nvidia-container-toolkit

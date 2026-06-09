@@ -26,13 +26,18 @@ except ModuleNotFoundError as e:
     sys.exit(2)
 
 
+def _preview_text(value, limit: int = 200) -> str:
+    text = value if isinstance(value, str) else ""
+    return text[:limit] + ("…" if len(text) > limit else "")
+
+
 def _serialize_task(t: "ScheduledTask") -> dict:
     return {
         "id": t.id,
         "name": t.name,
         "task_type": t.task_type,
         "action": t.action,
-        "prompt": (t.prompt or "")[:200] + ("…" if t.prompt and len(t.prompt) > 200 else ""),
+        "prompt": _preview_text(t.prompt),
         "schedule": t.schedule,
         "scheduled_time": t.scheduled_time,
         "next_run": t.next_run.isoformat() if t.next_run else "",
@@ -51,7 +56,7 @@ def _serialize_run(r: "TaskRun") -> dict:
         "started_at": r.started_at.isoformat() if r.started_at else "",
         "completed_at": r.completed_at.isoformat() if r.completed_at else "",
         "status": r.status,
-        "output_preview": (getattr(r, "output", "") or "")[:200],
+        "output_preview": _preview_text(getattr(r, "output", "")),
     }
 
 

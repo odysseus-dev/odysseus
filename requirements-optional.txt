@@ -4,6 +4,14 @@
 # Note: chromadb-client + fastembed moved to requirements.txt — RAG, semantic
 # memory, and tool selection are core paths, so they ship by default now.
 
+# Local speech-to-text (microphone -> text) via faster-whisper, for the
+# "local" STT provider. Runs on CPU out of the box (CTranslate2 backend, no
+# torch needed). Install if you want to dictate/transcribe with the mic
+# without sending audio to an external endpoint.
+# Optional extra: install `torch` too if you have a CUDA GPU and want
+# GPU-accelerated transcription — it's auto-detected, CPU is used otherwise.
+faster-whisper
+
 # DuckDuckGo as a search provider option.
 # Install if you want DDG in the search-provider dropdown.
 # Alternatives: SearXNG, Brave, Tavily, Serper, Google PSE.
@@ -15,3 +23,14 @@ duckduckgo-search
 # network-served app — see ACKNOWLEDGMENTS.md. The MIT core (PDF *text*
 # extraction via pypdf) works without it; this only unlocks form-filling.
 PyMuPDF
+
+# Office / EPUB document text extraction (chat attachments + the personal-docs
+# RAG index). markitdown (MIT, Microsoft) converts .docx/.xlsx/.pptx/.xls/.epub
+# to Markdown — more token-efficient and model-legible than a raw dump. Optional
+# and lazy-imported via src/markitdown_runtime.py; without it those formats fall
+# back to a friendly "install to extract" banner and the core stays pure-MIT.
+# Extras pull mammoth/lxml/python-pptx/pandas/openpyxl/xlrd; the base also pulls
+# magika (onnxruntime), already a core dep via fastembed. We avoid the
+# [all]/Azure/audio extras (cloud + heavy). Pinned to a release >30 days old per
+# the dependency-age discussion in issue #485.
+markitdown[docx,pptx,xlsx,xls]==0.1.5

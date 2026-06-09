@@ -2,6 +2,8 @@
 // Keyboard Shortcuts — dynamic keybinds
 // ============================================
 
+import { IS_MAC, isAltGrEvent } from './platform.js';
+
 const _defaultKeybinds = {
   search: 'ctrl+k', toggle_sidebar: 'ctrl+alt+b', new_session: 'ctrl+alt+n',
   fav_session: 'ctrl+alt+f', delete_session: 'ctrl+alt+d',
@@ -13,8 +15,11 @@ const _defaultKeybinds = {
   open_notes: '', open_tasks: '', open_theme: '',
 };
 
-function _matchesCombo(e, combo) {
+export function _matchesCombo(e, combo, isMac = IS_MAC) {
   if (!combo) return false;
+  // Drop AltGr keystrokes so typing characters on non-US layouts can't fire a
+  // Ctrl+Alt shortcut — e.g. the destructive delete_session. See platform.js.
+  if (isAltGrEvent(e, isMac)) return false;
   const parts = combo.split('+');
   const needCtrl = parts.includes('ctrl');
   const needAlt = parts.includes('alt');

@@ -57,7 +57,8 @@ _CCBCC = r"(?:Cc|Bcc|Kopie|Skrytá kopie|Копия)"
 _HDR_KEYS = rf"(?:{_FROM}|{_SENT}|{_SUBJ}|{_TO}|{_CCBCC}|Importance|Priority)"
 
 _ORIG_RE = re.compile(
-    r"(?:^|\n)[\s>]*[-_=]{3,}\s*(?:Original\s+Message|Ursprüngliche\s+Nachricht|"
+    r"(?:^|\n)[\s>]*[-_=]{3,}\s*(?:Original\s+Message|Forwarded\s+message|"
+    r"Ursprüngliche\s+Nachricht|"
     r"Mensaje\s+original|Messaggio\s+originale|Message\s+d['’]origine|"
     r"Oorspronkelijk\s+bericht|Original\s+meddelande|原文|原始邮件|転送)"
     r"\s*[-_=]{3,}",
@@ -604,10 +605,10 @@ def _parse_html(html: str) -> list[dict[str, Any]] | None:
 def parse_thread(body_html: str | None, body_text: str | None) -> list[dict[str, Any]] | None:
     """Public entry point. Prefer HTML when available, else plaintext.
     Returns None if no quoted material found (caller renders flat)."""
-    if body_html:
+    if isinstance(body_html, str) and body_html:
         out = _parse_html(body_html)
         if out:
             return out
-    if body_text:
+    if isinstance(body_text, str) and body_text:
         return _parse_plaintext(body_text)
     return None

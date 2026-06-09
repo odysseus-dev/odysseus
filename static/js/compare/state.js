@@ -2,6 +2,7 @@
 const state = {
   API_BASE: '',
   isActive: false,
+  _openingSelector: false,        // prevents duplicate compare modals on rapid re-clicks
   _streaming: false,
   _blindMode: true,
   _saveOnClose: false,
@@ -36,6 +37,7 @@ const state = {
 
 /** Reset transient state to defaults — useful for clean restarts. */
 export function reset() {
+  state._openingSelector = false;
   state._streaming = false;
   state._finishOrder = 0;
   state._paneElapsed = [];

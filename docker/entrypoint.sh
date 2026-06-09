@@ -56,13 +56,34 @@ done
 # Auto-set CUDA_HOME if a pip-installed nvcc is present, and disable the
 # FlashInfer JIT sampler — sampler only, no impact on attention path.
 # No-op when vllm isn't installed.
-for cu in /app/.local/lib/python*/site-packages/nvidia/cu13; do
+#
+# Checked layouts (all are real pip-wheel install paths):
+#   nvidia/cu13        — nvidia-nvcc-cu13 (CUDA 13.x wheel style)
+#   nvidia/cu12        — nvidia-nvcc-cu12 (CUDA 12.x wheel style)
+#   nvidia/cuda_nvcc   — nvidia-cuda-nvcc-cu12 (older cu12 sub-package style)
+for cu in \
+    /app/.local/lib/python*/site-packages/nvidia/cu13 \
+    /app/.local/lib/python*/site-packages/nvidia/cu12 \
+    /app/.local/lib/python*/site-packages/nvidia/cuda_nvcc; do
     if [ -x "$cu/bin/nvcc" ]; then
         export CUDA_HOME="$cu"
-        export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
         break
     fi
 done
+# Disable the FlashInfer JIT sampler unconditionally — it is sampler-only
+# and has no impact on the attention path, but requires nvcc + matching
+# CUDA headers at startup. Without this, vLLM crashes with "Could not find
+# nvcc" even when the GPU itself is fully visible to the container.
+export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
+
+# Make Cookbook-installed Python CLIs visible after `pip install --user`.
+# vLLM and helper scripts land here because /app is the non-root user's HOME.
+export PATH="/app/.local/bin:$PATH"
+
+# Run first-time setup as the app user so data/ files get the right ownership.
+# setup.py is idempotent — skips auth.json / .env if they already exist.
+# || true so a setup failure never prevents the container from starting.
+gosu "$PUID:$PGID" python /app/setup.py || true
 
 # Drop root and run the actual app. `gosu` is preferred over `su` /
 # `sudo` because it cleans up the process tree (no extra shell layer)
