@@ -71,6 +71,38 @@ def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message
         smtp.sendmail(from_addr, recipients, message)
 
 
+def _friendly_email_auth_error(protocol: str, host: str, error: object) -> str:
+    """Return a clearer setup error for known provider auth policies."""
+    raw = str(error or "")
+    lower = raw.lower()
+    host_lower = (host or "").lower()
+    microsoft_host = any(
+        marker in host_lower
+        for marker in (
+            "outlook.office365.com",
+            "smtp.office365.com",
+            "office365.com",
+            "outlook.com",
+            "hotmail.com",
+            "live.com",
+        )
+    )
+    microsoft_basic_auth_failure = (
+        "5.7.139" in lower
+        or "basic authentication is disabled" in lower
+        or ("authenticate failed" in lower and microsoft_host)
+        or ("authentication unsuccessful" in lower and microsoft_host)
+    )
+    if microsoft_basic_auth_failure:
+        return (
+            "Microsoft no longer accepts normal mailbox passwords for "
+            "Outlook/Office 365 IMAP/SMTP in most accounts. Odysseus "
+            "does not support Microsoft OAuth/Graph mail yet, so Outlook "
+            "accounts cannot be added with this password form."
+        )
+    return raw[:200]
+
+
 def _strip_think(text: str) -> str:
     """Email-flavored think strip — thin wrapper over the central helper.
 
@@ -706,7 +738,16 @@ def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int 
     port = int(port or 993)
     if starttls:
         conn = imaplib.IMAP4(host, port, timeout=timeout)
-        conn.starttls()
+        try:
+            conn.starttls()
+        except Exception:
+            # Don't leak the open plain socket if the STARTTLS upgrade is
+            # rejected; close it before propagating. (#3174)
+            try:
+                conn.shutdown()
+            except Exception:
+                pass
+            raise
     elif port == 993:
         conn = imaplib.IMAP4_SSL(host, port, timeout=timeout)
     else:
@@ -739,7 +780,18 @@ def _imap_connect(account_id: str | None = None, owner: str = ""):
         starttls=bool(cfg.get("imap_starttls")),
         timeout=_IMAP_TIMEOUT_SECONDS,
     )
-    conn.login(cfg["imap_user"], cfg["imap_password"])
+    try:
+        conn.login(cfg["imap_user"], cfg["imap_password"])
+    except Exception:
+        # A failed AUTHENTICATE (e.g. an Office 365 app password on an
+        # MFA-enabled tenant, #3174) otherwise orphans the already-connected
+        # socket; close it before propagating so a misconfigured account
+        # can't leak one descriptor per retry / background poller pass.
+        try:
+            conn.shutdown()
+        except Exception:
+            pass
+        raise
     return conn
 
 

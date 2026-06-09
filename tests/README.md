@@ -13,6 +13,26 @@ behavioral-vs-source-text policy, and helper/factory extraction rules - see
 [`TESTING_STANDARD.md`](./TESTING_STANDARD.md). This file is the concrete helper
 reference; that file is the standard the refactor works toward.
 
+## Running focused subsets (taxonomy markers)
+
+`tests/conftest.py` tags every test at collection time with two markers derived
+from its filename by `tests/_taxonomy.py`: an `area_*` marker (e.g.
+`area_security`) and a finer `sub_*` marker (e.g. `sub_owner_scope`). This adds
+markers only - it moves no files and changes no test behavior. Use them to run a
+focused slice:
+
+```bash
+python3 -m pytest -m area_security
+python3 -m pytest -m "area_services and sub_cookbook"
+```
+
+Areas are `security`, `routes`, `services`, `cli`, `js`, `helpers`, `unit`, and
+`uncategorized`. Classification is conservative and token-based: a file that
+matches no area keyword falls back to `area_uncategorized` with its filename as
+the sub-area. The `area_*` names are registered in `pyproject.toml`; the dynamic
+`sub_*` names are registered before collection by `pytest_configure` in
+`tests/conftest.py`, so unknown-mark warnings still flag genuine typos.
+
 ## Core principles
 
 - Keep PRs small and homogeneous: one kind of change per PR.

@@ -452,14 +452,10 @@ def setup_chat_routes(
         search_context = form_data.get("search_context")  # pre-fetched web search results (compare mode)
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
         incognito = str(form_data.get("incognito", "")).lower() == "true"
-        plan_mode = str(form_data.get("plan_mode", "")).lower() == "true"
+        # Plan mode is not part of the merge-ready UI. Ignore stale clients or
+        # manual form posts that still send plan_mode=true.
+        plan_mode = False
         chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
-        # Workspace: confine the agent's file/shell tools to this folder. Validate
-        # it's a real directory; ignore (no confinement) otherwise.
-        workspace = (form_data.get("workspace") or "").strip()
-        if workspace:
-            _ws_real = os.path.realpath(os.path.expanduser(workspace))
-            workspace = _ws_real if os.path.isdir(_ws_real) else ""
         # Plan mode is a modifier on agent mode — it only makes sense with tools.
         if plan_mode:
             chat_mode = "agent"
@@ -1138,7 +1134,6 @@ def setup_chat_routes(
                         tool_policy=tool_policy,
                         owner=_user,
                         fallbacks=_fallback_candidates,
-                        workspace=workspace or None,
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
                     ):
@@ -1270,8 +1265,7 @@ def setup_chat_routes(
         # without waiting on the next streamed chunk.
         #
         # Normal chat/agent streams keep the DETACHED behavior below: they
-        # survive the client closing the tab / navigating away (true
-        # terminal-agent semantics). The SSE response just subscribes (replay
+        # survive the client closing the tab / navigating away. The SSE response just subscribes (replay
         # buffered output + live); dropping the SSE only removes a subscriber —
         # the run keeps going and saves the assistant message on completion
         # regardless. Reconnect via /api/chat/resume.
