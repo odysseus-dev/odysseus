@@ -283,6 +283,7 @@ _HOST_TO_CURATED = (
     ("fireworks.ai", "fireworks"),
     ("googleapis.com", "google"),
     ("x.ai", "xai"),
+    ("nvidia.com", "nvidia"),
     ("openrouter.ai", "openrouter"),
     ("ollama.com", "ollama"),
 )
@@ -477,10 +478,17 @@ _NON_CHAT_PREFIXES = (
     "dall-e", "tts-", "whisper", "text-embedding", "embedding",
     "davinci", "babbage", "moderation", "omni-moderation",
     "sora", "gpt-image", "chatgpt-image",
+    # embedding / retrieval / non-chat models (common across providers)
+    "snowflake/arctic-embed", "nvidia/nv-embed", "embed",
 )
 _NON_CHAT_CONTAINS = (
     "-realtime", "-transcribe", "-tts", "-codex",
-    "codex-",
+    "codex-", "content-safety", "-safety", "-reward", "nvclip",
+    "kosmos", "fuyu", "deplot", "vila", "neva",
+    "gliner", "riva", "-parse", "-embedqa", "-nemoretriever",
+    "topic-control", "calibration",
+    "ai-synthetic-video", "cosmos-reason2",
+    "bge", "llama-guard",
 )
 _NON_CHAT_EXACT_PREFIXES = (
     "gpt-audio",  # gpt-audio, gpt-audio-mini etc. (not gpt-4o-audio-preview which is chat)
@@ -731,7 +739,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
                 for _e in _PROVIDER_CURATED.get(_ck, []):
                     if _e not in set(models) and not any(m.startswith(_e) for m in models):
                         models.append(_e)
-            return models
+            return [m for m in models if _is_chat_model(m)]
     except httpx.HTTPStatusError as e:
         if api_key:
             status = e.response.status_code if e.response is not None else "unknown"
@@ -755,7 +763,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
             data = r.json()
             models = [m.get("name") or m.get("model") for m in (data.get("models") or []) if m.get("name") or m.get("model")]
             if models:
-                return models
+                return [m for m in models if _is_chat_model(m)]
     except Exception as e:
         logger.debug(f"Ollama /api/tags probe failed for {base}: {e}")
     # Fall back to curated list if the provider has a URL-based match (e.g. z.ai has no /models endpoint)
