@@ -218,7 +218,7 @@ def parse_suggest_blocks(content: str) -> list:
 
 
 class CreateDocumentTool:
-    async def execute(self, content_block: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+    async def execute(self, content: str, ctx: dict) -> dict:
         """Create a new document. Supports two formats:
         1) Line-based: line 1 = title, line 2 (optional) = language, rest = content
         2) XML-like tags: <title>...</title><language>...</language><content>...</content>
@@ -226,7 +226,9 @@ class CreateDocumentTool:
         import uuid, re as _re
         from src.database import SessionLocal, Document, DocumentVersion, Session as DbSession
 
-        raw = content_block or ""
+        raw = content or ""
+        session_id = ctx.get("session_id")
+        owner = ctx.get("owner")
 
         # Known languages the editor understands (match the <select> in HTML)
         _KNOWN_LANGS = {
@@ -335,12 +337,13 @@ class CreateDocumentTool:
             db.close()
 
 class UpdateDocumentTool:    
-    async def execute(self, content: str, doc_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+    async def execute(self, content: str, ctx: dict) -> Dict:
         """Update an existing document. Content = full new document text."""
         import uuid
         from src.database import SessionLocal, Document, DocumentVersion
 
-        target_id = doc_id or _active_document_id
+        target_id = ctx.get("doc_id", None) or _active_document_id
+        owner = ctx.get("owner")
 
         db = SessionLocal()
         try:
@@ -390,12 +393,13 @@ class UpdateDocumentTool:
             db.close()
 
 class EditDocumentTool:
-    async def execute(self, content: str, doc_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+    async def execute(self, content: str, ctx: dict) -> Dict:
         """Apply targeted FIND/REPLACE edits to an existing document."""
         import uuid
         from src.database import SessionLocal, Document, DocumentVersion
 
-        target_id = doc_id or _active_document_id
+        target_id = ctx.get("doc_id", None) or _active_document_id
+        owner = ctx.get("owner")
 
         edits = parse_edit_blocks(content)
         if not edits:
@@ -475,11 +479,13 @@ class EditDocumentTool:
             db.close()
 
 class SuggestDocumentTool:
-    async def execute(self, content: str, doc_id: str = None, owner: Optional[str] = None) -> Dict:
+    async def execute(self, content: str, ctx: dict) -> Dict:
         """Create inline suggestions for the active document WITHOUT modifying it."""
         from src.database import SessionLocal, Document
 
-        target_id = doc_id or _active_document_id
+        target_id = ctx.get("doc_id", None) or _active_document_id
+        owner = ctx.get("owner")
+
         if not target_id:
             return {"error": "No active document to suggest on"}
 
@@ -518,7 +524,7 @@ class SuggestDocumentTool:
 # Document management tool (delete, list, organize)
 # ---------------------------------------------------------------------------
 class ManageDocumentTool:
-    async def execute(self, content: str, owner: Optional[str] = None) -> Dict:
+    async def execute(self, content: str, ctx: dict) -> Dict:
         """Manage documents: list, read/view/open, delete, tidy.
 
         Output format mirrors `manage_session`: list rows include a
@@ -527,6 +533,8 @@ class ManageDocumentTool:
         """
         from core.database import SessionLocal, Document
         from datetime import datetime, timezone
+
+        owner = ctx.get("owner")
 
         try:
             args = _parse_tool_args(content)
