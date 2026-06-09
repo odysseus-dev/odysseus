@@ -833,6 +833,7 @@ class TaskScheduler:
                     owner=task.owner,
                     body=run.result if output == "notification" else None,
                 )
+                await self._notify_via_reminder_channel(task, run)
 
             # Log result to the assistant chat so all task activity is visible.
             # Skip skipped/error rows — user shouldn't see "skipped: …" noise
@@ -1533,6 +1534,51 @@ class TaskScheduler:
             db.add(user_msg)
             db.add(assistant_msg)
             db.commit()
+
+    async def _notify_via_reminder_channel(self, task, run):
+        """Deliver a task-notification result through the user's configured
+        reminder channel (email/ntfy/webhook) in addition to the in-app queue.
+
+        Tasks with output_target='notification' previously only landed in the
+        in-memory queue polled by an open browser tab, so with the channel set
+        to webhook/ntfy/email nothing was ever sent externally and the result
+        was lost whenever no tab was open (#3702). Reuses dispatch_reminder —
+        the same delivery path note reminders and the urgent-email scanner use.
+        """
+        output = getattr(task, "output_target", None) or "session"
+        if output != "notification":
+            return None
+        if getattr(run, "status", None) != "success":
+            return None
+        body = (getattr(run, "result", None) or "").strip()
+        if not body:
+            return None
+        try:
+            from routes.note_routes import dispatch_reminder
+            result = await dispatch_reminder(
+                title=task.name or "Task",
+                note_body=body,
+                # Empty note_id skips the 25-min reping dedupe cache — each
+                # task run is a distinct result, not a re-fired reminder.
+                note_id="",
+                owner=task.owner or "",
+                # The in-app queue is already fed by add_notification above;
+                # queueing here too would double the browser notification.
+                queue_browser=False,
+                # Send the actual task result, not a one-sentence summary.
+                settings_override={"reminder_llm_synthesis": False},
+            )
+            channel = result.get("channel")
+            if channel in ("email", "ntfy", "webhook") and not result.get(f"{channel}_sent"):
+                logger.warning(
+                    "Task %s: notification via %s failed: %s",
+                    task.id, channel,
+                    result.get(f"{channel}_error") or "unknown error",
+                )
+            return result
+        except Exception as e:
+            logger.warning(f"Task {task.id}: reminder-channel notification dispatch failed: {e}")
+            return None
 
     @staticmethod
     def _is_email_output_target(output: str) -> bool:
