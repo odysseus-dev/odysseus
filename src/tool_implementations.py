@@ -1470,13 +1470,24 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             r = await do_manage_calendar(json.dumps(ev), owner=owner)
             results.append(r)
         created = [r for r in results if r.get("exit_code") == 0 and not r.get("error")]
-        errors = [r for r in results if r.get("error")]
+        failed = [r for r in results if r.get("error")]
+        
+        if not results:
+            return {"error": "No events to create", "exit_code": 1}
+        
+        # Surface both successes and failures
+        parts = []
         if created:
             summaries = [r.get("response", "") for r in created]
-            return {"response": f"Created {len(created)} event(s):\n" + "\n".join(summaries), "exit_code": 0}
-        if errors:
-            return {"error": errors[0].get("error", "Unknown error"), "exit_code": 1}
-        return {"error": "No events to create", "exit_code": 1}
+            parts.append(f"Created {len(created)} event(s):\n" + "\n".join(summaries))
+        if failed:
+            first_error = failed[0].get("error", "Unknown error")
+            parts.append(f"Failed to create {len(failed)} event(s). First error: {first_error}")
+        
+        response = "\n\n".join(parts)
+        # Non-zero exit code for partial or total failure
+        exit_code = 0 if not failed else 1
+        return {"response": response, "exit_code": exit_code, "created_count": len(created), "failed_count": len(failed)}
 
     # Normalize action — some models emit hyphens ("list-calendars") instead
     # of underscores. Treat them as equivalent so we don't bounce a
