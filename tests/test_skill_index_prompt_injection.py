@@ -76,6 +76,23 @@ def _seed_index_skill(tmp_path: Path) -> Path:
     return data_dir
 
 
+def _write_index_skill(data_dir: Path, name: str, description: str, owner: str) -> None:
+    skill_dir = data_dir / "skills" / owner / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        f"name: {name}\n"
+        f"description: {description}\n"
+        "when_to_use: when this owner needs a private workflow\n"
+        "category: private\n"
+        "status: published\n"
+        f"owner: {owner}\n"
+        "---\n\n"
+        f"# {name}\n",
+        encoding="utf-8",
+    )
+
+
 def _patch_prefs(monkeypatch, data_dir):
     """Mirror the helpers from test_skill_prompt_injection.py: point
     `src.constants.DATA_DIR` at our tmp, and patch the prefs loader so
@@ -152,3 +169,40 @@ def test_skill_index_lands_in_untrusted_user_message(tmp_path, monkeypatch):
     )
     assert untrusted[0]["role"] == "user"
     assert "Source: skills" in untrusted[0]["content"]
+
+
+def test_skill_index_is_owner_scoped_across_prompt_cache_hits(tmp_path, monkeypatch):
+    """Authenticated users must not receive another user's skill index.
+
+    This calls the prompt builder twice without clearing the base-prompt cache,
+    so the second call exercises the cache-hit path as well as owner scoping.
+    """
+    data_dir = tmp_path / "data"
+    _write_index_skill(data_dir, "alice-only", "Alice private procedure", "alice")
+    _write_index_skill(data_dir, "bob-only", "Bob private procedure", "bob")
+    _patch_prefs(monkeypatch, data_dir)
+
+    from src.agent_loop import _build_system_prompt  # noqa: WPS433
+
+    messages = [{"role": "user", "content": "use my workflow"}]
+    alice_out, _ = _build_system_prompt(
+        messages=messages, model="test-model",
+        active_document=None, mcp_mgr=None, owner="alice",
+    )
+    bob_out, _ = _build_system_prompt(
+        messages=messages, model="test-model",
+        active_document=None, mcp_mgr=None, owner="bob",
+    )
+
+    alice_text = "\n".join(m.get("content", "") or "" for m in alice_out)
+    bob_text = "\n".join(m.get("content", "") or "" for m in bob_out)
+
+    assert "alice-only" in alice_text
+    assert "Alice private procedure" in alice_text
+    assert "bob-only" not in alice_text
+    assert "Bob private procedure" not in alice_text
+
+    assert "bob-only" in bob_text
+    assert "Bob private procedure" in bob_text
+    assert "alice-only" not in bob_text
+    assert "Alice private procedure" not in bob_text
