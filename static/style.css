@@ -10922,6 +10922,42 @@ textarea.memory-add-input {
   border-color: var(--red);
 }
 
+.doclib-attach-btn {
+  position: absolute;
+  top: 6px;
+  right: 36px;
+  z-index: 5;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  transition: all 0.15s;
+  padding: 0;
+  opacity: 0;
+}
+.doclib-card:hover .doclib-attach-btn,
+.memory-item:hover .doclib-attach-btn,
+.doclib-chat-row:hover .doclib-attach-btn {
+  opacity: 1;
+}
+.doclib-attach-btn:hover {
+  color: var(--fg);
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, var(--panel));
+}
+.doclib-attach-btn.attached {
+  color: var(--accent, var(--red));
+  border-color: var(--accent, var(--red));
+  opacity: 1;
+}
+
 .memory-item-btn.pin {
   padding: 1px 4px;
   opacity: 0.4;

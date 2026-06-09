@@ -89,6 +89,8 @@ let _libraryEscHandler = null;
 let _librarySelectMode = false;
 let _librarySelectedIds = new Set();
 let _libraryImportMode = false;
+let _libraryAttachMode = false;
+let _libraryAttachCallback = null;
 let _libScrollBound = false;   // infinite-scroll listener attached once
 let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
@@ -421,6 +423,38 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     libraryUpdateBulkCount();
   }
 
+  function _injectAttachButtonsForGrid(grid, items, idField, fetchContent) {
+    if (!grid) return;
+    const cards = grid.querySelectorAll('.doclib-card, .memory-item');
+    cards.forEach(card => {
+      if (card.querySelector('.doclib-attach-btn')) return;
+      const itemId = card.dataset.docId || card.dataset.sid || card.dataset.researchId;
+      const item = items.find(i => String(i[idField]) === String(itemId));
+      if (!item) return;
+      const btn = document.createElement('button');
+      btn.className = 'doclib-attach-btn';
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+      btn.title = 'Add to chat';
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        btn.disabled = true;
+        btn.textContent = '...';
+        try {
+          const content = await fetchContent(item);
+          if (_libraryAttachCallback) _libraryAttachCallback([content]);
+          btn.textContent = '✓';
+          btn.classList.add('attached');
+        } catch (err) {
+          console.error('Failed to attach item:', err);
+          btn.disabled = false;
+          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+        }
+      });
+      card.style.position = 'relative';
+      card.appendChild(btn);
+    });
+  }
+
   function libraryRenderGrid() {
     const grid = document.getElementById('doclib-grid');
     if (!grid) return;
@@ -460,6 +494,14 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     const shown = _libraryDocs.slice(0, _docsVisibleLimit);
     for (const doc of shown) {
       grid.appendChild(libraryCreateCard(doc));
+    }
+    if (_libraryAttachMode) {
+      _injectAttachButtonsForGrid(grid, _libraryDocs, 'id', async (doc) => {
+        const res = await fetch(`${API_BASE}/api/document/${doc.id}`);
+        if (!res.ok) throw new Error('Failed to fetch document');
+        const full = await res.json();
+        return { title: full.title || doc.title, content: full.current_content || '', language: full.language || doc.language };
+      });
     }
     // Show a "Load more" while either more loaded docs remain to reveal, or
     // more exist on the server beyond what we've fetched.
@@ -1582,6 +1624,8 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     }
     _libraryOpen = true;
     _libraryImportMode = !!(opts && opts.import);
+    _libraryAttachMode = !!(opts && opts.mode === 'attach-to-chat');
+    _libraryAttachCallback = (opts && opts.onAttach) || null;
     _librarySelectMode = false;
     _librarySelectedIds.clear();
     _librarySearch = '';
@@ -1601,7 +1645,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
                Documents / Research / Archive) so the user sees ONE icon at
                the top representing the section they're in, with the tab
                strip below as sub-navigation. _switchLibTab() updates this. -->
-          <h4 id="doclib-header-title"><span id="doclib-header-icon" style="vertical-align:-2px;margin-right:4px;display:inline-flex;"></span><span id="doclib-header-text">Library</span></h4>
+          <h4 id="doclib-header-title"><span id="doclib-header-icon" style="vertical-align:-2px;margin-right:4px;display:inline-flex;"></span><span id="doclib-header-text">${_libraryAttachMode ? 'Add to Chat' : 'Library'}</span></h4>
           <button class="close-btn" id="doclib-close">\u2716</button>
         </div>
         <div class="lib-tabs" id="doclib-lib-tabs" style="padding:0 10px;">
@@ -1807,6 +1851,37 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
     // Wire events
     document.getElementById('doclib-close').addEventListener('click', closeLibrary);
+    function _injectAttachButtons(grid, items, idField, fetchContent) {
+      if (!_libraryAttachMode || !grid) return;
+      const cards = grid.querySelectorAll('.doclib-card, .memory-item');
+      cards.forEach(card => {
+        if (card.querySelector('.doclib-attach-btn')) return;
+        const itemId = card.dataset.docId || card.dataset.sid || card.dataset.researchId;
+        const item = items.find(i => String(i[idField]) === String(itemId));
+        if (!item) return;
+        const btn = document.createElement('button');
+        btn.className = 'doclib-attach-btn';
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+        btn.title = 'Add to chat';
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          btn.disabled = true;
+          btn.textContent = '...';
+          try {
+            const content = await fetchContent(item);
+            if (_libraryAttachCallback) _libraryAttachCallback([content]);
+            btn.textContent = '✓';
+            btn.classList.add('attached');
+          } catch (err) {
+            console.error('Failed to attach item:', err);
+            btn.disabled = false;
+            btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+          }
+        });
+        card.style.position = 'relative';
+        card.appendChild(btn);
+      });
+    }
 
     // Tab switching — Chats / Documents / Archive / Research
     let _activeLibTab = (opts && opts.tab) || 'documents';
@@ -1871,7 +1946,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         const ico = document.getElementById('doclib-header-icon');
         const txt = document.getElementById('doclib-header-text');
         if (ico) ico.innerHTML = hdr.svg;
-        if (txt) txt.textContent = hdr.label;
+        if (txt) txt.textContent = _libraryAttachMode ? `Add to Chat — ${hdr.label}` : hdr.label;
       }
       if (tab === 'chats') _renderLibChats();
       else if (tab === 'archive') _renderLibArchive();
@@ -2144,6 +2219,22 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         _chatsVisibleLimit += _LIB_PAGE_SIZE;
         _renderChatsGrid();
       });
+      if (_libraryAttachMode) {
+        _injectAttachButtons(grid, _chatsSessions, 'id', async (s) => {
+          const res = await fetch(`${API_BASE}/api/history/${s.id}`, { credentials: 'same-origin' });
+          if (!res.ok) throw new Error('Failed');
+          const data = await res.json();
+          const history = Array.isArray(data) ? data : (data.history || []);
+          const lines = [];
+          for (const m of history) {
+            if (m.role !== 'user' && m.role !== 'assistant') continue;
+            const label = m.role === 'user' ? 'User' : 'Assistant';
+            const body = (m.content || '').replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/, '').trim();
+            if (body) lines.push(`${label}: ${body}`);
+          }
+          return { title: s.name || 'Chat', content: lines.join('\n\n'), language: 'text' };
+        });
+      }
     }
 
     function _renderChatsChips() {
@@ -2571,6 +2662,22 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         _arcVisibleLimit += _LIB_PAGE_SIZE;
         _renderArcGrid();
       });
+      if (_libraryAttachMode) {
+        _injectAttachButtons(grid, _arcSessions, 'id', async (s) => {
+          const res = await fetch(`${API_BASE}/api/history/${s.id}`, { credentials: 'same-origin' });
+          if (!res.ok) throw new Error('Failed');
+          const data = await res.json();
+          const history = Array.isArray(data) ? data : (data.history || []);
+          const lines = [];
+          for (const m of history) {
+            if (m.role !== 'user' && m.role !== 'assistant') continue;
+            const label = m.role === 'user' ? 'User' : 'Assistant';
+            const body = (m.content || '').replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/, '').trim();
+            if (body) lines.push(`${label}: ${body}`);
+          }
+          return { title: s.name || 'Chat', content: lines.join('\n\n'), language: 'text' };
+        });
+      }
     }
 
     function _renderArcChips() {
@@ -2987,6 +3094,14 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         _researchVisibleLimit += _LIB_PAGE_SIZE;
         _renderResearchGrid();
       });
+      if (_libraryAttachMode) {
+        _injectAttachButtons(grid, _researchItems, 'id', async (r) => {
+          const res = await fetch(`${API_BASE}/api/research/detail/${r.id}`, { credentials: 'same-origin' });
+          if (!res.ok) throw new Error('Failed');
+          const data = await res.json();
+          return { title: data.query || r.query || 'Research', content: data.result || data.raw_report || '', language: 'markdown' };
+        });
+      }
     }
 
     // Research sort + search
@@ -3391,6 +3506,8 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     _librarySelectMode = false;
     _librarySelectedIds.clear();
     _libraryImportMode = false;
+    _libraryAttachMode = false;
+    _libraryAttachCallback = null;
     clearTimeout(_librarySearchDebounce);
 
     const modal = document.getElementById('doclib-modal');
