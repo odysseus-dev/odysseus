@@ -608,6 +608,9 @@ export function renderMemoryList() {
   memoryList.innerHTML = '';
 
   if (filtered.length === 0) {
+    const selectBtn = document.getElementById('memory-select-btn');
+    if (selectBtn) selectBtn.disabled = true;
+    if (selectMode) exitSelectMode();
     const searchTerm = document.getElementById('memory-search')?.value?.trim() || '';
     const _smiley = '<span style="vertical-align:-3px;margin-left:6px;">' + uiModule.emptyStateIcon('smiley') + '</span>';
     if (searchTerm || activeCategory !== 'all') {
@@ -626,6 +629,9 @@ export function renderMemoryList() {
     }
     return;
   }
+
+  const selectBtn = document.getElementById('memory-select-btn');
+  if (selectBtn) selectBtn.disabled = false;
 
   filtered.forEach(memory => {
     const item = document.createElement('div');

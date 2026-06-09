@@ -72,7 +72,7 @@ function _platformIcon(platform) {
   return '';
 }
 
-export let _envState = { env: 'none', envPath: '', hfToken: '', hfTokenConfigured: false, hfTokenMasked: '', gpus: '', remoteHost: '', servers: [], modelPaths: [], platform: '', defaultServer: '' };
+export let _envState = { env: 'none', envPath: '', hfToken: '', hfTokenConfigured: false, hfTokenMasked: '', gpus: '', remoteHost: '', remoteServerKey: '', servers: [], modelPaths: [], platform: '', defaultServer: '' };
 let _lastCacheHostVal = null;
 let _cookbookOpeningSpinners = [];
 export function _lastCacheHost() { return _lastCacheHostVal; }
@@ -89,8 +89,8 @@ function _setCookbookOpening(on) {
   ].filter(Boolean);
   if (!on) {
     _cookbookOpeningSpinners.forEach(({ spinner, wrap, target }) => {
-      try { spinner?.stop?.(); } catch {}
-      try { wrap?.remove?.(); } catch {}
+      try { spinner?.stop?.(); } catch { }
+      try { wrap?.remove?.(); } catch { }
       target?.classList?.remove('cookbook-opening');
     });
     _cookbookOpeningSpinners = [];
@@ -114,16 +114,42 @@ function _setCookbookOpening(on) {
 // True for the local server entry (empty / "local" / "localhost" host).
 function _isLocalEntry(s) { return !s || !s.host || s.host === 'local' || s.host.toLowerCase() === 'localhost'; }
 
-// Resolve a dropdown option value to a server entry. Option values are the
-// stable HOST string ('local' for the local box) — NOT array indices — because
-// `_envState.servers` gets deduped/reordered, which made index-based selection
-// silently resolve to the wrong (or local) server. Accepts a numeric index too
-// for backwards-compat with any stale value.
+// Resolve a dropdown option value to a server entry. New option values are
+// stable per-profile keys, so same-host SSH profiles stay distinguishable.
+// Host strings and numeric indices remain accepted for stale saved state.
+export function _serverKey(s) {
+  if (_isLocalEntry(s)) return 'local';
+  return 'srv:' + [
+    s?.name || '',
+    s?.host || '',
+    s?.port || '',
+    s?.envPath || '',
+    s?.platform || '',
+  ].map(v => encodeURIComponent(String(v).trim())).join('|');
+}
+
 function _serverByVal(val) {
   if (val == null || val === 'local' || val === '') return null;
-  let s = _envState.servers.find(x => x.host === val);
+  const raw = String(val);
+  let s = _envState.servers.find(x => _serverKey(x) === raw);
+  if (!s) s = _envState.servers.find(x => x.host === raw);
   if (!s && /^\d+$/.test(String(val))) s = _envState.servers[parseInt(val)];
   return s || null;
+}
+
+export function _selectedServer() {
+  if (_envState.remoteServerKey) {
+    const keyed = _serverByVal(_envState.remoteServerKey);
+    if (keyed) return keyed;
+  }
+  if (_envState.remoteHost) return _envState.servers.find(s => s.host === _envState.remoteHost) || null;
+  return null;
+}
+
+export function _currentServerValue() {
+  const selected = _selectedServer();
+  if (selected) return _serverKey(selected);
+  return _envState.remoteHost || 'local';
 }
 
 function _buildServerOpts(excludeLocal = false) {
@@ -134,13 +160,20 @@ function _buildServerOpts(excludeLocal = false) {
   const _localSrv = _localIdx >= 0 ? _envState.servers[_localIdx] : null;
   const _localLabel = (_localSrv && _localSrv.name) ? _localSrv.name : 'Local';
   let html = `<option value="local"${!_envState.remoteHost ? ' selected' : ''}>${esc(_localLabel)}</option>`;
+  const selectedKey = _envState.remoteServerKey || '';
+  let legacyHostSelected = false;
   for (let i = 0; i < _envState.servers.length; i++) {
     const s = _envState.servers[i];
     if (i === _localIdx) continue;                 // already the synthetic "local" option
     if (excludeLocal && _isLocalEntry(s)) continue;
     const label = s.name || s.host || `Server ${i + 1}`;
-    const selected = _envState.remoteHost === s.host ? ' selected' : '';
-    html += `<option value="${esc(s.host)}"${selected}>${esc(label)}</option>`;
+    const value = _serverKey(s);
+    let selected = selectedKey ? value === selectedKey : false;
+    if (!selectedKey && _envState.remoteHost === s.host && !legacyHostSelected) {
+      selected = true;
+      legacyHostSelected = true;
+    }
+    html += `<option value="${esc(value)}"${selected ? ' selected' : ''}>${esc(label)}</option>`;
   }
   return html;
 }
@@ -154,25 +187,41 @@ export function _sshCmd(host, cmd, port) {
 /** Get SSH port for a given host (or task object) */
 function _getPort(hostOrTask) {
   if (!hostOrTask) return '';
-  if (typeof hostOrTask === 'object') return hostOrTask.sshPort || _getPort(hostOrTask.remoteHost);
-  const srv = _envState.servers.find(s => s.host === hostOrTask);
+  if (typeof hostOrTask === 'object') return hostOrTask.sshPort || _getPort(hostOrTask.remoteServerKey || hostOrTask.remoteHost);
+  const selected = hostOrTask === _envState.remoteHost ? _selectedServer() : null;
+  const srv = selected || _serverByVal(hostOrTask);
   return srv?.port || '';
 }
 
 /** Get platform for a given host (or task object). Returns 'windows', 'termux', 'linux', or '' */
 export function _getPlatform(hostOrTask) {
   const isWinBrowser = (window.navigator.userAgent || window.navigator.platform || '').toLowerCase().includes('win');
+  // The browser's OS is NOT the server's OS when the UI is opened remotely —
+  // e.g. a Windows browser driving a Mac/Linux homeserver. Trusting the
+  // user-agent there makes the serve builder emit the Windows python-only
+  // shape (`python -m llama_cpp.server`, no `llama-server ||` fallback), which
+  // then fails on the actual Unix server. The local hardware probe is
+  // authoritative: it reports a backend (metal/cuda/rocm/cpu_*) for any Unix
+  // server and carries platform:"windows" for local Windows (which sets
+  // _envState.platform, short-circuiting below). So only fall back to the
+  // browser hint when we have no server-side signal at all.
+  const localPlatform = () => {
+    if (_envState.platform) return _envState.platform;
+    if (String(_hwfitCache?.system?.backend || '')) return '';
+    return isWinBrowser ? 'windows' : '';
+  };
   if (!hostOrTask || hostOrTask === 'local') {
-    return _envState.platform || (isWinBrowser ? 'windows' : '');
+    return localPlatform();
   }
   if (typeof hostOrTask === 'object') {
     const h = hostOrTask.remoteHost;
     if (!h || h === 'local') {
-      return hostOrTask.platform || _envState.platform || (isWinBrowser ? 'windows' : '');
+      return hostOrTask.platform || localPlatform();
     }
-    return hostOrTask.platform || _getPlatform(h);
+    return hostOrTask.platform || _getPlatform(hostOrTask.remoteServerKey || h);
   }
-  const srv = _envState.servers.find(s => s.host === hostOrTask);
+  const selected = hostOrTask === _envState.remoteHost ? _selectedServer() : null;
+  const srv = selected || _serverByVal(hostOrTask);
   return srv?.platform || '';
 }
 
@@ -581,7 +630,7 @@ function _fallbackCopy(text) {
   ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px';
   document.body.appendChild(ta);
   ta.select();
-  try { document.execCommand('copy'); } catch (_) {}
+  try { document.execCommand('copy'); } catch (_) { }
   document.body.removeChild(ta);
   return Promise.resolve();
 }
@@ -614,7 +663,7 @@ function _readStoredEnvState() {
 
 export function _persistEnvState() {
   try { localStorage.setItem(LAST_STATE_KEY, JSON.stringify(_envStateForStorage())); }
-  catch (_) {}
+  catch (_) { }
   _saveTasks(_loadTasks());
 }
 
@@ -667,18 +716,20 @@ async function _fetchDependencies() {
 
     const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
-      if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
-      if (pkg.installed && pkg.pip_update_available === false) {
+      const hasCustomInstall = !!pkg.install_cmd;
+      const hasCustomUpdate = !!pkg.update_cmd;
+      if (pkg.installed && isSystemDep && !hasCustomUpdate) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
+      if (pkg.installed && pkg.pip_update_available === false && !hasCustomUpdate) {
         const tip = esc(pkg.update_note || pkg.status_note || 'Found externally; update outside Odysseus.');
         return `<span class="cookbook-dep-tag cookbook-dep-installed" title="${tip}">Installed</span>`;
       }
       if (pkg.installed) return `<button class="cookbook-dep-tag cookbook-dep-installed cookbook-dep-installed-btn" title="Installed — click for actions"><span class="cookbook-dep-installed-label">Installed</span><span class="cookbook-dep-caret">&#9662;</span></button>`;
-      if (isSystemDep) {
+      if (isSystemDep && !hasCustomInstall) {
         const depTip = esc(pkg.install_hint || 'Install this OS package on the selected server.');
         const depLabel = pkg.applicable === false ? 'N/A ?' : 'Missing';
         return `<span class="cookbook-dep-tag cookbook-dep-na" title="${depTip}">${depLabel}</span>`;
       }
-      return `<button class="cookbook-dep-tag cookbook-dep-install" data-dep-pip="${esc(pkg.pip)}" data-dep-target="${isLocal ? 'local' : 'remote'}">Install</button>`;
+      return `<button class="cookbook-dep-tag cookbook-dep-install" data-dep-pip="${esc(pkg.pip || '')}" data-dep-install-cmd="${esc(pkg.install_cmd || '')}" data-dep-update-cmd="${esc(pkg.update_cmd || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}">Install</button>`;
     };
 
     const _depRow = (pkg) => {
@@ -701,7 +752,7 @@ async function _fetchDependencies() {
       } else if (pkg.name === 'sglang' && pkg.installed) {
         _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-reinstall" data-reinstall-pkg="sglang" title="Force-reinstall SGLang (pulls a matching torch). Runs as a tmux task in the Running tab.">Reinstall</button>`;
       }
-      return `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`
+      return `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-install-cmd="${esc(pkg.install_cmd || '')}" data-dep-update-cmd="${esc(pkg.update_cmd || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`
         + `<div class="cookbook-dep-info">`
         + `<div class="memory-item-title">${esc(pkg.name)}</div>`
         + `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${esc(pkg.desc)}</div>`
@@ -731,7 +782,7 @@ async function _fetchDependencies() {
     // Shared install/update routine — used by the Install button and the
     // "Update" item in an installed package's ⋮ menu. `upgrade` adds pip -U;
     // `statusEl`, when given, shows "Installing…/Updating…" and is disabled.
-    async function _installDep(pipName, pkgName, isLocalOnly, upgrade, statusEl) {
+    async function _installDep(pipName, pkgName, isLocalOnly, upgrade, statusEl, actionCmd = '') {
       if (isLocalOnly) {
         _envState.remoteHost = '';
         _envState.env = 'none';
@@ -776,6 +827,43 @@ async function _fetchDependencies() {
           envPrefix = 'eval "$(conda shell.bash hook)" && conda activate ' + _shellQuote(_envState.envPath);
         }
       }
+
+      if (actionCmd) {
+        const shellCmd = envPrefix ? `${envPrefix} ${actionCmd}` : actionCmd;
+        const fullCmd = (!isLocalOnly && _envState.remoteHost)
+          ? _sshCmd(_envState.remoteHost, shellCmd, _getPort(_envState.remoteHost))
+          : shellCmd;
+        try {
+          if (statusEl) { statusEl.textContent = upgrade ? 'Updating...' : 'Installing...'; statusEl.disabled = true; }
+          const res = await fetch('/api/shell/stream', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: fullCmd }),
+          });
+          uiModule.showToast(`${upgrade ? 'Updating' : 'Installing'} ${pkgName} on ${targetHost}...`);
+          const body = await res.text();
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const exitMatches = [...body.matchAll(/"exit_code":\s*(-?\d+)/g)].map(m => Number(m[1]));
+          const exitCode = exitMatches.length ? exitMatches[exitMatches.length - 1] : 0;
+          if (exitCode !== 0) {
+            throw new Error((body.slice(-500).trim() || `${pkgName} command failed`) + ` (exit ${exitCode})`);
+          }
+
+          if (upgrade) { uiModule.showToast(`Successfully updated ${pkgName} on ${targetHost}.`); } else { uiModule.showToast(`Successfully installed ${pkgName} on ${targetHost}.`); }
+          await _fetchDependencies();
+          return;
+        } catch (err) {
+          if (statusEl) { statusEl.textContent = 'Install'; statusEl.disabled = false; }
+          uiModule.showToast(`${upgrade ? 'Update' : 'Install'} failed: ` + err.message);
+          return;
+        }
+      }
+
+      // Always go through `python -m pip` so the leading token is `python`
+      // — matches the /api/model/serve allow-list (bare `pip` is blocked).
+      // Inside a venv/conda env, `--user` is invalid (pip refuses), so we
+      // only add `--user --break-system-packages` when there's no env —
+      // for PEP-668-locked system pythons (Arch, newer Debian).
       try {
         const reqBody = {
           repo_id: pipName,
@@ -814,8 +902,9 @@ async function _fetchDependencies() {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const pipName = btn.dataset.depPip;
+        const installCmd = btn.dataset.depInstallCmd || '';
         const pkgName = btn.closest('.cookbook-dep-row')?.querySelector('.memory-item-title')?.textContent || pipName;
-        await _installDep(pipName, pkgName, btn.dataset.depTarget === 'local', !!btn.dataset.upgrade, btn);
+        await _installDep(pipName, pkgName, btn.dataset.depTarget === 'local', !!btn.dataset.upgrade, btn, installCmd);
       });
     });
 
@@ -838,11 +927,12 @@ async function _fetchDependencies() {
       const it = document.createElement('div');
       it.className = 'dropdown-item-compact';
       it.innerHTML = `<span class="dropdown-icon">${upIco}</span><span>Update</span>`;
-      it.title = `Update ${pkgName} to the latest version (pip install -U)`;
+      it.title = row.dataset.depUpdateCmd ? `Update ${pkgName} using its custom command` : `Update ${pkgName} to the latest version (pip install -U)`;
       it.addEventListener('click', async (e) => {
         e.stopPropagation();
         dropdown.remove();
-        await _installDep(pipName, pkgName, isLocalOnly, true, null);
+        const updateCmd = row.dataset.depUpdateCmd || '';
+        await _installDep(pipName, pkgName, isLocalOnly, true, null, updateCmd);
       });
       dropdown.appendChild(it);
       document.body.appendChild(dropdown);
@@ -874,6 +964,7 @@ async function _fetchDependencies() {
 function _applyServerSelection(val) {
   if (val === 'local') {
     _envState.remoteHost = '';
+    _envState.remoteServerKey = '';
     _envState.env = 'none';
     _envState.envPath = '';
     _envState.platform = '';
@@ -881,6 +972,7 @@ function _applyServerSelection(val) {
     const s = _serverByVal(val);
     if (s) {
       _envState.remoteHost = s.host;
+      _envState.remoteServerKey = _serverKey(s);
       _envState.env = s.env || 'none';
       _envState.envPath = s.envPath || '';
       _envState.platform = s.platform || '';
@@ -891,10 +983,9 @@ function _applyServerSelection(val) {
   // bug: the Download/Cache/Deps dropdowns set the host but never saved it, so
   // it silently reverted and downloads/scans hit the wrong server).
   _persistEnvState();
-  const _want = _envState.remoteHost || 'local';
+  const _want = _currentServerValue();
   document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
     if (!sel || sel.tagName !== 'SELECT') return;
-    // Option values are host strings now ('local' for the local box).
     sel.value = _want;
     // If the host isn't among this select's current options (stale options after
     // the server list changed), the browser leaves the box BLANK/grey even though
@@ -902,7 +993,7 @@ function _applyServerSelection(val) {
     // re-apply; fall back to 'local' only if it's genuinely gone.
     if (sel.selectedIndex < 0) {
       sel.innerHTML = _buildServerOpts(sel.id === 'hwfit-dl-server');
-      sel.value = _want;
+      sel.value = _currentServerValue();
       if (sel.selectedIndex < 0) sel.value = 'local';
     }
   });
@@ -940,7 +1031,7 @@ function _wireTabEvents(body) {
       // Ignore swipes that start in a horizontally-scrollable tag row — those
       // should scroll the chips, not flip the tab.
       if (window.innerWidth > 768 || e.touches.length !== 1
-          || e.target.closest('input, textarea, select, .doclib-lang-chips')) { _sx = null; return; }
+        || e.target.closest('input, textarea, select, .doclib-lang-chips')) { _sx = null; return; }
       _sx = e.touches[0].clientX; _sy = e.touches[0].clientY;
     }, { passive: true });
     body.addEventListener('touchend', (e) => {
@@ -990,11 +1081,13 @@ function _wireTabEvents(body) {
       const remotes = servers.filter(s => !_isLocalEntry(s));
       if (remotes.length === 1) {
         _envState.remoteHost = remotes[0].host;
+        _envState.remoteServerKey = _serverKey(remotes[0]);
         _envState.env = remotes[0].env || 'none';
         _envState.envPath = remotes[0].envPath || '';
       }
     }
-    const activeSrv = servers.find(s => s.host === _envState.remoteHost);
+    const activeSrv = _selectedServer();
+    if (activeSrv) _envState.remoteServerKey = _serverKey(activeSrv);
     _envState.platform = activeSrv?.platform || '';
     localStorage.setItem('cookbook-last-state', JSON.stringify(_envStateForStorage()));
     _saveTasks(_loadTasks());
@@ -1002,7 +1095,7 @@ function _wireTabEvents(body) {
     // UI matches the resolved host. Done in a microtask so the dropdowns
     // exist by the time we set their .value.
     Promise.resolve().then(() => {
-      const _want = _envState.remoteHost || 'local';
+      const _want = _currentServerValue();
       document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
         if (sel && sel.tagName === 'SELECT') sel.value = _want;
       });
@@ -1290,7 +1383,7 @@ function _wireTabEvents(body) {
       if (srvVal !== 'local') {
         host = _serverByVal(srvVal)?.host || '';
       }
-      const _hsrv = _envState.servers.find(sv => sv.host === host) || {};
+      const _hsrv = srvVal !== 'local' ? (_serverByVal(srvVal) || {}) : {};
       let env = host ? (_hsrv.env || 'none') : _envState.env;
       let envPath = host ? (_hsrv.envPath || '') : _envState.envPath;
       const payload = { repo_id: repo };
@@ -1339,7 +1432,7 @@ function _wireTabEvents(body) {
       // the section is collapsed (the body's content normally provides
       // separation; with no body visible, the line gives the h2 definition).
       dlFold.classList.toggle('is-folded', !folded);
-      try { localStorage.setItem('cookbook_dl_tab_folded_v1', folded ? '0' : '1'); } catch {}
+      try { localStorage.setItem('cookbook_dl_tab_folded_v1', folded ? '0' : '1'); } catch { }
     });
   }
   const hfToggle = document.getElementById('cookbook-hf-latest-toggle');
@@ -1385,7 +1478,7 @@ function _wireTabEvents(body) {
           _hwCache[cacheKey] = hw;
           return hw;
         }
-      } catch {}
+      } catch { }
       _hwCache[cacheKey] = { vram: 0, backend: '' };
       return _hwCache[cacheKey];
     }
@@ -1510,7 +1603,7 @@ function _wireTabEvents(body) {
     hfInput.addEventListener('change', async () => {
       const val = hfInput.value.trim();
       _envState.hfToken = val;
-      try { await _persistEnvState(); } catch {}
+      try { await _persistEnvState(); } catch { }
       if (val) {
         _envState.hfTokenConfigured = true;
         const masked = val.length > 6 ? val.slice(0, 3) + '…' + val.slice(-3) : '••••';
@@ -1550,8 +1643,9 @@ export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
   let html = '';
   html += `<div class="cookbook-server-entry" data-idx="${i}" data-platform="${esc(s.platform || '')}">`;
   const _srvTitle = s.name || (isLocal ? 'Local' : (s.host || `Server ${i + 1}`));
-  const _srvKey = isLocal ? 'local' : (s.host || '');
-  const _isDefaultSrv = (defaultServer || '') === _srvKey;
+  const _srvKey = isLocal ? 'local' : _serverKey(s);
+  const _legacyDefault = !String(defaultServer || '').startsWith('srv:') && !isLocal && (defaultServer || '') === (s.host || '');
+  const _isDefaultSrv = (defaultServer || '') === _srvKey || _legacyDefault;
   const _pIco = _platformIcon(s.platform);
   const _keyBtn = `<button class="cookbook-server-key-btn" title="Set up SSH key for this server" style="height:22px;box-sizing:border-box;display:inline-flex;align-items:center;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><circle cx="7.5" cy="15.5" r="5.5"/><path d="M12 11l8-8"/><path d="M17 6l3 3"/></svg>Key</button>`;
   const _checkBtn = `<button class="cookbook-server-check-btn" title="Check SSH connection" style="height:22px;box-sizing:border-box;display:inline-flex;align-items:center;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>Check</button>`;
@@ -1685,7 +1779,7 @@ function _renderRecipes() {
   html += `<button class="cookbook-btn cookbook-dl-btn" id="cookbook-dl-btn">Download</button>`;
   html += `</div>`;
   // Latest HF models that fit — collapsible card list
-  html += `<div style="margin-top:5px;position:relative;top:-3px;">`;
+  html += `<div style="margin-top:5px;position:relative;top:-7px;">`;
   html += `<div style="display:flex;gap:4px;align-items:center;">`;
   html += `<button type="button" class="memory-toolbar-btn" id="cookbook-hf-latest-toggle" style="flex:1;text-align:left;height:26px;display:flex;align-items:center;gap:6px;border-radius:4px;">`;
   html += `<span id="cookbook-hf-latest-arrow" style="display:inline-block;transition:transform 0.15s;pointer-events:none;">\u25B8</span>`;
@@ -1710,7 +1804,7 @@ function _renderRecipes() {
   html += '<option value="general" selected>Standard</option><option value="coding">Coding</option>';
   html += '<option value="reasoning">Reasoning</option><option value="chat">Chat</option>';
   // Image tab removed — text→image gen is gone from this build (only inpaint
-   // remains, which uses its own settings panel). Vision (multimodal) stays.
+  // remains, which uses its own settings panel). Vision (multimodal) stays.
   html += '<option value="multimodal">Vision</option></select>';
   // Engine sits next to the type filter so the "what category / which serving
   // path" filters live together; Quant + Context are storage-format and budget
@@ -1776,12 +1870,12 @@ function _renderRecipes() {
   // to the curated model list. Sits below the list so it reads as a callout
   // after browsing, not a header.
   html += '<div class="hwfit-list-footer" style="margin-top:8px;padding-top:6px;border-top:1px solid color-mix(in srgb, var(--border) 50%, transparent);font-size:9.5px;opacity:0.65;text-align:right;">'
-       + 'Don\'t see a model? '
-       + '<a href="https://github.com/pewdiepie-archdaemon/odysseus/discussions/1962" target="_blank" rel="noopener" style="color:var(--accent,var(--red));text-decoration:none;display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">'
-       + 'Request it →'
-       + '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="flex-shrink:0;"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>'
-       + '</a>'
-       + '</div>';
+    + 'Don\'t see a model? '
+    + '<a href="https://github.com/pewdiepie-archdaemon/odysseus/discussions/1962" target="_blank" rel="noopener" style="color:var(--accent,var(--red));text-decoration:none;display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">'
+    + 'Request it →'
+    + '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="flex-shrink:0;"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>'
+    + '</a>'
+    + '</div>';
 
   html += '</div></div>';
 
@@ -1791,7 +1885,7 @@ function _renderRecipes() {
   html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">';
   html += '<h2 style="margin:0;padding:0;line-height:1;">Serve <span id="serve-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>';
   html += '</div>';
-  const _selSrv = _es.servers.find(s => s.host === _es.remoteHost) || _es.servers[0] || {};
+  const _selSrv = _selectedServer() || _es.servers[0] || {};
   const _srvDirs = (Array.isArray(_selSrv.modelDirs) ? _selSrv.modelDirs : [_selSrv.modelDir || '~/.cache/huggingface/hub']).map(d => d.replaceAll('✕', '').replaceAll('✖', '').trim()).filter(Boolean);
   html += '<div class="cookbook-serve-dirs" style="margin-top:6px;">';
   html += _srvDirs.map(d => `<span class="cookbook-serve-dir-pill">${esc(d)}</span>`).join('');
@@ -1869,7 +1963,7 @@ function _renderRecipes() {
   html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;margin-top:-4px;">';
   html += '<h2 style="margin:0;padding:0;line-height:1;">Servers</h2>';
   // Reuse the calendar +New pill: spinning plus, label fades in idea uses
-   // the same `.cal-add-btn-text` rules, so styling stays consistent.
+  // the same `.cal-add-btn-text` rules, so styling stays consistent.
   html += '<button class="cal-add-btn cal-add-btn-text" id="cookbook-server-add" title="Add server" style="margin-left:auto;"><span class="cal-add-plus">+</span><span class="cal-add-label">Add</span></button>';
   html += '</div>';
   html += '<p class="memory-desc doclib-desc">Configure SSH servers, install Odysseus keys, choose model directories, and set the default server. Local is this machine.</p>';
@@ -1965,73 +2059,73 @@ export async function open(opts) {
   }
   _setCookbookOpening(true);
   try {
-  // Invalidate any pending close() animation handlers so they won't re-hide us
-  _closeGen++;
-  // Clear any leftover inline styles from a previous swipe-dismiss or close animation
-  const _content = modal.querySelector('.modal-content');
-  if (_content) {
-    _content.classList.remove('modal-closing', 'sheet-ready', 'cookbook-modal-entering');
-    _content.style.transform = '';
-    _content.style.transition = '';
-    _content.style.animation = '';
-    _content.style.opacity = '';
-  }
-  modal.style.display = '';
-  Modals.register('cookbook-modal', {
-    railBtnId: 'rail-cookbook',
-    sidebarBtnId: 'tool-cookbook-btn',
-    closeFn: () => _doClose(),
-    restoreFn: () => { _renderRunningTab(); },
-  });
-  _wireCookbookDrag(modal);
-  await _syncFromServer();
-  // `_syncFromServer` lives in cookbookRunning.js and populates *its* _envState
-  // (a different object reference than this module's), then mirrors the merged
-  // state to localStorage. So ALWAYS hydrate our _envState from that mirror —
-  // on a successful sync it holds the freshly-fetched servers; on failure it
-  // holds the last-known state. Gating this on `!synced` left the render's
-  // _envState empty whenever sync succeeded → "servers don't show".
-  try { Object.assign(_envState, _readStoredEnvState()); } catch {}
-  // Honour a user-set default server: always land on it when Cookbook opens, so
-  // every dropdown (scan/download/serve/cache/deps) starts on the same machine.
-  if (_envState.defaultServer) {
-    const _dk = _envState.defaultServer;
-    if (_dk === 'local') {
-      _envState.remoteHost = ''; _envState.env = 'none'; _envState.envPath = ''; _envState.platform = '';
-    } else {
-      const _ds = (_envState.servers || []).find(s => s.host === _dk);
-      if (_ds) { _envState.remoteHost = _ds.host; _envState.env = _ds.env || 'none'; _envState.envPath = _ds.envPath || ''; _envState.platform = _ds.platform || ''; }
+    // Invalidate any pending close() animation handlers so they won't re-hide us
+    _closeGen++;
+    // Clear any leftover inline styles from a previous swipe-dismiss or close animation
+    const _content = modal.querySelector('.modal-content');
+    if (_content) {
+      _content.classList.remove('modal-closing', 'sheet-ready', 'cookbook-modal-entering');
+      _content.style.transform = '';
+      _content.style.transition = '';
+      _content.style.animation = '';
+      _content.style.opacity = '';
     }
-  }
-  // Re-render on every open AFTER sync so the freshly-fetched state (servers,
-  // HF token, presets) is always reflected. Gating this to once-per-page used
-  // to freeze a stale/empty servers list whenever the first sync raced or
-  // returned before hydration — and since close/reopen doesn't reset the page,
-  // only a full reload recovered it. Re-rendering is cheap and the in-progress
-  // Running tab is rendered separately just below.
-  _renderRecipes();
-  _rendered = true;
-  _clearCookbookNotif();
-  _renderRunningTab();
-  // Self-heal: revive any download tasks whose tmux session is still alive
-  // but were persisted as done/error (covers the "restarted server while a
-  // big multi-shard download was in flight" case — the task survived in
-  // tmux, the cookbook just lost track of it).
-  try { _selfHealStaleTasks({ oneShot: true }); } catch {}
-  if (_content) {
-    // Put the panel in its entering state before it becomes visible. On
-    // mobile, showing first and adding the class a frame later can paint the
-    // sheet at its final position, which makes the slide-up look like a snap.
-    _content.classList.add('cookbook-modal-entering');
-  }
-  modal.classList.remove('hidden');
-  if (_content) {
-    void _content.offsetWidth;
-    _content.addEventListener('animationend', () => {
-      _content.classList.remove('cookbook-modal-entering');
-    }, { once: true });
-  }
-  setTimeout(_applyIntent, 0);
+    modal.style.display = '';
+    Modals.register('cookbook-modal', {
+      railBtnId: 'rail-cookbook',
+      sidebarBtnId: 'tool-cookbook-btn',
+      closeFn: () => _doClose(),
+      restoreFn: () => { _renderRunningTab(); },
+    });
+    _wireCookbookDrag(modal);
+    await _syncFromServer();
+    // `_syncFromServer` lives in cookbookRunning.js and populates *its* _envState
+    // (a different object reference than this module's), then mirrors the merged
+    // state to localStorage. So ALWAYS hydrate our _envState from that mirror —
+    // on a successful sync it holds the freshly-fetched servers; on failure it
+    // holds the last-known state. Gating this on `!synced` left the render's
+    // _envState empty whenever sync succeeded → "servers don't show".
+    try { Object.assign(_envState, _readStoredEnvState()); } catch { }
+    // Honour a user-set default server: always land on it when Cookbook opens, so
+    // every dropdown (scan/download/serve/cache/deps) starts on the same machine.
+    if (_envState.defaultServer) {
+      const _dk = _envState.defaultServer;
+      if (_dk === 'local') {
+        _envState.remoteHost = ''; _envState.remoteServerKey = ''; _envState.env = 'none'; _envState.envPath = ''; _envState.platform = '';
+      } else {
+        const _ds = _serverByVal(_dk);
+        if (_ds) { _envState.remoteHost = _ds.host; _envState.remoteServerKey = _serverKey(_ds); _envState.env = _ds.env || 'none'; _envState.envPath = _ds.envPath || ''; _envState.platform = _ds.platform || ''; }
+      }
+    }
+    // Re-render on every open AFTER sync so the freshly-fetched state (servers,
+    // HF token, presets) is always reflected. Gating this to once-per-page used
+    // to freeze a stale/empty servers list whenever the first sync raced or
+    // returned before hydration — and since close/reopen doesn't reset the page,
+    // only a full reload recovered it. Re-rendering is cheap and the in-progress
+    // Running tab is rendered separately just below.
+    _renderRecipes();
+    _rendered = true;
+    _clearCookbookNotif();
+    _renderRunningTab();
+    // Self-heal: revive any download tasks whose tmux session is still alive
+    // but were persisted as done/error (covers the "restarted server while a
+    // big multi-shard download was in flight" case — the task survived in
+    // tmux, the cookbook just lost track of it).
+    try { _selfHealStaleTasks({ oneShot: true }); } catch { }
+    if (_content) {
+      // Put the panel in its entering state before it becomes visible. On
+      // mobile, showing first and adding the class a frame later can paint the
+      // sheet at its final position, which makes the slide-up look like a snap.
+      _content.classList.add('cookbook-modal-entering');
+    }
+    modal.classList.remove('hidden');
+    if (_content) {
+      void _content.offsetWidth;
+      _content.addEventListener('animationend', () => {
+        _content.classList.remove('cookbook-modal-entering');
+      }, { once: true });
+    }
+    setTimeout(_applyIntent, 0);
   } finally {
     _setCookbookOpening(false);
   }
@@ -2123,6 +2217,9 @@ const shared = {
   _getPort,
   _sshPrefix,
   _getPlatform,
+  _serverByVal,
+  _selectedServer,
+  _currentServerValue,
   _isWindows,
   _isMetal,
   _buildEnvPrefix,

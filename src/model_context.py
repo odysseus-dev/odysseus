@@ -297,7 +297,9 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
             logger.info(f"Using known context window for {model}: {known}")
         return known or DEFAULT_CONTEXT
 
-    models_url = endpoint_url.replace("/chat/completions", "/models")
+    from src.endpoint_resolver import build_models_url
+
+    models_url = build_models_url(endpoint_url)
     try:
         r = httpx.get(models_url, timeout=REQUEST_TIMEOUT)
         if r.is_success:

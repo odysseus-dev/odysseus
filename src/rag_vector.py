@@ -12,6 +12,8 @@ import re
 import logging
 import numpy as np
 from typing import List, Dict, Any, Optional, Set
+
+from src.constants import CHROMA_DIR
 from pathlib import Path
 
 from src.embedding_lanes import (
@@ -51,7 +53,7 @@ def _generate_doc_id(text: str, owner: str = "") -> str:
 class VectorRAG:
     """RAG system using ChromaDB vector storage with hybrid search."""
 
-    def __init__(self, persist_directory: str = "data/chroma"):
+    def __init__(self, persist_directory: str = CHROMA_DIR):
         self.persist_directory = persist_directory
         self._collection = None
         self._model = None

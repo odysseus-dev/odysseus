@@ -25,9 +25,10 @@ from src.url_safety import check_outbound_url
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-SETTINGS_FILE = DATA_DIR / "settings.json"
-LOCAL_CONTACTS_FILE = DATA_DIR / "contacts.json"
+from src.constants import DATA_DIR as _DATA_DIR, SETTINGS_FILE as _SETTINGS_FILE, CONTACTS_FILE as _CONTACTS_FILE
+DATA_DIR = Path(_DATA_DIR)
+SETTINGS_FILE = Path(_SETTINGS_FILE)
+LOCAL_CONTACTS_FILE = Path(_CONTACTS_FILE)
 
 
 def _load_settings():

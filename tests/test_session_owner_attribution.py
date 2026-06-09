@@ -137,3 +137,12 @@ def test_unauthenticated_caller_rejected(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         SR._verify_session_owner(req, "sid")
     assert exc.value.status_code == 401
+
+
+def test_auth_disabled_allows_owner_stamped_session(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    monkeypatch.setattr(SR, "SessionLocal", _session_local_returning("admin"))
+    req = _req(api_token=False, current_user=None)
+
+    # Single-user/auth-disabled mode should verify existence but not compare owner.
+    SR._verify_session_owner(req, "sid-owned-by-admin")

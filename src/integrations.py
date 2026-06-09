@@ -10,10 +10,11 @@ import httpx
 from core.atomic_io import atomic_write_json
 from core.platform_compat import safe_chmod
 from src.secret_storage import decrypt, encrypt, is_encrypted
+from src.constants import DATA_DIR, INTEGRATIONS_FILE, SETTINGS_FILE
 
 log = logging.getLogger(__name__)
 
-DATA_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "integrations.json")
+DATA_FILE = INTEGRATIONS_FILE
 
 # ---------------------------------------------------------------------------
 # Presets
@@ -471,7 +472,7 @@ def get_integrations_prompt() -> str:
 def migrate_from_settings() -> None:
     """If data/settings.json has miniflux_url and miniflux_api_key, create a
     Miniflux integration and clear those keys from settings."""
-    settings_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "settings.json")
+    settings_path = SETTINGS_FILE
     if not os.path.exists(settings_path):
         return
 

@@ -323,6 +323,9 @@ function _initModelPickerDropdown() {
       const nameSpan = document.createElement('span');
       nameSpan.className = 'mp-model-name';
       nameSpan.textContent = m.display;
+      // Long model names are clipped with ellipsis — expose the full name on
+      // hover so the suffix/variant tag is still discoverable (#1982).
+      nameSpan.title = m.display;
       row.appendChild(nameSpan);
       if (m.stale) {
         const badge = document.createElement('span');
@@ -711,6 +714,9 @@ export function updateModelPicker() {
   }
 
   const displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  // The header indicator clips long names with ellipsis; show the full model
+  // identifier on hover (#1982). No tooltip on the "Select model" placeholder.
+  label.title = modelId || '';
   const logo = modelId ? providerLogo(modelId) : null;
   if (logo) {
     label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ' + displayName;
