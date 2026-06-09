@@ -327,13 +327,10 @@ function _initModelPickerDropdown() {
       // hover so the suffix/variant tag is still discoverable (#1982).
       nameSpan.title = m.display;
       row.appendChild(nameSpan);
-      if (m.stale) {
-        const badge = document.createElement('span');
-        badge.className = 'model-switch-stale-badge';
-        badge.textContent = 'offline';
-        badge.style.cssText = 'font-size:10px;opacity:0.7;padding:1px 6px;border:1px solid var(--border);border-radius:8px;margin-left:6px;';
-        row.appendChild(badge);
-      }
+      // Offline state is already conveyed by the row's reduced opacity —
+      // a redundant "offline" pill on top of that just added clutter.
+      // (Class kept on `row` so the opacity rule still applies; the text
+      // badge is gone.)
       const epSpan = document.createElement('span');
       epSpan.className = 'model-switch-ep';
       // Don't show endpoint name if it matches the model name (local self-hosted)

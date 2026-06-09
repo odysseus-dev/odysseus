@@ -788,7 +788,7 @@ export function openEmailLibrary(opts = {}) {
         <div class="admin-card" style="flex:1;flex-direction:column;display:flex;overflow:hidden;">
           <p class="memory-desc doclib-desc">All emails. Click to open as a document.</p>
           <div class="email-accounts-row">
-            <div id="email-lib-accounts" style="display:flex;gap:4px;flex-wrap:wrap;flex:1;"></div>
+            <div id="email-lib-accounts" style="display:flex;gap:4px;flex:1;min-width:0;"></div>
             <button class="memory-toolbar-btn email-compose-jiggle" id="email-lib-compose-btn">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:3px;"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
               New
