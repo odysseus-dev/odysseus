@@ -242,11 +242,7 @@ export function _wirePanelEvents(panel, model, backend) {
   const dlBtn = panel.querySelector('.hwfit-dl-btn');
   if (dlBtn) {
     dlBtn.addEventListener('click', () => {
-      if (backend === 'ollama') {
-        _runPanelCmd(panel, _buildDownloadCmd(model, backend), { timeout: 0 });
-      } else {
-        _runModelDownload(panel, model, backend);
-      }
+      _runModelDownload(panel, model, backend)
     });
   }
 
@@ -459,7 +455,9 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
     uiModule.showToast(_missingGgufMessage(model));
     return;
   }
-  const repo = ggufSource?.repo || model.quant_repo || model.name;
+  const repo = backend === 'ollama'
+    ? (model.ollama || model.ollama_name || model.name)
+    : (ggufSource?.repo || model.quant_repo || model.name);
   const include = backend === 'llamacpp' ? _ggufIncludePattern(model, ggufSource) : null;
 
   _syncEnvFromPanel(panel);
@@ -494,7 +492,7 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
   const platform = host ? (srv.platform || '') : (_envState.platform || '');
   const isWin = host ? (platform === 'windows') : _isWindows();
 
-  const payload = { repo_id: repo };
+  const payload = { repo_id: repo, backend };
   if (include) payload.include = include;
   // Large downloads are where hf_transfer most often dies near the end. Use the
   // plain HuggingFace downloader up front for big model files; it is slower, but

@@ -347,6 +347,8 @@ class TestIsChatModel:
         "gpt-4o", "gpt-4o-mini", "claude-sonnet-4", "llama-3.3-70b",
         "deepseek-chat", "gemini-2.0-flash", "o3",
         "llama-4-scout-17b-16e-instruct",
+        "gemma-2b-it", "google/gemma-2b-it",
+        "bigcode/starcoder2-15b-instruct",
     ])
     def test_chat_models(self, model_id):
         assert _is_chat_model(model_id) is True
