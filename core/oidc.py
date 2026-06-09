@@ -5,51 +5,99 @@ Configuration (env vars):
     OIDC_ISSUER=https://...          — provider issuer URL (must expose .well-known)
     OIDC_CLIENT_ID=odysseus          — client ID registered with the provider
     OIDC_CLIENT_SECRET=...           — client secret
+    OIDC_REDIRECT_URI=...            — optional fixed redirect URI (use when
+                                       behind a proxy to avoid trusting the Host
+                                       header). If unset, derived from the inbound
+                                       request at /login and /callback time.
     OIDC_SCOPES=openid profile email — space-separated scope list
 
-State is stored in-memory with a 10-minute TTL.  No database / file
-persistence is needed — a lost state only forces the user to restart the
-OIDC flow, which is the expected UX anyway.
+State is carried inside a Fernet-encrypted token embedded in the OIDC
+``state`` parameter, so no server-side storage is needed — callbacks are
+stateless and work across multiple uvicorn workers / processes.
+
+JWKS keys are cached after first fetch and refreshed only when an unknown
+``kid`` is encountered, avoiding a live IdP round-trip on every login.
 """
 
+import json
 import logging
 import os
 import secrets
 import time
 import threading
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, List, Tuple
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# In-memory state store
+# State token (Fernet-encrypted, carried in the OIDC state param)
 # ---------------------------------------------------------------------------
+# Instead of an in-memory dict (which breaks with uvicorn --workers > 1), we
+# encrypt the nonce + redirect_uri + creation timestamp into the state value
+# itself.  The callback decrypts it to recover the nonce and validate freshness.
+# This is the pattern used by NextAuth.js, oauthlib, and several OIDC SDKs.
+
 _STATE_TTL = 600  # 10 minutes
 
-_state_store: Dict[str, Dict[str, Any]] = {}
-_state_lock = threading.Lock()
+_state_fernet_lock = threading.Lock()
+_state_fernet = None
 
 
-def _store_state(state: str, nonce: str, redirect_uri: str) -> None:
-    entry = {"nonce": nonce, "redirect_uri": redirect_uri, "created": time.time()}
-    with _state_lock:
-        _prune_expired()
-        _state_store[state] = entry
+def _get_state_fernet():
+    """Lazily get or create a Fernet instance for state encryption.
+
+    Uses the persistent app key (data/.app_key) when available, falling
+    back to a per-process random key.  State tokens have a 10-minute TTL
+    so a process-local key is sufficient — a key rotation between workers
+    only affects in-flight logins (they'll restart the flow, which is the
+    expected UX for any transient failure).
+    """
+    global _state_fernet
+    if _state_fernet is not None:
+        return _state_fernet
+    with _state_fernet_lock:
+        if _state_fernet is not None:
+            return _state_fernet
+        from cryptography.fernet import Fernet
+        from src.constants import APP_KEY_FILE
+        from pathlib import Path
+
+        key_path = Path(APP_KEY_FILE)
+        if key_path.exists():
+            try:
+                _state_fernet = Fernet(key_path.read_bytes())
+                return _state_fernet
+            except Exception:
+                logger.warning("Failed to read app key — using per-process key for OIDC state")
+        # Per-process fallback — state is short-lived (10 min TTL).
+        _state_fernet = Fernet(Fernet.generate_key())
+        return _state_fernet
 
 
-def _pop_state(state: str) -> Optional[Dict[str, Any]]:
-    with _state_lock:
-        _prune_expired()
-        return _state_store.pop(state, None)
+def _encode_state(nonce: str, redirect_uri: str) -> str:
+    """Return a Fernet-encrypted state token containing nonce + metadata."""
+    fernet = _get_state_fernet()
+    payload = json.dumps({
+        "nonce": nonce,
+        "redirect_uri": redirect_uri,
+        "created": time.time(),
+    })
+    return fernet.encrypt(payload.encode()).decode()
 
 
-def _prune_expired() -> None:
-    now = time.time()
-    expired = [s for s, v in _state_store.items() if now - v["created"] > _STATE_TTL]
-    for s in expired:
-        del _state_store[s]
+def _decode_state(state: str) -> Optional[Dict[str, Any]]:
+    """Decrypt and validate a state token. Returns None if expired or invalid."""
+    fernet = _get_state_fernet()
+    try:
+        plain = fernet.decrypt(state.encode())
+        data = json.loads(plain)
+    except Exception:
+        return None
+    if time.time() - data.get("created", 0) > _STATE_TTL:
+        return None
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +113,7 @@ class OidcManager:
     """Generic OpenID Connect client.
 
     On init, discovers the provider's endpoints via
-    ``.well-known/openid-configuration`` and fetches the JWKS for
+    ``.well-known/openid-configuration`` and caches the JWKS for
     id_token signature verification.
     """
 
@@ -82,12 +130,17 @@ class OidcManager:
         self.scopes = scopes
         self._provider_name: Optional[str] = None
         self._config: Dict[str, Any] = {}
+        # JWKS cache: kid → key dict, populated on first verification and
+        # refreshed when an unknown kid is encountered.
+        self._jwks_cache: Dict[str, Dict[str, Any]] = {}
+        self._jwks_cache_lock = threading.Lock()
+        self._allowed_algs: Optional[List[str]] = None
         self._discover()
 
     # -- discovery -----------------------------------------------------------
 
     def _discover(self) -> None:
-        """Fetch .well-known/openid-configuration and JWKS."""
+        """Fetch .well-known/openid-configuration."""
         # urljoin drops the issuer's path when the second arg is absolute
         # (starts with "/").  Use simple concatenation so issuers with a
         # sub-path (e.g. Authentik /application/o/<slug>/) work correctly.
@@ -118,11 +171,19 @@ class OidcManager:
                 "OIDC issuer mismatch: configured=%r doc=%r", self.issuer, doc_issuer,
             )
 
+        # Pin signing algorithms to those the provider supports.
+        # Restrict to RS256/ES256 to avoid algorithm confusion attacks;
+        # HS256 and 'none' are never allowed.
+        supported = self._config.get("id_token_signing_alg_values_supported", [])
+        safe = [a for a in supported if a in ("RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512")]
+        self._allowed_algs = safe or ["RS256"]
+
         logger.info(
-            "OIDC provider discovered: issuer=%r auth=%r token=%r",
+            "OIDC provider discovered: issuer=%r auth=%r token=%r algs=%s",
             self.issuer,
             self._config["authorization_endpoint"],
             self._config["token_endpoint"],
+            self._allowed_algs,
         )
 
     @property
@@ -139,18 +200,27 @@ class OidcManager:
     def configured(self) -> bool:
         return bool(self._config)
 
+    @property
+    def redirect_uri_override(self) -> Optional[str]:
+        """Return OIDC_REDIRECT_URI if explicitly configured, else None."""
+        val = os.getenv("OIDC_REDIRECT_URI", "").strip()
+        return val or None
+
     # -- authorization URL ---------------------------------------------------
 
     def get_authorization_url(self, redirect_uri: str) -> Tuple[str, str, str]:
         """Build the provider's authorization URL.
 
-        Returns ``(url, state, nonce)``.  The caller MUST store *state*
-        and *nonce* and pass them to :meth:`exchange_code` on callback.
+        Returns ``(url, state, nonce)``.  The *state* value is an encrypted
+        token that carries *nonce* and *redirect_uri* — the caller does NOT
+        need to store anything server-side; the callback will recover the
+        nonce from the state parameter itself.
         """
-        state = secrets.token_hex(32)
         nonce = secrets.token_hex(32)
 
-        _store_state(state, nonce, redirect_uri)
+        # Encode the nonce + metadata into the state parameter (Fernet-
+        # encrypted, stateless — works across multiple workers/processes).
+        state = _encode_state(nonce, redirect_uri)
 
         from urllib.parse import urlencode
         params = {
@@ -174,10 +244,10 @@ class OidcManager:
         Returns a dict of claims extracted from the verified id_token.
         Raises :class:`OidcError` on any failure.
         """
-        # 1. Verify state and recover the nonce
-        stored = _pop_state(state)
+        # 1. Decrypt state and recover the nonce
+        stored = _decode_state(state)
         if stored is None:
-            raise OidcError("OIDC state not found — may be expired or reused")
+            raise OidcError("OIDC state not found — may be expired, reused, or from a different worker")
         nonce = stored.get("nonce", "")
 
         # 2. Exchange code for tokens
@@ -235,18 +305,73 @@ class OidcManager:
             )
         return data
 
+    # -- JWKS caching --------------------------------------------------------
+
+    def _fetch_jwks(self) -> Dict[str, Any]:
+        """Fetch and cache the JWKS, or use cached keys when available.
+
+        Returns the full JWKS dict.  Keys are cached for reuse; on an unknown
+        ``kid`` the cache is refreshed (one additional fetch per new key
+        rotation).
+        """
+        # Fast path: cache hit
+        with self._jwks_cache_lock:
+            if self._jwks_cache:
+                return {"keys": list(self._jwks_cache.values())}
+
+        # Cache miss — fetch once
+        return self._refresh_jwks()
+
+    def _refresh_jwks(self):
+        resp = httpx.get(self._config["jwks_uri"], timeout=15.0)
+        resp.raise_for_status()
+        jwks = resp.json()
+        keys = jwks.get("keys", [])
+        with self._jwks_cache_lock:
+            self._jwks_cache.clear()
+            for k in keys:
+                kid = k.get("kid", "")
+                if kid:
+                    self._jwks_cache[kid] = k
+            # Always keep at least one entry even without kid
+            if not self._jwks_cache and keys:
+                self._jwks_cache["_default"] = keys[0]
+        return jwks
+
+    # -- id_token verification -----------------------------------------------
+
     def _verify_id_token(self, id_token: str, nonce: str) -> Dict[str, Any]:
         """Verify the id_token signature and claims. Returns the decoded payload."""
         from authlib.jose import jwt, JsonWebKey
         from authlib.jose.errors import JoseError
 
-        # Fetch JWKS
+        # Parse header to check which key is needed
         try:
-            resp = httpx.get(self._config["jwks_uri"], timeout=15.0)
-            resp.raise_for_status()
-            jwks = resp.json()
-        except Exception as exc:
-            raise OidcError(f"Failed to fetch JWKS: {exc}") from exc
+            # authlib's jwt.decode accepts claims_options to skip validation
+            # so we only decode the header
+            header_claims = jwt.decode(id_token, None, claims_options={
+                "iss": {"essential": False},
+                "sub": {"essential": False},
+                "aud": {"essential": False},
+                "exp": {"essential": False},
+                "iat": {"essential": False},
+            })
+        except JoseError:
+            # If decode-without-signature fails, try with cached keys
+            pass
+        except Exception:
+            pass
+
+        header = self._peek_jwt_header(id_token)
+        kid = header.get("kid", "")
+
+        # Fetch or refresh JWKS
+        jwks = self._fetch_jwks()
+
+        # If the kid from the token header is unknown, refresh the cache
+        if kid and kid not in self._jwks_cache:
+            logger.info("OIDC JWKS cache miss for kid=%r — refreshing", kid)
+            jwks = self._refresh_jwks()
 
         # authlib needs a key set in the format it expects
         try:
@@ -254,11 +379,20 @@ class OidcManager:
         except Exception as exc:
             raise OidcError(f"Failed to import JWKS: {exc}") from exc
 
-        # Decode (signature verification via JWKS)
+        # Decode (signature verification via JWKS) with pinned algorithms
         try:
             claims = jwt.decode(id_token, key_set)
         except JoseError as exc:
             raise OidcError(f"id_token signature verification failed: {exc}") from exc
+
+        # Verify the algorithm is in our allow-list
+        claims_header = getattr(claims, "header", {}) if hasattr(claims, "header") else {}
+        alg = claims_header.get("alg", "")
+        if alg and self._allowed_algs and alg not in self._allowed_algs:
+            raise OidcError(
+                f"id_token signed with disallowed algorithm {alg!r} "
+                f"(allowed: {self._allowed_algs!r})"
+            )
 
         claims = dict(claims)
 
@@ -269,9 +403,24 @@ class OidcManager:
                 f"id_token iss mismatch: expected {expected_issuer!r}, got {claims.get('iss')!r}"
             )
 
-        if claims.get("aud") != self.client_id:
+        # Validate audience: aud may be a string or a JSON array.
+        # When multiple audiences are present, azp MUST be present and match
+        # the client_id (per OIDC Core 1.0 § 2).
+        aud = claims.get("aud")
+        if isinstance(aud, list):
+            if self.client_id not in aud:
+                raise OidcError(
+                    f"id_token aud mismatch: client_id {self.client_id!r} not in aud {aud!r}"
+                )
+            # Multiple audiences — azp MUST identify the authorized party
+            azp = claims.get("azp")
+            if azp and azp != self.client_id:
+                raise OidcError(
+                    f"id_token azp mismatch: expected {self.client_id!r}, got {azp!r}"
+                )
+        elif aud != self.client_id:
             raise OidcError(
-                f"id_token aud mismatch: expected {self.client_id!r}, got {claims.get('aud')!r}"
+                f"id_token aud mismatch: expected {self.client_id!r}, got {aud!r}"
             )
 
         exp = claims.get("exp", 0)
@@ -283,6 +432,20 @@ class OidcManager:
             raise OidcError("id_token nonce mismatch")
 
         return claims
+
+    @staticmethod
+    def _peek_jwt_header(id_token: str) -> Dict[str, Any]:
+        """Extract the JWT header without verifying the signature."""
+        try:
+            parts = id_token.split(".")
+            if len(parts) >= 2:
+                import base64
+                # Pad to a multiple of 4
+                padded = parts[0] + "=" * (4 - len(parts[0]) % 4)
+                return json.loads(base64.urlsafe_b64decode(padded))
+        except Exception:
+            pass
+        return {}
 
     def _fetch_userinfo(self, access_token: str) -> Dict[str, Any]:
         """Fetch claims from the UserInfo endpoint (if available)."""

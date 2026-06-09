@@ -249,6 +249,9 @@ def test_list_users_includes_oidc_info(tmp_path):
 
 def test_set_oidc_user_admin_promotes(tmp_path):
     mgr = _make_manager(tmp_path)
+    # Disable auto-bootstrap so is_admin=False is respected
+    import os
+    os.environ["OIDC_FIRST_USER_IS_ADMIN"] = "false"
     mgr.create_user_oidc("alice", sub="abc", issuer="https://idp.example.com",
                           is_admin=False)
     assert not mgr.is_admin("alice")

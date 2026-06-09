@@ -49,10 +49,14 @@ def setup_oidc_routes(
                 {"error": "OIDC is not configured"}, status_code=503,
             )
 
-        # Build the redirect_uri from the incoming request so it works
-        # behind proxies (use the same scheme/host the browser used).
-        base = str(request.base_url).rstrip("/")
-        redirect_uri = f"{base}/api/auth/oidc/callback"
+        # Use OIDC_REDIRECT_URI when explicitly configured (proxy-safe).
+        # Otherwise derive from the inbound request — acceptable for
+        # single-host deployments but depends on accurate Host header
+        # behind proxies.
+        redirect_uri = oidc_manager.redirect_uri_override
+        if not redirect_uri:
+            base = str(request.base_url).rstrip("/")
+            redirect_uri = f"{base}/api/auth/oidc/callback"
 
         try:
             auth_url, _state, _nonce = oidc_manager.get_authorization_url(redirect_uri)
@@ -94,9 +98,12 @@ def setup_oidc_routes(
                 url=f"/login?error=oidc_invalid", status_code=302,
             )
 
-        # Build redirect_uri matching the one used in /login
-        base = str(request.base_url).rstrip("/")
-        redirect_uri = f"{base}/api/auth/oidc/callback"
+        # Use OIDC_REDIRECT_URI when explicitly configured (proxy-safe),
+        # matching the value used in /login.
+        redirect_uri = oidc_manager.redirect_uri_override
+        if not redirect_uri:
+            base = str(request.base_url).rstrip("/")
+            redirect_uri = f"{base}/api/auth/oidc/callback"
 
         # The nonce was stored server-side alongside the state in
         # OidcManager.get_authorization_url.  exchange_code pops the

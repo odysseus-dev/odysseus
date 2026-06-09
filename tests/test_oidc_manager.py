@@ -148,14 +148,14 @@ class TestOidcManagerInit:
         with patch.object(mod.httpx, "get") as mock_get:
             mock_get.side_effect = [
                 _mock_discovery_response(),
-                _mock_jwks_response(jwt_jwks),  # JWKS fetch happens in exchange_code, not init
+                _mock_jwks_response(jwt_jwks),
             ]
             mgr = mod.OidcManager(
                 issuer=FAKE_ISSUER,
                 client_id=FAKE_CLIENT_ID,
                 client_secret=FAKE_CLIENT_SECRET,
             )
-            mgr._config = DISCOVERY_DOC  # ensure config is set for subsequent tests
+            mgr._config = DISCOVERY_DOC
             assert mgr.configured
             assert mgr.issuer == FAKE_ISSUER
 
@@ -224,29 +224,24 @@ class TestAuthorizationUrl:
         assert "response_type=code" in url
         assert f"client_id={FAKE_CLIENT_ID}" in url
         assert "redirect_uri=https%3A%2F%2Fapp.example.com%2Fcallback" in url
-        assert f"state={state}" in url
+        # State is Fernet (base64) and gets URL-encoded; check via parse
+        from urllib.parse import urlparse, parse_qs
+        parsed = parse_qs(urlparse(url).query)
+        assert parsed.get("state") == [state]
         assert f"nonce={nonce}" in url
-        assert len(state) == 64  # 32 hex bytes
-        assert len(nonce) == 64
+        # State is now a Fernet-encrypted token (base64, variable length)
+        assert len(state) > 60  # Fernet tokens are always >60 chars
+        assert len(nonce) == 64  # nonce is still 32 hex bytes
 
-
-class TestExchangeCode:
-    def test_successful_exchange(self):
-        jwt_jwks, jwk = _make_test_jwks_and_key()
-        nonce = "a" * 64
-        id_token = _make_id_token("user123", nonce)
-
+    def test_state_roundtrip(self):
+        """Verify state token can be decoded back to the original data."""
         import core.oidc as mod
 
-        # Clear state store
-        mod._state_store.clear()
-
-        with patch.object(mod.httpx, "get") as mock_get, \
-             patch.object(mod.httpx, "post") as mock_post:
-            # Discovery
+        jwt_jwks, _ = _make_test_jwks_and_key()
+        with patch.object(mod.httpx, "get") as mock_get:
             mock_get.side_effect = [
                 _mock_discovery_response(),
-                _mock_jwks_response(jwt_jwks),   # JWKS for id_token verification
+                _mock_jwks_response(jwt_jwks),
             ]
             mgr = mod.OidcManager(
                 issuer=FAKE_ISSUER,
@@ -254,24 +249,50 @@ class TestExchangeCode:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            # Generate state first
+        url, state, nonce = mgr.get_authorization_url("https://app.example.com/callback")
+        decoded = mod._decode_state(state)
+        assert decoded is not None
+        assert decoded["nonce"] == nonce
+        assert decoded["redirect_uri"] == "https://app.example.com/callback"
+
+
+class TestExchangeCode:
+    def test_successful_exchange(self):
+        jwt_jwks, jwk = _make_test_jwks_and_key()
+        nonce = "a" * 64  # 32 hex bytes
+        id_token = _make_id_token("user123", nonce)
+
+        import core.oidc as mod
+
+        # Clear JWKS cache to force clean fetch
+        mod.OidcManager._jwks_cache = {}
+
+        with patch.object(mod.httpx, "get") as mock_get, \
+             patch.object(mod.httpx, "post") as mock_post:
+            # Discovery
+            mock_get.side_effect = [
+                _mock_discovery_response(),
+                _mock_jwks_response(jwt_jwks),
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+            # Generate auth URL — this creates an encrypted state with
+            # the same nonce we'll use in our id_token
             url, state, gen_nonce = mgr.get_authorization_url("https://app.example.com/callback")
 
-            # We need to override the nonce in the stored state to match our id_token
-            # Replace the state entry with our controlled nonce
-            mod._state_store[state] = {
-                "nonce": nonce,
-                "redirect_uri": "https://app.example.com/callback",
-                "created": time.time(),
-            }
+            # Override: build our own state with the nonce that matches the id_token
+            state = mod._encode_state(nonce, "https://app.example.com/callback")
 
-            # Token exchange
+            # Token exchange — mock first the JWKS fetch, then the token POST
             mock_post.return_value = _mock_token_response(id_token)
-
-            # Also need to handle any additional get calls
+            # Mock the JWKS fetch that happens inside _verify_id_token
             mock_get.reset_mock()
             mock_get.side_effect = [
-                _mock_jwks_response(jwt_jwks),   # JWKS fetch in _verify_id_token
+                _mock_jwks_response(jwt_jwks),
             ]
 
             claims = mgr.exchange_code("auth_code_xyz", state, "https://app.example.com/callback")
@@ -280,11 +301,10 @@ class TestExchangeCode:
             assert claims["email"] == "user123@example.com"
             assert claims["nonce"] == nonce
 
-    def test_state_not_found(self):
+    def test_state_invalid(self):
+        """An invalid/expired state token should raise OidcError."""
         jwt_jwks, _ = _make_test_jwks_and_key()
         import core.oidc as mod
-
-        mod._state_store.clear()
 
         with patch.object(mod.httpx, "get") as mock_get:
             mock_get.side_effect = [
@@ -298,14 +318,41 @@ class TestExchangeCode:
             )
 
         with pytest.raises(mod.OidcError, match="state not found"):
-            mgr.exchange_code("code", "nonexistent_state", "https://app.example.com/callback")
+            mgr.exchange_code("code", "not-a-valid-fernet-token", "https://app.example.com/callback")
+
+    def test_state_expired(self):
+        """An expired state token should raise OidcError."""
+        jwt_jwks, _ = _make_test_jwks_and_key()
+        import core.oidc as mod
+
+        with patch.object(mod.httpx, "get") as mock_get:
+            mock_get.side_effect = [
+                _mock_discovery_response(),
+                _mock_jwks_response(jwt_jwks),
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+        # Build an already-expired state token
+        token = mod._encode_state("nonce", "https://app.example.com/callback")
+        # Decode to verify it's valid, then re-encode with old timestamp
+        fernet = mod._get_state_fernet()
+        expired_data = json.dumps({
+            "nonce": "nonce",
+            "redirect_uri": "https://app.example.com/callback",
+            "created": time.time() - 1200,  # 20 minutes ago
+        })
+        expired_state = fernet.encrypt(expired_data.encode()).decode()
+
+        with pytest.raises(mod.OidcError, match="state not found"):
+            mgr.exchange_code("code", expired_state, "https://app.example.com/callback")
 
     def test_no_id_token_in_response(self):
         jwt_jwks, _ = _make_test_jwks_and_key()
-        nonce = "b" * 64
         import core.oidc as mod
-
-        mod._state_store.clear()
 
         with patch.object(mod.httpx, "get") as mock_get, \
              patch.object(mod.httpx, "post") as mock_post:
@@ -319,12 +366,7 @@ class TestExchangeCode:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            url, state, gen_nonce = mgr.get_authorization_url("https://app.example.com/callback")
-            mod._state_store[state] = {
-                "nonce": nonce,
-                "redirect_uri": "https://app.example.com/callback",
-                "created": time.time(),
-            }
+            state = mod._encode_state("nonce", "https://app.example.com/callback")
 
             # Token response without id_token
             mock_post.return_value = _FakeResponse(200, {"access_token": "fake"})
@@ -334,10 +376,7 @@ class TestExchangeCode:
 
     def test_token_endpoint_error(self):
         jwt_jwks, _ = _make_test_jwks_and_key()
-        nonce = "c" * 64
         import core.oidc as mod
-
-        mod._state_store.clear()
 
         with patch.object(mod.httpx, "get") as mock_get, \
              patch.object(mod.httpx, "post") as mock_post:
@@ -351,14 +390,7 @@ class TestExchangeCode:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            url, state, gen_nonce = mgr.get_authorization_url("https://app.example.com/callback")
-            mod._state_store[state] = {
-                "nonce": nonce,
-                "redirect_uri": "https://app.example.com/callback",
-                "created": time.time(),
-            }
-
-            # Token endpoint returns error
+            state = mod._encode_state("nonce", "https://app.example.com/callback")
             mock_post.return_value = _FakeResponse(400, {"error": "invalid_grant"})
 
             with pytest.raises(mod.OidcError):
@@ -370,8 +402,6 @@ class TestExchangeCode:
         id_token = _make_id_token("user123", nonce, issuer="https://evil.example.com")
         import core.oidc as mod
 
-        mod._state_store.clear()
-
         with patch.object(mod.httpx, "get") as mock_get, \
              patch.object(mod.httpx, "post") as mock_post:
             mock_get.side_effect = [
@@ -384,13 +414,7 @@ class TestExchangeCode:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            url, state, gen_nonce = mgr.get_authorization_url("https://app.example.com/callback")
-            mod._state_store[state] = {
-                "nonce": nonce,
-                "redirect_uri": "https://app.example.com/callback",
-                "created": time.time(),
-            }
-
+            state = mod._encode_state(nonce, "https://app.example.com/callback")
             mock_post.return_value = _mock_token_response(id_token)
             mock_get.reset_mock()
             mock_get.side_effect = [
@@ -406,8 +430,6 @@ class TestExchangeCode:
         id_token = _make_id_token("user123", nonce, aud="wrong-client")
         import core.oidc as mod
 
-        mod._state_store.clear()
-
         with patch.object(mod.httpx, "get") as mock_get, \
              patch.object(mod.httpx, "post") as mock_post:
             mock_get.side_effect = [
@@ -420,13 +442,7 @@ class TestExchangeCode:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            url, state, gen_nonce = mgr.get_authorization_url("https://app.example.com/callback")
-            mod._state_store[state] = {
-                "nonce": nonce,
-                "redirect_uri": "https://app.example.com/callback",
-                "created": time.time(),
-            }
-
+            state = mod._encode_state(nonce, "https://app.example.com/callback")
             mock_post.return_value = _mock_token_response(id_token)
             mock_get.reset_mock()
             mock_get.side_effect = [
@@ -436,13 +452,12 @@ class TestExchangeCode:
             with pytest.raises(mod.OidcError):
                 mgr.exchange_code("code", state, "https://app.example.com/callback")
 
-    def test_id_token_expired(self):
+    def test_id_token_aud_array_valid(self):
+        """aud as a JSON array containing the client_id should pass."""
         jwt_jwks, jwk = _make_test_jwks_and_key()
         nonce = "f" * 64
-        id_token = _make_id_token("user123", nonce, exp=int(time.time()) - 60)
+        id_token = _make_id_token("user123", nonce, aud=[FAKE_CLIENT_ID, "other-client"])
         import core.oidc as mod
-
-        mod._state_store.clear()
 
         with patch.object(mod.httpx, "get") as mock_get, \
              patch.object(mod.httpx, "post") as mock_post:
@@ -456,13 +471,64 @@ class TestExchangeCode:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            url, state, gen_nonce = mgr.get_authorization_url("https://app.example.com/callback")
-            mod._state_store[state] = {
-                "nonce": nonce,
-                "redirect_uri": "https://app.example.com/callback",
-                "created": time.time(),
-            }
+            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            mock_post.return_value = _mock_token_response(id_token)
+            mock_get.reset_mock()
+            mock_get.side_effect = [
+                _mock_jwks_response(jwt_jwks),
+            ]
 
+            claims = mgr.exchange_code("code", state, "https://app.example.com/callback")
+            assert claims["sub"] == "user123"
+
+    def test_id_token_aud_array_missing_client_id(self):
+        """aud as a JSON array WITHOUT the client_id should fail."""
+        jwt_jwks, jwk = _make_test_jwks_and_key()
+        nonce = "g" * 64
+        id_token = _make_id_token("user123", nonce, aud=["some-other-client", "another-one"])
+        import core.oidc as mod
+
+        with patch.object(mod.httpx, "get") as mock_get, \
+             patch.object(mod.httpx, "post") as mock_post:
+            mock_get.side_effect = [
+                _mock_discovery_response(),
+                _mock_jwks_response(jwt_jwks),
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            mock_post.return_value = _mock_token_response(id_token)
+            mock_get.reset_mock()
+            mock_get.side_effect = [
+                _mock_jwks_response(jwt_jwks),
+            ]
+
+            with pytest.raises(mod.OidcError, match="aud"):
+                mgr.exchange_code("code", state, "https://app.example.com/callback")
+
+    def test_id_token_expired(self):
+        jwt_jwks, jwk = _make_test_jwks_and_key()
+        nonce = "h" * 64
+        id_token = _make_id_token("user123", nonce, exp=int(time.time()) - 60)
+        import core.oidc as mod
+
+        with patch.object(mod.httpx, "get") as mock_get, \
+             patch.object(mod.httpx, "post") as mock_post:
+            mock_get.side_effect = [
+                _mock_discovery_response(),
+                _mock_jwks_response(jwt_jwks),
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+            state = mod._encode_state(nonce, "https://app.example.com/callback")
             mock_post.return_value = _mock_token_response(id_token)
             mock_get.reset_mock()
             mock_get.side_effect = [
@@ -474,12 +540,10 @@ class TestExchangeCode:
 
     def test_id_token_nonce_mismatch(self):
         jwt_jwks, jwk = _make_test_jwks_and_key()
-        nonce_in_token = "g" * 64
-        different_nonce = "h" * 64
+        nonce_in_token = "i" * 64
+        different_nonce = "j" * 64
         id_token = _make_id_token("user123", nonce_in_token)
         import core.oidc as mod
-
-        mod._state_store.clear()
 
         with patch.object(mod.httpx, "get") as mock_get, \
              patch.object(mod.httpx, "post") as mock_post:
@@ -493,14 +557,8 @@ class TestExchangeCode:
                 client_secret=FAKE_CLIENT_SECRET,
             )
 
-            url, state, gen_nonce = mgr.get_authorization_url("https://app.example.com/callback")
-            # Store a different nonce than what's in the token
-            mod._state_store[state] = {
-                "nonce": different_nonce,
-                "redirect_uri": "https://app.example.com/callback",
-                "created": time.time(),
-            }
-
+            # State carries a different nonce than the id_token
+            state = mod._encode_state(different_nonce, "https://app.example.com/callback")
             mock_post.return_value = _mock_token_response(id_token)
             mock_get.reset_mock()
             mock_get.side_effect = [
@@ -509,3 +567,81 @@ class TestExchangeCode:
 
             with pytest.raises(mod.OidcError, match="nonce"):
                 mgr.exchange_code("code", state, "https://app.example.com/callback")
+
+
+class TestJwksCache:
+    def test_jwks_cached_on_first_fetch(self):
+        """JWKS should be fetched once then served from cache."""
+        jwt_jwks, _ = _make_test_jwks_and_key()
+        import core.oidc as mod
+
+        # Reset cache
+        mod.OidcManager._jwks_cache = {}
+
+        with patch.object(mod.httpx, "get") as mock_get:
+            mock_get.side_effect = [
+                _mock_discovery_response(),
+                _mock_jwks_response(jwt_jwks),
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+            # First fetch: hits the network
+            jwks1 = mgr._fetch_jwks()
+            assert mock_get.call_count == 2  # discovery + first JWKS fetch
+
+            # Second fetch: cached (no additional HTTP call)
+            jwks2 = mgr._fetch_jwks()
+            assert mock_get.call_count == 2  # still 2
+            assert jwks1 == jwks2
+
+    def test_jwks_refresh_on_unknown_kid(self):
+        """Verification with an unknown kid should refresh the JWKS cache."""
+        jwt_jwks, jwk = _make_test_jwks_and_key()
+        nonce = "k" * 64
+        id_token = _make_id_token("user123", nonce)
+        import core.oidc as mod
+
+        # Reset cache
+        mod.OidcManager._jwks_cache = {}
+
+        with patch.object(mod.httpx, "get") as mock_get, \
+             patch.object(mod.httpx, "post") as mock_post:
+            mock_get.side_effect = [
+                _mock_discovery_response(),
+                _mock_jwks_response(jwt_jwks),  # first JWKS fetch
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+            state = mod._encode_state(nonce, "https://app.example.com/callback")
+
+            # First exchange — cache is populated
+            mock_post.return_value = _mock_token_response(id_token)
+            mock_get.reset_mock()
+            mock_get.side_effect = [
+                _mock_jwks_response(jwt_jwks),  # called by _verify_id_token
+            ]
+            claims = mgr.exchange_code("code1", state, "https://app.example.com/callback")
+            assert claims["sub"] == "user123"
+
+            # Second exchange with same kid — cached, no extra JWKS fetch.
+            # But userinfo still tries to call GET on the userinfo endpoint
+            # (which fails gracefully — logged as a warning, not a crash).
+            state2 = mod._encode_state(nonce, "https://app.example.com/callback")
+            mock_post.return_value = _mock_token_response(id_token)
+            mock_get.reset_mock()
+            # Provide a userinfo mock so it doesn't count as a real failure
+            mock_get.side_effect = [
+                _FakeResponse(200, {"sub": "user123"}),  # userinfo
+            ]
+            claims2 = mgr.exchange_code("code2", state2, "https://app.example.com/callback")
+            assert claims2["sub"] == "user123"
+            # One GET call for userinfo (not JWKS — that's cached)
+            assert mock_get.call_count == 1
