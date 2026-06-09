@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 from .subprocess_tools import BashTool, PythonTool
 from .web_tools import WebSearchTool, WebFetchTool
 from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool
+from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -33,6 +34,11 @@ TOOL_HANDLERS = {
     "ls": LsTool().execute,
     "glob": GlobTool().execute,
     "grep": GrepTool().execute,
+    "create_document": CreateDocumentTool().execute,
+    "update_document": UpdateDocumentTool().execute,
+    "edit_document": EditDocumentTool().execute,
+    "suggest_document": SuggestDocumentTool().execute,
+    "manage_documents": ManageDocumentTool().execute,
 }
 
 # ---------------------------------------------------------------------------
