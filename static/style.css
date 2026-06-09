@@ -36606,3 +36606,94 @@ body.theme-frosted .modal {
    the input beside it (.confirm-btn won't stretch on its own). */
 .ask-user-other-send { flex-shrink: 0; white-space: nowrap; min-height: 39px; }
 .ask-user-other-send:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Workspace picker ───────────────────────────────────────────── */
+/* Layout (width/flex column/max-height) inherited from base .modal-content. */
+/* Editable path/address bar: reuses .styled-prompt-input for border/bg/radius/
+   focus ring (set in the element's class list). Overrides only the deltas:
+   mono font, and full-bleed via flex stretch with no horizontal margin (the
+   modal-content's 10px padding is the gutter) instead of the base width:100%,
+   which overflowed against the overflow:auto scrollbar. */
+.workspace-cur {
+  align-self: stretch;
+  width: auto;
+  min-width: 0;
+  margin: 4px 0 8px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+}
+/* flex/overflow inherited from base .modal-body; only the padding differs. */
+.workspace-body { padding: 6px 0; }
+.workspace-row {
+  padding: 7px 18px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.workspace-row > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workspace-row-icon { flex-shrink: 0; opacity: 0.75; }
+.workspace-row:hover {
+  background: color-mix(in srgb, var(--border) 20%, transparent);
+}
+.workspace-up { opacity: 0.7; }
+.workspace-empty { padding: 14px 18px; opacity: 0.5; font-size: 13px; }
+.workspace-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+}
+/* Push Cancel/Use to the right while the hint stays on the left. */
+.workspace-footer-spacer { flex: 1 1 auto; }
+.workspace-hint { font-size: 11px; opacity: 0.5; }
+/* Per-folder "favorite" star button shown on the right of each browser row.
+   Hollow by default; filled gold when the folder is a saved workspace. */
+.workspace-fav-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--muted, currentColor);
+  opacity: 0.35;
+  display: inline-flex;
+  align-items: center;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+.workspace-fav-btn .workspace-row-icon { opacity: 1; }
+.workspace-row:hover .workspace-fav-btn { opacity: 0.7; }
+.workspace-fav-btn:hover { opacity: 1; color: #f5c518; }
+.workspace-fav-btn.saved {
+  opacity: 1;
+  color: #f5c518;
+}
+.workspace-fav-btn.saved .workspace-row-icon { fill: #f5c518; }
+/* Saved-workspaces list modal rows. */
+.workspace-saved-row.active {
+  background: color-mix(in srgb, var(--accent, var(--border)) 22%, transparent);
+}
+.workspace-saved-del {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1;
+  transition: opacity 0.12s ease;
+}
+.workspace-saved-row:hover .workspace-saved-del { opacity: 0.6; }
+.workspace-saved-del:hover { opacity: 1 !important; }
+/* Cookbook serve panel: Launch + ^ split button pair */
