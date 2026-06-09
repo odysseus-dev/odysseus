@@ -333,6 +333,37 @@ def test_rename_no_skills_dir_does_not_crash(rename_endpoint):
     assert res["ok"] is True
 
 
+def test_rename_skill_md_owner_case_insensitive(rename_endpoint):
+    """SKILL.md written with owner: Alice (mixed case) must be updated when
+    renaming alice — the regex was missing re.IGNORECASE."""
+    endpoint, _am, tmp_path = rename_endpoint
+
+    skill_dir = tmp_path / "skills" / "general" / "s"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(_SKILL_MD.format(owner="Alice"), encoding="utf-8")
+
+    asyncio.run(endpoint("alice", SimpleNamespace(username="alice2"), _request(tmp_path)))
+
+    assert "owner: alice2" in (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+
+
+def test_rename_usage_keys_case_insensitive(rename_endpoint):
+    """_usage.json keys stored as Alice::skill-name must be migrated when
+    renaming alice — the old startswith check was not lowercasing."""
+    endpoint, _am, tmp_path = rename_endpoint
+
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir(parents=True)
+    usage = {"Alice::my-skill": {"uses": 5, "last_used": 999}}
+    (skills_root / "_usage.json").write_text(json.dumps(usage), encoding="utf-8")
+
+    asyncio.run(endpoint("alice", SimpleNamespace(username="alice2"), _request(tmp_path)))
+
+    updated = json.loads((skills_root / "_usage.json").read_text(encoding="utf-8"))
+    assert "alice2::my-skill" in updated
+    assert "Alice::my-skill" not in updated
+
+
 # ---------------------------------------------------------------------------
 # 5. P1 regression: rejected auth rename must not mutate file-backed stores
 # ---------------------------------------------------------------------------

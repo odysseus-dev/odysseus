@@ -391,7 +391,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             skills_root = Path(SKILLS_DIR)
             if skills_root.is_dir():
                 _owner_re = re.compile(
-                    r'(?m)^(owner:\s*)' + re.escape(old_username) + r'\s*$'
+                    r'(?m)^(owner:\s*)' + re.escape(old_username) + r'\s*$',
+                    re.IGNORECASE,
                 )
                 for p in skills_root.rglob("SKILL.md"):
                     try:
@@ -406,12 +407,12 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                     try:
                         usage = json.loads(usage_path.read_text(encoding="utf-8"))
                         if isinstance(usage, dict):
-                            prefix = old_username + "::"
                             new_usage = {}
                             changed = False
                             for k, v in usage.items():
-                                if k.startswith(prefix):
-                                    new_usage[new_username + "::" + k[len(prefix):]] = v
+                                owner_part, sep, skill_part = k.partition("::")
+                                if sep and owner_part.lower() == old_username:
+                                    new_usage[new_username + "::" + skill_part] = v
                                     changed = True
                                 else:
                                     new_usage[k] = v
