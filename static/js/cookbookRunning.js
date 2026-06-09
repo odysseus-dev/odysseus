@@ -1564,6 +1564,10 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     const payload = { repo_id: repo, remote_host: _host || undefined, ssh_port: _sp || undefined, _cmd: cmd, _fields: fields || undefined, _env: _usedEnv, _envPath: _usedEnvPath, _gpus: _usedGpus };
     _addTask(data.session_id, shortName, 'serve', payload);
     uiModule.showToast(`Serving ${shortName}...`);
+    // Auto-register may have enabled an existing (offline) endpoint for this
+    // host:port. Refresh the picker so the row is no longer dimmed, and the
+    // user doesn't see "offline" on a serve they just started.
+    try { _refreshModelsAfterEndpointChange(); } catch (_) {}
   } catch (e) {
     uiModule.showToast('Failed: ' + e.message);
   }
@@ -3032,6 +3036,11 @@ async function _reconnectTask(el, task) {
             if (info.status === 'ready' && !task._serveReady) {
               task._serveReady = true;
               _updateTask(task.sessionId, { _serveReady: true });
+              // The auto-registered endpoint was marked offline while the
+              // server was coming up. Now that it's reachable, nudge the
+              // picker to re-probe so the offline pill clears without the
+              // user having to reopen Settings or refresh the page.
+              try { _refreshModelsAfterEndpointChange(); } catch (_) {}
             }
             if (info.phase) {
               badge.textContent = info.phase;
