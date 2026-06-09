@@ -345,33 +345,27 @@ class OidcManager:
         from authlib.jose import jwt, JsonWebKey
         from authlib.jose.errors import JoseError
 
-        # Parse header to check which key is needed
-        try:
-            # authlib's jwt.decode accepts claims_options to skip validation
-            # so we only decode the header
-            header_claims = jwt.decode(id_token, None, claims_options={
-                "iss": {"essential": False},
-                "sub": {"essential": False},
-                "aud": {"essential": False},
-                "exp": {"essential": False},
-                "iat": {"essential": False},
-            })
-        except JoseError:
-            # If decode-without-signature fails, try with cached keys
-            pass
-        except Exception:
-            pass
-
         header = self._peek_jwt_header(id_token)
         kid = header.get("kid", "")
 
         # Fetch or refresh JWKS
         jwks = self._fetch_jwks()
 
-        # If the kid from the token header is unknown, refresh the cache
+        # If the kid from the token header is unknown, refresh the cache.
+        # Guarded by a cooldown so an attacker can't drive unbounded
+        # outbound fetches by sending random kid values to the callback.
         if kid and kid not in self._jwks_cache:
-            logger.info("OIDC JWKS cache miss for kid=%r — refreshing", kid)
-            jwks = self._refresh_jwks()
+            now = time.time()
+            last_refresh = getattr(self, "_last_jwks_refresh", 0)
+            if now - last_refresh >= 60:
+                logger.info("OIDC JWKS cache miss for kid=%r — refreshing", kid)
+                jwks = self._refresh_jwks()
+                self._last_jwks_refresh = now
+            else:
+                logger.warning(
+                    "OIDC JWKS cache miss for kid=%r but refresh on cooldown "
+                    "(%.0fs remaining)", kid, 60 - (now - last_refresh),
+                )
 
         # authlib needs a key set in the format it expects
         try:
