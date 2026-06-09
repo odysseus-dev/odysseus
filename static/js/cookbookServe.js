@@ -15,6 +15,7 @@ let _envState;
 let _sshCmd;
 let _getPort;
 let _sshPrefix;
+let _serverByVal;
 let _getPlatform;
 let _isWindows;
 let _isMetal;
@@ -116,6 +117,7 @@ function _selectedServeTarget(panel) {
     host,
     port: host ? (_getPort(host) || server?.port || '') : '',
     venv,
+    platform: server?.platform || _envState.platform || '',
     label,
   };
 }
@@ -2040,8 +2042,12 @@ async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = nul
 function _retryCachedModel(repo, m) {
   const payload = { repo_id: repo };
   if (_envState.hfToken) payload.hf_token = _envState.hfToken;
-  if (_envState.remoteHost) { payload.remote_host = _envState.remoteHost; const _sp2 = _getPort(_envState.remoteHost); if (_sp2) payload.ssh_port = _sp2; }
-  if (_envState.platform) payload.platform = _envState.platform;
+  const _target = _selectedServeTarget(document.getElementById('cookbook-modal') || document);
+  if (_target.host) {
+    payload.remote_host = _target.host;
+    if (_target.port) payload.ssh_port = _target.port;
+  }
+  if (_target.platform) payload.platform = _target.platform;
   if (_isWindows()) {
     if (_envState.env === 'venv' && _envState.envPath) {
       payload.env_prefix = '& ' + _psQuote(_envState.envPath.endsWith('\\Scripts\\Activate.ps1') ? _envState.envPath : _envState.envPath + '\\Scripts\\Activate.ps1');
@@ -2306,6 +2312,7 @@ export function initServe(shared) {
   _sshCmd = shared._sshCmd;
   _getPort = shared._getPort;
   _sshPrefix = shared._sshPrefix;
+  _serverByVal = shared._serverByVal;
   _getPlatform = shared._getPlatform;
   _isWindows = shared._isWindows;
   _isMetal = shared._isMetal;
