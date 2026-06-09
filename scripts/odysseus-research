@@ -160,7 +160,7 @@ def _build_parser():
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pl = sub.add_parser("list", parents=[common])
-    pl.add_argument("--status", choices=["done", "running", "cancelled", "error"])
+    pl.add_argument("--status", choices=["complete", "running", "cancelled", "error"])
     pl.add_argument("--limit", type=int, default=50)
     pl.set_defaults(func=cmd_list)
 
