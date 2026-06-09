@@ -388,39 +388,6 @@ def _split_bg_marker(content: str):
     return False, content
 
 
-
-
-async def _tool_python(content: str, ctx: dict) -> dict:
-    progress_cb = ctx.get("progress_cb")
-    workspace = ctx.get("workspace")
-    _subproc_env = ctx.get("subproc_env")
-    # Run user code in a subprocess so an infinite loop or crash
-    # can't take the whole server down. -I = isolated mode (skip
-    # user site, no PYTHONPATH inheritance) for hygiene.
-    proc = await asyncio.create_subprocess_exec(
-        # Use the running interpreter — there is no `python3.exe` on
-        # Windows, which made the agent's `python` tool fail there.
-        (sys.executable or "python"), "-I", "-c", content,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=_subproc_env,
-        cwd=workspace or _AGENT_WORKDIR,
-    )
-    stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
-        proc,
-        timeout=DEFAULT_PYTHON_TIMEOUT,
-        progress_cb=progress_cb,
-    )
-    if timed_out:
-        return {"error": f"python: timed out after {DEFAULT_PYTHON_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS)}
-    output = stdout.rstrip()
-    err = stderr.rstrip()
-    if err:
-        output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
-    output = _truncate(output, MAX_OUTPUT_CHARS)
-    return {"output": output or "(no output)", "exit_code": rc or 0}
-
-
 async def _direct_fallback(
     tool: str,
     content: str,
@@ -445,7 +412,7 @@ async def _direct_fallback(
         from src.agent_tools import TOOL_HANDLERS
         if tool in TOOL_HANDLERS:
             return await TOOL_HANDLERS[tool](content, ctx)
-            
+
     except Exception as e:
         return {"error": f"{tool}: {e}", "exit_code": 1}
 

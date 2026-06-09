@@ -417,4 +417,3 @@ class GrepTool:
         if len(lines) >= max_hits:
             out += f"\n... [capped at {max_hits} matches]"
         return {"output": _truncate(out), "exit_code": 0}
-
