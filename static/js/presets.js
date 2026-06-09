@@ -830,34 +830,48 @@ export async function saveCustomPreset(showToast, showError) {
       const _selVal = document.getElementById('char-template-select')?.value || '';
       const isBuiltinPreset = PROMPT_TEMPLATES.some(t => t.isPreset && (t.name === name || t.name === _selVal));
       const saveName = isBuiltinPreset ? null : (name || null);
-      // Optimistically update the in-memory templates list so that any code
-      // reading getUserTemplates() (e.g. the Group participant dropdown) sees
-      // the new character immediately — before the async templates POST below
-      // completes and triggers loadUserTemplates().
+
       if (saveName) {
         const _existing = userTemplates.find(t => t.name === saveName);
+        let clone;
         const _entry = {
-          id: (_existing && _existing.id) || ('user-' + Math.random().toString(16).slice(2, 10)),
+          id: _existing
+            ? _existing.id
+            : `user-${Math.random().toString(16).slice(2, 10)}`,
           name: saveName,
-          system_prompt: system_prompt || '',
+          // use ?? since it's more semantic for null-coalescing
+          system_prompt: system_prompt ?? '',
           temperature: config.temperature,
           max_tokens: config.max_tokens,
-        };
+        }
+        const ENDPOINT = `${API_BASE}/api/presets/templates`;
+
+        // optimistic update by @michaelxer
         if (_existing) {
           Object.assign(_existing, _entry);
+          // slow but works for now
+          clone = JSON.parse(JSON.stringify(_existing));
         } else {
           userTemplates.push(_entry);
         }
-      }
-      if (saveName) {
-        fetch(`${API_BASE}/api/presets/templates`, {
-          method: 'POST',
+
+        fetch(ENDPOINT, {
+          method: "POST",
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: (userTemplates.find(t => t.name === saveName) || {}).id || '',
-            name: saveName, system_prompt, temperature: config.temperature, max_tokens: config.max_tokens,
-          }),
-        }).then(r => { if (r.ok) loadUserTemplates(); }).catch(() => {});
+          body: JSON.stringify(_entry)
+        }).then((r) => {
+          if (r.ok) {
+            loadUserTemplates();
+          }
+        }).catch(() => {
+          if (clone) {
+            Object.assign(_existing, clone);
+          }
+
+          if (showError) {
+            showError(_isInjectStart ? "Something went wrong. Saved prompt has been undone." : "Something went wrong. Saved persona has been undone.");
+          }
+        });
       }
 
       if (showToast) {

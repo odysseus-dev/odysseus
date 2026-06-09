@@ -344,17 +344,6 @@ async function _getCharacterList() {
   const chars = PROMPT_TEMPLATES.filter(t => t.isCharacter).map(t => ({
     id: t.id, name: t.name, prompt: t.prompt,
   }));
-  // User-created characters from presets
-  try {
-    const allPresets = getAllPresets();
-    if (allPresets && allPresets.custom && allPresets.custom.character_name) {
-      chars.push({
-        id: 'custom',
-        name: allPresets.custom.character_name,
-        prompt: allPresets.custom.system_prompt || allPresets.custom.prompt || '',
-      });
-    }
-  } catch (e) {}
   // Load user templates and wait for them before returning.
   // The endpoint returns a JSON array directly (not {templates:[...]}).
   // All user templates are personas by definition — no isCharacter filter needed.
@@ -362,24 +351,26 @@ async function _getCharacterList() {
     const r = await fetch(API_BASE + '/api/presets/templates', { credentials: 'same-origin' });
     const data = await r.json();
     const templates = Array.isArray(data) ? data : (data.templates || []);
+
     templates.forEach(t => {
       if (t.id && t.name && !chars.find(c => c.id === t.id)) {
         chars.push({ id: t.id, name: t.name, prompt: t.system_prompt || t.prompt || '' });
       }
     });
   } catch (e) {}
+
   // Also merge in-memory templates from presets.js — these may include
-  // newly created characters whose async save-to-API hasn't completed yet.
-  try {
-    const memTemplates = getUserTemplates();
-    if (Array.isArray(memTemplates)) {
-      memTemplates.forEach(t => {
-        if (t.id && t.name && !chars.find(c => c.id === t.id)) {
-          chars.push({ id: t.id, name: t.name, prompt: t.system_prompt || t.prompt || '' });
-        }
-      });
-    }
-  } catch (e) {}
+  // newly created characters whose async save-to-API hasn't completed yet.  
+  const memTemplates = getUserTemplates();
+
+  if (Array.isArray(memTemplates)) {
+    memTemplates.forEach(t => {
+      if (t.id && t.name && !chars.find(c => c.id === t.id)) {
+        chars.push({ id: t.id, name: t.name, prompt: t.system_prompt || t.prompt || '' });
+      }
+    });
+  }
+
   return chars;
 }
 
