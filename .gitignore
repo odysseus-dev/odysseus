@@ -1,92 +1,17 @@
-# Python
+node_modules/
+dist/
+target/
+.venv/
+.pytest_cache/
 __pycache__/
 *.pyc
 *.pyo
-*.egg-info/
-dist/
-build/
-!static/js/editor/build/
-venv/
-.venv/
-*.egg
-
-# Environment
-.env
-.env.bak.*
-!.env.example
-
-# Data — all user data stays local
-data/
-!services/hwfit/data/
-!services/hwfit/data/hf_models.json
-logs/
-*.log
-*.db
+*.pyd
 *.sqlite
-*.sqlite3
-
-# Node
-node_modules/
-services/node_modules/
-services/data/
-
-# IDE / Editor
-.aider*
-.claude/
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# Test capture artifacts (browser session dumps may contain personal content)
-.playwright-mcp/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Build artifacts
-*.cache
-cache/
-output.txt.txt
-
-# Media (uploaded/generated)
-*.jpg
-*.jpeg
-*.png
-*.gif
-*.bmp
-*.webp
-*.tiff
-*.pdf
-
-# …except shipped demo assets in docs/ that the README links to.
-!docs/*.jpg
-!docs/*.jpeg
-!docs/*.png
-!docs/*.gif
-!docs/*.webp
-# …and curated docs/ subfolder assets (e.g. accessibility before/after shots).
-!docs/**/*.png
-!docs/**/*.jpg
-!docs/**/*.gif
-!docs/**/*.webp
-
-# Reports and temp files
-reports/
-tasks/
-scripts/compound/*.json
-research_data/
-**/search_analytics.json
-
-# Internal dev/review notes — not for public repo
-dev-docs/
-# Windows-port working docs (local only, not for public repo)
-docs/windows-port/
-
-# Local config
-compound.config.json
-*.error.log
-_scratch/
-/odysseus/
+*.db
+src-tauri/target/
+src-tauri/gen/
+python-runtime/*
+!python-runtime/.gitkeep
+work/
+outputs/
