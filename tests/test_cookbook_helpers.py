@@ -347,15 +347,49 @@ def test_serve_runner_installs_llama_cpp_server_extra():
     assert "_pip_install_fallback_chain('llama-cpp-python[server]'" in src
 
 
-def test_serve_pip_install_normalizes_llama_cpp_alias_and_adds_wheel_index():
+def test_serve_pip_install_intercepts_llama_cpp_for_native_build_before_wheel_fallback():
     import pathlib
 
     src = (pathlib.Path(__file__).resolve().parent.parent
         / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
 
+    assert "llama_cpp_dependency_install = bool(" in src
+    assert 'req.repo_id = "llama-cpp"' in src
+    assert 'req.cmd = "llama-server --help"' in src
+    assert "Installing native llama.cpp server (fresh build)" in src
+    assert "ODYSSEUS_FORCE_LLAMA_CPP_BUILD" in src
+    assert src.index("llama_cpp_dependency_install = bool(") < src.index("if is_pip_install:")
     assert "re.sub(r\"(?<![A-Za-z0-9_.-])llama_cpp(?![A-Za-z0-9_.-])\", \"llama-cpp-python[server]\", req.cmd)" in src
     assert "if \"llama-cpp-python\" in req.cmd and \"--extra-index-url\" not in req.cmd:" in src
     assert "https://abetlen.github.io/llama-cpp-python/whl/cpu" in src
+
+
+def test_cookbook_setup_guards_break_system_packages_fallbacks():
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parent.parent
+        / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+
+    assert '_append_pip_install_runner_lines(setup_lines, "pip install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null")' in src
+    assert '_append_pip_install_runner_lines(setup_lines, "pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null")' in src
+    assert '"pip install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null || "' not in src
+    assert '"pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null; "' not in src
+
+
+def test_serve_runner_guards_pip_install_commands():
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parent.parent
+        / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+
+    guarded = (
+        "if is_pip_install:\n"
+        "                    _append_pip_install_runner_lines(runner_lines, req.cmd)\n"
+        "                else:\n"
+        "                    runner_lines.append(req.cmd)\n"
+        "                if local_windows:"
+    )
+    assert guarded in src
 
 
 def test_vllm_preflight_reports_cli_and_version():
