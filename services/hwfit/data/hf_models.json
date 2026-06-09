@@ -4650,7 +4650,7 @@
   "min_ram_gb": 2.6,
   "recommended_ram_gb": 4.4,
   "min_vram_gb": 2.4,
-  "quantization": "Q4_K_M",
+  "quantization": "NVFP4",
   "context_length": 40960,
   "use_case": "General purpose text generation",
   "capabilities": [
@@ -6647,6 +6647,33 @@
   "gguf_sources": [
    {
     "repo": "unsloth/granite-3.3-8b-instruct-GGUF",
+    "provider": "unsloth"
+   }
+  ]
+ },
+ {
+  "name": "Qwen/Qwen3-8B",
+  "provider": "Alibaba",
+  "parameter_count": "8.2B",
+  "parameters_raw": 8190735360,
+  "min_ram_gb": 4.6,
+  "recommended_ram_gb": 7.6,
+  "min_vram_gb": 4.2,
+  "quantization": "Q4_K_M",
+  "context_length": 131072,
+  "use_case": "Instruction following, chat",
+  "capabilities": [
+   "tool_use"
+  ],
+  "pipeline_tag": "text-generation",
+  "architecture": "qwen3",
+  "hf_downloads": 1200000,
+  "hf_likes": 500,
+  "release_date": "2025-04-28",
+  "_discovered": true,
+  "gguf_sources": [
+   {
+    "repo": "unsloth/Qwen3-8B-GGUF",
     "provider": "unsloth"
    }
   ]
