@@ -5,6 +5,7 @@ Uses direct endpoint extraction from setup_api_token_routes().routes and
 fake objects only — no real DB, no network, no external services.
 """
 
+import asyncio
 import contextlib
 import datetime
 import secrets as _secrets_mod
@@ -292,3 +293,84 @@ def test_delete_missing_token_returns_404_without_invalidating_cache(monkeypatch
         delete_token(request=req, token_id="missing99")
     assert exc.value.status_code == 404
     invalidator.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 6. PATCH /api/tokens/{id} — a partial update must not wipe scopes
+# ---------------------------------------------------------------------------
+
+
+def _patch_request(invalidator, body):
+    """An admin request whose async .json() yields `body`."""
+    req = _req("alice", is_admin=True, invalidator=invalidator)
+
+    async def _json():
+        return body
+
+    req.json = _json
+    return req
+
+
+def test_update_token_rename_preserves_scopes(monkeypatch, token_routes_mod):
+    """Renaming a token (no 'scopes' key in the body) must keep its scopes.
+
+    Previously update_token recomputed scopes from payload.get("scopes"),
+    which is None on a rename, so _normalize_scopes(None) reset every token to
+    the default ["chat"] scope — a silent privilege/data loss.
+    """
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    mod = token_routes_mod
+
+    token = SimpleNamespace(
+        id="tok123", name="original", owner="alice",
+        token_prefix="ody_orig", scopes="email:read,email:draft", is_active=True,
+    )
+    fake_session = MagicMock()
+    fake_session.query.return_value.filter.return_value.first.return_value = token
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+
+    invalidator = MagicMock()
+    req = _patch_request(invalidator, {"name": "renamed"})
+    update_token = _get_handler(mod, "PATCH", "/tokens/{token_id}")
+    resp = asyncio.run(update_token(request=req, token_id="tok123"))
+
+    assert token.scopes == "email:read,email:draft"  # untouched
+    assert resp["scopes"] == ["email:read", "email:draft"]
+    assert token.name == "renamed"
+    invalidator.assert_called_once()
+
+
+def test_update_token_applies_explicit_scopes(monkeypatch, token_routes_mod):
+    """When the body includes 'scopes', they are normalized and written."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    mod = token_routes_mod
+
+    token = SimpleNamespace(
+        id="tok123", name="original", owner="alice",
+        token_prefix="ody_orig", scopes="email:read,email:draft", is_active=True,
+    )
+    fake_session = MagicMock()
+    fake_session.query.return_value.filter.return_value.first.return_value = token
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+
+    req = _patch_request(MagicMock(), {"scopes": ["chat"]})
+    update_token = _get_handler(mod, "PATCH", "/tokens/{token_id}")
+    resp = asyncio.run(update_token(request=req, token_id="tok123"))
+
+    assert token.scopes == "chat"
+    assert resp["scopes"] == ["chat"]
+
+
+def test_update_missing_token_returns_404(monkeypatch, token_routes_mod):
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    mod = token_routes_mod
+
+    fake_session = MagicMock()
+    fake_session.query.return_value.filter.return_value.first.return_value = None
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+
+    req = _patch_request(MagicMock(), {"name": "x"})
+    update_token = _get_handler(mod, "PATCH", "/tokens/{token_id}")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(update_token(request=req, token_id="missing99"))
+    assert exc.value.status_code == 404

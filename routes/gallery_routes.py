@@ -12,8 +12,13 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from core.database import SessionLocal, GalleryImage, GalleryAlbum, ModelEndpoint
 from core.database import Session as DbSession
-from src.auth_helpers import get_current_user, require_privilege
-from src.upload_limits import read_upload_limited
+from src.auth_helpers import get_current_user, owner_filter, require_privilege
+from src.upload_limits import (
+    read_upload_limited,
+    GALLERY_UPLOAD_MAX_BYTES,
+    GALLERY_TRANSFORM_UPLOAD_MAX_BYTES,
+)
+from src.constants import GENERATED_IMAGES_DIR
 
 from routes.gallery_helpers import (
     GalleryPatch, _extract_exif, _image_to_dict, _owner_filter, _human_size,
@@ -21,8 +26,18 @@ from routes.gallery_helpers import (
 
 logger = logging.getLogger(__name__)
 
-GALLERY_UPLOAD_MAX_BYTES = int(os.getenv("ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES", str(100 * 1024 * 1024)))
-GALLERY_TRANSFORM_UPLOAD_MAX_BYTES = int(os.getenv("ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES", str(25 * 1024 * 1024)))
+
+def _current_user_is_admin(request: Request, user: str | None) -> bool:
+    if not user:
+        return False
+    auth_mgr = getattr(request.app.state, "auth_manager", None)
+    is_admin = getattr(auth_mgr, "is_admin", None)
+    if not callable(is_admin):
+        return False
+    try:
+        return bool(is_admin(user))
+    except Exception:
+        return False
 
 
 def _sanitize_gallery_filename(filename: str) -> str:
@@ -33,7 +48,7 @@ def _sanitize_gallery_filename(filename: str) -> str:
     return safe_name
 
 
-GALLERY_IMAGE_DIR = Path("data/generated_images")
+GALLERY_IMAGE_DIR = Path(GENERATED_IMAGES_DIR)
 
 
 def _gallery_image_path(filename: str) -> Path:
@@ -133,7 +148,7 @@ def setup_gallery_routes() -> APIRouter:
                 return {"ok": False, "duplicate": True, "filename": existing.filename,
                         "id": existing.id, "message": "Duplicate photo skipped"}
 
-            img_dir = Path("data/generated_images")
+            img_dir = Path(GENERATED_IMAGES_DIR)
             img_dir.mkdir(parents=True, exist_ok=True)
 
             ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "png"
@@ -199,7 +214,7 @@ def setup_gallery_routes() -> APIRouter:
                 raise HTTPException(400, "No image provided")
 
             content = await read_upload_limited(file, GALLERY_UPLOAD_MAX_BYTES, "Gallery replacement")
-            img_dir = Path("data/generated_images")
+            img_dir = Path(GENERATED_IMAGES_DIR)
             img_dir.mkdir(parents=True, exist_ok=True)
             img_path = img_dir / _sanitize_gallery_filename(img.filename)
             img_path.write_bytes(content)
@@ -461,8 +476,7 @@ def setup_gallery_routes() -> APIRouter:
                 .outerjoin(DbSession, GalleryImage.session_id == DbSession.id)
                 .filter(GalleryImage.is_active == True)
             )
-            if user is not None:
-                q = q.filter(GalleryImage.owner == user)
+            q = _owner_filter(q, user)
 
             # Search filter (prompt + tags + ai_tags)
             if search:
@@ -564,28 +578,26 @@ def setup_gallery_routes() -> APIRouter:
         db = SessionLocal()
         try:
             q = db.query(GalleryAlbum)
-            if user:
-                q = q.filter(GalleryAlbum.owner == user)
+            q = _owner_filter(q, user, GalleryAlbum)
             albums = q.order_by(GalleryAlbum.created_at.desc()).all()
             result = []
             for a in albums:
                 _count_q = db.query(GalleryImage).filter(
                     GalleryImage.album_id == a.id, GalleryImage.is_active == True
                 )
-                if user:
-                    _count_q = _count_q.filter(GalleryImage.owner == user)
+                _count_q = _owner_filter(_count_q, user)
                 count = _count_q.count()
                 cover_url = None
                 if a.cover_id:
-                    cover = db.query(GalleryImage).filter(GalleryImage.id == a.cover_id).first()
+                    cover_q = db.query(GalleryImage).filter(GalleryImage.id == a.cover_id)
+                    cover = _owner_filter(cover_q, user).first()
                     if cover:
                         cover_url = f"/api/generated-image/{cover.filename}"
                 elif count > 0:
                     _cover_q = db.query(GalleryImage).filter(
                         GalleryImage.album_id == a.id, GalleryImage.is_active == True
                     )
-                    if user:
-                        _cover_q = _cover_q.filter(GalleryImage.owner == user)
+                    _cover_q = _owner_filter(_cover_q, user)
                     first = _cover_q.order_by(GalleryImage.created_at.desc()).first()
                     if first:
                         cover_url = f"/api/generated-image/{first.filename}"
@@ -628,10 +640,9 @@ def setup_gallery_routes() -> APIRouter:
             base = db.query(GalleryImage).filter(GalleryImage.is_active == True)
             size_q = db.query(func.sum(GalleryImage.file_size)).filter(GalleryImage.is_active == True)
             album_q = db.query(GalleryAlbum)
-            if user:
-                base = base.filter(GalleryImage.owner == user)
-                size_q = size_q.filter(GalleryImage.owner == user)
-                album_q = album_q.filter(GalleryAlbum.owner == user)
+            base = _owner_filter(base, user)
+            size_q = _owner_filter(size_q, user)
+            album_q = _owner_filter(album_q, user, GalleryAlbum)
             total = base.count()
             total_size = size_q.scalar() or 0
             fav_count = base.filter(GalleryImage.favorite == True).count()
@@ -659,8 +670,7 @@ def setup_gallery_routes() -> APIRouter:
                 GalleryImage.is_active == True,
                 (GalleryImage.ai_tags == None) | (GalleryImage.ai_tags == ""),
             )
-            if user:
-                q = q.filter(GalleryImage.owner == user)
+            q = _owner_filter(q, user)
             if album_id:
                 q = q.filter(GalleryImage.album_id == album_id)
             untagged = q.count()
@@ -1042,7 +1052,10 @@ def setup_gallery_routes() -> APIRouter:
             try:
                 ep = _visible_image_endpoint_for_base(db, _target, user)
                 if ep:
+                    base = (ep.base_url or base).rstrip("/")
                     api_key = ep.api_key
+                elif user and not _current_user_is_admin(request, user):
+                    raise HTTPException(403, "Choose a registered image endpoint")
             finally:
                 db.close()
 
@@ -1233,7 +1246,10 @@ def setup_gallery_routes() -> APIRouter:
             try:
                 ep = _visible_image_endpoint_for_base(db, base, user)
                 if ep:
+                    base = (ep.base_url or base).rstrip("/")
                     api_key = ep.api_key
+                elif user and not _current_user_is_admin(request, user):
+                    raise HTTPException(403, "Choose a registered image endpoint")
             finally:
                 db.close()
 
