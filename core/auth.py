@@ -67,6 +67,14 @@ TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 RESERVED_USERNAMES = frozenset({"internal-tool", "api", "demo", "system"})
 
 
+def normalize_known_username(users: Dict[str, Any], username: str | None) -> Optional[str]:
+    """Return a normalized username only when it exists in the auth user map."""
+    key = str(username or "").strip().lower()
+    if not key or key not in users:
+        return None
+    return key
+
+
 def _hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
@@ -96,6 +104,7 @@ class AuthManager:
         self._load()
         self._load_sessions()
         self._migrate_single_user()
+        self._drop_reserved_loaded_users()
         self._migrate_legacy_admin_role()
 
     def _load(self):
@@ -148,7 +157,13 @@ class AuthManager:
     def _migrate_single_user(self):
         """Migrate old single-user format to multi-user format."""
         if "password_hash" in self._config and "users" not in self._config:
-            old_user = self._config.get("username", "admin")
+            old_user = str(self._config.get("username", "admin") or "admin").strip().lower()
+            if old_user in RESERVED_USERNAMES:
+                logger.warning(
+                    "Migrating legacy single-user reserved username '%s' to 'admin'",
+                    old_user,
+                )
+                old_user = "admin"
             old_hash = self._config["password_hash"]
             self._config = {
                 "users": {
@@ -161,6 +176,30 @@ class AuthManager:
             }
             self._save()
             logger.info(f"Migrated single-user auth to multi-user (admin: {old_user})")
+
+    def _drop_reserved_loaded_users(self):
+        """Fail closed for legacy/manual auth rows that collide with sentinels."""
+        users = self._config.get("users")
+        if not isinstance(users, dict):
+            return
+        normalized = {}
+        removed = []
+        for username, data in users.items():
+            key = str(username or "").strip().lower()
+            if not key:
+                continue
+            if key in RESERVED_USERNAMES:
+                removed.append(key)
+                continue
+            normalized[key] = data
+        if removed or normalized != users:
+            self._config["users"] = normalized
+            self._save()
+        if removed:
+            logger.warning(
+                "Removed reserved username(s) from auth config: %s",
+                ", ".join(sorted(set(removed))),
+            )
 
     def _migrate_legacy_admin_role(self):
         """Normalize setup.py's old role='admin' marker to is_admin=True."""
