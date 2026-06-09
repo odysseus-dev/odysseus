@@ -423,8 +423,26 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     libraryUpdateBulkCount();
   }
 
+  const ATTACH_PLUS_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+  const ATTACH_CHECK_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+
+  async function _fetchChatTranscript(session) {
+    const res = await fetch(`${API_BASE}/api/history/${session.id}`, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('Failed');
+    const data = await res.json();
+    const history = Array.isArray(data) ? data : (data.history || []);
+    const lines = [];
+    for (const m of history) {
+      if (m.role !== 'user' && m.role !== 'assistant') continue;
+      const label = m.role === 'user' ? 'User' : 'Assistant';
+      const body = (m.content || '').replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/, '').trim();
+      if (body) lines.push(`${label}: ${body}`);
+    }
+    return { title: session.name || 'Chat', content: lines.join('\n\n'), language: 'text' };
+  }
+
   function _injectAttachButtonsForGrid(grid, items, idField, fetchContent) {
-    if (!grid) return;
+    if (!_libraryAttachMode || !grid) return;
     const cards = grid.querySelectorAll('.doclib-card, .memory-item');
     cards.forEach(card => {
       if (card.querySelector('.doclib-attach-btn')) return;
@@ -433,7 +451,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (!item) return;
       const btn = document.createElement('button');
       btn.className = 'doclib-attach-btn';
-      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+      btn.innerHTML = ATTACH_PLUS_SVG;
       btn.title = 'Add to chat';
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -442,12 +460,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         try {
           const content = await fetchContent(item);
           if (_libraryAttachCallback) _libraryAttachCallback([content]);
-          btn.textContent = '✓';
+          btn.innerHTML = ATTACH_CHECK_SVG;
           btn.classList.add('attached');
         } catch (err) {
           console.error('Failed to attach item:', err);
           btn.disabled = false;
-          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+          btn.innerHTML = ATTACH_PLUS_SVG;
         }
       });
       card.style.position = 'relative';
@@ -1851,37 +1869,6 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
     // Wire events
     document.getElementById('doclib-close').addEventListener('click', closeLibrary);
-    function _injectAttachButtons(grid, items, idField, fetchContent) {
-      if (!_libraryAttachMode || !grid) return;
-      const cards = grid.querySelectorAll('.doclib-card, .memory-item');
-      cards.forEach(card => {
-        if (card.querySelector('.doclib-attach-btn')) return;
-        const itemId = card.dataset.docId || card.dataset.sid || card.dataset.researchId;
-        const item = items.find(i => String(i[idField]) === String(itemId));
-        if (!item) return;
-        const btn = document.createElement('button');
-        btn.className = 'doclib-attach-btn';
-        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
-        btn.title = 'Add to chat';
-        btn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          btn.disabled = true;
-          btn.textContent = '...';
-          try {
-            const content = await fetchContent(item);
-            if (_libraryAttachCallback) _libraryAttachCallback([content]);
-            btn.textContent = '✓';
-            btn.classList.add('attached');
-          } catch (err) {
-            console.error('Failed to attach item:', err);
-            btn.disabled = false;
-            btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
-          }
-        });
-        card.style.position = 'relative';
-        card.appendChild(btn);
-      });
-    }
 
     // Tab switching — Chats / Documents / Archive / Research
     let _activeLibTab = (opts && opts.tab) || 'documents';
@@ -2220,20 +2207,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         _renderChatsGrid();
       });
       if (_libraryAttachMode) {
-        _injectAttachButtons(grid, _chatsSessions, 'id', async (s) => {
-          const res = await fetch(`${API_BASE}/api/history/${s.id}`, { credentials: 'same-origin' });
-          if (!res.ok) throw new Error('Failed');
-          const data = await res.json();
-          const history = Array.isArray(data) ? data : (data.history || []);
-          const lines = [];
-          for (const m of history) {
-            if (m.role !== 'user' && m.role !== 'assistant') continue;
-            const label = m.role === 'user' ? 'User' : 'Assistant';
-            const body = (m.content || '').replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/, '').trim();
-            if (body) lines.push(`${label}: ${body}`);
-          }
-          return { title: s.name || 'Chat', content: lines.join('\n\n'), language: 'text' };
-        });
+        _injectAttachButtonsForGrid(grid, _chatsSessions, 'id', _fetchChatTranscript);
       }
     }
 
@@ -2663,20 +2637,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         _renderArcGrid();
       });
       if (_libraryAttachMode) {
-        _injectAttachButtons(grid, _arcSessions, 'id', async (s) => {
-          const res = await fetch(`${API_BASE}/api/history/${s.id}`, { credentials: 'same-origin' });
-          if (!res.ok) throw new Error('Failed');
-          const data = await res.json();
-          const history = Array.isArray(data) ? data : (data.history || []);
-          const lines = [];
-          for (const m of history) {
-            if (m.role !== 'user' && m.role !== 'assistant') continue;
-            const label = m.role === 'user' ? 'User' : 'Assistant';
-            const body = (m.content || '').replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/, '').trim();
-            if (body) lines.push(`${label}: ${body}`);
-          }
-          return { title: s.name || 'Chat', content: lines.join('\n\n'), language: 'text' };
-        });
+        _injectAttachButtonsForGrid(grid, _arcSessions, 'id', _fetchChatTranscript);
       }
     }
 
@@ -3095,7 +3056,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         _renderResearchGrid();
       });
       if (_libraryAttachMode) {
-        _injectAttachButtons(grid, _researchItems, 'id', async (r) => {
+        _injectAttachButtonsForGrid(grid, _researchItems, 'id', async (r) => {
           const res = await fetch(`${API_BASE}/api/research/detail/${r.id}`, { credentials: 'same-origin' });
           if (!res.ok) throw new Error('Failed');
           const data = await res.json();
