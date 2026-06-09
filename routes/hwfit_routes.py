@@ -196,7 +196,24 @@ def setup_hwfit_routes():
         if target_context is not None:
             target_context = max(1024, min(target_context, 1000000))
 
-        results = rank_models(system, use_case=use_case or None, limit=limit, search=search or None, sort=sort, quant=quant or None, target_context=target_context, fit_only=fit_only)
+        rank_kwargs = {
+            "use_case": use_case or None,
+            "limit": limit,
+            "search": search or None,
+            "sort": sort,
+            "quant": quant or None,
+            "fit_only": fit_only,
+        }
+        if target_context is not None:
+            rank_kwargs["target_context"] = target_context
+        try:
+            import inspect
+            supported = set(inspect.signature(rank_models).parameters)
+            rank_kwargs = {k: v for k, v in rank_kwargs.items() if k in supported}
+        except Exception:
+            rank_kwargs.pop("target_context", None)
+            rank_kwargs.pop("fit_only", None)
+        results = rank_models(system, **rank_kwargs)
         return {"system": system, "models": results}
 
     @router.get("/profiles")

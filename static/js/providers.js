@@ -118,6 +118,7 @@ const _ENDPOINT_LABELS = [
   [/(^|\.)together\.(ai|xyz)$/i, "Together"],
   [/(^|\.)fireworks\.ai$/i, "Fireworks"],
   [/(^|\.)perplexity\.ai$/i, "Perplexity"],
+  [/(^|\.)nvidia\.com$/i, "NVIDIA"],
   [/(^|\.)x\.ai$/i, "xAI"],
 ];
 

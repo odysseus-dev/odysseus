@@ -472,6 +472,10 @@ components = initialize_managers(BASE_DIR, rag_manager)
 session_manager   = components["session_manager"]
 from src.assistant_log import set_session_manager as _set_asst_sm
 _set_asst_sm(session_manager)
+# Set the global session manager singleton (used by core.models.Session.add_message)
+from core.models import set_session_manager_instance
+set_session_manager_instance(session_manager)
+app.state.session_manager = session_manager
 memory_manager    = components["memory_manager"]
 memory_vector     = components.get("memory_vector")
 upload_handler    = components["upload_handler"]
@@ -529,9 +533,6 @@ upload_cleanup_task = None
 from routes.emoji_routes import setup_emoji_routes
 app.include_router(setup_emoji_routes())
 
-from routes.workspace_routes import setup_workspace_routes
-app.include_router(setup_workspace_routes())
-
 # Sessions
 from routes.session_routes import setup_session_routes
 session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
@@ -576,7 +577,7 @@ app.include_router(setup_preset_routes(preset_manager))
 
 # Diagnostics
 from routes.diagnostics_routes import setup_diagnostics_routes
-app.include_router(setup_diagnostics_routes(rag_manager, rag_available, research_handler))
+app.include_router(setup_diagnostics_routes(rag_manager, rag_available, research_handler, memory_vector))
 
 # Cleanup
 from routes.cleanup_routes import setup_cleanup_routes
