@@ -29,6 +29,10 @@ export const THEMES = {
                             inputBg: '#2f2f2f' } },
   claude:     { bg:'#262624', fg:'#f5f4f0', panel:'#30302e', border:'#4a4a47', red:'#c6613f' },
   cute:       { bg:'#fff0f5', fg:'#d4608a', panel:'#fff8fa', border:'#f0c0d0', red:'#ff6b9d' },
+  catppuccin_latte:      { bg:'#eff1f5', fg:'#4c4f69', panel:'#e6e9ef', border:'#9ca0b0', red:'#d20f39' },
+  catppuccin_frappe:     { bg:'#303446', fg:'#c6d0f5', panel:'#292c3c', border:'#737994', red:'#e78284' },
+  catppuccin_macchiato:  { bg:'#24273a', fg:'#cad3f5', panel:'#1e2030', border:'#6e738d', red:'#ed8796' },
+  catppuccin_mocha:      { bg:'#1e1e2e', fg:'#cdd6f4', panel:'#181825', border:'#6c7086', red:'#f38ba8' },
 };
 
 const DEFAULT_THEME = 'dark';
@@ -58,6 +62,10 @@ const THEME_DEFAULT_PATTERN = {
   organs:     'rain',
   ume:        'petals',
   cute:       'sparkles',
+  catppuccin_latte:     'petals',
+  catppuccin_frappe:    'constellations',
+  catppuccin_macchiato: 'embers',
+  catppuccin_mocha:     'embers',
 };
 
 // Default effect colors for specific themes (overrides --fg)
@@ -66,6 +74,10 @@ const THEME_DEFAULT_EFFECT_COLOR = {
   organs:     '#451616',
   cute:       '#ff8cb8',
   ume:        '#f5a0c0',
+  catppuccin_latte:     '#fe640b',
+  catppuccin_frappe:    '#ef9f76',
+  catppuccin_macchiato: '#f5a97f',
+  catppuccin_mocha:     '#fab387',
 };
 
 // Default effect intensity (0..1) per theme. Any theme not listed defaults to 1.
