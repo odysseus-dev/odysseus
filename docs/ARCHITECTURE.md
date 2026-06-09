@@ -1831,7 +1831,163 @@ Odysseus's threat model acknowledges its nature as a privileged admin console.
 
 ---
 
-## 45. Known Issues & Future Improvements
+## 45. Deep Dive: Authentication & User Management
+
+The system uses a combination of route handling and helper logic to manage access control.
+
+### Purpose
+To authenticate incoming requests, issue and validate tokens, and provide device-flow authorization when needed.
+
+### Components
+- **`routes/auth_routes.py` & `src/auth_helpers.py`**: Manages user login, session token validation, and password verification. Contains core logic to authenticate against the user database and generate JWT tokens or session cookies.
+- **`routes/device_flow.py`**: Facilitates the OAuth 2.0 Device Authorization Grant, allowing head-less devices (like a companion app) to securely pair with the server.
+- **`src/api_key_manager.py`**: Manages the lifecycle and verification of static API keys, providing an alternative to standard login for external integrations calling into Odysseus endpoints.
+
+---
+
+## 46. Deep Dive: Session & History Management
+
+A core feature of the agent UI is managing conversational sessions and historical context over time.
+
+### Purpose
+To persist user chats across reloads, prune stale data, and provide search functionalities over past conversations.
+
+### Components
+- **`routes/session_routes.py` & `src/session_actions.py`**: Manages REST API endpoints for loading, renaming, and exporting chat sessions. Handles state logic like creating new empty sessions.
+- **`src/session_search.py` & `routes/history_routes.py`**: Powers the UI's sidebar history lookup. `session_search.py` performs the database lookups across raw JSON blobs containing chat history.
+- **`routes/cleanup_routes.py` & `src/cleanup_service.py`**: Manages garbage collection of orphaned session data, preventing the SQLite database from bloating infinitely with abandoned drafts.
+
+---
+
+## 47. Deep Dive: Personal & Workspace Data
+
+This module handles isolated user contexts such as personal settings, contacts, and workspace-specific document storage.
+
+### Purpose
+To ensure multi-tenancy and data isolation where users only interact with their configured environment.
+
+### Components
+- **`routes/personal_routes.py` & `src/personal_docs.py`**: Handles user-specific document uploads that feed into their personalized RAG store.
+- **`src/settings.py` & `src/settings_scrub.py` & `routes/prefs_routes.py`**: Manages reading and writing application preferences, including redacting (scrubbing) secrets before returning config to the client.
+- **`routes/contacts_routes.py`**: Stores and retrieves contact lists used by agents for communication tasks.
+- **`routes/backup_routes.py` & `routes/admin_wipe_routes.py`**: Administrative endpoints to export the entire workspace data as zip or to perform dangerous reset operations safely.
+
+---
+
+## 48. Deep Dive: Model Configuration & RAG Core
+
+The system coordinates between multiple LLM backends (local Ollama, OpenAI, Anthropic) while also maintaining a persistent RAG index.
+
+### Purpose
+Provides a unified layer to interact with LLMs and Vector Embeddings, hiding the implementation specifics from the main Agent Loop.
+
+### Components
+- **`routes/model_routes.py` & `src/model_discovery.py`**: Automatically polls APIs (e.g., standard `localhost:11434`) to list available models. `model_discovery.py` aggregates these lists and surfaces them to the UI.
+- **`src/model_context.py` & `src/endpoint_resolver.py`**: Resolves logical model names to concrete endpoint URLs and handles context window limit calculations to prevent prompt overflow.
+- **`routes/embedding_routes.py` & `src/embeddings.py` & `src/embedding_lanes.py`**: Configures the semantic search backend. Manages switching between external API embeddings (like OpenAI text-embedding-ada-002) and local fastembed onnx models.
+- **`src/chroma_client.py`, `src/rag_singleton.py`, `src/rag_vector.py`**: Wrapper clients for the ChromaDB vector store, managing RAG collection logic and querying similarities.
+
+---
+
+## 49. Deep Dive: Tooling, Execution & Security
+
+Odysseus dynamically gives tools to the LLMs, requiring strict security boundaries.
+
+### Purpose
+To execute code and filesystem tools securely while protecting the host machine from rogue LLM behavior.
+
+### Components
+- **`src/tool_execution.py` & `src/tool_utils.py`**: Core executors that actually perform requested actions, like appending to a file or running a bash command.
+- **`src/tool_parsing.py` & `src/tool_schemas.py`**: Maps unstructured LLM responses (JSON or XML) into strictly typed Pydantic models for execution.
+- **`src/tool_policy.py` & `src/tool_security.py`**: Enforces rules about which tools an agent can call. Blocks read/write paths outside the designated `/data` workspace unless running as an explicit administrator.
+- **`src/url_safety.py` & `src/url_security.py` & `src/tls_overrides.py`**: Analyzes generated outbound URLs (e.g., web scraping calls) to ensure they are external, preventing Server Side Request Forgery (SSRF) onto local networks.
+
+---
+
+## 50. Deep Dive: Research & Topic Analysis
+
+An advanced capability of the system is recursive, Deep Research where agents investigate topics deeply.
+
+### Purpose
+To facilitate complex web searching, summarization, and extracting topic intent from queries.
+
+### Components
+- **`routes/research_routes.py` & `src/research_handler.py`**: Manages the API surface and underlying orchestration to spin off long-running deep research loops.
+- **`src/research_utils.py` & `routes/search_routes.py`**: Utilities for parsing web scrape data and routes to interface with SearXNG backends for general querying.
+- **`src/topic_analyzer.py` & `src/goal_based_extractor.py`**: Analyzes the generated content dynamically to form a structured summary or determine if the research goal has been met.
+
+---
+
+## 51. Deep Dive: Integrations & MCP Extensibility
+
+The system natively supports adding extensions via the Model Context Protocol (MCP) and third-party subscriptions.
+
+### Purpose
+Provides dynamic loading of tools that aren't natively compiled into the python source.
+
+### Components
+- **`routes/mcp_routes.py` & `src/builtin_mcp.py` & `src/mcp_oauth.py`**: Scaffolds the setup and oauth workflows required to integrate external MCP servers (e.g., Google Drive, GitHub) via stdio or HTTP.
+- **`routes/copilot_routes.py`, `routes/chatgpt_subscription_routes.py`, `src/chatgpt_subscription.py`**: Modules handling proxying requests to proprietary endpoints like GitHub Copilot or ChatGPT by intercepting subscription headers, emulating an OpenAI-compatible interface.
+
+---
+
+## 52. Deep Dive: Multimedia & Background Tasks
+
+The system handles more than just text generation, acting as an ambient AI workspace.
+
+### Purpose
+To handle audio processing (TTS/STT), gallery imaging, background scheduling, and calendar synchronization.
+
+### Components
+- **`routes/stt_routes.py` & `routes/tts_routes.py`**: Fast endpoints interfacing with whisper (or remote endpoints) for speech-to-text and text-to-speech.
+- **`routes/gallery_helpers.py` & `src/generated_images.py`**: Helper logic routing for AI image generation (e.g., Stable Diffusion) and parsing EXIF data.
+- **`routes/task_routes.py`, `routes/calendar_routes.py`, `src/bg_monitor.py`**: Core routing for user-scheduled tasks and cron jobs. `bg_monitor.py` polls for detached subprocesses to ensure background routines complete cleanly.
+
+---
+
+## 53. Deep Dive: UI & UX Helpers
+
+Small foundational pieces to support the frontend SPA.
+
+### Purpose
+Provide localization, theming, and consistent rendering mechanics.
+
+### Components
+- **`routes/emoji_routes.py` & `routes/font_routes.py`**: Serves static SVGs and webfonts dynamically based on the current workspace themes.
+- **`src/text_helpers.py`**: Utilities for stripping reasoning chains or specific tokens from LLM output before presentation.
+- **`src/user_time.py`**: Manages timezone calculations so that when an agent is told "remind me tomorrow", it correctly translates to the user's localized time based on browser data.
+
+---
+
+## 54. Deep Dive: Cookbook & System Utilities
+
+A collection of operational scripts, setup hooks, and diagnostic endpoints.
+
+### Purpose
+To initialize the app predictably and provide developers insights into the running system.
+
+### Components
+- **`routes/cookbook_routes.py`, `routes/hwfit_routes.py`, `routes/diagnostics_routes.py`**: API endpoints exposing system load, GPU status (hardware fitness), and local recipes (cookbook).
+- **`routes/shell_routes.py`, `routes/upload_routes.py`, `routes/signature_routes.py`**: Handles standard terminal requests to the host OS and manages file IO/upload chunking.
+- **`src/app_helpers.py`, `src/app_initializer.py`, `src/constants.py`, `src/exceptions.py`**: Foundational bootstrap code. Bootstraps the SQLite tables, loads `.env` variables, and defines global exception classes.
+
+---
+
+## 55. Deep Dive: Chat Engine & Memory Components
+
+These files form the glue bridging conversational memory with the underlying agent loop.
+
+### Purpose
+To assemble context objects, record new learnings, and parse complex documents inline.
+
+### Components
+- **`routes/assistant_routes.py`, `src/assistant_log.py`**: Manages the persona traits of the primary assistant and logging of its internal monologue.
+- **`src/memory_provider.py`, `src/ai_interaction.py`**: The interface between raw text streams and the structured memory graph.
+- **`src/context_budget.py`**: Dynamically truncates conversational history so it fits securely within the model's configured input token limit.
+- **`routes/compare_routes.py`, `routes/editor_draft_routes.py`, `src/pdf_form_doc.py`**: Specialized tools for editing rich text documents inside the interface, and generating PDFs inline based on text fields.
+---
+
+## 56. Known Issues & Future Improvements
 
 While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
 
