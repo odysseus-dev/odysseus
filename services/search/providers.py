@@ -417,10 +417,17 @@ def duckduckgo_search(query: str, count: Optional[int] = None, time_filter: Opti
             return []
 
     try:
-        from duckduckgo_search import DDGS
+        # `ddgs` is the maintained successor to `duckduckgo-search` (which froze
+        # in Jul 2025). Prefer it; fall back to the old package name if only that
+        # is installed, then to the HTML scrape — so this can't regress an
+        # existing install.
+        from ddgs import DDGS
     except ImportError:
-        logger.warning("duckduckgo-search package not installed; using HTML fallback")
-        return _html_fallback()
+        try:
+            from duckduckgo_search import DDGS
+        except ImportError:
+            logger.warning("ddgs / duckduckgo-search not installed; using HTML fallback")
+            return _html_fallback()
 
     timelimit = None
     if time_filter:

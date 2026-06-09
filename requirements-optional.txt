@@ -15,7 +15,9 @@ faster-whisper
 # DuckDuckGo as a search provider option.
 # Install if you want DDG in the search-provider dropdown.
 # Alternatives: SearXNG, Brave, Tavily, Serper, Google PSE.
-duckduckgo-search
+# `ddgs` is the maintained successor to `duckduckgo-search` (frozen Jul 2025);
+# the search provider still falls back to the old package name if it's present.
+ddgs
 
 # PDF form-filling feature (fillable AcroForm detection, field extraction,
 # value/annotation/signature stamping, page rendering for the form overlay).
