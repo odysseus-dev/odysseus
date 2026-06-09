@@ -762,10 +762,14 @@ def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int 
     imaplib._MAXLINE = 50_000_000
     return conn
 
-def _imap_connect(account_id: str | None = None, owner: str = ""):
+def _imap_connect(account_id: str | None = None, owner: str = "",
+                  timeout: int = _IMAP_TIMEOUT_SECONDS):
     # SECURITY: passing `owner` scopes the fallback config lookup so a brand
     # new user doesn't get connected against another user's default mailbox
     # when they have no account configured.
+    #
+    # `timeout` is overridable so short-lived callers (e.g. the service-health
+    # probe) can impose a tighter budget than the default IMAP timeout.
     cfg = _get_email_config(account_id, owner=owner)
     # Connection mode:
     #   STARTTLS on → plain + upgrade
@@ -778,7 +782,7 @@ def _imap_connect(account_id: str | None = None, owner: str = ""):
         cfg["imap_host"],
         cfg["imap_port"],
         starttls=bool(cfg.get("imap_starttls")),
-        timeout=_IMAP_TIMEOUT_SECONDS,
+        timeout=timeout,
     )
     try:
         conn.login(cfg["imap_user"], cfg["imap_password"])
