@@ -472,6 +472,14 @@ class ToolIndex:
         frozenset({"write a", "create a doc", "draft", "compose", "poem", "story",
                    "essay", "outline", "letter"}):
             {"create_document", "edit_document", "update_document"},
+        # Web browsing / URL intent — "visit <url>", "open this link",
+        # "go to example.com", etc. Must NOT include "tell" (see #1707).
+        frozenset({"visit", "https://", "http://",
+                   "open this link", "open the website", "open the page",
+                   "go to this url", "go to this link", "go to this page",
+                   "browse to", "navigate to",
+                   "fetch this url", "fetch this page", "fetch this link"}):
+            {"web_search", "web_fetch"},
     }
 
     def get_tools_for_query(
