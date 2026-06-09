@@ -82,6 +82,39 @@ def test_validate_caldav_url_fails_closed_when_hostname_does_not_resolve(monkeyp
         caldav_sync.validate_caldav_url("https://calendar.example.com/dav")
 
 
+def test_validate_caldav_url_fails_closed_when_host_resolves_to_no_usable_records(monkeypatch):
+    # Distinct from the OSError path above: here resolution *succeeds* but yields
+    # no usable A/AAAA records (the `if not addrs` branch). Fail closed there too
+    # rather than letting an un-vetted host through.
+    monkeypatch.setattr(caldav_sync, "_resolve_caldav_host_ips", lambda host: [])
+
+    with pytest.raises(ValueError, match="host does not resolve"):
+        caldav_sync.validate_caldav_url("https://calendar.example.com/dav")
+
+
+@pytest.mark.parametrize(
+    "addrs",
+    [
+        ["93.184.216.34", "127.0.0.1"],  # public first, internal second
+        ["127.0.0.1", "93.184.216.34"],  # internal first, public second
+    ],
+)
+def test_validate_caldav_url_blocks_mixed_dns_in_any_order(monkeypatch, addrs):
+    # A host that resolves to BOTH a public and an internal address must be
+    # rejected regardless of record order — every resolved address is checked,
+    # so one internal answer is enough to block. Defends DNS round-robin and a
+    # rebind that slips an internal A-record alongside a public one.
+    monkeypatch.delenv("ODYSSEUS_ALLOW_PRIVATE_CALDAV", raising=False)
+    monkeypatch.setattr(
+        caldav_sync,
+        "_resolve_caldav_host_ips",
+        lambda host: [ipaddress.ip_address(a) for a in addrs],
+    )
+
+    with pytest.raises(ValueError, match="host is not allowed"):
+        caldav_sync.validate_caldav_url("https://calendar.example.com/dav")
+
+
 def test_sync_caldav_decrypts_stored_password_and_validates_url(monkeypatch):
     monkeypatch.setattr(
         caldav_sync,

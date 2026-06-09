@@ -14,6 +14,8 @@ import uuid
 import time
 from typing import Dict, Optional, Tuple
 
+from src.constants import GENERATED_IMAGES_DIR
+
 logger = logging.getLogger(__name__)
 
 AI_CHAT_TIMEOUT = 120  # seconds for a single LLM call
@@ -22,7 +24,9 @@ MAX_PIPELINE_STEPS = 10
 
 # ---------------------------------------------------------------------------
 # Global managers (set from app.py, same pattern as _mcp_manager)
-# ---------------------------------------------------------------------------
+# _session_manager is kept as a local cache for performance (avoiding
+# repeated get_session_manager_instance() calls). It's synced with
+# the authoritative singleton in core.models.
 _session_manager = None
 _memory_manager = None
 _memory_vector = None
@@ -31,11 +35,15 @@ _personal_docs_manager = None
 
 
 def set_session_manager(mgr):
+    """Set the global session manager. Syncs local cache + core singleton."""
     global _session_manager
     _session_manager = mgr
+    from core.models import set_session_manager_instance
+    set_session_manager_instance(mgr)
 
 
 def get_session_manager():
+    """Get the global session manager."""
     return _session_manager
 
 
@@ -55,7 +63,7 @@ def set_rag_manager(rag_mgr, personal_docs_mgr=None):
 # Model resolution
 # ---------------------------------------------------------------------------
 
-from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url, build_headers, build_models_url
+from src.endpoint_resolver import build_chat_url, build_headers, build_models_url, resolve_endpoint_runtime
 
 
 def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Dict]:
@@ -96,9 +104,12 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
                              (f" matching '{target_endpoint_name}'" if target_endpoint_name else ""))
 
         for ep in endpoints:
-            base = _normalize_base(ep.base_url)
+            try:
+                base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+            except Exception:
+                continue
             provider = _detect_provider(base)
-            headers = build_headers(ep.api_key, base)
+            headers = build_headers(api_key, base)
 
             if provider == "anthropic":
                 # Anthropic: match against hardcoded model list
@@ -112,16 +123,20 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
             else:
                 # OpenAI-compatible and native Ollama: probe the provider's model list.
                 try:
-                    r = httpx.get(build_models_url(base), headers=headers, timeout=5)
-                    r.raise_for_status()
-                    data = r.json()
-                    model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
-                    if not model_ids:
-                        model_ids = [
-                            m.get("name") or m.get("model")
-                            for m in (data.get("models") or [])
-                            if m.get("name") or m.get("model")
-                        ]
+                    models_url = build_models_url(base)
+                    if models_url:
+                        r = httpx.get(models_url, headers=headers, timeout=5)
+                        r.raise_for_status()
+                        data = r.json()
+                        model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+                        if not model_ids:
+                            model_ids = [
+                                m.get("name") or m.get("model")
+                                for m in (data.get("models") or [])
+                                if m.get("name") or m.get("model")
+                            ]
+                    else:
+                        model_ids = json.loads(ep.cached_models or "[]")
                 except Exception:
                     model_ids = []
 
@@ -1119,25 +1134,32 @@ async def do_list_models(content: str, session_id: Optional[str] = None, owner: 
         total_models = 0
 
         for ep in endpoints:
-            base = _normalize_base(ep.base_url)
+            try:
+                base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+            except Exception:
+                continue
             provider = _detect_provider(base)
-            headers = build_headers(ep.api_key, base)
+            headers = build_headers(api_key, base)
 
             model_ids = []
             if provider == "anthropic":
                 model_ids = list(ANTHROPIC_MODELS)
             else:
                 try:
-                    r = httpx.get(build_models_url(base), headers=headers, timeout=5)
-                    r.raise_for_status()
-                    data = r.json()
-                    model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
-                    if not model_ids:
-                        model_ids = [
-                            m.get("name") or m.get("model")
-                            for m in (data.get("models") or [])
-                            if m.get("name") or m.get("model")
-                        ]
+                    models_url = build_models_url(base)
+                    if models_url:
+                        r = httpx.get(models_url, headers=headers, timeout=5)
+                        r.raise_for_status()
+                        data = r.json()
+                        model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+                        if not model_ids:
+                            model_ids = [
+                                m.get("name") or m.get("model")
+                                for m in (data.get("models") or [])
+                                if m.get("name") or m.get("model")
+                            ]
+                    else:
+                        model_ids = json.loads(ep.cached_models or "[]")
                 except Exception:
                     model_ids = ["(endpoint offline)"]
 
@@ -1268,7 +1290,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
       toggle <name> <on|off>  — Toggle a setting (web, bash, rag, research, incognito, document_editor)
       set_mode <agent|chat>   — Switch between agent and chat mode
       switch_model <model>    — Change the model for the current session
-      set_theme <preset>      — Apply a theme preset (dark, light, paper, nord, dracula, gruvbox, gpt, claude, lavender, etc.)
+      set_theme <preset>      — Apply a built-in theme preset (dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute)
       create_theme <name> <bg> <fg> <panel> <border> <accent> [key=val ...] — Create custom theme. Optional key=val: advanced color overrides AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false
       open_panel <name>       — Open a panel (documents, gallery, email, sessions, notes, memories, skills, settings, cookbook)
       open_email_reply <uid> [folder] [reply|reply-all|ai-reply] — Open a reply draft document for an email; does not send
@@ -1715,7 +1737,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
 
             # GPT image models always return b64_json; DALL-E may return url
             if img.get("b64_json"):
-                img_dir = Path("data/generated_images")
+                img_dir = Path(GENERATED_IMAGES_DIR)
                 img_dir.mkdir(parents=True, exist_ok=True)
                 filename = f"{uuid.uuid4().hex[:12]}.png"
                 img_path = img_dir / filename
@@ -1728,7 +1750,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                 try:
                     dl_resp = httpx.get(img["url"], timeout=60)
                     if dl_resp.status_code == 200:
-                        img_dir = Path("data/generated_images")
+                        img_dir = Path(GENERATED_IMAGES_DIR)
                         img_dir.mkdir(parents=True, exist_ok=True)
                         filename = f"{uuid.uuid4().hex[:12]}.png"
                         img_path = img_dir / filename

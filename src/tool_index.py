@@ -28,34 +28,11 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Tools that are ALWAYS included regardless of retrieval results.
-# These are the most commonly needed and should never be missing.
+# Keep this deliberately tiny. Domain tools (web, documents, email,
+# cookbook/model serving, files, settings, etc.) are injected by retrieval or
+# keyword intent so a trivial agent prompt like "test" does not carry every
+# domain's schemas and rules.
 ALWAYS_AVAILABLE = frozenset({
-    "bash", "python", "web_search", "web_fetch",
-    # File tools: read AND write/edit. An agent with disk access should always
-    # be able to change files, not just read them — otherwise a bare "edit X"
-    # request can miss write_file/edit_file (RAG-only) and the model wrongly
-    # falls back to edit_document (editor panel). All admin-gated by tool_security.
-    "read_file", "write_file", "edit_file",
-    "grep", "glob", "ls",  # code-navigation tools (admin-gated by tool_security)
-    "api_call",  # For configured integrations (Miniflux, Gitea, Linkding, etc.)
-    # The two genuinely AMBIENT cookbook tools — "what's running" and
-    # "kill it" can be asked any time without prior cookbook context,
-    # and need to survive typos. The other cookbook tools (downloads,
-    # presets, serve, cached, servers) are CONTEXTUAL — they fire via
-    # keyword hints when the user is actually talking about cookbook.
-    # Keeping the always-on set small leaves room in the ~16-tool
-    # budget for manage_tasks / manage_calendar / etc.
-    "list_served_models", "stop_served_model", "tail_serve_output",
-    # Serving is a core agent capability — keep these always available so
-    # the router doesn't lose them on phrasings like "servic" / "fire up" / "boot".
-    "serve_model", "serve_preset", "list_serve_presets",
-    "list_cached_models", "list_cookbook_servers",
-    # Fallback when serve_model's allowlist rejects a cmd or when the
-    # model was launched out-of-band via bash+tmux — without this the
-    # session is invisible to the cookbook UI even though it's running.
-    "adopt_served_model",
-    # Generic API loopback — the catch-all when no named tool fits.
-    "app_api",
     # Memory is ambient — "remember this" can follow any message regardless
     # of topic. Without this, RAG drops it and the agent falls back to
     # app_api /api/memory/add which fails with 422 on first attempt.
@@ -153,7 +130,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "serve_preset": "Launch a saved Cookbook serve preset by name. Reuses the exact tmux command + host the user already saved. Use for 'run stable diffusion 3.5', 'serve vllm-qwen', 'start the inpaint model' — preset-name matches the user's UI labels.",
     "adopt_served_model": "Register an existing tmux model server (one started manually or outside the cookbook flow) into Cookbook tracking AND add it as a chat endpoint. Use when the user (or a previous turn) launched something via ssh+tmux and now wants it visible in the UI, stoppable via stop_served_model, and usable in the model picker.",
     "list_cookbook_servers": "List the cookbook's configured servers (remote GPU boxes + local) and which is the current default. Use this BEFORE download_model/serve_model when the user didn't name a host — to decide where to run, or to ask the user which server when ambiguous. Downloads/serves default to the cookbook's selected server, NOT localhost.",
-    "app_api": "Generic loopback to ANY Odysseus internal endpoint. Use this when the user wants something the UI can do but there's no named tool for it. Covers calendar, gallery, library/documents, memory, notes, tasks, settings, research, compare, cookbook GPUs/state — every UI button hits some /api/* endpoint and you can hit it too. action='endpoints' with filter=<keyword> lists available endpoints. action='call' takes method+path+body. Hits same routes the UI uses — auth flows free. NOTE: themes are NOT an API endpoint — use the ui_control tool (create_theme / set_theme), not app_api. SESSIONS/CHATS: do NOT use app_api for these — GET /api/sessions returns EMPTY for tool calls (it's owner-filtered and tool calls authenticate as a different identity). EMAIL ACCOUNTS: do NOT use /api/email/accounts via app_api; use list_email_accounts, list_emails, and read_email instead. To list/rename/archive/delete/fork chats use the list_sessions and manage_session tools instead.",
+    "app_api": "Generic loopback to allowed Odysseus internal endpoints. Use this when the user wants something the UI can do but there's no named tool for it. Covers calendar, gallery, library/documents, memory, notes, tasks, settings, research, compare, cookbook GPUs/state — allowed UI buttons hit /api/* endpoints and you can hit them too. Sensitive auth/user/admin/shell paths and host-control Cookbook mutation routes are blocked; do NOT use app_api for shell commands, package installs, engine rebuilds, or PID signalling. Use named command tooling for shell commands. action='endpoints' with filter=<keyword> lists available endpoints. action='call' takes method+path+body. Hits same routes the UI uses — auth flows free. NOTE: themes are NOT an API endpoint — use the ui_control tool (create_theme / set_theme), not app_api. SESSIONS/CHATS: do NOT use app_api for these — GET /api/sessions returns EMPTY for tool calls (it's owner-filtered and tool calls authenticate as a different identity). EMAIL ACCOUNTS: do NOT use /api/email/accounts via app_api; use list_email_accounts, list_emails, and read_email instead. To list/rename/archive/delete/fork chats use the list_sessions and manage_session tools instead.",
     "edit_image": "Edit an image in the gallery: upscale (increase resolution), remove background (rembg), inpaint (fill selected area), or harmonize (blend edits). Specify image ID and action.",
     "trigger_research": "Start a deep research job on any topic — appears in the Deep Research sidebar, streams progress, produces a detailed report. Use for 'research X', 'look into Y', 'do deep research on Z', 'investigate'. NOT a scheduled task — it runs now and surfaces in the sidebar.",
 }
@@ -355,6 +332,10 @@ class ToolIndex:
         r"|\bat\s+\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b",  # at 7:30 am / at 7am
         re.I,
     )
+    _WEB_RE = re.compile(
+        r"https?://|www\.|\b(?:visit|open|fetch|check|read)\s+(?:this\s+)?(?:url|link|site|website|page)\b",
+        re.I,
+    )
 
     # Keyword hints: if the query mentions these words, force-include the tools.
     _KEYWORD_HINTS = {
@@ -362,7 +343,7 @@ class ToolIndex:
         # request (e.g. "visit <url> and tell me the title"), force-including the
         # whole email toolset and crowding out the relevant tools — the model then
         # believed it had only email tools and refused web/other tasks (#1707).
-        frozenset({"email", "mail", "gmail", "googlemail", "message", "send", "reply", "inbox", "unread"}):
+        frozenset({"email", "emails", "mail", "mails", "gmail", "googlemail", "message", "messages", "send", "reply", "replies", "inbox", "unread"}):
             {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control"},
         frozenset({"calendar", "event", "meeting", "schedule", "appointment"}):
             {"manage_calendar"},
@@ -426,14 +407,14 @@ class ToolIndex:
         # Document edit/update intent
         frozenset({"edit", "change", "fix", "rewrite", "update",
                    "replace", "add a", "tweak", "modify", "rename", "paragraph",
-                   "section", "line", "the doc", "the document", "in the doc"}):
+                   "section", "line", "the doc", "the docs", "the document", "the documents", "in the doc", "in the docs", "in document"}):
             {"edit_document", "update_document", "create_document", "suggest_document"},
         # Document deletion / management — include generic open/find/read/show
         # verbs + file/doc synonyms so "open my <X>", "find the <X>", "delete
         # <X>" reach manage_documents even without the literal word "document".
         frozenset({"delete this doc", "delete the doc", "delete document",
-                   "remove document", "remove the doc", "trash", "list documents",
-                   "list docs", "all my docs", "my documents", "my docs", "my files",
+                   "remove document", "remove the doc", "trash", "list document", "list documents",
+                   "list doc", "list docs", "all my docs", "my document", "my documents", "my doc", "my docs", "my files",
                    "open the", "open my", "open document", "open doc", "find the",
                    "find my", "find document", "read the", "read my", "show me the",
                    "show my", "the file", "my file", "the report", "the write-up",
@@ -516,6 +497,11 @@ class ToolIndex:
         # the agent can actually create the cron job instead of fumbling.
         if self._SCHEDULE_RE.search(ql):
             base.add("manage_tasks")
+        # URL/site requests need web tools even when embedding retrieval is
+        # stubbed/unavailable. Keep this structural, not always-on, so trivial
+        # prompts do not drag web schemas into the agent context.
+        if self._WEB_RE.search(query):
+            base.update({"web_search", "web_fetch"})
         return base
 
 

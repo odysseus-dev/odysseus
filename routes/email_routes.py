@@ -32,9 +32,10 @@ from email.mime.multipart import MIMEMultipart
 
 from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPException, Depends, Request
 from fastapi.responses import FileResponse
+from src.constants import DATA_DIR
 
 from src.llm_core import llm_call_async
-from src.upload_limits import read_upload_limited
+from src.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTES
 
 from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
@@ -47,6 +48,7 @@ from routes.email_helpers import (
     _extract_attachment_to_disk, _extract_html, _extract_text,
     _fetch_sender_thread_context, _pre_retrieve_context,
     _EMAIL_REPLY_SYS_PROMPT_BASE, _POOL_HOOKS,
+    _friendly_email_auth_error,
     SendEmailRequest, ExtractStyleRequest,
     ATTACHMENTS_DIR, COMPOSE_UPLOADS_DIR, SCHEDULED_DB,
     attachment_extract_dir, _email_cache_owner_clause,
@@ -56,7 +58,6 @@ from routes.email_pollers import _start_poller
 logger = logging.getLogger(__name__)
 
 ODYSSEUS_MAIL_ORIGIN = "odysseus-ui"
-EMAIL_COMPOSE_UPLOAD_MAX_BYTES = 25 * 1024 * 1024
 
 
 def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[str]:
@@ -2904,7 +2905,7 @@ def setup_email_routes():
         from pathlib import Path as _P
         import json as _json
         _slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
-        path = _P(f"data/email_urgency_state_{_slug}.json")
+        path = _P(DATA_DIR) / f"email_urgency_state_{_slug}.json"
         if not path.exists():
             return {"total_unread": 0, "total_urgent": 0, "max_score": 0, "per_uid": {}}
         try:
@@ -3162,7 +3163,7 @@ def setup_email_routes():
                     try: conn.logout()
                     except Exception: pass
             except Exception as e:
-                imap_result = {"ok": False, "error": str(e)[:200]}
+                imap_result = {"ok": False, "error": _friendly_email_auth_error("IMAP", imap_host, e)}
 
         smtp_host = (body.get("smtp_host") or "").strip()
         if smtp_host:
@@ -3184,7 +3185,7 @@ def setup_email_routes():
                     try: smtp.quit()
                     except Exception: pass
             except Exception as e:
-                smtp_result = {"ok": False, "error": str(e)[:200]}
+                smtp_result = {"ok": False, "error": _friendly_email_auth_error("SMTP", smtp_host, e)}
 
         return {
             "ok": imap_result["ok"] and (smtp_result is None or smtp_result["ok"]),

@@ -15,8 +15,9 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from src.auth_helpers import require_user
+from src.auth_helpers import require_authenticated_request, require_user
 from src.tool_implementations import do_manage_notes
+from src.constants import COOKBOOK_STATE_FILE
 
 
 COOKBOOK_READ_SCOPES = {"cookbook:read", "cookbook:launch"}
@@ -41,7 +42,9 @@ async def _as_owner(request: Request, owner: str, fn, *args, **kwargs):
     the scope-gated owner (not the "api" pseudo-user the bearer middleware sets).
     Restores the original value when done. Works for sync and async handlers."""
     orig = getattr(request.state, "current_user", None)
+    orig_api_token = getattr(request.state, "api_token", None)
     request.state.current_user = owner
+    request.state.api_token = False
     try:
         result = fn(*args, **kwargs)
         if asyncio.iscoroutine(result):
@@ -49,6 +52,13 @@ async def _as_owner(request: Request, owner: str, fn, *args, **kwargs):
         return result
     finally:
         request.state.current_user = orig
+        if orig_api_token is None:
+            try:
+                delattr(request.state, "api_token")
+            except AttributeError:
+                pass
+        else:
+            request.state.api_token = orig_api_token
 
 
 def _scope_owner(request: Request, allowed: set[str]) -> str:
@@ -146,7 +156,7 @@ def setup_codex_routes(
 
     @router.get("/plugin.zip")
     def plugin_zip(request: Request):
-        require_user(request)
+        require_authenticated_request(request)
         root = Path(__file__).resolve().parent.parent / "integrations" / "codex"
         if not root.exists():
             raise HTTPException(404, "Codex plugin bundle not found")
@@ -415,8 +425,8 @@ def setup_codex_routes(
 
     def _read_cookbook_state() -> dict:
         from pathlib import Path as _Path
-        import os as _os, json as _json
-        p = _Path(_os.environ.get("DATA_DIR", "data")) / "cookbook_state.json"
+        import json as _json
+        p = _Path(COOKBOOK_STATE_FILE)
         if not p.exists():
             return {}
         try:
@@ -724,7 +734,7 @@ def setup_codex_routes(
         import time as _t, json as _json
         from core.atomic_io import atomic_write_json
         from pathlib import Path as _Path
-        cookbook_state_path = _Path("/app/data/cookbook_state.json")
+        cookbook_state_path = _Path(COOKBOOK_STATE_FILE)
         try:
             state = _json.loads(cookbook_state_path.read_text(encoding="utf-8"))
         except Exception:
@@ -762,7 +772,7 @@ def setup_claude_routes() -> APIRouter:
 
     @router.get("/plugin.zip")
     def plugin_zip(request: Request):
-        require_user(request)
+        require_authenticated_request(request)
         # Only ship the skills/ subtree so extracting at ~/.claude/ doesn't dump
         # README.md or other bundle metadata into the user's claude config dir.
         skills_root = Path(__file__).resolve().parent.parent / "integrations" / "claude" / "skills"

@@ -24,7 +24,7 @@ _sd = types.ModuleType("src.database")
 _sd.ModelEndpoint = MagicMock()
 sys.modules.setdefault("src.database", _sd)
 
-from routes.research_routes import _owned_enabled_endpoint  # noqa: E402
+from routes.research_routes import _owned_enabled_endpoint, _resolve_endpoint_runtime  # noqa: E402
 
 
 class _Predicate:
@@ -129,3 +129,29 @@ def test_null_owner_is_legacy_single_user_noop():
     rows = [_ep("ep-x", "bob"), _ep("ep-y", "alice")]
     ep = _resolve(rows, None, "ep-x")
     assert ep is not None and ep.id == "ep-x"
+
+
+def test_runtime_resolution_uses_provider_auth_for_chatgpt_subscription(monkeypatch):
+    ep = SimpleNamespace(
+        id="ep-chatgpt",
+        owner="alice",
+        base_url="https://chatgpt.com/backend-api/codex",
+        api_key=None,
+        provider_auth_id="auth-1",
+        cached_models='["gpt-5.5"]',
+        hidden_models=None,
+    )
+
+    monkeypatch.setattr(
+        "src.chatgpt_subscription.resolve_runtime_credentials",
+        lambda auth_id, owner=None: {
+            "base_url": "https://chatgpt.com/backend-api/codex",
+            "api_key": "fresh-access-token",
+        },
+    )
+
+    url, model, headers = _resolve_endpoint_runtime(ep, owner="alice", model="")
+
+    assert url == "https://chatgpt.com/backend-api/codex/responses"
+    assert model == "gpt-5.5"
+    assert headers["Authorization"] == "Bearer fresh-access-token"
