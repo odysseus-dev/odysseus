@@ -1,5 +1,15 @@
+import sys
+for mod_name in ["src.endpoint_resolver", "src.database", "core.database"]:
+    _mod = sys.modules.get(mod_name)
+    if _mod is not None and not getattr(_mod, "__file__", None):
+        sys.modules.pop(mod_name, None)
+
 import json
 from types import SimpleNamespace
+
+from tests.helpers.import_state import clear_fake_endpoint_resolver_modules
+
+clear_fake_endpoint_resolver_modules("routes.chat_routes")
 
 from routes import chat_routes
 

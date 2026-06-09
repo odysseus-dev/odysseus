@@ -6,8 +6,9 @@ import json
 import logging
 import hashlib
 import threading
+import re
 from fastapi import HTTPException
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 from src.model_context import get_context_length, DEFAULT_CONTEXT
 from urllib.parse import urlparse
 
@@ -66,8 +67,108 @@ _host_fails: Dict[str, int] = {}
 _host_health_lock = threading.Lock()
 _model_activity: Dict[str, float] = {}
 
+_HARMONY_MARKER_RE = re.compile(
+    r"<\|channel\|>(analysis|final)"
+    r"|<\|start\|>(?:assistant|system|user|tool)?"
+    r"|<\|message\|>"
+    r"|<\|end\|>"
+    r"|<\|return\|>"
+    r"|<\|call\|>"
+)
+_HARMONY_MARKERS = (
+    "<|channel|>analysis",
+    "<|channel|>final",
+    "<|start|>assistant",
+    "<|start|>system",
+    "<|start|>user",
+    "<|start|>tool",
+    "<|start|>",
+    "<|message|>",
+    "<|end|>",
+    "<|return|>",
+    "<|call|>",
+)
+_HARMONY_MAX_MARKER_LEN = max(len(marker) for marker in _HARMONY_MARKERS)
+
+
+def _harmony_suffix_hold_len(text: str) -> int:
+    """Return how many trailing chars could be the start of a harmony marker."""
+    limit = min(len(text), _HARMONY_MAX_MARKER_LEN - 1)
+    for n in range(limit, 0, -1):
+        suffix = text[-n:]
+        if any(marker.startswith(suffix) for marker in _HARMONY_MARKERS):
+            return n
+    return 0
+
+
+class _HarmonyStreamRouter:
+    """Route OpenAI harmony analysis/final channels without leaking markers."""
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._seen_harmony = False
+        self._channel: Optional[str] = None
+        self._in_message = False
+
+    def feed(self, text: str) -> List[Tuple[str, bool]]:
+        if not text:
+            return []
+        self._buf += text
+        return self._drain(final=False)
+
+    def flush(self) -> List[Tuple[str, bool]]:
+        return self._drain(final=True)
+
+    def _append_text(self, out: List[Tuple[str, bool]], text: str) -> None:
+        if not text:
+            return
+        if not self._seen_harmony:
+            out.append((text, False))
+            return
+        if self._in_message:
+            out.append((text, self._channel == "analysis"))
+
+    def _handle_marker(self, match: re.Match[str]) -> None:
+        marker = match.group(0)
+        self._seen_harmony = True
+        if marker.startswith("<|channel|>"):
+            self._channel = match.group(1)
+            self._in_message = False
+        elif marker == "<|message|>":
+            self._in_message = True
+        else:
+            self._in_message = False
+            if marker in {"<|end|>", "<|return|>", "<|call|>"}:
+                self._channel = None
+
+    def _drain(self, *, final: bool) -> List[Tuple[str, bool]]:
+        out: List[Tuple[str, bool]] = []
+        while True:
+            match = _HARMONY_MARKER_RE.search(self._buf)
+            if not match:
+                break
+            self._append_text(out, self._buf[:match.start()])
+            self._handle_marker(match)
+            self._buf = self._buf[match.end():]
+
+        hold = 0 if final else _harmony_suffix_hold_len(self._buf)
+        emit = self._buf if hold == 0 else self._buf[:-hold]
+        self._buf = "" if hold == 0 else self._buf[-hold:]
+        self._append_text(out, emit)
+        return out
+
+
+def _stream_delta_event(text: str, *, thinking: bool = False) -> str:
+    payload = {"delta": text}
+    if thinking:
+        payload["thinking"] = True
+    return f"data: {json.dumps(payload)}\n\n"
+
 def _model_activity_key(url: str, model: str) -> str:
-    return f"{(url or '').strip().rstrip()}|{(model or '').strip()}"
+    return f"{(url or '').strip()}|{(model or '').strip()}"
+
+def _same_model_identity(left: str, right: str) -> bool:
+    return (left or "").strip().lower() == (right or "").strip().lower()
 
 def note_model_activity(url: str, model: str):
     """Record that a real upstream request used this endpoint/model."""
@@ -129,7 +230,10 @@ def _get_http_client() -> httpx.AsyncClient:
     """Return process-wide AsyncClient. Per-request timeout is passed at call time."""
     global _http_client
     if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(limits=_http_limits, http2=False)
+        from src.tls_overrides import llm_verify
+        _http_client = httpx.AsyncClient(
+            limits=_http_limits, http2=False, verify=llm_verify(),
+        )
     return _http_client
 
 def _get_cached_response(cache_key: str) -> Optional[str]:
@@ -166,8 +270,28 @@ def _is_ollama_native_url(url: str) -> bool:
     path = (parsed.path or "").rstrip("/")
     if _host_match(url, "ollama.com"):
         return True
+    if path.startswith("/v1"):
+        return False
     local_ollama_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or parsed.port == 11434
-    return local_ollama_host and (path == "/api" or path.startswith("/api/"))
+    return local_ollama_host and (path == "" or path == "/api" or path.startswith("/api/"))
+
+
+def _is_ollama_openai_compat_url(url: str) -> bool:
+    """Return True for local Ollama's OpenAI-compatible /v1 surface.
+
+    Mirrors the host detection used by ``_is_ollama_native_url`` so that the
+    two helpers stay in lockstep: a localhost Ollama on a non-default port
+    (custom ``OLLAMA_HOST``, reverse proxy, container port remap) is treated
+    the same way here as it is on the native ``/api`` path.
+    """
+    try:
+        parsed = urlparse(url or "")
+    except Exception:
+        return False
+    host = parsed.hostname or ""
+    path = (parsed.path or "").rstrip("/")
+    local_ollama_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or parsed.port == 11434
+    return local_ollama_host and (path == "/v1" or path.startswith("/v1/"))
 
 
 def _ollama_api_root(url: str) -> str:
@@ -183,6 +307,8 @@ def _ollama_api_root(url: str) -> str:
         return url[: -len("/generate")]
     if path.endswith("/api"):
         return url
+    if path == "":
+        return url + "/api"
     if _host_match(url, "ollama.com"):
         root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
         return root.rstrip("/") + "/api"
@@ -310,10 +436,22 @@ def _detect_provider(url: str) -> str:
         return "ollama"
     if _host_match(url, "anthropic.com"):
         return "anthropic"
+    if _host_match(url, "opencode.ai/zen/go"):
+        return "opencode-go"
+    if _host_match(url, "opencode.ai/zen"):
+        return "opencode-zen"
     if _host_match(url, "openrouter.ai"):
         return "openrouter"
     if _host_match(url, "groq.com"):
         return "groq"
+    if _host_match(url, "nvidia.com"):
+        return "nvidia"
+    from src.chatgpt_subscription import is_chatgpt_subscription_base
+    if is_chatgpt_subscription_base(url):
+        return "chatgpt-subscription"
+    from src.copilot import is_copilot_base
+    if is_copilot_base(url):
+        return "copilot"
     return "openai"
 
 
@@ -324,6 +462,14 @@ def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str
     if provider == "openrouter":
         h.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
         h.setdefault("X-OpenRouter-Title", "Odysseus")
+    if provider == "copilot":
+        # Ensure the Copilot-required headers are present even when the caller
+        # didn't pass pre-built headers (e.g. model listing). build_headers()
+        # already injects these for the live chat path; setdefault keeps any
+        # request-specific values (x-initiator/vision) the caller set.
+        from src.copilot import copilot_headers
+        for k, v in copilot_headers(None).items():
+            h.setdefault(k, v)
     return h
 
 
@@ -336,9 +482,16 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "x.ai"): return "xAI"
     if _host_match(url, "openai.com"): return "OpenAI"
     if _host_match(url, "openrouter.ai"): return "OpenRouter"
+    if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
+    if _host_match(url, "opencode.ai/zen"): return "OpenCode Zen"
     if _host_match(url, "groq.com"): return "Groq"
+    from src.chatgpt_subscription import is_chatgpt_subscription_base
+    if is_chatgpt_subscription_base(url): return "ChatGPT Subscription"
+    from src.copilot import is_copilot_base
+    if is_copilot_base(url): return "GitHub Copilot"
     if _host_match(url, "mistral.ai"): return "Mistral"
     if _host_match(url, "deepseek.com"): return "DeepSeek"
+    if _host_match(url, "nvidia.com"): return "NVIDIA"
     if _host_match(url, "googleapis.com"): return "Google"
     if _host_match(url, "together.xyz", "together.ai"): return "Together"
     if _host_match(url, "fireworks.ai"): return "Fireworks"
@@ -350,6 +503,77 @@ def _provider_label(url: str) -> str:
     if host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
         return "local endpoint"
     return host or "provider"
+
+
+def _normalize_chatgpt_subscription_url(url: str) -> str:
+    base = (url or "").strip().rstrip("/")
+    if base.endswith("/responses"):
+        return base
+    return base + "/responses"
+
+
+def _message_content_as_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if not isinstance(part, dict):
+                if part:
+                    parts.append(str(part))
+                continue
+            if isinstance(part.get("text"), str):
+                parts.append(part["text"])
+                continue
+            if isinstance(part.get("content"), str):
+                parts.append(part["content"])
+        return "\n".join(parts)
+    return "" if content is None else str(content)
+
+
+def _chatgpt_subscription_instructions(messages: List[Dict]) -> str:
+    instructions = [
+        _message_content_as_text(msg.get("content")).strip()
+        for msg in messages or []
+        if (msg.get("role") or "") == "system"
+    ]
+    instructions = [part for part in instructions if part]
+    if instructions:
+        return "\n\n".join(instructions)
+    return "You are a helpful AI assistant."
+
+
+def _build_chatgpt_responses_payload(
+    model: str,
+    messages: List[Dict],
+    temperature: float,
+    max_tokens: int,
+    *,
+    stream: bool = False,
+) -> Dict:
+    from src.chatgpt_subscription import build_responses_input
+
+    conversation = [msg for msg in (messages or []) if (msg.get("role") or "") != "system"]
+    payload: Dict = {
+        "model": model,
+        "instructions": _chatgpt_subscription_instructions(messages),
+        "input": build_responses_input(conversation),
+        "stream": stream,
+        "store": False,
+    }
+    if not _restricts_temperature(model):
+        payload["temperature"] = temperature
+    if max_tokens and max_tokens > 0:
+        payload["max_output_tokens"] = max_tokens
+    return payload
+
+
+def _format_chatgpt_subscription_error(status_code: int, text: str) -> str:
+    if status_code in (401, 403):
+        return "ChatGPT Subscription credentials expired or were rejected. Reconnect the provider."
+    if status_code == 429:
+        return "ChatGPT Subscription quota or rate limit was reached. Retry after the upstream limit resets."
+    return _format_upstream_error(status_code, text, "https://chatgpt.com/backend-api/codex")
 
 
 def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:
@@ -420,7 +644,7 @@ def _restricts_temperature(model: str) -> bool:
     return any(m.startswith(p) or f"/{p}" in m for p in _FIXED_TEMPERATURE_MODELS)
 
 # Models that support structured thinking — may output </think> without opening tag
-_THINKING_MODEL_PATTERNS = ("qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax", "m2-reap")
+_THINKING_MODEL_PATTERNS = ("qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax", "m2-reap", "gemma")
 
 def _supports_thinking(model: str) -> bool:
     """Check if model supports structured thinking output."""
@@ -478,7 +702,7 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
     chat_messages = []
     for m in messages:
         if m.get("role") == "system":
-            system_parts.append(m["content"])
+            system_parts.append(m.get("content") or "")
         elif m.get("role") == "tool":
             # Convert OpenAI tool result to Anthropic format
             chat_messages.append({
@@ -512,6 +736,12 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
             # Convert multimodal content (image_url → image) for Anthropic
             content = _convert_openai_content_to_anthropic(m["content"])
             chat_messages.append({"role": m["role"], "content": content})
+    # Anthropic only accepts temperature in [0.0, 1.0] and 400s on anything above
+    # 1.0. Clamp here (in the Anthropic builder only) so presets/sliders that use
+    # the wider OpenAI 0.0-2.0 range — e.g. the shipped "Nietzsche" preset at 1.2
+    # — don't hard-break every Claude request. OpenAI's own path is left untouched.
+    if temperature is not None:
+        temperature = max(0.0, min(temperature, 1.0))
     payload = {
         "model": model,
         "messages": chat_messages,
@@ -562,11 +792,32 @@ def _build_anthropic_headers(headers):
     return h
 
 def _parse_anthropic_response(data: dict) -> str:
-    """Extract text from Anthropic response."""
-    for block in data.get("content", []):
-        if block.get("type") == "text":
-            return block.get("text", "")
-    return ""
+    """Extract text from an Anthropic response.
+
+    The Messages API `content` is an array that can hold more than one text
+    block (e.g. text split around a tool_use block, or citation-segmented
+    text). Concatenate them all instead of returning only the first, which
+    silently dropped the rest of the reply.
+    """
+    return "".join(
+        block.get("text", "")
+        for block in data.get("content", [])
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
+
+
+def _as_content_blocks(content) -> List[Dict]:
+    """Coerce a message `content` into a list of content blocks.
+
+    A list (multimodal: text + image parts) passes through; a non-empty string
+    becomes a single text block; None/empty yields no blocks. Used when merging
+    consecutive user messages so multimodal content isn't str()-ed away.
+    """
+    if isinstance(content, list):
+        return content
+    if content:
+        return [{"type": "text", "text": str(content)}]
+    return []
 
 
 def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
@@ -603,43 +854,109 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
         elif "content" in item:
             cleaned.append(item)
 
-    # Merge consecutive user messages to satisfy strict role alternation requirements.
-    merged = []
-    for item in cleaned:
+    # Repair tool-call adjacency before sending to any OpenAI-compatible
+    # provider. Trimming/compaction/retries can leave `role:"tool"` messages
+    # without their immediately-preceding assistant `tool_calls` parent, which
+    # DeepSeek rejects with:
+    # "Messages with role 'tool' must be a response to a preceding message with
+    # 'tool_calls'". Also strip unanswered assistant tool_calls; some providers
+    # reject those as incomplete conversations.
+    repaired: List[Dict] = []
+    i = 0
+    while i < len(cleaned):
+        msg = cleaned[i]
+        role = msg.get("role")
+
+        if role == "tool":
+            # Orphan tool result. There is no valid assistant tool_calls parent
+            # immediately before this batch, so it cannot be sent.
+            logger.debug("Dropping orphan tool message before provider request")
+            i += 1
+            continue
+
+        tool_calls = msg.get("tool_calls") if role == "assistant" else None
+        if not tool_calls:
+            repaired.append(msg)
+            i += 1
+            continue
+
+        call_ids = [
+            str(tc.get("id"))
+            for tc in tool_calls
+            if isinstance(tc, dict) and tc.get("id")
+        ]
+        expected = set(call_ids)
+        answered_ids = []
+        tool_batch = []
+        j = i + 1
+        while j < len(cleaned) and cleaned[j].get("role") == "tool":
+            tid = str(cleaned[j].get("tool_call_id") or "")
+            if tid in expected and tid not in answered_ids:
+                answered_ids.append(tid)
+                tool_batch.append(cleaned[j])
+            else:
+                logger.debug("Dropping unmatched/duplicate tool message before provider request")
+            j += 1
+
+        if not tool_batch:
+            plain = {k: v for k, v in msg.items() if k != "tool_calls"}
+            if (plain.get("content") or "").strip():
+                repaired.append(plain)
+            else:
+                logger.debug("Dropping unanswered assistant tool_calls before provider request")
+            i = j
+            continue
+
+        answered = set(answered_ids)
+        pruned_calls = [
+            tc for tc in tool_calls
+            if isinstance(tc, dict) and str(tc.get("id")) in answered
+        ]
+        fixed = dict(msg)
+        fixed["tool_calls"] = pruned_calls
+        if "content" not in fixed:
+            fixed["content"] = None
+        repaired.append(fixed)
+        repaired.extend(tool_batch)
+        if len(pruned_calls) != len(tool_calls):
+            logger.debug("Pruned unanswered assistant tool_calls before provider request")
+        i = j
+
+    # Merge consecutive user messages to satisfy strict role alternation
+    # requirements after invalid tool-call fragments have been removed.
+    merged: List[Dict] = []
+    for item in repaired:
         if not merged:
             merged.append(item)
             continue
 
         last = merged[-1]
-        if last["role"] == "user" and item["role"] == "user":
+        if last.get("role") == "user" and item.get("role") == "user":
             last_copy = dict(last)
-
-            # Content:
-            last_content = last_copy.get("content")
-            item_content = item.get("content")
-
-            # Convert contents to string if they exist, or keep None/empty
-            last_str = str(last_content) if last_content is not None else ""
-            item_str = str(item_content) if item_content is not None else ""
-
-            if last_str and item_str:
-                new_content = f"{last_str}\n\n{item_str}"
-            elif last_str:
-                new_content = last_str
+            lc = last_copy.get("content")
+            ic = item.get("content")
+            if isinstance(lc, list) or isinstance(ic, list):
+                # Preserve multimodal content blocks (e.g. an image part) by
+                # concatenating the block lists. str()-ing a list turned an
+                # image message into its Python repr and dropped the image.
+                merged_blocks = _as_content_blocks(lc) + _as_content_blocks(ic)
+                if merged_blocks:
+                    last_copy["content"] = merged_blocks
+                else:
+                    last_copy.pop("content", None)
             else:
-                new_content = item_str if item_str else None
-
-            if new_content is not None:
-                last_copy["content"] = new_content
-            elif "content" in last_copy:
-                del last_copy["content"]
-
+                last_str = str(lc) if lc is not None else ""
+                item_str = str(ic) if ic is not None else ""
+                new_content = "\n\n".join(part for part in (last_str, item_str) if part)
+                if new_content:
+                    last_copy["content"] = new_content
+                else:
+                    last_copy.pop("content", None)
             merged[-1] = last_copy
         else:
             merged.append(item)
 
     return merged
-
 
 def _normalize_anthropic_url(url: str) -> str:
     """Ensure Anthropic URL points to /v1/messages."""
@@ -650,8 +967,92 @@ def _normalize_anthropic_url(url: str) -> str:
         return url + "/messages"
     return url + "/v1/messages"
 
-def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT, headers: Optional[Dict] = None) -> List[str]:
+
+def _model_list_base(url: str) -> str:
+    """Normalize model/chat URLs to the configured endpoint base."""
+    base = (url or "").strip().rstrip("/")
+    for suffix in ("/models", "/chat/completions", "/completions", "/v1/messages", "/responses"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)].rstrip("/")
+    for suffix in ("/chat", "/tags", "/generate"):
+        if base.endswith("/api" + suffix):
+            base = base[: -len(suffix)].rstrip("/")
+    return base
+
+
+def _parse_model_cache(raw) -> List[str]:
+    if not raw:
+        return []
+    try:
+        models = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return []
+    if not isinstance(models, list):
+        return []
+    out = []
+    seen = set()
+    for item in models:
+        mid = str(item or "").strip()
+        if not mid or mid in seen:
+            continue
+        out.append(mid)
+        seen.add(mid)
+    return out
+
+
+def _configured_cached_model_ids(
+    endpoint_url: str,
+    *,
+    owner: Optional[str] = None,
+    endpoint_id: Optional[str] = None,
+) -> List[str]:
+    """Return cached models for a configured endpoint matching endpoint_url."""
+    target = _model_list_base(endpoint_url)
+    if not target:
+        return []
+    try:
+        from src.database import SessionLocal, ModelEndpoint
+    except Exception:
+        return []
+    db = SessionLocal()
+    try:
+        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        if endpoint_id:
+            q = q.filter(ModelEndpoint.id == endpoint_id)
+        if owner:
+            from src.auth_helpers import owner_filter
+            q = owner_filter(q, ModelEndpoint, owner)
+        rows = q.all()
+        for ep in rows:
+            if _model_list_base(getattr(ep, "base_url", "")) != target:
+                continue
+            models = _parse_model_cache(getattr(ep, "cached_models", None) or getattr(ep, "models", None))
+            if not models:
+                continue
+            hidden = set(_parse_model_cache(getattr(ep, "hidden_models", None)))
+            return [m for m in models if m not in hidden]
+    except Exception:
+        return []
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+    return []
+
+
+def list_model_ids(
+    base_chat_url: str,
+    timeout: int = LLMConfig.DEFAULT_TIMEOUT,
+    headers: Optional[Dict] = None,
+    *,
+    owner: Optional[str] = None,
+    endpoint_id: Optional[str] = None,
+) -> List[str]:
     """List available model IDs from an endpoint."""
+    cached = _configured_cached_model_ids(base_chat_url, owner=owner, endpoint_id=endpoint_id)
+    if cached:
+        return cached
     provider = _detect_provider(base_chat_url)
     if provider == "anthropic":
         return list(ANTHROPIC_MODELS)
@@ -662,7 +1063,9 @@ def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT,
         if provider == "ollama":
             models_url = _ollama_api_root(base_chat_url) + "/tags"
         else:
-            models_url = base_chat_url.replace("/chat/completions", "/models")
+            from src.endpoint_resolver import build_models_url
+
+            models_url = build_models_url(base_chat_url)
         r = httpx.get(models_url, headers=h, timeout=timeout)
         r.raise_for_status()
         data = r.json()
@@ -685,9 +1088,16 @@ def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT,
             pass
         return []
 
-def normalize_model_id(endpoint_url: str, requested: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT) -> Optional[str]:
+def normalize_model_id(
+    endpoint_url: str,
+    requested: str,
+    timeout: int = LLMConfig.DEFAULT_TIMEOUT,
+    *,
+    owner: Optional[str] = None,
+    endpoint_id: Optional[str] = None,
+) -> Optional[str]:
     """Normalize a model ID to match available models."""
-    avail = list_model_ids(endpoint_url, timeout)
+    avail = list_model_ids(endpoint_url, timeout, owner=owner, endpoint_id=endpoint_id)
     if not avail:
         return None
     if requested in avail:
@@ -722,7 +1132,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     non_sys = []
     for m in messages_copy:
         if m.get("role") == "system":
-            sys_parts.append(m["content"])
+            sys_parts.append(m.get('content') or '')
         else:
             non_sys.append(m)
     if sys_parts:
@@ -749,6 +1159,9 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         )
     else:
         target_url = url
+        if provider == "copilot":
+            from src.copilot import apply_request_headers
+            apply_request_headers(h, messages_copy)
         payload = {
             "model": model,
             "messages": messages_copy,
@@ -773,11 +1186,37 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         elif provider == "ollama":
             response = _parse_ollama_response(data)
         else:
-            response = data["choices"][0]["message"]["content"]
+            msg = data["choices"][0]["message"]
+            response = msg.get("content") or msg.get("reasoning_content") or ""
         _set_cached_response(cache_key, response)
         return response
     except Exception:
         raise HTTPException(502, f"Unexpected schema from {target_url}: {str(data)[:400]}")
+
+
+def _dedupe_candidates(candidates):
+    """Filter malformed entries and drop a later repeat of an already-seen
+    ``(url, model)`` route, preserving order (first occurrence wins).
+
+    The chain is the primary target followed by the configured fallbacks, so a
+    fallback that repeats the session's current model — a common misconfiguration,
+    since callers prepend the live ``(url, model)`` to ``default_model_fallbacks``
+    — would otherwise make the chain re-attempt the very route that just failed:
+    a wasted round-trip plus a spurious ``fallback`` notice for a switch that did
+    not happen. Headers are not part of the key; the first tuple (with its
+    headers) is the one kept.
+    """
+    seen = set()
+    out = []
+    for c in candidates or []:
+        if not c or not c[0] or not c[1]:
+            continue
+        key = (c[0], c[1])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(c)
+    return out
 
 
 def llm_call_with_fallback(candidates, messages, **kwargs) -> str:
@@ -788,7 +1227,7 @@ def llm_call_with_fallback(candidates, messages, **kwargs) -> str:
     the next candidate. The dead-host cooldown inside `llm_call` makes repeat
     attempts at an offline primary effectively free.
     """
-    cands = [c for c in (candidates or []) if c and c[0] and c[1]]
+    cands = _dedupe_candidates(candidates)
     if not cands:
         raise HTTPException(503, "No model endpoint configured")
     last_err = None
@@ -805,7 +1244,7 @@ def llm_call_with_fallback(candidates, messages, **kwargs) -> str:
 
 async def llm_call_async_with_fallback(candidates, messages, **kwargs) -> str:
     """Async variant of `llm_call_with_fallback` — same semantics."""
-    cands = [c for c in (candidates or []) if c and c[0] and c[1]]
+    cands = _dedupe_candidates(candidates)
     if not cands:
         raise HTTPException(503, "No model endpoint configured")
     last_err = None
@@ -840,7 +1279,7 @@ async def llm_call_async(
     non_sys = []
     for m in messages_copy:
         if m.get("role") == "system":
-            sys_parts.append(m["content"])
+            sys_parts.append(m.get('content') or '')
         else:
             non_sys.append(m)
     if sys_parts:
@@ -853,6 +1292,49 @@ async def llm_call_async(
     if cached_response:
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
+
+    if provider == "chatgpt-subscription":
+        # ChatGPT/Codex requires streamed Responses requests even for callers
+        # that want a plain string (auto-title, memory extraction, etc.).
+        # Reuse stream_llm's validated Codex SSE path and collect deltas.
+        parts: List[str] = []
+        async for chunk in stream_llm(
+            url,
+            model,
+            messages_copy,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            headers=headers,
+            timeout=timeout,
+        ):
+            event_is_error = False
+            for line in str(chunk).splitlines():
+                if line.startswith("event:"):
+                    event_is_error = line[6:].strip() == "error"
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                raw = line[5:].strip()
+                if not raw:
+                    continue
+                if raw == "[DONE]":
+                    response = "".join(parts)
+                    _set_cached_response(cache_key, response)
+                    return response
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if event_is_error or data.get("error") or (data.get("status") and data.get("text")):
+                    status = int(data.get("status") or 502)
+                    text = data.get("text") or data.get("error") or "ChatGPT Subscription request failed"
+                    raise HTTPException(status, text)
+                delta = data.get("delta")
+                if isinstance(delta, str):
+                    parts.append(delta)
+        response = "".join(parts)
+        _set_cached_response(cache_key, response)
+        return response
 
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
@@ -870,6 +1352,9 @@ async def llm_call_async(
     else:
         target_url = url
         h = _provider_headers(provider, headers)
+        if provider == "copilot":
+            from src.copilot import apply_request_headers
+            apply_request_headers(h, messages_copy)
         payload = {
             "model": model,
             "messages": messages_copy,
@@ -880,6 +1365,9 @@ async def llm_call_async(
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
+        # Suppress thinking for qwen3/gemma4 on Ollama /v1 — same as stream_llm.
+        if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
+            payload["think"] = False
 
     if _is_host_dead(target_url):
         raise HTTPException(503, f"Upstream {_host_key(target_url)} marked unreachable (cooldown active)")
@@ -900,6 +1388,9 @@ async def llm_call_async(
                     f"LLM async call to {target_url} failed in {duration:.2f}s "
                     f"(attempt {attempt}): HTTP {r.status_code} {friendly}"
                 )
+                if r.status_code in (429, 502, 503, 504) and attempt < max_retries:
+                    await asyncio.sleep(LLMConfig.RETRY_DELAY)
+                    continue
                 raise HTTPException(r.status_code, friendly)
             logger.info(f"LLM async call to {target_url} succeeded in {duration:.2f}s (attempt {attempt})")
             _clear_host_dead(target_url)
@@ -910,7 +1401,8 @@ async def llm_call_async(
                 elif provider == "ollama":
                     response = _parse_ollama_response(data)
                 else:
-                    response = data["choices"][0]["message"]["content"]
+                    msg = data["choices"][0]["message"]
+                    response = msg.get("content") or msg.get("reasoning_content") or ""
                 _set_cached_response(cache_key, response)
                 return response
             except Exception:
@@ -920,7 +1412,9 @@ async def llm_call_async(
             duration = time.time() - start
             _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
             logger.warning(f"LLM async connect to {target_url} failed after {duration:.2f}s: {e}{_tail}")
-            raise HTTPException(503, f"Cannot reach {_host_key(target_url)}: {e}")
+            if _cooled or attempt >= max_retries:
+                raise HTTPException(503, f"Cannot reach {_host_key(target_url)}: {e}")
+            await asyncio.sleep(LLMConfig.RETRY_DELAY)
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
             duration = time.time() - start
             logger.warning(f"LLM async call attempt {attempt} failed after {duration:.2f}s: {e}")
@@ -949,7 +1443,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     non_sys = []
     for m in messages_copy:
         if m.get("role") == "system":
-            sys_parts.append(m["content"])
+            sys_parts.append(m.get('content') or '')
         else:
             non_sys.append(m)
     if sys_parts:
@@ -970,6 +1464,10 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             model, messages_copy, temperature, max_tokens,
             stream=True, tools=tools, num_ctx=get_context_length(url, model),
         )
+    elif provider == "chatgpt-subscription":
+        target_url = _normalize_chatgpt_subscription_url(url)
+        h = _provider_headers(provider, headers)
+        payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
     else:
         target_url = url
         payload = {
@@ -987,7 +1485,15 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             payload[tok_key] = max_tokens
         if tools:
             payload["tools"] = tools
+        # For Ollama's OpenAI-compat /v1 endpoint with thinking models (qwen3,
+        # gemma4, etc.), suppress thinking so tool calls aren't swallowed inside
+        # <think> blocks. Ollama /v1 accepts "think": false as a top-level param.
+        if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
+            payload["think"] = False
         h = _provider_headers(provider, headers)
+        if provider == "copilot":
+            from src.copilot import apply_request_headers
+            apply_request_headers(h, messages_copy)
 
     # Short connect timeout: a reachable peer answers SYN in <100ms even on
     # Tailscale. 3s is plenty; 30s let one dead upstream wedge the UI.
@@ -998,9 +1504,72 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         return
     note_model_activity(target_url, model)
 
+    # ── ChatGPT Subscription / Codex Responses streaming ──
+    if provider == "chatgpt-subscription":
+        event_name = ""
+        input_tokens = 0
+        output_tokens = 0
+        try:
+            client = _get_http_client()
+            async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
+                _clear_host_dead(target_url)
+                if r.status_code != 200:
+                    raw = (await r.aread()).decode(errors="replace")
+                    friendly = _format_chatgpt_subscription_error(r.status_code, raw)
+                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    return
+                async for line in r.aiter_lines():
+                    if not line:
+                        continue
+                    if line.startswith("event:"):
+                        event_name = line[6:].strip()
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+                    raw = line[5:].strip()
+                    if not raw:
+                        continue
+                    try:
+                        data = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    evt = data.get("type") or event_name
+                    if evt == "response.output_text.delta":
+                        delta = data.get("delta") or ""
+                        if delta:
+                            yield f'data: {json.dumps({"delta": delta})}\n\n'
+                    elif evt == "response.completed":
+                        usage = (data.get("response") or {}).get("usage") or data.get("usage") or {}
+                        input_tokens = usage.get("input_tokens") or usage.get("prompt_tokens") or input_tokens
+                        output_tokens = usage.get("output_tokens") or usage.get("completion_tokens") or output_tokens
+                        if input_tokens or output_tokens:
+                            yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": input_tokens, "output_tokens": output_tokens}})}\n\n'
+                        yield "data: [DONE]\n\n"
+                        return
+                    elif evt in ("response.failed", "error"):
+                        err = data.get("error") or (data.get("response") or {}).get("error") or {}
+                        text = err.get("message") if isinstance(err, dict) else str(err or "ChatGPT Subscription request failed")
+                        yield f'event: error\ndata: {json.dumps({"status": 502, "text": text})}\n\n'
+                        return
+                yield "data: [DONE]\n\n"
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            _cooled = _mark_host_dead(target_url)
+            _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
+            logger.warning(f"ChatGPT Subscription stream connect to {target_url} failed: {e}{_tail}")
+            yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
+        except httpx.ReadTimeout:
+            yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
+        except httpx.NetworkError:
+            yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
+        except Exception as e:
+            logger.error(f"ChatGPT Subscription stream error: {e}")
+            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+        return
+
     # ── Native Ollama streaming ──
     if provider == "ollama":
         _ollama_tool_calls: List[Dict] = []
+        _harmony_router = _HarmonyStreamRouter()
         try:
             client = _get_http_client()
             async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
@@ -1020,10 +1589,11 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                     message = j.get("message") or {}
                     thinking = message.get("thinking") or ""
                     if thinking:
-                        yield f'data: {json.dumps({"delta": thinking, "thinking": True})}\n\n'
+                        yield _stream_delta_event(thinking, thinking=True)
                     content = message.get("content") or ""
                     if content:
-                        yield f'data: {json.dumps({"delta": content})}\n\n'
+                        for part, is_thinking in _harmony_router.feed(content):
+                            yield _stream_delta_event(part, thinking=is_thinking)
                     for tc in message.get("tool_calls") or []:
                         fn = tc.get("function") or {}
                         if fn.get("name"):
@@ -1033,12 +1603,16 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                 "arguments": json.dumps(fn.get("arguments") or {}),
                             })
                     if j.get("done"):
+                        for part, is_thinking in _harmony_router.flush():
+                            yield _stream_delta_event(part, thinking=is_thinking)
                         if _ollama_tool_calls:
                             yield f'data: {json.dumps({"type": "tool_calls", "calls": _ollama_tool_calls})}\n\n'
                         if j.get("prompt_eval_count") is not None or j.get("eval_count") is not None:
                             yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": j.get("prompt_eval_count", 0), "output_tokens": j.get("eval_count", 0)}})}\n\n'
                         yield "data: [DONE]\n\n"
                         return
+                for part, is_thinking in _harmony_router.flush():
+                    yield _stream_delta_event(part, thinking=is_thinking)
                 yield "data: [DONE]\n\n"
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             _cooled = _mark_host_dead(target_url)
@@ -1072,9 +1646,13 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                     yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
                     return
                 async for line in r.aiter_lines():
-                    if not line or not line.startswith("data: "):
+                    # SSE allows "data:value" with no space after the colon
+                    # (the space is optional per the spec). Some gateways and
+                    # local servers omit it; gating on "data: " dropped their
+                    # entire stream.
+                    if not line or not line.startswith("data:"):
                         continue
-                    data = line[6:].strip()
+                    data = line[5:].strip()
                     if not data or not data.startswith("{"):
                         continue
                     try:
@@ -1165,6 +1743,12 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     # can detect thinking-in-progress (some models output </think> but no <think>)
     _thinking_model = _supports_thinking(model)
     _first_content_sent = False
+    _in_think_tag = False        # True while consuming <think>…</think> content
+    _think_open_stripped = False  # opening <think> tag already removed
+    _harmony_router = _HarmonyStreamRouter()
+    _harmony_active = False       # sticky: gpt-oss harmony <|channel|> stream detected
+    _actual_model = ""
+    _actual_model_announced = False
 
     def _emit_tool_calls():
         """Build the tool_calls event string if any were accumulated."""
@@ -1172,6 +1756,22 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             return None
         calls = [_tc_acc[i] for i in sorted(_tc_acc)]
         return f'data: {json.dumps({"type": "tool_calls", "calls": calls})}\n\n'
+
+    def _format_routed_content(parts: List[Tuple[str, bool]]) -> List[str]:
+        nonlocal _first_content_sent
+        events = []
+        for part, is_thinking in parts:
+            if is_thinking:
+                events.append(_stream_delta_event(part, thinking=True))
+                continue
+            # Some thinking backends start normal content with a stray closing
+            # tag. Repair only that shape; do not wrap every first token for
+            # model families like MiniMax, which often stream ordinary answers.
+            if _thinking_model and not _first_content_sent and part.lstrip().lower().startswith("</think"):
+                part = "<think>" + part
+            _first_content_sent = True
+            events.append(_stream_delta_event(part))
+        return events
 
     try:
         client = _get_http_client()
@@ -1187,9 +1787,14 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                 if not line:
                     continue
 
-                if line.startswith("data: "):
-                    data = line[6:].strip()
+                # SSE allows "data:value" with no space after the colon; gating
+                # on "data: " silently dropped content + usage from providers
+                # that omit it.
+                if line.startswith("data:"):
+                    data = line[5:].strip()
                     if data == "[DONE]":
+                        for event in _format_routed_content(_harmony_router.flush()):
+                            yield event
                         tc_event = _emit_tool_calls()
                         if tc_event:
                             yield tc_event
@@ -1200,11 +1805,33 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                         if data.strip():
                             if data.startswith("{"):
                                 j = json.loads(data)
+                                chunk_model = j.get("model")
+                                if isinstance(chunk_model, str) and chunk_model.strip():
+                                    _actual_model = chunk_model.strip()
+                                    if (
+                                        not _actual_model_announced
+                                        and not _same_model_identity(_actual_model, model)
+                                    ):
+                                        _actual_model_announced = True
+                                        yield f'data: {json.dumps({"type": "model_actual", "requested_model": model, "model": _actual_model})}\n\n'
                                 # Usage chunk (from stream_options)
                                 _choices = j.get("choices") or []
-                                _delta0 = _choices[0].get("delta") if _choices else None
-                                if "usage" in j and _delta0 in (None, {}, {"content": None}):
-                                    u = j["usage"]
+                                _delta0 = _choices[0].get("delta") if (_choices and _choices[0] is not None) else None
+                                # Capture usage whenever the chunk carries it and
+                                # the delta has no actual output. Some gateways /
+                                # local servers attach usage to the FINAL delta,
+                                # which also carries role/finish_reason (so it is
+                                # not exactly None/{}/{"content": None}); gating on
+                                # those exact shapes discarded their token counts.
+                                _delta_has_output = isinstance(_delta0, dict) and (
+                                    _delta0.get("content")
+                                    or _delta0.get("reasoning_content")
+                                    or _delta0.get("reasoning")
+                                    or _delta0.get("thinking")
+                                    or _delta0.get("tool_calls")
+                                )
+                                if "usage" in j and not _delta_has_output:
+                                    u = j["usage"] or {}
                                     _usage_data = {"input_tokens": u.get("prompt_tokens", 0), "output_tokens": u.get("completion_tokens", 0)}
                                     # llama.cpp puts a `timings` block alongside `usage` with the
                                     # TRUE generation speed (predicted_per_second) — pure decode,
@@ -1217,27 +1844,83 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                             _usage_data["gen_tps"] = round(_tm["predicted_per_second"], 2)
                                         if _tm.get("prompt_per_second"):
                                             _usage_data["prefill_tps"] = round(_tm["prompt_per_second"], 2)
+                                    if _actual_model:
+                                        _usage_data["model"] = _actual_model
+                                        if not _same_model_identity(_actual_model, model):
+                                            _usage_data["requested_model"] = model
                                     yield f'data: {json.dumps({"type": "usage", "data": _usage_data})}\n\n'
                                 elif "choices" in j:
-                                    delta = j["choices"][0].get("delta") or {}
+                                    _c0 = (j["choices"] or [None])[0]
+                                    if _c0 is None:
+                                        continue
+                                    delta = _c0.get("delta") or {}
                                     if isinstance(delta, dict):
                                         # Text content
-                                        # Reasoning tokens (VLLM --reasoning-parser, e.g. Qwen3/DeepSeek-R1, Nemotron). vLLM 0.20.2 / NIM emit the field as `reasoning`; older builds use `reasoning_content`. Accept either.
-                                        reasoning = delta.get("reasoning_content") or delta.get("reasoning") or ""
+                                        # Reasoning tokens (VLLM --reasoning-parser, e.g. Qwen3/DeepSeek-R1, Nemotron). vLLM 0.20.2 / NIM emit the field as `reasoning`; older builds use `reasoning_content`. Some OpenAI-compatible Ollama builds use `thinking`.
+                                        reasoning = delta.get("reasoning_content") or delta.get("reasoning") or delta.get("thinking") or ""
                                         if reasoning:
-                                            yield f'data: {json.dumps({"delta": reasoning, "thinking": True})}\n\n'
+                                            yield _stream_delta_event(reasoning, thinking=True)
                                         content = delta.get("content") or ""
                                         if content:
-                                            # Some thinking backends start normal content with a
-                                            # stray closing tag. Repair only that shape; do not
-                                            # wrap every first token for model families like
-                                            # MiniMax, which often stream ordinary answers.
-                                            if _thinking_model and not _first_content_sent and content.lstrip().lower().startswith("</think"):
-                                                content = "<think>" + content
-                                            _first_content_sent = True
-                                            yield f'data: {json.dumps({"delta": content})}\n\n'
+                                            stripped = content.lstrip()
+                                            # gpt-oss harmony format (<|channel|>analysis/final): route via the harmony
+                                            # stream router. Sticky once the first marker appears — distinct from the
+                                            # <think> path below (handled in the else, preserving #2588 behaviour).
+                                            if _harmony_active or "<|" in content:
+                                                _harmony_active = True
+                                                for event in _format_routed_content(_harmony_router.feed(content)):
+                                                    yield event
+                                            else:
+                                                # Auto-detect <think>…</think> in content stream.
+                                                # Covers Qwen3-derived models (Qwopus, QwQ forks) whose
+                                                # names don't match _THINKING_MODEL_PATTERNS but still
+                                                # emit literal <think> markup via llama.cpp --jinja.
+                                                if not _first_content_sent and not _thinking_model and not _in_think_tag and stripped.lower().startswith("<think"):
+                                                    _thinking_model = True
+                                                    _in_think_tag = True
+                                                if _in_think_tag:
+                                                    close_idx = content.lower().find("</think>")
+                                                    if close_idx != -1:
+                                                        # Split: up-to-</think> → thinking, remainder → content
+                                                        think_part = content[:close_idx]
+                                                        if not _think_open_stripped:
+                                                            # Strip the opening <think[...] > from the first chunk.
+                                                            # Use a dedicated flag — _first_content_sent stays False
+                                                            # throughout the think block, so it must not be reused.
+                                                            tag_end = think_part.lower().find(">")
+                                                            if tag_end != -1:
+                                                                think_part = think_part[tag_end + 1:]
+                                                            _think_open_stripped = True
+                                                        regular_part = content[close_idx + len("</think>"):]
+                                                        _in_think_tag = False
+                                                        if think_part:
+                                                            yield f'data: {json.dumps({"delta": think_part, "thinking": True})}\n\n'
+                                                        if regular_part:
+                                                            _first_content_sent = True
+                                                            yield f'data: {json.dumps({"delta": regular_part})}\n\n'
+                                                    else:
+                                                        # Still inside <think>: route to thinking channel
+                                                        if not _think_open_stripped:
+                                                            # Strip the opening <think[...] > tag (first chunk only)
+                                                            tag_end = stripped.lower().find(">")
+                                                            if tag_end != -1:
+                                                                content = stripped[tag_end + 1:]
+                                                            _think_open_stripped = True
+                                                        if content:
+                                                            yield f'data: {json.dumps({"delta": content, "thinking": True})}\n\n'
+                                                else:
+                                                    # Some thinking backends start normal content with a
+                                                    # stray closing tag. Repair only that shape; do not
+                                                    # wrap every first token for model families like
+                                                    # MiniMax, which often stream ordinary answers.
+                                                    if _thinking_model and not _first_content_sent and stripped.lower().startswith("</think"):
+                                                        content = "<think>" + content
+                                                    _first_content_sent = True
+                                                    yield f'data: {json.dumps({"delta": content})}\n\n'
                                         # Native tool calls — accumulate across chunks
                                         for tc in delta.get("tool_calls") or []:
+                                            if tc is None:
+                                                continue
                                             func = tc.get("function") or {}
                                             raw_idx = tc.get("index")
                                             if raw_idx is None:
@@ -1276,21 +1959,30 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                             if func.get("name"):
                                                 _tc_acc[idx]["name"] = func["name"]
                                             if "arguments" in func:
-                                                _tc_acc[idx]["arguments"] += func["arguments"]
+                                                # Guard against a null arguments delta: `func` can be
+                                                # {"arguments": None} (JSON null), and a raw `+= None`
+                                                # raises TypeError that the broad except swallows,
+                                                # silently dropping the rest of the chunk. Matches the
+                                                # Anthropic accumulator (`partial = ... or ""`) above.
+                                                _tc_acc[idx]["arguments"] += func["arguments"] or ""
                                                 # Stream tool arg deltas for doc tools
                                                 if func["arguments"] and _tc_acc[idx].get("name") in ("create_document", "update_document", "edit_document"):
                                                     yield f'data: {json.dumps({"type": "tool_call_delta", "index": idx, "name": _tc_acc[idx]["name"], "arg_delta": func["arguments"]})}\n\n'
                                 elif "text" in j:
                                     if j["text"]:
-                                        yield f'data: {json.dumps({"delta": j["text"]})}\n\n'
+                                        for event in _format_routed_content(_harmony_router.feed(j["text"])):
+                                            yield event
                             else:
                                 if data.strip():
-                                    yield f'data: {json.dumps({"delta": data})}\n\n'
+                                    for event in _format_routed_content(_harmony_router.feed(data)):
+                                        yield event
                     except Exception as e:
                         logger.error(f"Error parsing stream data: {e}")
                         continue
 
             # End of stream (no explicit [DONE] received)
+            for event in _format_routed_content(_harmony_router.flush()):
+                yield event
             tc_event = _emit_tool_calls()
             if tc_event:
                 yield tc_event
@@ -1341,7 +2033,7 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
 
     Yields the same SSE chunk protocol as stream_llm.
     """
-    cands = [c for c in (candidates or []) if c and c[0] and c[1]]
+    cands = _dedupe_candidates(candidates)
     if not cands:
         yield f'event: error\ndata: {json.dumps({"error": "No model endpoint configured", "status": 503})}\n\n'
         return
@@ -1368,6 +2060,13 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                 continue
             # Any data chunk other than the terminal [DONE] means real output.
             if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
+                try:
+                    event_data = json.loads(chunk[6:])
+                except Exception:
+                    event_data = {}
+                if event_data.get("type") == "model_actual":
+                    yield chunk
+                    continue
                 # First real output from a NON-primary candidate: tell the client
                 # the selected model failed and another answered. Without this the
                 # fallback is invisible — a misconfigured provider looks like it

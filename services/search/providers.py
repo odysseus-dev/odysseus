@@ -66,7 +66,17 @@ def _get_provider_key(provider: str) -> str:
         if val:
             return val
     # Legacy fallback: old shared search_api_key field
-    return (settings.get("search_api_key") or "").strip()
+    legacy = (settings.get("search_api_key") or "").strip()
+    if legacy:
+        return legacy
+    env_map = {
+        "brave": "DATA_BRAVE_API_KEY",
+        "google_pse": "GOOGLE_API_KEY",
+        "tavily": "TAVILY_API_KEY",
+        "serper": "SERPER_API_KEY",
+    }
+    env_name = env_map.get(provider, "")
+    return (os.environ.get(env_name) or "").strip() if env_name else ""
 
 
 def _get_result_count() -> int:
@@ -126,9 +136,10 @@ _NEWS_HINTS = ("news", "nyheter", "headlines", "breaking", "latest", "today", "i
 _GENERAL_ENGINES = os.environ.get("SEARXNG_GENERAL_ENGINES", "bing,mojeek,presearch")
 
 
-def searxng_search_api(query: str, count: int = 10, categories: str = "general",
+def searxng_search_api(query: str, count: Optional[int] = None, categories: str = "general",
                        time_filter: Optional[str] = None) -> List[dict]:
     """Search using SearXNG JSON API. Returns list of {title, url, snippet}."""
+    count = count if count is not None else _get_result_count()
     instance = _get_search_instance()
     api_key = ""
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -274,8 +285,9 @@ def searxng_search(query, max_results=10):
 
 # ── Brave ──
 
-def brave_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+def brave_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
     """Search using Brave API with key from admin settings or env var."""
+    count = count if count is not None else _get_result_count()
     api_key = _get_provider_key("brave") or os.environ.get("DATA_BRAVE_API_KEY") or ""
     return _brave_search_impl(query, count, time_filter, search_config={"brave_api_key": api_key})
 
@@ -373,9 +385,9 @@ def _resolve_ddg_redirect(raw: str) -> str:
     return resolved
 
 
-def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+def duckduckgo_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
     """Search using DuckDuckGo via the duckduckgo-search library. No API key needed."""
-
+    count = count if count is not None else _get_result_count()
     def _html_fallback() -> List[dict]:
         try:
             response = httpx.get(
@@ -444,7 +456,7 @@ def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = 
 
 # ── Google Programmable Search Engine ──
 
-def google_pse_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+def google_pse_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
     """Search using Google PSE (Custom Search JSON API).
 
     Requires two keys in settings:
@@ -452,6 +464,7 @@ def google_pse_search(query: str, count: int = 10, time_filter: Optional[str] = 
       - google_pse_cx: Programmable Search Engine ID (cx)
     Or env vars GOOGLE_API_KEY and GOOGLE_PSE_CX.
     """
+    count = count if count is not None else _get_result_count()
     settings = _get_search_settings()
     api_key = _get_provider_key("google_pse") or os.environ.get("GOOGLE_API_KEY", "")
     cx = (settings.get("google_pse_cx") or "").strip() or os.environ.get("GOOGLE_PSE_CX", "")
@@ -484,12 +497,17 @@ def google_pse_search(query: str, count: int = 10, time_filter: Optional[str] = 
         if response.status_code == 429:
             raise RateLimitError("Google PSE rate limit hit")
         response.raise_for_status()
-        data = response.json()
     except httpx.RequestError as e:
         error_logger.error(f"Google PSE search failed: {e}")
         return []
     except RateLimitError as e:
         error_logger.error(str(e))
+        return []
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        error_logger.error(f"Google PSE returned invalid JSON: {e}")
         return []
 
     results = []
@@ -509,8 +527,9 @@ def google_pse_search(query: str, count: int = 10, time_filter: Optional[str] = 
 
 # ── Tavily ──
 
-def tavily_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+def tavily_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
     """Search using Tavily API. Requires search_api_key or TAVILY_API_KEY env var."""
+    count = count if count is not None else _get_result_count()
     api_key = _get_provider_key("tavily") or os.environ.get("TAVILY_API_KEY", "")
     if not api_key:
         logger.warning("Tavily: no API key configured")
@@ -536,12 +555,17 @@ def tavily_search(query: str, count: int = 10, time_filter: Optional[str] = None
         if response.status_code == 429:
             raise RateLimitError("Tavily rate limit hit")
         response.raise_for_status()
-        data = response.json()
     except httpx.RequestError as e:
         error_logger.error(f"Tavily search failed: {e}")
         return []
     except RateLimitError as e:
         error_logger.error(str(e))
+        return []
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        error_logger.error(f"Tavily returned invalid JSON: {e}")
         return []
 
     results = []
@@ -562,8 +586,9 @@ def tavily_search(query: str, count: int = 10, time_filter: Optional[str] = None
 
 # ── Serper.dev ──
 
-def serper_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+def serper_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
     """Search using Serper.dev API. Requires search_api_key or SERPER_API_KEY env var."""
+    count = count if count is not None else _get_result_count()
     api_key = _get_provider_key("serper") or os.environ.get("SERPER_API_KEY", "")
     if not api_key:
         logger.warning("Serper: no API key configured")
@@ -591,12 +616,17 @@ def serper_search(query: str, count: int = 10, time_filter: Optional[str] = None
         if response.status_code == 429:
             raise RateLimitError("Serper rate limit hit")
         response.raise_for_status()
-        data = response.json()
     except httpx.RequestError as e:
         error_logger.error(f"Serper search failed: {e}")
         return []
     except RateLimitError as e:
         error_logger.error(str(e))
+        return []
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        error_logger.error(f"Serper returned invalid JSON: {e}")
         return []
 
     results = []

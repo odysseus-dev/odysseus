@@ -18,12 +18,20 @@ _SECRET_KEY_PATTERNS = (
     "_credential", "_credentials", "_key",
 )
 _SECRET_KEY_ALLOW = ("google_pse_cx",)  # public identifiers, not secrets
+_SENSITIVE_KEY_EXACT = (
+    # A stable global integration id is a capability handle for routes that can
+    # trigger outbound webhook sends; do not expose it to non-admin settings
+    # callers even though it is not secret-shaped.
+    "reminder_webhook_integration_id",
+)
 
 
 def is_secret_key(name: str) -> bool:
     n = (name or "").lower()
     if n in _SECRET_KEY_ALLOW:
         return False
+    if n in _SENSITIVE_KEY_EXACT:
+        return True
     return any(n.endswith(p) or n == p.lstrip("_") for p in _SECRET_KEY_PATTERNS)
 
 
@@ -47,4 +55,6 @@ def _scrub_value(key, value):
 
 def scrub_settings(settings: dict) -> dict:
     """Return a copy of ``settings`` with secret-shaped values masked (deep)."""
+    if not isinstance(settings, dict):
+        return {}
     return {k: _scrub_value(k, v) for k, v in (settings or {}).items()}

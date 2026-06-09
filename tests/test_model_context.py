@@ -1,9 +1,57 @@
 """Tests for model_context.py — local endpoint detection, token estimation, known model lookup."""
 
+import sys
+import types
+
 import pytest
 
 import src.model_context as model_context
 from src.model_context import _is_local_endpoint, estimate_tokens, _lookup_known
+
+
+class _Column:
+    def __init__(self, name):
+        self.name = name
+
+    def __eq__(self, value):
+        return ("eq", self.name, value)
+
+
+class _ModelEndpoint:
+    is_enabled = _Column("is_enabled")
+
+
+class _Query:
+    def __init__(self, rows):
+        self.rows = list(rows)
+
+    def filter(self, *conditions):
+        for condition in conditions:
+            if isinstance(condition, tuple) and condition[0] == "eq":
+                _, field, value = condition
+                self.rows = [row for row in self.rows if getattr(row, field) == value]
+        return self
+
+    def all(self):
+        return list(self.rows)
+
+
+class _Db:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def query(self, model):
+        return _Query(self.rows)
+
+    def close(self):
+        pass
+
+
+def _install_endpoint_db(monkeypatch, rows):
+    mod = types.ModuleType("core.database")
+    mod.ModelEndpoint = _ModelEndpoint
+    mod.SessionLocal = lambda: _Db(rows)
+    monkeypatch.setitem(sys.modules, "core.database", mod)
 
 
 class TestIsLocalEndpoint:
@@ -22,6 +70,18 @@ class TestIsLocalEndpoint:
     def test_tailscale_100(self):
         # 100.64.0.0/10 is the CGNAT range Tailscale uses.
         assert _is_local_endpoint("http://100.64.0.1:5000/v1/chat/completions") is True
+
+    def test_configured_tailscale_proxy_is_remote(self, monkeypatch):
+        _install_endpoint_db(monkeypatch, [
+            types.SimpleNamespace(
+                base_url="http://100.117.136.97:34521/v1",
+                endpoint_kind="proxy",
+                api_key="fake-key",
+                is_enabled=True,
+            )
+        ])
+
+        assert _is_local_endpoint("http://100.117.136.97:34521/v1/chat/completions") is False
 
     def test_openai_is_remote(self):
         assert _is_local_endpoint("https://api.openai.com/v1/chat/completions") is False
@@ -164,3 +224,28 @@ class TestGetContextLength:
         assert first == 200000
         assert second == 200000
         assert len(calls) == 1
+
+    def test_configured_proxy_uses_default_without_model_listing(self, monkeypatch):
+        _install_endpoint_db(monkeypatch, [
+            types.SimpleNamespace(
+                base_url="http://100.117.136.97:34521/v1",
+                endpoint_kind="proxy",
+                api_key="fake-key",
+                is_enabled=True,
+            )
+        ])
+        calls = []
+
+        def fake_get(*args, **kwargs):
+            calls.append(args)
+            raise AssertionError("/models should not be queried for configured proxy context")
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+
+        endpoint = "http://100.117.136.97:34521/v1/chat/completions"
+        first = model_context.get_context_length(endpoint, "unknown-proxy-model")
+        second = model_context.get_context_length(endpoint, "unknown-proxy-model")
+
+        assert first == model_context.DEFAULT_CONTEXT
+        assert second == model_context.DEFAULT_CONTEXT
+        assert calls == []

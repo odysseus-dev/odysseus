@@ -14,6 +14,8 @@ import uuid
 
 import bcrypt
 
+from src.constants import AUTH_FILE
+
 PAIRING_VERSION = 1
 COMPANION_SCOPE = "chat"
 
@@ -61,14 +63,19 @@ def lan_ip_candidates() -> list[str]:
 def find_admin_user() -> str | None:
     """Resolve an admin username from data/auth.json (schema uses is_admin),
     falling back to the first user."""
-    auth_path = os.path.join("data", "auth.json")
+    auth_path = AUTH_FILE
     try:
         with open(auth_path, "r", encoding="utf-8") as f:
-            users = (json.load(f) or {}).get("users", {})
+            data = json.load(f)
     except (OSError, json.JSONDecodeError):
         return None
+    if not isinstance(data, dict):
+        return None
+    users = data.get("users") or {}
+    if not isinstance(users, dict):
+        return None
     for uname, udata in users.items():
-        if udata.get("is_admin") is True:
+        if isinstance(udata, dict) and udata.get("is_admin") is True:
             return uname
     return next(iter(users), None)
 

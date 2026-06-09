@@ -60,13 +60,17 @@ def fail(msg: str, code: int = 1) -> None:
     sys.exit(code)
 
 
+def _contact_rows(contacts):
+    return [c for c in contacts or [] if isinstance(c, dict)]
+
+
 # ─── list ────────────────────────────────────────────────────────────
 
 def cmd_list(args) -> None:
     cfg = _get_carddav_config()
     if not cfg["url"]:
         fail("CardDAV not configured. Set carddav_url/username/password in the web UI.")
-    contacts = _fetch_contacts(force=args.refresh)
+    contacts = _contact_rows(_fetch_contacts(force=args.refresh))
     emit(contacts, args)
 
 
@@ -77,7 +81,7 @@ def cmd_search(args) -> None:
     if not cfg["url"]:
         fail("CardDAV not configured.")
     q = args.query.lower()
-    contacts = _fetch_contacts()
+    contacts = _contact_rows(_fetch_contacts())
     matches = [
         c for c in contacts
         if q in (c.get("name") or "").lower() or q in (c.get("email") or "").lower()

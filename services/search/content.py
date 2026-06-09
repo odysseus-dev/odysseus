@@ -39,7 +39,17 @@ _PRIVATE_NETWORKS = (
 
 
 def _is_private_address(addr: ipaddress._BaseAddress) -> bool:
-    return addr.is_private or addr.is_loopback or addr.is_link_local or any(addr in net for net in _PRIVATE_NETWORKS)
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return (
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_reserved
+        or addr.is_multicast
+        or addr.is_unspecified
+        or any(addr in net for net in _PRIVATE_NETWORKS)
+    )
 
 
 def _resolve_hostname_ips(hostname: str) -> list[ipaddress._BaseAddress]:
@@ -249,6 +259,9 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
             raise RateLimitError(f"Rate limit hit for {url} (attempt {retry_attempt})")
 
         response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        error_logger.warning(f"HTTP {e.response.status_code} fetching {url}: {e}")
+        return _empty_result(url, f"HTTP {e.response.status_code}: {e}")
     except httpx.RequestError as e:
         error_logger.error(f"NetworkError fetching {url} (attempt {retry_attempt}): {e}")
         return _empty_result(url, f"NetworkError: {e}")
@@ -385,13 +398,18 @@ def get_tldr(text: str, max_sentences: int = 3) -> str:
 
 def extract_quotes(text: str) -> List[str]:
     """Return quoted excerpts that are at least 15 characters long."""
-    return [m.group(1).strip() for m in re.finditer(r'["\']([^"\']{15,}?)["\']', text)]
+    # Backreference the opening quote so the closing quote must match it —
+    # otherwise `"text'` (open double, close single) is treated as a quote.
+    return [m.group(2).strip() for m in re.finditer(r'(["\'])([^"\']{15,}?)\1', text)]
 
 
 def extract_statistics(text: str) -> List[str]:
     """Find numbers, percentages, dates and simple measurements."""
+    # Match a comma-grouped number (1,000,000) OR a plain digit run (50000) —
+    # the old `\d{1,3}(?:,\d{3})*` matched only the first 3 digits of a
+    # comma-less number, and the trailing `\b` dropped a closing `%`.
     pattern = re.compile(
-        r"\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\s*(%|percent|‰|per cent|[a-zA-Z]+)?\b",
+        r"\b(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*(%|percent|‰|per cent|[a-zA-Z]+)?",
         re.IGNORECASE,
     )
     return [m.group(0).strip() for m in pattern.finditer(text)]
