@@ -28,33 +28,6 @@ from src.search import update_search_config
 logger = logging.getLogger(__name__)
 
 
-def _resolve_memory_backend(prefs_path: str = None) -> str:
-    """Resolve which memory backend to use.
-
-    Priority:
-      1. MEMORY_BACKEND environment variable
-      2. user_prefs.json memory_backend field
-      3. Default to 'native'
-    """
-    env = os.getenv("MEMORY_BACKEND", "").strip().lower()
-    if env in ("native", "memmachine"):
-        return env
-
-    try:
-        path = prefs_path or os.path.join(DATA_DIR, "user_prefs.json")
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict) and "_users" not in data:
-                    pref = data.get("memory_backend", "")
-                    if isinstance(pref, str) and pref.lower() in ("native", "memmachine"):
-                        return pref.lower()
-    except Exception:
-        pass
-
-    return "native"
-
-
 def create_directories():
     """Create necessary directories if they don't exist."""
     for directory in (DATA_DIR, PERSONAL_DIR, RUNBOOK_DIR, UPLOAD_DIR):
@@ -105,10 +78,6 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
         logger.warning(f"MemoryVectorStore DEGRADED: {e}")
         memory_vector = None
 
-    # --- Memory backend selection (swap-only) ---
-    memory_backend = _resolve_memory_backend()
-    logger.info("Memory backend resolved: %s", memory_backend)
-
     # --- Enhanced memory provider (TRACE-style hierarchical memory) ---
     from src.settings import get_setting
     use_llm_topics = get_setting("memory_llm_topic_classification", False)
@@ -119,35 +88,14 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
         branch_threshold=branch_threshold,
     )
 
-    native_provider = EnhancedMemoryProvider(
+    memory_provider = EnhancedMemoryProvider(
         memory_manager,
         memory_vector=memory_vector,
         data_dir=DATA_DIR,
         topic_classifier=topic_classifier,
     )
-    memory_provider: Any = native_provider
 
-    if memory_backend == "memmachine":
-        try:
-            from src.memmachine_provider import MemMachineMemoryProvider
-            mm_provider = MemMachineMemoryProvider()
-            if mm_provider.healthy:
-                memory_provider = mm_provider
-                logger.info("MemMachine memory provider active (swap mode)")
-            else:
-                logger.warning(
-                    "MemMachine provider not healthy; using enhanced native memory."
-                )
-        except ImportError:
-            logger.warning(
-                "MemMachine client not installed. Using enhanced native memory."
-            )
-        except Exception as e:
-            logger.error(
-                "Error initializing MemMachineMemoryProvider: %s", e, exc_info=True
-            )
-
-    memory_provider_registry = MemoryProviderRegistry([native_provider])
+    memory_provider_registry = MemoryProviderRegistry([memory_provider])
 
     # Initialize processors
     chat_processor = ChatProcessor(

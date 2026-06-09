@@ -1,6 +1,6 @@
 """Hierarchical memory engine for Odysseus.
 
-Provides TRACE-inspired episodic memory, MemMachine-inspired profile memory,
+Provides TRACE-inspired episodic memory, structured profile memory,
 and an enhanced provider that unifies them with the existing flat fact store.
 """
 

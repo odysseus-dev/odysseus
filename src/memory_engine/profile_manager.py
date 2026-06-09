@@ -1,6 +1,6 @@
 """Profile memory — structured user facts and preferences.
 
-MemMachine-inspired key-value store with upsert-by-key semantics.
+Key-value store with upsert-by-key semantics.
 """
 
 from __future__ import annotations
