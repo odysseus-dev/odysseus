@@ -308,6 +308,11 @@ class AuthManager:
         OIDC users have no password hash — they can only authenticate
         through the OIDC flow. An existing OIDC user with the same
         (sub, issuer) is returned as-is (idempotent).
+
+        When OIDC is the only auth path (no password admin exists) or
+        OIDC_ADMIN_GROUPS is unset, the first OIDC user becomes admin
+        by default to prevent zero-admin lockout.  Set
+        OIDC_FIRST_USER_IS_ADMIN=false to disable this bootstrap.
         """
         username = username.strip().lower()
         if not username:
@@ -320,6 +325,20 @@ class AuthManager:
         existing = self.get_user_by_oidc(sub, issuer)
         if existing is not None:
             return existing
+
+        # Bootstrap: if no users exist yet and the env var doesn't explicitly
+        # opt out, make the first OIDC user an admin so the install isn't
+        # unadministrable.  OIDC_ADMIN_GROUPS, when set, takes precedence.
+        if not is_admin:
+            first_user_admin = os.getenv("OIDC_FIRST_USER_IS_ADMIN", "true").lower() != "false"
+            oidc_admin_groups = os.getenv("OIDC_ADMIN_GROUPS", "").strip()
+            if first_user_admin and not self.users:
+                is_admin = True
+                logger.info(
+                    "First OIDC user '%s' promoted to admin (bootstrap). "
+                    "Set OIDC_FIRST_USER_IS_ADMIN=false or OIDC_ADMIN_GROUPS to override.",
+                    username,
+                )
 
         # If the requested username is taken by a *different* identity
         # (another OIDC user or a local password user), find a free slot
