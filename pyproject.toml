@@ -1,3 +1,18 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Test-taxonomy markers added at collection time by tests/conftest.py. The
+# stable area_* markers are declared here; the dynamic sub_<filename-token>
+# markers are registered before collection by pytest_configure in
+# tests/conftest.py, so unknown-mark warnings still flag genuine typos outside
+# the taxonomy. See tests/_taxonomy.py and tests/README.md.
+markers = [
+    "area_security: tests covering auth, owner-scope, SSRF, XSS, confinement, redaction",
+    "area_routes: tests covering HTTP route / API behavior",
+    "area_services: tests covering service-layer behavior (llm, cookbook, email, calendar, ...)",
+    "area_cli: tests covering CLI / script behavior",
+    "area_js: JavaScript / Node-backed tests",
+    "area_helpers: self-tests for the shared test helpers in tests/helpers/",
+    "area_unit: pure parser / utility tests that do not clearly belong elsewhere",
+    "area_uncategorized: tests not yet matched by the taxonomy (fallback)",
+]
