@@ -358,6 +358,34 @@ def test_serve_pip_install_normalizes_llama_cpp_alias_and_adds_wheel_index():
     assert "https://abetlen.github.io/llama-cpp-python/whl/cpu" in src
 
 
+def test_cookbook_setup_guards_break_system_packages_fallbacks():
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parent.parent
+        / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+
+    assert '_append_pip_install_runner_lines(setup_lines, "pip install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null")' in src
+    assert '_append_pip_install_runner_lines(setup_lines, "pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null")' in src
+    assert '"pip install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null || "' not in src
+    assert '"pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null; "' not in src
+
+
+def test_serve_runner_guards_pip_install_commands():
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parent.parent
+        / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+
+    guarded = (
+        "if is_pip_install:\n"
+        "                    _append_pip_install_runner_lines(runner_lines, req.cmd)\n"
+        "                else:\n"
+        "                    runner_lines.append(req.cmd)\n"
+        "                if local_windows:"
+    )
+    assert guarded in src
+
+
 def test_vllm_preflight_reports_cli_and_version():
     lines = []
 
