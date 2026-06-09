@@ -30,8 +30,9 @@ _LOCAL_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _OLLAMA_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,200}$")
 # Include pattern is a glob: allow typical safe glyphs only.
 _INCLUDE_RE = re.compile(r"^[A-Za-z0-9._\-*?/\[\]]+$")
-# Remote host: user@host (optionally with :port-free hostname parts).
-_REMOTE_HOST_RE = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$")
+# Remote host: either `user@host` or plain `host` (alias is allowed), where host
+# is a safe DNS-like token or a short SSH config alias.
+_REMOTE_HOST_RE = re.compile(r"^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+$")
 # HF tokens and API tokens are url-safe base64-like.
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9._~+/=-]+$")
 # Session IDs we mint look like "cookbook-deadbeef" or "serve-deadbeef".
@@ -81,7 +82,7 @@ def _validate_remote_host(v: str | None) -> str | None:
     if v is None or v == "":
         return None
     if not _REMOTE_HOST_RE.match(v):
-        raise HTTPException(400, "Invalid remote_host — must be user@host, no SSH option syntax")
+        raise HTTPException(400, "Invalid remote_host — must be host or user@host, no SSH option syntax")
     return v
 
 
@@ -787,6 +788,7 @@ def _llama_cpp_rebuild_cmd() -> str:
 
 class ModelDownloadRequest(BaseModel):
     repo_id: str
+    backend: str | None = None  # "hf" (default) or "ollama"
     include: str | None = None  # glob pattern e.g. "*Q4_K_M*"
     hf_token: str | None = None
     env_prefix: str | None = None  # e.g. "source ~/venv/bin/activate"
