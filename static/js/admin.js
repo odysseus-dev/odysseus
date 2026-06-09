@@ -5,6 +5,7 @@ import uiModule from './ui.js';
 import settingsModule from './settings.js';
 import { providerLogo } from './providers.js';
 import { sortModelObjects } from './modelSort.js';
+import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
 
 let initialized = false;
 let modalEl = null;
@@ -87,8 +88,12 @@ async function loadUsers() {
           <input type="number" min="0" value="${maxMsg}" data-priv="max_messages_per_day" data-user="${esc(u.username)}" style="width:70px;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:12px;text-align:center;">
         </div>`;
         // Allowed models — checkbox list
-        const allowedSet = new Set((u.privileges && u.privileges.allowed_models) || []);
-        const allEmpty = allowedSet.size === 0;
+        const allowedModels = Array.isArray(u.privileges && u.privileges.allowed_models)
+          ? u.privileges.allowed_models
+          : [];
+        const allowedSet = new Set(allowedModels);
+        const modelsRestricted = !!(u.privileges && u.privileges.allowed_models_restricted);
+        const blockAllModels = !!(u.privileges && u.privileges.block_all_models);
         html += `<div style="padding:4px 0;">
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <span style="font-size:12px;">Allowed models</span>
@@ -97,7 +102,7 @@ async function loadUsers() {
               <a href="#" class="priv-models-none" data-user="${esc(u.username)}" style="font-size:10px;opacity:0.5;">None</a>
             </div>
           </div>
-          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${allEmpty ? 'All models allowed (no restrictions)' : allowedSet.size + ' model(s) allowed'}</div>
+          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${blockAllModels ? 'No models allowed' : (!modelsRestricted ? 'All models allowed (no restrictions)' : (allowedSet.size === 0 ? 'No models allowed' : allowedSet.size + ' model(s) allowed'))}</div>
           <div class="priv-models-list" data-user="${esc(u.username)}">
             <span style="opacity:0.4;font-size:11px;">Loading models...</span>
           </div>
@@ -119,7 +124,7 @@ async function loadUsers() {
           // Load models list on first expand
           if (!_modelsLoaded && !privPanel.classList.contains('hidden')) {
             _modelsLoaded = true;
-            _loadModelsForUser(u.username, allowedSet, privPanel);
+            _loadModelsForUser(u.username, allowedSet, modelsRestricted, blockAllModels, privPanel);
           }
         });
 
@@ -199,26 +204,32 @@ async function loadUsers() {
   } catch (e) { list.innerHTML = '<div class="admin-error">Failed to load users</div>'; }
 }
 
-async function _loadModelsForUser(username, allowedSet, privPanel) {
+async function _loadModelsForUser(username, allowedSet, modelsRestricted, blockAllModels, privPanel) {
   const listEl = privPanel.querySelector(`.priv-models-list[data-user="${username}"]`);
   if (!listEl) return;
   try {
-    const res = await fetch('/api/models', { credentials: 'same-origin' });
+    // Use /api/model-endpoints rather than /api/models — the latter is
+    // backed by `cached_models`, so endpoints that haven't been probed yet
+    // (e.g. a freshly-added cloud API like DeepSeek) simply don't show up
+    // until some other endpoint happens to trigger a cache refresh. The
+    // endpoints listing always reflects every configured endpoint.
+    const res = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
     const data = await res.json();
     const allModels = [];
-    (data.items || []).forEach(item => {
-      if (item.offline) return;
-      (item.models || []).forEach(mid => {
-        allModels.push({ mid, epName: item.endpoint_name || '', display: mid.split('/').pop() });
+    (Array.isArray(data) ? data : []).forEach(ep => {
+      if (!ep.online) return;
+      (ep.models || []).forEach(mid => {
+        allModels.push({ mid, epName: ep.name || '', display: mid.split('/').pop() });
       });
     });
     if (!allModels.length) {
       listEl.innerHTML = '<span style="opacity:0.4;font-size:11px;">No models available</span>';
       return;
     }
-    const allEmpty = allowedSet.size === 0;
+    let restricted = modelsRestricted;
+    let blockAll = blockAllModels;
     listEl.innerHTML = sortModelObjects(allModels).map(m => {
-      const checked = allEmpty || allowedSet.has(m.mid) ? 'checked' : '';
+      const checked = !blockAll && (!restricted || allowedSet.has(m.mid)) ? 'checked' : '';
       return `<label>
         <input type="checkbox" class="priv-model-cb" data-mid="${esc(m.mid)}" ${checked}>
         <span>${esc(m.display)}</span>
@@ -232,14 +243,33 @@ async function _loadModelsForUser(username, allowedSet, privPanel) {
       listEl.querySelectorAll('.priv-model-cb').forEach(cb => {
         if (cb.checked) checked.push(cb.dataset.mid);
       });
-      // If all are checked, send empty array (= no restrictions)
-      const value = checked.length === allModels.length ? [] : checked;
+      // Three distinct states the backend must be able to tell apart:
+      //  - all checked   -> no restriction (allowed_models: [], block_all_models: false)
+      //  - none checked  -> block everything (allowed_models: [], block_all_models: true)
+      //  - some checked  -> allowlist (allowed_models: checked, block_all_models: false)
+      let value, hintText;
+      if (checked.length === allModels.length) {
+        restricted = false;
+        blockAll = false;
+        value = [];
+        hintText = 'All models allowed (no restrictions)';
+      } else if (checked.length === 0) {
+        restricted = true;
+        blockAll = true;
+        value = [];
+        hintText = 'No models allowed';
+      } else {
+        restricted = true;
+        blockAll = false;
+        value = checked;
+        hintText = value.length + ' model(s) allowed';
+      }
       const hint = privPanel.querySelector('.priv-models-list[data-user]')?.previousElementSibling?.querySelector('div[style*="opacity"]');
-      if (hint) hint.textContent = value.length === 0 ? 'All models allowed (no restrictions)' : value.length + ' model(s) allowed';
+      if (hint) hint.textContent = hintText;
       fetch(`/api/auth/users/${encodeURIComponent(username)}/privileges`, {
         method: 'PUT', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ allowed_models: value }),
+        body: JSON.stringify({ allowed_models: value, allowed_models_restricted: restricted, block_all_models: blockAll }),
       }).catch(() => {});
     }
     listEl.querySelectorAll('.priv-model-cb').forEach(cb => cb.addEventListener('change', _saveModels));
@@ -413,6 +443,9 @@ async function loadEndpoints() {
       const justAddedClass = (_recentlyAddedEpId && String(ep.id) === _recentlyAddedEpId) ? ' adm-ep-just-added' : '';
       const category = ep.category || (_isLocalEndpoint(ep.base_url) ? 'local' : 'api');
       const kindLabel = ep.endpoint_kind && ep.endpoint_kind !== 'auto' ? ep.endpoint_kind.toUpperCase() : '';
+      const keyLabel = ep.has_key
+        ? (ep.api_key_fingerprint ? ` (key ${esc(ep.api_key_fingerprint)})` : ' (key set)')
+        : '';
       return `
         <div class="admin-user-row${ep.is_enabled ? '' : ' admin-ep-disabled'}${justAddedClass}" data-adm-ep-id="${ep.id}">
           <div style="display:flex;align-items:center;justify-content:space-between;${hasModels ? 'cursor:pointer;' : ''}padding:4px 0;" data-adm-ep-header="${ep.id}">
@@ -430,7 +463,7 @@ async function loadEndpoints() {
               ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
             </div>
           </div>
-          <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${ep.has_key ? ' (key set)' : ''}</div>
+          <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${keyLabel}</div>
           ${hasModels ? `<div class="mcp-tools-panel hidden" data-adm-ep-models-panel="${ep.id}"></div>` : ''}
         </div>`;
     });
@@ -683,6 +716,80 @@ function initEndpointForm() {
   const pickerBtn = el('adm-provider-btn');
   const pickerMenu = el('adm-provider-menu');
   const pickerCurrent = picker ? picker.querySelector('.adm-provider-current') : null;
+  const DEVICE_AUTH_PROVIDER_VALUES = new Set(Object.keys(PROVIDER_DEVICE_FLOWS));
+  let deviceAuthPolling = false;
+  function _selectedProviderOption() {
+    return provider && provider.selectedOptions ? provider.selectedOptions[0] : null;
+  }
+  function _selectedDeviceAuthProvider() {
+    const opt = _selectedProviderOption();
+    const flow = opt && opt.dataset ? opt.dataset.authFlow : '';
+    if (flow && DEVICE_AUTH_PROVIDER_VALUES.has(flow)) return flow;
+    return DEVICE_AUTH_PROVIDER_VALUES.has(provider.value) ? provider.value : '';
+  }
+  function _isDeviceAuthSelected() {
+    return !!_selectedDeviceAuthProvider();
+  }
+  function _setApiFormForProvider() {
+    const deviceAuthProvider = _selectedDeviceAuthProvider();
+    const deviceAuthConfig = PROVIDER_DEVICE_FLOWS[deviceAuthProvider] || null;
+    const apiKey = el('adm-epApiKey');
+    const testBtn = el('adm-epApiTestBtn');
+    const addBtn = el('adm-epAddBtn');
+    const status = el('adm-deviceAuthStatus');
+    const msg = _endpointMsg('api');
+    if (deviceAuthConfig) {
+      urlInput.value = '';
+      urlInput.placeholder = deviceAuthProvider === 'copilot'
+        ? 'GitHub Copilot uses GitHub account sign-in'
+        : 'ChatGPT Subscription uses OpenAI account sign-in';
+      urlInput.readOnly = true;
+      if (apiKey) {
+        apiKey.value = '';
+        apiKey.placeholder = 'No API key needed';
+        apiKey.disabled = true;
+      }
+      if (testBtn) {
+        testBtn.disabled = true;
+        testBtn.style.opacity = '0.45';
+        testBtn.style.cursor = 'not-allowed';
+      }
+      if (addBtn) {
+        addBtn.disabled = false;
+        addBtn.textContent = 'Add';
+        addBtn.style.width = '55px';
+        addBtn.style.display = '';
+      }
+      if (kindSel) kindSel.value = 'api';
+      if (msg) {
+        msg.textContent = '';
+        msg.className = '';
+      }
+    } else {
+      urlInput.placeholder = 'Base URL or pick provider';
+      urlInput.readOnly = false;
+      if (apiKey) {
+        apiKey.placeholder = 'API key';
+        apiKey.disabled = false;
+      }
+      if (testBtn) {
+        testBtn.disabled = false;
+        testBtn.style.opacity = '';
+        testBtn.style.cursor = '';
+      }
+      if (addBtn) {
+        addBtn.disabled = false;
+        addBtn.textContent = 'Add';
+        addBtn.style.width = '55px';
+        addBtn.style.display = '';
+      }
+      if (msg) {
+        msg.textContent = '';
+        msg.className = '';
+      }
+      if (!deviceAuthPolling && status) status.textContent = '';
+    }
+  }
   function _renderPickerMenu() {
     if (!pickerMenu) return;
     pickerMenu.innerHTML = Array.from(provider.options).map(o => {
@@ -724,21 +831,28 @@ function initEndpointForm() {
   }
 
   provider.addEventListener('change', () => {
+    if (_isDeviceAuthSelected()) {
+      _setApiFormForProvider();
+      _renderPickerMenu();
+      _syncPickerCurrent();
+      return;
+    }
     if (provider.value) urlInput.value = provider.value;
     else urlInput.value = '';
     if (kindSel) kindSel.value = provider.value ? 'api' : 'proxy';
+    _setApiFormForProvider();
   });
   urlInput.addEventListener('input', () => {
     if (provider.value && urlInput.value.trim() !== provider.value) {
       provider.value = '';
-      if (kindSel) kindSel.value = 'proxy';
+      if (kindSel) kindSel.value = 'api';
       _renderPickerMenu();
       _syncPickerCurrent();
     }
   });
-  if (kindSel) kindSel.value = provider.value ? 'api' : (kindSel.value || 'proxy');
+  if (kindSel) kindSel.value = kindSel.value || 'api';
   function _apiEndpointKind() {
-    return (kindSel && kindSel.value) ? kindSel.value : (provider.value ? 'api' : 'proxy');
+    return (kindSel && kindSel.value) ? kindSel.value : 'api';
   }
   function _normalizeBaseUrl(raw) {
     let u = raw.trim();
@@ -766,7 +880,7 @@ function initEndpointForm() {
       }
     } catch(e) {}
     // Ensure /v1 suffix for bare host:port URLs (not cloud providers)
-    if (!u.includes('api.') && !u.includes('openrouter') && !u.includes('ollama.com') && !u.endsWith('/v1')) {
+    if (!u.includes('api.') && !u.includes('openrouter') && !u.includes('opencode.ai') && !u.includes('ollama.com') && !u.endsWith('/v1')) {
       try {
         const parsed = new URL(u);
         if (!parsed.pathname || parsed.pathname === '/') {
@@ -814,6 +928,12 @@ function initEndpointForm() {
   const apiCancelTestBtn = el('adm-epApiCancelTestBtn');
   if (apiTestBtn) {
     apiTestBtn.addEventListener('click', async () => {
+      if (_isDeviceAuthSelected()) {
+        const msg = _endpointMsg('api');
+        msg.textContent = '';
+        msg.className = '';
+        return;
+      }
       const msg = _endpointMsg('api');
       msg.textContent = ''; msg.className = '';
       const rawUrl = (urlInput.value || provider.value).trim();
@@ -861,6 +981,11 @@ function initEndpointForm() {
   }
 
   el('adm-epAddBtn').addEventListener('click', async () => {
+    const deviceAuthProvider = _selectedDeviceAuthProvider();
+    if (deviceAuthProvider) {
+      await _startProviderDeviceAuth(deviceAuthProvider, el('adm-epAddBtn'));
+      return;
+    }
     const msg = _endpointMsg('api');
     msg.textContent = ''; msg.className = '';
     const rawUrl = (urlInput.value || provider.value).trim();
@@ -911,6 +1036,118 @@ function initEndpointForm() {
     } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
     btn.disabled = false; btn.textContent = 'Add';
   });
+
+  async function _startProviderDeviceAuth(providerKey, triggerEl = null) {
+    if (deviceAuthPolling) return;
+    const config = PROVIDER_DEVICE_FLOWS[providerKey];
+    if (!config) return;
+    const status = el('adm-deviceAuthStatus') || _endpointMsg('api');
+    if (!status) return;
+    const triggerText = triggerEl ? triggerEl.textContent : '';
+    // Render an error with an inline "Try again" (the top button is hidden for
+    // device-auth providers, so retry lives here). Built with DOM methods, not
+    // innerHTML. Call reset() first so the deviceAuthPolling guard is cleared.
+    const showAuthError = (text) => {
+      status.className = 'admin-error';
+      status.textContent = text + ' ';
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'admin-btn-sm';
+      retry.textContent = 'Try again';
+      retry.addEventListener('click', () => { _startProviderDeviceAuth(providerKey, triggerEl); });
+      status.appendChild(retry);
+    };
+    const reset = () => {
+      if (triggerEl) {
+        triggerEl.disabled = false;
+        triggerEl.textContent = triggerText || 'Add';
+      }
+      deviceAuthPolling = false;
+      _setApiFormForProvider();
+    };
+    status.textContent = '';
+    status.className = 'adm-ep-inline-msg';
+    if (triggerEl) {
+      triggerEl.disabled = true;
+      triggerEl.textContent = 'Starting...';
+    }
+    deviceAuthPolling = true;
+    _setApiFormForProvider();
+    status.textContent = `Starting ${config.label} sign-in...`;
+
+    try {
+      const result = await runProviderDeviceFlow(providerKey, {
+        openWindow: () => {},
+        onStart: ({ start, authUrl }) => {
+          if (triggerEl) triggerEl.textContent = 'Waiting...';
+          status.className = '';
+          const authLabel = providerKey === 'copilot' ? 'Authorize on GitHub' : 'Authorize with OpenAI';
+          const waitLabel = providerKey === 'copilot' ? 'Waiting for GitHub authorization...' : 'Waiting for ChatGPT authorization...';
+          status.innerHTML =
+            '<div class="adm-copilot-panel">' +
+              '<div class="adm-copilot-wait"><span class="admin-spinner"></span>' +
+                '<span>' + esc(waitLabel) + '</span></div>' +
+              '<div class="adm-copilot-coderow">' +
+                '<span class="adm-copilot-code-label">Code</span>' +
+                '<code class="adm-copilot-code">' + esc(start.user_code) + '</code>' +
+                '<button type="button" class="admin-btn-sm adm-device-auth-copy">Copy</button>' +
+              '</div>' +
+              '<a class="admin-btn-add adm-copilot-auth" href="' + encodeURI(authUrl || '') + '" target="_blank" rel="noopener">' + esc(authLabel) + ' ↗</a>' +
+            '</div>';
+          const copyBtn = status.querySelector('.adm-device-auth-copy');
+          if (copyBtn) copyBtn.addEventListener('click', async () => {
+            const code = start.user_code || '';
+            let ok = false;
+            try {
+              if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(code);
+                ok = true;
+              }
+            } catch (e) {}
+            if (!ok) {
+              // navigator.clipboard is unavailable in non-secure contexts (HTTP
+              // self-host over a LAN IP), so fall back to execCommand('copy').
+              const ta = document.createElement('textarea');
+              ta.value = code;
+              ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px;';
+              document.body.appendChild(ta);
+              ta.focus();
+              ta.select();
+              try { ta.setSelectionRange(0, code.length); } catch (e) {}
+              try { ok = document.execCommand('copy'); } catch (e) {}
+              ta.remove();
+            }
+            copyBtn.textContent = ok ? 'Copied' : 'Failed';
+            setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+          });
+        },
+      });
+      if (result.status === 'authorized') {
+        const endpoint = result.endpoint || {};
+        const n = ((endpoint && endpoint.models) || []).length;
+        status.className = 'admin-success';
+        status.textContent = 'Connected - ' + n + ' ' + config.label + ' model' + (n !== 1 ? 's' : '') + ' available.';
+        if (endpoint && endpoint.id) _recentlyAddedEpId = String(endpoint.id);
+        await loadEndpoints();
+        await _selectAddedModelInChat(endpoint || {});
+        reset();
+        return;
+      }
+      if (result.status === 'failed') {
+        reset();
+        showAuthError('Authorization failed (' + (result.error || 'denied') + ').');
+        return;
+      }
+      if (result.status === 'expired') {
+        reset();
+        showAuthError('Authorization expired.');
+        return;
+      }
+    } catch (e) {
+      reset();
+      showAuthError(formatDeviceFlowError(e));
+    }
+  }
 
   // Local "Add" button — sibling form for self-hosted base URLs.
   const localAddBtn = el('adm-epLocalAddBtn');
@@ -1133,11 +1370,11 @@ const _GOOGLE_OAUTH_HELP = `To get Google OAuth credentials:
 
 const MCP_PRESETS = [
   { name: "Gmail",           command: "npx", args: ["-y", "@gongrzhe/server-gmail-autoauth-mcp"],      env: { GOOGLE_CLIENT_ID: "", GOOGLE_CLIENT_SECRET: "" },
-    oauthFile: { dir: "~/.gmail-mcp", filename: "gcp-oauth.keys.json" },
+    oauthFile: { dir: "gmail", filename: "gcp-oauth.keys.json" },
     oauth: {
       provider: "google",
-      keys_file: "~/.gmail-mcp/gcp-oauth.keys.json",
-      token_file: "~/.gmail-mcp/credentials.json",
+      keys_file: "gmail/gcp-oauth.keys.json",
+      token_file: "gmail/credentials.json",
       scopes: ["https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/gmail.settings.basic"],
     },
     help: `Setup:
@@ -2041,14 +2278,22 @@ function initBackup() {
     const btn = el('adm-importDataBtn');
     btn.disabled = true; btn.textContent = 'Importing...'; msg.textContent = '';
     try {
-      const text = await file.text();
-      const data = JSON.parse(text);
+      const text = (await file.text()).replace(/^\uFEFF/, '').trim();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        throw new Error('Invalid backup file: ' + e.message);
+      }
       const res = await fetch('/api/import', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
-      const result = await res.json();
+      const result = await res.json().catch(() => null);
+      if (!result) {
+        throw new Error(`Import failed: server returned ${res.status}`);
+      }
       if (res.ok && result.ok) {
         msg.textContent = result.message || 'Import successful.'; msg.className = 'admin-success';
       } else {

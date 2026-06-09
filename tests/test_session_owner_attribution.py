@@ -10,35 +10,61 @@ Follows the direct-helper + mocked-DB style of tests/test_null_owner_gates.py.
 
 import os
 import sys
-import types
+import importlib
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
+from tests.helpers.import_state import clear_module, preserve_import_state
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# routes.session_routes imports several heavy modules at import time that blow up
-# under conftest's sqlalchemy/* MagicMock stubs (declarative classes). Stub them
-# so we can import the module and exercise _verify_session_owner with a mock DB.
-_STUBS = {
-    "core.database": {"Session": MagicMock(), "SessionLocal": MagicMock(),
-                      "Document": MagicMock(), "GalleryImage": MagicMock()},
-    "core.session_manager": {"SessionManager": MagicMock()},
-    "core.models": {"ChatMessage": MagicMock()},
-    "src.request_models": {"SessionResponse": MagicMock()},
-}
-for _name, _attrs in _STUBS.items():
-    if _name not in sys.modules:
-        _m = types.ModuleType(_name)
-        for _k, _v in _attrs.items():
-            setattr(_m, _k, _v)
-        sys.modules[_name] = _m
+# Stub heavy ORM modules so routes.session_routes can be imported under
+# conftest's MagicMock sqlalchemy shim. preserve_import_state restores both the
+# stubs and the cached route module — including the parent `routes`/`core`
+# package attributes — on exit, preventing poisoning of later tests via
+# `import routes.session_routes`.
+
+
+def _set_module_and_parent_attr(dotted_name, module):
+    """Install a module at both sys.modules *and* the parent-package attribute.
+
+    Setting only sys.modules[...] leaves the parent `core` package attribute
+    pointing at the previous (real) module, so a later import resolving through
+    the parent would bypass the stub — and, symmetrically, a stub left on the
+    parent attribute would poison later tests. Controlling both keeps the two
+    views consistent so preserve_import_state can fully undo them.
+    """
+    sys.modules[dotted_name] = module
+    pkg_name, _, attr = dotted_name.rpartition(".")
+    pkg = sys.modules.get(pkg_name)
+    if pkg is not None:
+        setattr(pkg, attr, module)
+
+
+# Modules whose import-time effects leak through both sys.modules and the parent
+# `core`/`routes` package attributes. core.database/core.models are stubbed so
+# routes.session_routes imports under conftest's MagicMock sqlalchemy shim;
+# core.session_manager and routes.session_routes are (re)imported fresh.
+# preserve_import_state captures each at both levels and restores them on exit so
+# this file cannot poison later tests via `import core.<...>` /
+# `import routes.session_routes`.
+_TEMP_STUBS = ("core.database", "core.models")
+_MANAGED = _TEMP_STUBS + ("core.session_manager", "routes.session_routes")
+with preserve_import_state(*_MANAGED):
+    for _name in _TEMP_STUBS:
+        _set_module_and_parent_attr(_name, MagicMock(name=_name))
+    # Clear sys.modules AND the parent package attribute for the modules we
+    # re-import so the stubbed import below yields fresh modules with no stale
+    # binding reachable behind them.
+    clear_module("core.session_manager")
+    clear_module("routes.session_routes")
+    importlib.import_module("core.session_manager")
+    import routes.session_routes as SR  # noqa: E402
 
 from fastapi import HTTPException  # noqa: E402
-
 from src.auth_helpers import effective_user  # noqa: E402
-import routes.session_routes as SR  # noqa: E402
 
 
 def _req(**state):
@@ -110,4 +136,13 @@ def test_unauthenticated_caller_rejected(monkeypatch):
     req = _req(api_token=False, current_user=None)
     with pytest.raises(HTTPException) as exc:
         SR._verify_session_owner(req, "sid")
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 401
+
+
+def test_auth_disabled_allows_owner_stamped_session(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    monkeypatch.setattr(SR, "SessionLocal", _session_local_returning("admin"))
+    req = _req(api_token=False, current_user=None)
+
+    # Single-user/auth-disabled mode should verify existence but not compare owner.
+    SR._verify_session_owner(req, "sid-owned-by-admin")

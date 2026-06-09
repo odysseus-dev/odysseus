@@ -31,11 +31,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 server = Server("email")
 EMAIL_SOCKET_TIMEOUT = float(os.environ.get("EMAIL_SOCKET_TIMEOUT", "20"))
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+from src.constants import DATA_DIR as _DATA_DIR, APP_DB, EMAIL_CACHE_DB, SETTINGS_FILE as _SETTINGS_FILE, MAIL_ATTACHMENTS_DIR
+DATA_DIR = Path(_DATA_DIR)
 
 
 def _b(value) -> bytes:
     return str(value).encode()
+
+
+def _q(name: str) -> str:
+    """Quote an IMAP mailbox name for commands that take mailbox args."""
+    return '"' + (name or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def _uid_fetch_rows(data) -> list:
@@ -58,7 +64,7 @@ def _clean_header_value(value) -> str:
 
 
 def _db_path() -> Path:
-    return DATA_DIR / "app.db"
+    return Path(APP_DB)
 
 
 def _list_accounts_raw() -> list:
@@ -157,7 +163,7 @@ def _load_config(account: str | None = None) -> dict:
         "trash_folder": os.environ.get("TRASH_FOLDER", "Trash"),
         "cache_db": os.environ.get(
             "EMAIL_CACHE_DB",
-            str(DATA_DIR / "email_cache.db"),
+            EMAIL_CACHE_DB,
         ),
         "account_id": None,
         "account_name": None,
@@ -199,7 +205,7 @@ def _load_config(account: str | None = None) -> dict:
     else:
         # Legacy fallback: settings.json flat keys
         try:
-            settings_path = Path(__file__).resolve().parent.parent / "data" / "settings.json"
+            settings_path = Path(_SETTINGS_FILE)
             if settings_path.exists():
                 settings = json.loads(settings_path.read_text(encoding="utf-8"))
                 for key in (
@@ -239,10 +245,27 @@ def _imap_connect(account: str | None = None):
             timeout=EMAIL_SOCKET_TIMEOUT,
         )
         if cfg["imap_starttls"]:
-            conn.starttls()
+            try:
+                conn.starttls()
+            except Exception:
+                # Don't leak the open plain socket on a rejected STARTTLS. (#3174)
+                try:
+                    conn.shutdown()
+                except Exception:
+                    pass
+                raise
     if getattr(conn, "sock", None):
         conn.sock.settimeout(EMAIL_SOCKET_TIMEOUT)
-    conn.login(cfg["imap_user"], cfg["imap_password"])
+    try:
+        conn.login(cfg["imap_user"], cfg["imap_password"])
+    except Exception:
+        # A failed login otherwise orphans the connected socket; close it
+        # before propagating (shutdown() is the pre-auth low-level close). (#3174)
+        try:
+            conn.shutdown()
+        except Exception:
+            pass
+        raise
     return conn
 
 
@@ -418,68 +441,71 @@ def _list_emails(folder="INBOX", max_results=20, unresponded_only=False,
     Pass unread_only=True and/or unresponded_only=True for attention scans.
     account selects mailbox (None = default).
     """
-    conn = _imap_connect(account)
-    select_status, _ = conn.select(folder, readonly=True)
-    if select_status != "OK":
-        conn.logout()
-        raise ValueError(f"IMAP folder not found: {folder}")
+    conn = None
+    try:
+        conn = _imap_connect(account)
+        select_status, _ = conn.select(_q(folder), readonly=True)
+        if select_status != "OK":
+            raise ValueError(f"IMAP folder not found: {folder}")
 
-    if unread_only and unresponded_only:
-        status, data = conn.uid("SEARCH", None, "(UNSEEN UNANSWERED)")
-    elif unread_only:
-        status, data = conn.uid("SEARCH", None, "(UNSEEN)")
-    elif unresponded_only:
-        # Was missing — unresponded_only=True (without unread_only) fell through
-        # to "ALL" and returned answered mail too, despite the documented
-        # "emails without replies" behaviour.
-        status, data = conn.uid("SEARCH", None, "(UNANSWERED)")
-    else:
-        # Include read too — IMAP search "ALL" returns the entire folder
-        status, data = conn.uid("SEARCH", None, "ALL")
+        if unread_only and unresponded_only:
+            status, data = conn.uid("SEARCH", None, "(UNSEEN UNANSWERED)")
+        elif unread_only:
+            status, data = conn.uid("SEARCH", None, "(UNSEEN)")
+        elif unresponded_only:
+            # Was missing — unresponded_only=True (without unread_only) fell through
+            # to "ALL" and returned answered mail too, despite the documented
+            # "emails without replies" behaviour.
+            status, data = conn.uid("SEARCH", None, "(UNANSWERED)")
+        else:
+            # Include read too — IMAP search "ALL" returns the entire folder
+            status, data = conn.uid("SEARCH", None, "ALL")
 
-    if status != "OK" or not data[0]:
-        conn.logout()
-        return []
+        if status != "OK" or not data[0]:
+            return []
 
-    uid_list = list(reversed(data[0].split()))[:max_results]
-    cache = _get_cached_summaries()
-    results = []
+        uid_list = list(reversed(data[0].split()))[:max_results]
+        cache = _get_cached_summaries()
+        results = []
 
-    for uid in uid_list:
-        try:
-            status, msg_data = conn.uid("FETCH", uid, "(RFC822.HEADER)")
-            if status != "OK":
+        for uid in uid_list:
+            try:
+                status, msg_data = conn.uid("FETCH", uid, "(RFC822.HEADER)")
+                if status != "OK":
+                    continue
+                raw_header = msg_data[0][1]
+                msg = email.message_from_bytes(raw_header)
+
+                subject = _decode_header(msg.get("Subject", "(no subject)"))
+                sender = _decode_header(msg.get("From", "unknown"))
+                date_str = msg.get("Date", "")
+                message_id = msg.get("Message-ID", "")
+
+                # Parse sender name
+                sender_name, sender_addr = email.utils.parseaddr(sender)
+                sender_display = sender_name or sender_addr
+
+                # Check cache for summary
+                cached = cache.get(subject, {})
+                summary = cached.get("summary", "")
+
+                results.append({
+                    "uid": uid.decode(),
+                    "message_id": message_id,
+                    "subject": subject,
+                    "from": sender_display,
+                    "from_address": sender_addr,
+                    "date": date_str,
+                    "summary": summary,
+                })
+            except Exception:
                 continue
-            raw_header = msg_data[0][1]
-            msg = email.message_from_bytes(raw_header)
 
-            subject = _decode_header(msg.get("Subject", "(no subject)"))
-            sender = _decode_header(msg.get("From", "unknown"))
-            date_str = msg.get("Date", "")
-            message_id = msg.get("Message-ID", "")
-
-            # Parse sender name
-            sender_name, sender_addr = email.utils.parseaddr(sender)
-            sender_display = sender_name or sender_addr
-
-            # Check cache for summary
-            cached = cache.get(subject, {})
-            summary = cached.get("summary", "")
-
-            results.append({
-                "uid": uid.decode(),
-                "message_id": message_id,
-                "subject": subject,
-                "from": sender_display,
-                "from_address": sender_addr,
-                "date": date_str,
-                "summary": summary,
-            })
-        except Exception:
-            continue
-
-    conn.logout()
-    return results
+        return results
+    finally:
+        if conn:
+            try: conn.logout()
+            except Exception: pass
 
 
 def _result_sort_time(result: dict) -> datetime:
@@ -542,7 +568,7 @@ def _search_emails(query, folders=None, max_results=20, account=None):
     try:
         for folder in folders:
             try:
-                status, _ = conn.select(folder, readonly=True)
+                status, _ = conn.select(_q(folder), readonly=True)
                 if status != "OK":
                     continue
                 status, data = conn.uid("SEARCH", None, search_cmd)
@@ -652,54 +678,55 @@ def _extract_attachment_to_disk(msg, index, target_dir):
 def _read_email(uid=None, message_id=None, folder="INBOX", account=None):
     """Read full email content by UID or message-ID. account = mailbox selector."""
     cfg = _load_config(account)
-    conn = _imap_connect(account)
-    conn.select(folder, readonly=True)
+    conn = None
+    try:
+        conn = _imap_connect(account)
+        conn.select(_q(folder), readonly=True)
 
-    if message_id and not uid:
-        status, data = conn.uid("SEARCH", None, f'(HEADER Message-ID "{message_id}")')
-        if status != "OK" or not data[0]:
-            conn.logout()
-            return {"error": f"Email not found with Message-ID: {message_id}"}
-        uid = data[0].split()[-1]
+        if message_id and not uid:
+            status, data = conn.uid("SEARCH", None, f'(HEADER Message-ID "{message_id}")')
+            if status != "OK" or not data[0]:
+                return {"error": f"Email not found with Message-ID: {message_id}"}
+            uid = data[0].split()[-1]
 
-    if not uid:
-        conn.logout()
-        return {"error": "No UID or Message-ID provided"}
+        if not uid:
+            return {"error": "No UID or Message-ID provided"}
 
-    status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
-    if status != "OK":
-        conn.logout()
-        return {"error": f"Failed to fetch email UID {uid}"}
-    if not msg_data or not msg_data[0] or not isinstance(msg_data[0], tuple) or len(msg_data[0]) < 2:
-        conn.logout()
-        return {"error": f"Email not found with UID {uid}"}
+        status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
+        if status != "OK":
+            return {"error": f"Failed to fetch email UID {uid}"}
+        if not msg_data or not msg_data[0] or not isinstance(msg_data[0], tuple) or len(msg_data[0]) < 2:
+            return {"error": f"Email not found with UID {uid}"}
 
-    raw = msg_data[0][1]
-    msg = email.message_from_bytes(raw)
+        raw = msg_data[0][1]
+        msg = email.message_from_bytes(raw)
 
-    subject = _decode_header(msg.get("Subject", "(no subject)"))
-    sender = _decode_header(msg.get("From", "unknown"))
-    date_str = msg.get("Date", "")
-    message_id_header = msg.get("Message-ID", "")
-    body = _extract_text(msg)
-    attachments = _list_attachments_from_msg(msg)
+        subject = _decode_header(msg.get("Subject", "(no subject)"))
+        sender = _decode_header(msg.get("From", "unknown"))
+        date_str = msg.get("Date", "")
+        message_id_header = msg.get("Message-ID", "")
+        body = _extract_text(msg)
+        attachments = _list_attachments_from_msg(msg)
 
-    sender_name, sender_addr = email.utils.parseaddr(sender)
+        sender_name, sender_addr = email.utils.parseaddr(sender)
 
-    conn.logout()
-    return {
-        "uid": uid.decode() if isinstance(uid, bytes) else str(uid),
-        "account": cfg.get("account_name") or cfg.get("imap_user") or "default",
-        "account_email": cfg.get("imap_user") or cfg.get("from_address") or "",
-        "account_id": cfg.get("account_id"),
-        "message_id": message_id_header,
-        "subject": subject,
-        "from": sender_name or sender_addr,
-        "from_address": sender_addr,
-        "date": date_str,
-        "body": body[:8000],
-        "attachments": attachments,
-    }
+        return {
+            "uid": uid.decode() if isinstance(uid, bytes) else str(uid),
+            "account": cfg.get("account_name") or cfg.get("imap_user") or "default",
+            "account_email": cfg.get("imap_user") or cfg.get("from_address") or "",
+            "account_id": cfg.get("account_id"),
+            "message_id": message_id_header,
+            "subject": subject,
+            "from": sender_name or sender_addr,
+            "from_address": sender_addr,
+            "date": date_str,
+            "body": body[:8000],
+            "attachments": attachments,
+        }
+    finally:
+        if conn:
+            try: conn.logout()
+            except Exception: pass
 
 
 def _read_email_across_accounts(uid=None, message_id=None, folder="INBOX"):
@@ -768,7 +795,16 @@ def _smtp_connect(account=None, cfg=None):
             port,
             timeout=EMAIL_SOCKET_TIMEOUT,
         )
-        conn.starttls()
+        try:
+            conn.starttls()
+        except Exception:
+            # Don't leak the open plain socket on a rejected STARTTLS. SMTP has
+            # no shutdown(); close() is the low-level socket close (no QUIT). (#3174)
+            try:
+                conn.close()
+            except Exception:
+                pass
+            raise
     elif security == "ssl":
         conn = smtplib.SMTP_SSL(
             cfg["smtp_host"],
@@ -782,7 +818,16 @@ def _smtp_connect(account=None, cfg=None):
             timeout=EMAIL_SOCKET_TIMEOUT,
         )
     if cfg["smtp_user"] and cfg["smtp_password"]:
-        conn.login(cfg["smtp_user"], cfg["smtp_password"])
+        try:
+            conn.login(cfg["smtp_user"], cfg["smtp_password"])
+        except Exception:
+            # A failed login otherwise orphans the connected socket; close it
+            # before propagating (SMTP has no shutdown(); close() = socket close). (#3174)
+            try:
+                conn.close()
+            except Exception:
+                pass
+            raise
     return conn
 
 
@@ -827,7 +872,7 @@ def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, b
         imap = _imap_connect(send_account)
         try:
             sent_folder = _detect_sent_folder(imap)
-            append_st, append_data = imap.append(sent_folder, "\\Seen", None, msg.as_bytes())
+            append_st, append_data = imap.append(_q(sent_folder), "\\Seen", None, msg.as_bytes())
             if append_st == "OK" and append_data:
                 m = re.search(rb"APPENDUID\s+\d+\s+(\d+)", append_data[0] or b"")
                 if m:
@@ -853,10 +898,15 @@ def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, b
 
 def _reply_to_email(uid, body, folder="INBOX", reply_all=False, account=None):
     """Reply to an existing email by UID. Threads via In-Reply-To/References."""
-    conn = _imap_connect(account)
-    conn.select(folder, readonly=True)
-    status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
-    conn.logout()
+    conn = None
+    try:
+        conn = _imap_connect(account)
+        conn.select(_q(folder), readonly=True)
+        status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
+    finally:
+        if conn:
+            try: conn.logout()
+            except Exception: pass
     if status != "OK" or not msg_data or not msg_data[0]:
         return {"error": f"Failed to fetch email UID {uid}"}
     raw = msg_data[0][1]
@@ -896,7 +946,7 @@ def _reply_to_email(uid, body, folder="INBOX", reply_all=False, account=None):
 def _set_flag(uid, folder, flag, add=True, account=None):
     """Add or remove an IMAP flag (e.g. \\Seen, \\Answered, \\Deleted)."""
     conn = _imap_connect(account)
-    conn.select(folder)
+    conn.select(_q(folder))
     op = "+FLAGS" if add else "-FLAGS"
     try:
         status, data = conn.uid("STORE", _b(uid), op, flag)
@@ -918,7 +968,7 @@ def _bulk_set_flag(uids, folder, flag, add=True, account=None):
     conn = _imap_connect(account)
     touched = []
     try:
-        conn.select(folder)
+        conn.select(_q(folder))
         op = "+FLAGS" if add else "-FLAGS"
         msg_set = ",".join(str(u) for u in uids)
         try:
@@ -945,7 +995,7 @@ def _bulk_move(uids, source_folder, dest_folder, account=None, role: str = ""):
     conn = _imap_connect(account)
     moved = 0
     try:
-        conn.select(source_folder)
+        conn.select(_q(source_folder))
         dest_folder = _resolve_folder(conn, dest_folder, role or _folder_role_from_name(dest_folder))
         msg_set = ",".join(str(u) for u in uids)
         try:
@@ -956,10 +1006,11 @@ def _bulk_move(uids, source_folder, dest_folder, account=None, role: str = ""):
         if not existing:
             return 0
         moved = len(existing)
-        status, _ = conn.uid("MOVE", _b(msg_set), dest_folder)
+        dest_arg = _q(dest_folder)
+        status, _ = conn.uid("MOVE", _b(msg_set), dest_arg)
         if status != "OK":
             # Fallback: UID copy + flag-delete + expunge
-            status, _ = conn.uid("COPY", _b(msg_set), dest_folder)
+            status, _ = conn.uid("COPY", _b(msg_set), dest_arg)
             if status != "OK":
                 return 0
             status, _ = conn.uid("STORE", _b(msg_set), "+FLAGS", "\\Deleted")
@@ -976,7 +1027,7 @@ def _search_uids(folder="INBOX", criteria="UNSEEN", account=None):
     ALL, ANSWERED). Used to resolve selectors like all_unread → uids."""
     conn = _imap_connect(account)
     try:
-        conn.select(folder, readonly=True)
+        conn.select(_q(folder), readonly=True)
         status, data = conn.uid("SEARCH", None, criteria)
         if status != "OK" or not data or not data[0]:
             return []
@@ -988,7 +1039,7 @@ def _search_uids(folder="INBOX", criteria="UNSEEN", account=None):
 def _move_message(uid, source_folder, dest_folder, account=None, role: str = ""):
     """Move a message between folders. Tries IMAP MOVE, falls back to copy+delete."""
     conn = _imap_connect(account)
-    conn.select(source_folder)
+    conn.select(_q(source_folder))
     try:
         dest_folder = _resolve_folder(conn, dest_folder, role or _folder_role_from_name(dest_folder))
         try:
@@ -998,11 +1049,12 @@ def _move_message(uid, source_folder, dest_folder, account=None, role: str = "")
         existing = _uid_fetch_rows(data)
         if status != "OK" or not existing:
             return False
-        status, _ = conn.uid("MOVE", _b(uid), dest_folder)
+        dest_arg = _q(dest_folder)
+        status, _ = conn.uid("MOVE", _b(uid), dest_arg)
         if status == "OK":
             return True
         # Fallback: UID copy + delete
-        status, _ = conn.uid("COPY", _b(uid), dest_folder)
+        status, _ = conn.uid("COPY", _b(uid), dest_arg)
         if status != "OK":
             return False
         status, _ = conn.uid("STORE", _b(uid), "+FLAGS", "\\Deleted")
@@ -1031,16 +1083,21 @@ def _archive_email(uid, folder="INBOX", account=None):
 
 def _download_attachment(uid, index, folder="INBOX", account=None):
     """Extract a specific attachment to disk and return its local path."""
-    conn = _imap_connect(account)
-    conn.select(folder, readonly=True)
-    status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
-    conn.logout()
+    conn = None
+    try:
+        conn = _imap_connect(account)
+        conn.select(_q(folder), readonly=True)
+        status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
+    finally:
+        if conn:
+            try: conn.logout()
+            except Exception: pass
     if status != "OK":
         return {"error": f"Failed to fetch email UID {uid}"}
     raw = msg_data[0][1]
     msg = email.message_from_bytes(raw)
 
-    target_dir = DATA_DIR / "mail-attachments" / f"{folder}_{uid}"
+    target_dir = Path(MAIL_ATTACHMENTS_DIR) / f"{folder}_{uid}"
     filepath = _extract_attachment_to_disk(msg, index, target_dir)
     if not filepath:
         return {"error": f"Attachment index {index} not found"}
