@@ -27,6 +27,7 @@ class _FakeModelEndpoint:
 
 
 class _FakeDbSession:
+    id = _FakeColumn("id")
     endpoint_url = _FakeColumn("endpoint_url")
 
 
@@ -43,6 +44,9 @@ class _FakeQuery:
 
     def first(self):
         return self.rows[0] if self.rows else None
+
+    def all(self):
+        return list(self.rows)
 
 
 class _FakeDb:
@@ -73,16 +77,30 @@ def _install_model_route_import_stubs(monkeypatch):
     db_mod.SessionLocal = lambda: _FakeDb([])
     db_mod.ModelEndpoint = _FakeModelEndpoint
     db_mod.Session = _FakeDbSession
+    db_mod.Document = MagicMock()
+    db_mod.DocumentVersion = MagicMock()
+    db_mod.GalleryImage = MagicMock()
     middleware_mod = types.ModuleType("core.middleware")
     middleware_mod.require_admin = lambda request: None
     multipart_mod = types.ModuleType("python_multipart")
     multipart_mod.__version__ = "0.0.13"
+    models_mod = types.ModuleType("core.models")
+    models_mod.ChatMessage = MagicMock()
+    exceptions_mod = types.ModuleType("core.exceptions")
+    exceptions_mod.SessionNotFoundError = type("SessionNotFoundError", (Exception,), {})
+    session_mgr_mod = types.ModuleType("core.session_manager")
+    session_mgr_mod.SessionManager = MagicMock()
 
     monkeypatch.delitem(sys.modules, "routes.model_routes", raising=False)
+    monkeypatch.delitem(sys.modules, "routes.chat_routes", raising=False)
+    monkeypatch.delitem(sys.modules, "routes.session_routes", raising=False)
     monkeypatch.setitem(sys.modules, "core", core_mod)
     monkeypatch.setitem(sys.modules, "core.database", db_mod)
     monkeypatch.setitem(sys.modules, "core.middleware", middleware_mod)
     monkeypatch.setitem(sys.modules, "python_multipart", multipart_mod)
+    monkeypatch.setitem(sys.modules, "core.models", models_mod)
+    monkeypatch.setitem(sys.modules, "core.exceptions", exceptions_mod)
+    monkeypatch.setitem(sys.modules, "core.session_manager", session_mgr_mod)
 
 
 def _install_core_auth_stub(monkeypatch):
@@ -95,6 +113,55 @@ def _install_core_auth_stub(monkeypatch):
     monkeypatch.setitem(sys.modules, "core", core_mod)
     monkeypatch.setitem(sys.modules, "core.auth", auth_mod)
     return auth_mod
+
+
+def _install_core_middleware_stub(monkeypatch):
+    """Install the narrow middleware surface needed by loopback tool tests."""
+    core_mod = types.ModuleType("core")
+    core_mod.__path__ = []
+    middleware_mod = types.ModuleType("core.middleware")
+    middleware_mod.INTERNAL_TOOL_HEADER = "X-Internal-Tool"
+    middleware_mod.INTERNAL_TOOL_TOKEN = "test-token"
+    core_mod.middleware = middleware_mod
+    monkeypatch.setitem(sys.modules, "core", core_mod)
+    monkeypatch.setitem(sys.modules, "core.middleware", middleware_mod)
+    return middleware_mod
+
+
+def test_providers_requires_admin_before_discovery_and_cache(monkeypatch):
+    _install_model_route_import_stubs(monkeypatch)
+    import routes.model_routes as model_routes
+
+    class _Discovery:
+        def __init__(self):
+            self.calls = 0
+
+        def get_providers(self):
+            self.calls += 1
+            return {"providers": [{"host": "internal.example"}]}
+
+    discovery = _Discovery()
+    router = model_routes.setup_model_routes(discovery)
+    endpoint = next(
+        route.endpoint
+        for route in router.routes
+        if getattr(route, "path", "") == "/api/providers"
+    )
+    request = SimpleNamespace()
+
+    assert endpoint(request, refresh=True) == {"providers": [{"host": "internal.example"}]}
+    assert discovery.calls == 1
+
+    def deny_admin(_request):
+        raise PermissionError("admin required")
+
+    monkeypatch.setattr(model_routes, "require_admin", deny_admin)
+
+    with pytest.raises(PermissionError):
+        endpoint(request, refresh=True)
+    with pytest.raises(PermissionError):
+        endpoint(request, refresh=False)
+    assert discovery.calls == 1
 
 
 def test_default_chat_does_not_auto_pick_shared_endpoint_for_fresh_user(monkeypatch):
@@ -311,7 +378,7 @@ async def test_build_chat_context_incognito_does_not_duplicate_current_user_mess
     def fake_add_user_message(sess, chat_handler, preprocessed, incognito=False):
         sess.messages.append({"role": "user", "content": preprocessed.user_content})
 
-    async def fake_maybe_compact(sess, endpoint_url, model, messages, headers):
+    async def fake_maybe_compact(sess, endpoint_url, model, messages, headers, owner=None):
         return messages, 123, False
 
     monkeypatch.setattr(chat_helpers, "preprocess", fake_preprocess)
@@ -319,7 +386,7 @@ async def test_build_chat_context_incognito_does_not_duplicate_current_user_mess
     monkeypatch.setattr(chat_helpers, "add_user_message", fake_add_user_message)
     monkeypatch.setattr(chat_helpers, "load_prefs_for_user", lambda user: {})
     monkeypatch.setattr(chat_helpers, "get_current_user", lambda request: "tester")
-    monkeypatch.setattr(chat_helpers, "normalize_model_id", lambda endpoint_url, model: None)
+    monkeypatch.setattr(chat_helpers, "normalize_model_id", lambda endpoint_url, model, **kwargs: None)
     monkeypatch.setattr(chat_helpers, "maybe_compact", fake_maybe_compact)
     monkeypatch.setattr(chat_helpers, "trim_for_context", lambda messages, context_length: messages)
 
@@ -363,14 +430,177 @@ async def test_admin_agent_tools_require_admin(monkeypatch):
 
     monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
 
-    desc, result = await execute_tool_block(
-        SimpleNamespace(tool_type="manage_tokens", content='{"action":"create","name":"bad"}'),
-        owner="regular-user",
+    for tool_name in ("manage_tokens", "app_api", "serve_preset"):
+        desc, result = await execute_tool_block(
+            SimpleNamespace(tool_type=tool_name, content='{"action":"create","name":"bad"}'),
+            owner="regular-user",
+        )
+
+        assert desc == f"{tool_name}: BLOCKED"
+        assert result["exit_code"] == 1
+        assert "requires an admin" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_app_api_blocks_shell_routes_before_loopback(monkeypatch):
+    import httpx
+    from src.tool_implementations import do_app_api
+
+    class UnexpectedAsyncClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("app_api should block shell routes before loopback")
+
+    monkeypatch.setattr(httpx, "AsyncClient", UnexpectedAsyncClient)
+
+    for path in ("/api/shell/exec", "api/shell/stream"):
+        result = await do_app_api(
+            json.dumps(
+                {
+                    "action": "call",
+                    "method": "POST",
+                    "path": path,
+                    "body": {"command": "echo should-not-run"},
+                }
+            ),
+            owner="admin",
+        )
+
+        assert result["exit_code"] == 1
+        assert "Path blocked for safety" in result["error"]
+        assert "Sensitive endpoints" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_app_api_blocks_cookbook_host_control_routes_before_loopback(monkeypatch):
+    import httpx
+    from src.tool_implementations import do_app_api
+
+    class UnexpectedAsyncClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("app_api should block host-control routes before loopback")
+
+    monkeypatch.setattr(httpx, "AsyncClient", UnexpectedAsyncClient)
+
+    blocked_calls = (
+        (
+            "api/cookbook/packages/install",
+            {"pip": "hf_transfer"},
+            "package installation is host code execution",
+        ),
+        (
+            "/api/cookbook/rebuild-engine",
+            {"engine": "llamacpp"},
+            "engine rebuild mutates local or remote host state",
+        ),
+        (
+            "/api/cookbook/kill-pid",
+            {"pid": 12345, "signal": "TERM"},
+            "process signalling is host control",
+        ),
     )
 
-    assert desc == "manage_tokens: BLOCKED"
-    assert result["exit_code"] == 1
-    assert "requires an admin" in result["error"]
+    for path, body, error_text in blocked_calls:
+        result = await do_app_api(
+            json.dumps(
+                {
+                    "action": "call",
+                    "method": "POST",
+                    "path": path,
+                    "body": body,
+                }
+            ),
+            owner="admin",
+        )
+
+        assert result["exit_code"] == 1
+        assert error_text in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_app_api_endpoint_discovery_hides_shell_routes(monkeypatch):
+    _install_core_middleware_stub(monkeypatch)
+    import httpx
+    from src.tool_implementations import do_app_api
+
+    class FakeResponse:
+        def json(self):
+            return {
+                "paths": {
+                    "/api/shell/exec": {"post": {"summary": "Execute Shell Command"}},
+                    "/api/shell/stream": {"post": {"summary": "Stream Shell Command"}},
+                    "/api/auth/settings": {"get": {"summary": "Auth Settings"}},
+                    "/api/cookbook/gpus": {"get": {"summary": "List GPUs"}},
+                }
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    result = await do_app_api(json.dumps({"action": "endpoints"}), owner="admin")
+
+    assert result["exit_code"] == 0
+    paths = {(endpoint["method"], endpoint["path"]) for endpoint in result["endpoints"]}
+    assert ("GET", "/api/cookbook/gpus") in paths
+    assert ("POST", "/api/shell/exec") not in paths
+    assert ("POST", "/api/shell/stream") not in paths
+    assert ("GET", "/api/auth/settings") not in paths
+    assert all(not endpoint["path"].startswith("/api/shell") for endpoint in result["endpoints"])
+
+
+@pytest.mark.asyncio
+async def test_app_api_endpoint_discovery_hides_cookbook_host_control_routes(monkeypatch):
+    _install_core_middleware_stub(monkeypatch)
+    import httpx
+    from src.tool_implementations import do_app_api
+
+    class FakeResponse:
+        def json(self):
+            return {
+                "paths": {
+                    "/api/cookbook/packages": {"get": {"summary": "List Cookbook Packages"}},
+                    "/api/cookbook/packages/install": {"post": {"summary": "Install Package"}},
+                    "/api/cookbook/rebuild-engine": {"post": {"summary": "Rebuild Engine"}},
+                    "/api/cookbook/kill-pid": {"post": {"summary": "Kill Process"}},
+                    "/api/cookbook/gpus": {"get": {"summary": "List GPUs"}},
+                }
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    result = await do_app_api(json.dumps({"action": "endpoints", "filter": "cookbook"}), owner="admin")
+
+    assert result["exit_code"] == 0
+    paths = {(endpoint["method"], endpoint["path"]) for endpoint in result["endpoints"]}
+    assert ("GET", "/api/cookbook/packages") in paths
+    assert ("GET", "/api/cookbook/gpus") in paths
+    assert ("POST", "/api/cookbook/packages/install") not in paths
+    assert ("POST", "/api/cookbook/rebuild-engine") not in paths
+    assert ("POST", "/api/cookbook/kill-pid") not in paths
 
 
 @pytest.mark.asyncio
@@ -386,7 +616,7 @@ async def test_public_agent_policy_blocks_sensitive_tools(monkeypatch):
 
     monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
 
-    for tool_name in ("send_email", "read_file", "app_api", "mcp__email__send_email"):
+    for tool_name in ("send_email", "read_file", "mcp__email__send_email"):
         desc, result = await execute_tool_block(
             SimpleNamespace(tool_type=tool_name, content="{}"),
             owner="regular-user",
@@ -413,6 +643,7 @@ def test_public_agent_policy_hides_sensitive_tools(monkeypatch):
     assert "send_email" in blocked
     assert "read_file" in blocked
     assert "app_api" in blocked
+    assert "serve_preset" in blocked
     assert "manage_tasks" in blocked
 
 
@@ -428,7 +659,25 @@ async def test_webhook_tool_reuses_private_url_validation():
     fake_src_db = types.ModuleType("src.database")
     fake_src_db.SessionLocal = fake_core_db.SessionLocal
     fake_src_db.Webhook = object
+    # Importing do_manage_webhooks below re-executes src.webhook_manager bound to
+    # the faked src.database, whose Webhook is plain `object`. Save BOTH the
+    # sys.modules entry AND the parent-package attribute (src.webhook_manager) so
+    # the real module can be restored afterwards. Without this the polluted
+    # module leaks into the cache and breaks sibling tests that call
+    # WebhookManager._deliver (which evaluates `Webhook.id == webhook_id`).
+    _ABSENT = object()
+    _wm_saved_module = sys.modules.get("src.webhook_manager", _ABSENT)
+    _src_pkg = sys.modules.get("src")
+    _wm_saved_attr = (
+        getattr(_src_pkg, "webhook_manager", _ABSENT) if _src_pkg is not None else _ABSENT
+    )
+
+    # Drop both bindings so the import re-executes against the fake src.database,
+    # still exercising the intended import path.
     sys.modules.pop("src.webhook_manager", None)
+    if _src_pkg is not None and hasattr(_src_pkg, "webhook_manager"):
+        delattr(_src_pkg, "webhook_manager")
+
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setitem(sys.modules, "core.database", fake_core_db)
     monkeypatch.setitem(sys.modules, "src.database", fake_src_db)
@@ -442,6 +691,158 @@ async def test_webhook_tool_reuses_private_url_validation():
         )
     finally:
         monkeypatch.undo()
+        # Restore src.webhook_manager to its exact pre-test state at BOTH the
+        # sys.modules and parent-package attribute level.
+        if _wm_saved_module is _ABSENT:
+            sys.modules.pop("src.webhook_manager", None)
+        else:
+            sys.modules["src.webhook_manager"] = _wm_saved_module
+        if _src_pkg is not None:
+            if _wm_saved_attr is _ABSENT:
+                if hasattr(_src_pkg, "webhook_manager"):
+                    delattr(_src_pkg, "webhook_manager")
+            else:
+                setattr(_src_pkg, "webhook_manager", _wm_saved_attr)
 
     assert result["exit_code"] == 1
     assert "private/internal" in result["error"]
+
+
+def test_default_chat_skips_hidden_first_model(monkeypatch):
+    """get_default_chat picks first visible model when default_model is empty
+    and the first cached model is hidden."""
+    _install_model_route_import_stubs(monkeypatch)
+    import routes.model_routes as model_routes
+    import routes.prefs_routes as prefs_routes
+
+    ep = SimpleNamespace(
+        id="ep1",
+        base_url="http://localhost:11434",
+        is_enabled=True,
+        owner="fresh",
+        cached_models='["hidden-model", "visible-model"]',
+        hidden_models='["hidden-model"]',
+    )
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _FakeModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: _FakeDb([ep]))
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: {})
+    monkeypatch.setattr(model_routes, "owner_filter", lambda q, m, u, **kw: q)
+    monkeypatch.setattr(model_routes, "_normalize_base", lambda base: base.rstrip("/"))
+    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+    monkeypatch.setattr(prefs_routes, "_load_for_user", lambda user: {})
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user="fresh"),
+        app=SimpleNamespace(state=SimpleNamespace(
+            auth_manager=SimpleNamespace(is_admin=lambda user: False)
+        )),
+    )
+
+    result = _default_chat_endpoint()(request)
+    assert result["model"] == "visible-model", f"Expected visible-model, got {result['model']!r}"
+
+
+def test_default_chat_admin_skips_hidden_first_model(monkeypatch):
+    """Admin user with global defaults also skips hidden models in fallback."""
+    _install_model_route_import_stubs(monkeypatch)
+    import routes.model_routes as model_routes
+
+    ep = SimpleNamespace(
+        id="ep1",
+        base_url="http://localhost:11434",
+        is_enabled=True,
+        owner=None,
+        cached_models='["hidden-model", "visible-model"]',
+        hidden_models='["hidden-model"]',
+    )
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _FakeModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: _FakeDb([ep]))
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: {})
+    monkeypatch.setattr(model_routes, "owner_filter", lambda q, m, u, **kw: q)
+    monkeypatch.setattr(model_routes, "_normalize_base", lambda base: base.rstrip("/"))
+    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user="admin"),
+        app=SimpleNamespace(state=SimpleNamespace(
+            auth_manager=SimpleNamespace(is_admin=lambda user: True)
+        )),
+    )
+
+    result = _default_chat_endpoint()(request)
+    assert result["model"] == "visible-model"
+
+
+def test_default_chat_all_models_hidden_returns_empty_model(monkeypatch):
+    """When all cached models are hidden, get_default_chat returns model: ''."""
+    _install_model_route_import_stubs(monkeypatch)
+    import routes.model_routes as model_routes
+
+    ep = SimpleNamespace(
+        id="ep1",
+        base_url="http://localhost:11434",
+        is_enabled=True,
+        owner=None,
+        cached_models='["hidden-a", "hidden-b"]',
+        hidden_models='["hidden-a", "hidden-b"]',
+    )
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _FakeModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: _FakeDb([ep]))
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: {})
+    monkeypatch.setattr(model_routes, "owner_filter", lambda q, m, u, **kw: q)
+    monkeypatch.setattr(model_routes, "_normalize_base", lambda base: base.rstrip("/"))
+    monkeypatch.setattr(model_routes, "build_chat_url", lambda base: f"{base}/chat/completions")
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user="admin"),
+        app=SimpleNamespace(state=SimpleNamespace(
+            auth_manager=SimpleNamespace(is_admin=lambda user: True)
+        )),
+    )
+
+    result = _default_chat_endpoint()(request)
+    assert result["model"] == "", f"Expected empty model, got {result['model']!r}"
+
+
+def test_visible_models_filters_hidden_first(monkeypatch):
+    """_visible_models removes hidden models from the list."""
+    from routes.model_routes import _visible_models
+
+    result = _visible_models(
+        '["hidden-model", "visible-model"]',
+        '["hidden-model"]',
+    )
+    assert result == ["visible-model"]
+
+
+def test_visible_models_all_hidden_returns_empty(monkeypatch):
+    """_visible_models returns [] when all models are hidden."""
+    from routes.model_routes import _visible_models
+
+    result = _visible_models(
+        '["hidden-a", "hidden-b"]',
+        '["hidden-a", "hidden-b"]',
+    )
+    assert result == []
+
+
+def test_visible_models_no_hidden_returns_all(monkeypatch):
+    """_visible_models returns full list when no hidden_models."""
+    from routes.model_routes import _visible_models
+
+    result = _visible_models(
+        '["model-a", "model-b"]',
+        None,
+    )
+    assert result == ["model-a", "model-b"]
+
+
+def test_visible_models_empty_cached_returns_empty(monkeypatch):
+    """_visible_models returns [] for empty cached list."""
+    from routes.model_routes import _visible_models
+
+    result = _visible_models([], None)
+    assert result == []

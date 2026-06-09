@@ -37,6 +37,7 @@
 //                        Default true when onEnterFullscreen is supplied.
 
 import { makeEdgeDockController } from './modalSnap.js';
+import { makeWindowResizable } from './windowResize.js';
 
 const SNAP_PX = 6;        // cursor distance from top edge for fullscreen snap
 const UNSNAP_PX = 24;     // cursor distance from top before fullscreen exits
@@ -62,6 +63,7 @@ export function makeWindowDraggable(modal, options = {}) {
   const onExitFullscreen = options.onExitFullscreen || null;
   const enableFullscreen = options.enableFullscreen !== false && !!onEnterFullscreen;
   const onDragEnd = options.onDragEnd || null;
+  const onDragStart = options.onDragStart || null;
   const skipSelector = options.skipSelector || 'button, input, select';
   const mobileSkip = (typeof options.mobileSkip === 'number') ? options.mobileSkip : 768;
   const enableTouch = options.enableTouch !== false;
@@ -70,12 +72,32 @@ export function makeWindowDraggable(modal, options = {}) {
   header.style.cursor = 'move';
   header.style.userSelect = 'none';
 
+  // Edge/corner resize. Every draggable window also becomes resizable — the
+  // same gesture a native desktop window uses (grab an edge or corner, drag).
+  // Skipped on mobile (windows are full-screen sheets there) and while the
+  // window is fullscreen-snapped or docked. Wired here so all ~12 callsites
+  // get it without per-file changes.
+  if (options.enableResize !== false) {
+    const _dockClasses = ['modal-right-docked', 'modal-left-docked'];
+    makeWindowResizable(content, {
+      modal,
+      mobileSkip,
+      minWidth: options.minWidth,
+      minHeight: options.minHeight,
+      isLocked: () => (fsClass && modal && modal.classList.contains(fsClass))
+        || (modal && _dockClasses.some((c) => modal.classList.contains(c))),
+      storageKey: options.resizeStorageKey
+        || (modal && modal.id ? 'winsize-' + modal.id
+          : (content.id ? 'winsize-' + content.id : null)),
+    });
+  }
+
   const rightDock = enableDock ? makeEdgeDockController(modal, 'right') : null;
-  // Left dock is opt-in (enableLeftDock). For most windows it's off — the
-  // sidebar lives on the left, so a left dock collides with it. The email
-  // window enables it so you can park the message on the left and read it
-  // while replying in the document on the right.
-  const leftDock = (enableDock && options.enableLeftDock) ? makeEdgeDockController(modal, 'left') : null;
+  // Left dock is enabled by default too. modalSnap collapses the wide sidebar
+  // and anchors the panel beside the icon rail, so it no longer collides with
+  // the navigation. Callers can still pass enableLeftDock:false for a special
+  // modal that should only dock right.
+  const leftDock = (enableDock && options.enableLeftDock !== false) ? makeEdgeDockController(modal, 'left') : null;
 
   // Per-drag state, reset on mousedown.
   let dragging = false;
@@ -126,7 +148,18 @@ export function makeWindowDraggable(modal, options = {}) {
 
   const _startDrag = (cx, cy) => {
     dragging = true;
+    if (modal) modal.classList.add('modal-dragging');
+    // Cancel any in-flight open animation so we don't pin a mid-animation
+    // rect and then jump once the animation settles.
+    try {
+      content.getAnimations()
+        .filter(a => a.playState !== 'finished')
+        .forEach(a => a.cancel());
+    } catch (_) {}
     const rect = content.getBoundingClientRect();
+    if (onDragStart) {
+      try { onDragStart({ rect, cx, cy }); } catch (_) {}
+    }
     startX = cx; startY = cy;
     startLeft = rect.left; startTop = rect.top;
     // Pin position so the drag follows the cursor instead of fighting a
@@ -216,6 +249,7 @@ export function makeWindowDraggable(modal, options = {}) {
   const _onEnd = (cx, cy) => {
     if (!dragging) return;
     dragging = false;
+    if (modal) modal.classList.remove('modal-dragging');
     _showSnapHint(false);
     // Top edge wins over side edges — fullscreen is the more common gesture.
     if (enableFullscreen && typeof cy === 'number' && cy <= SNAP_PX) {

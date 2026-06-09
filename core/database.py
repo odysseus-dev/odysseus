@@ -1,7 +1,9 @@
 import os
 import logging
-from datetime import datetime
-from sqlalchemy import create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
+import sqlite3
+from datetime import datetime, timezone
+from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.orm import relationship, sessionmaker, backref
@@ -11,18 +13,25 @@ logger = logging.getLogger(__name__)
 # Create base class for declarative models
 Base = declarative_base()
 
+
+def utcnow_naive() -> datetime:
+    """Return naive UTC for existing DateTime columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 class TimestampMixin:
     """Mixin that adds timestamp fields to models"""
     @declared_attr
     def created_at(cls):
-        return Column(DateTime, default=datetime.utcnow, nullable=False)
+        return Column(DateTime, default=utcnow_naive, nullable=False)
     
     @declared_attr
     def updated_at(cls):
-        return Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+        return Column(DateTime, default=utcnow_naive, onupdate=utcnow_naive, nullable=False)
 
-# Get database URL from environment, default to SQLite
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
+# Get database URL from environment, default to SQLite in DATA_DIR
+from src.constants import DATA_DIR, AUTH_FILE, MEMORY_FILE, USER_PREFS_FILE, SETTINGS_FILE
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR}/app.db")
 
 # Create engine
 engine = create_engine(
@@ -32,6 +41,18 @@ engine = create_engine(
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+# Listening on the Engine class ensures this listener fires for all Engine
+# instances created within the process, not just the primary application engine.
+# The isinstance(sqlite3.Connection) check ensures that this PRAGMA foreign_keys=ON
+# configuration remains a no-op when using non-SQLite database backends.
+@event.listens_for(Engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    if isinstance(dbapi_connection, sqlite3.Connection):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 
 class EncryptedText(TypeDecorator):
@@ -157,7 +178,7 @@ class ChatMessage(Base):
     meta_data = Column("metadata", Text, nullable=True)  # JSON string for metrics etc.
 
     # Timestamp
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=utcnow_naive)
     
     # Relationship to Session
     session = relationship("Session", back_populates="messages")
@@ -210,7 +231,7 @@ class DocumentVersion(Base):
     content        = Column(Text, nullable=False)
     summary        = Column(String, nullable=True)     # Edit description
     source         = Column(String, default="ai")      # "ai" or "user"
-    created_at     = Column(DateTime, default=datetime.utcnow)
+    created_at     = Column(DateTime, default=utcnow_naive)
 
     document = relationship("Document", back_populates="versions")
 
@@ -298,6 +319,7 @@ class EmailAccount(TimestampMixin, Base):
     # SMTP (sending)
     smtp_host      = Column(String, default="")
     smtp_port      = Column(Integer, default=465)
+    smtp_security  = Column(String, default="ssl")  # ssl | starttls | none
     smtp_user      = Column(String, default="")
     smtp_password  = Column(String, default="")
 
@@ -319,7 +341,16 @@ class ModelEndpoint(TimestampMixin, Base):
     is_enabled = Column(Boolean, default=True)
     hidden_models = Column(Text, nullable=True)    # JSON list of model IDs that failed probing
     cached_models = Column(Text, nullable=True)    # JSON list of last-known model IDs (avoids probe on list)
+    pinned_models = Column(Text, nullable=True)    # JSON list of admin-pinned model IDs (manual, may not appear in /v1/models)
     model_type = Column(String, nullable=True, default="llm")  # "llm" or "image"
+    # auto = classify by URL; local = self-hosted server; api/proxy = external
+    # OpenAI-compatible API even when reachable through a private/tailnet IP.
+    endpoint_kind = Column(String, nullable=True, default="auto")
+    # auto = background refresh with TTL/backoff; manual/disabled = cached-first
+    # only unless an explicit endpoint probe is requested.
+    model_refresh_mode = Column(String, nullable=True, default="auto")
+    model_refresh_interval = Column(Integer, nullable=True, default=None)
+    model_refresh_timeout = Column(Integer, nullable=True, default=None)
     # Whether models on this endpoint accept OpenAI-style function
     # schemas + emit `tool_calls`. Auto-detected at Cookbook auto-
     # register time from `--enable-auto-tool-choice` in the serve cmd;
@@ -330,6 +361,24 @@ class ModelEndpoint(TimestampMixin, Base):
     # is the historical default. When non-null, the model picker only shows
     # the endpoint to that user (admins always see everything).
     owner = Column(String, nullable=True, index=True)
+    # Optional OAuth/session-backed credential row. Used by subscription-backed
+    # providers that need refresh tokens instead of a static API key.
+    provider_auth_id = Column(String, nullable=True, index=True)
+
+
+class ProviderAuthSession(TimestampMixin, Base):
+    """Encrypted OAuth/session credentials for refresh-aware model providers."""
+    __tablename__ = "provider_auth_sessions"
+
+    id = Column(String, primary_key=True, index=True)
+    provider = Column(String, nullable=False, index=True)
+    owner = Column(String, nullable=True, index=True)
+    label = Column(String, nullable=True)
+    base_url = Column(String, nullable=False)
+    access_token = Column(EncryptedText, nullable=True)
+    refresh_token = Column(EncryptedText, nullable=True)
+    last_refresh = Column(DateTime, nullable=True)
+    auth_mode = Column(String, nullable=True)
 
 class McpServer(TimestampMixin, Base):
     """Admin-configured MCP (Model Context Protocol) tool servers."""
@@ -345,6 +394,7 @@ class McpServer(TimestampMixin, Base):
     is_enabled = Column(Boolean, default=True)
     oauth_config = Column(Text, nullable=True)   # JSON: provider, keys_file, token_file, scopes
     disabled_tools = Column(Text, nullable=True)  # JSON array of tool names to hide from LLM
+    oauth_tokens = Column(EncryptedText, nullable=True)  # JSON {tokens, client_info} for generic MCP OAuth, encrypted at rest
 
 
 class Comparison(TimestampMixin, Base):
@@ -456,8 +506,8 @@ class UserToolData(Base):
     tool_id    = Column(String, ForeignKey("user_tools.id", ondelete="CASCADE"), nullable=False)
     key        = Column(String, nullable=False)
     value      = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow_naive)
+    updated_at = Column(DateTime, default=utcnow_naive, onupdate=utcnow_naive)
 
     tool = relationship("UserTool", backref=backref("data_entries", cascade="all, delete-orphan"))
 
@@ -576,7 +626,7 @@ class TaskRun(Base):
 
     id          = Column(String, primary_key=True, index=True)
     task_id     = Column(String, ForeignKey("scheduled_tasks.id", ondelete="CASCADE"), nullable=False)
-    started_at  = Column(DateTime, nullable=False, default=datetime.utcnow)
+    started_at  = Column(DateTime, nullable=False, default=utcnow_naive)
     finished_at = Column(DateTime, nullable=True)
     status      = Column(String, default="running")  # "running", "success", "error"
     result      = Column(Text, nullable=True)
@@ -617,7 +667,7 @@ class Memory(Base):
     session_id = Column(String, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Timestamp as Unix timestamp
-    timestamp = Column(Integer, default=lambda: int(datetime.utcnow().timestamp()))
+    timestamp = Column(Integer, default=lambda: int(utcnow_naive().timestamp()))
 
     # Relationship to Session
     session = relationship("Session", backref="memories")
@@ -769,6 +819,26 @@ def _migrate_add_model_endpoint_owner_column():
         logging.getLogger(__name__).warning(f"model_endpoints.owner migration failed: {e}")
 
 
+def _migrate_add_provider_auth_id_column():
+    """Add provider_auth_id column to model_endpoints if it doesn't exist."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(model_endpoints)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "provider_auth_id" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN provider_auth_id VARCHAR")
+            conn.execute("CREATE INDEX IF NOT EXISTS ix_model_endpoints_provider_auth_id ON model_endpoints(provider_auth_id)")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'provider_auth_id' column + index to model_endpoints")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"model_endpoints.provider_auth_id migration failed: {e}")
+
+
 def _migrate_add_model_type_column():
     """Add model_type column to model_endpoints if it doesn't exist."""
     import sqlite3
@@ -786,6 +856,29 @@ def _migrate_add_model_type_column():
         conn.close()
     except Exception as e:
         logging.getLogger(__name__).warning(f"model_type migration failed: {e}")
+
+def _migrate_add_model_endpoint_refresh_columns():
+    """Add endpoint classification / refresh policy columns if missing."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(model_endpoints)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "endpoint_kind" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN endpoint_kind TEXT DEFAULT 'auto'")
+        if columns and "model_refresh_mode" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN model_refresh_mode TEXT DEFAULT 'auto'")
+        if columns and "model_refresh_interval" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN model_refresh_interval INTEGER")
+        if columns and "model_refresh_timeout" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN model_refresh_timeout INTEGER")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"model_endpoints refresh-policy migration failed: {e}")
 
 def _migrate_add_task_run_model_column():
     """Add model column to task_runs if it doesn't exist (records which model ran)."""
@@ -840,6 +933,24 @@ def _migrate_add_cached_models_column():
         conn.close()
     except Exception as e:
         logging.getLogger(__name__).warning(f"cached_models migration failed: {e}")
+
+def _migrate_add_pinned_models_column():
+    """Add pinned_models column to model_endpoints if it doesn't exist."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(model_endpoints)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "pinned_models" not in columns:
+            conn.execute("ALTER TABLE model_endpoints ADD COLUMN pinned_models TEXT")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'pinned_models' column to model_endpoints")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"pinned_models migration failed: {e}")
 
 def _migrate_add_notes_sort_order():
     """Add sort_order, image_url, repeat columns to notes if they don't exist."""
@@ -993,7 +1104,7 @@ def _migrate_assign_legacy_owner():
     # fell through to "first user" every time.
     auth_path = os.path.join(os.path.dirname(DATABASE_URL.replace("sqlite:///", "")), "auth.json")
     if not os.path.isabs(auth_path):
-        auth_path = os.path.join("data", "auth.json")
+        auth_path = AUTH_FILE
     admin_user = None
     try:
         with open(auth_path, "r", encoding="utf-8") as f:
@@ -1046,7 +1157,7 @@ def _migrate_assign_legacy_owner():
         logger.warning(f"Legacy owner migration failed: {e}")
 
     # Also migrate memory.json
-    mem_path = os.path.join("data", "memory.json")
+    mem_path = MEMORY_FILE
     try:
         if os.path.exists(mem_path):
             with open(mem_path, "r", encoding="utf-8") as f:
@@ -1064,7 +1175,7 @@ def _migrate_assign_legacy_owner():
         logger.warning(f"memory.json legacy migration failed: {e}")
 
     # Also migrate user_prefs.json to per-user format
-    prefs_path = os.path.join("data", "user_prefs.json")
+    prefs_path = USER_PREFS_FILE
     try:
         if os.path.exists(prefs_path):
             with open(prefs_path, "r", encoding="utf-8") as f:
@@ -1240,6 +1351,23 @@ def _migrate_add_disabled_tools():
     except Exception as e:
         logging.getLogger(__name__).warning(f"disabled_tools migration: {e}")
 
+def _migrate_add_mcp_oauth_tokens_column():
+    """Add oauth_tokens column to mcp_servers table if missing.
+
+    The model declares this column as EncryptedText, but the SQL type is plain
+    TEXT on purpose: EncryptedText is a SQLAlchemy TypeDecorator that encrypts at
+    the Python layer and stores the ciphertext as TEXT, so the DB column type is
+    TEXT. This matches the existing encrypted columns (see _migrate_encrypt_*)."""
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(mcp_servers)"))]
+            if "oauth_tokens" not in cols:
+                conn.execute(text("ALTER TABLE mcp_servers ADD COLUMN oauth_tokens TEXT"))
+                conn.commit()
+                logging.getLogger(__name__).info("Added oauth_tokens column to mcp_servers")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"oauth_tokens migration: {e}")
+
 def _migrate_add_task_v2_columns():
     """Add cron_expression, then_task_id, webhook_token to scheduled_tasks."""
     new_cols = {
@@ -1369,7 +1497,11 @@ class CalendarCal(TimestampMixin, Base):
     owner = Column(String, nullable=True, index=True)
     name  = Column(String, nullable=False)
     color = Column(String, default="#5b8abf")
-    source = Column(String, default="local")  # "local" or "timetree"
+    source = Column(String, default="local")  # "local" or "caldav"
+    # UUID of the CalDAV account in user prefs that owns this calendar.
+    # NULL for local calendars and for CalDAV calendars created before
+    # multi-account support was added (treated as "use any configured account").
+    account_id = Column(String, nullable=True, index=True)
 
     events = relationship("CalendarEvent", back_populates="calendar", cascade="all, delete-orphan")
 
@@ -1396,6 +1528,10 @@ class CalendarEvent(TimestampMixin, Base):
     importance  = Column(String, default="normal")    # low | normal | high | critical
     event_type  = Column(String, nullable=True)        # work | personal | health | travel | meal | social | admin | other
     last_pinged = Column(DateTime, nullable=True)      # last time the assistant pinged about this event
+    # "caldav" = pulled from a CalDAV server (so the sync may prune it when it
+    # vanishes upstream). NULL/local = created locally (agent, email triage, or
+    # a UI event whose write-back failed) and must NOT be pruned by the sync.
+    origin      = Column(String, nullable=True, index=True)
 
     calendar = relationship("CalendarCal", back_populates="events")
 
@@ -1433,7 +1569,7 @@ def _migrate_seed_email_account():
         import json as _json
         import uuid as _uuid
         from pathlib import Path
-        settings_file = Path("data/settings.json")
+        settings_file = Path(SETTINGS_FILE)
         if not settings_file.exists():
             return
         try:
@@ -1446,7 +1582,7 @@ def _migrate_seed_email_account():
         if not imap_host and not smtp_host:
             return  # nothing to migrate
 
-        now = datetime.utcnow()
+        now = utcnow_naive()
         with engine.begin() as conn:
             conn.execute(text("""
                 INSERT INTO email_accounts
@@ -1483,6 +1619,10 @@ def _migrate_seed_email_account():
         logging.getLogger(__name__).warning(f"seed email account migration: {e}")
 
 
+# WARNING: Foreign-key enforcement is enabled globally for all SQLite connections.
+# Any future migrations or schema changes that temporarily violate foreign-key
+# constraints will fail. To perform such operations, foreign_keys must be
+# temporarily disabled around the migration workflow.
 def init_db():
     """
     Initialize the database by creating all tables.
@@ -1492,9 +1632,12 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     _migrate_add_hidden_models_column()
     _migrate_add_cached_models_column()
+    _migrate_add_pinned_models_column()
     _migrate_add_notes_sort_order()
     _migrate_add_model_type_column()
+    _migrate_add_model_endpoint_refresh_columns()
     _migrate_add_model_endpoint_owner_column()
+    _migrate_add_provider_auth_id_column()
     _migrate_add_supports_tools_column()
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()
@@ -1512,17 +1655,142 @@ def init_db():
     _migrate_add_oauth_config()
     _migrate_add_task_automation_columns()
     _migrate_add_disabled_tools()
+    _migrate_add_mcp_oauth_tokens_column()
     _migrate_add_task_v2_columns()
     _migrate_add_notifications_enabled()
     _migrate_drop_ping_notes_tasks()
     _migrate_add_crew_member_id()
     _migrate_add_assistant_columns()
+    _migrate_add_email_smtp_security()
     _migrate_seed_email_account()
     _migrate_add_calendar_metadata()
     _migrate_add_calendar_is_utc()
+    _migrate_add_calendar_origin()
+    _migrate_add_calendar_account_id()
+    _migrate_chat_messages_fts()
     _migrate_encrypt_email_passwords()
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
+    _migrate_backfill_task_folders()
+
+
+def _migrate_backfill_task_folders():
+    """Backfill folder='Tasks' on pre-existing task/research sessions.
+
+    Sessions created by the task scheduler (LLM tasks, action tasks, research
+    runs) now set folder='Tasks' at creation time.  This migration tags any
+    older sessions that predate that assignment.  Idempotent — only touches
+    rows where folder is NULL or empty and the title matches known prefixes.
+    """
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(sessions)"))]
+            if "folder" not in cols:
+                return
+            res = conn.execute(text(
+                "UPDATE sessions SET folder = 'Tasks' "
+                "WHERE (folder IS NULL OR folder = '') "
+                "AND (name LIKE '[Task] %' OR name LIKE '[Research] %')"
+            ))
+            conn.commit()
+            if res.rowcount:
+                logging.getLogger(__name__).info(
+                    f"Backfilled folder='Tasks' on {res.rowcount} task/research sessions")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"task folder backfill: {e}")
+
+
+def _migrate_chat_messages_fts():
+    """Create and backfill the session transcript FTS index for SQLite."""
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if db_path == ":memory:":
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS temp._odysseus_fts5_probe USING fts5(content)")
+            conn.execute("DROP TABLE IF EXISTS temp._odysseus_fts5_probe")
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"chat_messages FTS migration skipped; FTS5 unavailable: {e}")
+            return
+
+        conn.executescript(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS chat_messages_fts USING fts5(
+                content,
+                message_id UNINDEXED,
+                session_id UNINDEXED,
+                role UNINDEXED
+            );
+
+            CREATE TRIGGER IF NOT EXISTS chat_messages_fts_ai
+            AFTER INSERT ON chat_messages BEGIN
+                INSERT INTO chat_messages_fts(content, message_id, session_id, role)
+                VALUES (COALESCE(new.content, ''), new.id, new.session_id, new.role);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS chat_messages_fts_ad
+            AFTER DELETE ON chat_messages BEGIN
+                DELETE FROM chat_messages_fts WHERE message_id = old.id;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS chat_messages_fts_au
+            AFTER UPDATE ON chat_messages BEGIN
+                DELETE FROM chat_messages_fts WHERE message_id = old.id;
+                INSERT INTO chat_messages_fts(content, message_id, session_id, role)
+                VALUES (COALESCE(new.content, ''), new.id, new.session_id, new.role);
+            END;
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO chat_messages_fts(content, message_id, session_id, role)
+            SELECT COALESCE(cm.content, ''), cm.id, cm.session_id, cm.role
+            FROM chat_messages cm
+            WHERE NOT EXISTS (
+                SELECT 1 FROM chat_messages_fts fts
+                WHERE fts.message_id = cm.id
+            )
+            """
+        )
+        conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"chat_messages FTS migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _migrate_add_email_smtp_security():
+    """Add explicit SMTP security mode for Proton Bridge/custom local SMTP."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(email_accounts)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "smtp_security" not in columns:
+            conn.execute("ALTER TABLE email_accounts ADD COLUMN smtp_security TEXT DEFAULT 'ssl'")
+            conn.execute(
+                "UPDATE email_accounts SET smtp_security = CASE "
+                "WHEN COALESCE(smtp_port, 465) = 587 THEN 'starttls' "
+                "WHEN COALESCE(smtp_port, 465) = 465 THEN 'ssl' "
+                "ELSE 'ssl' END "
+                "WHERE smtp_security IS NULL OR smtp_security = ''"
+            )
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added smtp_security column to email_accounts")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"smtp_security migration skipped: {e}")
 
 
 def _migrate_encrypt_endpoint_keys():
@@ -1636,6 +1904,49 @@ def _migrate_add_calendar_is_utc():
         logging.getLogger(__name__).warning(f"is_utc migration failed: {e}")
 
 
+def _migrate_add_calendar_origin():
+    """Add `origin` to calendar_events so the CalDAV sync can tell server-pulled
+    rows (prunable when they vanish upstream) from locally-created ones (agent /
+    email triage / failed write-back), which must never be pruned. Idempotent."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(calendar_events)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "origin" not in columns:
+            conn.execute("ALTER TABLE calendar_events ADD COLUMN origin TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS ix_calendar_events_origin ON calendar_events(origin)")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'origin' column to calendar_events")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"calendar_events.origin migration failed: {e}")
+
+
+def _migrate_add_calendar_account_id():
+    """Add `account_id` to calendars so each CalDAV-backed calendar knows which
+    credential set (from caldav_accounts in user prefs) owns it. Idempotent."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(calendars)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "account_id" not in columns:
+            conn.execute("ALTER TABLE calendars ADD COLUMN account_id TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS ix_calendars_account_id ON calendars(account_id)")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'account_id' column to calendars")
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"calendars.account_id migration failed: {e}")
+
+
 def _migrate_add_calendar_metadata():
     """Add importance/event_type/last_pinged columns to calendar_events table."""
     import sqlite3
@@ -1694,7 +2005,7 @@ def bulk_insert_messages(session_id: str, messages: list):
                     'session_id': session_id,
                     'role': msg['role'],
                     'content': msg['content'],
-                    'timestamp': datetime.utcnow()
+                    'timestamp': utcnow_naive()
                 }
                 for msg in messages
             ]
@@ -1705,7 +2016,7 @@ def cleanup_old_sessions(days: int = 30):
     from datetime import timedelta
     
     with get_db_session() as db:
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = utcnow_naive() - timedelta(days=days)
         
         deleted_count = db.query(Session).filter(
             Session.archived == True,
@@ -1750,7 +2061,7 @@ def update_session_last_accessed(session_id: str):
     with get_db_session() as db:
         db_session = db.query(Session).filter(Session.id == session_id).first()
         if db_session:
-            db_session.last_accessed = datetime.utcnow()
+            db_session.last_accessed = utcnow_naive()
             db.commit()
             return True
     return False
@@ -1786,6 +2097,32 @@ def get_session_by_id(session_id: str):
     """Get a session by ID"""
     with get_db_session() as db:
         return db.query(Session).filter(Session.id == session_id).first()
+
+def get_upcoming_events(owner, horizon_days: int = 60, limit: int = 40):
+    """Upcoming, non-cancelled events as {uid, title, start} dicts, soonest first.
+
+    owner=None means NO owner scoping (single-user / legacy). Multi-user callers
+    MUST pass the owning username — otherwise they read every tenant's events.
+    The autonomous email->calendar pass relies on this to avoid disclosing (and
+    acting on) other users' calendars."""
+    from datetime import timedelta
+    now = utcnow_naive()
+    with get_db_session() as db:
+        q = db.query(CalendarEvent).join(CalendarCal).filter(
+            CalendarEvent.dtstart >= now,
+            CalendarEvent.dtstart <= now + timedelta(days=horizon_days),
+            CalendarEvent.status != "cancelled",
+        )
+        if owner is not None:
+            q = q.filter(CalendarCal.owner == owner)
+        return [
+            {
+                "uid": e.uid,
+                "title": e.summary or "",
+                "start": e.dtstart.isoformat() if e.dtstart else "",
+            }
+            for e in q.order_by(CalendarEvent.dtstart).limit(limit).all()
+        ]
 
 def archive_session(session_id: str):
     """Archive a session"""

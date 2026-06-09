@@ -10,6 +10,7 @@ import spinnerModule from './spinner.js';
 import markdownModule from './markdown.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { langIcon } from './langIcons.js';
+import { registerMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
 // ── Injected references from documentModule ──
 let API_BASE = '';
@@ -75,6 +76,15 @@ function _hlSearch(text) {
                        '<mark class="doclib-search-hl">$1</mark>');
   } catch { return esc; }
 }
+
+function _safeResearchHref(raw) {
+  try {
+    const parsed = new URL(String(raw || '').trim(), window.location.origin);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return _esc(parsed.href);
+  } catch {}
+  return '';
+}
+
 let _libraryEscHandler = null;
 let _librarySelectMode = false;
 let _librarySelectedIds = new Set();
@@ -184,7 +194,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
   function _showLibDropdown(anchor, items, opts) {
     opts = opts || {};
-    document.querySelectorAll('._lib-dd').forEach(d => d.remove());
+    document.querySelectorAll('._lib-dd').forEach(dismissOrRemove);
     const dd = document.createElement('div');
     dd.className = 'dropdown session-dropdown-menu _lib-dd';
     for (const item of items) {
@@ -193,7 +203,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const iconKey = item.icon || item.label.toLowerCase();
       const iconSvg = _LIB_DD_ICONS[iconKey] || '';
       row.innerHTML = (iconSvg ? '<span class="dropdown-icon">' + iconSvg + '</span>' : '') + '<span>' + item.label + '</span>';
-      row.addEventListener('click', (e) => { e.stopPropagation(); dd.remove(); item.action(); });
+      row.addEventListener('click', (e) => { e.stopPropagation(); teardown(); item.action(); });
       dd.appendChild(row);
     }
     if (typeof opts.onSelect === 'function') {
@@ -202,7 +212,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       sel.innerHTML =
         '<span class="dropdown-icon"><span style="font-size:16px;line-height:1;position:relative;top:-2px;">●</span></span>'
         + '<span>Select</span>';
-      sel.addEventListener('click', (e) => { e.stopPropagation(); dd.remove(); opts.onSelect(); });
+      sel.addEventListener('click', (e) => { e.stopPropagation(); teardown(); opts.onSelect(); });
       dd.appendChild(sel);
     }
     const cancel = document.createElement('div');
@@ -210,7 +220,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     cancel.innerHTML =
       '<span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>'
       + '<span>Cancel</span>';
-    cancel.addEventListener('click', (e) => { e.stopPropagation(); dd.remove(); if (typeof opts.onCancel === 'function') opts.onCancel(); });
+    cancel.addEventListener('click', (e) => { e.stopPropagation(); teardown(); if (typeof opts.onCancel === 'function') opts.onCancel(); });
     dd.appendChild(cancel);
     document.body.appendChild(dd);
     const rect = anchor.getBoundingClientRect();
@@ -225,8 +235,18 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       }
       if (mr.left < 8) { dd.style.left = '8px'; dd.style.right = 'auto'; }
     });
-    const close = (e) => { if (!dd.contains(e.target)) { dd.remove(); document.removeEventListener('click', close); } };
+    // Single idempotent teardown shared by every dismissal path (item click,
+    // outside click, swipe, and the Escape arbiter via registerMenuDismiss).
+    let _unreg = () => {};
+    const teardown = () => {
+      _unreg(); _unreg = () => {};
+      document.removeEventListener('click', close);
+      dd.remove();
+    };
+    const close = (e) => { if (!dd.contains(e.target)) teardown(); };
     setTimeout(() => document.addEventListener('click', close), 0);
+    _unreg = registerMenuDismiss(teardown);
+    dd._dismiss = teardown;   // let bulk removers (reopen sweep) tear down cleanly
 
     // Swipe-down-to-dismiss (mobile). Mirrors the bottom-sheet feel — drag the
     // popup down and release past the threshold to close. Below threshold,
@@ -257,8 +277,11 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         dd.style.transition = 'transform 0.15s ease, opacity 0.15s ease';
         dd.style.transform = 'translateY(120px)';
         dd.style.opacity = '0';
-        setTimeout(() => dd.remove(), 160);
+        // Unregister + drop the outside-click listener now; defer the DOM
+        // removal so the slide-out animation can play.
+        _unreg(); _unreg = () => {};
         document.removeEventListener('click', close);
+        setTimeout(() => dd.remove(), 160);
       } else {
         dd.style.transition = 'transform 0.18s ease, opacity 0.18s ease';
         dd.style.transform = '';
@@ -377,9 +400,34 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     }
   }
 
+  function libraryRemoveDocumentFromState(docId) {
+    const removed = _libraryDocs.find(d => String(d.id) === String(docId));
+    _libraryDocs = _libraryDocs.filter(d => String(d.id) !== String(docId));
+    _librarySelectedIds.delete(docId);
+    _libraryTotal = Math.max(0, _libraryTotal - 1);
+
+    const lang = removed && (removed.language || 'text');
+    if (lang && Object.prototype.hasOwnProperty.call(_libraryLanguages, lang)) {
+      const next = Math.max(0, Number(_libraryLanguages[lang] || 0) - 1);
+      if (next > 0) {
+        _libraryLanguages[lang] = next;
+      } else {
+        delete _libraryLanguages[lang];
+      }
+    }
+
+    libraryRenderStats();
+    libraryRenderLangChips();
+    libraryUpdateBulkCount();
+  }
+
   function libraryRenderGrid() {
     const grid = document.getElementById('doclib-grid');
     if (!grid) return;
+    // An open card menu is mounted on <body> (to escape overflow clipping), so
+    // clearing the grid would orphan it; dismiss it first so its listener +
+    // Escape-stack entry go too.
+    document.querySelectorAll('.doclib-card-dropdown').forEach(dismissOrRemove);
     grid.innerHTML = '';
     // Drop any previous inline load-more — regenerated below alongside the list.
     if (grid.parentElement) grid.parentElement.querySelectorAll(':scope > .doclib-inline-load-more').forEach(b => b.remove());
@@ -576,8 +624,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (dropdown) {
         const isOpen = dropdown.style.display !== 'none' && dropdown.parentElement === document.body;
         if (isOpen) {
-          dropdown.style.display = 'none';
-          menuWrap.appendChild(dropdown);
+          hideCardDropdown();
         } else {
           // Position fixed on body to escape overflow clipping
           const rect = menuBtn.getBoundingClientRect();
@@ -593,15 +640,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             if (mr.bottom > window.innerHeight - 8) dropdown.style.top = (rect.top - mr.height - 4) + 'px';
             if (mr.left < 8) { dropdown.style.left = '8px'; dropdown.style.right = 'auto'; }
           });
-          // Close on outside click
-          const close = (ev) => {
-            if (!dropdown.contains(ev.target) && !menuWrap.contains(ev.target)) {
-              dropdown.style.display = 'none';
-              menuWrap.appendChild(dropdown);
-              document.removeEventListener('click', close, true);
-            }
+          // Close on outside click or Escape (the latter via the registry).
+          _cardDocClick = (ev) => {
+            if (!dropdown.contains(ev.target) && !menuWrap.contains(ev.target)) hideCardDropdown();
           };
-          setTimeout(() => document.addEventListener('click', close, true), 0);
+          setTimeout(() => document.addEventListener('click', _cardDocClick, true), 0);
+          _cardUnreg = registerMenuDismiss(hideCardDropdown);
         }
       }
     });
@@ -612,6 +656,21 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     dropdown.className = 'doclib-card-dropdown';
     dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;z-index:1000;min-width:0;width:max-content;padding:4px;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);backdrop-filter:blur(12px);font-size:12px;';
 
+    // Single close path for the card action dropdown, shared by the toggle
+    // button, the outside-click listener, every menu item, and the Escape
+    // arbiter (via registerMenuDismiss). Hides the menu, returns it to its
+    // wrapper, drops the outside-click listener, and unregisters from the
+    // Escape stack. Idempotent — safe to call from whichever path fires first.
+    let _cardUnreg = () => {};
+    let _cardDocClick = null;
+    function hideCardDropdown() {
+      _cardUnreg(); _cardUnreg = () => {};
+      if (_cardDocClick) { document.removeEventListener('click', _cardDocClick, true); _cardDocClick = null; }
+      dropdown.style.display = 'none';
+      if (dropdown.parentElement === document.body) menuWrap.appendChild(dropdown);
+    }
+    dropdown._dismiss = hideCardDropdown;   // bulk removers tear down through this
+
     const _di = (svg) => `<span class="dropdown-icon">${svg}</span>`;
     const _openIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
 
@@ -621,11 +680,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     openItem.style.cssText = 'background:none;border:none;width:100%;';
     openItem.innerHTML = _di(_openIco) + '<span>Open</span>';
     if (doc.session_id) {
-      openItem.addEventListener('click', (e) => { e.stopPropagation(); dropdown.style.display = 'none'; libraryOpenInSession(doc); });
+      openItem.addEventListener('click', (e) => { e.stopPropagation(); hideCardDropdown(); libraryOpenInSession(doc); });
     } else {
-      openItem.disabled = true;
-      openItem.style.opacity = '0.35';
-      openItem.title = 'Not linked to a session';
+      // Orphaned doc (closed / session detached) is still openable in the editor
+      // by id — libraryOpenDocument handles the no-session case (#1602).
+      openItem.title = 'Open in the editor';
+      openItem.addEventListener('click', (e) => { e.stopPropagation(); hideCardDropdown(); libraryOpenDocument(doc); });
     }
     dropdown.appendChild(openItem);
 
@@ -636,7 +696,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     cloneItem.style.cssText = 'background:none;border:none;width:100%;';
     cloneItem.innerHTML = _di(_cloneIco) + '<span>Clone</span>';
     cloneItem.title = 'Clone to active session';
-    cloneItem.addEventListener('click', (e) => { e.stopPropagation(); dropdown.style.display = 'none'; libraryImportDocument(doc); });
+    cloneItem.addEventListener('click', (e) => { e.stopPropagation(); hideCardDropdown(); libraryImportDocument(doc); });
     dropdown.appendChild(cloneItem);
 
     // Export
@@ -647,7 +707,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     exportItem.innerHTML = _di(_exportIco) + '<span>Export</span>';
     exportItem.addEventListener('click', async (e) => {
       e.stopPropagation();
-      dropdown.style.display = 'none';
+      hideCardDropdown();
       try {
         const res = await fetch(`${API_BASE}/api/document/${doc.id}`);
         if (!res.ok) throw new Error('Failed');
@@ -673,14 +733,13 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     archiveItem.title = _libraryArchivedView ? 'Restore to active documents' : 'Archive (hide from the main list)';
     archiveItem.addEventListener('click', async (e) => {
       e.stopPropagation();
-      dropdown.style.display = 'none';
+      hideCardDropdown();
       const toArchived = !_libraryArchivedView;
       try {
         const res = await fetch(`${API_BASE}/api/document/${doc.id}/archive?archived=${toArchived}`, { method: 'POST', credentials: 'same-origin' });
         if (!res.ok) throw new Error('failed');
         // Drop it from the current view (it no longer belongs here) and refresh.
-        _libraryDocs = _libraryDocs.filter(d => d.id !== doc.id);
-        _libraryTotal = Math.max(0, _libraryTotal - 1);
+        libraryRemoveDocumentFromState(doc.id);
         libraryRenderGrid();
         if (uiModule) uiModule.showToast(toArchived ? 'Archived' : 'Restored');
       } catch { if (uiModule) uiModule.showError('Failed to ' + (toArchived ? 'archive' : 'restore')); }
@@ -693,7 +752,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     deleteItem.className = 'dropdown-item-compact dropdown-item-danger';
     deleteItem.style.cssText = 'background:none;border:none;width:100%;';
     deleteItem.innerHTML = _di(_deleteIco) + '<span>Delete</span>';
-    deleteItem.addEventListener('click', (e) => { e.stopPropagation(); dropdown.style.display = 'none'; libraryDeleteSingle(doc.id, card); });
+    deleteItem.addEventListener('click', (e) => { e.stopPropagation(); hideCardDropdown(); libraryDeleteSingle(doc.id, card); });
     dropdown.appendChild(deleteItem);
 
     menuWrap.appendChild(dropdown);
@@ -743,10 +802,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       openBtn.title = 'Open in original session';
       openBtn.addEventListener('click', (e) => { e.stopPropagation(); libraryOpenInSession(doc); });
     } else {
-      openBtn.disabled = true;
-      openBtn.style.opacity = '0.35';
-      openBtn.style.cursor = 'not-allowed';
-      openBtn.title = 'This document is not linked to a session';
+      // Orphaned doc (closed / session detached) is still openable in the editor
+      // by id — libraryOpenDocument handles the no-session case (#1602).
+      openBtn.title = 'Open in the editor';
+      openBtn.addEventListener('click', (e) => { e.stopPropagation(); libraryOpenDocument(doc); });
     }
 
     const cloneBtn = document.createElement('button');
@@ -772,8 +831,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       try {
         const res = await fetch(`${API_BASE}/api/document/${doc.id}/archive?archived=${toArchived}`, { method: 'POST', credentials: 'same-origin' });
         if (!res.ok) throw new Error('failed');
-        _libraryDocs = _libraryDocs.filter(d => d.id !== doc.id);
-        _libraryTotal = Math.max(0, _libraryTotal - 1);
+        libraryRemoveDocumentFromState(doc.id);
         libraryRenderGrid();
         if (uiModule) uiModule.showToast(toArchived ? 'Archived' : 'Restored');
       } catch { if (uiModule) uiModule.showError('Failed to ' + (toArchived ? 'archive' : 'restore')); }
@@ -1140,9 +1198,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         card.addEventListener('transitionend', () => card.remove(), { once: true });
         setTimeout(() => { if (card.parentElement) card.remove(); }, 400);
       }
-      _libraryDocs = _libraryDocs.filter(d => d.id !== docId);
-      _libraryTotal = Math.max(0, _libraryTotal - 1);
-      libraryRenderStats();
+      libraryRemoveDocumentFromState(docId);
       if (uiModule) uiModule.showToast('Document deleted');
     } catch (e) {
       if (uiModule) uiModule.showError(`Failed to delete document: ${e.message || e}`);
@@ -1542,7 +1598,11 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     modal.innerHTML = `
       <div class="modal-content doclib-modal-content" style="width:min(640px, 92vw);max-height:85vh;background:var(--bg);">
         <div class="modal-header">
-          <h4><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="14" y2="11"/></svg>Library</h4>
+          <!-- Header title + icon mirror the currently-active sub-tab (Chats /
+               Documents / Research / Archive) so the user sees ONE icon at
+               the top representing the section they're in, with the tab
+               strip below as sub-navigation. _switchLibTab() updates this. -->
+          <h4 id="doclib-header-title"><span id="doclib-header-icon" style="vertical-align:-2px;margin-right:4px;display:inline-flex;"></span><span id="doclib-header-text">Library</span></h4>
           <button class="close-btn" id="doclib-close">\u2716</button>
         </div>
         <div class="lib-tabs" id="doclib-lib-tabs" style="padding:0 10px;">
@@ -1775,6 +1835,27 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       grid.parentElement.appendChild(btn);
     }
 
+    // SVG markup + label for each tab — used to keep the modal header
+    // in sync with whichever sub-tab the user is on.
+    const _TAB_HEADERS = {
+      chats: {
+        label: 'Chats',
+        svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+      },
+      documents: {
+        label: 'Documents',
+        svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>',
+      },
+      research: {
+        label: 'Research',
+        svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>',
+      },
+      archive: {
+        label: 'Archive',
+        svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>',
+      },
+    };
+
     function _switchLibTab(tab) {
       _activeLibTab = tab;
       _tabBtns.forEach(b => b.classList.toggle('active', b.dataset.doclibTab === tab));
@@ -1785,6 +1866,14 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           p.style.display = 'none';
         }
       });
+      // Sync the modal header icon + label to match the active sub-tab.
+      const hdr = _TAB_HEADERS[tab];
+      if (hdr) {
+        const ico = document.getElementById('doclib-header-icon');
+        const txt = document.getElementById('doclib-header-text');
+        if (ico) ico.innerHTML = hdr.svg;
+        if (txt) txt.textContent = hdr.label;
+      }
       if (tab === 'chats') _renderLibChats();
       else if (tab === 'archive') _renderLibArchive();
       else if (tab === 'research') _renderLibResearch();
@@ -2030,6 +2119,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           { label: 'Copy', action: () => _copyChatById(s.id) },
           { label: 'Archive', action: async () => { await fetch(API_BASE + '/api/session/' + s.id + '/archive', { method: 'POST', headers: {'Content-Type':'application/json'} }); _renderLibChats(); } },
           { label: 'Delete', action: async () => {
+            if (!await window.styledConfirm('Delete this chat?', { confirmText: 'Delete', danger: true })) return;
             await fetch(API_BASE + '/api/session/' + s.id, { method: 'DELETE' });
             card.style.maxHeight = `${Math.max(card.getBoundingClientRect().height, card.scrollHeight)}px`;
             card.classList.add('memory-tidy-removing');
@@ -2383,7 +2473,11 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           { label: 'Open', action: () => { if (window.sessionModule) window.sessionModule.selectSession(s.id); } },
           { label: 'Copy', action: () => _copyChatById(s.id) },
           { label: 'Restore', action: async () => { await fetch(API_BASE + '/api/session/' + s.id + '/unarchive', { method: 'POST' }); _renderLibArchive(); } },
-          { label: 'Delete', action: async () => { await fetch(API_BASE + '/api/session/' + s.id, { method: 'DELETE' }); _renderLibArchive(); }, danger: true },
+          { label: 'Delete', action: async () => {
+            if (!await window.styledConfirm('Delete this chat permanently?', { confirmText: 'Delete', danger: true })) return;
+            await fetch(API_BASE + '/api/session/' + s.id, { method: 'DELETE' });
+            _renderLibArchive();
+          }, danger: true },
         ], { onSelect: () => {
           _arcSelectMode = true;
           _arcSelected.add('chats:' + s.id);
@@ -2597,7 +2691,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         const data = await res.json();
         _researchItems = data.research || data || [];
       } catch (e) {
-        grid.innerHTML = `<div class="hwfit-loading">Failed to load: ${e.message}</div>`;
+        grid.innerHTML = `<div class="hwfit-loading">Failed to load: ${_esc(e.message)}</div>`;
         return;
       }
       _renderResearchGrid();
@@ -2639,9 +2733,9 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const sources = Array.isArray(detail.sources) ? detail.sources : [];
       const sourcesList = sources.slice(0, 12).map((src, i) => {
         const title = _esc(src.title || src.url || `Source ${i + 1}`);
-        const url = src.url || '';
+        const url = _safeResearchHref(src.url);
         return url
-          ? `<li><a href="${_esc(url)}" target="_blank" rel="noopener">${title}</a></li>`
+          ? `<li><a href="${url}" target="_blank" rel="noopener">${title}</a></li>`
           : `<li>${title}</li>`;
       }).join('');
       const sourcesHtml = sources.length
@@ -3060,8 +3154,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       return new Date(iso).toLocaleDateString();
     }
 
-    // Switch to initial tab if not documents
-    if (_activeLibTab !== 'documents') _switchLibTab(_activeLibTab);
+    // Switch to the initial tab. Always call this — even when the
+    // default ('documents') matches — so the modal header's icon + label
+    // sync from "Library" to the active sub-tab on first open.
+    _switchLibTab(_activeLibTab);
 
     const searchInput = document.getElementById('doclib-search');
     searchInput.addEventListener('input', () => {
@@ -3101,7 +3197,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       importFileBtn.addEventListener('click', () => fileInput.click());
       fileInput.addEventListener('change', async () => {
         if (fileInput.files.length === 0) return;
-        const files = fileInput.files;
+        const files = Array.from(fileInput.files);
         fileInput.value = '';
         // Swap the import icon for a whirlpool while files upload.
         const _orig = importFileBtn.innerHTML;

@@ -5,25 +5,16 @@ Extracted tool implementation functions (do_* and helpers) from agent_tools.py.
 These handle the actual execution logic for each tool type.
 """
 
+import asyncio
 import json
 import logging
 import os
 import re
 from typing import Any, Dict, List, Optional
 
-MAX_OUTPUT_CHARS = 10_000
-MAX_READ_CHARS = 20_000
-
-
-def get_mcp_manager():
-    from src import agent_tools
-    return agent_tools.get_mcp_manager()
-
-
-def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
-    if len(text) > limit:
-        return text[:limit] + f"\n... (truncated, {len(text)} chars total)"
-    return text
+from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE
+from src.tool_utils import get_mcp_manager
+from core.constants import internal_api_base
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +77,50 @@ def set_active_model(model: Optional[str]):
 
 def get_active_document():
     return _active_document_id
+
+
+def clear_active_document(doc_id: Optional[str] = None) -> bool:
+    """Clear the in-memory active-document pointer.
+
+    With ``doc_id`` given, only clears when it matches the current pointer, so a
+    different active document is left untouched. Returns True if it was cleared.
+
+    Called when a document is detached from its session or deleted (its tab is
+    closed): without this, the stale pointer makes the last-resort doc-injection
+    path re-surface a closed document in a later, unrelated chat — even one whose
+    session no longer matches — because an unlinked doc has session_id NULL (#1160).
+    """
+    global _active_document_id
+    if doc_id is None or _active_document_id == doc_id:
+        _active_document_id = None
+        return True
+    return False
+
+
+def _owned_document_query(query, Document, owner: Optional[str]):
+    if owner is None:
+        # A bare Python `False` is not a valid SQL expression — SQLAlchemy 1.4
+        # deprecates it and 2.0 raises ArgumentError. Use the SQL `false()`
+        # literal to return zero rows for an unscoped (owner-less) query.
+        from sqlalchemy import false
+        return query.filter(false())
+    return query.filter(Document.owner == owner)
+
+
+def _get_owned_document(db, Document, doc_id: str, owner: Optional[str], active_only: bool = False):
+    q = db.query(Document).filter(Document.id == doc_id)
+    if active_only:
+        q = q.filter(Document.is_active == True)
+    q = _owned_document_query(q, Document, owner)
+    return q.first()
+
+
+def _most_recent_owned_document(db, Document, owner: Optional[str], active_only: bool = False):
+    q = db.query(Document)
+    if active_only:
+        q = q.filter(Document.is_active == True)
+    q = _owned_document_query(q, Document, owner)
+    return q.order_by(Document.updated_at.desc()).first()
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +206,7 @@ def _coerce_email_document_content(existing: str, incoming: str) -> str:
     return header.rstrip() + "\n---\n" + body
 
 
-async def do_create_document(content_block: str, session_id: Optional[str] = None) -> Dict:
+async def do_create_document(content_block: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
     """Create a new document. Supports two formats:
       1) Line-based: line 1 = title, line 2 (optional) = language, rest = content
       2) XML-like tags: <title>...</title><language>...</language><content>...</content>
@@ -240,6 +275,8 @@ async def do_create_document(content_block: str, session_id: Optional[str] = Non
         # Inherit ownership from the chat session so the doc survives that
         # session later being deleted (session_id → NULL).
         _sess = db.query(DbSession).filter(DbSession.id == session_id).first()
+        if owner is not None and (not _sess or _sess.owner != owner):
+            return {"error": "Cannot create document in another user's session"}
         _owner = _sess.owner if _sess else None
 
         doc = Document(
@@ -286,7 +323,7 @@ async def do_create_document(content_block: str, session_id: Optional[str] = Non
         db.close()
 
 
-async def do_update_document(content: str, doc_id: Optional[str] = None) -> Dict:
+async def do_update_document(content: str, doc_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
     """Update an existing document. Content = full new document text."""
     import uuid
     from src.database import SessionLocal, Document, DocumentVersion
@@ -297,9 +334,9 @@ async def do_update_document(content: str, doc_id: Optional[str] = None) -> Dict
     try:
         doc = None
         if target_id:
-            doc = db.query(Document).filter(Document.id == target_id).first()
+            doc = _get_owned_document(db, Document, target_id, owner)
         if not doc:
-            doc = db.query(Document).order_by(Document.updated_at.desc()).first()
+            doc = _most_recent_owned_document(db, Document, owner)
             if doc:
                 target_id = doc.id
                 set_active_document(target_id)
@@ -350,7 +387,7 @@ def parse_edit_blocks(content: str) -> list:
     return edits
 
 
-async def do_edit_document(content: str, doc_id: Optional[str] = None) -> Dict:
+async def do_edit_document(content: str, doc_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
     """Apply targeted FIND/REPLACE edits to an existing document."""
     import uuid
     from src.database import SessionLocal, Document, DocumentVersion
@@ -365,11 +402,11 @@ async def do_edit_document(content: str, doc_id: Optional[str] = None) -> Dict:
     try:
         doc = None
         if target_id:
-            doc = db.query(Document).filter(Document.id == target_id).first()
+            doc = _get_owned_document(db, Document, target_id, owner)
         if not doc:
             # Fallback: most recently updated document. Avoids "no active doc" errors
             # after server restart or when the agent loses track of which doc to edit.
-            doc = db.query(Document).order_by(Document.updated_at.desc()).first()
+            doc = _most_recent_owned_document(db, Document, owner)
             if doc:
                 target_id = doc.id
                 set_active_document(target_id)
@@ -458,7 +495,7 @@ def parse_suggest_blocks(content: str) -> list:
     return suggestions
 
 
-async def do_suggest_document(content: str, doc_id: str = None) -> Dict:
+async def do_suggest_document(content: str, doc_id: str = None, owner: Optional[str] = None) -> Dict:
     """Create inline suggestions for the active document WITHOUT modifying it."""
     from src.database import SessionLocal, Document
 
@@ -472,7 +509,7 @@ async def do_suggest_document(content: str, doc_id: str = None) -> Dict:
 
     db = SessionLocal()
     try:
-        doc = db.query(Document).filter(Document.id == target_id).first()
+        doc = _get_owned_document(db, Document, target_id, owner)
         if not doc:
             return {"error": f"Document {target_id} not found"}
 
@@ -502,7 +539,7 @@ async def do_suggest_document(content: str, doc_id: str = None) -> Dict:
 # ---------------------------------------------------------------------------
 
 async def do_search_chats(query: str, limit: int = 20, owner: str | None = None) -> Dict:
-    """Search past chat messages for the calling user's sessions only.
+    """Search past session transcripts for the calling user's sessions only.
 
     Without an owner filter this used to leak EVERY user's chat history
     into the agent's `search_chats` results (v2 review HIGH-11). The
@@ -510,63 +547,36 @@ async def do_search_chats(query: str, limit: int = 20, owner: str | None = None)
     through; legacy callers without owner pass through as before but
     will only see legacy/null-owner rows.
     """
-    from src.database import SessionLocal, ChatMessage as DBChatMessage, Session as DBSession
-    # Escape LIKE wildcards in the user-supplied query so a stray % or _
-    # doesn't widen the match (and to keep the response deterministic).
-    safe_q = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    db = SessionLocal()
     try:
-        q = (
-            db.query(DBChatMessage, DBSession.id, DBSession.name)
-            .join(DBSession, DBChatMessage.session_id == DBSession.id)
-            .filter(
-                DBSession.archived == False,
-                DBChatMessage.content.ilike(f"%{safe_q}%", escape="\\"),
-                DBChatMessage.role.in_(["user", "assistant"]),
-            )
-        )
-        if owner is not None:
-            # Restrict to this user's sessions plus legacy null-owner
-            # rows (so single-user upgrades keep seeing their own data).
-            q = q.filter((DBSession.owner == owner) | (DBSession.owner.is_(None)))
-        rows = q.order_by(DBChatMessage.timestamp.desc()).limit(limit).all()
+        from src.session_search import search_session_messages
 
-        if not rows:
+        results = search_session_messages(query, limit=limit, owner=owner)
+        if not results:
             return {"results": f"No chats found matching \"{query}\"."}
 
         # Group by session to avoid duplicate links
         seen_sessions = {}
-        for msg, session_id, session_name in rows:
-            if session_id not in seen_sessions:
-                content = msg.content or ""
-                lower_content = content.lower()
-                idx = lower_content.find(query.lower())
-                if idx == -1:
-                    snippet = content[:150]
-                else:
-                    start = max(0, idx - 60)
-                    end = min(len(content), idx + len(query) + 60)
-                    snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
-                seen_sessions[session_id] = {
-                    "name": session_name or "Untitled",
-                    "snippet": snippet,
-                    "role": msg.role,
-                    "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
-                }
+        for result in results:
+            if result.session_id not in seen_sessions:
+                seen_sessions[result.session_id] = result
 
         lines = [f"Found {len(seen_sessions)} session(s) matching \"{query}\":\n"]
-        for sid, info in seen_sessions.items():
-            lines.append(f"- **{info['name']}** (#{sid})")
+        for sid, result in seen_sessions.items():
+            lines.append(f"- **{result.session_name}** (#{sid})")
             lines.append(f"  Link: [Open chat](#{sid})")
-            lines.append(f"  > {info['snippet']}")
+            lines.append(f"  Match ({result.role}): {result.content_snippet}")
+            if result.context_before:
+                before = result.context_before[-1]
+                lines.append(f"  Before ({before['role']}): {before['content'][:180]}")
+            if result.context_after:
+                after = result.context_after[0]
+                lines.append(f"  After ({after['role']}): {after['content'][:180]}")
             lines.append("")
 
         return {"results": "\n".join(lines)}
     except Exception as e:
         logger.error(f"search_chats failed: {e}")
         return {"error": str(e), "exit_code": 1}
-    finally:
-        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -627,7 +637,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
     if action == "view":
         if not name:
             return {"error": "name is required for view", "exit_code": 1}
-        md = sm.read_skill_md(name)
+        md = sm.read_skill_md(name, owner=owner)
         if md is None:
             return {"error": f"Skill {name!r} not found", "exit_code": 1}
         return {"results": md}
@@ -638,7 +648,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         ref = (args.get("path") or "").strip()
         if not ref:
             return {"error": "path is required for view_ref", "exit_code": 1}
-        text = sm.read_skill_reference(name, ref)
+        text = sm.read_skill_reference(name, ref, owner=owner)
         if text is None:
             return {"error": f"Reference {ref!r} not found under {name!r}", "exit_code": 1}
         return {"results": text}
@@ -713,7 +723,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
             return {"error": f"Skill {name!r} not found", "exit_code": 1}
         if not sk_new.owner:
             sk_new.owner = match.get("owner") or owner
-        ok = sm.update_skill(name, _skill_dump(sk_new))
+        ok = sm.update_skill(name, _skill_dump(sk_new), owner=owner)
         return {"results": f"Edited skill `{sk_new.name}`."} if ok else {"error": "Update failed", "exit_code": 1}
 
     if action == "patch":
@@ -723,7 +733,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         new_str = args.get("new_string", "")
         if not isinstance(old, str) or not old:
             return {"error": "old_string is required and must be non-empty", "exit_code": 1}
-        md = sm.read_skill_md(name)
+        md = sm.read_skill_md(name, owner=owner)
         if md is None:
             return {"error": f"Skill {name!r} not found", "exit_code": 1}
         count = md.count(old)
@@ -737,7 +747,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         except Exception as e:
             return {"error": f"Patched content is not valid SKILL.md: {e}", "exit_code": 1}
         sk_new.name = slugify(sk_new.name or name)
-        ok = sm.update_skill(name, _skill_dump(sk_new))
+        ok = sm.update_skill(name, _skill_dump(sk_new), owner=owner)
         return {"results": f"Patched skill `{sk_new.name}`."} if ok else {"error": "Patch update failed", "exit_code": 1}
 
     if action == "publish":
@@ -750,13 +760,13 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         updates = {"status": "published"}
         if args.get("confidence") is not None:
             updates["confidence"] = max(0.0, min(1.0, float(args["confidence"])))
-        sm.update_skill(name, updates)
+        sm.update_skill(name, updates, owner=owner)
         return {"results": f"✅ Published `{name}`. It now appears in the skills index for future turns."}
 
     if action == "delete":
         if not name:
             return {"error": "name is required for delete", "exit_code": 1}
-        ok = sm.delete_skill(name)
+        ok = sm.delete_skill(name, owner=owner)
         return {"results": f"Deleted skill `{name}`."} if ok else {"error": f"Skill {name!r} not found", "exit_code": 1}
 
     if action == "search":
@@ -864,7 +874,9 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
                 )
 
             task_id = str(_uuid.uuid4())
-            name = args.get("name") or args.get("prompt", args.get("action_name", "Task"))[:50]
+            # Guard each fallback with `or`: args.get("prompt", default) returns
+            # None when the key is present but null, and None[:50] raises.
+            name = args.get("name") or (args.get("prompt") or args.get("action_name") or "Task")[:50]
 
             task = ScheduledTask(
                 id=task_id,
@@ -1167,7 +1179,17 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
             try:
                 srv = db2.query(McpServer).filter(McpServer.id == sid).first()
                 if srv:
-                    await mcp.connect_server(sid)
+                    _args = json.loads(srv.args) if srv.args else []
+                    _env = json.loads(srv.env) if srv.env else {}
+                    await mcp.connect_server(
+                        server_id=sid,
+                        name=srv.name,
+                        transport=srv.transport,
+                        command=srv.command,
+                        args=_args,
+                        env=_env,
+                        url=srv.url,
+                    )
                     st = mcp.get_server_status(sid)
                     return {"response": f"Reconnected '{srv.name}' ({st.get('tool_count', 0)} tools)", "exit_code": 0}
                 return {"error": f"Server {sid} not found", "exit_code": 1}
@@ -1368,6 +1390,7 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
     try:
         if action == "list":
             q = db.query(Document).filter(Document.is_active == True)
+            q = _owned_document_query(q, Document, owner)
             if args.get("search"):
                 q = q.filter(Document.title.ilike(f"%{args['search']}%"))
             if args.get("language"):
@@ -1398,7 +1421,7 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
             doc_id = args.get("document_id") or args.get("id") or args.get("uid")
             if not doc_id:
                 return {"error": "Need document_id (use action=list to find one)", "exit_code": 1}
-            doc = db.query(Document).filter(Document.id == doc_id, Document.is_active == True).first()
+            doc = _get_owned_document(db, Document, doc_id, owner, active_only=True)
             if not doc:
                 return {"error": f"Document '{doc_id}' not found", "exit_code": 1}
             body = doc.current_content or ""
@@ -1423,10 +1446,10 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
             doc_id = args.get("document_id") or args.get("id") or args.get("uid") or _active_document_id
             doc = None
             if doc_id:
-                doc = db.query(Document).filter(Document.id == doc_id).first()
+                doc = _get_owned_document(db, Document, doc_id, owner)
             if not doc:
                 # Fallback: most recently updated doc (likely what the user means)
-                doc = db.query(Document).filter(Document.is_active == True).order_by(Document.updated_at.desc()).first()
+                doc = _most_recent_owned_document(db, Document, owner, active_only=True)
             if not doc:
                 return {"error": "No document to delete", "exit_code": 1}
             title = doc.title
@@ -1478,7 +1501,14 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             "tavily_api_key", "serper_api_key", "app_public_url",
         }
         def _is_secret(k):
-            return k in _SECRET_KEYS or any(t in k for t in ("api_key", "_key", "token", "secret", "password"))
+            # `token` must be a suffix, not a substring: otherwise the int
+            # setting `agent_input_token_budget` (which even has a "token budget"
+            # alias to set it from chat) is wrongly classified as a credential.
+            return (
+                k in _SECRET_KEYS
+                or k.endswith("token")
+                or any(t in k for t in ("api_key", "_key", "secret", "password"))
+            )
 
         # Friendly aliases → real keys, so natural phrasing resolves.
         _ALIASES_SET = {
@@ -1499,9 +1529,14 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             "image gen": "image_gen_enabled", "image generation": "image_gen_enabled",
             "reminder channel": "reminder_channel", "reminders": "reminder_channel",
             "ntfy topic": "reminder_ntfy_topic",
+            "webhook integration": "reminder_webhook_integration_id",
+            "webhook template": "reminder_webhook_payload_template", "webhook payload": "reminder_webhook_payload_template",
             "agent tool calls": "agent_max_tool_calls", "max tool calls": "agent_max_tool_calls",
             "agent timeout": "agent_stream_timeout_seconds", "stream timeout": "agent_stream_timeout_seconds",
-            "token budget": "agent_input_token_budget",
+            "token budget": "agent_input_token_budget", "input budget": "agent_input_token_budget",
+            "hard max": "agent_input_token_hard_max",
+            "token budget cap": "agent_input_token_hard_max",
+            "input budget cap": "agent_input_token_hard_max",
         }
         def _resolve(k):
             k2 = (k or "").strip().lower()
@@ -1511,7 +1546,7 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
 
         _ENUMS = {
             "image_quality": ["low", "medium", "high"],
-            "reminder_channel": ["browser", "email", "ntfy"],
+            "reminder_channel": ["browser", "email", "ntfy", "webhook"],
         }
         def _coerce(value, default):
             if isinstance(default, bool):
@@ -1784,6 +1819,22 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
         text = re.sub(r"^\s*reminder\s*:\s*", "", text)
         return re.sub(r"\s+", " ", text)
 
+    def _note_visible_to_owner(note, owner_value: Optional[str]) -> bool:
+        # Empty owner_value is single-user / auth-disabled mode. A real
+        # authenticated owner must match exactly; null/empty legacy rows are not
+        # shared between accounts.
+        if not owner_value:
+            return True
+        return getattr(note, "owner", None) == owner_value
+
+    def _note_by_prefix(note_id: str):
+        if not note_id:
+            return None
+        q = db.query(Note).filter(Note.id.startswith(note_id))
+        if owner:
+            q = q.filter(Note.owner == owner)
+        return q.first()
+
     try:
         if action == "list":
             q = db.query(Note)
@@ -1828,7 +1879,13 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 title = text_raw.strip()
             elif not content_raw and text_raw:
                 content_raw = text_raw
-            items_raw = args.get("items")
+            # Accept both `items` (legacy/internal field) and `checklist_items`
+            # (the schema-exposed name used by native function calls). Models
+            # following the schema emit `checklist_items`; older code paths
+            # and direct API callers still use `items`.
+            items_raw = args.get("checklist_items")
+            if items_raw is None:
+                items_raw = args.get("items")
             items_json = json.dumps(items_raw) if items_raw is not None else None
             note_type = args.get("note_type", "checklist" if items_raw else "note")
             # Accept natural-language due_date ("tomorrow at 1pm") in
@@ -1881,20 +1938,48 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             )
             db.add(note)
             db.commit()
-            return {"response": f"Note created: \"{title or '(untitled)'}\" (id: {note.id[:8]})", "exit_code": 0}
+            # Return note_id so the chat-side renderer can build a real
+            # "View note" button that opens the notes modal at this id.
+            # Previously the create response only included a prose
+            # confirmation; the model would type "View note" as a markdown
+            # link with no target, leaving the user with a click that
+            # did nothing and uncertainty about whether the note was made.
+            return {
+                "response": f"Note created: \"{title or '(untitled)'}\" (id: {note.id[:8]})",
+                "note_id": note.id,
+                "note_title": title or "",
+                "open_url": f"/#open=notes&note={note.id}",
+                "exit_code": 0,
+            }
 
         elif action == "update":
             note_id = args.get("id", "")
-            note = db.query(Note).filter(Note.id.startswith(note_id)).first() if note_id else None
+            note = _note_by_prefix(note_id)
             if not note:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
-            if owner is not None and note.owner and note.owner != owner:
+            if not _note_visible_to_owner(note, owner):
                 return {"error": "Note not found", "exit_code": 1}
-            for field in ("title", "content", "note_type", "color", "label", "due_date"):
+            for field in ("title", "content", "note_type", "color", "label"):
                 if field in args and args[field] is not None:
                     setattr(note, field, args[field])
-            if "items" in args and args["items"] is not None:
-                note.items = json.dumps(args["items"])
+            # Parse due_date the same way the `add` action does. The schema
+            # advertises natural language ("tomorrow at 9am"), and naive ISO
+            # strings need the user's tz offset attached so the frontend's
+            # `new Date()` resolves the right absolute moment. Storing the raw
+            # value here left updated reminders as unparseable literals that
+            # never fired.
+            if args.get("due_date") is not None:
+                due_raw = args["due_date"]
+                try:
+                    from routes.calendar_routes import parse_due_for_user as _pdt_user
+                    note.due_date = _pdt_user(due_raw)
+                except Exception:
+                    note.due_date = due_raw  # fall through; trust the model
+            new_items = args.get("checklist_items")
+            if new_items is None:
+                new_items = args.get("items")
+            if new_items is not None:
+                note.items = json.dumps(new_items)
                 flag_modified(note, "items")
             if "pinned" in args:
                 note.pinned = args["pinned"]
@@ -1905,10 +1990,10 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
 
         elif action == "delete":
             note_id = args.get("id", "")
-            note = db.query(Note).filter(Note.id.startswith(note_id)).first() if note_id else None
+            note = _note_by_prefix(note_id)
             if not note:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
-            if owner is not None and note.owner and note.owner != owner:
+            if not _note_visible_to_owner(note, owner):
                 return {"error": "Note not found", "exit_code": 1}
             title = note.title
             db.delete(note)
@@ -1918,10 +2003,10 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
         elif action == "toggle_item":
             note_id = args.get("id", "")
             index = args.get("index", 0)
-            note = db.query(Note).filter(Note.id.startswith(note_id)).first() if note_id else None
+            note = _note_by_prefix(note_id)
             if not note:
                 return {"error": f"Note '{note_id}' not found", "exit_code": 1}
-            if owner is not None and note.owner and note.owner != owner:
+            if not _note_visible_to_owner(note, owner):
                 return {"error": "Note not found", "exit_code": 1}
             if not note.items:
                 return {"error": "Note has no checklist items", "exit_code": 1}
@@ -2033,6 +2118,13 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         """Parse agent event datetimes in the user's timezone when available."""
         return _parse_dt_pair(parse_due_for_user(raw))
 
+    def _first_nonempty_arg(*names: str):
+        for name in names:
+            value = args.get(name)
+            if value not in (None, ""):
+                return value
+        return None
+
     def _create_calendar_reminder(summary: str, location: str, dtstart: datetime,
                                   all_day: bool, minutes_before: int,
                                   is_utc: bool = False) -> tuple[Optional[str], Optional[str]]:
@@ -2090,12 +2182,18 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
 
         elif action == "list_events":
             try:
-                if args.get("start"):
-                    start_dt = _parse_dt(args["start"])
+                start_raw = _first_nonempty_arg(
+                    "start", "start_date", "range_start", "from", "dtstart", "since"
+                )
+                end_raw = _first_nonempty_arg(
+                    "end", "end_date", "range_end", "to", "dtend", "until"
+                )
+                if start_raw:
+                    start_dt = _parse_dt(start_raw)
                 else:
                     start_dt = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-                if args.get("end"):
-                    end_dt = _parse_dt(args["end"])
+                if end_raw:
+                    end_dt = _parse_dt(end_raw)
                 else:
                     end_dt = start_dt + timedelta(days=14)
             except ValueError as e:
@@ -2331,9 +2429,17 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             if args.get("location") is not None:
                 ev.location = args["location"]
             if args.get("dtstart") is not None:
-                ev.dtstart = _parse_dt(args["dtstart"])
+                # Anchor naive/natural-language input to the USER's timezone and
+                # refresh is_utc, exactly like create_event. Parsing with the
+                # raw server-local _parse_dt here (and never touching is_utc)
+                # silently shifted an updated event by the user's UTC offset.
+                _eff_all_day = (
+                    args["all_day"] if args.get("all_day") is not None else ev.all_day
+                )
+                ev.dtstart, _su = _parse_event_dt(args["dtstart"])
+                ev.is_utc = bool(_su and not _eff_all_day)
             if args.get("dtend") is not None:
-                ev.dtend = _parse_dt(args["dtend"])
+                ev.dtend, _eu = _parse_event_dt(args["dtend"])
             if args.get("all_day") is not None:
                 ev.all_day = args["all_day"]
             # Tag/category + importance updates (any of these aliases).
@@ -2377,10 +2483,12 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
 
 # ── Cookbook tools ──
 
-# Cookbook routes loopback. The agent's tool calls run in-process but
-# need to reach admin-gated cookbook routes; we ride the per-process
-# internal token so require_admin lets us through. See core/middleware.py.
-_COOKBOOK_BASE = "http://localhost:7000"
+# In-process loopback base for agent tools that call Odysseus's own API
+# (cookbook state, model serve, gallery, email, calendar). We ride the
+# per-process internal token so require_admin lets us through. See
+# core/middleware.py. Resolution (override / APP_PORT / 7000) lives in
+# core.constants.internal_api_base().
+_INTERNAL_BASE = internal_api_base()
 
 
 def _internal_headers(owner: Optional[str] = None) -> Dict[str, str]:
@@ -2399,7 +2507,7 @@ async def _cookbook_servers() -> Dict[str, Any]:
     import httpx
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state", headers=_internal_headers())
+            r = await client.get(f"{_INTERNAL_BASE}/api/cookbook/state", headers=_internal_headers())
             state = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
     except Exception:
         return {"default_host": "", "hosts": []}
@@ -2465,7 +2573,7 @@ async def _cookbook_env_for_host(host: str) -> Dict[str, Any]:
     state: Dict[str, Any] = {}
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state", headers=headers)
+            r = await client.get(f"{_INTERNAL_BASE}/api/cookbook/state", headers=headers)
             state = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
     except Exception as e:
         logger.debug(f"cookbook env lookup failed for host={host!r}: {e}")
@@ -2504,6 +2612,8 @@ async def _cookbook_env_for_host(host: str) -> Dict[str, Any]:
 
     return {
         "env_prefix": env_prefix,
+        "env_type": env_kind,
+        "env_path": env_path,
         "gpus": env_root.get("gpus") or "",
         "platform": platform,
         "hf_token": env_root.get("hfToken") or "",
@@ -2523,7 +2633,7 @@ async def _cookbook_register_task(session_id: str, model: str, host: str,
     headers = _internal_headers()
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state", headers=headers)
+            r = await client.get(f"{_INTERNAL_BASE}/api/cookbook/state", headers=headers)
             state = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
     except Exception as e:
         logger.debug(f"cookbook state read failed: {e}")
@@ -2545,7 +2655,7 @@ async def _cookbook_register_task(session_id: str, model: str, host: str,
     placeholder = (
         f"Launched via agent — waiting for tmux output…\n"
         f"  session: {session_id}\n"
-        f"  target:  {target}{cmd.split()[0] if cmd else ''}\n"
+        f"  target:  {target}{(cmd.split() or [''])[0] if cmd else ''}\n"
         f"  cmd:     {cmd[:200]}{'…' if len(cmd) > 200 else ''}"
     )
     tasks.append({
@@ -2567,7 +2677,7 @@ async def _cookbook_register_task(session_id: str, model: str, host: str,
     state["tasks"] = tasks
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(f"{_COOKBOOK_BASE}/api/cookbook/state",
+            r = await client.post(f"{_INTERNAL_BASE}/api/cookbook/state",
                                   json=state, headers=headers)
         return r.status_code < 400
     except Exception as e:
@@ -2576,26 +2686,32 @@ async def _cookbook_register_task(session_id: str, model: str, host: str,
 
 
 # Paths the generic `app_api` tool will refuse to call. Auth/token/user
-# administration is too risky to route through an agent surface even
-# when the agent is admin-context — accidental "delete account"
-# style mistakes have permanent blast radius.
+# administration and host shell execution are too risky to route through an
+# agent surface even when the agent is admin-context; accidental account or
+# command mistakes have permanent blast radius.
 _APP_API_BLOCKLIST_PREFIXES = (
-    "/api/auth/",          # login/logout/password
-    "/api/users/",         # user CRUD
-    "/api/tokens/",        # api token mgmt
-    "/api/admin/",         # admin one-shots (wipe etc.)
+    "/api/auth",           # login/logout/password
+    "/api/users",          # user CRUD (bare /api/users list+create+delete must also block)
+    "/api/tokens",         # api token mgmt (bare /api/tokens list+create must also block)
+    "/api/admin",          # admin one-shots (wipe etc.)
+    "/api/shell",          # host shell execution must stay behind named command tooling
     "/api/backup/restore", # destructive restore
 )
 
 # (method, prefix) pairs to refuse specifically. Used for endpoints
-# where GET is fine but writes are destructive — saw the agent wipe
-# cookbook_state.json (presets + tasks) by POSTing {"tasks": []} to
-# /api/cookbook/state, which overwrote the whole file. Use the
-# dedicated preset/task tools instead.
+# where GET is fine but writes are destructive or host-control shaped.
+# Saw the agent wipe cookbook_state.json (presets + tasks) by POSTing
+# {"tasks": []} to /api/cookbook/state, which overwrote the whole file.
+# Use dedicated tools or UI flows instead.
 _APP_API_BLOCKLIST_METHOD_PATH = (
     ("GET",    "/api/email/accounts"),  # owner-filtered in tool context; use list_email_accounts MCP tool
     ("POST",   "/api/cookbook/state"),   # whole-file overwrite — agent must use serve_preset/serve_model instead
     ("DELETE", "/api/cookbook/state"),
+    # Host-control routes: package install, engine rebuild, and process
+    # signalling should not be reachable through the generic API bridge.
+    ("POST",   "/api/cookbook/packages/install"),
+    ("POST",   "/api/cookbook/rebuild-engine"),
+    ("POST",   "/api/cookbook/kill-pid"),
     # Use the named tools (download_model / serve_model) — they handle
     # host-name resolution, per-host env_prefix, AND register the task
     # in cookbook state so it shows in the UI + list_downloads. Hitting
@@ -2620,7 +2736,7 @@ _APP_API_BLOCKLIST_METHOD_PATH = (
 
 
 async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
-    """Generic loopback to any internal Odysseus API endpoint. Lets the
+    """Generic loopback to allowed internal Odysseus API endpoints. Lets the
     agent reach the full UI-button surface (cookbook, email, notes,
     calendar, skills, sessions, gallery, research, etc.) without us
     landing a named tool wrapper for every one.
@@ -2634,7 +2750,8 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
 
     The `endpoints` action returns the OpenAPI surface (method + path +
     summary) so the agent can discover what's reachable. A blocklist
-    refuses auth/user/admin paths to keep blast radius bounded.
+    refuses sensitive auth/user/admin/shell paths and method-specific
+    host-control routes to keep blast radius bounded.
     """
     import httpx
     try:
@@ -2643,7 +2760,7 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
 
     action = (args.get("action") or "call").lower()
-    base = _COOKBOOK_BASE
+    base = _INTERNAL_BASE
 
     if action == "endpoints":
         # Fetch FastAPI's OpenAPI schema so the agent can discover any
@@ -2694,7 +2811,7 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     if not path.startswith("/"):
         path = "/" + path
     if any(path.startswith(p) for p in _APP_API_BLOCKLIST_PREFIXES):
-        return {"error": f"Path blocked for safety: {path}. Auth/user/admin endpoints are off-limits via app_api.", "exit_code": 1}
+        return {"error": f"Path blocked for safety: {path}. Sensitive endpoints are off-limits via app_api.", "exit_code": 1}
 
     method = (args.get("method") or "GET").upper()
     if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
@@ -2702,6 +2819,12 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     if any(method == m and path.startswith(p) for m, p in _APP_API_BLOCKLIST_METHOD_PATH):
         if "/api/email/accounts" in path:
             return {"error": "Don't use /api/email/accounts via app_api — it is owner-filtered in tool context and may return empty. Use the `list_email_accounts` email tool, then pass `account` to list_emails/read_email.", "exit_code": 1}
+        if "/api/cookbook/packages/install" in path:
+            return {"error": "Don't POST /api/cookbook/packages/install via app_api — package installation is host code execution. Use the dedicated Cookbook dependency UI/flow instead.", "exit_code": 1}
+        if "/api/cookbook/rebuild-engine" in path:
+            return {"error": "Don't POST /api/cookbook/rebuild-engine via app_api — engine rebuild mutates local or remote host state. Use the dedicated Cookbook UI/flow instead.", "exit_code": 1}
+        if "/api/cookbook/kill-pid" in path:
+            return {"error": "Don't POST /api/cookbook/kill-pid via app_api — process signalling is host control. Use the dedicated Cookbook stop/diagnostic flow instead.", "exit_code": 1}
         if "/api/model/download" in path:
             return {"error": "Don't POST /api/model/download directly — use the `download_model` tool (it resolves the server name, sets the venv env_prefix, and registers the task so it shows in the UI).", "exit_code": 1}
         if "/api/model/serve" in path:
@@ -2898,7 +3021,7 @@ async def do_download_model(content: str, owner: Optional[str] = None) -> Dict:
     if env_cfg.get("ssh_port"):   payload["ssh_port"]   = env_cfg["ssh_port"]
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{_COOKBOOK_BASE}/api/model/download",
+            resp = await client.post(f"{_INTERNAL_BASE}/api/model/download",
                                      json=payload, headers=_internal_headers())
             data = resp.json()
         if data.get("ok"):
@@ -2942,6 +3065,31 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
     # the UI uses. Without env_prefix, `vllm serve …` lands in a shell
     # without the user's venv and fails 'command not found'.
     env_cfg = await _cookbook_env_for_host(host)
+    # Rewrite bare `vllm` / `python3` leading tokens to the venv's absolute
+    # binary path when the target host has a venv configured. SSH non-
+    # interactive shells often leave ~/.local/bin ahead of the venv bin on
+    # PATH even with the venv activated, so `vllm serve` finds the wrong
+    # binary and crashes early (e.g. compute_89 torch ABI errors on an old
+    # user-site torch). This mirrors what static/js/cookbook.js does in
+    # _buildServeCmd for the UI launch path.
+    env_path = (env_cfg.get("env_path") or "").rstrip("/")
+    env_type = (env_cfg.get("env_type") or env_cfg.get("env") or "").lower()
+    if env_type == "venv" and env_path:
+        venv_bin = f"{env_path}/bin"
+        # Match the FIRST shell-token: skip leading KEY=VAL env-var prefixes
+        # (CUDA_VISIBLE_DEVICES=… VLLM_USE_FLASHINFER_SAMPLER=…) before the binary.
+        import re as _re3
+        tokens = cmd.split()
+        idx = 0
+        env_re = _re3.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+        while idx < len(tokens) and env_re.match(tokens[idx]):
+            idx += 1
+        if idx < len(tokens):
+            head = tokens[idx]
+            if head in ("vllm", "python3", "python"):
+                tokens[idx] = f"{venv_bin}/{head}"
+                cmd = " ".join(tokens)
+                payload["cmd"] = cmd
     if env_cfg.get("env_prefix"): payload["env_prefix"] = env_cfg["env_prefix"]
     if env_cfg.get("gpus"):       payload["gpus"]       = env_cfg["gpus"]
     if env_cfg.get("hf_token"):   payload["hf_token"]   = env_cfg["hf_token"]
@@ -2949,7 +3097,7 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
     if env_cfg.get("ssh_port"):   payload["ssh_port"]   = env_cfg["ssh_port"]
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{_COOKBOOK_BASE}/api/model/serve",
+            resp = await client.post(f"{_INTERNAL_BASE}/api/model/serve",
                                      json=payload, headers=_internal_headers())
             data = resp.json()
         if data.get("ok"):
@@ -2960,7 +3108,19 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
             )
             note = "" if registered else " (state-write failed — task may not show in UI)"
             return {"output": f"Serving {repo_id} (session: {sid}){note}", "session_id": sid, "exit_code": 0}
-        return {"error": data.get("error", "Serve failed"), "exit_code": 1}
+        # FastAPI HTTPException puts the message under `detail`, not `error`.
+        # Surface BOTH so the agent sees "Invalid characters in cmd" (from
+        # _validate_serve_cmd rejecting `&&`/`source`/`cd`) instead of
+        # the generic "Serve failed", which leaves it with nothing to act on.
+        err_msg = data.get("error") or data.get("detail") or "Serve failed"
+        hint = ""
+        if isinstance(err_msg, str) and "cmd" in err_msg.lower():
+            hint = (" — the cmd must START with an allowlisted binary "
+                    "(vllm, python3, llama-server, ollama, sglang, lmdeploy, node, npx). "
+                    "Do NOT prefix with `cd …`, `source …`, or chain with `&&`. "
+                    "env_prefix (e.g. `source ~/qwen35-env/bin/activate`) is added "
+                    "automatically from the host's saved venv settings.")
+        return {"error": f"{err_msg}{hint}", "exit_code": 1}
     except Exception as e:
         return {"error": str(e), "exit_code": 1}
 
@@ -2977,7 +3137,7 @@ async def do_list_served_models(content: str, owner: Optional[str] = None) -> Di
     cookbook_tasks: List[Dict[str, Any]] = []
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/tasks/status",
+            resp = await client.get(f"{_INTERNAL_BASE}/api/cookbook/tasks/status",
                                     headers=_internal_headers())
             cookbook_tasks = (resp.json() or {}).get("tasks") or []
     except Exception as e:
@@ -3004,13 +3164,31 @@ async def do_list_served_models(content: str, owner: Optional[str] = None) -> Di
             "exit_code": 0,
         }
 
+    # Sort so the agent sees what's actually LIVE first. Stopped/error/
+    # completed tasks are mostly historical noise — they shouldn't lead
+    # the list when something is genuinely serving.
+    _ORDER = {
+        "ready": 0, "running": 1, "loading": 1, "warming": 1,
+        "queued": 2, "starting": 2,
+        "error": 5, "crashed": 5, "failed": 5,
+        "stopped": 6, "killed": 6, "cancelled": 6, "canceled": 6,
+        "done": 7, "completed": 7, "finished": 7,
+    }
+    def _rank(t: Dict[str, Any]) -> int:
+        phase = (t.get("phase") or t.get("status") or "unknown").lower()
+        return _ORDER.get(phase, 3)
+    merged.sort(key=_rank)
+
     cb_n = len(cookbook_tasks)
     ext_n = len(external)
+    live_n = sum(1 for t in merged if _rank(t) <= 2)
     header = []
     if cb_n:
         header.append(f"{cb_n} cookbook-tracked")
     if ext_n:
         header.append(f"{ext_n} external")
+    if live_n:
+        header.insert(0, f"{live_n} LIVE")
     lines = [f"Running: {', '.join(header)}."]
     for t in merged:
         phase = t.get("phase") or t.get("status", "unknown")
@@ -3037,8 +3215,20 @@ async def do_list_served_models(content: str, owner: Optional[str] = None) -> Di
         if t.get("status") == "error" and t.get("output_tail"):
             tail = str(t.get("output_tail") or "").strip()
             if tail:
+                # Prefer a window around a Python traceback if one exists,
+                # falling back to the last 30 lines. The previous 6-line
+                # tail showed only the post-crash bash prompt / neofetch
+                # banner ("Locale: C / Ubuntu_Odysseus ❯") — useless for
+                # diagnosis. The traceback we want is usually 50-200 lines
+                # earlier in the buffer.
+                _tail_lines = tail.splitlines()
+                _shown = _tail_lines[-30:]
+                for _i, _ln in enumerate(_tail_lines):
+                    if "Traceback (most recent call last)" in _ln or "ERROR" in _ln or "Error:" in _ln:
+                        _shown = _tail_lines[_i:_i + 40]
+                        break
                 lines.append("    recent log:")
-                for line in tail.splitlines()[-6:]:
+                for line in _shown:
                     lines.append(f"      {line[:220]}")
         if t.get("external") and t.get("cmdline_preview"):
             lines.append(f"    cmd: {t['cmdline_preview']}")
@@ -3066,7 +3256,7 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
     state: Dict[str, Any] = {}
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state", headers=headers)
+            resp = await client.get(f"{_INTERNAL_BASE}/api/cookbook/state", headers=headers)
             state = resp.json() or {}
     except Exception as e:
         logger.debug(f"cookbook state lookup failed for {session_id}: {e}")
@@ -3095,7 +3285,7 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(f"{_COOKBOOK_BASE}/api/shell/exec",
+            resp = await client.post(f"{_INTERNAL_BASE}/api/shell/exec",
                                      json={"command": cmd}, headers=headers)
         if resp.status_code >= 400:
             return {"error": f"shell/exec returned HTTP {resp.status_code}: {resp.text[:200]}", "exit_code": 1}
@@ -3116,7 +3306,7 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
             try:
                 matched["status"] = "stopped"
                 async with httpx.AsyncClient(timeout=10) as client:
-                    await client.post(f"{_COOKBOOK_BASE}/api/cookbook/state",
+                    await client.post(f"{_INTERNAL_BASE}/api/cookbook/state",
                                       json=state, headers=headers)
             except Exception as e:
                 logger.debug(f"failed to mark {session_id} stopped in state: {e}")
@@ -3144,12 +3334,131 @@ async def do_stop_served_model(content: str, owner: Optional[str] = None) -> Dic
     )
 
 
+async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dict:
+    """Capture the last N lines of a cookbook task's tmux pane — remote-aware.
+
+    Used by the agent to debug a failed/stuck serve: list_served_models tells
+    you the task is `crashed`, this tool returns the actual stderr/traceback
+    so the agent can match it against a known fix (compute_89 nvcc mismatch,
+    flashinfer version mismatch, OOM, missing kernels, etc.) and decide
+    whether to relaunch via serve_model with new flags.
+    """
+    import httpx
+    import shlex
+    try:
+        args = _parse_tool_args(content)
+    except ValueError:
+        return {"error": "Invalid JSON arguments", "exit_code": 1}
+    session_id = (args.get("session_id") or "").strip()
+    if not session_id:
+        return {"error": "session_id is required (from list_served_models)", "exit_code": 1}
+    import re as _re
+    if not _re.fullmatch(r"[a-zA-Z0-9_-]+", session_id):
+        return {"error": "Invalid session_id format", "exit_code": 1}
+    try:
+        tail = int(args.get("tail") or 400)
+    except (TypeError, ValueError):
+        tail = 400
+    tail = max(20, min(tail, 4000))
+    headers = _internal_headers()
+    remote = (args.get("remote_host") or args.get("host") or "").strip()
+    sport = (args.get("ssh_port") or "").strip()
+    # Resolve host from cookbook state if caller didn't pass one — same
+    # lookup _cookbook_kill_session uses.
+    if not remote:
+        state: Dict[str, Any] = {}
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(f"{_INTERNAL_BASE}/api/cookbook/state", headers=headers)
+                state = resp.json() or {}
+        except Exception as e:
+            logger.debug(f"cookbook state lookup failed for {session_id}: {e}")
+        if isinstance(state, dict):
+            for t in (state.get("tasks") or []):
+                if isinstance(t, dict) and (t.get("sessionId") == session_id or t.get("id") == session_id):
+                    remote = t.get("remoteHost") or ""
+                    if not sport:
+                        sport = t.get("sshPort") or ""
+                    break
+    # Prefer the persisted /tmp/odysseus-tmux/SESSION.log file over the
+    # live tmux pane. The pane is what the user would see scrolling on
+    # their screen — including the post-crash neofetch banner and the
+    # idle bash prompt that overwrites the actual traceback the moment
+    # vllm exits. The log file is the raw stdout/stderr of the wrapped
+    # process and survives the crash unchanged. We only fall back to
+    # the pane when the log file doesn't exist (older sessions launched
+    # before the tmux+tee wrapper was added).
+    log_path = f"/tmp/odysseus-tmux/{session_id}.log"
+    pane_inner = f"tmux capture-pane -t {shlex.quote(session_id)} -p -S -{tail} 2>/dev/null"
+    file_inner = f"tail -n {tail} {shlex.quote(log_path)} 2>/dev/null"
+    inner = (
+        f"if [ -s {shlex.quote(log_path)} ]; then {file_inner}; "
+        f"else {pane_inner}; fi"
+    )
+    if remote:
+        _pf = f"-p {shlex.quote(str(sport))} " if sport and str(sport) != "22" else ""
+        cmd = (
+            f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
+            f"{_pf}{shlex.quote(remote)} {shlex.quote(inner)}"
+        )
+        host_label = remote
+    else:
+        cmd = inner
+        host_label = "local"
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(f"{_INTERNAL_BASE}/api/shell/exec",
+                                     json={"command": cmd}, headers=headers)
+        if resp.status_code >= 400:
+            return {"error": f"shell/exec returned HTTP {resp.status_code}: {resp.text[:200]}", "exit_code": 1}
+        data = resp.json() if resp.content else {}
+        output_text = (data.get("stdout") or "").strip()
+        stderr_text = (data.get("stderr") or "").strip()
+        rc = data.get("exit_code")
+        if rc not in (None, 0) and not output_text:
+            already_gone = any(s in (stderr_text or "").lower() for s in ("no server running", "can't find session", "session not found"))
+            if already_gone:
+                return {"output": f"Tmux session {session_id} on {host_label} is gone (task already exited).", "exit_code": 0, "session_id": session_id, "host": host_label}
+            return {"error": f"capture-pane failed on {host_label}: {stderr_text or f'exit {rc}'}", "exit_code": 1}
+        # Dedupe download-progress noise. A 100-shard HF download produces
+        # tens of thousands of `model-NN-of-MM.safetensors: 91%|...` lines
+        # that all look the same to the agent and drown the actual error.
+        # Keep only one sample per (file, decile-percent) bucket.
+        import re as _re2
+        lines = output_text.splitlines()
+        dedup_lines = []
+        seen_progress = set()
+        progress_re = _re2.compile(r"^([\w./\-]+):\s+(\d+)%")
+        for ln in lines:
+            m = progress_re.match(ln.strip())
+            if m:
+                key = (m.group(1), int(m.group(2)) // 10)  # bucket by 10%
+                if key in seen_progress:
+                    continue
+                seen_progress.add(key)
+            dedup_lines.append(ln)
+        output_text = "\n".join(dedup_lines)
+        # Hard cap so the agent doesn't blow its token budget.
+        MAX_CHARS = 8000
+        if len(output_text) > MAX_CHARS:
+            output_text = "…(earlier output truncated)…\n" + output_text[-MAX_CHARS:]
+        return {
+            "output": output_text or "(empty pane)",
+            "session_id": session_id,
+            "host": host_label,
+            "tail_lines": tail,
+            "exit_code": 0,
+        }
+    except Exception as e:
+        return {"error": str(e), "exit_code": 1}
+
+
 async def do_list_downloads(content: str, owner: Optional[str] = None) -> Dict:
     """List in-flight model downloads (filters /api/cookbook/tasks/status to type=download)."""
     import httpx
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/tasks/status",
+            resp = await client.get(f"{_INTERNAL_BASE}/api/cookbook/tasks/status",
                                     headers=_internal_headers())
             data = resp.json()
         tasks = [t for t in data.get("tasks", []) if (t.get("type") or "").lower() == "download"]
@@ -3200,7 +3509,7 @@ async def do_search_hf_models(content: str, owner: Optional[str] = None) -> Dict
         params["limit"] = str(limit)
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/hf-latest",
+            resp = await client.get(f"{_INTERNAL_BASE}/api/cookbook/hf-latest",
                                     params=params, headers=_internal_headers())
             data = resp.json()
         models = data.get("models") if isinstance(data, dict) else data
@@ -3266,7 +3575,7 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
         check = f"tmux has-session -t {shlex.quote(sess)} 2>&1"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(f"{_COOKBOOK_BASE}/api/shell/exec",
+            r = await client.post(f"{_INTERNAL_BASE}/api/shell/exec",
                                   json={"command": check}, headers=headers)
             data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
         if r.status_code >= 400 or (data.get("exit_code") not in (None, 0)):
@@ -3283,7 +3592,7 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
     server_up = False
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.post(f"{_COOKBOOK_BASE}/api/shell/exec",
+            r = await client.post(f"{_INTERNAL_BASE}/api/shell/exec",
                                   json={"command": health_cmd}, headers=headers)
             body = (r.json() or {}).get("stdout", "") if r.headers.get("content-type", "").startswith("application/json") else ""
             server_up = '"data"' in body or '"object"' in body
@@ -3294,7 +3603,7 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
     # overwrite the whole file (that'd nuke presets).
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state", headers=headers)
+            r = await client.get(f"{_INTERNAL_BASE}/api/cookbook/state", headers=headers)
             state = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
     except Exception as e:
         return {"error": f"could not read cookbook state: {e}", "exit_code": 1}
@@ -3330,7 +3639,7 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
         state["tasks"] = tasks
         try:
             async with httpx.AsyncClient(timeout=10) as client:
-                await client.post(f"{_COOKBOOK_BASE}/api/cookbook/state",
+                await client.post(f"{_INTERNAL_BASE}/api/cookbook/state",
                                   json=state, headers=headers)
         except Exception as e:
             return {"error": f"could not save cookbook state: {e}", "exit_code": 1}
@@ -3407,7 +3716,7 @@ async def do_list_serve_presets(content: str, owner: Optional[str] = None) -> Di
     import httpx
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state",
+            resp = await client.get(f"{_INTERNAL_BASE}/api/cookbook/state",
                                     headers=_internal_headers())
             state = resp.json() or {}
     except Exception as e:
@@ -3455,7 +3764,7 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state",
+            resp = await client.get(f"{_INTERNAL_BASE}/api/cookbook/state",
                                     headers=_internal_headers())
             state = resp.json() or {}
     except Exception as e:
@@ -3499,7 +3808,7 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{_COOKBOOK_BASE}/api/model/serve",
+            resp = await client.post(f"{_INTERNAL_BASE}/api/model/serve",
                                      json=payload, headers=_internal_headers())
             data = resp.json()
         if data.get("ok"):
@@ -3516,38 +3825,133 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
 
 
 async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Dict:
-    """List models already cached locally (or on a remote host)."""
+    """List models already cached locally and/or on remote hosts.
+
+    With no `host` arg, scans EVERY configured Cookbook server (and local)
+    and aggregates — so the agent sees the full inventory in one call
+    instead of having to query each server individually.
+    """
     import httpx
     try:
         args = _parse_tool_args(content) if content.strip() else {}
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
-    params: Dict[str, str] = {}
     raw_host = (args.get("host") or "").strip()
-    host = await _resolve_cookbook_host(raw_host) if raw_host else ""
-    if host:
-        params["host"] = host
-    if args.get("model_dir"):
-        params["model_dir"] = args["model_dir"]
-    if args.get("ssh_port"):
-        params["ssh_port"] = str(args["ssh_port"])
-    if args.get("platform"):
-        params["platform"] = args["platform"]
+    headers = _internal_headers()
+
+    async def _scan_one(host_label: str, host_val: str, ssh_port: str = "",
+                        platform: str = "", model_dir: str = "") -> list:
+        """Hit /api/model/cached for one host; tag each returned model with its source."""
+        p: Dict[str, str] = {}
+        if host_val:
+            p["host"] = host_val
+        # Caller-provided override beats per-server config beats nothing.
+        if args.get("model_dir"):
+            p["model_dir"] = args["model_dir"]
+        elif model_dir:
+            p["model_dir"] = model_dir
+        if ssh_port:
+            p["ssh_port"] = ssh_port
+        elif args.get("ssh_port"):
+            p["ssh_port"] = str(args["ssh_port"])
+        if platform:
+            p["platform"] = platform
+        elif args.get("platform"):
+            p["platform"] = args["platform"]
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.get(f"{_INTERNAL_BASE}/api/model/cached",
+                                        params=p, headers=headers)
+                data = resp.json()
+            ms = data.get("models", []) if isinstance(data, dict) else (data or [])
+            for m in ms:
+                m["host"] = host_label or "local"
+            return ms or []
+        except Exception as e:
+            logger.debug(f"list_cached_models scan({host_label}) failed: {e}")
+            return []
+
+    # When the caller specifies a host explicitly, scan only that one (old behaviour).
+    # Otherwise iterate every configured server + local so the agent doesn't
+    # have to repeat the call per server.
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.get(f"{_COOKBOOK_BASE}/api/model/cached",
-                                    params=params, headers=_internal_headers())
-            data = resp.json()
-        models = data.get("models", []) if isinstance(data, dict) else data
+        # Pull configured servers from cookbook state (used for resolving
+        # modelDirs both when caller specifies a host and when we scan all).
+        servers: list = []
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                st = await client.get(f"{_INTERNAL_BASE}/api/cookbook/state", headers=headers)
+                st_data = st.json() if st.headers.get("content-type", "").startswith("application/json") else {}
+            servers = (st_data.get("env", {}) or {}).get("servers") or []
+        except Exception as e:
+            logger.debug(f"server list fetch failed: {e}")
+            st_data = {}
+
+        def _dirs_for(server_record: Dict[str, Any]) -> str:
+            """Comma-joined modelDirs from a saved server record (Settings).
+
+            Filters out the HF cache (~/.cache/huggingface/hub) — the backend
+            scan script always scans it by default, so re-passing it as an
+            extra model_dir is redundant AND confuses some path-handling
+            edge cases where the extra dir suppresses the deeper scan.
+            We only need to forward the NON-default dirs (e.g. /mnt/HADES/models).
+            """
+            mds = server_record.get("modelDirs") if isinstance(server_record, dict) else None
+            HF_DEFAULTS = {"~/.cache/huggingface/hub", "~/.cache/huggingface"}
+            if isinstance(mds, list):
+                extras = [d for d in mds if isinstance(d, str) and d.strip() and d.strip() not in HF_DEFAULTS]
+                return ",".join(extras)
+            if isinstance(mds, str) and mds.strip() not in HF_DEFAULTS:
+                return mds
+            return ""
+
+        if raw_host:
+            host = await _resolve_cookbook_host(raw_host)
+            # Find this host's saved record so its modelDirs apply too.
+            srv = next(
+                (s for s in servers if isinstance(s, dict)
+                 and (s.get("name") == raw_host or s.get("host") == host or s.get("host") == raw_host)),
+                {},
+            )
+            models = await _scan_one(raw_host, host, model_dir=_dirs_for(srv))
+        else:
+            # Always include local. Local's saved record is the one with no host.
+            local_srv = next((s for s in servers if isinstance(s, dict) and not (s.get("host") or "").strip()), {})
+            scans: list = [_scan_one("local", "", model_dir=_dirs_for(local_srv))]
+            for s in servers:
+                if not isinstance(s, dict):
+                    continue
+                name = s.get("name") or s.get("host")
+                host_val = s.get("host") or ""
+                if not host_val:
+                    continue
+                scans.append(_scan_one(
+                    name,
+                    host_val,
+                    ssh_port=str(s.get("port") or ""),
+                    platform=s.get("platform") or "",
+                    model_dir=_dirs_for(s),
+                ))
+            results = await asyncio.gather(*scans, return_exceptions=False)
+            # Dedupe by (host, repo_id) — same model could appear in both HF cache + Ollama list.
+            seen = set()
+            models: list = []
+            for batch in results:
+                for m in batch:
+                    key = (m.get("host", ""), m.get("repo_id", ""))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    models.append(m)
         if not models:
-            # Filesystem cache scans can miss models downloaded into the HF
-            # default cache when the server has no explicit model_dir configured.
-            # Still surface completed Cookbook downloads so the agent doesn't
-            # incorrectly assume a model is absent and re-download it.
+            # Cache scans can miss models downloaded into the HF default cache
+            # when the server has no explicit model_dir configured. Surface
+            # completed Cookbook download tasks so the agent doesn't conclude
+            # a model is absent and re-download it.
             downloaded = []
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
-                    st = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state", headers=_internal_headers())
+                    st = await client.get(f"{_INTERNAL_BASE}/api/cookbook/state", headers=headers)
                     state = st.json() if st.headers.get("content-type", "").startswith("application/json") else {}
                 for t in (state.get("tasks") or []):
                     if not isinstance(t, dict) or t.get("type") != "download":
@@ -3555,27 +3959,44 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
                     if (t.get("status") or "").lower() not in {"done", "completed"}:
                         continue
                     task_host = t.get("remoteHost") or (t.get("payload") or {}).get("remote_host") or ""
-                    if host and task_host != host:
+                    if raw_host and task_host != raw_host:
                         continue
                     repo = t.get("modelId") or t.get("repoId") or (t.get("payload") or {}).get("repo_id") or t.get("name")
                     if repo and repo not in downloaded:
                         downloaded.append(repo)
             except Exception:
                 downloaded = []
+            host_str = f" on {raw_host}" if raw_host else ""
             if downloaded:
-                host_str = f" on {raw_host or host}" if (raw_host or host) else ""
                 lines = [f"No cache paths were detected{host_str}, but Cookbook has completed download task(s):"]
                 lines.extend(f"- {repo} — downloaded via Cookbook task" for repo in downloaded)
                 return {"output": "\n".join(lines), "models": [{"repo_id": repo, "source": "cookbook_task"} for repo in downloaded], "exit_code": 0}
-            host_str = f" on {raw_host or host}" if (raw_host or host) else ""
             return {"output": f"No cached models found{host_str}.", "exit_code": 0}
-        lines = [f"{len(models)} cached model(s):"]
-        for m in models:
-            name = m.get("repo_id", "?")
-            sz = m.get("size") or (f"{m.get('size_bytes', 0) / (1024**3):.1f}GB" if m.get("size_bytes") else "")
-            inc = " (incomplete)" if m.get("has_incomplete") else ""
-            kind = " [diffusion]" if m.get("is_diffusion") else ""
-            lines.append(f"- {name}{kind} — {sz}{inc}")
+        # Multi-host scan: group by host so the agent sees inventory per server.
+        # Single-host scan: flat list (matches old output shape).
+        if raw_host:
+            lines = [f"{len(models)} cached model(s) on {raw_host}:"]
+            for m in models:
+                name = m.get("repo_id", "?")
+                sz = m.get("size") or (f"{m.get('size_bytes', 0) / (1024**3):.1f}GB" if m.get("size_bytes") else "")
+                inc = " (incomplete)" if m.get("has_incomplete") else ""
+                kind = " [diffusion]" if m.get("is_diffusion") else ""
+                lines.append(f"- {name}{kind} — {sz}{inc}")
+        else:
+            from collections import defaultdict as _dd
+            by_host = _dd(list)
+            for m in models:
+                by_host[m.get("host", "local")].append(m)
+            lines = [f"{len(models)} cached model(s) across {len(by_host)} server(s):"]
+            for host_name in sorted(by_host.keys()):
+                lines.append(f"\n[{host_name}]")
+                for m in by_host[host_name]:
+                    name = m.get("repo_id", "?")
+                    sz = m.get("size") or (f"{m.get('size_bytes', 0) / (1024**3):.1f}GB" if m.get("size_bytes") else "")
+                    inc = " (incomplete)" if m.get("has_incomplete") else ""
+                    kind = " [diffusion]" if m.get("is_diffusion") else ""
+                    backend = f" ({m.get('backend')})" if m.get("backend") else ""
+                    lines.append(f"- {name}{kind}{backend} — {sz}{inc}")
         return {"output": "\n".join(lines), "models": models, "exit_code": 0}
     except Exception as e:
         return {"error": str(e), "exit_code": 1}
@@ -3601,7 +4022,7 @@ async def do_edit_image(content: str, owner: Optional[str] = None) -> Dict:
         payload["scale"] = args["scale"]
     try:
         async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(f"http://localhost:7000/api/gallery/{action}", json=payload)
+            resp = await client.post(f"{_INTERNAL_BASE}/api/gallery/{action}", json=payload)
             data = resp.json()
         if data.get("success") or data.get("id"):
             return {"output": f"Image edited ({action}). New image ID: {data.get('id', '?')}", "exit_code": 0}
@@ -3626,7 +4047,7 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
         args = {}
     action = (args.get("action") or "list").lower()
     rid = (args.get("id") or args.get("session_id") or args.get("research_id") or "").strip()
-    data_dir = _Path("data/deep_research")
+    data_dir = _Path(DEEP_RESEARCH_DIR)
 
     # SECURITY: the research id is interpolated straight into a filesystem
     # path (data/deep_research/<rid>.json) for read AND delete. Without this
@@ -3717,7 +4138,7 @@ async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict
         payload["search_provider"] = args["search_provider"]
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{_COOKBOOK_BASE}/api/research/start",
+            resp = await client.post(f"{_INTERNAL_BASE}/api/research/start",
                                      json=payload, headers=_internal_headers(owner))
         if resp.status_code >= 400:
             return {"error": f"research/start returned HTTP {resp.status_code}: {resp.text[:200]}", "exit_code": 1}
@@ -3777,7 +4198,7 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
     async with httpx.AsyncClient(timeout=30) as client:
         # 2. Email history (sent/received)
         try:
-            resp = await client.get("http://localhost:7000/api/email/resolve-contact", params={"name": name})
+            resp = await client.get(f"{_INTERNAL_BASE}/api/email/resolve-contact", params={"name": name})
             if resp.status_code == 200:
                 for c in (resp.json().get("contacts") or []):
                     email = (c.get("email") or "").strip().lower()
@@ -3871,7 +4292,7 @@ async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
 def _load_vault_config() -> Dict:
     """Load Vaultwarden config from data/vault.json."""
     from pathlib import Path
-    p = Path("data/vault.json")
+    p = Path(VAULT_FILE)
     if p.exists():
         try:
             return json.loads(p.read_text(encoding="utf-8"))
@@ -4013,7 +4434,9 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
     if not master_password:
         return {"error": "master_password is required", "exit_code": 1}
 
-    stdout, stderr, rc = await _run_bw(["unlock", master_password, "--raw"])
+    # Do not pass the master password as an argv element. Local process lists
+    # can expose argv to other users; stdin keeps the secret out of `ps`.
+    stdout, stderr, rc = await _run_bw(["unlock", "--raw"], input_text=master_password + "\n")
     if rc != 0:
         return {"error": f"Unlock failed: {stderr[:300]}", "exit_code": 1}
 
@@ -4023,7 +4446,7 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
 
     # Save session to vault.json
     from pathlib import Path
-    p = Path("data/vault.json")
+    p = Path(VAULT_FILE)
     cfg = {}
     if p.exists():
         try:

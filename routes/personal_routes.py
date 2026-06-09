@@ -2,18 +2,47 @@
 """Routes for personal documents management."""
 import os
 import logging
-from typing import List
+import uuid
+from typing import List, Tuple
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Depends
 from src.request_models import DirectoryRequest
-from core.constants import BASE_DIR, PERSONAL_DIR
+from core.constants import BASE_DIR, PERSONAL_DIR, PERSONAL_UPLOADS_DIR
 from src.rag_singleton import get_rag_manager
-from src.auth_helpers import get_current_user, require_user
+from src.auth_helpers import require_privilege, require_user
 from core.middleware import require_admin
 from src.upload_handler import secure_filename
+from src.upload_limits import PERSONAL_UPLOAD_MAX_BYTES
 
-UPLOADS_DIR = os.path.join(BASE_DIR, "data", "personal_uploads")
+UPLOADS_DIR = PERSONAL_UPLOADS_DIR
 
 logger = logging.getLogger(__name__)
+
+
+def _personal_upload_dir_for_owner(owner: str | None) -> str:
+    """Return the per-owner upload directory used for direct RAG uploads."""
+    owner_segment = secure_filename((owner or "local").strip())[:80] or "local"
+    upload_dir = os.path.abspath(os.path.join(UPLOADS_DIR, owner_segment))
+    base_abs = os.path.abspath(UPLOADS_DIR)
+    if os.path.commonpath([upload_dir, base_abs]) != base_abs:
+        raise ValueError("Unsafe upload owner path")
+    os.makedirs(upload_dir, exist_ok=True)
+    return upload_dir
+
+
+def _unique_personal_upload_path(upload_dir: str, original_name: str | None) -> Tuple[str, str, str]:
+    """Build a collision-resistant upload path while preserving a display name."""
+    safe_name = secure_filename(os.path.basename(original_name or "upload"))
+    if not safe_name or safe_name.startswith("."):
+        safe_name = "upload"
+
+    stem, ext = os.path.splitext(safe_name)
+    stem = (stem or "upload")[:80]
+    filename = f"{stem}-{uuid.uuid4().hex[:10]}{ext.lower()}"
+    file_path = os.path.abspath(os.path.join(upload_dir, filename))
+    upload_abs = os.path.abspath(upload_dir)
+    if os.path.commonpath([file_path, upload_abs]) != upload_abs:
+        raise ValueError("Unsafe upload filename")
+    return file_path, filename, safe_name
 
 def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
     """
@@ -38,9 +67,12 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
         if not directory:
             raise HTTPException(400, "Directory path is required")
 
-        base_abs = os.path.abspath(PERSONAL_DIR)
+        # realpath (not abspath) so a symlink inside PERSONAL_DIR that points
+        # outside it is resolved before the commonpath confinement check below;
+        # abspath only normalises `..` and would let such a symlink escape.
+        base_abs = os.path.realpath(PERSONAL_DIR)
         candidate = directory if os.path.isabs(directory) else os.path.join(base_abs, directory)
-        resolved = os.path.abspath(candidate)
+        resolved = os.path.realpath(candidate)
         try:
             in_base = os.path.commonpath([resolved, base_abs]) == base_abs
         except ValueError:
@@ -160,12 +192,12 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
     @router.post("/upload")
     async def upload_files_to_rag(request: Request, files: List[UploadFile] = File(...)):
         """Upload files directly into RAG. Supports text and PDF."""
-        user = get_current_user(request)
+        user = require_privilege(request, "can_use_documents")
         rag = _rag()
         if not rag:
             raise HTTPException(503, "RAG system is not available — is the embedding service running?")
 
-        os.makedirs(UPLOADS_DIR, exist_ok=True)
+        upload_dir = _personal_upload_dir_for_owner(user)
 
         total_indexed = 0
         total_failed = 0
@@ -173,18 +205,12 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
 
         for upload in files:
             try:
-                # Sanitize filename — strip directory components and unsafe chars
-                safe_name = secure_filename(os.path.basename(upload.filename or "upload"))
-                if not safe_name or safe_name.startswith("."):
-                    safe_name = f"upload_{total_indexed + total_failed}"
-                file_path = os.path.join(UPLOADS_DIR, safe_name)
-                # Defense-in-depth: ensure resolved path stays under UPLOADS_DIR
-                base_abs = os.path.abspath(UPLOADS_DIR)
-                if os.path.commonpath([os.path.abspath(file_path), base_abs]) != base_abs:
-                    logger.warning(f"Rejected unsafe upload path: {upload.filename!r}")
+                file_path, stored_name, safe_name = _unique_personal_upload_path(upload_dir, upload.filename)
+                content_bytes = await upload.read(PERSONAL_UPLOAD_MAX_BYTES + 1)
+                if len(content_bytes) > PERSONAL_UPLOAD_MAX_BYTES:
+                    logger.warning(f"Rejected oversized personal upload: {upload.filename!r}")
                     total_failed += 1
                     continue
-                content_bytes = await upload.read()
                 with open(file_path, "wb") as f:
                     f.write(content_bytes)
 
@@ -205,7 +231,8 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
                     metadata = {
                         "source": file_path,
                         "filename": safe_name,
-                        "directory": UPLOADS_DIR,
+                        "stored_filename": stored_name,
+                        "directory": upload_dir,
                         "type": ext,
                         "chunk_id": i,
                     }
@@ -223,7 +250,7 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
 
         # Track uploads directory
         if uploaded_files and hasattr(personal_docs_manager, "add_directory"):
-            personal_docs_manager.add_directory(UPLOADS_DIR, index=False)
+            personal_docs_manager.add_directory(upload_dir, index=False)
 
         return {
             "success": True,
@@ -257,9 +284,12 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
             except ValueError:
                 # commonpath raises on mixed drives / non-comparable paths
                 in_uploads = False
-            if in_uploads and abs_target != base_abs and os.path.exists(abs_target):
-                os.remove(abs_target)
-                deleted_from_disk = True
+            if in_uploads and abs_target != base_abs:
+                try:
+                    os.remove(abs_target)
+                    deleted_from_disk = True
+                except FileNotFoundError:
+                    pass  # already gone — race with another request or cleanup
 
             # Exclude the file from the listing (persists across restarts)
             personal_docs_manager.exclude_file(filepath)

@@ -42,7 +42,7 @@ _SOTA_HOSTS = frozenset({
     "api.together.xyz", "api.fireworks.ai",
     "api.perplexity.ai", "api.x.ai",
     "generativelanguage.googleapis.com", "api.groq.com",
-    "openrouter.ai", "ollama.com",
+    "openrouter.ai", "ollama.com", "api.venice.ai",
 })
 
 
@@ -112,7 +112,7 @@ def evaluate_turn_regex(
                     return ("failure", f"tool result matched error pattern {pat.pattern!r}: {snippet!r}")
 
     # Agent verbally gave up?
-    if agent_reply:
+    if isinstance(agent_reply, str) and agent_reply:
         for pat in _REPLY_GIVE_UP_PATTERNS:
             m = pat.search(agent_reply)
             if m:
@@ -229,12 +229,13 @@ portable across users / hosts.
 """
 
 
-async def _call_teacher(teacher_model_spec: str, prompt: str) -> Optional[str]:
+async def _call_teacher(teacher_model_spec: str, prompt: str,
+                        owner: Optional[str] = None) -> Optional[str]:
     """Call the configured teacher endpoint with the escalation prompt."""
     from src.llm_core import llm_call_async
     from src.ai_interaction import _resolve_model, _TEACHER_SYSTEM_PROMPT
     try:
-        url, model, headers = _resolve_model(teacher_model_spec)
+        url, model, headers = _resolve_model(teacher_model_spec, owner=owner)
     except Exception as e:
         logger.warning(f"teacher endpoint not resolvable ({teacher_model_spec!r}): {e}")
         return None
@@ -327,7 +328,7 @@ def _extract_skill_json(teacher_response: str) -> Optional[Dict[str, Any]]:
     treated as "teacher declined to write a skill", per the prompt
     contract.
     """
-    if not teacher_response:
+    if not isinstance(teacher_response, str) or not teacher_response:
         return None
     import json
     m = re.search(r"```(?:json)?\s*\n(\{[\s\S]*?\})\s*\n```", teacher_response)
@@ -388,7 +389,7 @@ async def escalate_and_learn(
         untrusted_trace_guard=_UNTRUSTED_TRACE_GUARD,
         trace=_format_trace(tool_results, agent_reply),
     )
-    response = await _call_teacher(teacher_spec, prompt)
+    response = await _call_teacher(teacher_spec, prompt, owner=owner)
     if not response:
         return None
 
@@ -523,7 +524,7 @@ async def run_teacher_inline(
     # Resolve teacher endpoint
     try:
         from src.ai_interaction import _resolve_model
-        teacher_url, teacher_model, teacher_headers = _resolve_model(teacher_spec)
+        teacher_url, teacher_model, teacher_headers = _resolve_model(teacher_spec, owner=owner)
     except Exception as e:
         logger.warning(f"teacher endpoint not resolvable ({teacher_spec!r}): {e}")
         yield (
@@ -617,7 +618,7 @@ async def run_teacher_inline(
         untrusted_trace_guard=_UNTRUSTED_TRACE_GUARD,
         trace=_format_trace(captured_tool_events, teacher_text),
     )
-    skill_response = await _call_teacher(teacher_spec, prompt)
+    skill_response = await _call_teacher(teacher_spec, prompt, owner=owner)
     if skill_response and "NO_SKILL" in skill_response and not _extract_skill_json(skill_response):
         logger.info("teacher declined to write a skill (NO_SKILL)")
         yield (

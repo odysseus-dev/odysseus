@@ -12,6 +12,14 @@ import re
 import time
 from typing import Dict, List, Optional, Set
 
+from src.embedding_lanes import (
+    LANE_CUSTOM,
+    LANE_FASTEMBED,
+    build_embedding_lanes,
+    dedupe_results,
+    migrate_legacy_collection,
+)
+
 try:
     import numpy as np
 except ImportError:
@@ -20,20 +28,20 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Tools that are ALWAYS included regardless of retrieval results.
-# These are the most commonly needed and should never be missing.
+# Keep this deliberately tiny. Domain tools (web, documents, email,
+# cookbook/model serving, files, settings, etc.) are injected by retrieval or
+# keyword intent so a trivial agent prompt like "test" does not carry every
+# domain's schemas and rules.
 ALWAYS_AVAILABLE = frozenset({
-    "bash", "python", "web_search", "web_fetch", "read_file",
-    "api_call",  # For configured integrations (Miniflux, Gitea, Linkding, etc.)
-    # The two genuinely AMBIENT cookbook tools — "what's running" and
-    # "kill it" can be asked any time without prior cookbook context,
-    # and need to survive typos. The other cookbook tools (downloads,
-    # presets, serve, cached, servers) are CONTEXTUAL — they fire via
-    # keyword hints when the user is actually talking about cookbook.
-    # Keeping the always-on set small leaves room in the ~16-tool
-    # budget for manage_tasks / manage_calendar / etc.
-    "list_served_models", "stop_served_model",
-    # Generic API loopback — the catch-all when no named tool fits.
-    "app_api",
+    # Memory is ambient — "remember this" can follow any message regardless
+    # of topic. Without this, RAG drops it and the agent falls back to
+    # app_api /api/memory/add which fails with 422 on first attempt.
+    "manage_memory",
+    # Ask the user a multiple-choice question for a decision/clarification.
+    # Always reachable so the agent can pause and ask at any point.
+    "ask_user",
+    # Write back to the active plan (tick steps done / revise) during execution.
+    "update_plan",
 })
 
 # Tools that the Personal Assistant always has access to during scheduled
@@ -59,13 +67,17 @@ COLLECTION_NAME = "odysseus_tool_index"
 # Each tool gets a searchable description that helps retrieval.
 # These are richer than the system prompt one-liners — they're for embedding.
 BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
-    "bash": "Run shell commands on the server. Install packages, check files, git operations, curl, system info, process management, networking.",
-    "python": "Execute Python code for computation, data processing, math, scripting, parsing, API calls. Not for writing code for the user.",
-    "web_search": "Quick single web lookup for a fact, current event, or doc mid-task. NOT for 'research X' / 'do research on X' requests — those are deep-research jobs (use trigger_research). web_search = one query; trigger_research = a full researched report in the sidebar.",
+    "bash": "Run shell commands on the server. Install packages, check files, git operations, system info, and process management. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
+    "python": "Execute Python code for computation, data processing, math, scripting, and parsing. Not for writing code for the user. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
+    "web_search": "Quick single web lookup for a fact, current event, latest/current information, or doc mid-task. Use this instead of bash/curl/python/requests for web searches. NOT for 'research X' / 'do research on X' requests — those are deep-research jobs (use trigger_research). web_search = one query; trigger_research = a full researched report in the sidebar.",
     "web_fetch": "Fetch and read the text content of a specific URL/website the user names (e.g. 'check example.com', 'open this link'). Use when you have a concrete URL; for open-ended lookups use web_search instead.",
-    "read_file": "Read a file from disk and return its contents. View source code, config files, logs.",
-    "write_file": "Write content to a file on disk. Create new files, save output, update configs.",
-    "create_document": "Create a new document in the editor panel. For code, articles, text content longer than 15 lines. Specify title, language, and content.",
+    "read_file": "Read a file from disk and return its contents. View source code, config files, logs. Supports an optional line range (offset/limit) for large files.",
+    "grep": "Search file CONTENTS for a regex across a directory tree (ripgrep-backed, honours .gitignore). Returns file:line:match. Use to find where code/symbols/strings live — prefer over bash grep.",
+    "glob": "Find FILES by glob pattern (e.g. '**/*.py'), newest first. Use to locate files by name/extension — prefer over bash find/ls.",
+    "ls": "List a directory's entries (folders then files with sizes). Use to see what's in a folder — prefer over bash ls.",
+    "write_file": "Write/create or fully rewrite a file ON DISK (source code, configs, project files). Use for new files or full rewrites — NOT create_document (editor panel) and NOT a bash heredoc.",
+    "edit_file": "Edit an existing file ON DISK by exact string replacement (fix a bug, change a function). Shows a diff. The tool for changing files on disk — NOT edit_document (editor panel) and NOT bash sed/heredoc.",
+    "create_document": "Create a new document in the editor panel. For code, articles, text content longer than 15 lines, unless an already-open document/email draft is the obvious target. If an email compose draft is open, edit that draft instead of creating another document.",
     "edit_document": "Preferred tool for editing an existing document — targeted find-and-replace. Use for any small change: add a function, fix a bug, tweak a section, rename things.",
     "update_document": "Replace the entire active document content. ONLY for full rewrites (>50% changed). Do not use for small edits — use edit_document instead.",
     "suggest_document": "Suggest changes to the active document with explanations. For code review, proofreading, feedback requests.",
@@ -88,7 +100,9 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "create_session": "Create a new chat with a name and model.",
     "list_sessions": "List all chats with their metadata (the UI calls these 'chats'). Use for 'list my chats', 'rename all my chats' (list first, then manage_session to rename each).",
     "send_to_session": "Send a message to another chat. Cross-chat communication.",
-    "search_chats": "Search through chat history across all sessions.",
+    "search_chats": "Search past session transcripts across chats.",
+    "ask_user": "Ask the user a multiple-choice question to get a decision or clarification. Use this when the task is genuinely ambiguous and the answer changes what you do next — pick between approaches, confirm an assumption, choose among options — instead of guessing. Provide a clear `question` and 2-6 `options` (each with a short `label`, optional `description`). Calling this ENDS your turn: the user sees clickable buttons and their choice arrives as your next message. Don't use it for things you can decide from context or sensible defaults, or for irreversible-action confirmation if a dedicated flow exists.",
+    "update_plan": "Write back to the ACTIVE PLAN while executing an approved plan: mark steps done or revise them. After finishing a step call this with the full checklist and that step marked done; when the user asks to change the plan call it with the revised checklist. Always pass the COMPLETE markdown checklist (`- [ ]` / `- [x]`), not a diff. The user's docked plan window updates live. No effect when there is no active plan.",
     "ui_control": "Control the UI and toggle tools on/off. Use this to turn off / turn on / disable / enable individual tools and features: shell (bash), search (web), research, browser, documents, incognito. Open panels (documents library, gallery, email inbox, sessions, notes, memories/brain, skills, settings, cookbook) via `open_panel <name>`. Use `open_email_reply <uid> <folder> reply` to open an email reply draft document without sending. Also switches between chat/agent modes, changes the current model, and applies/creates themes.",
     "list_email_accounts": "List configured email accounts and default status. Use before reading or sending mail when the user mentions Gmail, work mail, custom domain mail, another mailbox, or asks to compare/check multiple inboxes.",
     "list_emails": "List emails for a folder/account, newest first, including read messages by default. Shows subject, sender, date, UID, account, and AI summary. Check inbox, find emails needing replies. Supports account from list_email_accounts for Gmail/work/custom mailboxes. For last/latest/newest email, use max_results=1 and unread_only=false.",
@@ -102,11 +116,12 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "resolve_contact": "Look up a contact's email address by name. Searches CardDAV address book and sent email history. Use when the user says 'message [name]', 'email [name]', or 'send to [name]' without an email address.",
     "manage_contact": "Create, update, delete, or list CardDAV contacts. Use to save a new contact, change an existing one's email/phone, or remove one. Action=list returns uids needed for update/delete. Use when the user says 'save this contact', 'add [name] to contacts', 'update [name]'s email', 'delete [name] from contacts'. Do not use for user identity facts like 'my name is <name>'; those are memory.",
     "manage_notes": "Create and manage notes and checklists (Google Keep-style). ALWAYS use this for note/todo/checklist/reminder creation — NEVER hit /api/notes via app_api. Accepts natural-language `due_date` like 'tomorrow at 9am' or '11pm today' (parsed in the USER'S timezone). The due_date IS the reminder — it fires a notification at that time, so do NOT also create a calendar event for the same reminder. Set colors, labels, pin, archive. Do NOT use manage_memory for note content.",
-    "manage_calendar": "Calendar event management: list, create, update, delete. Each event can carry a tag/category (event_type — work/personal/health/travel/meal/social/admin/other) and importance (low/normal/high/critical). Use ISO datetimes; supports all-day events. For event reminders/alarms, pass reminder_minutes; this creates the Notes reminder, so do not also call manage_notes for the same reminder.",
+    "manage_calendar": "Calendar event management: list, create, update, delete. Each event can carry a tag/category (event_type — work/personal/health/travel/meal/social/admin/other) and importance (low/normal/high/critical). Resolve today/tomorrow using the Current date and time context, then use ISO datetimes in the user's local wall time; supports all-day events. For event reminders/alarms, pass reminder_minutes; this creates the Notes reminder, so do not also call manage_notes for the same reminder.",
     "download_model": "Download a HuggingFace model to a local or remote server. Specify repo_id (e.g. 'Qwen/Qwen3-8B'), optional server host, and optional include filter for specific files.",
-    "serve_model": "Start serving a model with vLLM, SGLang, llama.cpp, Ollama, or Diffusers. For image/inpainting/diffusion use python3 scripts/diffusion_server.py --model <repo> --port 8100. After launch, call list_served_models for readiness/errors and retry suggestions.",
+    "serve_model": "Start serving a model with vLLM, SGLang, llama.cpp, Ollama, or Diffusers. cmd MUST start with the binary directly — e.g. `vllm serve /mnt/HADES/models/Qwen3.5-397B-A17B-AWQ --port 8003 --tensor-parallel-size 8 …`. NEVER prefix with `cd …`, `source …`, or chain with `&&`/`||` — those get rejected by the validator. The venv activation (env_prefix) and CUDA env are added automatically from the target host's saved settings. For image/inpainting/diffusion use python3 scripts/diffusion_server.py --model <repo> --port 8100. After launch, call list_served_models for readiness/errors and retry suggestions. If serve_model fails with 'Invalid characters in cmd', simplify to the bare binary + args.",
     "list_served_models": "List currently running model servers in the Cookbook — shows status (loading, ready, idle, error), model name, port, throughput, and serve failure diagnosis/retry suggestions. Use when the user asks 'what's running', 'show my cookbook', 'which models are up', 'what's serving'.",
     "stop_served_model": "Stop a running model server in the Cookbook by session ID or model name. Use when the user says 'kill my cookbook', 'stop the model', 'kill the serve', 'shut down vLLM', 'cancel the running model'.",
+    "tail_serve_output": "Read the actual tmux stderr/traceback of a cookbook serve/download task. Use to debug WHY a task is `crashed`/`error` (compute_89 nvcc mismatch, OOM, missing kernels, wrong attention backend, etc.) so you can call serve_model with adjusted flags. Pass session_id from list_served_models; tail defaults to 300, bump if the error references 'see root cause above'.",
     "list_downloads": "List in-progress HuggingFace model downloads in the Cookbook. Shows model name, phase, percent, session ID. Use for 'what's downloading', 'show my downloads', 'check download progress'.",
     "cancel_download": "Cancel an in-progress model download by tmux session ID. Use for 'cancel the download', 'stop downloading X', 'kill the download'. Call list_downloads first to get the session_id.",
     "search_hf_models": "Search HuggingFace for models matching a query (e.g. 'qwen 8B', 'flux', 'llama-3 instruct'). Returns ranked repo IDs with sizes and download counts. Use for 'find a model', 'search huggingface for X', 'what models are there for Y'.",
@@ -115,7 +130,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "serve_preset": "Launch a saved Cookbook serve preset by name. Reuses the exact tmux command + host the user already saved. Use for 'run stable diffusion 3.5', 'serve vllm-qwen', 'start the inpaint model' — preset-name matches the user's UI labels.",
     "adopt_served_model": "Register an existing tmux model server (one started manually or outside the cookbook flow) into Cookbook tracking AND add it as a chat endpoint. Use when the user (or a previous turn) launched something via ssh+tmux and now wants it visible in the UI, stoppable via stop_served_model, and usable in the model picker.",
     "list_cookbook_servers": "List the cookbook's configured servers (remote GPU boxes + local) and which is the current default. Use this BEFORE download_model/serve_model when the user didn't name a host — to decide where to run, or to ask the user which server when ambiguous. Downloads/serves default to the cookbook's selected server, NOT localhost.",
-    "app_api": "Generic loopback to ANY Odysseus internal endpoint. Use this when the user wants something the UI can do but there's no named tool for it. Covers calendar, gallery, library/documents, memory, notes, tasks, settings, research, compare, cookbook GPUs/state — every UI button hits some /api/* endpoint and you can hit it too. action='endpoints' with filter=<keyword> lists available endpoints. action='call' takes method+path+body. Hits same routes the UI uses — auth flows free. NOTE: themes are NOT an API endpoint — use the ui_control tool (create_theme / set_theme), not app_api. SESSIONS/CHATS: do NOT use app_api for these — GET /api/sessions returns EMPTY for tool calls (it's owner-filtered and tool calls authenticate as a different identity). EMAIL ACCOUNTS: do NOT use /api/email/accounts via app_api; use list_email_accounts, list_emails, and read_email instead. To list/rename/archive/delete/fork chats use the list_sessions and manage_session tools instead.",
+    "app_api": "Generic loopback to allowed Odysseus internal endpoints. Use this when the user wants something the UI can do but there's no named tool for it. Covers calendar, gallery, library/documents, memory, notes, tasks, settings, research, compare, cookbook GPUs/state — allowed UI buttons hit /api/* endpoints and you can hit them too. Sensitive auth/user/admin/shell paths and host-control Cookbook mutation routes are blocked; do NOT use app_api for shell commands, package installs, engine rebuilds, or PID signalling. Use named command tooling for shell commands. action='endpoints' with filter=<keyword> lists available endpoints. action='call' takes method+path+body. Hits same routes the UI uses — auth flows free. NOTE: themes are NOT an API endpoint — use the ui_control tool (create_theme / set_theme), not app_api. SESSIONS/CHATS: do NOT use app_api for these — GET /api/sessions returns EMPTY for tool calls (it's owner-filtered and tool calls authenticate as a different identity). EMAIL ACCOUNTS: do NOT use /api/email/accounts via app_api; use list_email_accounts, list_emails, and read_email instead. To list/rename/archive/delete/fork chats use the list_sessions and manage_session tools instead.",
     "edit_image": "Edit an image in the gallery: upscale (increase resolution), remove background (rembg), inpaint (fill selected area), or harmonize (blend edits). Specify image ID and action.",
     "trigger_research": "Start a deep research job on any topic — appears in the Deep Research sidebar, streams progress, produces a detailed report. Use for 'research X', 'look into Y', 'do deep research on Z', 'investigate'. NOT a scheduled task — it runs now and surfaces in the sidebar.",
 }
@@ -125,32 +140,30 @@ class ToolIndex:
     """ChromaDB-backed tool index for RAG-based tool selection."""
 
     def __init__(self):
-        from src.chroma_client import get_chroma_client
-        from src.embeddings import get_embedding_client
-
-        self._embedder = get_embedding_client()
-        if not self._embedder:
-            raise RuntimeError("No embedding client available")
-
-        client = get_chroma_client()
-        self._collection = client.get_or_create_collection(
-            name=COLLECTION_NAME,
-            metadata={"hnsw:space": "cosine"},
+        self._lanes = build_embedding_lanes(COLLECTION_NAME)
+        if not self._lanes:
+            raise RuntimeError("No embedding lanes available")
+        self._embedder = self._lanes[0].client
+        self._collection = next(
+            (lane.collection for lane in self._lanes if lane.name == LANE_FASTEMBED),
+            self._lanes[0].collection,
         )
+        migrate_legacy_collection(COLLECTION_NAME, self._lanes)
         self._fingerprint = ""
         self._mcp_generation = -1
         self._healthy = True
-        logger.info("ToolIndex initialized")
+        logger.info("ToolIndex initialized (lanes=%s)", [lane.name for lane in self._lanes])
 
     @property
     def healthy(self):
         return self._healthy
 
     def _embed(self, texts: List[str]) -> List[List[float]]:
-        vecs = self._embedder.encode(texts, normalize_embeddings=True)
+        if not self._lanes:
+            return []
+        vecs = self._lanes[0].encode(texts)
         if np is not None:
             return np.array(vecs, dtype=np.float32).tolist()
-        # Fallback without numpy
         return [list(v) for v in vecs]
 
     def index_builtin_tools(self):
@@ -171,23 +184,31 @@ class ToolIndex:
         # registry (e.g. removed tools like the old vault_* set).
         # Without this, upsert leaves them in place and RAG keeps
         # surfacing tools that no longer exist.
-        try:
-            existing = self._collection.get(where={"tool_type": "builtin"})
-            existing_ids = (existing or {}).get("ids") or []
-            stale = [i for i in existing_ids if i not in set(ids)]
-            if stale:
-                self._collection.delete(ids=stale)
-                logger.info(f"Pruned {len(stale)} stale builtin tool entries from index")
-        except Exception as e:
-            logger.debug(f"Stale-pruning skipped: {e}")
+        indexed = False
+        for lane in self._lanes:
+            try:
+                existing = lane.collection.get(where={"tool_type": "builtin"})
+                existing_ids = (existing or {}).get("ids") or []
+                stale = [i for i in existing_ids if i not in set(ids)]
+                if stale:
+                    lane.collection.delete(ids=stale)
+                    logger.info(f"Pruned {len(stale)} stale builtin tool entries from {lane.name} index")
+            except Exception as e:
+                logger.debug(f"Stale-pruning skipped for {lane.name}: {e}")
 
-        embeddings = self._embed(docs)
-        self._collection.upsert(
-            ids=ids,
-            documents=docs,
-            embeddings=embeddings,
-            metadatas=metadatas,
-        )
+            try:
+                lane.collection.upsert(
+                    ids=ids,
+                    documents=docs,
+                    embeddings=lane.encode(docs),
+                    metadatas=metadatas,
+                )
+                indexed = True
+            except Exception as e:
+                logger.warning("Builtin tool indexing failed in %s lane: %s", lane.name, e)
+        if not indexed:
+            self._healthy = False
+            raise RuntimeError("Builtin tool indexing failed in all embedding lanes")
         self._fingerprint = hashlib.sha256(
             ",".join(sorted(BUILTIN_TOOL_DESCRIPTIONS.keys())).encode()
         ).hexdigest()
@@ -202,15 +223,15 @@ class ToolIndex:
         gen = getattr(mcp_mgr, '_generation', 0)
         if gen == self._mcp_generation:
             return
-        self._mcp_generation = gen
 
         # Remove old MCP entries
-        try:
-            existing = self._collection.get(where={"tool_type": "mcp"})
-            if existing and existing["ids"]:
-                self._collection.delete(ids=existing["ids"])
-        except Exception:
-            pass
+        for lane in self._lanes:
+            try:
+                existing = lane.collection.get(where={"tool_type": "mcp"})
+                if existing and existing["ids"]:
+                    lane.collection.delete(ids=existing["ids"])
+            except Exception:
+                pass
 
         # Get current MCP tools
         try:
@@ -219,6 +240,7 @@ class ToolIndex:
             all_tools = ""
 
         if not all_tools:
+            self._mcp_generation = gen
             return
 
         # Parse MCP tool descriptions from the prompt text
@@ -246,39 +268,59 @@ class ToolIndex:
                     metadatas.append({"tool_name": name, "tool_type": "mcp"})
 
         if not docs:
+            self._mcp_generation = gen
             return
 
-        embeddings = self._embed(docs)
-        self._collection.upsert(
-            ids=ids,
-            documents=docs,
-            embeddings=embeddings,
-            metadatas=metadatas,
-        )
+        indexed = False
+        for lane in self._lanes:
+            try:
+                lane.collection.upsert(
+                    ids=ids,
+                    documents=docs,
+                    embeddings=lane.encode(docs),
+                    metadatas=metadatas,
+                )
+                indexed = True
+            except Exception as e:
+                logger.warning("MCP tool indexing failed in %s lane: %s", lane.name, e)
+        if not indexed:
+            logger.warning("MCP tool indexing failed in all embedding lanes")
+            return
+        self._mcp_generation = gen
         logger.info(f"Indexed {len(docs)} MCP tools")
 
     def retrieve(self, query: str, k: int = 8) -> List[str]:
         """Retrieve the top-K most relevant tool names for a query."""
-        try:
-            query_embedding = self._embed([query])
-            results = self._collection.query(
-                query_embeddings=query_embedding,
-                n_results=min(k, self._collection.count() or k),
-                include=["metadatas", "distances"],
-            )
-            if not results or not results.get("metadatas"):
-                return []
-
-            tool_names = []
-            for meta_list in results["metadatas"]:
-                for meta in meta_list:
-                    name = meta.get("tool_name", "")
-                    if name and name not in tool_names:
-                        tool_names.append(name)
-            return tool_names
-        except Exception as e:
-            logger.warning(f"Tool retrieval failed: {e}")
-            return []
+        rows = []
+        lane_priority = {LANE_CUSTOM: 0, LANE_FASTEMBED: 1}
+        for lane in self._lanes:
+            try:
+                count = lane.count()
+                if count == 0:
+                    continue
+                results = lane.collection.query(
+                    query_embeddings=lane.encode([query]),
+                    n_results=min(k, count),
+                    include=["metadatas", "distances"],
+                )
+                if not results or not results.get("metadatas"):
+                    continue
+                distances = results.get("distances") or []
+                for list_idx, meta_list in enumerate(results["metadatas"]):
+                    distance_list = distances[list_idx] if list_idx < len(distances) else []
+                    for idx, meta in enumerate(meta_list):
+                        name = meta.get("tool_name", "")
+                        if name:
+                            distance = distance_list[idx] if idx < len(distance_list) else 1.0
+                            rows.append({
+                                "tool_name": name,
+                                "score": round(1.0 - distance, 4),
+                                "embedding_lane": lane.name,
+                            })
+            except Exception as e:
+                logger.warning("Tool retrieval failed in %s lane: %s", lane.name, e)
+        rows.sort(key=lambda row: (-row["score"], lane_priority.get(row["embedding_lane"], 99)))
+        return [row["tool_name"] for row in dedupe_results(rows, id_key="tool_name", limit=k)]
 
     # Structural recurring-schedule intent. Typo-resilient (matches "every dya"
     # via "every <word>"), and catches bare clock times ("at 7:30 am", "7am").
@@ -293,7 +335,11 @@ class ToolIndex:
 
     # Keyword hints: if the query mentions these words, force-include the tools.
     _KEYWORD_HINTS = {
-        frozenset({"email", "mail", "gmail", "googlemail", "message", "send", "reply", "inbox", "unread", "tell"}):
+        # NOTE: "tell" was removed from this set. It fired on any "tell me ..."
+        # request (e.g. "visit <url> and tell me the title"), force-including the
+        # whole email toolset and crowding out the relevant tools — the model then
+        # believed it had only email tools and refused web/other tasks (#1707).
+        frozenset({"email", "emails", "mail", "mails", "gmail", "googlemail", "message", "messages", "send", "reply", "replies", "inbox", "unread"}):
             {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control"},
         frozenset({"calendar", "event", "meeting", "schedule", "appointment"}):
             {"manage_calendar"},
@@ -357,14 +403,14 @@ class ToolIndex:
         # Document edit/update intent
         frozenset({"edit", "change", "fix", "rewrite", "update",
                    "replace", "add a", "tweak", "modify", "rename", "paragraph",
-                   "section", "line", "the doc", "the document", "in the doc"}):
+                   "section", "line", "the doc", "the docs", "the document", "the documents", "in the doc", "in the docs", "in document"}):
             {"edit_document", "update_document", "create_document", "suggest_document"},
         # Document deletion / management — include generic open/find/read/show
         # verbs + file/doc synonyms so "open my <X>", "find the <X>", "delete
         # <X>" reach manage_documents even without the literal word "document".
         frozenset({"delete this doc", "delete the doc", "delete document",
-                   "remove document", "remove the doc", "trash", "list documents",
-                   "list docs", "all my docs", "my documents", "my docs", "my files",
+                   "remove document", "remove the doc", "trash", "list document", "list documents",
+                   "list doc", "list docs", "all my docs", "my document", "my documents", "my doc", "my docs", "my files",
                    "open the", "open my", "open document", "open doc", "find the",
                    "find my", "find document", "read the", "read my", "show me the",
                    "show my", "the file", "my file", "the report", "the write-up",
@@ -431,10 +477,14 @@ class ToolIndex:
         base = set(always_include or ALWAYS_AVAILABLE)
         retrieved = self.retrieve(query, k=k)
         base.update(retrieved)
-        # Keyword-based force-include for common intents
+        # Keyword-based force-include for common intents. Match on word
+        # boundaries, not raw substrings, so short hints like "fix", "line",
+        # "serve", "reply" or "unread" don't fire inside unrelated words
+        # ("prefix", "deadline"/"online", "observe"/"reserve", "replying",
+        # "unreadable"). Same word-boundary matching used in topic_analyzer.
         ql = query.lower()
         for keywords, tools in self._KEYWORD_HINTS.items():
-            if any(kw in ql for kw in keywords):
+            if any(re.search(rf"\b{re.escape(kw)}\b", ql) for kw in keywords):
                 base.update(tools)
         # Structural scheduling-intent detection — typo-resilient (the literal
         # keyword "every day" misses "every dya"). Catches "every <word>",
@@ -473,3 +523,10 @@ def get_tool_index() -> Optional[ToolIndex]:
         logger.warning(f"ToolIndex init failed (will retry in {_RETRY_INTERVAL}s): {e}")
         _tool_index = None
         return None
+
+
+def reset_tool_index() -> None:
+    """Clear the singleton so embedding endpoint changes rebuild tool lanes."""
+    global _tool_index, _last_attempt
+    _tool_index = None
+    _last_attempt = 0.0

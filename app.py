@@ -1,5 +1,22 @@
 # app.py — slim orchestrator
+import mimetypes
 import os
+
+
+def register_static_mime_types() -> None:
+    """Force stable JS module MIME types across platforms.
+
+    Some native Windows setups inherit stale/incorrect registry mappings for
+    ``.js``/``.mjs``, which can make Starlette serve ES modules with a non-JS
+    ``Content-Type`` and cause the UI to load but fail on click. Re-register the
+    standard MIME types at startup so static assets are served consistently.
+    """
+
+    mimetypes.add_type("text/javascript", ".js")
+    mimetypes.add_type("application/javascript", ".mjs")
+
+
+register_static_mime_types()
 
 # Windows: force HuggingFace/fastembed to COPY model files instead of symlinking.
 # On a network-share/UNC data dir Windows can't follow HF's symlinks ([WinError
@@ -17,13 +34,14 @@ from dotenv import load_dotenv
 # is silently ignored and the user is unexpectedly forced to log in (issue #142).
 # utf-8-sig reads plain UTF-8 (no BOM) identically, so this is safe everywhere.
 load_dotenv(encoding="utf-8-sig")
-import uuid
 
 import asyncio
 import logging
+import secrets
 from datetime import datetime
 from typing import Dict
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,10 +51,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # Core imports
 from core.constants import (
     BASE_DIR, STATIC_DIR, SESSIONS_FILE,
-    REQUEST_TIMEOUT, OPENAI_API_KEY,
+    REQUEST_TIMEOUT, OPENAI_API_KEY, AUTH_FILE,
 )
 from core.database import SessionLocal, ApiToken
-from core.middleware import SecurityHeadersMiddleware
+from core.middleware import SecurityHeadersMiddleware, is_cors_preflight
 from core.auth import AuthManager
 from core.exceptions import (
     SessionNotFoundError, InvalidFileUploadError,
@@ -46,6 +64,7 @@ from core.exceptions import (
 import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join
+from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
@@ -56,6 +75,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ========= APP =========
+# Lifespan is defined below (after all helpers it references are in scope)
+# and passed to FastAPI so we can use the modern context-manager lifecycle
+# instead of the deprecated @app.on_event("startup"/"shutdown") decorators.
 app = FastAPI(
     title="AI Chat Application",
     description="Comprehensive AI chat with memory, research, and multi-modal capabilities",
@@ -133,6 +155,8 @@ auth_manager = AuthManager()
 app.state.auth_manager = auth_manager
 AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() != "false"
 LOCALHOST_BYPASS = os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
+if LOCALHOST_BYPASS:
+    logger.warning("LOCALHOST_BYPASS is enabled, loopback requests bypass authentication. Do not expose this instance to a network.")
 
 if AUTH_ENABLED:
     AUTH_EXEMPT_EXACT = {
@@ -149,9 +173,25 @@ if AUTH_ENABLED:
         "/login",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
+    # Dynamic paths whose own handler proves identity via a path-embedded
+    # secret instead of the session/bearer auth. The route handler at
+    # routes/task_routes.py validates the per-task `webhook_token` itself
+    # and returns 404 on mismatch, so the path is the credential — the
+    # UI labels these URLs "no auth needed" precisely because external
+    # callers (Zapier, n8n, curl) can't supply a session cookie. Without
+    # this exemption AuthMiddleware rejects every POST with 401 before
+    # the token is ever checked.
+    import re as _re
+    AUTH_EXEMPT_PATTERNS = [
+        _re.compile(r"^/api/tasks/[^/]+/webhook/[^/]+/?$"),
+    ]
 
     def _is_auth_exempt(path: str) -> bool:
-        return path in AUTH_EXEMPT_EXACT or any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES)
+        if path in AUTH_EXEMPT_EXACT:
+            return True
+        if any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES):
+            return True
+        return any(p.match(path) for p in AUTH_EXEMPT_PATTERNS)
 
     # In-memory token cache: prefix → list[(token_id, token_hash, owner, scopes)]. The DB
     # query was running on every API-bearer request and scanning bcrypt
@@ -213,6 +253,15 @@ if AUTH_ENABLED:
     class AuthMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
             path = request.url.path
+            # A genuine CORS preflight (OPTIONS + Access-Control-Request-Method)
+            # carries no credentials by design and must reach CORSMiddleware to be
+            # answered. AuthMiddleware is the outermost middleware, so gating the
+            # preflight on auth 401s it before CORS can respond -- which blocks
+            # every cross-origin browser/WebView client before the real request
+            # is sent. Let real preflights through (only OPTIONS w/ the ACRM
+            # header; never a credentialed request).
+            if is_cors_preflight(request.method, request.headers):
+                return await call_next(request)
             if _is_auth_exempt(path):
                 return await call_next(request)
             # In-process internal-tool token bypass. Used by the agent
@@ -222,7 +271,7 @@ if AUTH_ENABLED:
             try:
                 from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN as _ITT
                 _hdr = request.headers.get(INTERNAL_TOOL_HEADER)
-                if _hdr and _hdr == _ITT and _is_trusted_loopback(request):
+                if _hdr and secrets.compare_digest(_hdr, _ITT) and _is_trusted_loopback(request):
                     # Impersonation: when the agent's loopback call sets
                     # X-Odysseus-Owner, attribute the request to that user only
                     # if they exist. Authorization checks remain separate; this
@@ -348,13 +397,7 @@ app.mount("/static", _RevalidatingStatic(directory="static"), name="static")
 @app.get("/api/generated-image/{filename}")
 async def serve_generated_image(filename: str, request: Request):
     """Serve generated images from the data directory."""
-    from pathlib import Path
-    import re
-    if not re.match(r'^[a-f0-9]{8,64}\.(png|jpg|jpeg|webp|gif|mp4|mov|webm|mkv|m4v)$', filename):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    img_path = Path("data/generated_images") / filename
-    if not img_path.exists():
-        raise HTTPException(status_code=404, detail="Image not found")
+    img_path = resolve_generated_image_path(filename)
     # SECURITY: filename is the only key, so anyone who knows / guesses a
     # 12-hex content hash could pull another user's image bytes. Require
     # auth and verify ownership via the gallery row (when one exists).
@@ -390,7 +433,7 @@ async def serve_generated_image(filename: str, request: Request):
     return FileResponse(
         str(img_path),
         media_type=mime,
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        headers=GENERATED_IMAGE_HEADERS,
     )
 
 # ========= YOUTUBE INIT =========
@@ -486,6 +529,9 @@ upload_cleanup_task = None
 from routes.emoji_routes import setup_emoji_routes
 app.include_router(setup_emoji_routes())
 
+from routes.workspace_routes import setup_workspace_routes
+app.include_router(setup_workspace_routes())
+
 # Sessions
 from routes.session_routes import setup_session_routes
 session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
@@ -497,7 +543,8 @@ app.include_router(setup_admin_wipe_routes(session_manager))
 
 # Memory
 from routes.memory_routes import setup_memory_routes
-app.include_router(setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector))
+memory_router = setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector)
+app.include_router(memory_router)
 from routes.skills_routes import setup_skills_routes
 app.include_router(setup_skills_routes(skills_manager))
 
@@ -547,6 +594,14 @@ app.include_router(setup_embedding_routes())
 from routes.model_routes import setup_model_routes
 app.include_router(setup_model_routes(model_discovery))
 
+# GitHub Copilot device-flow login
+from routes.copilot_routes import setup_copilot_routes
+app.include_router(setup_copilot_routes())
+
+# ChatGPT Subscription device-flow login
+from routes.chatgpt_subscription_routes import setup_chatgpt_subscription_routes
+app.include_router(setup_chatgpt_subscription_routes())
+
 # TTS
 from routes.tts_routes import setup_tts_routes
 app.include_router(setup_tts_routes(tts_service))
@@ -560,7 +615,8 @@ logger.info("STT service initialized (provider managed via settings)")
 
 # Documents (artifacts/canvas)
 from routes.document_routes import setup_document_routes
-app.include_router(setup_document_routes(session_manager, upload_handler))
+document_router = setup_document_routes(session_manager, upload_handler)
+app.include_router(document_router)
 
 # Signatures (reusable image stamps)
 from routes.signature_routes import setup_signature_routes
@@ -587,7 +643,8 @@ app.include_router(setup_assistant_routes(task_scheduler))
 
 # Calendar (CalDAV)
 from routes.calendar_routes import setup_calendar_routes
-app.include_router(setup_calendar_routes())
+calendar_router = setup_calendar_routes()
+app.include_router(calendar_router)
 
 # Shell (user-facing command execution)
 from routes.shell_routes import setup_shell_routes
@@ -650,7 +707,22 @@ app.include_router(setup_note_routes(task_scheduler))
 
 # Email
 from routes.email_routes import setup_email_routes
-app.include_router(setup_email_routes())
+email_router = setup_email_routes()
+app.include_router(email_router)
+
+# Codex integration — HTTP surface for the Codex plugin/MCP bridge. Reuses
+# api_token scopes (todos:read|write, email:read|draft|send) so external
+# Codex sessions can only touch the data the user explicitly allowed. Mounted
+# AFTER email so the codex_routes can borrow the email router for shared
+# search/threading helpers.
+from routes.codex_routes import setup_codex_routes, setup_claude_routes
+app.include_router(setup_codex_routes(
+    email_router=email_router,
+    memory_router=memory_router,
+    calendar_router=calendar_router,
+    document_router=document_router,
+))
+app.include_router(setup_claude_routes())
 
 from routes.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
@@ -658,6 +730,9 @@ app.include_router(setup_vault_routes())
 # Contacts (CardDAV)
 from routes.contacts_routes import setup_contacts_routes
 app.include_router(setup_contacts_routes())
+
+from companion import setup_companion_routes
+app.include_router(setup_companion_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
@@ -722,6 +797,8 @@ async def serve_backgrounds(request: Request):
 
 @app.get("/login")
 async def serve_login(request: Request):
+    if not AUTH_ENABLED:
+        return RedirectResponse(url="/", status_code=302)
     return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
 
 @app.get("/api/version")
@@ -732,6 +809,17 @@ async def get_version():
 @app.get("/api/health")
 async def health_check() -> Dict[str, str]:
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+
+@app.get("/api/ready")
+async def readiness_check() -> JSONResponse:
+    """Readiness / integrity self-check — DB, data dir, local-first storage.
+
+    Unlike /api/health (liveness), this returns 503 unless every critical
+    subsystem is whole, so an orchestrator can gate traffic on real readiness.
+    """
+    from src.readiness import check_readiness
+    result = check_readiness()
+    return JSONResponse(status_code=200 if result.get("ready") else 503, content=result)
 
 @app.get("/api/runtime")
 async def runtime_info() -> Dict[str, object]:
@@ -755,8 +843,19 @@ async def runtime_info() -> Dict[str, object]:
 
 # ========= LIFECYCLE =========
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def _lifespan(app):
+    """Modern lifespan context manager replacing deprecated @app.on_event."""
+    # ── STARTUP ──
+    await _startup_event()
+    yield
+    # ── SHUTDOWN ──
+    await _shutdown_event()
+
+app.router.lifespan_context = _lifespan
+
+
+async def _startup_event():
     global upload_cleanup_task
     logger.info("Application starting up...")
     webhook_manager.set_loop(asyncio.get_running_loop())
@@ -817,7 +916,6 @@ async def startup_event():
             from src.tool_index import get_tool_index
             idx = await asyncio.to_thread(get_tool_index)
             if idx:
-                await asyncio.to_thread(idx.index_builtin_tools)
                 await asyncio.to_thread(idx.get_tools_for_query, "warmup", 8)
                 logger.info("[startup] Tool index pre-warmed")
         except Exception as e:
@@ -860,7 +958,7 @@ async def startup_event():
         owners = set()
         try:
             import json as _json
-            auth_path = "data/auth.json"
+            auth_path = AUTH_FILE
             with open(auth_path, encoding="utf-8") as f:
                 users = _json.load(f).get("users", {})
             owners.update(users.keys())
@@ -907,7 +1005,7 @@ async def startup_event():
     # does not make an existing library look empty after auth/account changes.
     try:
         import json as _json
-        auth_path = "data/auth.json"
+        auth_path = AUTH_FILE
         with open(auth_path, encoding="utf-8") as f:
             users = _json.load(f).get("users", {})
         primary_owner = None
@@ -979,10 +1077,19 @@ async def startup_event():
                 logger.warning(f"Nightly skill audit failed: {e}")
 
     _startup_tasks.append(asyncio.create_task(_skill_audit_nightly_loop()))
+
+    # Cookbook serve lifecycle — kills scheduler-launched serves whose
+    # window-end has passed. Paired with the cookbook_serve builtin
+    # action; both are no-ops unless a scheduled task actually launches
+    # something with end_after_min set. Removing this line + the
+    # cookbook_serve entry in BUILTIN_ACTIONS + src/cookbook_serve_lifecycle.py
+    # removes the feature.
+    from src.cookbook_serve_lifecycle import cookbook_serve_lifecycle_loop
+    _startup_tasks.append(asyncio.create_task(cookbook_serve_lifecycle_loop()))
+
     logger.info("Application startup complete")
 
-@app.on_event("shutdown")
-async def shutdown_event():
+async def _shutdown_event():
     logger.info("Application shutting down...")
     if upload_cleanup_task:
         upload_cleanup_task.cancel()

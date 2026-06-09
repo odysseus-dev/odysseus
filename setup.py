@@ -6,23 +6,30 @@ initial admin user. Safe to re-run (skips what already exists).
 """
 
 import os
+import platform
 import shutil
+import subprocess
 import sys
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
+sys.path.insert(0, BASE_DIR)
+from src.constants import (
+    DATA_DIR, AUTH_FILE, UPLOAD_DIR, PERSONAL_DIR, PERSONAL_UPLOADS_DIR,
+    TTS_CACHE_DIR, GENERATED_IMAGES_DIR, DEEP_RESEARCH_DIR, CHROMA_DIR,
+    RAG_DIR, MEMORY_VECTORS_DIR,
+)
 
 DIRS = [
     DATA_DIR,
-    os.path.join(DATA_DIR, "uploads"),
-    os.path.join(DATA_DIR, "personal_docs"),
-    os.path.join(DATA_DIR, "personal_uploads"),
-    os.path.join(DATA_DIR, "tts_cache"),
-    os.path.join(DATA_DIR, "generated_images"),
-    os.path.join(DATA_DIR, "deep_research"),
-    os.path.join(DATA_DIR, "chroma"),
-    os.path.join(DATA_DIR, "rag"),
-    os.path.join(DATA_DIR, "memory_vectors"),
+    UPLOAD_DIR,
+    PERSONAL_DIR,
+    PERSONAL_UPLOADS_DIR,
+    TTS_CACHE_DIR,
+    GENERATED_IMAGES_DIR,
+    DEEP_RESEARCH_DIR,
+    CHROMA_DIR,
+    RAG_DIR,
+    MEMORY_VECTORS_DIR,
     os.path.join(BASE_DIR, "logs"),
 ]
 
@@ -43,9 +50,36 @@ def init_database():
     print("  [ok] Database initialized")
 
 
+def _prompt_admin_credentials():
+    """Interactively ask for admin username and password when running in a terminal."""
+    import getpass
+
+    print()
+    print("  Set up your admin account:")
+    print("  (Press Enter to accept defaults)")
+    print()
+
+    username = input("  Username [admin]: ").strip().lower()
+    if not username:
+        username = "admin"
+
+    while True:
+        password = getpass.getpass("  Password: ")
+        if not password:
+            print("  Password cannot be empty.")
+            continue
+        confirm = getpass.getpass("  Confirm password: ")
+        if password != confirm:
+            print("  Passwords don't match. Try again.")
+            continue
+        break
+
+    return username, password
+
+
 def create_default_admin():
     """Create an initial admin user if none exists."""
-    auth_path = os.path.join(DATA_DIR, "auth.json")
+    auth_path = AUTH_FILE
     if os.path.exists(auth_path):
         print("  [skip] auth.json already exists")
         return "exists"
@@ -54,8 +88,22 @@ def create_default_admin():
         import bcrypt
         import json
 
-        username = os.getenv("ODYSSEUS_ADMIN_USER", "admin").strip() or "admin"
-        password = os.getenv("ODYSSEUS_ADMIN_PASSWORD") or __import__("secrets").token_urlsafe(18)
+        # Priority: env vars > interactive prompt > random password
+        username = os.getenv("ODYSSEUS_ADMIN_USER", "").strip().lower()
+        password = os.getenv("ODYSSEUS_ADMIN_PASSWORD", "").strip()
+
+        if username and password:
+            # Both provided via env — use them directly
+            pass
+        elif sys.stdin.isatty() and not os.getenv("ODYSSEUS_SKIP_ADMIN_PROMPT"):
+            # Interactive terminal — ask the user
+            username, password = _prompt_admin_credentials()
+        else:
+            # Non-interactive (Docker, CI) — fall back to generated password
+            username = username or "admin"
+            password = password or __import__("secrets").token_urlsafe(18)
+
+        username = username or "admin"
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         auth_data = {
             "users": {
@@ -67,11 +115,25 @@ def create_default_admin():
         }
         with open(auth_path, "w", encoding="utf-8") as f:
             json.dump(auth_data, f, indent=2)
-        print(f"  [ok] Initial admin user created ({username})")
-        print(f"        Temporary password: {password}")
-        print(f"        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **")
+
+        if sys.stdin.isatty() and not os.getenv("ODYSSEUS_ADMIN_PASSWORD"):
+            print(f"  [ok] Admin account created ({username})")
+        else:
+            print(f"  [ok] Initial admin user created ({username})")
+            if not os.getenv("ODYSSEUS_ADMIN_PASSWORD"):
+                print(f"        Temporary password: {password}")
+                print(f"        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **")
         return "created"
-    except ImportError:
+    except ImportError as e:
+        if "incompatible architecture" in str(e).lower():
+            # bcrypt is present but built for the wrong CPU architecture — the
+            # same Apple Silicon mismatch check_arch() guards against, caught here
+            # for the rarer case of an x86 wheel inside an arm64 venv.
+            print("  [error] bcrypt loaded with the wrong CPU architecture.")
+            print("          Rebuild the venv with an arm64 Python:")
+            print("            rm -rf venv && /opt/homebrew/bin/python3.11 -m venv venv")
+            print("            ./venv/bin/pip install -r requirements.txt")
+            return "skipped"
         print("  [warn] bcrypt not installed — skipping admin user creation")
         print("         Run: pip install bcrypt")
         return "skipped"
@@ -121,8 +183,51 @@ def check_deps():
         print("  [ok] tmux installed")
 
 
+def check_arch():
+    """Stop early, with guidance, if we're on Apple Silicon but running an
+    Intel (x86_64) Python through Rosetta.
+
+    A venv built with such an interpreter installs and loads compiled packages
+    (bcrypt, pydantic-core, onnxruntime, …) for the wrong CPU architecture, then
+    dies deep inside an import with a cryptic
+    "(mach-o file, but is an incompatible architecture)" error. Catching it here
+    turns that into one clear, actionable message.
+    """
+    if sys.platform != "darwin" or platform.machine() == "arm64":
+        return  # Not macOS, or already an arm64-native interpreter — nothing to do.
+
+    # platform.machine() == "x86_64": either a genuine Intel Mac (fine) or an x86
+    # interpreter running under Rosetta on Apple Silicon (the case we must catch).
+    try:
+        translated = subprocess.run(
+            ["sysctl", "-n", "sysctl.proc_translated"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+    except Exception:
+        translated = ""
+    if translated != "1":
+        return  # Genuine Intel Mac — carry on.
+
+    print("\n  [error] This is an Apple Silicon Mac, but setup is running under an")
+    print("          Intel (x86_64) Python through Rosetta. Compiled packages would")
+    print('          load as the wrong architecture and crash with "incompatible')
+    print('          architecture" later on.')
+    print("\n          Rebuild the environment with Homebrew's arm64 Python:")
+    print("            brew install python@3.11          # if you don't have it yet")
+    print("            rm -rf venv")
+    print("            /opt/homebrew/bin/python3.11 -m venv venv")
+    print("            ./venv/bin/pip install -r requirements.txt")
+    print("            ./venv/bin/python setup.py")
+    print("\n          Tip: ./start-macos.sh does all of this with the right Python.\n")
+    sys.exit(1)
+
+
 def main():
     print("\n=== Odysseus Setup ===\n")
+
+    # Fail fast with a clear message if the CPU architecture is wrong (Apple
+    # Silicon under an x86/Rosetta Python) before importing anything native.
+    check_arch()
 
     print("1. Creating directories...")
     create_dirs()
@@ -160,7 +265,7 @@ def main():
 
     # Cleaned, action-focused final instruction strings
     if admin_status == "created":
-        print("Login with the admin username and temporary password printed above.\n")
+        print("Login with your admin credentials.\n")
     elif admin_status == "exists":
         print("Login with your existing admin credentials.\n")
     elif admin_status == "skipped":

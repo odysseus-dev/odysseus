@@ -17,9 +17,11 @@ import chatRenderer from './chatRenderer.js';
 import spinnerModule from './spinner.js';
 import themeModule from './theme.js';
 import documentModule from './document.js';
+import workspaceModule from './workspace.js';
 import settingsModule from './settings.js';
 import cookbookModule from './cookbook.js';
 import { EVAL_PROMPTS } from './compare/index.js';
+import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
 
 // ── Module state ──────────────────────────────────────────────────────
 
@@ -53,12 +55,31 @@ const SETUP_PROVIDER_URLS = {
   groq: { name: 'Groq', url: 'https://api.groq.com/openai/v1' },
   gemini: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
   google: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
+  'opencode-zen': { name: 'OpenCode Zen', url: 'https://opencode.ai/zen/v1' },
+  'opencode-go': { name: 'OpenCode Go', url: 'https://opencode.ai/zen/go/v1' },
 };
-const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini'];
-const SETUP_PROVIDER_HINT = SETUP_PROVIDER_NAMES.slice(0, -1).join(', ') + ', or ' + SETUP_PROVIDER_NAMES[SETUP_PROVIDER_NAMES.length - 1];
+const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini', 'opencode-zen', 'opencode-go'];
+const SETUP_DEVICE_AUTH_PROVIDERS = [
+  { key: 'copilot', name: 'GitHub Copilot', aliases: ['github'], command: '/setup copilot' },
+  { key: 'chatgpt-subscription', name: 'ChatGPT Subscription', aliases: ['chatgptsubscription', 'chatgpt-sub', 'codex'], command: '/setup chatgpt-subscription' },
+];
+const SETUP_PROVIDER_HINT_NAMES = SETUP_PROVIDER_NAMES.concat(SETUP_DEVICE_AUTH_PROVIDERS.map(provider => provider.key));
+const SETUP_PROVIDER_HINT = SETUP_PROVIDER_HINT_NAMES.slice(0, -1).join(', ') + ', or ' + SETUP_PROVIDER_HINT_NAMES[SETUP_PROVIDER_HINT_NAMES.length - 1];
 const SETUP_LOCAL_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>';
 const SETUP_API_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
 const SETUP_SETTINGS_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
+
+function _setupApiProviderChips() {
+  return SETUP_PROVIDER_NAMES.map(name =>
+    '<span class="setup-clickable-provider" data-setup-kind="api-key" data-setup-provider="' + name + '" style="cursor:pointer;text-decoration:underline;margin-right:8px;" title="Click to setup ' + name + '">' + name + '</span>'
+  ).join(' ');
+}
+
+function _setupDeviceAuthProviderChips() {
+  return SETUP_DEVICE_AUTH_PROVIDERS.map(provider =>
+    '<span class="setup-clickable-provider" data-setup-kind="device-auth" data-setup-provider="' + provider.key + '" style="cursor:pointer;text-decoration:underline;margin-right:8px;" title="Run ' + provider.command + '">' + provider.name + '</span>'
+  ).join(' ');
+}
 
 function _setupProviderFromInput(input) {
   const raw = (input || '').trim().toLowerCase().replace(/\s+/g, '');
@@ -79,6 +100,17 @@ function _setupProviderFromInput(input) {
     grok: 'xai',
   };
   return SETUP_PROVIDER_URLS[aliases[raw] || raw] || null;
+}
+
+function _setupDeviceAuthProviderFromInput(input) {
+  const raw = (input || '').trim().toLowerCase().replace(/\s+/g, '').replace(/_/g, '-');
+  if (!raw) return '';
+  for (const provider of SETUP_DEVICE_AUTH_PROVIDERS) {
+    const candidates = [provider.key, provider.name, ...(provider.aliases || [])]
+      .map(value => String(value || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '-'));
+    if (candidates.includes(raw)) return provider.key;
+  }
+  return '';
 }
 
 function _extractSetupProviderCredential(input) {
@@ -155,9 +187,8 @@ function _setupReply(text, remember = true) {
 }
 
 function _showSetupEndpointChoices() {
-  const providers = SETUP_PROVIDER_NAMES.map(name =>
-    '<span>' + name + '</span>'
-  ).join(', ');
+  const providers = _setupApiProviderChips();
+  const deviceAuthProviders = _setupDeviceAuthProviderChips();
   return slashReply(
     '<div class="setup-guide-no-censor" style="display:grid;gap:10px;">' +
       '<div>' +
@@ -166,15 +197,16 @@ function _showSetupEndpointChoices() {
       '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:color-mix(in srgb,var(--bg) 88%,var(--fg) 12%);">' +
         '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_LOCAL_ICON + 'Local setup</div>' +
         '<div>Paste endpoint URL in chat (example):</div>' +
-        '<pre style="margin:4px 0 0;"><code>http://localhost:11434/v1</code></pre>' +
+        '<pre style="margin:4px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://localhost:11434/v1</code></pre>' +
         '<div style="margin-top:4px;">or</div>' +
-        '<pre style="margin:2px 0 0;"><code>http://llm-host.local:8000/v1</code></pre>' +
+        '<pre style="margin:2px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">http://llm-host.local:8000/v1</code></pre>' +
       '</div>' +
       '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:color-mix(in srgb,var(--bg) 88%,var(--fg) 12%);">' +
         '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_API_ICON + 'API setup</div>' +
         '<div>Paste provider name then API key (example):</div>' +
-        '<pre style="margin:4px 0 0;"><code>deepseek sk-...</code></pre>' +
+        '<pre style="margin:4px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">deepseek sk-...</code></pre>' +
         '<div style="margin-top:8px;font-size:1em;"><span>Supported providers:</span><br>' + providers + '</div>' +
+        '<div style="margin-top:8px;font-size:1em;"><span>Account sign-in:</span><br>' + deviceAuthProviders + '</div>' +
       '</div>' +
     '</div>'
   );
@@ -205,7 +237,8 @@ function _showSetupEndpointChoicesStreamed(options = {}) {
       text: 'deepseek sk-...',
       copyText: 'deepseek sk-...',
     },
-    { kind: 'p', html: '<strong>Supported providers:</strong><br>' + SETUP_PROVIDER_NAMES.join(', ') },
+    { kind: 'p', html: '<strong>Supported providers:</strong><br>' + _setupApiProviderChips() },
+    { kind: 'p', html: '<strong>Account sign-in:</strong><br>' + _setupDeviceAuthProviderChips() },
   ];
   return typewriterBlocksReply(blocks, { gap: '4px', bodyClass: 'setup-guide-no-censor', interval: 3 });
 }
@@ -226,7 +259,7 @@ async function _hasConfiguredModels() {
 }
 
 function _setupProviderPrompt() {
-  const chips = SETUP_PROVIDER_NAMES.map(name =>
+  const chips = SETUP_PROVIDER_HINT_NAMES.map(name =>
     '<span style="font-weight:650;">' + name + '</span>'
   ).join('  ');
   slashReply('<b>Supported providers:</b><br>' + chips);
@@ -279,6 +312,53 @@ function slashReply(text) {
   uiModule.scrollHistory();
   _persistMsg('assistant', body.textContent, { source: 'slash' });
   return { el: div, body };
+}
+
+let _skillCatalogCache = { at: 0, items: [] };
+
+async function _loadSkillSlashCatalog(force = false) {
+  const now = Date.now();
+  if (!force && (now - _skillCatalogCache.at) < 15000) return _skillCatalogCache.items;
+  try {
+    const res = await fetch(`${API_BASE}/api/skills/slash-catalog`, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('catalog unavailable');
+    const data = await res.json();
+    const items = Array.isArray(data.skills) ? data.skills : [];
+    _skillCatalogCache = { at: now, items };
+    return items;
+  } catch {
+    return _skillCatalogCache.items || [];
+  }
+}
+
+function _submitComposedMessage(text) {
+  const msgInput = document.getElementById('message');
+  const form = document.getElementById('chat-form');
+  if (!msgInput || !form) return false;
+  msgInput.value = text;
+  msgInput.dispatchEvent(new Event('input', { bubbles: true }));
+  if (typeof form.requestSubmit === 'function') form.requestSubmit();
+  else form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  return true;
+}
+
+async function _invokeSkillByName(name, requestText, ctx) {
+  const res = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(name)}/invoke`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request: requestText || '' })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    slashReply(ctx?.esc ? ctx.esc(err?.detail || 'Skill is not available') : 'Skill is not available');
+    return true;
+  }
+  const data = await res.json();
+  if (!data.message || !_submitComposedMessage(data.message)) {
+    slashReply('Could not start skill invocation.');
+  }
+  return true;
 }
 
 /** Minimal footer for slash replies: copy + dismiss */
@@ -392,10 +472,36 @@ function typewriterBlocksReply(blocks, options = {}) {
         pre.style.margin = '0';
         const code = document.createElement('code');
         pre.appendChild(code);
+        const useBtn = document.createElement('button');
+        useBtn.type = 'button';
+        useBtn.className = 'use-code';
+        useBtn.title = 'Use in Chat';
+        useBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>';
+        const copyText = block.copyText || block.text || '';
+        const useNow = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          let text = copyText;
+          if (text.includes('sk-...')) {
+            text = text.replace('sk-...', 'sk-');
+          }
+          const messageInput = document.getElementById('message');
+          if (messageInput) {
+            messageInput.value = text;
+            messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+            messageInput.focus();
+            messageInput.setSelectionRange(text.length, text.length);
+          }
+          useBtn.classList.add('used');
+          setTimeout(() => useBtn.classList.remove('used'), 1200);
+        };
+        useBtn.addEventListener('pointerdown', useNow);
+        useBtn.addEventListener('click', useNow);
+        pre.appendChild(useBtn);
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'copy-code';
-        const copyText = block.copyText || block.text || '';
         btn.setAttribute('data-code', copyText);
         btn.title = 'Copy';
         btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
@@ -648,6 +754,13 @@ async function handleSetupWizard(mode, input) {
       setupMode = 'endpoint-provider';
       _showSetupUserBubble(input, false);
       await _setupProviderPrompt();
+      return;
+    }
+    const deviceAuthProvider = _setupDeviceAuthProviderFromInput(input);
+    if (deviceAuthProvider) {
+      _addMessage('user', input);
+      setupMode = false;
+      await _setupProviderDeviceFlow(deviceAuthProvider);
       return;
     }
     const paired = _extractSetupProviderCredential(input);
@@ -1113,6 +1226,51 @@ async function _cmdToggleDoc(args, ctx) {
   return true;
 }
 
+// Workspace: confine the agent's file/shell tools to a folder. Not a boolean —
+// show / set <path> / clear / pick (open the directory browser).
+async function _cmdWorkspace(args, ctx) {
+  const sub = (args[0] || '').toLowerCase();
+  const rest = args.slice(1).join(' ').trim();
+  const cur = workspaceModule.getWorkspace();
+  if (!sub || sub === 'show' || sub === 'status' || sub === 'info') {
+    slashReply(cur ? `Workspace: <code>${uiModule.esc(cur)}</code>` : 'No workspace set. <code>/workspace pick</code> or <code>/workspace set /path</code>.');
+    return true;
+  }
+  if (sub === 'set' || sub === 'cd' || sub === 'use') {
+    if (!rest) { slashReply('Usage: <code>/workspace set /absolute/path</code>'); return true; }
+    workspaceModule.setWorkspace(rest);
+    slashReply(`Workspace set: <code>${uiModule.esc(rest)}</code>`);
+    return true;
+  }
+  if (sub === 'clear' || sub === 'off' || sub === 'none' || sub === 'unset') {
+    workspaceModule.clearWorkspace();
+    slashReply('Workspace cleared.');
+    return true;
+  }
+  if (sub === 'pick' || sub === 'browse' || sub === 'open') {
+    workspaceModule.openWorkspaceBrowser();
+    return true;
+  }
+  slashReply('Usage: <code>/workspace</code> · <code>set /path</code> · <code>clear</code> · <code>pick</code>');
+  return true;
+}
+// Plan mode: drive the real toggle pill (#plan-toggle-btn) so its per-mode
+// persistence/UI logic runs. Only meaningful in agent mode.
+async function _cmdTogglePlan(args, ctx) {
+  const btn = document.getElementById('plan-toggle-btn');
+  const chk = document.getElementById('plan-toggle');
+  if (!btn || btn.style.display === 'none' || btn.offsetParent === null) {
+    slashReply('Plan mode is only available in agent mode — switch to Agent first.');
+    return true;
+  }
+  const cur = !!(chk && chk.checked);
+  const v = (args[0] || '').toLowerCase();
+  const target = v === 'on' ? true : v === 'off' ? false : !cur;
+  if (target !== cur) btn.click();
+  slashReply(`Plan mode: ${target ? 'on' : 'off'}`);
+  return true;
+}
+
 async function _cmdToggleShow(args, ctx) {
   const name = (args[0] || '').toLowerCase();
   const val = (args[1] || '').toLowerCase();
@@ -1166,22 +1324,6 @@ async function _cmdToggleSidebar(args, ctx) {
   return true;
 }
 
-// ── Mode ──
-
-async function _cmdMode(args, ctx) {
-  const mode = (args[0] || '').toLowerCase();
-  if (mode !== 'agent' && mode !== 'chat') {
-    slashReply(`Current mode: ${Storage.getToggle('mode', 'chat')}. Usage: /mode &lt;agent|chat&gt;`);
-    return true;
-  }
-  const ab = document.getElementById('mode-agent-btn'), cb = document.getElementById('mode-chat-btn');
-  if (ab && cb) { ab.classList.toggle('active', mode === 'agent'); cb.classList.toggle('active', mode === 'chat'); }
-  Storage.setToggle('mode', mode);
-  document.querySelectorAll('[data-mode-tool]').forEach(b => { b.style.display = mode === 'agent' ? '' : 'none'; });
-  await typewriterReply(`Mode: ${mode}`);
-  return true;
-}
-
 // ── Settings ──
 
 async function _cmdOpen(args, ctx) {
@@ -1213,9 +1355,15 @@ async function _cmdOpen(args, ctx) {
       notes: ['tool-notes-btn', 'rail-notes'],
       tasks: ['tool-tasks-btn', 'rail-tasks'],
       library: ['tool-library-btn', 'rail-archive'],
+      documents: ['tool-library-btn', 'rail-archive'],
+      docs: ['tool-library-btn', 'rail-archive'],
       archive: ['tool-library-btn', 'rail-archive'],
+      brain: ['tool-memory-btn', 'rail-memory'],
+      memory: ['tool-memory-btn', 'rail-memory'],
+      memories: ['tool-memory-btn', 'rail-memory'],
       research: ['tool-research-btn', 'rail-research'],
       compare: ['tool-compare-btn', 'rail-compare'],
+      theme: ['tool-theme-btn', 'rail-theme'],
     };
     const ids = targets[target];
     if (ids && clickFirst(...ids)) return true;
@@ -1224,6 +1372,53 @@ async function _cmdOpen(args, ctx) {
   }
   slashReply(`I don't know how to open "${ctx.esc(target)}" yet.`);
   return true;
+}
+
+async function _cmdToolPanel(tool, args, ctx) {
+  const target = String(tool || '').toLowerCase();
+  const rest = (args || []).join(' ').trim();
+  if (target === 'cookbook') {
+    const sub = (args[0] || '').toLowerCase();
+    if (sub === 'serve') {
+      const query = args.slice(1).join(' ').trim();
+      try {
+        if (cookbookModule && typeof cookbookModule.open === 'function') {
+          await cookbookModule.open({ tab: 'Serve', serveSearch: query });
+          if (query) {
+            try {
+              const mod = await import('./cookbookServe.js');
+              if (mod && typeof mod.openServePanelForRepo === 'function') {
+                setTimeout(() => { mod.openServePanelForRepo(query).catch(() => {}); }, 80);
+              }
+            } catch (_) {}
+          }
+        } else {
+          document.getElementById('tool-cookbook-btn')?.click();
+        }
+      } catch (e) {
+        slashReply(`Could not open Cookbook Serve${e?.message ? `: ${ctx.esc(e.message)}` : ''}`);
+      }
+      return true;
+    }
+    if (sub === 'download' || sub === 'scan') {
+      await cookbookModule?.open?.({ tab: 'Download', usecase: args.slice(1).join(' ').trim() || undefined });
+      return true;
+    }
+    await cookbookModule?.open?.({ tab: 'Download', usecase: rest || undefined });
+    return true;
+  }
+  if (target === 'email') {
+    const btn = document.getElementById('rail-email') || document.getElementById('email-section-title');
+    if (btn) btn.click();
+    else slashReply('Could not open Email.');
+    return true;
+  }
+  if (target === 'settings') {
+    if (settingsModule && typeof settingsModule.open === 'function') settingsModule.open(rest || undefined);
+    else document.getElementById('user-bar-settings')?.click();
+    return true;
+  }
+  return _cmdOpen([target], ctx);
 }
 
 async function _cmdSettings(args, ctx) {
@@ -1316,6 +1511,42 @@ async function _cmdModels(args, ctx) {
   return true;
 }
 
+async function _cmdModel(args, ctx) {
+  const sub = (args[0] || '').toLowerCase();
+  if (sub === 'list' || sub === 'ls') return _cmdModels(args.slice(1), ctx);
+
+  const model = sessionModule.getCurrentModel ? sessionModule.getCurrentModel() : '';
+  const endpoint = sessionModule.getCurrentEndpointUrl ? sessionModule.getCurrentEndpointUrl() : '';
+  slashReply(`<pre>${[
+    `Current model: ${ctx.esc(model || 'None selected')}`,
+    endpoint ? `Endpoint: ${ctx.esc(endpoint)}` : 'Endpoint: not available',
+    '',
+    'Usage: /model list to show all available models'
+  ].join('\n')}</pre>`);
+  return true;
+}
+
+async function _cmdMcp(args, ctx) {
+  const res = await fetch(`${API_BASE}/api/mcp/servers`, { credentials: 'same-origin' });
+  if (!res.ok) {
+    slashReply('MCP status is unavailable for this user.');
+    return true;
+  }
+  const servers = await res.json();
+  if (!Array.isArray(servers) || !servers.length) {
+    slashReply('No MCP servers configured.');
+    return true;
+  }
+  const lines = servers.map(s => {
+    const status = s.status || (s.is_enabled ? 'enabled' : 'disabled');
+    const enabled = Number(s.enabled_tool_count ?? s.tool_count ?? 0);
+    const total = Number(s.tool_count ?? enabled);
+    return `${s.name || s.id || 'MCP server'} - ${status} (${enabled}/${total} tools)`;
+  });
+  slashReply(`<pre>${lines.map(line => ctx.esc(line)).join('\n')}</pre>`);
+  return true;
+}
+
 // ── Memory ──
 
 async function _cmdMemoryList(args, ctx) {
@@ -1394,17 +1625,84 @@ async function _cmdMemorySearch(args, ctx) {
   return true;
 }
 
-// ── Note (quick memory shortcut) ──
+// ── Skills ──
+
+async function _cmdSkills(args, ctx) {
+  const sub = (args[0] || 'list').toLowerCase();
+  const rest = args.slice(1);
+
+  if (sub === 'list' || sub === 'ls') {
+    const skills = await _loadSkillSlashCatalog(true);
+    if (!skills.length) {
+      slashReply('No published skills available for slash commands.');
+      return true;
+    }
+    const lines = skills.map(s => {
+      const uses = Number(s.uses || 0);
+      const useText = uses > 0 ? `  uses:${uses}` : '';
+      return `${ctx.esc(String(s.token || '').padEnd(24))}${ctx.esc(s.help || '')}${useText}`;
+    });
+    slashReply(`<pre>${lines.join('\n')}</pre>`);
+    return true;
+  }
+
+  if (sub === 'search' || sub === 'find') {
+    const query = rest.join(' ').trim();
+    if (!query) { slashReply('Usage: /skills search query'); return true; }
+    const res = await fetch(`${API_BASE}/api/skills/search`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query })
+    });
+    if (!res.ok) { slashReply('Skill search failed.'); return true; }
+    const data = await res.json();
+    const skills = Array.isArray(data.skills) ? data.skills : [];
+    if (!skills.length) { slashReply(`No skills found for "${ctx.esc(query)}".`); return true; }
+    const lines = skills.map(s =>
+      ctx.esc(`/${s.name || s.id || ''}`.padEnd(24)) + ctx.esc(s.description || '')
+    );
+    slashReply(`<pre>${lines.join('\n')}</pre>`);
+    return true;
+  }
+
+  if (sub === 'view' || sub === 'cat' || sub === 'show') {
+    const name = (rest[0] || '').trim();
+    if (!name) { slashReply('Usage: /skills view name'); return true; }
+    const res = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(name)}/markdown`, { credentials: 'same-origin' });
+    if (!res.ok) { slashReply(`Skill "${ctx.esc(name)}" was not found.`); return true; }
+    const data = await res.json();
+    slashReply(`<pre>${ctx.esc(data.markdown || '')}</pre>`);
+    return true;
+  }
+
+  if (sub === 'use' || sub === 'run') {
+    const name = (rest[0] || '').trim();
+    if (!name) { slashReply('Usage: /skills use name request'); return true; }
+    return _invokeSkillByName(name, rest.slice(1).join(' ').trim(), ctx);
+  }
+
+  slashReply('Usage: /skills list | search query | view name | use name request');
+  return true;
+}
+
+async function _cmdReloadSkills(args, ctx) {
+  const skills = await _loadSkillSlashCatalog(true);
+  slashReply(`Reloaded skills. ${skills.length} skill command${skills.length === 1 ? '' : 's'} available.`);
+  return true;
+}
+
+// ── Note (quick Notes shortcut) ──
 
 async function _cmdNote(args, ctx) {
   const text = args.join(' ');
   if (!text) { slashReply('Usage: /note Your note here'); return true; }
-  const res = await fetch(`${API_BASE}/api/memory/add`, {
+  const res = await fetch(`${API_BASE}/api/notes`, {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, category: 'note', source: 'user' })
+    body: JSON.stringify({ title: text, content: '', note_type: 'note', source: 'slash' })
   });
-  if (res.ok) await typewriterReply(`Note saved: ${ctx.esc(text)}`);
+  if (res.ok) await typewriterReply(`Note added: ${ctx.esc(text)}`);
   else slashReply('Failed to save note');
   return true;
 }
@@ -1464,6 +1762,7 @@ function _parseTimeSpec(input) {
     const mer = (m[4] || '').toLowerCase();
     if (mer === 'pm' && hh < 12) hh += 12;
     if (mer === 'am' && hh === 12) hh = 0;
+    if (hh > 23 || mm > 59) return null;
     d.setHours(hh, mm, 0, 0);
     return { date: d, rest: m[5].trim() };
   }
@@ -1477,9 +1776,9 @@ function _parseTimeSpec(input) {
     const mer = (m[3] || '').toLowerCase();
     if (mer === 'pm' && hh < 12) hh += 12;
     if (mer === 'am' && hh === 12) hh = 0;
-    // Require an hour <= 23 and either a minute field or am/pm to avoid
-    // eating plain numbers like "3 apples".
-    if (hh > 23) return null;
+    // Require a valid hour/minute and either a minute field or am/pm to
+    // avoid eating plain numbers like "3 apples".
+    if (hh > 23 || mm > 59) return null;
     if (m[2] == null && !mer) return null;
     d.setHours(hh, mm, 0, 0);
     if (d.getTime() <= now.getTime()) d.setDate(d.getDate() + 1);
@@ -1537,36 +1836,6 @@ async function _cmdEvent(args, ctx) {
   } else {
     const err = await res.text().catch(() => '');
     slashReply(`Failed to create event${err ? `: ${ctx.esc(err.slice(0,200))}` : ''}`);
-  }
-  return true;
-}
-
-async function _cmdRemind(args, ctx) {
-  // Accepts "/remind me at 15:00 to call mom", "/remind in 30m check oven",
-  // "/remind tomorrow 9am standup". Shares _parseTimeSpec with /event — the
-  // parser strips "me", "at", "in", "to" stop words.
-  const raw = args.join(' ').trim();
-  if (!raw) { slashReply('Usage: /remind me at 15:00 to call mom  ·  /remind in 30m check oven'); return true; }
-  const parsed = _parseTimeSpec(raw);
-  if (!parsed || !parsed.rest) { slashReply(`Could not parse time from: ${ctx.esc(raw)}`); return true; }
-  const start = parsed.date;
-  const end = new Date(start.getTime() + 30 * 60 * 1000); // reminders default to 30m block
-  const body = {
-    summary: parsed.rest,
-    dtstart: _toLocalIso(start),
-    dtend: _toLocalIso(end),
-    all_day: false,
-  };
-  const res = await fetch(`${API_BASE}/api/calendar/events`, {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (res.ok) {
-    await typewriterReply(`Reminder set: ${ctx.esc(parsed.rest)} — ${start.toLocaleString()}`);
-  } else {
-    const err = await res.text().catch(() => '');
-    slashReply(`Failed to set reminder${err ? `: ${ctx.esc(err.slice(0,200))}` : ''}`);
   }
   return true;
 }
@@ -1712,6 +1981,53 @@ Memories:  ${d.memories || '?'}
 Documents: ${d.documents || '?'}
 Uploads:   ${d.uploads || '?'}</pre>`);
   } else { slashReply('Failed to fetch stats'); }
+  return true;
+}
+
+async function _cmdUsage(args, ctx) {
+  const sid = ctx.sid;
+  if (!sid) {
+    slashReply('No active session.');
+    return true;
+  }
+
+  let session = null;
+  try {
+    const sessions = sessionModule.getSessions ? sessionModule.getSessions() : [];
+    session = (sessions || []).find(s => s.id === sid) || null;
+    if (!session) {
+      const res = await fetch(`${API_BASE}/api/sessions`, { credentials: 'same-origin' });
+      if (res.ok) {
+        const data = await res.json();
+        const items = Array.isArray(data) ? data : (data.sessions || data.items || []);
+        session = items.find(s => s.id === sid) || null;
+      }
+    }
+  } catch (_) {}
+
+  const model = session?.model || 'Unknown';
+  const endpointUrl = session?.endpoint_url || (
+    sessionModule.getCurrentEndpointUrl ? sessionModule.getCurrentEndpointUrl() : ''
+  );
+  const messageCount = Number(session?.message_count || 0);
+  const totalTokens = Number(session?.total_tokens || 0);
+  const costTracked = chatRenderer.isCostTrackedEndpoint ? chatRenderer.isCostTrackedEndpoint(endpointUrl) : true;
+  const cost = costTracked && chatRenderer.getSessionCost ? Number(chatRenderer.getSessionCost(sid) || 0) : 0;
+  const costLine = costTracked
+    ? (cost > 0
+      ? `Estimated local cost: $${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}`
+      : 'Estimated local cost: unavailable or zero')
+    : 'Estimated local cost: not tracked for this endpoint';
+
+  slashReply(`<pre>${[
+    `Session: ${ctx.esc(session?.name || 'Current chat')}`,
+    `Model: ${ctx.esc(model)}`,
+    `Messages: ${messageCount.toLocaleString()}`,
+    `Recorded tokens: ${totalTokens.toLocaleString()}`,
+    costLine,
+    '',
+    'Provider account usage is not available from here; check the provider dashboard for account quota/billing.'
+  ].join('\n')}</pre>`);
   return true;
 }
 
@@ -4699,11 +5015,65 @@ function _clearSetupCommandInput() {
   }
 }
 
+async function _setupProviderDeviceFlow(providerKey) {
+  _clearSetupGuideMessages();
+  const config = PROVIDER_DEVICE_FLOWS[providerKey];
+  if (!config) {
+    await _setupReply('Provider not recognised.');
+    return;
+  }
+  await _setupReply(`Starting ${config.label} sign-in...`);
+  try {
+    const result = await runProviderDeviceFlow(providerKey, {
+      onStart: async ({ start, authUrl }) => {
+        const place = providerKey === 'copilot' ? 'GitHub' : 'OpenAI';
+        const action = providerKey === 'copilot' ? 'approve the request' : 'enter the code';
+        if (providerKey === 'chatgpt-subscription') {
+          slashReply(
+            '<div class="setup-guide-no-censor" style="display:grid;gap:6px;">' +
+              '<div>Open this URL in your browser, enter the code, then come back here. Waiting...</div>' +
+              '<div>Code: <code>' + uiModule.esc(start.user_code || '') + '</code></div>' +
+              '<div><a href="' + uiModule.esc(authUrl || '') + '" target="_blank" rel="noopener noreferrer">' + uiModule.esc(authUrl || '') + '</a></div>' +
+            '</div>'
+          );
+          return;
+        }
+        await _setupReply(`Opening ${place} - ${action} (code ${start.user_code}). Waiting...`);
+      },
+      openWindow: (url) => {
+        if (providerKey === 'chatgpt-subscription') return;
+        try { if (url) window.open(url, '_blank', 'noopener'); } catch (e) {}
+      },
+    });
+    if (result.status === 'authorized') {
+      const n = ((result.endpoint && result.endpoint.models) || []).length;
+      await _setupReply(`Connected - ${n} ${config.label} model${n !== 1 ? 's' : ''} available.`);
+      if (modelsModule) modelsModule.refreshModels(true);
+      return;
+    }
+    if (result.status === 'failed') {
+      await _setupReply(`${config.label} sign-in failed (${result.error || 'denied'}).`);
+      return;
+    }
+    if (result.status === 'expired') {
+      await _setupReply(`${config.label} sign-in expired - run /setup ${providerKey} again.`);
+      return;
+    }
+  } catch (e) {
+    await _setupReply(formatDeviceFlowError(e));
+  }
+}
+
 async function _cmdSetup(args, ctx) {
   _hideWelcomeScreen();
   _clearSetupCommandInput();
   const topic = (args[0] || '').trim().toLowerCase();
   const topicArgs = args.slice(1);
+  const deviceAuthProvider = _setupDeviceAuthProviderFromInput(topic);
+  if (deviceAuthProvider) {
+    await _setupProviderDeviceFlow(deviceAuthProvider);
+    return true;
+  }
   const provider = _setupProviderFromInput(topic);
   if (provider) {
     _clearSetupGuideMessages();
@@ -4713,7 +5083,15 @@ async function _cmdSetup(args, ctx) {
     } else {
       pendingSetupProvider = provider;
       setupMode = 'endpoint-key-for-provider';
-      await _setupReply(`Paste your ${provider.name} API key.`);
+      // Show the canonical "/setup <provider> <key>" usage so the user
+      // learns the one-shot form instead of relying on the pasted-key
+      // mode that always greets them with a generic prompt.
+      // _setupReply renders as plain text (no HTML) — use markdown
+      // backticks for the inline code instead of <code> + &lt;&gt;.
+      const _slug = (topic || '').toLowerCase();
+      await _setupReply(
+        `Paste your ${provider.name} API key, or run \`/setup ${_slug} <api-key>\` to set it in one step.`
+      );
     }
     return true;
   }
@@ -5318,7 +5696,7 @@ async function _cmdHelp(args, ctx) {
       categories[cat].push(`  ${usage.padEnd(21)}${desc}`);
     }
   }
-  const order = ['Getting started', 'Tours', 'Settings', 'Memory', 'Productivity', 'AI Tools'];
+  const order = ['Getting started', 'Tours', 'Chats', 'Settings', 'Memory', 'Productivity', 'AI Tools'];
   let lines = [];
   for (const cat of order) {
     if (categories[cat] && categories[cat].length) {
@@ -5335,8 +5713,20 @@ async function _cmdHelp(args, ctx) {
       lines.push('');
     }
   }
+  const skillCommands = await _loadSkillSlashCatalog(false);
+  if (skillCommands.length) {
+    lines.push('Skills:');
+    for (const skill of skillCommands.slice(0, 20)) {
+      const token = String(skill.token || '').padEnd(21);
+      lines.push(`  ${ctx.esc(token)}${ctx.esc(skill.help || '')}`);
+    }
+    if (skillCommands.length > 20) {
+      lines.push(`  ... ${skillCommands.length - 20} more. Use /skills list`);
+    }
+    lines.push('');
+  }
   lines.push('Tip: /<command> --help for details');
-  lines.push('Unix aliases: /rm /mv /cd /ls /cp /cat /man /stat /tar /mkdir /curl /df /fsck /bind /status');
+  lines.push('Shortcuts: /new /rename /fork /web /bash /memories /skills');
   slashReply(`<pre style="line-height:1.7">${lines.join('\n')}</pre>`);
   return true;
 }
@@ -5344,29 +5734,28 @@ async function _cmdHelp(args, ctx) {
 // ── Command registry ──────────────────────────────────────────────
 // Each top-level key is a command group.  Flat commands have a handler
 // directly; grouped commands use `subs`.  `default` is the sub run
-// when the command is invoked bare (e.g. `/session` -> list).
+// when the command is invoked bare (e.g. `/chats` -> info).
 
 const COMMANDS = {
-  session: {
-    alias: ['s'],
-    category: 'Session',
-    hidden: true,
+  chats: {
+    alias: ['chat', 'session', 'sessions', 's'],
+    category: 'Chats',
     help: 'Manage chat sessions',
     default: 'info',
     subs: {
-      'new':         { handler: _cmdSessionNew,         alias: ['create','mkdir'], help: 'Create new session',          usage: '/session new [name]' },
-      'delete':      { handler: _cmdSessionDelete,      alias: ['del','rm'],  help: 'Delete session',                 usage: '/session delete [id]' },
-      'archive':     { handler: _cmdSessionArchive,     alias: ['tar'],       help: 'Archive session',                usage: '/session archive [id]' },
-      'rename':      { handler: _cmdSessionRename,      alias: ['mv'],        help: 'Rename current session',         usage: '/session rename Name' },
-      'important':   { handler: _cmdSessionImportant,   alias: ['star'],      help: 'Mark as important',              usage: '/session important' },
-      'unimportant': { handler: _cmdSessionUnimportant, alias: ['unstar'],    help: 'Unmark important',               usage: '/session unimportant' },
-      'fork':        { handler: _cmdSessionFork,        alias: ['cp'],        help: 'Fork session (keep first N msgs)', usage: '/session fork [N]' },
-      'truncate':    { handler: _cmdSessionTruncate,    alias: [],            help: 'Delete older messages, keep last N', usage: '/session truncate N' },
-      'switch':      { handler: _cmdSessionSwitch,      alias: ['goto','cd'], help: 'Switch to session by name/id',   usage: '/session switch name' },
-      'sort':        { handler: _cmdSessionSort,        alias: [],            help: 'Auto-sort into folders',         usage: '/session sort' },
-      'info':        { handler: _cmdSessionInfo,        alias: ['stat'],      help: 'Show session details',           usage: '/session info' },
-      'clear':       { handler: _cmdSessionClear,       alias: [],            help: 'Clear chat display',             usage: '/session clear' },
-      'export':      { handler: _cmdSessionExport,      alias: ['cat'],       help: 'Download as markdown',           usage: '/session export' }
+      'new':         { handler: _cmdSessionNew,         alias: ['create','mkdir'], help: 'Create new chat',             usage: '/chats new [name]' },
+      'delete':      { handler: _cmdSessionDelete,      alias: ['del','rm'],       help: 'Delete chat',                 usage: '/chats delete [id]' },
+      'archive':     { handler: _cmdSessionArchive,     alias: ['tar'],            help: 'Archive chat',                usage: '/chats archive [id]' },
+      'rename':      { handler: _cmdSessionRename,      alias: ['mv'],             help: 'Rename current chat',         usage: '/chats rename Name' },
+      'favorite':    { handler: _cmdSessionImportant,   alias: ['pin','important'], help: 'Mark as favorite',          usage: '/chats favorite' },
+      'unfavorite':  { handler: _cmdSessionUnimportant, alias: ['unpin','unimportant'], help: 'Unmark favorite',       usage: '/chats unfavorite' },
+      'fork':        { handler: _cmdSessionFork,        alias: ['cp'],             help: 'Fork chat (keep first N msgs)', usage: '/chats fork [N]' },
+      'truncate':    { handler: _cmdSessionTruncate,    alias: [],                 help: 'Delete older messages, keep last N', usage: '/chats truncate N' },
+      'switch':      { handler: _cmdSessionSwitch,      alias: ['goto','cd'],      help: 'Switch to chat by name/id',    usage: '/chats switch name' },
+      'sort':        { handler: _cmdSessionSort,        alias: [],                 help: 'Auto-sort into folders',      usage: '/chats sort' },
+      'info':        { handler: _cmdSessionInfo,        alias: ['stat'],           help: 'Show chat details',           usage: '/chats info' },
+      'clear':       { handler: _cmdSessionClear,       alias: [],                 help: 'Clear chat display',          usage: '/chats clear' },
+      'export':      { handler: _cmdSessionExport,      alias: ['cat'],            help: 'Download as markdown',        usage: '/chats export' }
     }
   },
   toggle: {
@@ -5380,9 +5769,25 @@ const COMMANDS = {
       'bash':      { handler: _cmdToggleBash,      alias: ['b','shell'],       help: 'Toggle bash/shell',       usage: '/toggle bash' },
       'research':  { handler: _cmdToggleResearch,  alias: ['r'],               help: 'Toggle deep research',    usage: '/toggle research' },
       'doc':       { handler: _cmdToggleDoc,       alias: [],     help: 'Toggle document editor',  usage: '/toggle doc' },
+      'plan':      { handler: _cmdTogglePlan,      alias: ['p'],  help: 'Toggle plan mode (agent)', usage: '/toggle plan' },
       'sidebar':   { handler: _cmdToggleSidebar,   alias: ['sb'], help: 'Cycle sidebar (full/mini/off)', usage: '/toggle sidebar [1|2|3]' },
       '_show':     { handler: _cmdToggleShow,      alias: [],     help: 'Show all toggle states',  usage: '/toggle' }
     }
+  },
+  workspace: {
+    alias: ['ws'],
+    category: 'Agent',
+    help: 'Set the folder the agent works in',
+    handler: _cmdWorkspace,
+    noUserBubble: true,
+    usage: '/workspace [set <path> | clear | pick]',
+  },
+  plan: {
+    alias: [],
+    category: 'Quick toggles',
+    help: 'Toggle plan mode (agent)',
+    handler: _cmdTogglePlan,
+    usage: '/plan [on|off]',
   },
   memory: {
     alias: ['m'],
@@ -5395,6 +5800,20 @@ const COMMANDS = {
       'delete': { handler: _cmdMemoryDelete, alias: ['del', 'rm'],   help: 'Delete by ID',        usage: '/memory delete id' },
       'search': { handler: _cmdMemorySearch, alias: ['grep'],        help: 'Search memories',     usage: '/memory search q' }
     }
+  },
+  skills: {
+    alias: ['skill'],
+    category: 'Memory',
+    help: 'List, search, inspect, or run skills',
+    handler: _cmdSkills,
+    usage: '/skills list | search query | view name | use name request',
+  },
+  'reload-skills': {
+    alias: ['reload_skills'],
+    category: 'Memory',
+    help: 'Refresh the slash skill catalog',
+    handler: _cmdReloadSkills,
+    usage: '/reload-skills',
   },
   rag: {
     alias: [],
@@ -5416,14 +5835,6 @@ const COMMANDS = {
     noUserBubble: true,
     usage: '/todo Your task  ·  /todo list',
   },
-  remind: {
-    alias: ['rem'],
-    category: 'Productivity',
-    help: 'Create a note reminder',
-    handler: _cmdRemind,
-    noUserBubble: true,
-    usage: '/remind me at 15:00 to call mom  ·  /remind in 30m check oven',
-  },
   event: {
     alias: ['ev'],
     category: 'Productivity',
@@ -5437,7 +5848,32 @@ const COMMANDS = {
     category: 'Getting started',
     help: 'Add local or API model endpoints',
     handler: _cmdSetup,
-    usage: '/setup local URL  ·  /setup groq KEY  ·  /setup endpoint'
+    usage: '/setup local URL  ·  /setup groq KEY  ·  /setup copilot  ·  /setup chatgpt-subscription',
+    // Provider subs so the autocomplete popup surfaces "/setup deepseek",
+    // "/setup openai", etc. when the user types "/setup de". Each sub's
+    // handler is a thin wrapper that re-prepends the sub name and
+    // re-dispatches into _cmdSetup, which already knows how to handle
+    // bare-provider (prompts for the key) AND provider-with-key (saves it).
+    // Without the explicit handler, the slash-dispatcher errors with
+    // "subDef.handler is not a function".
+    subs: {
+      deepseek:   { help: 'DeepSeek',      usage: '/setup deepseek sk-...',     handler: (a, c) => _cmdSetup(['deepseek',   ...a], c) },
+      openai:     { help: 'OpenAI',        usage: '/setup openai sk-proj-...',  handler: (a, c) => _cmdSetup(['openai',     ...a], c) },
+      anthropic:  { help: 'Anthropic',     usage: '/setup anthropic sk-ant-...',handler: (a, c) => _cmdSetup(['anthropic',  ...a], c) },
+      openrouter: { help: 'OpenRouter',    usage: '/setup openrouter sk-or-...',handler: (a, c) => _cmdSetup(['openrouter', ...a], c) },
+      groq:       { help: 'Groq',          usage: '/setup groq gsk_...',        handler: (a, c) => _cmdSetup(['groq',       ...a], c) },
+      gemini:     { help: 'Google Gemini', alias: ['google'], usage: '/setup gemini AIza...', handler: (a, c) => _cmdSetup(['gemini', ...a], c) },
+      xai:        { help: 'xAI (Grok)',    alias: ['grok'],   usage: '/setup xai xai-...',   handler: (a, c) => _cmdSetup(['xai',    ...a], c) },
+      ollama:     { help: 'Ollama Cloud',  usage: '/setup ollama KEY',          handler: (a, c) => _cmdSetup(['ollama',     ...a], c) },
+      copilot:    { help: 'GitHub Copilot', usage: '/setup copilot',            handler: (a, c) => _cmdSetup(['copilot',    ...a], c) },
+      'chatgpt-subscription': { help: 'ChatGPT Subscription', alias: ['codex'], usage: '/setup chatgpt-subscription', handler: (a, c) => _cmdSetup(['chatgpt-subscription', ...a], c) },
+      local:      { help: 'Local model server (vLLM / LM Studio / llama.cpp / Ollama)',
+                    usage: '/setup local http://localhost:8000/v1',
+                    handler: (a, c) => _cmdSetup(['local', ...a], c) },
+      endpoint:   { help: 'Open the endpoint manager in Settings',
+                    usage: '/setup endpoint',
+                    handler: (a, c) => _cmdSetup(['endpoint', ...a], c) },
+    },
   },
   demo: {
     alias: ['tour'],
@@ -5523,13 +5959,6 @@ const COMMANDS = {
     handler: _cmdPrompt,
     usage: '/prompt'
   },
-  mode: {
-    alias: [],
-    category: 'Settings',
-    help: 'Switch agent/chat mode',
-    handler: _cmdMode,
-    usage: '/mode agent|chat'
-  },
   theme: {
     alias: [],
     category: 'Settings',
@@ -5552,8 +5981,85 @@ const COMMANDS = {
     handler: _cmdOpen,
     usage: '/open Cookbook'
   },
+  cookbook: {
+    alias: ['cook'],
+    category: 'Tools',
+    help: 'Open Cookbook; use "serve" to jump to model serving',
+    handler: (args, ctx) => _cmdToolPanel('cookbook', args, ctx),
+    usage: '/cookbook  ·  /cookbook serve qwen'
+  },
+  email: {
+    alias: ['mail', 'inbox'],
+    category: 'Tools',
+    help: 'Open Email',
+    handler: (args, ctx) => _cmdToolPanel('email', args, ctx),
+    usage: '/email'
+  },
+  notes: {
+    alias: [],
+    category: 'Tools',
+    help: 'Open Notes',
+    handler: (args, ctx) => _cmdToolPanel('notes', args, ctx),
+    usage: '/notes'
+  },
+  tasks: {
+    alias: [],
+    category: 'Tools',
+    help: 'Open Tasks',
+    handler: (args, ctx) => _cmdToolPanel('tasks', args, ctx),
+    usage: '/tasks'
+  },
+  brain: {
+    alias: ['memories'],
+    category: 'Tools',
+    help: 'Open Brain',
+    handler: (args, ctx) => _cmdToolPanel('brain', args, ctx),
+    usage: '/brain'
+  },
+  library: {
+    alias: ['docs', 'documents'],
+    category: 'Tools',
+    help: 'Open Library',
+    handler: (args, ctx) => _cmdToolPanel('library', args, ctx),
+    usage: '/library'
+  },
+  gallery: {
+    alias: ['photos'],
+    category: 'Tools',
+    help: 'Open Gallery',
+    handler: (args, ctx) => _cmdToolPanel('gallery', args, ctx),
+    usage: '/gallery'
+  },
+  research: {
+    alias: [],
+    category: 'Tools',
+    help: 'Open Deep Research',
+    handler: (args, ctx) => _cmdToolPanel('research', args, ctx),
+    usage: '/research'
+  },
+  compare: {
+    alias: [],
+    category: 'Tools',
+    help: 'Open Compare',
+    handler: (args, ctx) => _cmdToolPanel('compare', args, ctx),
+    usage: '/compare'
+  },
+  mcp: {
+    alias: [],
+    category: 'Tools',
+    help: 'Show MCP server status',
+    handler: _cmdMcp,
+    usage: '/mcp'
+  },
+  model: {
+    alias: [],
+    category: 'Settings',
+    help: 'Show current chat model',
+    handler: _cmdModel,
+    usage: '/model  ·  /model list'
+  },
   models: {
-    alias: ['model'],
+    alias: [],
     category: 'Settings',
     help: 'List available models',
     handler: _cmdModels,
@@ -5584,21 +6090,19 @@ const COMMANDS = {
     handler: _cmdStats,
     usage: '/stats'
   },
+  usage: {
+    alias: ['cost', 'tokens'],
+    category: 'Utility',
+    help: 'Show local usage for the current chat',
+    handler: _cmdUsage,
+    usage: '/usage'
+  },
   compact: {
     alias: [],
     category: 'Utility',
-    hidden: true,
     help: 'Compact older chat messages',
     handler: _cmdCompact,
     usage: '/compact'
-  },
-  tts: {
-    alias: ['speak'],
-    category: 'Utility',
-    hidden: true,
-    help: 'Text-to-speech',
-    handler: _cmdTts,
-    usage: '/tts text'
   },
   sh: {
     alias: ['exec', 'run', 'shell'],
@@ -5650,26 +6154,28 @@ const COMMANDS = {
 // ── Legacy aliases ────────────────────────────────────────────────
 // Maps old flat command names to { parent, sub } so `/new` still works.
 
-const LEGACY_ALIASES = {
-  'new':         { parent: 'session', sub: 'new' },
-  'create':      { parent: 'session', sub: 'new' },
-  'delete':      { parent: 'session', sub: 'delete' },
-  'del':         { parent: 'session', sub: 'delete' },
-  'archive':     { parent: 'session', sub: 'archive' },
-  'rename':      { parent: 'session', sub: 'rename' },
-  'important':   { parent: 'session', sub: 'important' },
-  'star':        { parent: 'session', sub: 'important' },
-  'unimportant': { parent: 'session', sub: 'unimportant' },
-  'unstar':      { parent: 'session', sub: 'unimportant' },
-  'fork':        { parent: 'session', sub: 'fork' },
-  'truncate':    { parent: 'session', sub: 'truncate' },
-  'sessions':    { parent: 'session', sub: 'info' },
-  'switch':      { parent: 'session', sub: 'switch' },
-  'goto':        { parent: 'session', sub: 'switch' },
-  'sort':        { parent: 'session', sub: 'sort' },
-  'info':        { parent: 'session', sub: 'info' },
-  'clear':       { parent: 'session', sub: 'clear' },
-  'export':      { parent: 'session', sub: 'export' },
+export const LEGACY_ALIASES = {
+  'new':         { parent: 'chats', sub: 'new' },
+  'create':      { parent: 'chats', sub: 'new' },
+  'delete':      { parent: 'chats', sub: 'delete' },
+  'del':         { parent: 'chats', sub: 'delete' },
+  'archive':     { parent: 'chats', sub: 'archive' },
+  'rename':      { parent: 'chats', sub: 'rename' },
+  'favorite':    { parent: 'chats', sub: 'favorite' },
+  'important':   { parent: 'chats', sub: 'favorite' },
+  'star':        { parent: 'chats', sub: 'favorite' },
+  'unfavorite':  { parent: 'chats', sub: 'unfavorite' },
+  'unimportant': { parent: 'chats', sub: 'unfavorite' },
+  'unstar':      { parent: 'chats', sub: 'unfavorite' },
+  'fork':        { parent: 'chats', sub: 'fork' },
+  'truncate':    { parent: 'chats', sub: 'truncate' },
+  'sessions':    { parent: 'chats', sub: 'info' },
+  'switch':      { parent: 'chats', sub: 'switch' },
+  'goto':        { parent: 'chats', sub: 'switch' },
+  'sort':        { parent: 'chats', sub: 'sort' },
+  'info':        { parent: 'chats', sub: 'info' },
+  'clear':       { parent: 'chats', sub: 'clear' },
+  'export':      { parent: 'chats', sub: 'export' },
   'web':         { parent: 'toggle', sub: 'web' },
   'bash':        { parent: 'toggle', sub: 'bash' },
   'research':    { parent: 'toggle', sub: 'research' },
@@ -5678,14 +6184,14 @@ const LEGACY_ALIASES = {
   'memories':    { parent: 'memory', sub: 'list' },
   'forget':      { parent: 'memory', sub: 'delete' },
   // Linux-style aliases
-  'rm':          { parent: 'session', sub: 'delete' },
-  'mv':          { parent: 'session', sub: 'rename' },
-  'cd':          { parent: 'session', sub: 'switch' },
-  'cp':          { parent: 'session', sub: 'fork' },
-  'cat':         { parent: 'session', sub: 'export' },
-  'stat':        { parent: 'session', sub: 'info' },
-  'tar':         { parent: 'session', sub: 'archive' },
-  'mkdir':       { parent: 'session', sub: 'new' },
+  'rm':          { parent: 'chats', sub: 'delete' },
+  'mv':          { parent: 'chats', sub: 'rename' },
+  'cd':          { parent: 'chats', sub: 'switch' },
+  'cp':          { parent: 'chats', sub: 'fork' },
+  'cat':         { parent: 'chats', sub: 'export' },
+  'stat':        { parent: 'chats', sub: 'info' },
+  'tar':         { parent: 'chats', sub: 'archive' },
+  'mkdir':       { parent: 'chats', sub: 'new' },
   'status':      { parent: 'toggle', sub: '_show' }
 };
 
@@ -5767,7 +6273,9 @@ async function handleSlashCommand(input) {
   let args = parts.slice(1);
   const ctx = _makeCtx();
   let _userShown = false;
-  function _showUser() { if (!_userShown) { _userShown = true; _addMessage('user', input); _persistMsg('user', input); } }
+  // Tag the echoed command with source:'slash' so it renders in the transcript
+  // but is excluded from LLM context (get_context_messages), like the replies.
+  function _showUser() { if (!_userShown) { _userShown = true; _addMessage('user', input); _persistMsg('user', input, { source: 'slash' }); } }
 
   try {
     // --- Check for --help / -h on any command ---
@@ -5864,33 +6372,13 @@ async function handleSlashCommand(input) {
     }
 
     // --- 4. Skill invocation: /<skill-name> [request] ---
-    // If `rawCmd` matches a published skill, pin its SKILL.md to the user's
-    // message and re-submit. Lets you fire a stored procedure on demand
-    // without the model having to discover the skill itself.
+    // If `rawCmd` matches a published skill, the backend records usage and
+    // returns a skill-pinned message to submit as the next agent turn.
     try {
-      const skillRes = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(rawCmd)}/markdown`, { credentials: 'same-origin' });
-      if (skillRes.ok) {
-        const skillData = await skillRes.json();
-        const md = skillData.markdown || '';
-        if (md) {
-          _showUser();
-          const request = args.join(' ').trim();
-          const msgInput = document.getElementById('message');
-          const composed =
-            `Apply the skill below to my request, following its Procedure / Pitfalls / Verification.\n\n` +
-            `--- BEGIN SKILL ---\n${md}\n--- END SKILL ---\n\n` +
-            (request ? `Request: ${request}` : `Request: (use the skill as appropriate)`);
-          if (msgInput) {
-            msgInput.value = composed;
-            const form = document.getElementById('chat-form');
-            if (form && typeof form.requestSubmit === 'function') {
-              form.requestSubmit();
-            } else if (form) {
-              form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
-            }
-          }
-          return true;
-        }
+      const catalog = await _loadSkillSlashCatalog(false);
+      if (catalog.some(s => s.name === rawCmd)) {
+        _showUser();
+        return await _invokeSkillByName(rawCmd, args.join(' ').trim(), ctx);
       }
     } catch (_) { /* fall through to fuzzy match */ }
 
@@ -5923,6 +6411,63 @@ async function handleSlashCommand(input) {
 export function initSlashCommands(deps) {
   API_BASE = deps.apiBase || '';
   if (deps.isStreaming) _isStreamingFn = deps.isStreaming;
+
+  // Global delegation for onboarding and setup clicks
+  document.addEventListener('click', (e) => {
+    // 1. Check for clicking the "/setup" trigger link on the welcome screen
+    const trigger = e.target.closest('.setup-trigger-link');
+    if (trigger) {
+      e.preventDefault();
+      const messageInput = document.getElementById('message');
+      if (messageInput) {
+        messageInput.value = '/setup';
+        messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+        messageInput.focus();
+        const chatForm = document.getElementById('chat-form');
+        if (chatForm) {
+          chatForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        }
+      }
+      return;
+    }
+
+    // 2. Check for clicking a clickable provider inside the setup guide
+    const providerEl = e.target.closest('.setup-clickable-provider');
+    if (providerEl) {
+      e.preventDefault();
+      const providerKey = providerEl.dataset.setupProvider || providerEl.textContent.trim();
+      const providerName = providerEl.textContent.trim();
+      const messageInput = document.getElementById('message');
+      if (messageInput) {
+        const text = providerEl.dataset.setupKind === 'device-auth'
+          ? '/setup ' + providerKey
+          : providerName + ' sk-';
+        messageInput.value = text;
+        messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+        messageInput.focus();
+        messageInput.setSelectionRange(text.length, text.length);
+      }
+      return;
+    }
+
+    // 3. Check for clicking a clickable code block inside the setup guide
+    const codeEl = e.target.closest('.setup-clickable-code');
+    if (codeEl) {
+      e.preventDefault();
+      let text = codeEl.textContent.trim();
+      if (text.includes('sk-...')) {
+        text = text.replace('sk-...', 'sk-');
+      }
+      const messageInput = document.getElementById('message');
+      if (messageInput) {
+        messageInput.value = text;
+        messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+        messageInput.focus();
+        messageInput.setSelectionRange(text.length, text.length);
+      }
+      return;
+    }
+  });
 }
 
 /**
@@ -5950,7 +6495,7 @@ export function clearSetupMode(preservePendingState = false) {
   }
 }
 
-export { handleSlashCommand, handleSetupInput, handleSetupWizard, slashReply, typewriterReply };
+export { handleSlashCommand, handleSetupInput, handleSetupWizard, slashReply, typewriterReply, COMMANDS };
 
 const slashCommands = {
   initSlashCommands,

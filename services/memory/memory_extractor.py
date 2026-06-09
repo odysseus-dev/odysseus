@@ -34,12 +34,18 @@ def _fingerprint_entries(entries) -> str:
     only on id+text+category. Any add/edit/delete invalidates it."""
     items = sorted(
         (str(e.get("id", "")), e.get("text", ""), e.get("category", ""))
-        for e in entries
+        for e in _memory_dicts(entries)
     )
     h = hashlib.sha256()
     for triple in items:
         h.update(("\x1f".join(triple) + "\x1e").encode("utf-8"))
     return h.hexdigest()
+
+
+def _memory_dicts(entries):
+    for entry in entries or []:
+        if isinstance(entry, dict):
+            yield entry
 
 
 def _load_tidy_state(memory_manager) -> dict:
@@ -186,11 +192,19 @@ def _fallback_memory_candidates(messages) -> list[dict]:
             if place:
                 add(f"User lives in {place}.", "identity")
 
-        m = re.search(r"\bi (?:prefer|like|love|hate|do not like|don't like)\s+([^.!?\n]{4,100})", text, re.I)
+        m = re.search(r"\bi (prefer|like|love|hate|do not like|don't like)\s+([^.!?\n]{4,100})", text, re.I)
         if m:
-            preference = _clean_memory_value(m.group(1), 100)
+            preference = _clean_memory_value(m.group(2), 100)
             if preference:
-                add(f"User prefers {preference}.", "preference")
+                # The same pattern catches likes and dislikes; keep the stored
+                # sentiment faithful instead of recording every match as a
+                # preference ("I hate cilantro" must not become "User prefers
+                # cilantro").
+                verb = m.group(1).lower()
+                if verb in ("hate", "do not like", "don't like"):
+                    add(f"User dislikes {preference}.", "preference")
+                else:
+                    add(f"User prefers {preference}.", "preference")
 
         m = re.search(
             r"\bi (?:(?:want|would like|plan|hope) to|wanna) "
@@ -211,7 +225,7 @@ def _is_text_duplicate(new_text: str, existing: list, threshold: float = 0.6) ->
     new_tokens = set(new_text.lower().split())
     if not new_tokens:
         return False
-    for entry in existing:
+    for entry in _memory_dicts(existing):
         old_tokens = set(entry.get("text", "").lower().split())
         if not old_tokens:
             continue
@@ -220,6 +234,43 @@ def _is_text_duplicate(new_text: str, existing: list, threshold: float = 0.6) ->
         if len(intersection) / len(union) >= threshold:
             return True
     return False
+
+
+def _parse_extraction_json(raw: str) -> list:
+    """Parse the extraction LLM's reply into a list of facts, tolerating
+    reasoning-model noise.
+
+    The model emits <think>…</think> (and sometimes a prose preamble or a
+    ```json fence) AROUND the JSON array; without stripping it, json.loads
+    bombs and the run silently yields "0 candidates". Pure str -> list (no
+    LLM/network); returns [] on any parse failure instead of raising.
+    """
+    text = (raw or "").strip()
+    try:
+        from src.text_helpers import strip_think as _strip_think
+        text = _strip_think(text, prose=True, prompt_echo=True).strip()
+    except Exception:
+        pass
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    # JSON may still be embedded in surrounding commentary (leading prose or
+    # trailing remarks like "[...] Done!") — slice from the first '[' to the
+    # last ']' whenever both exist. Slice unconditionally: a reply that starts
+    # with '[' can still carry trailing commentary that breaks json.loads.
+    _start = text.find("[")
+    _end = text.rfind("]")
+    if 0 <= _start < _end:
+        text = text[_start : _end + 1]
+
+    try:
+        facts = json.loads(text)
+    except json.JSONDecodeError:
+        logger.debug("Memory extraction returned non-JSON: %r", (raw or "")[:120])
+        return []
+    except Exception:
+        logger.debug("Memory extraction returned non-JSON: %r", (raw or "")[:120])
+        return []
+    return facts if isinstance(facts, list) else []
 
 
 async def extract_and_store(
@@ -235,6 +286,10 @@ async def extract_and_store(
     Designed to run as a background task (asyncio.create_task).
     Errors are logged, never raised.
     """
+    if not endpoint_url or not model:
+        logger.debug("[memory-extract] No model or URL provided, skipping")
+        return
+
     try:
         from src.llm_core import llm_call_async
 
@@ -245,11 +300,55 @@ async def extract_and_store(
         if len(recent) < 2:
             return  # Need at least a user message and assistant response
 
-        fallback_facts = _fallback_memory_candidates(recent)
+        # Strip media (images/audio) from messages — background memory extraction
+        # only needs the text. The VL-generated descriptions are already in the
+        # text content of the messages. This avoids sending image tokens to
+        # non-vision models and prevents accidental "vision grounding" triggers.
+        stripped_recent = []
+        for msg in recent:
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                # Filter out multimodal blocks that aren't text
+                text_only = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                if not text_only and content:
+                    continue
+                content = text_only
+            stripped_recent.append({"role": role, "content": content})
 
+        if not stripped_recent:
+            return
+
+        fallback_facts = _fallback_memory_candidates(stripped_recent)
+
+        # Flatten the window into a SINGLE user message instead of appending the
+        # raw alternating role messages. Passed as raw chat messages, the model
+        # treats the window as a conversation to CONTINUE rather than a transcript
+        # to ANALYZE, so it reliably extracts nothing — typically returning `[]`
+        # (and, depending on the input, sometimes an empty or <think>-only
+        # completion when the window ends on an assistant turn). This was the real
+        # cause of auto-memory logging "0 candidates" on every run. Reframing it as
+        # one "analyze this transcript, return the JSON array" user message makes
+        # the model actually extract. Controlled repro on this model: 0/6 trials
+        # with the old structure vs 6/6 with this one. The skill extractor flattens
+        # for the same reason.
+        def _flatten_msg(m):
+            c = m.get("content", "")
+            if isinstance(c, list):
+                c = " ".join(
+                    b.get("text", "") for b in c
+                    if isinstance(b, dict) and b.get("type") == "text"
+                )
+            return f"{m.get('role', '?')}: {c}"
+
+        transcript = "\n\n".join(_flatten_msg(m) for m in stripped_recent)
         extraction_messages = [
             {"role": "system", "content": EXTRACT_SYSTEM_PROMPT},
-        ] + recent
+            {"role": "user", "content": (
+                "Conversation to analyze:\n\n" + transcript
+                + "\n\nReturn the JSON array of durable facts now (or [] if none)."
+            )},
+        ]
 
         facts = []
         try:
@@ -258,19 +357,20 @@ async def extract_and_store(
                 model,
                 extraction_messages,
                 temperature=0.1,
-                max_tokens=500,
+                # A reasoning model spends most of its budget on <think> tokens
+                # BEFORE emitting the JSON, so the old 500 truncated the response
+                # before any JSON appeared → every run logged "0 candidates". The
+                # audit path hit the same wall and raised to 16384; extraction's
+                # output (a short facts list) is small, so an ample ceiling is
+                # enough once thinking has room.
+                max_tokens=4096,
                 headers=headers,
             )
 
-            # Parse JSON from response (handle markdown fences if model wraps them)
-            text = raw.strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-
-            try:
-                facts = json.loads(text)
-            except json.JSONDecodeError:
-                logger.debug("Memory extraction returned non-JSON")
+            # Parse JSON, tolerating reasoning-model noise (<think> blocks, a
+            # ```json fence, and leading/trailing commentary). See
+            # _parse_extraction_json — returns [] rather than raising.
+            facts = _parse_extraction_json(raw)
         except Exception as e:
             logger.warning(f"LLM memory extraction failed; using fallback candidates if available: {e}")
 
@@ -303,12 +403,30 @@ async def extract_and_store(
             if not fact_text or len(fact_text) < 5:
                 continue
 
-            # Dedup: check vector similarity first (fast), then exact text match
+            # Dedup: check vector similarity first (fast), then exact text match.
+            # A runtime embedding/ChromaDB failure (backend OOM, model evicted,
+            # remote endpoint down) must not abort the whole batch — fall through
+            # to the text/fuzzy dedup below instead of losing every validated
+            # fact extracted this session. (`.healthy` is only set at init, so
+            # it does not catch failures that develop later.)
             if memory_vector and memory_vector.healthy:
-                existing_id = memory_vector.find_similar(fact_text, threshold=0.72)
+                try:
+                    existing_id = memory_vector.find_similar(fact_text, threshold=0.72)
+                except Exception as e:
+                    logger.warning(f"Memory dedup (vector) unavailable, using text fallback: {e}")
+                    existing_id = None
                 if existing_id:
-                    logger.debug(f"Memory dedup (vector): '{fact_text[:50]}' matches {existing_id}")
-                    continue
+                    # The vector store is a single shared collection with no
+                    # owner metadata, so find_similar can return ANOTHER
+                    # tenant's memory. Only treat it as a duplicate when the
+                    # match is this user's own (or a legacy unowned) memory —
+                    # otherwise the user's freshly-extracted fact would be
+                    # silently dropped. Mirror the owner predicate used by the
+                    # text dedup below; cross-tenant/stale matches fall through.
+                    _match = next((e for e in existing if e.get("id") == existing_id), None)
+                    if _match is not None and (_match.get("owner") == _owner or _match.get("owner") is None):
+                        logger.debug(f"Memory dedup (vector): '{fact_text[:50]}' matches {existing_id}")
+                        continue
 
             # Text dedup fallback: exact match + fuzzy similarity
             user_existing = [e for e in existing if e.get("owner") == _owner or e.get("owner") is None] if _owner else existing
@@ -330,9 +448,14 @@ async def extract_and_store(
 
             existing.append(entry)
 
-            # Add to vector index
+            # Add to vector index. The JSON store (saved below) is the source of
+            # truth and the keyword path can still retrieve this entry, so a vector
+            # write failure must not drop the fact or abort the remaining batch.
             if memory_vector and memory_vector.healthy:
-                memory_vector.add(entry["id"], fact_text)
+                try:
+                    memory_vector.add(entry["id"], fact_text)
+                except Exception as e:
+                    logger.warning(f"Memory vector add failed for {entry['id']}: {e}")
 
             added += 1
 
@@ -510,17 +633,20 @@ async def audit_memories(
             for e in all_entries:
                 if e.get("owner") is None and e["id"] not in audited_ids and e["id"] not in {o["id"] for o in other_entries}:
                     other_entries.append(e)
-            memory_manager.save(final_entries + other_entries)
+            saved_entries = final_entries + other_entries
         else:
-            memory_manager.save(final_entries)
+            saved_entries = final_entries
+        memory_manager.save(saved_entries)
         logger.info(
             f"Memory audit complete: {before_count} -> {after_count} entries "
             f"({before_count - after_count} removed/merged)"
         )
 
-        # Rebuild vector index
+        # Rebuild vector index from the full saved set, not just this owner's
+        # slice — otherwise the shared collection is wiped of every other
+        # owner's entries until they happen to run their own audit.
         if memory_vector and memory_vector.healthy:
-            memory_vector.rebuild(final_entries)
+            memory_vector.rebuild(saved_entries)
 
         # Persist the post-tidy fingerprint so the next call short-circuits
         # if nothing has changed in the meantime.

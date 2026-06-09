@@ -12,6 +12,8 @@ import chatRenderer from './chatRenderer.js';
 import chatStream from './chatStream.js';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
+import { svgifyEmoji } from './markdown.js';
+import planWindowModule from './planWindow.js';
 import spinnerModule from './spinner.js';
 import presetsModule from './presets.js';
 import fileHandlerModule from './fileHandler.js';
@@ -21,6 +23,9 @@ import * as emailInbox from './emailInbox.js';
 import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
 import createResearchSynapse from './researchSynapse.js';
+import { createStreamRenderer } from './streamingRenderer.js';
+import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
+
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -50,7 +55,27 @@ import createResearchSynapse from './researchSynapse.js';
 
   // shortModel and modelColor are now in chatRenderer.js
   var _shortModel = chatRenderer.shortModel;
+  var _modelRouteLabel = chatRenderer.modelRouteLabel;
+  var _sameModelName = chatRenderer.sameModelName;
   var _applyModelColor = chatRenderer.applyModelColor;
+  function _setRoleModelLabel(roleEl, requestedModel, actualModel, opts) {
+    if (!roleEl) return;
+    opts = opts || {};
+    const tsSpan = roleEl.querySelector('.role-timestamp');
+    const req = requestedModel || actualModel || '';
+    const actual = actualModel || requestedModel || '';
+    let label = _modelRouteLabel(req, actual);
+    if (opts.suffix) label += ' (' + opts.suffix + ')';
+    if (opts.characterName) label = opts.characterName;
+    roleEl.textContent = label + ' ';
+    _applyModelColor(roleEl, actual || req);
+    if (req && actual && !_sameModelName(req, actual)) {
+      roleEl.title = req + ' -> ' + actual + (opts.reason ? ': ' + opts.reason : '');
+    } else if (!opts.reason) {
+      roleEl.removeAttribute('title');
+    }
+    if (tsSpan) roleEl.appendChild(tsSpan);
+  }
   // Per-session research tracking (supports concurrent research across sessions)
   const _researchingStreamIds = new Set();
   let _researchTimerEl = null, _researchTimerInterval = null;
@@ -82,13 +107,44 @@ import createResearchSynapse from './researchSynapse.js';
 
   // Background streaming support
   const _backgroundStreams = new Map(); // sessionId -> { status, accumulated, sourcesHtml, abortCtrl, query, metrics }
+  const _resumingStreams = new Set();   // sessionId -> a resumeStream() reader is live (re-attach lock)
   let _streamSessionId = null; // Session ID for the currently active reader loop
   let _lastReaderActivity = 0; // Timestamp of last reader.read() success — used to detect frozen streams
   let _webLockRelease = null;  // Function to release the Web Lock held during streaming
+  let _forcePlanOff = false;   // One-shot: suppress plan_mode for the next send (Approve & Run)
+
+  // ── Plan store: the latest proposed/approved checklist for the CURRENT chat ──
+  // Kept so (a) it can be sent back each turn and pinned in context (a long plan
+  // on a weak model survives history truncation), and (b) the plan window can be
+  // re-opened/docked at any time via the plan-button menu. Stored per session in
+  // localStorage so it survives a reload mid-execution.
+  function _setStoredPlan(text) {
+    const sid = sessionModule.getCurrentSessionId();
+    if (!sid || !text || !text.trim()) return;
+    Storage.setJSON(Storage.KEYS.PLAN, { sid, text });
+    // Live-refresh the plan window if it's open (shows progress as the agent
+    // restates the checklist with [x]).
+    try {
+      if (planWindowModule.isPlanWindowOpen && planWindowModule.isPlanWindowOpen()) {
+        planWindowModule.openPlanWindow(text, null);
+      }
+    } catch (_) {}
+  }
+  function _getStoredPlan() {
+    const sid = sessionModule.getCurrentSessionId();
+    const rec = Storage.getJSON(Storage.KEYS.PLAN, null);
+    return (rec && rec.sid === sid && rec.text) ? rec.text : '';
+  }
+  // A line like "- [ ] step" / "- [x] step" marks a GitHub-style checklist.
+  const _CHECKLIST_RE = /^\s*[-*]\s+\[[ xX]\]\s+/m;
+  // Exposed for app.js (plan-button menu) — re-open the stored plan window.
+  window._getStoredPlan = _getStoredPlan;
+  window.planWindowModule = planWindowModule;
 
   /** Check if an SSE reader is still actively connected for a session. */
   function hasActiveStream(sessionId) {
-    return _streamSessionId === sessionId || _backgroundStreams.has(sessionId);
+    return _streamSessionId === sessionId || _backgroundStreams.has(sessionId) ||
+           _resumingStreams.has(sessionId);
   }
 
   // Sources box builder and toggleSources are now in chatRenderer.js
@@ -156,6 +212,26 @@ import createResearchSynapse from './researchSynapse.js';
     initSlashCommands({ apiBase, isStreaming: () => isStreaming });
     // Initialize email inbox
     emailInbox.init(documentModule);
+    // Wire the slash-command autocomplete popup on the chat composer. The
+    // dispatcher already handles the typed command — this just surfaces the
+    // registry as a discoverable menu when the user starts a message with /.
+    import('./slashAutocomplete.js').then(mod => {
+      const ta = document.getElementById('message');
+      if (ta && mod.initSlashAutocomplete) mod.initSlashAutocomplete(ta);
+    }).catch(() => {});
+
+    // ArrowUp on empty composer recalls last user message (like many chat apps).
+    const _wireArrowUpRecall = (composer) =>
+      wireArrowUpRecall(composer, () => getLastUserMessageFromChatHistory(), {
+        autoResize: uiModule?.autoResize,
+      });
+
+    const composer = document.getElementById('message');
+    if (!_wireArrowUpRecall(composer)) {
+      // Init can run before #message exists (templated UI); short retries only.
+      try { requestAnimationFrame(() => _wireArrowUpRecall(document.getElementById('message'))); } catch (_) {}
+      setTimeout(() => _wireArrowUpRecall(document.getElementById('message')), 250);
+    }
   }
 
   // addMessage, createMsgFooter, displayMetrics, hideWelcomeScreen, showWelcomeScreen
@@ -450,6 +526,8 @@ import createResearchSynapse from './researchSynapse.js';
           const ok = await sessionModule.materializePendingSession();
           if (!ok || !sessionModule.getCurrentSessionId()) { _releaseSendFlag(); return; }
         } else {
+          el('message').value = '';
+          if (uiModule.autoResize) uiModule.autoResize(el('message'));
           addMessage('assistant',
             'No chat session active. You can:\n\n' +
             '- Open the model picker in the chat box and pick a model\n' +
@@ -459,6 +537,8 @@ import createResearchSynapse from './researchSynapse.js';
           return;
         }
       } catch (e) {
+        el('message').value = '';
+        if (uiModule.autoResize) uiModule.autoResize(el('message'));
         addMessage('assistant',
           'No chat session active. You can:\n\n' +
           '- Open the model picker in the chat box and pick a model\n' +
@@ -505,13 +585,22 @@ import createResearchSynapse from './researchSynapse.js';
 
     // Declare accumulated outside try block so it's accessible in catch
     let accumulated = '';
+    // Are we currently inside an unclosed <think> block? Toggled per think/answer
+    // cycle so a multi-round agent response (one reasoning phase PER round) wraps each
+    // round's reasoning in its own <think>…</think> instead of leaking rounds 2+ as text.
+    let _thinkOpen = false;
     let holder = null;
     let finalMeta = null;
-    let finalModelName = null;
     let spinner = null;
     let timedOut = false;
     let processingProbeTimer = null;
     let processingProbeAbort = null;
+    let _renderStream = () => {};
+    let _cancelThinkingTimer = () => {};
+    let _removeThinkingSpinner = () => {};
+    let timeoutId = null;
+    let responseTimeoutCleared = false;
+    let clearResponseTimeout = () => {};
     const clearProcessingProbe = () => {
       if (processingProbeTimer) {
         clearTimeout(processingProbeTimer);
@@ -750,6 +839,22 @@ import createResearchSynapse from './researchSynapse.js';
       if (el('bash-toggle').checked) {
         fd.append('allow_bash', 'true');
       }
+      // Plan mode: agent investigates read-only and proposes a plan to approve.
+      // Only meaningful in agent mode, and never alongside deep research.
+      // _forcePlanOff is a one-shot set by "Approve & Run" so the execution turn
+      // runs with full tools even though the Plan toggle is still on.
+      const _planToggle = el('plan-toggle');
+      const planTurn = !_forcePlanOff && isAgentMode && _planToggle && _planToggle.checked && !el('research-toggle').checked;
+      _forcePlanOff = false;
+      if (planTurn) {
+        fd.append('plan_mode', 'true');
+        fd.set('mode', 'agent');
+      } else if (isAgentMode) {
+        // Executing (not proposing): send the stored plan back so the backend
+        // pins it in context and the agent can always re-reference it.
+        const _sp = _getStoredPlan();
+        if (_sp) fd.append('approved_plan', _sp);
+      }
       const ragChk = el('rag-toggle');
       if (ragChk && !ragChk.checked) {
         fd.append('use_rag', 'false');
@@ -757,6 +862,10 @@ import createResearchSynapse from './researchSynapse.js';
       const incognitoChk = el('incognito-toggle');
       if (incognitoChk && incognitoChk.checked) {
         fd.append('incognito', 'true');
+      }
+      const _ws = (Storage.KEYS && Storage.get(Storage.KEYS.WORKSPACE, '')) || '';
+      if (_ws) {
+        fd.append('workspace', _ws);
       }
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
@@ -772,13 +881,26 @@ import createResearchSynapse from './researchSynapse.js';
 
       // Timeout: 6 min for research and agent mode, 3 min otherwise
       const timeoutMs = el('research-toggle').checked || _isAgent ? RESEARCH_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
-      const timeoutId = setTimeout(() => {
+      timeoutId = setTimeout(() => {
         if (!abortCtrl.signal.aborted) {
           timedOut = true;
           abortCtrl._reason = 'timeout';
+          try {
+            if (streamSessionId) {
+              fetch(`/api/chat/stop/${encodeURIComponent(streamSessionId)}`, {
+                method: 'POST',
+                credentials: 'same-origin',
+              }).catch(() => {});
+            }
+          } catch (_) {}
           abortCtrl.abort();
         }
       }, timeoutMs);
+      clearResponseTimeout = () => {
+        if (responseTimeoutCleared) return;
+        responseTimeoutCleared = true;
+        clearTimeout(timeoutId);
+      };
       
       const box = el('chat-history');
       holder = document.createElement('div');
@@ -804,11 +926,13 @@ import createResearchSynapse from './researchSynapse.js';
         loadingText = 'Processing request...';
       }
 
-      var roleLabel = _shortModel(modelName);
+      var roleLabel = _modelRouteLabel(modelName, modelName);
       var _charNameInit = presetsModule.getCharacterName ? presetsModule.getCharacterName() : '';
       if (_charNameInit) roleLabel = _charNameInit;
       const roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-      holder.innerHTML = `<div class="role">${roleLabel} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
+      holder.innerHTML = `<div class="role">${uiModule.esc(roleLabel)} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
+      holder._requestedModel = modelName;
+      holder._actualModel = modelName;
       _applyModelColor(holder.querySelector('.role'), modelName);
       holder.style.position = 'relative';
       
@@ -904,16 +1028,19 @@ import createResearchSynapse from './researchSynapse.js';
       // the agent so natural-language times like "today at 9pm" are
       // interpreted in YOUR timezone, not the server's.
       const _tzOffsetMin = -new Date().getTimezoneOffset();
+      const _tzName = (() => {
+        try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; }
+        catch { return ''; }
+      })();
       const res = await fetch(`${API_BASE}/api/chat_stream`, {
         method: 'POST',
         body: fd,
-        headers: { 'X-Tz-Offset': String(_tzOffsetMin) },
+        headers: { 'X-Tz-Offset': String(_tzOffsetMin), 'X-Tz-Name': _tzName },
         signal: abortCtrl.signal
       });
       
-      clearTimeout(timeoutId);
-      
       if (!res.ok) {
+        clearResponseTimeout();
         if (res.status === 404) {
           // Session was deleted (e.g. by AI) — reload and go to welcome
           holder.remove();
@@ -949,6 +1076,11 @@ import createResearchSynapse from './researchSynapse.js';
         enableResearchBtn();
         return;
       }
+
+      // Mark the chat log busy while streaming so screen readers wait for the
+      // settled response instead of announcing every token. Cleared in finally.
+      const _chatLog = document.getElementById('chat-history');
+      if (_chatLog) _chatLog.setAttribute('aria-busy', 'true');
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -986,13 +1118,13 @@ import createResearchSynapse from './researchSynapse.js';
       }
       const esc = uiModule.esc;
       // Remove thinking spinner helper
-      function _removeThinkingSpinner() {
+      _removeThinkingSpinner = () => {
         const el = document.querySelector('.agent-thinking-dots');
         if (el) {
           if (el._spinner) el._spinner.destroy();
           el.remove();
         }
-      }
+      };
 
       // Tool-aware thinking spinner
       let _lastToolName = '';
@@ -1056,9 +1188,9 @@ import createResearchSynapse from './researchSynapse.js';
           }
         }, 400);
       }
-      function _cancelThinkingTimer() {
+      _cancelThinkingTimer = () => {
         if (_textPauseTimer) { clearTimeout(_textPauseTimer); _textPauseTimer = null; }
-      }
+      };
 
       // Document streaming state (text-fence detection)
       let _docFenceOpened = false;
@@ -1072,11 +1204,8 @@ import createResearchSynapse from './researchSynapse.js';
       let _liveThinkToggle = null;
       let _liveThinkDomId = null;
 
-      // Offscreen measurement div — reused across renders
-      let _measureDiv = null;
-
       function _replyAfterClosedThinking(text) {
-        const closeRe = /<\/think(?:ing)?>/gi;
+        const closeRe = /<\/(?:think(?:ing)?|thought)>|<channel\|>/gi;
         let match = null;
         let last = null;
         while ((match = closeRe.exec(text || '')) !== null) last = match;
@@ -1085,7 +1214,7 @@ import createResearchSynapse from './researchSynapse.js';
       }
 
       // Direct render helper for streaming text
-      function _renderStream() {
+      _renderStream = () => {
         let dt = stripToolBlocks(roundText);
         const bodyEl = roundHolder.querySelector('.body');
         const contentEl = _ensureStreamLayout(bodyEl);
@@ -1103,7 +1232,7 @@ import createResearchSynapse from './researchSynapse.js';
             replyTrimmed = (replyText || '').trim();
           } else {
             // Non-tag: check for garbled <think> (reasoning\n<think>reply)
-            const _gm = dt.match(/^[\s\S]+?<think(?:ing)?>\s*([\s\S]*?)(?:<\/think(?:ing)?>)?\s*$/i);
+            const _gm = dt.match(/^[\s\S]+?<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*([\s\S]*?)(?:<\/(?:think(?:ing)?|thought)>)?\s*$/i);
             if (_gm && _gm[1].trim()) {
               replyTrimmed = _gm[1].trim();
             } else {
@@ -1129,88 +1258,50 @@ import createResearchSynapse from './researchSynapse.js';
             }
           }
           if (replyTrimmed) {
-            const replyHtml = markdownModule.mdToHtml(markdownModule.squashOutsideCode(replyTrimmed));
-            const prevLen = liveReply._prevTextLen || 0;
-            liveReply.innerHTML = replyHtml;
-            _fadeNewTokens(liveReply, prevLen);
-            liveReply._prevTextLen = liveReply.textContent.length;
-            if (window.hljs) liveReply.querySelectorAll('pre code').forEach((b) => window.hljs.highlightElement(b));
+            const r = liveReply._streamRenderer ||
+              (liveReply._streamRenderer = createStreamRenderer(liveReply, {
+                render: (t) => markdownModule.mdToHtml(markdownModule.squashOutsideCode(t)),
+                hljs: window.hljs,
+              }));
+            r.update(replyTrimmed);
           }
           // Reply empty or not — preserve thinking bar, don't fall through to full re-render
           uiModule.scrollHistory();
           return;
         }
 
-        const prevLen = contentEl._prevTextLen || 0;
         // If thinking is still streaming (unclosed <think>), show indicator instead of raw text
         if (markdownModule.hasUnclosedThinkTag && markdownModule.hasUnclosedThinkTag(dt)) {
-          const thinkStart = dt.search(/<think(?:ing)?>/i);
-          const thinkContent = dt.substring(thinkStart).replace(/<think(?:ing)?>/i, '').trim();
+          const thinkStart = dt.search(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought/i);
+          const thinkContent = dt.substring(Math.max(thinkStart, 0))
+            .replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought\s*\n?/i, '')
+            .replace(/<channel\|>/gi, '')
+            .trim();
           const lines = thinkContent.split('\n').length;
           // Don't show beforeThink text during streaming — it'll appear in the final render
           // This prevents the "split into two" duplication
           contentEl.innerHTML =
             '<div class="thinking-section"><div class="thinking-header"><div class="thinking-header-left">Thinking' +
             (lines > 1 ? ` (${lines} lines)` : '') + '</div></div></div>';
-          contentEl._prevTextLen = 0;
+          // The stream renderer self-heals when it next sees this overwritten
+          // container (streamingRenderer.js), so no explicit reset is needed here.
           uiModule.scrollHistory();
           return;
         }
-        const html = markdownModule.processWithThinking(markdownModule.squashOutsideCode(dt));
 
-        // Smooth expand only for regular chat text (not thinking/agent blocks)
-        const _hasThinking = html.includes('thinking-section');
-        const _isAgentRound = roundHolder !== holder;
-        if (!_hasThinking && !_isAgentRound) {
-          // Render into offscreen clone to measure new height before swapping
-          if (!_measureDiv) {
-            _measureDiv = document.createElement('div');
-            _measureDiv.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;z-index:-1;';
-          }
-          _measureDiv.style.width = contentEl.offsetWidth + 'px';
-          _measureDiv.className = contentEl.className;
-          _measureDiv.innerHTML = html;
-          contentEl.parentNode.appendChild(_measureDiv);
-          const measuredH = _measureDiv.offsetHeight;
-          _measureDiv.remove();
-          const curMin = parseFloat(contentEl.style.minHeight) || 0;
-          contentEl.style.minHeight = Math.max(curMin, measuredH) + 'px';
-        } else {
-          contentEl.style.minHeight = '';
-        }
-
-        contentEl.innerHTML = html;
-        _fadeNewTokens(contentEl, prevLen);
-        contentEl._prevTextLen = contentEl.textContent.length;
-        if (window.hljs) contentEl.querySelectorAll('pre code').forEach((b) => window.hljs.highlightElement(b));
+        // Incremental streaming render: freeze finalized blocks, re-render only the
+        // growing tail, and highlight each code block once on completion. This is
+        // what keeps code-block hover buttons from flickering and avoids the O(N^2)
+        // re-parse/re-highlight of the whole message on every token.
+        // See streamingRenderer.js / streamingSegmenter.js.
+        const renderer = contentEl._streamRenderer ||
+          (contentEl._streamRenderer = createStreamRenderer(contentEl, {
+            render: (t) => markdownModule.processWithThinking(markdownModule.squashOutsideCode(t)),
+            hljs: window.hljs,
+          }));
+        renderer.update(dt);
         uiModule.scrollHistory();
-      }
-
-      // Walk text nodes, skip past `prevLen` characters of old text,
-      // wrap everything after that in <span class="token-new"> for fade-in
-      function _fadeNewTokens(container, prevLen) {
-        if (!prevLen) return; // First chunk — skip, whole msg already has entrance anim
-        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-        let charCount = 0;
-        const toWrap = [];
-        while (walker.nextNode()) {
-          const node = walker.currentNode;
-          const len = node.textContent.length;
-          if (charCount + len <= prevLen) { charCount += len; continue; }
-          const splitAt = charCount < prevLen ? prevLen - charCount : 0;
-          toWrap.push({ node, splitAt });
-          charCount += len;
-        }
-        for (const { node, splitAt } of toWrap) {
-          const parent = node.parentNode;
-          if (!parent || parent.closest('pre, .think-content')) continue;
-          const target = splitAt > 0 ? node.splitText(splitAt) : node;
-          const span = document.createElement('span');
-          span.className = 'token-new';
-          parent.replaceChild(span, target);
-          span.appendChild(target);
-        }
-      }
+      };
 
       let _nextIsError = false;
       let _streamSawDone = false;
@@ -1336,7 +1427,8 @@ import createResearchSynapse from './researchSynapse.js';
                 typewriterInto(roundHolder.querySelector('.body'), errMsg);
                 break;
               }
-              if (json.delta || json.type === 'tool_start' || json.type === 'agent_step' || json.type === 'doc_stream_delta') {
+              if (json.delta || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
+                clearResponseTimeout();
                 clearProcessingProbe();
               }
               if (json.delta) {
@@ -1347,12 +1439,15 @@ import createResearchSynapse from './researchSynapse.js';
                 if (_threadAbove && _threadAbove.classList.contains('agent-thread') && !_threadAbove.classList.contains('has-bottom')) {
                   _threadAbove.classList.add('has-bottom');
                 }
-                // VLLM reasoning tokens: wrap in <think> tags for the thinking UI
+                // VLLM reasoning tokens: wrap in <think> tags for the thinking UI.
+                // Stateful open/close (not a whole-message substring check) so each round
+                // of a multi-round agent response gets its own <think>…</think> — otherwise
+                // only round 1 is wrapped and rounds 2+ reasoning leaks into the answer.
                 let _delta = json.delta;
                 if (json.thinking) {
-                  if (!accumulated.includes('<think>')) _delta = '<think>' + _delta;
-                } else if (accumulated.includes('<think>') && !accumulated.includes('</think>')) {
-                  _delta = '</think>' + _delta;
+                  if (!_thinkOpen) { _delta = '<think>' + _delta; _thinkOpen = true; }
+                } else if (_thinkOpen) {
+                  _delta = '</think>' + _delta; _thinkOpen = false;
                 }
                 const wasEmpty = !accumulated;
                 accumulated += _delta;
@@ -1401,7 +1496,7 @@ import createResearchSynapse from './researchSynapse.js';
                 // Detect non-tag thinking patterns: "Thinking:", "Thinking Process:", Gemma-style reasoning
                 // These patterns don't use <think> tags, so we simulate unclosed thinking during streaming
                 const _replyPrefixes = ['Hey', 'Hi ', 'Hi!', 'Hello', 'Sure', 'Yes', 'No ', 'No,', 'Yo', 'OK', 'Here', 'Absolutely', 'Of course', 'Great', 'Alright', 'Thanks', 'Welcome', 'Good ', "I'm happy", "I'd be"];
-                if (!hasUnclosedThink && !roundText.includes('<think')) {
+                if (!hasUnclosedThink && !/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought/i.test(roundText)) {
                   const _trimmedRT = roundText.trimStart();
                   const _isReasoning = markdownModule.startsWithReasoningPrefix(_trimmedRT);
                   if (_isReasoning) {
@@ -1427,10 +1522,10 @@ import createResearchSynapse from './researchSynapse.js';
                     }
                   }
                 }
-                if (!hasUnclosedThink && /^<think(?:ing)?>\s*<\/think(?:ing)?>/i.test(roundText)) {
+                if (!hasUnclosedThink && /^<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*<\/(?:think(?:ing)?|thought)>/i.test(roundText)) {
                   // Empty <think></think> — the model likely put thinking outside the tags
-                  const afterEmpty = roundText.replace(/^<think(?:ing)?>\s*<\/think(?:ing)?>/i, '').trim();
-                  const closeTags = (afterEmpty.match(/<\/think(?:ing)?>/gi) || []).length;
+                  const afterEmpty = roundText.replace(/^<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*<\/(?:think(?:ing)?|thought)>/i, '').trim();
+                  const closeTags = (afterEmpty.match(/<\/(?:think(?:ing)?|thought)>/gi) || []).length;
                   if (closeTags === 0 && afterEmpty.length > 0) {
                     hasUnclosedThink = true; // still waiting for real closing tag
                   }
@@ -1439,13 +1534,13 @@ import createResearchSynapse from './researchSynapse.js';
                 // Only applies when there's a second </think> later (model leaked thinking outside tags)
                 // Do NOT trigger if the text after </think> contains tool calls (that's real content)
                 if (!hasUnclosedThink && isThinking) {
-                  const _thinkMatch = roundText.match(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/i);
+                  const _thinkMatch = roundText.match(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i);
                   const _thinkLen = _thinkMatch ? _thinkMatch[1].trim().length : 0;
                   if (_thinkLen < 20) {
-                    const _afterClose = roundText.replace(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/i, '').trim();
+                    const _afterClose = roundText.replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/i, '').trim();
                     // Only keep waiting if there's trailing text that looks like thinking (not tool calls)
                     const _hasToolCall = /```(?:bash|python|web_search|read_file|write_file|create_document|edit_document|manage_|generate_image)/i.test(_afterClose);
-                    const _hasOrphanClose = /<\/think(?:ing)?>/i.test(_afterClose);
+                    const _hasOrphanClose = /<\/(?:think(?:ing)?|thought)>/i.test(_afterClose);
                     if (!_hasToolCall && (_hasOrphanClose || (Date.now() - thinkingStartTime) < 500)) {
                       hasUnclosedThink = true; // keep waiting for real </think>
                     }
@@ -1502,8 +1597,12 @@ import createResearchSynapse from './researchSynapse.js';
                   }
                 } else if (hasUnclosedThink && isThinking) {
                   if (_liveThinkInner) {
-                    // Extract raw thinking text (strip all <think>/<thinking> open/close tags and prefixes)
-                    var thinkText = roundText.replace(/<\/?think(?:ing)?>/gi, '');
+                    // Extract raw thinking text (strip known thinking wrappers and prefixes)
+                    var thinkText = roundText
+                      .replace(/<\/?(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi, '')
+                      .replace(/<\|channel>thought\s*\n?/gi, '')
+                      .replace(/<\|channel>response\s*\n?/gi, '')
+                      .replace(/<channel\|>/gi, '');
                     thinkText = thinkText.replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
                     _liveThinkInner.innerHTML = markdownModule.mdToHtml(thinkText);
                     // Keep thinking box scrolled to bottom
@@ -1744,22 +1843,92 @@ import createResearchSynapse from './researchSynapse.js';
                 if (!_isBg && holder) {
                   const roleEl = holder.querySelector('.role');
                   if (roleEl) {
-                    const tsSpan = roleEl.querySelector('.role-timestamp');
-                    var _modelLabel = _shortModel(json.model);
-                    if (json.suffix) {
-                      _modelLabel += ' (' + json.suffix + ')';
-                      holder._roleSuffix = json.suffix;
-                    }
+                    holder._requestedModel = json.requested_model || json.model || holder._requestedModel;
+                    holder._actualModel = json.model || holder._actualModel || holder._requestedModel;
+                    if (json.suffix) holder._roleSuffix = json.suffix;
                     // Prepend character name if sent by server or set locally
                     var _charName = json.character_name || (presetsModule.getCharacterName ? presetsModule.getCharacterName() : '');
-                    if (_charName) {
-                      _modelLabel = _charName;
-                      holder._characterName = _charName;
-                    }
-                    roleEl.textContent = _modelLabel + ' ';
-                    _applyModelColor(roleEl, json.model);
-                    if (tsSpan) roleEl.appendChild(tsSpan);
+                    if (_charName) holder._characterName = _charName;
+                    _setRoleModelLabel(roleEl, holder._requestedModel, holder._actualModel, {
+                      suffix: holder._roleSuffix,
+                      characterName: holder._characterName,
+                    });
                   }
+                }
+              } else if (json.type === 'fallback') {
+                // The selected model failed and another provider answered. Make
+                // it visible so a misconfigured provider is never silently
+                // masked under the selected model's name.
+                if (!_isBg) {
+                  var _selM = _shortModel(json.selected_model || '');
+                  var _ansM = _shortModel(json.answered_by || '');
+                  uiModule.showToast('⚠ ' + _selM + ' failed — answered by ' + _ansM, 6000);
+                  if (holder) {
+                    var _rEl = holder.querySelector('.role');
+                    if (_rEl) {
+                      var _tsS = _rEl.querySelector('.role-timestamp');
+                      _rEl.textContent = _ansM + ' (fallback) ';
+                      _rEl.title = (json.selected_model || '') + ' failed' +
+                        (json.reason ? ': ' + json.reason : '') + ' — answered by ' + (json.answered_by || '');
+                      _applyModelColor(_rEl, json.answered_by);
+                      if (_tsS) _rEl.appendChild(_tsS);
+                      holder._requestedModel = json.selected_model || holder._requestedModel || modelName;
+                      const _hasResolvedActual = holder._actualModel && !_sameModelName(holder._actualModel, holder._requestedModel);
+                      holder._actualModel = _hasResolvedActual ? holder._actualModel : (json.answered_by || holder._actualModel || holder._requestedModel);
+                      _setRoleModelLabel(_rEl, holder._requestedModel, holder._actualModel, {
+                        suffix: holder._roleSuffix,
+                        characterName: holder._characterName,
+                        reason: json.reason,
+                      });
+                    }
+                  }
+                }
+              } else if (json.type === 'rounds_exhausted') {
+                // The agent hit the per-turn step limit while still working.
+                // Offer a Continue button instead of stalling silently.
+                // NOTE: append to the chat-history container (bottom), NOT the
+                // message body — the body innerHTML is re-rendered at stream
+                // finalize, which would wipe a note placed inside it.
+                const _chatBox = document.getElementById('chat-history');
+                if (!_isBg && _chatBox) {
+                  // Drop any prior box so repeated cap-hits each get a fresh
+                  // Continue at the bottom (multiple continues in a row).
+                  const _old = _chatBox.querySelector('.rounds-exhausted');
+                  if (_old) _old.remove();
+                  const note = document.createElement('div');
+                  note.className = 'stopped-indicator rounds-exhausted';
+                  const label = document.createElement('span');
+                  label.className = 'rounds-exhausted-label';
+                  label.textContent = `Reached the ${json.rounds || ''}-step limit — not finished.`;
+                  note.appendChild(label);
+                  const contBtn = document.createElement('button');
+                  contBtn.className = 'continue-btn';
+                  contBtn.title = 'Continue the task';
+                  contBtn.textContent = 'Continue ▸';
+                  const _holder = currentHolder;
+                  contBtn.addEventListener('click', () => {
+                    note.remove();
+                    _hideUserBubble = true;
+                    _pendingContinue = _holder;
+                    const msgInput = uiModule.el('message');
+                    if (msgInput) {
+                      msgInput.value = 'You hit the step limit before finishing — the task is not complete. Continue from exactly where you left off and keep going until it is done. Do NOT repeat work already done.';
+                      const sb = document.querySelector('.send-btn');
+                      if (sb) sb.click();
+                    }
+                  });
+                  note.appendChild(contBtn);
+                  _chatBox.appendChild(note);
+                  try { note.scrollIntoView({ block: 'end', behavior: 'smooth' }); } catch (_) { uiModule.scrollHistory && uiModule.scrollHistory(); }
+                }
+              } else if (json.type === 'model_actual') {
+                if (!_isBg && holder) {
+                  holder._requestedModel = json.requested_model || holder._requestedModel || modelName;
+                  holder._actualModel = json.model || holder._actualModel || holder._requestedModel;
+                  _setRoleModelLabel(holder.querySelector('.role'), holder._requestedModel, holder._actualModel, {
+                    suffix: holder._roleSuffix,
+                    characterName: holder._characterName,
+                  });
                 }
               } else if (json.type === 'attachments') {
                 if (_isBg) continue;
@@ -1838,6 +2007,10 @@ import createResearchSynapse from './researchSynapse.js';
                 }
               } else if (json.type === 'metrics') {
                 metrics = json.data;
+                if (!_isBg && holder && metrics) {
+                  holder._requestedModel = metrics.requested_model || holder._requestedModel || modelName;
+                  holder._actualModel = metrics.model || holder._actualModel || holder._requestedModel;
+                }
                 if (_isBg) {
                   var bgM = _backgroundStreams.get(streamSessionId);
                   if (bgM) bgM.metrics = json.data;
@@ -1927,7 +2100,7 @@ import createResearchSynapse from './researchSynapse.js';
                 const node = document.createElement('div')
                 node.className = 'agent-thread-node running';
                 const cmdHtml = cmd ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : '';
-                node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">\u25B6</span><span class="agent-thread-tool">${toolLabel}</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
+                node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">\u25B6</span><span class="agent-thread-tool">${esc(toolLabel)}</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
                 // Expand/collapse via delegated click handler (init at module bottom).
                 threadWrap.appendChild(node);
                 currentToolBubble = node;
@@ -2006,7 +2179,33 @@ import createResearchSynapse from './researchSynapse.js';
                   if (json.output && json.output.trim()) {
                     outHtml = `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(json.output)}</pre></details>`;
                   }
-                  const cmdHtml2 = cmd ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : '';
+                  // File-write diff (write_file): show a before/after unified diff.
+                  let diffHtml = '';
+                  if (json.diff && json.diff.text) {
+                    const d = json.diff;
+                    // Collapsed summary: filename + +adds (green) / −dels (red).
+                    const stat = [
+                      d.new_file ? '<span class="diff-stat-new">new</span>' : '',
+                      d.added ? `<span class="diff-stat-add">+${d.added}</span>` : '',
+                      d.removed ? `<span class="diff-stat-del">−${d.removed}</span>` : '',
+                    ].filter(Boolean).join(' ');
+                    const rows = d.text.split('\n').map(line => {
+                      let cls = 'diff-ctx', text = line;
+                      if (line.startsWith('+++') || line.startsWith('---')) cls = 'diff-meta';
+                      else if (line.startsWith('@@')) cls = 'diff-hunk';
+                      // Drop the leading diff marker (+/-/space) — the row colour
+                      // already encodes add/del, and keeping it doubles up with
+                      // markdown "- " bullets (reads as "+-"/"--").
+                      else if (line.startsWith('+')) { cls = 'diff-add'; text = line.slice(1); }
+                      else if (line.startsWith('-')) { cls = 'diff-del'; text = line.slice(1); }
+                      else if (line.startsWith(' ')) { text = line.slice(1); }
+                      return `<span class="${cls}">${esc(text) || '&nbsp;'}</span>`;
+                    }).join('');  // spans are display:block — a literal \n here would double-space the diff
+                    diffHtml = `<details class="agent-tool-output agent-tool-diff"><summary><span class="diff-file">${esc(d.file || 'diff')}</span> <span class="diff-summary-stats">${stat}</span></summary><pre class="diff-pre">${rows}</pre></details>`;
+                  }
+                  // For file edits the "command" is the raw JSON args — redundant
+                  // next to the diff, so hide it when we have a diff to show.
+                  const cmdHtml2 = (cmd && !(json.diff && json.diff.text)) ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : '';
                   // Preserve the user's .open choice across the innerHTML
                   // rewrite \u2014 otherwise expanding a running tool collapses
                   // it as soon as the result lands, forcing the user to
@@ -2014,7 +2213,7 @@ import createResearchSynapse from './researchSynapse.js';
                   // bottom of file) so no per-node listener needed.
                   const _wasOpen = currentToolBubble.classList.contains('open');
                   currentToolBubble.className = 'agent-thread-node' + (ok ? '' : ' error') + (_wasOpen ? ' open' : '');
-                  currentToolBubble.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(json.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${cmdHtml2}${outHtml}</div>`;
+                  currentToolBubble.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(json.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${cmdHtml2}${outHtml}${diffHtml}</div>`;
                   // Reset so thinking spinner between tools says "Thinking" not the old tool's label
                   _lastToolName = '';
                   uiModule.scrollHistory();
@@ -2031,10 +2230,19 @@ import createResearchSynapse from './researchSynapse.js';
                 if (json.screenshot && currentToolBubble) {
                   const contentEl = currentToolBubble.querySelector('.agent-thread-content');
                   if (contentEl) {
-                    const details = document.createElement('details');
-                    details.className = 'agent-tool-output';
-                    details.innerHTML = `<summary>Screenshot</summary><img src="${json.screenshot}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" />`;
-                    contentEl.appendChild(details);
+                    const screenshotSrc = chatRenderer.safeToolScreenshotSrc(json.screenshot);
+                    if (screenshotSrc) {
+                      const details = document.createElement('details');
+                      details.className = 'agent-tool-output';
+                      const summary = document.createElement('summary');
+                      summary.textContent = 'Screenshot';
+                      const img = document.createElement('img');
+                      img.src = screenshotSrc;
+                      img.style.cssText = 'max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)';
+                      details.appendChild(summary);
+                      details.appendChild(img);
+                      contentEl.appendChild(details);
+                    }
                   }
                 }
                 // --- Reload sessions after manage_session tool (delete, rename, etc.) ---
@@ -2109,6 +2317,159 @@ import createResearchSynapse from './researchSynapse.js';
                 if (_isBg) continue;
                 chatStream.handleUIControl(json.data || {});
 
+              } else if (json.type === 'ask_user') {
+                if (_isBg) continue;
+                // The agent posed a multiple-choice question; the turn has ended.
+                // Render clickable options at the bottom of the history. The
+                // user's pick is sent as the next message and the agent resumes.
+                _cancelThinkingTimer();
+                _removeThinkingSpinner();
+                const _aq = json.data || {};
+                const _opts = Array.isArray(_aq.options) ? _aq.options : [];
+                if (_aq.question && _opts.length) {
+                  const chatBox = document.getElementById('chat-history');
+                  // Drop any prior unanswered card so only the latest shows.
+                  chatBox.querySelectorAll('.ask-user-card').forEach(n => n.remove());
+                  const card = document.createElement('div');
+                  card.className = 'ask-user-card';
+                  const multi = !!_aq.multi;
+                  // Group the choices for assistive tech and label the group with
+                  // the question (set below); make the card focusable so it can be
+                  // moved to when it appears.
+                  card.setAttribute('role', 'group');
+                  card.tabIndex = -1;
+                  // Render any emoji in agent-supplied text through the app's
+                  // pipeline: escape, then svgify to monochrome theme-tinted
+                  // glyphs (project rule: never colorful emoji; respects the
+                  // "Text-only Emojis" setting like the rest of the chat).
+                  const _emo = (s) => svgifyEmoji(uiModule.esc(String(s)));
+
+                  // Header row holds the close (×) to dismiss the affordances and
+                  // just type a reply instead.
+                  const head = document.createElement('div');
+                  head.className = 'ask-user-head';
+                  const closeBtn = document.createElement('button');
+                  closeBtn.type = 'button';
+                  closeBtn.className = 'modal-close ask-user-close';
+                  closeBtn.setAttribute('aria-label', 'Dismiss question');
+                  closeBtn.textContent = '×';
+                  closeBtn.addEventListener('click', () => {
+                    card.remove();
+                    const mi = uiModule.el('message');
+                    if (mi) mi.focus();
+                  });
+                  head.appendChild(closeBtn);
+                  card.appendChild(head);
+
+                  // Render the question inside the card so it's self-contained:
+                  // some models call ask_user without first narrating the question
+                  // as assistant text, in which case the card would otherwise show
+                  // bare options with no prompt.
+                  if (_aq.question) {
+                    const q = document.createElement('div');
+                    q.className = 'ask-user-question';
+                    q.id = `ask-user-q-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+                    q.innerHTML = _emo(_aq.question);
+                    card.appendChild(q);
+                    // Label the choice group with the question for screen readers.
+                    card.setAttribute('aria-labelledby', q.id);
+                  } else {
+                    card.setAttribute('aria-label', 'Question from the assistant');
+                  }
+
+                  const list = document.createElement('div');
+                  list.className = 'ask-user-options';
+                  card.appendChild(list);
+
+                  const _send = (text) => {
+                    if (!text) return;
+                    // Remove the card once answered — the choice is sent as a
+                    // normal user message (and the question persists as the
+                    // assistant text above), so the affordances are spent.
+                    card.remove();
+                    const mi = uiModule.el('message');
+                    if (mi) mi.value = text;
+                    const sb = document.querySelector('.send-btn');
+                    if (sb) sb.click();
+                  };
+
+                  _opts.forEach((opt, i) => {
+                    const label = (opt && opt.label) ? String(opt.label) : String(opt || '');
+                    if (!label) return;
+                    const descr = (opt && opt.description) ? String(opt.description) : '';
+                    const row = document.createElement(multi ? 'label' : 'button');
+                    row.className = 'ask-user-option';
+                    if (multi) {
+                      const cb = document.createElement('input');
+                      cb.type = 'checkbox';
+                      cb.value = label;
+                      row.appendChild(cb);
+                    }
+                    const txt = document.createElement('span');
+                    txt.className = 'ask-user-option-label';
+                    txt.innerHTML = _emo(label);
+                    row.appendChild(txt);
+                    if (descr) {
+                      const d = document.createElement('span');
+                      d.className = 'ask-user-option-desc';
+                      d.innerHTML = _emo(descr);
+                      row.appendChild(d);
+                    }
+                    if (!multi) {
+                      row.type = 'button';
+                      row.addEventListener('click', () => _send(label));
+                    }
+                    list.appendChild(row);
+                  });
+
+                  // Free-text "Other" — type a custom answer + send (Enter or →).
+                  const other = document.createElement('div');
+                  other.className = 'ask-user-other';
+                  const otherInput = document.createElement('input');
+                  otherInput.type = 'text';
+                  otherInput.className = 'styled-prompt-input ask-user-other-input';
+                  otherInput.placeholder = multi ? 'Other (added to selection)…' : 'Other… (type your own answer)';
+                  otherInput.setAttribute('aria-label', multi ? 'Add a custom option' : 'Type a custom answer');
+                  const otherSend = document.createElement('button');
+                  otherSend.type = 'button';
+                  otherSend.className = 'confirm-btn confirm-btn-primary ask-user-other-send';
+                  otherSend.setAttribute('aria-label', 'Send answer');
+                  otherSend.textContent = multi ? 'Send selection' : 'Send';
+                  const _submit = () => {
+                    const free = otherInput.value.trim();
+                    if (multi) {
+                      const picked = Array.from(card.querySelectorAll('.ask-user-option input:checked')).map(c => c.value);
+                      if (free) picked.push(free);
+                      if (picked.length) _send(picked.join(', '));
+                    } else if (free) {
+                      _send(free);
+                    }
+                  };
+                  otherSend.addEventListener('click', _submit);
+                  otherInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+                      e.preventDefault();
+                      _submit();
+                    }
+                  });
+                  other.appendChild(otherInput);
+                  other.appendChild(otherSend);
+                  card.appendChild(other);
+
+                  chatBox.appendChild(card);
+                  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                  // Move focus to the card so keyboard/screen-reader users land on
+                  // the question + choices when it appears.
+                  try { card.focus(); } catch (_) {}
+                }
+
+              } else if (json.type === 'plan_update') {
+                if (_isBg) continue;
+                // Agent wrote back to the plan (ticked a step / revised). Update
+                // the stored plan + live-refresh the docked plan window.
+                const _pu = (json.data && json.data.plan) ? json.data.plan : '';
+                if (_pu) _setStoredPlan(_pu);
+
               } else if (json.type === 'agent_step') {
                 if (_isBg) continue;
                 _cancelThinkingTimer();
@@ -2132,8 +2493,10 @@ import createResearchSynapse from './researchSynapse.js';
                 const newRole = document.createElement('div');
                 newRole.className = 'role';
                 const metaS = sessionModule.getSessions().find(s => s.id === streamSessionId);
-                newRole.textContent = _shortModel(metaS?.model) || '';
-                _applyModelColor(newRole, metaS?.model);
+                const _roundRequested = holder?._requestedModel || metaS?.model;
+                const _roundActual = holder?._actualModel || _roundRequested;
+                newRole.textContent = _modelRouteLabel(_roundRequested, _roundActual) || '';
+                _applyModelColor(newRole, _roundActual);
                 newWrap.appendChild(newRole);
                 const newBody = document.createElement('div');
                 newBody.className = 'body';
@@ -2239,18 +2602,16 @@ import createResearchSynapse from './researchSynapse.js';
       const _isBgFinal = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
       if (!_isBgFinal) {
         finalMeta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
-        finalModelName = _shortModel(metrics?.model || finalMeta?.model);
-        // Preserve suffix (e.g. "Research") if set by model_info event
-        if (holder._roleSuffix) finalModelName += ' (' + holder._roleSuffix + ')';
+        const _finalActualModel = metrics?.model || holder._actualModel || finalMeta?.model;
+        const _finalRequestedModel = metrics?.requested_model || holder._requestedModel || finalMeta?.model || _finalActualModel;
         // Prepend character name if set
         var _charNameFinal = presetsModule.getCharacterName ? presetsModule.getCharacterName() : '';
-        if (_charNameFinal) finalModelName = _charNameFinal;
         const roleEl = holder.querySelector('.role');
         if (roleEl) {
-          const tsSpan = roleEl.querySelector('.role-timestamp');
-          roleEl.textContent = finalModelName + ' ';
-          _applyModelColor(roleEl, metrics?.model || finalMeta?.model);
-          if (tsSpan) roleEl.appendChild(tsSpan);
+          _setRoleModelLabel(roleEl, _finalRequestedModel, _finalActualModel, {
+            suffix: holder._roleSuffix,
+            characterName: _charNameFinal || holder._characterName,
+          });
         }
         holder.dataset.raw = accumulated;
 
@@ -2308,8 +2669,8 @@ import createResearchSynapse from './researchSynapse.js';
               _finalReply = (_extracted.content || '').trim();
             } else {
               // Non-tag thinking: extract reply from raw text
-              // Handle garbled <think> tag: "Thinking: reasoning\n<think>reply"
-              const _garbledMatch = finalDisplay.match(/^[\s\S]+?<think(?:ing)?>\s*([\s\S]*?)(?:<\/think(?:ing)?>)?\s*$/i);
+              // Handle garbled thinking tag: "Thinking: reasoning\n<think>reply"
+              const _garbledMatch = finalDisplay.match(/^[\s\S]+?<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>\s*([\s\S]*?)(?:<\/(?:think(?:ing)?|thought)>)?\s*$/i);
               if (_garbledMatch && _garbledMatch[1].trim()) {
                 _finalReply = _garbledMatch[1].trim();
               } else {
@@ -2358,8 +2719,8 @@ import createResearchSynapse from './researchSynapse.js';
           _body4b.innerHTML = _sourcesData ? _buildSourcesBox(_sourcesData, _sourcesType, _wasExpanded2) : _sourcesHtml;
         } else if (roundHolder !== holder) {
           // Check if there's thinking content worth showing
-          const _thinkMatch = roundText.match(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/i);
-          if (_thinkMatch && _thinkMatch[1].trim()) {
+          const _thinkingOnly = markdownModule.extractThinkingBlocks(roundText);
+          if (_thinkingOnly.thinkingBlocks?.length && !_thinkingOnly.content) {
             // Show thinking in a collapsed section even if no visible reply text
             const _body4c = roundHolder.querySelector('.body');
             if (_body4c) _body4c.innerHTML = markdownModule.processWithThinking(roundText);
@@ -2409,6 +2770,61 @@ import createResearchSynapse from './researchSynapse.js';
         // Attach footer to the last visible bubble (roundHolder for multi-round agent, holder for single)
         const footerTarget = (roundHolder && roundHolder !== holder && roundHolder.style.display !== 'none') ? roundHolder : holder;
         footerTarget.appendChild(createMsgFooter(footerTarget));
+        // Capture any checklist this message produced as the current plan — both
+        // the initial proposal AND restated progress during execution. Keeps the
+        // stored plan (and the docked plan window) in sync with the latest state.
+        if (accumulated && _CHECKLIST_RE.test(accumulated)) {
+          _setStoredPlan(accumulated);
+        }
+        // Plan mode: the agent has proposed a plan — offer to approve & execute it.
+        // Approving re-sends with plan_mode suppressed (full tools) for one turn.
+        if (planTurn && accumulated.trim()) {
+          const _planText = accumulated;
+          const _runApproved = () => {
+            _approveWrap.remove();
+            _forcePlanOff = true;
+            // Persist the approved plan for THIS chat so it's (a) re-sent and
+            // pinned in context every execution turn, and (b) re-openable via the
+            // plan-button menu. Do this BEFORE flipping the toggle, since the menu
+            // intercept keys off a stored plan existing.
+            _setStoredPlan(_planText);
+            // Approving exits plan mode for good — turn it OFF directly (NOT via
+            // the button's click, which would now open the plan menu instead of
+            // toggling) so execution and every follow-up keep full write tools.
+            try { if (window._setPlanMode) window._setPlanMode(false); } catch (_) {}
+            const _inp = el('message');
+            if (_inp) {
+              _inp.value = 'Approved — execute the plan. The full approved checklist is pinned '
+                + 'for you under "## ACTIVE PLAN"; do NOT go looking for it in tasks, notes, or '
+                + 'memory. Work through it in order, and after each step call the update_plan tool '
+                + 'with the full checklist and that step marked `- [x]`. Do the next unchecked item '
+                + 'until all are done.';
+              _inp.dispatchEvent(new Event('input'));
+            }
+            // Show a clean bubble; the full instruction still goes to the model.
+            _displayOverride = 'Approved the plan.';
+            handleChatSubmit({ preventDefault() {} });
+          };
+          var _approveWrap = document.createElement('div');
+          _approveWrap.className = 'plan-approve-bar';
+          const _approveBtn = document.createElement('button');
+          _approveBtn.type = 'button';
+          _approveBtn.className = 'plan-approve-btn';
+          _approveBtn.textContent = 'Approve & Run';
+          _approveBtn.addEventListener('click', _runApproved);
+          // Open the plan in a draggable, side-dockable window (reuses the
+          // shared modal framework). Approving from the window runs it too.
+          const _openBtn = document.createElement('button');
+          _openBtn.type = 'button';
+          _openBtn.className = 'plan-open-btn';
+          _openBtn.textContent = 'Open in window';
+          _openBtn.addEventListener('click', () => {
+            planWindowModule.openPlanWindow(_planText, _runApproved);
+          });
+          _approveWrap.appendChild(_approveBtn);
+          _approveWrap.appendChild(_openBtn);
+          footerTarget.appendChild(_approveWrap);
+        }
         // Add "View Report" link for completed research
         if (_researchingStreamIds.has(streamSessionId)) {
           _appendViewReportLink(footerTarget, streamSessionId);
@@ -2664,7 +3080,11 @@ import createResearchSynapse from './researchSynapse.js';
         }
       }
     } finally {
+      clearResponseTimeout();
       clearProcessingProbe();
+      // Streaming done — let screen readers announce the settled response.
+      const _chatLogDone = document.getElementById('chat-history');
+      if (_chatLogDone) _chatLogDone.setAttribute('aria-busy', 'false');
       // Always clean up research tracking regardless of background state
       _researchingStreamIds.delete(streamSessionId);
       if (_researchingStreamIds.size === 0) {
@@ -2976,6 +3396,152 @@ import createResearchSynapse from './researchSynapse.js';
   var _insertStreamDoneToast = chatStream.insertStreamDoneToast;
 
   /**
+   * Live-resume a chat run still streaming detached on the server (#2539).
+   *
+   * On session re-entry, GET /api/chat/resume/{id} replays the run's buffer then
+   * streams live; reply tokens render as they arrive. On completion a plain text
+   * reply is finalized in place (canonical bubble via chatRenderer.addMessage, no
+   * reload); a "rich" reply (tool calls, sources, doc streaming, multi-round) is
+   * reloaded from the DB so its full render stays faithful. Returns true if it
+   * attached, false to let the caller fall back to spinner+poll.
+   */
+  export async function resumeStream(sessionId) {
+    if (!sessionId) return false;
+    if (hasActiveStream(sessionId)) return false;
+
+    let res;
+    try {
+      res = await fetch(`${API_BASE}/api/chat/resume/${sessionId}`);
+    } catch (e) {
+      return false;
+    }
+    if (!res.ok || !res.body) return false;
+
+    const box = document.getElementById('chat-history');
+    if (!box) return false;
+
+    // Block duplicate re-attach attempts while this reader is live. A dedicated
+    // set (not _backgroundStreams) so checkBackgroundStream doesn't mistake this
+    // for a same-tab POST stream and spawn its own spinner+poll on re-entry.
+    _resumingStreams.add(sessionId);
+
+    const holder = document.createElement('div');
+    holder.className = 'msg msg-ai';
+    const meta = sessionModule.getSessions().find(s => s.id === sessionId);
+    const roleLabel = _shortModel(meta && meta.model);
+    const roleTs = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    holder.innerHTML = '<div class="role">' + uiModule.esc(roleLabel) +
+      ' <span class="role-timestamp">' + roleTs + '</span></div>' +
+      '<div class="body"><div class="stream-content"></div></div>';
+    _applyModelColor(holder.querySelector('.role'), meta && meta.model);
+    const contentDiv = holder.querySelector('.stream-content');
+    box.appendChild(holder);
+
+    const spinner = spinnerModule.create('Generating response...', 'right');
+    holder.querySelector('.body').appendChild(spinner.createElement());
+    spinner.start();
+    uiModule.scrollHistory();
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let roundText = '';
+    let gotDelta = false;
+    let leftSession = false;
+    let metricsData = null;
+    // "Rich" responses (tool calls, sources, doc streaming, multi-round) need the
+    // full canonical render, which is rebuilt from the saved DB record on reload.
+    // Plain text replies can be finalized in place without a reload.
+    let rich = false;
+
+    const cleanup = () => {
+      try { spinner.destroy(); } catch (_) {}
+      _resumingStreams.delete(sessionId);
+    };
+
+    const renderDelta = () => {
+      const dt = stripToolBlocks(roundText);
+      contentDiv.innerHTML = markdownModule.mdToHtml(markdownModule.squashOutsideCode(dt));
+      uiModule.scrollHistory();
+    };
+
+    try {
+      readLoop:
+      while (true) {
+        // User left this session: stop rendering, the run continues server-side.
+        if (sessionModule.getCurrentSessionId &&
+            sessionModule.getCurrentSessionId() !== sessionId) {
+          leftSession = true;
+          try { await reader.cancel(); } catch (_) {}
+          break;
+        }
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop();
+        for (const part of parts) {
+          const line = part.split('\n').find(l => l.startsWith('data: '));
+          if (!line) continue;
+          const payload = line.slice(6);
+          if (payload === '[DONE]') {
+            try { await reader.cancel(); } catch (_) {}
+            break readLoop;
+          }
+          let json;
+          try { json = JSON.parse(payload); } catch (_) { continue; }
+          if (json.delta) {
+            roundText += json.delta;
+            if (!gotDelta) { gotDelta = true; try { spinner.destroy(); } catch (_) {} }
+            renderDelta();
+          } else if (json.type === 'doc_stream_open') {
+            rich = true;
+            if (documentModule) documentModule.streamDocOpen(json.title || '', json.lang || '');
+          } else if (json.type === 'doc_stream_delta') {
+            rich = true;
+            if (documentModule && json.delta) documentModule.streamDocDelta(json.delta);
+          } else if (json.type === 'metrics') {
+            metricsData = json.data || metricsData;
+          } else if (json.type === 'tool_start' || json.type === 'tool_output' ||
+                     json.type === 'tool_progress' || json.type === 'agent_step' ||
+                     json.type === 'web_sources' || json.type === 'rag_sources' ||
+                     json.type === 'research_progress' || json.type === 'research_sources' ||
+                     json.type === 'research_findings' || json.type === 'research_done') {
+            rich = true;
+          }
+        }
+      }
+    } catch (e) {
+      // Network drop or parse failure: fall through to the reload below.
+    }
+
+    cleanup();
+    if (leftSession) { if (holder.parentNode) holder.remove(); return true; }
+
+    const onThisSession = sessionModule.getCurrentSessionId &&
+                          sessionModule.getCurrentSessionId() === sessionId;
+
+    // Plain text reply: finalize in place. Replace the live bubble with a
+    // canonical single message (markdown + footer actions + metrics) using the
+    // same renderer history does. No history refetch, no end-of-stream flicker.
+    if (onThisSession && !rich && roundText.trim()) {
+      if (holder.parentNode) holder.remove();
+      const model = meta && meta.model;
+      const meta_ = metricsData ? Object.assign({ model }, metricsData) : { model };
+      chatRenderer.addMessage('assistant', roundText, model, meta_);
+      uiModule.scrollHistory();
+      return true;
+    }
+
+    // Rich response (tools, sources, docs, multi-round) or user moved on:
+    // reload from the DB for the full canonical render.
+    if (holder.parentNode) holder.remove();
+    if (onThisSession) sessionModule.selectSession(sessionId);
+    else sessionModule.loadSessions();
+    return true;
+  }
+
+  /**
    * Check for background streams when switching to a session.
    * Called after history loads on session switch.
    */
@@ -3020,7 +3586,7 @@ import createResearchSynapse from './researchSynapse.js';
       var meta = sessionModule.getSessions().find(function(s) { return s.id === sessionId; });
       var roleLabel = _shortModel(meta && meta.model);
       var roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-      holder.innerHTML = '<div class="role">' + roleLabel + ' <span class="role-timestamp">' + roleTs + '</span></div><div class="body"></div>';
+      holder.innerHTML = '<div class="role">' + uiModule.esc(roleLabel) + ' <span class="role-timestamp">' + roleTs + '</span></div><div class="body"></div>';
       _applyModelColor(holder.querySelector('.role'), meta && meta.model);
 
       var bodyDiv = holder.querySelector('.body');
@@ -3379,7 +3945,7 @@ import createResearchSynapse from './researchSynapse.js';
 
     // Also submit on Enter (without shift)
     editor.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         saveBtn.click();
       }
@@ -3822,7 +4388,7 @@ import createResearchSynapse from './researchSynapse.js';
       const roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
       const agentMeta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
       const agentModelLabel = _shortModel(agentMeta?.model);
-      holder.innerHTML = `<div class="role">${agentModelLabel} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
+      holder.innerHTML = `<div class="role">${uiModule.esc(agentModelLabel)} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
       _applyModelColor(holder.querySelector('.role'), agentMeta?.model);
       box.appendChild(holder);
 
@@ -3992,8 +4558,11 @@ import createResearchSynapse from './researchSynapse.js';
     const clickedIndex = allMsgs.indexOf(msgElement);
     if (clickedIndex < 0) return;
 
+    // No early-out on a missing session: an output shown before any model was
+    // selected (issue #1428) has no session/persisted rows, but its "x" must
+    // still remove it. We only need the session id for the server-side delete
+    // below; without one we fall back to removing the DOM.
     const sessionId = sessionModule.getCurrentSessionId();
-    if (!sessionId) return;
 
     const clickedIsUser = msgElement.classList.contains('msg-user');
 
@@ -4069,8 +4638,10 @@ import createResearchSynapse from './researchSynapse.js';
       }
     }
 
-    if (!msgIds.length) {
-      // Fallback: just remove DOM elements if no DB IDs available
+    if (!msgIds.length || !sessionId) {
+      // No persisted rows to delete (no DB IDs, or no session at all — e.g. an
+      // error output shown before a model was selected, #1428). Just remove the
+      // DOM so the "x" works regardless.
       domToRemove.forEach(el => el.remove());
       if (uiModule) uiModule.showToast('Message deleted');
       return;
@@ -4285,9 +4856,10 @@ import createResearchSynapse from './researchSynapse.js';
       // never closes (so it would otherwise hide the whole answer). Peel all of
       // those off so what's left is just the rewritten text.
       const _stripThink = (t) => {
-        t = t.replace(/<think>[\s\S]*?<\/think>/gi, '');   // complete blocks
-        if (/<\/think>/i.test(t)) t = t.replace(/^[\s\S]*?<\/think>/i, '');  // reasoning w/o opener
-        return t.replace(/<\/?think>/gi, '').trim();        // any orphan tag
+        t = markdownModule.normalizeThinkingMarkup(t || '');
+        t = t.replace(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>[\s\S]*?<\/(?:think(?:ing)?|thought)>/gi, '');   // complete blocks
+        if (/<\/(?:think(?:ing)?|thought)>/i.test(t)) t = t.replace(/^[\s\S]*?<\/(?:think(?:ing)?|thought)>/i, '');  // reasoning w/o opener
+        return t.replace(/<\/?(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi, '').trim();        // any orphan tag
       };
       newText = _stripThink(newText);
 
@@ -4453,6 +5025,7 @@ import createResearchSynapse from './researchSynapse.js';
     abortCurrentRequest,
     detachCurrentStream,
     checkBackgroundStream,
+    resumeStream,
     hideWelcomeScreen: chatRenderer.hideWelcomeScreen,
     showWelcomeScreen: chatRenderer.showWelcomeScreen,
     checkPendingResearch,

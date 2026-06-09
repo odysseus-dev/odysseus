@@ -8,6 +8,24 @@ let API_BASE = '';
 let selectedPreset = null;
 let presets = {};
 
+export function loadStoredArray(key) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(value) ? value : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+export function loadStoredObject(key) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch (e) {
+    return {};
+  }
+}
+
 // Built-in prompt templates (moved from cot_prompts.py)
 export const PROMPT_TEMPLATES = [
   {
@@ -220,7 +238,7 @@ function initNameDropdown() {
       if (!charName || charName === '__default__') return;
       const match = userTemplates.find(t => t.name === charName);
       const isBuiltin = PROMPT_TEMPLATES.some(t => t.name === charName);
-      if (!await window.styledConfirm(`Delete "${charName}"?\n\nThis will remove the character and all its memories.`, { confirmText: 'Delete', danger: true })) return;
+      if (!await window.styledConfirm(`Delete "${charName}"?\n\nThis will remove the persona and all its memories.`, { confirmText: 'Delete', danger: true })) return;
       try {
         // Delete saved template if exists
         if (match) {
@@ -228,7 +246,7 @@ function initNameDropdown() {
         }
         // Hide built-in preset
         if (isBuiltin) {
-          const hidden = JSON.parse(localStorage.getItem('odysseus-hidden-presets') || '[]');
+          const hidden = loadStoredArray('odysseus-hidden-presets');
           if (!hidden.includes(charName)) hidden.push(charName);
           localStorage.setItem('odysseus-hidden-presets', JSON.stringify(hidden));
         }
@@ -296,7 +314,7 @@ function _populateCharSelect() {
   const select = document.getElementById('char-template-select');
   if (!select) return;
   const currentVal = select.value;
-  select.innerHTML = '<option value="__default__">Default (no character)</option>';
+  select.innerHTML = '<option value="__default__">Default (no persona)</option>';
 
   const savedNames = new Set(userTemplates.map(t => t.name));
   if (userTemplates.length) {
@@ -311,7 +329,7 @@ function _populateCharSelect() {
     select.appendChild(group);
   }
 
-  const hiddenPresets = JSON.parse(localStorage.getItem('odysseus-hidden-presets') || '[]');
+  const hiddenPresets = loadStoredArray('odysseus-hidden-presets');
   const builtins = PROMPT_TEMPLATES.filter(t => !savedNames.has(t.name) && !hiddenPresets.includes(t.name));
   if (builtins.length) {
     const group = document.createElement('optgroup');
@@ -405,7 +423,7 @@ function initPersistentChat() {
       await fetch(`${API_BASE}/api/session/${sessionId}/important`, { method: 'POST', body: favFd });
 
       // Save session → character mapping so it restores on switch
-      const charSessions = JSON.parse(localStorage.getItem('odysseus-char-sessions') || '{}');
+      const charSessions = loadStoredObject('odysseus-char-sessions');
       charSessions[sessionId] = charName;
       localStorage.setItem('odysseus-char-sessions', JSON.stringify(charSessions));
 
@@ -437,7 +455,7 @@ function initSaveAsTemplate() {
 
     let name = nameInput ? nameInput.value.trim() : '';
     if (!name) {
-      name = prompt('Enter a name for this character:');
+      name = prompt('Enter a name for this persona:');
       if (!name || !name.trim()) return;
       name = name.trim();
       if (nameInput) nameInput.value = name;
@@ -616,7 +634,7 @@ export function openCustomPresetModal() {
     } else {
       // Character/persona tab. "Save & " prefix when the user edited a template,
       // so it's clear the edit is being saved on start.
-      label = changed ? 'Save & Start Character' : 'Start Character';
+      label = changed ? 'Save & Start Persona' : 'Start Persona';
     }
     btn.textContent = label;
     // Show a "Cancel" button next to Start when the active tab's feature is
@@ -708,7 +726,7 @@ export function openCustomPresetModal() {
       const notice = document.createElement('div');
       notice.id = 'char-lock-notice';
       notice.style.cssText = 'font-size:11px;color:var(--color-muted);text-align:center;padding:6px;margin-bottom:8px;border:1px dashed var(--border);border-radius:6px;';
-      notice.textContent = 'Persistent chat — character is locked. Style, temperature, and memory can still be changed.';
+      notice.textContent = 'Persistent chat — persona is locked. Style, temperature, and memory can still be changed.';
       modal.querySelector('.modal-body').prepend(notice);
     }
   } else {
@@ -825,7 +843,7 @@ export async function saveCustomPreset(showToast, showError) {
 
       if (showToast) {
         // The Inject tab is a plain tuned "prompt" chat, not a persona — say so.
-        showToast(_isInjectStart ? 'Prompt saved' : 'Character saved');
+        showToast(_isInjectStart ? 'Prompt saved' : 'Persona saved');
       }
       const modal = document.getElementById('custom-preset-modal');
       if (modal) {
@@ -962,7 +980,7 @@ function _syncCharIndicator() {
     if (hasChar) {
       if (iconEl) iconEl.innerHTML = _AVATAR;
       if (nameSpan) nameSpan.textContent = custom.character_name;
-      btn.title = `Character: ${custom.character_name} — click to configure`;
+      btn.title = `Persona: ${custom.character_name} — click to configure`;
     } else {
       // Inject/tuning chat — syringe tag labeled "Prompt" to match the
       // window identity, no persona name.
@@ -1011,7 +1029,7 @@ function _syncCharIndicator() {
 let _prevSessionId = null;
 
 export function onSessionSwitch(sessionId) {
-  const charSessions = JSON.parse(localStorage.getItem('odysseus-char-sessions') || '{}');
+  const charSessions = loadStoredObject('odysseus-char-sessions');
 
   // Leaving a persistent chat — deactivate for this switch only
   if (window._persistentChatSession) {
@@ -1059,7 +1077,7 @@ export function isPersistentChat() {
  * Remove a session from persistent chat mappings (call when session is deleted).
  */
 export function removePersistentChat(sessionId) {
-  const charSessions = JSON.parse(localStorage.getItem('odysseus-char-sessions') || '{}');
+  const charSessions = loadStoredObject('odysseus-char-sessions');
   if (charSessions[sessionId]) {
     delete charSessions[sessionId];
     localStorage.setItem('odysseus-char-sessions', JSON.stringify(charSessions));

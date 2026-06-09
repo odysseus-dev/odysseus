@@ -32,10 +32,21 @@ def _extract_exif(content: bytes) -> dict:
         from PIL import Image
         from io import BytesIO
         img = Image.open(BytesIO(content))
+        # Read the raw EXIF before any transpose: exif_transpose strips the
+        # orientation tag and with it the parsed EXIF view.
+        exif = img._getexif() if hasattr(img, '_getexif') else None
+
+        # Record DISPLAY dimensions (EXIF-rotated), matching upload_handler.
+        # A phone photo with Orientation 6/8 is stored landscape but shown
+        # portrait, so the raw width/height swap the aspect ratio.
+        try:
+            from PIL import ImageOps
+            img = ImageOps.exif_transpose(img) or img
+        except Exception:
+            pass
         result["width"] = img.width
         result["height"] = img.height
 
-        exif = img._getexif() if hasattr(img, '_getexif') else None
         if not exif:
             return result
 
@@ -110,9 +121,17 @@ def _image_to_dict(img: GalleryImage, session_name: str = None) -> Dict[str, Any
 
 
 def _owner_filter(q, user):
-    """Apply owner filtering to a gallery query."""
+    """Apply owner filtering to a gallery query.
+
+    When auth is disabled (single-user mode) get_current_user returns None
+    and there is no per-user scoping. The main library list and stats already
+    treat None as "show everything" (`if user is not None`), so this helper
+    must too — otherwise the tag/model filter sidebars come back empty and the
+    tag-cleanup endpoints (clear-user-tags, clear-ai-tags, dedupe-tags)
+    silently affect zero rows in the most common self-hosted deployment.
+    """
     if user is None:
-        return q.filter(False)
+        return q
     return q.filter(GalleryImage.owner == user)
 
 

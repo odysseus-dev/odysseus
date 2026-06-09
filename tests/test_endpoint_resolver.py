@@ -1,71 +1,15 @@
-"""Tests for endpoint_resolver — pure functions tested directly to avoid import pollution."""
-import re
-from urllib.parse import urlparse
+"""Tests for endpoint_resolver — pure functions tested directly."""
+import json
 
-
-# Copy the pure functions to test them without importing the full module.
-# This avoids module cache conflicts with other test files that mock dependencies.
-
-def normalize_base(url: str) -> str:
-    url = (url or "").strip().rstrip("/")
-    for suffix in ["/models", "/chat/completions", "/completions", "/v1/messages"]:
-        if url.endswith(suffix):
-            url = url[: -len(suffix)].rstrip("/")
-    for suffix in ["/chat", "/tags", "/generate"]:
-        if url.endswith("/api" + suffix):
-            url = url[: -len(suffix)].rstrip("/")
-    return url
-
-
-def _detect_provider(url: str) -> str:
-    parsed = urlparse(url or "")
-    host = parsed.hostname or ""
-    path = (parsed.path or "").rstrip("/")
-    if host.endswith("ollama.com") or (parsed.port == 11434 and (path == "/api" or path.startswith("/api/"))):
-        return "ollama"
-    if "anthropic.com" in (url or ""):
-        return "anthropic"
-    return "openai"
-
-
-def _ollama_api_root(base: str) -> str:
-    base = (base or "").strip().rstrip("/")
-    parsed = urlparse(base)
-    host = parsed.hostname or ""
-    path = (parsed.path or "").rstrip("/")
-    if path.endswith("/api"):
-        return base
-    if host.endswith("ollama.com"):
-        return f"{parsed.scheme}://{parsed.netloc}/api"
-    return base
-
-
-def build_chat_url(base: str) -> str:
-    provider = _detect_provider(base)
-    if provider == "anthropic":
-        host = urlparse(base).hostname or ""
-        if host.endswith("anthropic.com") and base.rstrip("/").endswith("/v1"):
-            base = base.rstrip("/")[:-3].rstrip("/")
-        return base + "/v1/messages"
-    if provider == "ollama":
-        return _ollama_api_root(base) + "/chat"
-    return base + "/chat/completions"
-
-
-def build_models_url(base: str) -> str:
-    provider = _detect_provider(base)
-    if provider == "ollama":
-        return _ollama_api_root(base) + "/tags"
-    return base + "/models"
-
-
-def build_headers(api_key, base: str) -> dict:
-    if not api_key:
-        return {}
-    provider = _detect_provider(base)
-    if provider == "anthropic":
-        return {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
-    return {"Authorization": f"Bearer {api_key}"}
+from src.endpoint_resolver import (
+    _first_chat_model,
+    _endpoint_hidden_models,
+    _endpoint_enabled_models,
+    normalize_base,
+    build_chat_url,
+    build_models_url,
+    build_headers,
+)
 
 
 class TestNormalizeBase:
@@ -116,6 +60,12 @@ class TestBuildChatUrl:
     def test_ollama_cloud_root_adds_api(self):
         assert build_chat_url("https://ollama.com") == "https://ollama.com/api/chat"
 
+    def test_ollama_bare_url_adds_api(self):
+        assert build_chat_url("http://nas:11434") == "http://nas:11434/api/chat"
+
+    def test_ollama_v1_preserves_openai_compat(self):
+        assert build_chat_url("http://nas:11434/v1") == "http://nas:11434/v1/chat/completions"
+
 
 class TestBuildModelsUrl:
     def test_openai_models(self):
@@ -137,3 +87,62 @@ class TestBuildHeaders:
 
     def test_empty_key(self):
         assert build_headers("", "https://api.openai.com/v1") == {}
+
+
+class _Ep:
+    """Minimal ModelEndpoint stand-in for the model-picking helpers."""
+    def __init__(self, cached=None, hidden=None):
+        self.cached_models = json.dumps(cached) if cached is not None else None
+        self.hidden_models = json.dumps(hidden) if hidden is not None else None
+
+
+class TestFirstChatModel:
+    def test_skips_embedding_and_tts(self):
+        models = ["text-embedding-ada-002", "whisper-large-v3", "gpt-4o"]
+        assert _first_chat_model(models) == "gpt-4o"
+
+    def test_falls_back_to_first_when_all_non_chat(self):
+        assert _first_chat_model(["whisper-large-v3"]) == "whisper-large-v3"
+
+    def test_empty(self):
+        assert _first_chat_model([]) is None
+
+
+class TestEnabledModels:
+    def test_excludes_hidden(self):
+        # The Groq repro: 16 models, only gpt-oss-120b enabled.
+        cached = [
+            "openai/gpt-oss-safeguard-20b", "canopylabs/orpheus-arabic-saudi",
+            "whisper-large-v3", "openai/gpt-oss-120b",
+        ]
+        hidden = [
+            "openai/gpt-oss-safeguard-20b", "canopylabs/orpheus-arabic-saudi",
+            "whisper-large-v3",
+        ]
+        ep = _Ep(cached=cached, hidden=hidden)
+        assert _endpoint_enabled_models(ep) == ["openai/gpt-oss-120b"]
+
+    def test_no_hidden_returns_all(self):
+        ep = _Ep(cached=["a", "b"], hidden=None)
+        assert _endpoint_enabled_models(ep) == ["a", "b"]
+
+    def test_picker_never_selects_disabled_model(self):
+        # Regression: a disabled model listed first must not be auto-picked.
+        cached = ["canopylabs/orpheus-arabic-saudi", "openai/gpt-oss-120b"]
+        hidden = ["canopylabs/orpheus-arabic-saudi"]
+        ep = _Ep(cached=cached, hidden=hidden)
+        assert _first_chat_model(_endpoint_enabled_models(ep)) == "openai/gpt-oss-120b"
+
+    def test_stale_configured_model_is_discarded(self):
+        # A configured model that's been disabled is dropped, falling through
+        # to the first enabled chat model.
+        ep = _Ep(
+            cached=["canopylabs/orpheus-arabic-saudi", "openai/gpt-oss-120b"],
+            hidden=["canopylabs/orpheus-arabic-saudi"],
+        )
+        configured = "canopylabs/orpheus-arabic-saudi"
+        if configured in _endpoint_hidden_models(ep):
+            configured = ""
+        if not configured:
+            configured = _first_chat_model(_endpoint_enabled_models(ep))
+        assert configured == "openai/gpt-oss-120b"

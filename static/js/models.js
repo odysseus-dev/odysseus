@@ -16,6 +16,7 @@ import { sortModelIds } from './modelSort.js';
 let API_BASE = '';
 let _cachedItems = []; // cached /api/models items for model-switch dropdown
 let _lastFetchTime = 0;
+let _fetchInflight = null;
 const _FETCH_CACHE_TTL = 30000; // 30s client-side cache for /api/models
 const COLLAPSE_KEY = 'odysseus-models-collapsed';
 const FAVORITES_KEY = 'odysseus-model-favorites';
@@ -176,8 +177,15 @@ export async function refreshModels(force = false) {
     box.appendChild(_loadingSpinner.createElement());
     _loadingSpinner.start();
     try {
-      const res = await fetch(`${API_BASE}/api/models`);
-      const data = await res.json();
+      if (!_fetchInflight) {
+        _fetchInflight = fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' })
+          .then(async (res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json();
+          })
+          .finally(() => { _fetchInflight = null; });
+      }
+      const data = await _fetchInflight;
       _lastFetchTime = Date.now();
       _cachedItems = data.items || [];
     } catch (e) {
@@ -554,7 +562,7 @@ export async function refreshModels(force = false) {
       box.appendChild(noModels);
       // No endpoints yet: keep the welcome screen focused on first setup.
       const welcomeSub = document.getElementById('welcome-sub');
-      if (welcomeSub) welcomeSub.innerHTML = 'Type <span style="color:var(--accent,var(--red));font-weight:600">/setup</span> to get started.';
+      if (welcomeSub) welcomeSub.innerHTML = 'Type <span class="setup-trigger-link" style="color:var(--accent,var(--red));font-weight:600;cursor:pointer;text-decoration:underline;" title="Click to launch setup">/setup</span> to get started.';
       const welcomeTip = document.getElementById('welcome-tip');
       if (welcomeTip) welcomeTip.textContent = 'Type /setup, then choose Local models or API.';
     } else {

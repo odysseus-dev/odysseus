@@ -4,9 +4,11 @@
 import uiModule from './ui.js';
 import markdownModule from './markdown.js';
 import { addAITTSButton } from './tts-ai.js';
-import { providerLogo } from './providers.js';
+import { providerLogo, providerLabel } from './providers.js';
 import settingsModule from './settings.js';
 import spinnerModule from './spinner.js';
+import { bindMenuDismiss } from './escMenuStack.js';
+import { matchModelKey } from './model/matchKey.js';
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
@@ -22,6 +24,29 @@ function _safeHref(url) {
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return uiModule.esc(url);
   } catch(e) { /* invalid URL */ }
   return '#';
+}
+
+export function safeToolScreenshotSrc(raw) {
+  const src = String(raw || '').trim();
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(src)) {
+    return src;
+  }
+  return '';
+}
+
+export function safeDisplayImageSrc(raw) {
+  const src = String(raw || '').trim();
+  if (!src) return '';
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(src)) {
+    return src;
+  }
+  try {
+    const parsed = new URL(src, window.location.origin);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.href;
+    }
+  } catch (_) {}
+  return '';
 }
 
 function _makeActionBtn(className, title, text, handler) {
@@ -512,6 +537,39 @@ export function shortModel(name) {
   return short;
 }
 
+function modelValue(name) {
+  if (name == null) return '';
+  return String(name).trim();
+}
+
+export function sameModelName(left, right) {
+  const a = modelValue(left);
+  const b = modelValue(right);
+  if (!a || !b) return false;
+  return a.toLowerCase() === b.toLowerCase()
+    || shortModel(a).toLowerCase() === shortModel(b).toLowerCase();
+}
+
+export function modelRouteLabel(requestedModel, actualModel) {
+  const requested = modelValue(requestedModel);
+  const actual = modelValue(actualModel) || requested;
+  if (!requested || sameModelName(requested, actual)) return shortModel(actual || requested);
+  return shortModel(requested) + ' -> ' + shortModel(actual);
+}
+
+export function replyModelPair(modelName, metadata) {
+  const meta = metadata || {};
+  const actualFromMeta = modelValue(meta.model || meta.actual_model);
+  const requestedFromMeta = modelValue(meta.requested_model || meta.selected_model);
+  if (actualFromMeta || requestedFromMeta) {
+    const actual = actualFromMeta || requestedFromMeta || modelValue(modelName);
+    const requested = requestedFromMeta || actual;
+    return { requestedModel: requested, actualModel: actual };
+  }
+  const fallback = modelValue(modelName);
+  return { requestedModel: fallback, actualModel: fallback };
+}
+
 /**
  * Generate a consistent HSL color for a model name.
  * Returns an hsl() string. The hue is derived from a string hash,
@@ -531,11 +589,8 @@ export function modelColor(name) {
 /** Look up model info (pricing + context) by substring match */
 export function getModelInfo(modelName) {
   if (!modelName) return null;
-  const name = modelName.toLowerCase();
-  for (const [key, info] of Object.entries(MODEL_INFO)) {
-    if (name.includes(key)) return { key, ...info };
-  }
-  return null;
+  const key = matchModelKey(modelName, Object.keys(MODEL_INFO));
+  return key ? { key, ...MODEL_INFO[key] } : null;
 }
 
 function _fmtCtx(n) {
@@ -555,7 +610,11 @@ export function applyModelColor(roleEl, modelName) {
   }
   // Replace generic dot with provider logo if available
   const logo = providerLogo(modelName);
-  if (logo && !roleEl.querySelector('.role-provider-logo')) {
+  const existingLogo = roleEl.querySelector('.role-provider-logo');
+  if (!logo) {
+    if (existingLogo) existingLogo.remove();
+    roleEl.classList.remove('has-logo');
+  } else if (!existingLogo) {
     const span = document.createElement('span');
     span.className = 'role-provider-logo';
     span.innerHTML = logo;
@@ -568,7 +627,7 @@ export function applyModelColor(roleEl, modelName) {
     roleEl.style.cursor = 'pointer';
     roleEl.addEventListener('click', (e) => {
       e.stopPropagation();
-      document.querySelectorAll('.ctx-popup').forEach(p => p.remove());
+      document.querySelectorAll('.ctx-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
       const info = getModelInfo(modelName);
       const short = shortModel(modelName);
       const logoHtml = providerLogo(modelName);
@@ -578,6 +637,12 @@ export function applyModelColor(roleEl, modelName) {
       if (logoHtml) html += '<span class="role-provider-logo" style="opacity:0.7">' + logoHtml + '</span>';
       html += short + '</div>';
       html += '<div><span class="ctx-label">Model</span> ' + modelName.split('/').pop() + '</div>';
+      // Provider = the serving endpoint, distinct from the model vendor/logo
+      // (e.g. the same model via OpenRouter vs Copilot vs Anthropic direct).
+      const _epUrl = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
+        ? window.sessionModule.getCurrentEndpointUrl() : null;
+      const _provLabel = providerLabel(_epUrl);
+      if (_provLabel) html += '<div><span class="ctx-label">Provider</span> ' + uiModule.esc(_provLabel) + '</div>';
       // Show static context initially, then fetch real from server
       const _realCtx = window._realContextLengths && window._realContextLengths[modelName];
       if (_realCtx) {
@@ -615,9 +680,11 @@ export function applyModelColor(roleEl, modelName) {
           html += '<div><span class="ctx-label">Max tokens</span> ' + _mt.toLocaleString() + ' <span style="opacity:0.4">(configured)</span></div>';
         }
       }
-      if (info && info.input != null) html += '<div><span class="ctx-label">Input</span> $' + info.input.toFixed(2) + ' / 1M</div>';
-      if (info && info.output != null) html += '<div><span class="ctx-label">Output</span> $' + info.output.toFixed(2) + ' / 1M</div>';
-      if (!info) html += '<div style="opacity:0.4;font-size:0.85em;margin-top:4px;">No pricing data available</div>';
+      if (isCostTrackedEndpoint(_epUrl)) {
+        if (info && info.input != null) html += '<div><span class="ctx-label">Input</span> $' + info.input.toFixed(2) + ' / 1M</div>';
+        if (info && info.output != null) html += '<div><span class="ctx-label">Output</span> $' + info.output.toFixed(2) + ' / 1M</div>';
+        if (!info) html += '<div style="opacity:0.4;font-size:0.85em;margin-top:4px;">No pricing data available</div>';
+      }
       popup.innerHTML = html;
       const rect = roleEl.getBoundingClientRect();
       popup.style.top = (rect.bottom + 4) + 'px';
@@ -626,23 +693,17 @@ export function applyModelColor(roleEl, modelName) {
       const pr = popup.getBoundingClientRect();
       if (pr.bottom > window.innerHeight - 8) popup.style.top = (rect.top - pr.height - 4) + 'px';
       if (pr.right > window.innerWidth - 8) popup.style.left = (window.innerWidth - pr.width - 8) + 'px';
-      const closePopup = (ev) => {
-        if (!popup.contains(ev.target)) { popup.remove(); document.removeEventListener('click', closePopup, true); }
-      };
-      setTimeout(() => document.addEventListener('click', closePopup, true), 0);
+      bindMenuDismiss(popup, () => popup.remove());
     });
   }
 }
 
 export function getModelCost(modelName, inputTokens, outputTokens) {
   if (!modelName) return null;
-  const name = modelName.toLowerCase();
-  for (const [key, price] of Object.entries(MODEL_PRICING)) {
-    if (name.includes(key)) {
-      return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
-    }
-  }
-  return null;
+  const key = matchModelKey(modelName, Object.keys(MODEL_PRICING));
+  if (!key) return null;
+  const price = MODEL_PRICING[key];
+  return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
 }
 
 /**
@@ -661,6 +722,12 @@ export function isLocalEndpoint(url) {
   if (!host) return true;
   if (host === 'localhost' || host === '0.0.0.0' || host === 'host.docker.internal' || host.endsWith('.local')) return true;
   if (typeof window !== 'undefined' && window.location && host === window.location.hostname) return true;
+  // A single-label hostname (no dot) is an internal/Docker service name
+  // (e.g. "nim-nano", "llamaswap", "nemotron-super-49b") or a LAN shortname —
+  // never a public API, which always needs an FQDN. Treat as local → free.
+  // (Without this, container-name endpoints get billed at cloud rates because
+  // the pricing table matches on a name substring, e.g. "nemotron".)
+  if (!host.includes('.')) return true;
   if (/^127\./.test(host)) return true;
   if (/^10\./.test(host)) return true;
   if (/^192\.168\./.test(host)) return true;
@@ -670,11 +737,31 @@ export function isLocalEndpoint(url) {
   return false;
 }
 
-/** Cost for the current turn, returning null (free) for local endpoints. */
-function _billableCost(model, inputTokens, outputTokens) {
-  const url = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
+export function isSubscriptionEndpoint(url) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.replace(/\/+$/, '');
+    return parsed.hostname === 'chatgpt.com'
+      && (path === '/backend-api/codex' || path.startsWith('/backend-api/codex/'));
+  } catch (_e) {
+    return false;
+  }
+}
+
+function _currentEndpointUrl() {
+  return (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
     ? window.sessionModule.getCurrentEndpointUrl() : null;
-  if (isLocalEndpoint(url)) return null;
+}
+
+export function isCostTrackedEndpoint(url) {
+  return !isLocalEndpoint(url) && !isSubscriptionEndpoint(url);
+}
+
+/** Cost for the current turn, returning null for non-billable endpoints. */
+function _billableCost(model, inputTokens, outputTokens) {
+  const url = _currentEndpointUrl();
+  if (!isCostTrackedEndpoint(url)) return null;
   return getModelCost(model, inputTokens, outputTokens);
 }
 
@@ -719,11 +806,10 @@ export function resetSessionCost(sessionId) {
 export function updateSessionCostUI() {
   const el = document.getElementById('session-cost-display');
   if (!el) return;
-  // Local model? It's free — hide the badge and clear any stale cost that a
-  // previous (buggy) cloud-rate billing left in localStorage for this session.
-  const _url = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
-    ? window.sessionModule.getCurrentEndpointUrl() : null;
-  if (isLocalEndpoint(_url)) {
+  // Non-billable endpoint? Hide the badge and clear stale cost that a previous
+  // cloud-rate calculation may have left in localStorage for this session.
+  const _url = _currentEndpointUrl();
+  if (!isCostTrackedEndpoint(_url)) {
     const sid = window.sessionModule && window.sessionModule.getCurrentSessionId();
     if (sid && getSessionCost(sid) > 0) {
       try {
@@ -977,7 +1063,12 @@ document.addEventListener('click', function(e) {
 // matching module via a dynamic import (avoids circular deps —
 // sessions.js itself imports chatRenderer.js).
 document.addEventListener('click', function(e) {
-  const a = e.target && e.target.closest && e.target.closest('a[href]');
+  // Walk past Text nodes — clicking link text yields a Text node target
+  // whose .closest is undefined, so preventDefault never fires and the
+  // browser performs a default hash-navigation that resets the session.
+  let _t = e.target;
+  while (_t && _t.nodeType === Node.TEXT_NODE) _t = _t.parentElement;
+  const a = _t && _t.closest && _t.closest('a[href]');
   if (!a) return;
   const href = a.getAttribute('href') || '';
   if (!href.startsWith('#')) return;
@@ -1053,12 +1144,19 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   const body = document.createElement('div');
   body.className = 'body';
 
+  const safeImageUrl = safeDisplayImageSrc(imageUrl);
+  if (!safeImageUrl) {
+    body.textContent = '[Image unavailable]';
+    wrap.appendChild(body);
+    return wrap;
+  }
+
   const img = document.createElement('img');
   img.className = 'generated-image';
   img.alt = prompt || 'Generated image';
   img.title = prompt || 'Generated image';
-  img.src = imageUrl;
-  img.addEventListener('click', () => { window.open(img.src, '_blank'); });
+  img.src = safeImageUrl;
+  img.addEventListener('click', () => { window.open(safeImageUrl, '_blank', 'noopener,noreferrer'); });
   body.appendChild(img);
 
   if (prompt) {
@@ -1213,6 +1311,17 @@ export function showWelcomeScreen() {
   const cc = document.getElementById('chat-container');
   if (ws) ws.classList.remove('hidden');
   if (cc) cc.classList.add('welcome-active');
+  // Entering the New Chat / welcome state: discard any stale draft left in the
+  // composer from the previous session so the input starts empty (issue #1343).
+  // Switching between existing sessions loads them directly and does NOT call
+  // this, so genuine drafts are not erased. Reset the autosized height and fire
+  // an `input` event so the send button + autosize listeners update.
+  const _msg = document.getElementById('message');
+  if (_msg) {
+    _msg.value = '';
+    _msg.style.height = '';
+    _msg.dispatchEvent(new Event('input', { bubbles: true }));
+  }
   // Re-trigger the L→R clip-wipe reveal on the welcome name each time the
   // welcome screen is shown (new session, deleted last session, etc.) — without
   // this, the CSS animation only fires on initial DOM insertion.
@@ -1332,12 +1441,17 @@ export function createMsgFooter(msgElement) {
     moreBtn.textContent = '\u00B7\u00B7\u00B7';
     moreBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      // Toggle overflow menu — close any existing one first
+      // Toggle overflow menu — close any existing one first (through its own
+      // dismiss so the Escape registry entry goes with it).
       const existing = document.querySelector('.msg-overflow-menu');
-      if (existing) { existing.remove(); if (existing._trigger === moreBtn) return; }
+      if (existing) {
+        if (typeof existing._dismiss === 'function') existing._dismiss(); else existing.remove();
+        if (existing._trigger === moreBtn) return;
+      }
 
       const menu = document.createElement('div');
       menu.className = 'msg-overflow-menu';
+      let closeMenu = () => menu.remove();
       overflow.forEach(a => {
         const item = document.createElement('button');
         item.className = 'msg-overflow-item';
@@ -1347,7 +1461,7 @@ export function createMsgFooter(msgElement) {
         item.addEventListener('click', (ev) => {
           ev.stopPropagation();
           _trackAction(a.id);
-          menu.remove();
+          closeMenu();
           a.handler(ev);
         });
         menu.appendChild(item);
@@ -1363,15 +1477,9 @@ export function createMsgFooter(msgElement) {
       // Keep within right edge
       const mr = menu.getBoundingClientRect();
       if (mr.right > window.innerWidth - 8) menu.style.left = (window.innerWidth - mr.width - 8) + 'px';
-      // Close on outside click
-      const close = (ev) => {
-        if (!menu.contains(ev.target) && ev.target !== moreBtn) {
-          menu.remove();
-          document.removeEventListener('click', close, true);
-        }
-      };
-      setTimeout(() => document.addEventListener('click', close, true), 0);
-    });
+      // Close on outside click or Escape. The trigger button is treated as
+      // "inside" so its own click toggles rather than double-fires.
+      closeMenu = bindMenuDismiss(menu, () => menu.remove(), (ev) => !menu.contains(ev.target) && ev.target !== moreBtn);    });
     actions.appendChild(moreBtn);
   }
 
@@ -1392,9 +1500,14 @@ export function createMsgFooter(msgElement) {
     pill.addEventListener('click', (e) => {
       e.stopPropagation();
       let detail = pill._openDetail || document.querySelector('.memory-used-detail');
-      if (detail) { detail.remove(); pill._openDetail = null; return; }
+      if (detail) {
+        if (typeof detail._dismiss === 'function') detail._dismiss();
+        else { detail.remove(); pill._openDetail = null; }
+        return;
+      }
       detail = document.createElement('div');
       detail.className = 'memory-used-detail';
+      let closeDetail = () => { detail.remove(); pill._openDetail = null; };
       mems.forEach(m => {
         const row = document.createElement('div');
         row.className = 'memory-used-row';
@@ -1410,8 +1523,7 @@ export function createMsgFooter(msgElement) {
         row.appendChild(text);
         row.addEventListener('click', (ev) => {
           ev.stopPropagation();
-          detail.remove();
-          pill._openDetail = null;
+          closeDetail();
           const memModal = document.getElementById('memory-modal');
           if (memModal) memModal.classList.remove('hidden');
         });
@@ -1435,15 +1547,8 @@ export function createMsgFooter(msgElement) {
       if (parseFloat(detail.style.left) < 8) detail.style.left = '8px';
       detail.style.visibility = '';
       pill._openDetail = detail;
-      const close = (ev) => {
-        if (!detail.contains(ev.target) && ev.target !== pill) {
-          detail.remove();
-          pill._openDetail = null;
-          document.removeEventListener('click', close, true);
-        }
-      };
-      setTimeout(() => document.addEventListener('click', close, true), 0);
-    });
+      // Close on outside click or Escape (pill click toggles, so it's inside).
+      closeDetail = bindMenuDismiss(detail, () => { detail.remove(); pill._openDetail = null; }, (ev) => !detail.contains(ev.target) && ev.target !== pill);    });
 
     footer.appendChild(pill);
   }
@@ -1528,10 +1633,14 @@ export function createUserMsgFooter(msgElement) {
     moreBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const existing = document.querySelector('.msg-overflow-menu');
-      if (existing) { existing.remove(); if (existing._trigger === moreBtn) return; }
+      if (existing) {
+        if (typeof existing._dismiss === 'function') existing._dismiss(); else existing.remove();
+        if (existing._trigger === moreBtn) return;
+      }
 
       const menu = document.createElement('div');
       menu.className = 'msg-overflow-menu';
+      let closeMenu = () => menu.remove();
       overflow.forEach(a => {
         const item = document.createElement('button');
         item.className = 'msg-overflow-item';
@@ -1541,7 +1650,7 @@ export function createUserMsgFooter(msgElement) {
         item.addEventListener('click', (ev) => {
           ev.stopPropagation();
           _trackUserAction(a.id);
-          menu.remove();
+          closeMenu();
           a.handler(ev);
         });
         menu.appendChild(item);
@@ -1554,14 +1663,7 @@ export function createUserMsgFooter(msgElement) {
       if (parseFloat(menu.style.top) < 8) menu.style.top = (btnRect.bottom + 4) + 'px';
       const mr = menu.getBoundingClientRect();
       if (mr.right > window.innerWidth - 8) menu.style.left = (window.innerWidth - mr.width - 8) + 'px';
-      const close = (ev) => {
-        if (!menu.contains(ev.target) && ev.target !== moreBtn) {
-          menu.remove();
-          document.removeEventListener('click', close, true);
-        }
-      };
-      setTimeout(() => document.addEventListener('click', close, true), 0);
-    });
+      closeMenu = bindMenuDismiss(menu, () => menu.remove(), (ev) => !menu.contains(ev.target) && ev.target !== moreBtn);    });
     actions.appendChild(moreBtn);
   }
 
@@ -1625,9 +1727,10 @@ export function displayMetrics(messageElement, metrics) {
   metricsDivider.style.pointerEvents = 'none';
   metricsContainer.addEventListener('click', (e) => {
     e.stopPropagation();
-    document.querySelectorAll('.ctx-popup').forEach(p => p.remove());
+    document.querySelectorAll('.ctx-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
 
-    const costStr = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : 'n/a';
+    const costStr = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : '';
+    const costRows = costStr ? `<div><span class="ctx-label">Cost</span> ${costStr}</div>` : '';
     const speedStr = tps != null && tps !== 'undefined' ? `${tps} tok/s` : 'n/a';
     const totalTok = inputTokens + outputTokens;
     const ctxColor = ctxPct >= 85 ? 'var(--red, #e06c75)' : ctxPct >= 70 ? '#ff9900' : 'var(--color-muted-alt, #6b7280)';
@@ -1641,7 +1744,7 @@ export function displayMetrics(messageElement, metrics) {
     // Session total cost
     let sessionCostStr = '';
     const sc = getSessionCost();
-    if (sc > 0) {
+    if (costStr && sc > 0) {
       sessionCostStr = `<div><span class="ctx-label">Session</span> $${sc < 0.01 ? sc.toFixed(4) : sc.toFixed(3)}</div>`;
     }
 
@@ -1657,7 +1760,7 @@ export function displayMetrics(messageElement, metrics) {
       <div><span class="ctx-label">Time</span> ${responseTime}s</div>
       ${prepTime != null ? `<div><span class="ctx-label">Prep</span> ${prepTime}s</div>` : ''}
       ${modelWaitTime != null ? `<div><span class="ctx-label">Model wait</span> ${modelWaitTime}s</div>` : ''}
-      <div><span class="ctx-label">Cost</span> ${costStr}</div>
+      ${costRows}
       ${sessionCostStr}
       ${prepDetails ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:0.85em;opacity:0.8;">
         <div style="font-weight:600;margin-bottom:4px;color:var(--fg);">Agent prep</div>
@@ -1685,13 +1788,7 @@ export function displayMetrics(messageElement, metrics) {
     if (parseFloat(popup.style.left) < 8) popup.style.left = '8px';
     popup.style.visibility = '';
 
-    const closePopup = (ev) => {
-      if (!popup.contains(ev.target)) {
-        popup.remove();
-        document.removeEventListener('click', closePopup, true);
-      }
-    };
-    setTimeout(() => document.addEventListener('click', closePopup, true), 0);
+    bindMenuDismiss(popup, () => popup.remove());
   });
 
   // Store real context length for model info popup
@@ -1722,7 +1819,7 @@ export function displayMetrics(messageElement, metrics) {
 
     ctxRing.addEventListener('click', (e) => {
       e.stopPropagation();
-      document.querySelectorAll('.ctx-detail-popup').forEach(p => p.remove());
+      document.querySelectorAll('.ctx-detail-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
 
       const usedTokens = inputTokens || 0;
       const totalCtx = ctxLen || 0;
@@ -1802,7 +1899,13 @@ export function displayMetrics(messageElement, metrics) {
                 }
               }, 200);
             } else {
-              compactBody.innerHTML = '<span style="color:var(--red);">Compaction failed. Try again later.</span>';
+              let detail = 'Compaction failed. Try again later.';
+              try {
+                const err = await res.json();
+                if (err.detail) detail = err.detail;
+              } catch {}
+              compactBody.textContent = detail;
+              compactBody.style.color = 'var(--red)';
             }
           } catch (err) {
             clearInterval(waveInterval);
@@ -1826,13 +1929,7 @@ export function displayMetrics(messageElement, metrics) {
       }
       popup.style.visibility = '';
 
-      const closePopup = (ev) => {
-        if (!popup.contains(ev.target) && ev.target !== ctxRing && !ctxRing.contains(ev.target)) {
-          popup.remove();
-          document.removeEventListener('click', closePopup, true);
-        }
-      };
-      setTimeout(() => document.addEventListener('click', closePopup, true), 0);
+      bindMenuDismiss(popup, () => popup.remove(), (ev) => !popup.contains(ev.target) && ev.target !== ctxRing && !ctxRing.contains(ev.target));
     });
   }
 
@@ -1901,8 +1998,12 @@ export function addMessage(role, content, modelName, metadata) {
           wrap.className = 'msg msg-ai' + (r > 0 ? ' msg-continuation' : '');
           const roleEl = document.createElement('div');
           roleEl.className = 'role';
-          const contModel = modelName || metadata?.model;
-          roleEl.textContent = shortModel(contModel);
+          const pair = replyModelPair(modelName, metadata);
+          const contModel = pair.actualModel || pair.requestedModel;
+          roleEl.textContent = modelRouteLabel(pair.requestedModel, contModel);
+          if (pair.requestedModel && contModel && !sameModelName(pair.requestedModel, contModel)) {
+            roleEl.title = pair.requestedModel + ' -> ' + contModel;
+          }
           applyModelColor(roleEl, contModel);
           if (r === 0) roleEl.appendChild(roleTimestamp(metadata?.timestamp));
           wrap.appendChild(roleEl);
@@ -1956,13 +2057,37 @@ export function addMessage(role, content, modelName, metadata) {
             if (ev.output && ev.output.trim()) {
               outHtml = `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(ev.output)}</pre></details>`;
             }
-            if (ev.screenshot) {
-              outHtml += `<details class="agent-tool-output"><summary>Screenshot</summary><img src="${esc(ev.screenshot)}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" /></details>`;
+            const screenshotSrc = safeToolScreenshotSrc(ev.screenshot);
+            if (screenshotSrc) {
+              outHtml += `<details class="agent-tool-output"><summary>Screenshot</summary><img src="${esc(screenshotSrc)}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" /></details>`;
+            }
+            // File-write/edit diff (persisted in the tool event) \u2014 re-render it
+            // so it survives reload, matching the live stream.
+            let evDiffHtml = '';
+            if (ev.diff && ev.diff.text) {
+              const d = ev.diff;
+              const stat = [
+                d.new_file ? '<span class="diff-stat-new">new</span>' : '',
+                d.added ? `<span class="diff-stat-add">+${d.added}</span>` : '',
+                d.removed ? `<span class="diff-stat-del">\u2212${d.removed}</span>` : '',
+              ].filter(Boolean).join(' ');
+              const rows = d.text.split('\n').map(line => {
+                let cls = 'diff-ctx', text = line;
+                if (line.startsWith('+++') || line.startsWith('---')) cls = 'diff-meta';
+                else if (line.startsWith('@@')) cls = 'diff-hunk';
+                // Drop the leading diff marker (+/-/space) — colour encodes add/del.
+                else if (line.startsWith('+')) { cls = 'diff-add'; text = line.slice(1); }
+                else if (line.startsWith('-')) { cls = 'diff-del'; text = line.slice(1); }
+                else if (line.startsWith(' ')) { text = line.slice(1); }
+                return `<span class="${cls}">${esc(text) || '&nbsp;'}</span>`;
+              }).join('');  // spans are display:block \u2014 a literal \n would double-space
+              evDiffHtml = `<details class="agent-tool-output agent-tool-diff"><summary><span class="diff-file">${esc(d.file || 'diff')}</span> <span class="diff-summary-stats">${stat}</span></summary><pre class="diff-pre">${rows}</pre></details>`;
             }
             const node = document.createElement('div');
             node.className = 'agent-thread-node' + (ok ? '' : ' error');
-            const evCmdHtml = ev.command ? `<pre class="agent-thread-cmd">${esc(ev.command)}</pre>` : '';
-            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(ev.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}</div>`;
+            // Hide the raw JSON command when a diff says it better (same as live).
+            const evCmdHtml = (ev.command && !(ev.diff && ev.diff.text)) ? `<pre class="agent-thread-cmd">${esc(ev.command)}</pre>` : '';
+            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(ev.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}${evDiffHtml}</div>`;
             // Click handling is delegated globally \u2014 see chat.js init.
             threadWrap.appendChild(node);
           }
@@ -2001,8 +2126,9 @@ export function addMessage(role, content, modelName, metadata) {
     r.className = 'role';
     const isSlash = metadata?.source === 'slash';
     const isCompacted = metadata?.compacted;
-    const resolvedModel = modelName || metadata?.model;
-    var _roleText = role === 'user' ? 'You' : (isSlash || isCompacted) ? 'Odysseus' : shortModel(resolvedModel);
+    const replyModels = replyModelPair(modelName, metadata);
+    const resolvedModel = replyModels.actualModel || replyModels.requestedModel;
+    var _roleText = role === 'user' ? 'You' : (isSlash || isCompacted) ? 'Odysseus' : modelRouteLabel(replyModels.requestedModel, resolvedModel);
     if (role === 'assistant' && (metadata?.research || metadata?.research_clarification)) {
       _roleText += ' (Research)';
     }
@@ -2013,6 +2139,9 @@ export function addMessage(role, content, modelName, metadata) {
     }
     r.textContent = _roleText;
     if (role !== 'user') {
+      if (!isSlash && !isCompacted && replyModels.requestedModel && resolvedModel && !sameModelName(replyModels.requestedModel, resolvedModel)) {
+        r.title = replyModels.requestedModel + ' -> ' + resolvedModel;
+      }
       if (!isSlash && !isCompacted) applyModelColor(r, resolvedModel);
       r.appendChild(roleTimestamp(metadata?.timestamp));
     }
@@ -2279,15 +2408,22 @@ export function addMessage(role, content, modelName, metadata) {
 
 const chatRenderer = {
   shortModel,
+  sameModelName,
+  modelRouteLabel,
+  replyModelPair,
   modelColor,
   applyModelColor,
   getModelCost,
+  isCostTrackedEndpoint,
+  isSubscriptionEndpoint,
   getImageCost,
   getSessionCost,
   resetSessionCost,
   updateSessionCostUI,
   roleTimestamp,
   stripToolBlocks,
+  safeToolScreenshotSrc,
+  safeDisplayImageSrc,
   buildSourcesBox,
   buildFindingsBox,
   appendReportButton,

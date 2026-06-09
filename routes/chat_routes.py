@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import time
 import logging
 from datetime import datetime
@@ -19,14 +20,17 @@ from src import agent_runs
 from src.model_context import estimate_tokens
 from src.chat_helpers import coerce_message_and_session
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
+from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
 from src.auth_helpers import get_current_user
 from routes.session_routes import _verify_session_owner
+from routes.document_helpers import _owner_session_filter
 from core.database import SessionLocal, get_session_mode, set_session_mode
 from core.database import Session as DBSession, ChatMessage as DBChatMessage
 from core.database import Document as DBDocument, ModelEndpoint
 from routes.research_routes import _resolve_research_endpoint
+from routes.model_routes import _visible_models
 from routes.chat_helpers import (
     resolve_session_auth,
     build_chat_context,
@@ -35,12 +39,14 @@ from routes.chat_helpers import (
     clean_thinking_for_save,
     _enforce_chat_privileges,
 )
-from src.action_intents import message_needs_tools as _message_needs_tools
+from src.action_intents import classify_tool_intent as _classify_tool_intent
+from src.tool_policy import build_effective_tool_policy
 
 logger = logging.getLogger(__name__)
 
 # Track active streams for partial-save safety net
 _active_streams: Dict[str, dict] = {}
+_IMAGE_MODEL_PREFIXES = ("gpt-image", "dall-e", "chatgpt-image")
 
 
 def _stream_set(session_id: str, **fields) -> None:
@@ -69,13 +75,17 @@ def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
     return sess in variants or sess.startswith(base + "/")
 
 
-def _clear_orphaned_session_endpoint(sess) -> bool:
+def _clear_orphaned_session_endpoint(sess, owner: str | None = None) -> bool:
     """Clear a session model if its endpoint was deleted from ModelEndpoint."""
     if not getattr(sess, "endpoint_url", ""):
         return False
     db = SessionLocal()
     try:
-        endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        if owner:
+            from src.auth_helpers import owner_filter
+            q = owner_filter(q, ModelEndpoint, owner)
+        endpoints = q.all()
         for ep in endpoints:
             if _session_url_matches_endpoint(sess.endpoint_url or "", ep.base_url or ""):
                 return False
@@ -96,6 +106,197 @@ def _clear_orphaned_session_endpoint(sess) -> bool:
         db.close()
 
 
+def _endpoint_cache_contains_model(endpoint, model: str) -> bool:
+    """Return True when a populated endpoint model cache includes ``model``.
+
+    Empty/malformed caches are treated as unknown rather than a negative match
+    so older image endpoints without cached models still work.
+    """
+    raw = getattr(endpoint, "cached_models", None)
+    if not raw:
+        return True
+    try:
+        models = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return True
+    if not isinstance(models, list) or not models:
+        return True
+    wanted = (model or "").strip()
+    return wanted in {str(item).strip() for item in models}
+
+
+def _is_image_generation_session(sess, owner: str | None = None) -> bool:
+    """Whether this chat session should bypass text chat and generate images.
+
+    Model-name prefixes are explicit image models. Endpoint type is only used
+    when the current session endpoint actually matches that image endpoint, and
+    when a populated endpoint model cache includes the selected model. This
+    prevents an image endpoint on the same host from misrouting ordinary text
+    models into the image-generation path.
+    """
+    model = (getattr(sess, "model", "") or "").strip()
+    if any(model.lower().startswith(prefix) for prefix in _IMAGE_MODEL_PREFIXES):
+        return True
+
+    endpoint_url = (getattr(sess, "endpoint_url", "") or "").strip()
+    if not endpoint_url:
+        return False
+
+    db = SessionLocal()
+    try:
+        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        if owner:
+            from src.auth_helpers import owner_filter
+            q = owner_filter(q, ModelEndpoint, owner)
+        endpoints = q.all()
+        for endpoint in endpoints:
+            if (getattr(endpoint, "model_type", None) or "llm") != "image":
+                continue
+            if not _session_url_matches_endpoint(endpoint_url, getattr(endpoint, "base_url", "") or ""):
+                continue
+            if _endpoint_cache_contains_model(endpoint, model):
+                return True
+    except Exception:
+        return False
+    finally:
+        db.close()
+    return False
+
+
+def _recover_empty_session_model(sess, session_id: str, owner: str | None = None) -> bool:
+    """Re-populate sess.model from the matching endpoint's cached models.
+
+    Covers the window between endpoint setup and the first chat send: the
+    picker showed a model in the dropdown but the session record never got
+    written (Issue #587 — UI uses the cached endpoint list, not s.model).
+    For ChatGPT Subscription, also repairs stale OpenAI API model names such as
+    ``gpt-5`` that are not accepted by the Codex-backed ChatGPT account route.
+    """
+    current_model = (getattr(sess, "model", "") or "").strip()
+    endpoint_url = (getattr(sess, "endpoint_url", "") or "").strip()
+    is_chatgpt_subscription = False
+    if current_model:
+        try:
+            from src.chatgpt_subscription import is_chatgpt_subscription_base
+            is_chatgpt_subscription = is_chatgpt_subscription_base(endpoint_url)
+            if not is_chatgpt_subscription:
+                return False
+        except Exception:
+            return False
+    db = SessionLocal()
+    try:
+        # Prefer the endpoint whose base URL matches the session — we know the
+        # user already pointed this session at that endpoint, so its first
+        # cached model is the most defensible default.
+        ep = None
+        if getattr(sess, "endpoint_url", ""):
+            q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+            if owner:
+                from src.auth_helpers import owner_filter
+                q = owner_filter(q, ModelEndpoint, owner)
+            endpoints = q.all()
+            for cand in endpoints:
+                if _session_url_matches_endpoint(sess.endpoint_url or "", cand.base_url or ""):
+                    ep = cand
+                    break
+        if not ep:
+            return False
+        if not is_chatgpt_subscription:
+            try:
+                from src.chatgpt_subscription import is_chatgpt_subscription_base
+                is_chatgpt_subscription = is_chatgpt_subscription_base(getattr(ep, "base_url", "") or endpoint_url)
+            except Exception:
+                is_chatgpt_subscription = False
+        try:
+            cached = json.loads(ep.cached_models) if isinstance(ep.cached_models, str) else (ep.cached_models or [])
+        except Exception:
+            cached = []
+        if not cached:
+            visible = []
+        else:
+            try:
+                visible = _visible_models(cached, getattr(ep, "hidden_models", None))
+            except Exception:
+                visible = cached
+        if current_model and current_model in {str(item).strip() for item in visible}:
+            return False
+        if is_chatgpt_subscription:
+            live_models = []
+            if getattr(ep, "provider_auth_id", None):
+                try:
+                    from src.chatgpt_subscription import fetch_available_models
+                    from src.endpoint_resolver import resolve_endpoint_runtime
+                    _base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+                    if api_key:
+                        live_models = fetch_available_models(api_key)
+                        if live_models:
+                            ep.cached_models = json.dumps(live_models)
+                            db.commit()
+                except Exception:
+                    live_models = []
+            # ChatGPT Subscription recovery must use the live Codex catalog.
+            # Cached rows are only trusted above to avoid revalidating a model
+            # that is already present in the visible picker list.
+            cached = live_models
+            if not cached:
+                return False
+            try:
+                visible = _visible_models(cached, getattr(ep, "hidden_models", None))
+            except Exception:
+                visible = cached
+            if current_model and current_model in {str(item).strip() for item in visible}:
+                return False
+        if not visible:
+            return False
+        model = visible[0]
+        if not isinstance(model, str) or not model.strip():
+            return False
+        model = model.strip()
+        # Persist so the next request, websocket reconnect, or page reload
+        # picks up the same model (we'd otherwise re-pick on every send
+        # and silently switch on the user if the cached order shifts).
+        db_session_q = db.query(DBSession).filter(DBSession.id == session_id)
+        if owner:
+            db_session_q = db_session_q.filter(DBSession.owner == owner)
+        db_session = db_session_q.first()
+        if db_session:
+            db_session.model = model
+            db_session.updated_at = datetime.utcnow()
+            db.commit()
+        sess.model = model
+        logger.info(
+            "Recovered session model for %s — picked %r from endpoint %s",
+            session_id, model, ep.id,
+        )
+        return True
+    except Exception as e:
+        db.rollback()
+        logger.warning("Failed to recover empty session model for %s: %s", session_id, e)
+        return False
+    finally:
+        db.close()
+
+
+def _set_user_time_from_request(request: Request) -> None:
+    """Copy browser timezone headers into the per-request context.
+
+    This is intentionally ephemeral: it is used only while building prompts
+    and running tools for this request. It is not persisted or logged.
+    """
+    try:
+        tz_offset = request.headers.get("x-tz-offset")
+        tz_name = request.headers.get("x-tz-name")
+        from src.user_time import clear_user_time_context, set_user_tz_name, set_user_tz_offset
+
+        clear_user_time_context()
+        if tz_offset is not None:
+            set_user_tz_offset(tz_offset)
+        if tz_name:
+            set_user_tz_name(tz_name)
+    except Exception:
+        pass
+
+
 def setup_chat_routes(
     session_manager,
     chat_handler,
@@ -114,6 +315,8 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     @router.post("/api/chat", response_model=Dict[str, str])
     async def chat_endpoint(request: Request, chat_request: ChatRequest) -> Dict[str, str]:
+        _set_user_time_from_request(request)
+
         message = chat_request.message
         session = chat_request.session
         att_ids = chat_request.attachments or []
@@ -130,15 +333,31 @@ def setup_chat_routes(
             sess = session_manager.get_session(session)
         except KeyError:
             raise HTTPException(404, f"Session '{session}' not found")
-        if _clear_orphaned_session_endpoint(sess):
+        owner = get_current_user(request)
+        if _clear_orphaned_session_endpoint(sess, owner=owner):
             raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
+
+        # Empty model + live endpoint = setup race (Issue #587). Repair from
+        # the endpoint's cached model list before privilege checks, which
+        # otherwise see "" and behave inconsistently with the allowlist.
+        _recover_empty_session_model(sess, session, owner=owner)
+        if not getattr(sess, "model", "").strip():
+            raise HTTPException(
+                400,
+                "No model selected for this chat. Open the model picker and choose one before sending.",
+            )
 
         # Same allowed_models + daily-cap gate as chat_stream (mirror so the
         # non-streaming path can't be used to bypass).
         _enforce_chat_privileges(request, sess)
 
+        tool_policy = build_effective_tool_policy(last_user_message=message)
+        allow_tool_preprocessing = not tool_policy.block_all_tool_calls
+
         # Inline memory command
-        memory_response = await chat_handler.handle_memory_command(sess, message)
+        memory_response = None
+        if not tool_policy.blocks("manage_memory"):
+            memory_response = await chat_handler.handle_memory_command(sess, message)
         if memory_response:
             return {"response": memory_response}
 
@@ -152,10 +371,15 @@ def setup_chat_routes(
             use_web=use_web,
             time_filter=time_filter,
             webhook_manager=webhook_manager,
+            allow_tool_preprocessing=allow_tool_preprocessing,
         )
 
         # Research injection
-        if use_research:
+        research_blocked_by_policy = (
+            tool_policy.blocks("trigger_research")
+            or tool_policy.blocks("manage_research")
+        )
+        if use_research and not research_blocked_by_policy:
             try:
                 _r_ep, _r_model, _r_headers = _resolve_research_endpoint(sess)
                 research_ctx = await research_handler.call_research_service(
@@ -190,6 +414,7 @@ def setup_chat_routes(
             ctx.uprefs, memory_manager, memory_vector, webhook_manager,
             character_name=ctx.preset.character_name,
             owner=ctx.user,
+            allow_background_extraction=not tool_policy.block_all_tool_calls,
         )
 
         return {"response": reply}
@@ -211,16 +436,7 @@ def setup_chat_routes(
         except Exception as e:
             raise HTTPException(400, f"Request parsing error: {e}")
 
-        # Stash the user's UTC offset (in minutes east of UTC) from the
-        # frontend so tools like manage_notes interpret natural-language
-        # times in the USER's tz, not the server's. See calendar_routes.
-        try:
-            _tz_hdr = request.headers.get("x-tz-offset")
-            if _tz_hdr is not None:
-                from routes.calendar_routes import set_user_tz_offset
-                set_user_tz_offset(_tz_hdr)
-        except Exception:
-            pass
+        _set_user_time_from_request(request)
 
         form_data = await request.form()
         message = form_data.get("message")
@@ -236,7 +452,25 @@ def setup_chat_routes(
         search_context = form_data.get("search_context")  # pre-fetched web search results (compare mode)
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
         incognito = str(form_data.get("incognito", "")).lower() == "true"
+        plan_mode = str(form_data.get("plan_mode", "")).lower() == "true"
         chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
+        # Workspace: confine the agent's file/shell tools to this folder. Validate
+        # it's a real directory; ignore (no confinement) otherwise.
+        workspace = (form_data.get("workspace") or "").strip()
+        if workspace:
+            _ws_real = os.path.realpath(os.path.expanduser(workspace))
+            workspace = _ws_real if os.path.isdir(_ws_real) else ""
+        # Plan mode is a modifier on agent mode — it only makes sense with tools.
+        if plan_mode:
+            chat_mode = "agent"
+        # An approved plan being EXECUTED: the frontend sends the checklist back
+        # on each turn so we can pin it in context. This way a long plan on a
+        # weak model survives history truncation — the agent can always re-read
+        # the plan. Ignored while still proposing (plan_mode on). Capped so a
+        # huge plan can't blow the prompt.
+        approved_plan = ""
+        if not plan_mode:
+            approved_plan = (form_data.get("approved_plan") or "").strip()[:8192]
         # Did the USER explicitly pick agent mode? (vs. us auto-escalating
         # below). Skill extraction should only learn from real agent sessions,
         # not chats we quietly promoted for a notes/calendar intent.
@@ -249,10 +483,15 @@ def setup_chat_routes(
         # its way through a plain chat request (and fail, especially with the
         # shell disabled).
         auto_escalated = False
-        if chat_mode == "chat" and isinstance(message, str) and _message_needs_tools(message):
+        _tool_intent = _classify_tool_intent(message) if isinstance(message, str) else None
+        if chat_mode == "chat" and _tool_intent and _tool_intent.needs_tools:
             chat_mode = "agent"
             auto_escalated = True
-            logger.info("chat→agent auto-escalation: message matched tool-intent pattern")
+            logger.info(
+                "chat→agent auto-escalation: category=%s reason=%s",
+                _tool_intent.category,
+                _tool_intent.reason,
+            )
         active_doc_id = form_data.get("active_doc_id", "").strip()
         logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
 
@@ -270,8 +509,21 @@ def setup_chat_routes(
             # but BEFORE loading. Prevents cross-user session hijack.
             _verify_session_owner(request, session)
             sess = session_manager.get_session(session)
-            if _clear_orphaned_session_endpoint(sess):
+            owner = get_current_user(request)
+            if _clear_orphaned_session_endpoint(sess, owner=owner):
                 raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
+            # Issue #587: picker shows a model from the endpoint cache but
+            # s.model never made it onto the DB row (first-send race after
+            # endpoint setup, or a previous endpoint delete/recreate). Pull
+            # the first cached model off the matching endpoint so the
+            # upstream isn't called with model="" (which surfaces as a
+            # generic 401/503).
+            _recover_empty_session_model(sess, session, owner=owner)
+            if not getattr(sess, "model", "").strip():
+                raise HTTPException(
+                    400,
+                    "No model selected for this chat. Open the model picker and choose one before sending.",
+                )
         except SessionNotFoundError as e:
             raise HTTPException(404, str(e))
         except (ValueError, ValidationError):
@@ -288,7 +540,7 @@ def setup_chat_routes(
         _enforce_chat_privileges(request, sess)
 
         # Ensure session has auth headers
-        resolve_session_auth(sess, session)
+        resolve_session_auth(sess, session, owner=get_current_user(request))
 
         # Check for research_pending BEFORE mode persist overwrites it
         do_research = str(use_research).lower() == "true"
@@ -296,11 +548,6 @@ def setup_chat_routes(
             if get_session_mode(session) == 'research_pending':
                 do_research = True
                 logger.info(f"Session {session} in research_pending — auto-triggering research")
-
-        # Persist session mode (research > agent > chat)
-        _effective_mode = 'research' if do_research else (chat_mode or 'chat')
-        if _effective_mode in ('agent', 'research', 'chat'):
-            set_session_mode(session, _effective_mode)
 
         att_ids = []
         if body and isinstance(body.get("attachments"), list):
@@ -312,6 +559,10 @@ def setup_chat_routes(
                 pass
 
         no_memory = str(form_data.get("no_memory", "")).lower() == "true"
+        pre_context_tool_policy = build_effective_tool_policy(
+            last_user_message=message,
+        )
+        allow_tool_preprocessing = not pre_context_tool_policy.block_all_tool_calls
 
         # Build shared context (stream path uses enhanced_message for context preface)
         ctx = await build_chat_context(
@@ -333,6 +584,7 @@ def setup_chat_routes(
             # manage_skills (agent mode). In plain chat or incognito the
             # index would be useless / unwanted noise.
             agent_mode=(chat_mode == "agent"),
+            allow_tool_preprocessing=allow_tool_preprocessing,
         )
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope
@@ -343,18 +595,39 @@ def setup_chat_routes(
         try:
             if active_doc_id:
                 logger.info(f"[doc-inject] active_doc_id from frontend: {active_doc_id}")
-                active_doc = _doc_db.query(DBDocument).filter(
-                    DBDocument.id == active_doc_id,
-                ).first()
+                # Scope to the caller's documents. The session and in-memory
+                # fallbacks below are already owner/session-bound; this
+                # explicit-id path looked up by id alone, so a user could
+                # inject another user's document by passing its id.
+                _doc_q = _doc_db.query(DBDocument).filter(DBDocument.id == active_doc_id)
+                active_doc = _owner_session_filter(_doc_q, ctx.user).first()
                 if active_doc:
-                    logger.info(f"[doc-inject] found by ID: title={active_doc.title!r}, lang={active_doc.language!r}, is_active={active_doc.is_active}, content_len={len(active_doc.current_content or '')}")
+                    doc_session = active_doc.session_id
+                    doc_owner = getattr(active_doc, "owner", None)
+                    if doc_owner and ctx.user and doc_owner != ctx.user:
+                        logger.warning(
+                            "[doc-inject] ignoring active_doc_id %s owned by another user",
+                            active_doc_id,
+                        )
+                        active_doc = None
+                    elif doc_session and doc_session != session:
+                        logger.warning(
+                            "[doc-inject] ignoring stale active_doc_id %s from session %s while in session %s",
+                            active_doc_id,
+                            doc_session,
+                            session,
+                        )
+                        active_doc = None
+                    else:
+                        logger.info(f"[doc-inject] found by ID: title={active_doc.title!r}, lang={active_doc.language!r}, is_active={active_doc.is_active}, content_len={len(active_doc.current_content or '')}")
                 else:
                     logger.warning(f"[doc-inject] NOT FOUND by ID {active_doc_id}")
             if not active_doc:
-                active_doc = _doc_db.query(DBDocument).filter(
+                _session_doc_q = _doc_db.query(DBDocument).filter(
                     DBDocument.session_id == session,
                     DBDocument.is_active == True
-                ).order_by(DBDocument.updated_at.desc()).first()
+                )
+                active_doc = _owner_session_filter(_session_doc_q, ctx.user).order_by(DBDocument.updated_at.desc()).first()
                 if active_doc:
                     logger.info(f"[doc-inject] found by session fallback: title={active_doc.title!r}")
             # Last resort: the document the agent itself just created/edited
@@ -368,7 +641,8 @@ def setup_chat_routes(
                     from src.tool_implementations import get_active_document
                     _mem_id = get_active_document()
                     if _mem_id:
-                        cand = _doc_db.query(DBDocument).filter(DBDocument.id == _mem_id).first()
+                        _mem_q = _doc_db.query(DBDocument).filter(DBDocument.id == _mem_id)
+                        cand = _owner_session_filter(_mem_q, ctx.user).first()
                         if cand and (not cand.session_id or cand.session_id == session):
                             active_doc = cand
                             logger.info(f"[doc-inject] found by in-memory active id: title={active_doc.title!r} (session_id={cand.session_id!r})")
@@ -455,6 +729,32 @@ def setup_chat_routes(
             if chat_mode == 'chat':
                 disabled_tools.update({"bash", "python", "read_file", "write_file", "web_search", "web_fetch", "search_chats", "manage_tasks"})
 
+        # Plan mode: investigate read-only, propose a plan, don't mutate. Block
+        # every tool not on the read-only allowlist. (stream_agent_loop enforces
+        # this again + drops MCP, so this is belt-and-suspenders.)
+        if plan_mode:
+            from src.tool_security import plan_mode_disabled_tools
+            disabled_tools.update(plan_mode_disabled_tools())
+
+        tool_policy = build_effective_tool_policy(
+            disabled_tools=disabled_tools,
+            last_user_message=message,
+        )
+        disabled_tools = tool_policy.all_disabled_names()
+        research_blocked_by_policy = bool(
+            tool_policy.blocks("trigger_research")
+            or tool_policy.blocks("manage_research")
+        )
+        effective_do_research = bool(
+            do_research and _research_flags["do"] and not research_blocked_by_policy
+        )
+
+        # Persist session mode after policy/privilege gates so blocked research
+        # turns remain ordinary chat/agent streams and saved messages.
+        _effective_mode = 'research' if effective_do_research else (chat_mode or 'chat')
+        if _effective_mode in ('agent', 'research', 'chat'):
+            set_session_mode(session, _effective_mode)
+
         async def stream_with_save() -> AsyncGenerator[str, None]:
             # _effective_mode is read-only here; closure captures it from
             # the outer scope. (Was `nonlocal` but never reassigned.)
@@ -462,7 +762,7 @@ def setup_chat_routes(
             web_sources = ctx.web_sources
 
             # Register active stream for partial-save safety net
-            _active_streams[session] = {"status": "streaming", "partial": "", "query": message, "is_research": do_research, "mode": _effective_mode}
+            _active_streams[session] = {"status": "streaming", "partial": "", "query": message, "is_research": effective_do_research, "mode": _effective_mode}
 
             if ctx.preprocessed.attachment_meta:
                 yield f"data: {json.dumps({'type': 'attachments', 'data': ctx.preprocessed.attachment_meta})}\n\n"
@@ -486,7 +786,7 @@ def setup_chat_routes(
                 yield f"data: {json.dumps({'type': 'memories_used', 'data': ctx.used_memories})}\n\n"
 
             # Run research as a background task (survives page refresh)
-            if do_research and _research_flags["do"]:
+            if effective_do_research:
                 _r_ep, _r_model, _r_headers = _resolve_research_endpoint(sess)
                 _auth_keys = list(_r_headers.keys()) if _r_headers else []
                 logger.info(f"Research endpoint resolved: model={_r_model}, endpoint={_r_ep}, auth_keys={_auth_keys}, sess_headers_keys={list(sess.headers.keys()) if isinstance(sess.headers, dict) else type(sess.headers)}")
@@ -563,6 +863,7 @@ def setup_chat_routes(
                         prior_findings=_prior_findings,
                         prior_urls=_prior_urls,
                         on_complete=_on_research_done,
+                        owner=_user,
                     )
 
                     _heartbeat_counter = 0
@@ -619,12 +920,12 @@ def setup_chat_routes(
             # output. Resolved once per request.
             try:
                 from src.endpoint_resolver import resolve_chat_fallback_candidates
-                _fallback_candidates = resolve_chat_fallback_candidates()
+                _fallback_candidates = resolve_chat_fallback_candidates(owner=_user)
             except Exception:
                 _fallback_candidates = []
 
             # Send model name early so the frontend can show it during streaming
-            _model_suffix = "Research" if do_research else None
+            _model_suffix = "Research" if effective_do_research else None
             _model_info = {"type": "model_info", "model": sess.model}
             if _model_suffix:
                 _model_info["suffix"] = _model_suffix
@@ -632,29 +933,14 @@ def setup_chat_routes(
                 _model_info["character_name"] = ctx.preset.character_name
             yield f'data: {json.dumps(_model_info)}\n\n'
 
-            # Detect image models and route directly to image generation
-            _IMAGE_MODEL_PREFIXES = ("gpt-image", "dall-e", "chatgpt-image")
-            _is_image_model = any(sess.model.lower().startswith(p) for p in _IMAGE_MODEL_PREFIXES)
-
-            # Also check if the endpoint is registered as an image-type endpoint
-            if not _is_image_model:
-                try:
-                    from src.endpoint_resolver import normalize_base as _nb
-                    _ep_base = _nb(sess.endpoint_url)
-                    _db = SessionLocal()
-                    try:
-                        _is_image_model = _db.query(ModelEndpoint).filter(
-                            ModelEndpoint.model_type == "image",
-                            ModelEndpoint.is_enabled == True,
-                            ModelEndpoint.base_url.contains(_ep_base.split("://")[-1].split("/")[0]),
-                        ).first() is not None
-                    finally:
-                        _db.close()
-                except Exception:
-                    pass
-
-            if _is_image_model:
+            if _is_image_generation_session(sess, owner=_user):
                 from src.settings import get_setting
+                if tool_policy.blocks("generate_image"):
+                    _blocked_msg = tool_policy.reason_for("generate_image")
+                    yield f'data: {json.dumps({"delta": _blocked_msg})}\n\n'
+                    yield "data: [DONE]\n\n"
+                    _active_streams.pop(session, None)
+                    return
                 if not get_setting("image_gen_enabled", True):
                     yield f'data: {json.dumps({"delta": "Image generation is disabled by the administrator."})}\n\n'
                     yield "data: [DONE]\n\n"
@@ -664,7 +950,7 @@ def setup_chat_routes(
                 _user_msg = message or ""
                 yield f'data: {json.dumps({"type": "tool_start", "tool": "generate_image", "command": _user_msg[:100]})}\n\n'
                 yield ": heartbeat\n\n"
-                _img_result = await do_generate_image(f"{_user_msg}\n{sess.model}", session)
+                _img_result = await do_generate_image(f"{_user_msg}\n{sess.model}", session, owner=_user)
                 _img_output = _img_result.get("results", _img_result.get("error", ""))
                 _img_tool_data = {"type": "tool_output", "tool": "generate_image", "command": _user_msg[:100], "output": _img_output, "exit_code": 0 if "error" not in _img_result else 1}
                 for _k in ("image_url", "image_id", "image_prompt", "image_model", "image_size", "image_quality"):
@@ -688,6 +974,9 @@ def setup_chat_routes(
                 return
             elif chat_mode == "chat":
                 _chat_start = time.time()
+                _answered_by = None  # set if the selected model failed and a fallback answered
+                _requested_model = sess.model
+                _actual_model = None
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
                 try:
                     _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
@@ -708,16 +997,43 @@ def setup_chat_routes(
                             try:
                                 data = json.loads(chunk[6:])
                                 if "delta" in data:
-                                    full_response += data["delta"]
-                                    _stream_set(session, partial=full_response)
+                                    # Reasoning tokens arrive flagged thinking:true.
+                                    # Forward them so the client can show a thinking
+                                    # indicator, but don't fold them into the saved
+                                    # reply (mirrors the rewrite path below).
+                                    if not data.get("thinking"):
+                                        full_response += data["delta"]
+                                        _stream_set(session, partial=full_response)
                                     yield chunk
+                                elif data.get("type") == "fallback":
+                                    # Selected model failed; a fallback answered.
+                                    # Forward the notice and remember the real model.
+                                    _answered_by = data.get("answered_by") or _answered_by
+                                    _actual_model = _actual_model or _answered_by
+                                    data["selected_model"] = data.get("selected_model") or _requested_model
+                                    yield chunk
+                                elif data.get("type") == "model_actual":
+                                    _actual_model = data.get("model") or _actual_model
+                                    data["requested_model"] = _requested_model
+                                    yield f'data: {json.dumps(data)}\n\n'
                                 elif data.get("type") == "usage":
                                     last_metrics = data.get("data", {})
-                                    last_metrics["model"] = sess.model
+                                    _reported_model = last_metrics.get("model")
+                                    last_metrics["requested_model"] = _requested_model
+                                    last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model
                                     if ctx.context_length and last_metrics.get("input_tokens"):
                                         pct = min(round((last_metrics["input_tokens"] / ctx.context_length) * 100, 1), 100.0)
                                         last_metrics["context_percent"] = pct
                                         last_metrics["context_length"] = ctx.context_length
+                                    # The frontend reads `tokens_per_second`; the raw usage event
+                                    # carries the backend's true gen speed as `gen_tps` (llama.cpp
+                                    # timings). Map it through so this direct-chat path shows real
+                                    # t/s instead of "n/a" → falling back to a bare token count.
+                                    if last_metrics.get("gen_tps") and not last_metrics.get("tokens_per_second"):
+                                        last_metrics["tokens_per_second"] = last_metrics["gen_tps"]
+                                        last_metrics["tps_source"] = "backend"
+                                    # Wall-clock response time for the stats popup ("Time").
+                                    last_metrics.setdefault("response_time", round(time.time() - _chat_start, 2))
                                     yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
                             except json.JSONDecodeError:
                                 yield chunk
@@ -741,7 +1057,8 @@ def setup_chat_routes(
                                     "tokens_per_second": _tps,
                                     "context_percent": _ctx_pct,
                                     "context_length": ctx.context_length,
-                                    "model": sess.model,
+                                    "model": _actual_model or _answered_by or _requested_model,
+                                    "requested_model": _requested_model,
                                     "usage_source": "estimated",
                                 }
                                 yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
@@ -753,7 +1070,7 @@ def setup_chat_routes(
                                     rag_sources=ctx.rag_sources,
                                     research_sources=research_sources,
                                     used_memories=ctx.used_memories,
-                                    do_research=do_research,
+                                    do_research=effective_do_research,
                                     incognito=incognito,
                                 )
                                 if _saved_id:
@@ -763,14 +1080,22 @@ def setup_chat_routes(
                                     last_metrics, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
                                     incognito=incognito, compare_mode=compare_mode,
                                     character_name=ctx.preset.character_name,
-                                                            owner=_user,
+                                    owner=_user,
+                                    allow_background_extraction=not tool_policy.block_all_tool_calls,
                                 )
                             _stream_set(session, status="done")
                             yield chunk
                 except (asyncio.CancelledError, GeneratorExit):
                     if full_response:
                         logger.info("Client disconnected mid-stream (chat mode) for session %s, saving partial (%d chars)", session, len(full_response))
-                        _stopped_content, _stopped_md = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model})
+                        _stopped_content, _stopped_md = clean_thinking_for_save(
+                            full_response,
+                            {
+                                "stopped": True,
+                                "model": _actual_model or _answered_by or _requested_model,
+                                "requested_model": _requested_model,
+                            },
+                        )
                         sess.add_message(ChatMessage("assistant", _stopped_content, metadata=_stopped_md))
                         if not incognito:
                             session_manager.save_sessions()
@@ -781,9 +1106,20 @@ def setup_chat_routes(
                 # ── Agent mode: full agent loop with tools ──
                 _agent_rounds = 0
                 _agent_tool_calls = 0
+                _answered_by = None  # set if the selected model failed and a fallback answered
+                _requested_model = sess.model
+                _actual_model = None
                 try:
                     from src.settings import get_setting
+                    from src.agent_tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
                     _tool_budget = int(get_setting("agent_max_tool_calls", 0))
+                    # Per-message round cap from settings; clamp defensively in
+                    # case settings.json was hand-edited to a bad value.
+                    try:
+                        _max_rounds = int(get_setting("agent_max_rounds", _DEFAULT_ROUNDS) or _DEFAULT_ROUNDS)
+                    except (TypeError, ValueError):
+                        _max_rounds = _DEFAULT_ROUNDS
+                    _max_rounds = max(1, min(_max_rounds, 200))
 
                     async for chunk in stream_agent_loop(
                         sess.endpoint_url,
@@ -794,19 +1130,28 @@ def setup_chat_routes(
                         max_tokens=ctx.preset.max_tokens,
                         prompt_type=preset_id,
                         max_tool_calls=_tool_budget,
+                        max_rounds=_max_rounds,
                         context_length=ctx.context_length,
                         active_document=active_doc,
                         session_id=session,
                         disabled_tools=disabled_tools if disabled_tools else None,
+                        tool_policy=tool_policy,
                         owner=_user,
                         fallbacks=_fallback_candidates,
+                        workspace=workspace or None,
+                        plan_mode=plan_mode,
+                        approved_plan=approved_plan or None,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
                                 data = json.loads(chunk[6:])
                                 if "delta" in data:
-                                    full_response += data["delta"]
-                                    _stream_set(session, partial=full_response)
+                                    # Reasoning tokens arrive flagged thinking:true.
+                                    # Forward them for the live indicator, but keep
+                                    # them out of the saved reply (same as chat mode).
+                                    if not data.get("thinking"):
+                                        full_response += data["delta"]
+                                        _stream_set(session, partial=full_response)
                                     yield chunk
                                 elif data.get("type") == "web_sources":
                                     web_sources = data.get("data", [])
@@ -815,15 +1160,33 @@ def setup_chat_routes(
                                     "tool_start", "tool_output", "agent_step",
                                     "doc_stream_open", "doc_stream_delta",
                                     "doc_update", "doc_suggestions", "ui_control",
+                                    "rounds_exhausted",
+                                    "ask_user",
+                                    "plan_update",
                                 ):
                                     if data.get("type") == "agent_step":
                                         _agent_rounds = max(_agent_rounds, data.get("round", 1))
                                     elif data.get("type") == "tool_start":
                                         _agent_tool_calls += 1
                                     yield chunk
+                                elif data.get("type") == "fallback":
+                                    # Selected model failed; a fallback answered.
+                                    # Forward the notice and remember the real
+                                    # model so metrics reflect it, not the masked
+                                    # selected model.
+                                    _answered_by = data.get("answered_by") or _answered_by
+                                    _actual_model = _actual_model or _answered_by
+                                    data["selected_model"] = data.get("selected_model") or _requested_model
+                                    yield chunk
+                                elif data.get("type") == "model_actual":
+                                    _actual_model = data.get("model") or _actual_model
+                                    data["requested_model"] = _requested_model
+                                    yield f'data: {json.dumps(data)}\n\n'
                                 elif data.get("type") == "metrics":
                                     last_metrics = data.get("data", {})
-                                    last_metrics["model"] = sess.model
+                                    _reported_model = last_metrics.get("model")
+                                    last_metrics["requested_model"] = last_metrics.get("requested_model") or _requested_model
+                                    last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model
                                     yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
                             except json.JSONDecodeError:
                                 yield chunk
@@ -851,6 +1214,7 @@ def setup_chat_routes(
                                     skills_manager=skills_manager,
                                     owner=_user,
                                     extract_skills=user_requested_agent,
+                                    allow_background_extraction=not tool_policy.block_all_tool_calls,
                                 )
                             _stream_set(session, status="done")
                             yield chunk
@@ -864,7 +1228,14 @@ def setup_chat_routes(
                     try:
                         if full_response:
                             logger.info("Client disconnected mid-stream for session %s, saving partial response (%d chars)", session, len(full_response))
-                            _stopped_content2, _stopped_md2 = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model})
+                            _stopped_content2, _stopped_md2 = clean_thinking_for_save(
+                                full_response,
+                                {
+                                    "stopped": True,
+                                    "model": _actual_model or _answered_by or _requested_model,
+                                    "requested_model": _requested_model,
+                                },
+                            )
                             sess.add_message(ChatMessage("assistant", _stopped_content2, metadata=_stopped_md2))
                             if not incognito:
                                 session_manager.save_sessions()
@@ -883,11 +1254,30 @@ def setup_chat_routes(
             finally:
                 _active_streams.pop(session, None)
 
-        # Run the stream as a DETACHED background task so it survives the client
-        # closing the tab / navigating away (true terminal-agent behavior). The
-        # SSE response just subscribes (replay buffered output + live); dropping
-        # the SSE only removes a subscriber — the run keeps going and saves the
-        # assistant message on completion regardless. Reconnect via /api/chat/resume.
+        # Compare panes are short-lived, single-shot generations whose sessions
+        # exist only to drive that one pane — there's nothing to "resume" and
+        # the user expects the pane's Stop button (which aborts the fetch,
+        # closing this SSE) to promptly cancel the upstream LLM call. Detaching
+        # them would keep burning upstream tokens/compute after the pane is
+        # stopped or the comparison is abandoned, and would surface a stale
+        # "still streaming" /resume target for a session nobody will revisit.
+        #
+        # So: stream them directly (no agent_runs wrapping). Starlette cancels
+        # the underlying async generator (raising CancelledError/GeneratorExit
+        # inside it) as soon as it notices the client disconnected — which the
+        # mode-specific except blocks above already handle by saving the
+        # partial response exactly once. This stops the upstream call promptly
+        # without waiting on the next streamed chunk.
+        #
+        # Normal chat/agent streams keep the DETACHED behavior below: they
+        # survive the client closing the tab / navigating away (true
+        # terminal-agent semantics). The SSE response just subscribes (replay
+        # buffered output + live); dropping the SSE only removes a subscriber —
+        # the run keeps going and saves the assistant message on completion
+        # regardless. Reconnect via /api/chat/resume.
+        if compare_mode:
+            return StreamingResponse(_safe_stream(), media_type="text/event-stream")
+
         agent_runs.start(session, _safe_stream())
         return StreamingResponse(agent_runs.subscribe(session), media_type="text/event-stream")
 
@@ -920,11 +1310,15 @@ def setup_chat_routes(
         _verify_session_owner(request, session_id)
         # A detached run can still be going even if _active_streams was popped;
         # report it as active so the client knows to reconnect via /resume.
-        if session_id not in _active_streams:
+        # Read once via .get() to avoid a KeyError race between the membership
+        # check and the indexed read if a sibling stream's finally pops the
+        # entry in between (same pattern _stream_set already uses).
+        rec = _active_streams.get(session_id)
+        if rec is None:
             if agent_runs.is_active(session_id):
                 return {"status": "streaming", "detached": True}
             raise HTTPException(404, "No active stream for this session")
-        return _active_streams[session_id]
+        return rec
 
     # ------------------------------------------------------------------ #
     # POST /api/inject_context
@@ -954,45 +1348,16 @@ def setup_chat_routes(
             return []
 
         _user = get_current_user(request)
-        query_term = q.strip()
-        db = SessionLocal()
-        try:
-            base_q = (
-                db.query(DBChatMessage, DBSession.name)
-                .join(DBSession, DBChatMessage.session_id == DBSession.id)
-                .filter(
-                    DBSession.archived == False,
-                    DBChatMessage.content.ilike(f"%{query_term}%"),
-                    DBChatMessage.role.in_(["user", "assistant"]),
-                )
+        return [
+            result.to_dict()
+            for result in search_session_messages(
+                q,
+                limit=limit,
+                owner=_user,
+                restrict_owner=_user is not None,
+                include_legacy_owner=False,
             )
-            if _user:
-                base_q = base_q.filter(DBSession.owner == _user)
-            rows = base_q.order_by(DBChatMessage.timestamp.desc()).limit(limit).all()
-
-            results = []
-            for msg, session_name in rows:
-                content = msg.content or ""
-                lower_content = content.lower()
-                idx = lower_content.find(query_term.lower())
-                if idx == -1:
-                    snippet = content[:120]
-                else:
-                    start = max(0, idx - 50)
-                    end = min(len(content), idx + len(query_term) + 50)
-                    snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
-
-                results.append({
-                    "session_id": msg.session_id,
-                    "session_name": session_name or "Untitled",
-                    "role": msg.role,
-                    "content_snippet": snippet,
-                    "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
-                })
-
-            return results
-        finally:
-            db.close()
+        ]
 
     # ------------------------------------------------------------------ #
     # POST /api/rewrite — lightweight rewrite of last AI message (no tools)
@@ -1088,7 +1453,7 @@ def setup_chat_routes(
                                 db_msg = (
                                     db.query(DBChatMessage)
                                     .filter(DBChatMessage.session_id == session_id, DBChatMessage.role == 'assistant')
-                                    .order_by(DBChatMessage.created_at.desc())
+                                    .order_by(DBChatMessage.timestamp.desc())
                                     .first()
                                 )
                                 if db_msg:
