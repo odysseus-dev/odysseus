@@ -488,3 +488,113 @@ graph TD
 - **Editors & Visuals:** `document.js` manages multiple tabs and state. `gallery.js` handles image assets and grids. The `editor/` sub-folder contains extensions for masking and specialized layout.
 - **Sub-Apps:** Major integrations are separated completely, e.g., `emailLibrary.js` (a full IMAP client UI), `calendar.js` (CalDAV sync rendering), `tasks.js`, and `notes.js`.
 - **Cookbook (Hardware Management):** The `cookbook*.js` modules execute complex, multi-step tasks across SSE streams, including diagnosis, hardware fitting, and download signaling.
+
+---
+
+## 28. Deep Dive: Testing Taxonomy (`tests/`, `TESTING_STANDARD.md`)
+
+Odysseus enforces a strict, deterministic testing strategy designed to eliminate order-dependence and global state leakage.
+
+```mermaid
+graph TD
+    TestRunner[Pytest Runner] --> Collection[conftest.py / _taxonomy.py]
+    Collection --> Tags[Taxonomy Area Tags]
+    Tags --> Unit[tests/ unit / helpers]
+    Tags --> Routes[tests/ routes integration]
+    Tags --> Services[tests/ services / background]
+    Tags --> Security[tests/ security / isolation]
+    TestRunnerNode[Node.js Runner] --> JS[tests/ streaming/*.mjs]
+    Unit -.-> |Import State Isolation| Module[Core Modules]
+```
+
+### Components & Principles
+- **Taxonomy Tags (`tests/_taxonomy.py`)**: Tests are categorized (e.g., `security`, `routes`, `cli`, `js`) during collection based on filename conventions.
+- **Determinism & Isolation (`tests/helpers/import_state.py`)**: Tests are heavily isolated. `sys.modules`, `os.environ`, and `cwd` are strictly guarded against cross-test leakage, preventing order-dependent execution failures.
+- **In-memory Default (`tests/conftest.py`)**: Pytest initiates with a fallback in-memory SQLite database to prevent collection-time side-effects within the user's `data/` directory.
+- **Behavior-First Validation**: The testing philosophy strongly discourages `read_text()` or `ast.parse` style source code checks. Tests are required to exercise routing, database interactions, and module calls directly, prioritizing real-world execution state over text inspection.
+
+---
+
+## 29. Deep Dive: Companion Bridge (`companion/`)
+
+The Companion Bridge provides an additive layer for Local Area Network (LAN) clients (like a mobile companion app) to securely discover and pair with the Odysseus server without duplicating core LLM logic.
+
+```mermaid
+graph LR
+    Client[Mobile Companion App] --> |GET /api/companion/ping| Bridge[Companion Bridge routes]
+    Client --> |GET /api/companion/info| Bridge
+    Client --> |GET /api/companion/models| Bridge
+    Browser[Admin Browser Session] --> |POST /api/companion/pair| Mint[Token Minting]
+    Mint --> |Returns JSON Token| QRCode[QR Code / API Response]
+    QRCode -.-> |Scanned / Copied| Client
+```
+
+### Components & Posture
+- **Capabilities & Discovery (`companion/routes.py`)**: Endpoints like `/api/companion/info` and `/api/companion/models` allow an authenticated client to discover what AI providers, tools, and endpoints the server makes available. Model requests scope strictly to the authenticated user.
+- **Pairing Flow & CSRF Security (`companion/pairing.py`)**: To pair a new device, an admin session requests a one-time API pairing token. The server enforces strict CSRF protections by requiring this token minting to be an explicit `POST` operation, protected by a `SameSite=Lax` cookie policy. The `GET /pair` route only returns an HTML form, preventing unintended token minting via cross-site GET navigations.
+
+---
+
+## 30. Deep Dive: Outgoing Webhooks (`src/webhook_manager.py`)
+
+Odysseus can dispatch system events to external HTTP endpoints, allowing automation platforms like ntfy, Zapier, or custom scripts to react to chat completions and new sessions.
+
+```mermaid
+graph TD
+    EventBus[Event Bus / Agent Loop] --> |session.created, chat.completed| Manager[src/webhook_manager.py]
+    Manager --> |Lookup Subscriptions| DB[(SQLite Webhooks)]
+    Manager --> |Validate URL| SSRF[SSRF Security Layer]
+    SSRF --> |Block Private IP| Drop[Discard]
+    SSRF --> |Permit| Dispatch[HTTPX Async POST]
+    Dispatch --> |X-Odysseus-Signature| External[External Webhook URL]
+```
+
+### Components & Security
+- **Event Dispatch**: Monitored events trigger `webhook_manager.dispatch(event_type, payload)` asynchronously in the background.
+- **SSRF Protection (`_PRIVATE_NETWORKS`)**: To prevent Server-Side Request Forgery, where a user configures a webhook to attack internal infrastructure (e.g., querying `127.0.0.1` or `10.0.x.x`), the webhook manager strictly resolves target domains and drops requests bound for private, loopback, or link-local subnets.
+- **Signature Validation**: Outgoing requests include an `X-Odysseus-Signature` header computed via HMAC-SHA256, allowing external recipients to verify that the webhook legitimately originated from Odysseus and hasn't been tampered with.
+
+---
+
+## 31. Deep Dive: External Integrations (`integrations/`)
+
+Odysseus provides an integration layer that acts as a secure bridge for third-party AI agents (e.g., Claude Code, OpenAI integrations) to execute tools locally through the Odysseus server.
+
+```mermaid
+graph TD
+    Agent[Claude Code / External Agent] --> |HTTP Bearer Token| Codex[routes/codex_routes.py]
+    Codex --> Auth[Token Validation & Scope Check]
+    Auth --> |Forbidden Tools| Reject[403 Forbidden]
+    Auth --> |Allowed| ToolIndex[Tool Dispatch src/agent_tools.py]
+    ToolIndex --> LocalTools[Local OS / Database / Memory]
+    LocalTools --> Codex
+    Codex --> Agent
+```
+
+### Components & Posture
+- **The "Codex" Abstraction (`routes/codex_routes.py`)**: Historically named "codex", this router exposes the canonical, scope-gated API endpoints (`/api/codex/*`) that external agents hit to list available tools and execute them.
+- **Plugin Bundles (`integrations/claude/`)**: Directories like `integrations/claude` contain ready-to-use skill bundles (`SKILL.md` and wrapper scripts). A user installs this into their external agent (like Anthropic's `claude-code` CLI).
+- **Scope Enforcement**: API tokens generated for integrations are heavily scope-gated. If an external agent attempts to execute a tool (e.g., `bash` or `read_file`) that the user has not explicitly enabled in the Integrations UI, Odysseus rejects the request. This ensures external platforms cannot access the host machine unconditionally.
+
+---
+
+## 32. Deep Dive: Operational CLI Scripts (`scripts/`)
+
+For maintenance, debugging, and offline operations, Odysseus includes a suite of Python CLI tools.
+
+### Components
+- **CLI Abstraction (`scripts/_lib/cli.py`)**: A generalized module that bootstraps the necessary environment (handling `sys.path` injection and `.env` loading) so scripts can run cleanly without `python -m`.
+- **Maintenance Tools (`odysseus-*`)**: Functional shortcuts for admins to view and modify the database directly from the terminal. Examples include `odysseus-backup`, `odysseus-logs`, `odysseus-mcp`, and `odysseus-preset`.
+- **Headless Migrations & Indexing**: Scripts like `update_database.py` manage Alembic-style ORM schema upgrades automatically. `index_documents.py` forces a headless re-embedding of personal docs into ChromaDB.
+- **CI / Quality Checks (`pr_blocker_audit.py`)**: An automated audit script run during GitHub Actions to statically analyze code for forbidden patterns (like raw `print` statements in production routes or unauthorized global state mutations).
+
+---
+
+## 33. Deep Dive: Embedding Strategy (`src/embeddings.py`, `src/chroma_client.py`)
+
+Odysseus handles vector embeddings (used for RAG and semantic memory) gracefully, balancing API endpoints with local fail-safes.
+
+### Components
+- **Priority Resolution (`src/embeddings.py`)**: The system first attempts to connect to an external HTTP API (like Ollama, vLLM, or llama.cpp) if `EMBEDDING_URL` is defined in the `.env`. If no external URL is provided, it falls back to a zero-config, embedded ONNX runtime (`fastembed`), using a ~50MB local model (`all-MiniLM-L6-v2` or similar).
+- **Windows Symlink Mitigations**: HuggingFace's caching mechanism relies heavily on symlinks, which often fail on Windows environments (especially network drives/UNC paths) resulting in `[WinError 1463]`. `src/embeddings.py` intercepts this at the top level and forces `HF_HUB_DISABLE_SYMLINKS=1` to ensure ONNX models load reliably on Windows natively.
+- **Chroma Client (`src/chroma_client.py`)**: Abstract client logic ensuring collections exist, configuring the HTTP transport layer, and routing queries either to the standalone Docker ChromaDB instance or an ephemeral client.
