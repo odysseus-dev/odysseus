@@ -297,8 +297,9 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
             logger.info(f"Using known context window for {model}: {known}")
         return known or DEFAULT_CONTEXT
 
-    # First try standard OpenAI-compatible /v1/models endpoint
-    models_url = endpoint_url.replace("/chat/completions", "/models")
+    from src.endpoint_resolver import build_models_url
+
+    models_url = build_models_url(endpoint_url)
     try:
         r = httpx.get(models_url, timeout=REQUEST_TIMEOUT)
         if r.is_success:
@@ -331,38 +332,7 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
                                     break
                     break
     except Exception as e:
-        logger.debug(f"Failed to query context length for {model} from {models_url}: {e}")
-
-    # If standard endpoint didn't work or returned no context, try LM Studio /api/v1/models endpoint
-    if not api_ctx and _is_local_endpoint(endpoint_url):
-        # Construct the LM Studio API URL (assuming it's on same host/port as v1)
-        lmstudio_url = endpoint_url.replace("/v1", "/api/v1").replace("/chat/completions", "/models")
-        try:
-            r = httpx.get(lmstudio_url, timeout=REQUEST_TIMEOUT)
-            if r.is_success:
-                data = r.json()
-                models_list = data.get("models") or []
-
-                for m in models_list:
-
-                    # We need to match the base name without quantization
-                    key = m.get("key", "")
-                    if not key:
-                        continue
-                    
-                    # Extract base model name (remove @quantization suffix)
-                    key_base = key.split("@")[0]
-                    model_base = model.split("@")[0]
-                    
-                    # Match either exact key or basename match
-                    if key == model or key_base == model_base:
-                        val = m.get("max_context_length")
-                        if val and isinstance(val, (int, float)) and val > 0:
-                            api_ctx = int(val)
-                            logger.info(f"LM Studio /api/v1/models reports max_context_length={api_ctx} for {model}")
-                            break
-        except Exception as e:
-            logger.debug(f"Failed to query context length for {model} from {lmstudio_url}: {e}")
+        logger.debug(f"Failed to query context length for {model}: {e}")
 
     # For local/self-hosted endpoints, trust the API value (user set --max-model-len)
     # For cloud APIs, use the larger value (API can report low defaults)
