@@ -1709,7 +1709,9 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
     // If we already painted the cached list, leave it on screen — beats
     // wiping it for "Failed to load" when there's still readable content.
     if (!cached) {
-      const msg = e && e.message ? `Failed to load: ${e.message}` : 'Failed to load';
+      const msg = accountAtStart
+        ? 'Failed to load emails'
+        : 'Connect an email account to view your inbox';
       grid.innerHTML = `<div class="email-loading">${_esc(msg)}${_emailSetupHintHtml()}</div>`;
       _wireEmailSetupHint(grid);
     }
