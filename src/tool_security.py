@@ -51,6 +51,51 @@ NON_ADMIN_BLOCKED_TOOLS = {
 }
 
 
+def context_has_untrusted(messages) -> bool:
+    """True if any message in ``messages`` is untrusted-wrapped — content from
+    outside the user's control: web pages, emails, RAG documents, research
+    output, skill text, and the active editor document.
+
+    Detection keys on the markers ``untrusted_context_message`` already sets:
+    - the per-message ``metadata.trusted is False`` flag, and
+    - the ``GUARD_OPEN`` delimiter literal embedded in the wrapped content (a
+      backstop for paths where metadata is stripped before the model sees it).
+    Because ``untrusted_context_message`` escapes that literal inside the body
+    (see ``prompt_security._escape_guard_markers``), it only ever appears in a
+    genuine wrapper — so the content check has no false positives.
+    """
+    from src.prompt_security import GUARD_OPEN
+
+    for m in (messages or []):
+        if not isinstance(m, dict):
+            continue
+        if (m.get("metadata") or {}).get("trusted") is False:
+            return True
+        content = m.get("content")
+        if isinstance(content, str) and GUARD_OPEN in content:
+            return True
+    return False
+
+
+def untrusted_attenuation_block(messages, *, enabled: bool) -> Set[str]:
+    """Capability attenuation for prompt-injection defense (audit finding H2).
+
+    When ``enabled`` AND the turn's context contains untrusted-wrapped content,
+    drop the agent to public-user tool privileges — block
+    ``NON_ADMIN_BLOCKED_TOOLS`` even for an admin / single-user owner — so a
+    prompt injection that slips past the soft "untrusted" header still cannot
+    reach high-impact tools (bash, vault, send_email, manage_tokens, model
+    serving, ...). A hard gate at the tool layer, not a prompt instruction.
+
+    Returns the empty set when disabled or when no untrusted content is present,
+    so it is safe to leave the setting (agent_block_high_impact_on_untrusted)
+    off by default — zero behaviour change until a user opts in.
+    """
+    if enabled and context_has_untrusted(messages):
+        return set(NON_ADMIN_BLOCKED_TOOLS)
+    return set()
+
+
 # Plan mode: the agent may investigate but must not mutate anything. Only these
 # read-only/inspection tools stay enabled; everything else (writes, sends,
 # manage_*, model serving, MCP, etc.) is blocked. Allowlist rather than blocklist

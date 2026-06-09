@@ -19,7 +19,11 @@ from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native
 from src.model_context import estimate_tokens
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
-from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
+from src.tool_security import (
+    blocked_tools_for_owner,
+    plan_mode_disabled_tools,
+    untrusted_attenuation_block,
+)
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, ToolPolicy
 from src.tool_utils import get_mcp_manager
 from src.agent_tools import (
@@ -1747,6 +1751,17 @@ async def stream_agent_loop(
         # filtered to read-only tools below (after the disabled map is loaded).
         disabled_tools.update(plan_mode_disabled_tools())
 
+    # H2 (audit) — opt-in capability attenuation against prompt injection. When
+    # this turn's context contains untrusted-wrapped content (web/email/RAG/
+    # research, marked metadata.trusted=False), drop to public-user tool
+    # privileges so an injection that slips past the soft "untrusted" header
+    # still can't reach high-impact tools. Default off → no behaviour change.
+    # Checked here on the caller-provided context, and again after
+    # _build_system_prompt (which adds the skills / active-document wrappers) so
+    # the dispatch gate covers every untrusted vector.
+    _attenuate_untrusted = bool(get_setting("agent_block_high_impact_on_untrusted", False))
+    disabled_tools.update(untrusted_attenuation_block(messages, enabled=_attenuate_untrusted))
+
     _t0 = time.time()
     _needs_admin = _detect_admin_intent(messages)
     _last_user = _extract_last_user_message(messages)
@@ -1936,6 +1951,10 @@ async def stream_agent_loop(
         owner=owner,
         suppress_local_context=guide_only,
     )
+    # Re-apply attenuation on the FINAL context: _build_system_prompt wraps the
+    # skills index and active editor document as untrusted, so re-checking here
+    # ensures the dispatch gate blocks high-impact tools for those vectors too.
+    disabled_tools.update(untrusted_attenuation_block(messages, enabled=_attenuate_untrusted))
     if plan_mode and not guide_only:
         # Steer the model to investigate-then-propose. Hard tool gating handles
         # every write path except shell; this directive is what keeps the
