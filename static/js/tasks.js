@@ -178,6 +178,29 @@ async function _fetchActions() {
   return _builtinActions;
 }
 
+let _taskCalendars = null;
+async function _fetchTaskCalendars() {
+  if (_taskCalendars) return _taskCalendars;
+  try {
+    const res = await fetch(`${API_BASE}/api/calendar/calendars`, { credentials: 'same-origin' });
+    const data = await res.json();
+    _taskCalendars = data.calendars || [];
+  } catch (e) {
+    _taskCalendars = [];
+  }
+  return _taskCalendars;
+}
+
+function _parseJsonObject(raw) {
+  if (!raw || typeof raw !== 'string') return {};
+  try {
+    const obj = JSON.parse(raw);
+    return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : {};
+  } catch (_) {
+    return {};
+  }
+}
+
 let _urgentEmailSettings = null;
 async function _fetchUrgentEmailSettings() {
   if (_urgentEmailSettings) return _urgentEmailSettings;
@@ -1010,6 +1033,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
 
   const curTaskType = existing?.task_type || initTaskType || 'llm';
   const curTriggerType = existing?.trigger_type || initTriggerType || 'schedule';
+  const existingActionConfig = _parseJsonObject(existing?.prompt || '');
 
   body.innerHTML = `
     <div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
@@ -1093,23 +1117,62 @@ function _showForm(existing, initTaskType, initTriggerType) {
         const sel = document.getElementById('task-form-action');
         const extra = document.getElementById('task-form-action-extra');
         if (!sel || !extra) return;
-        if (sel.value !== 'check_email_urgency') {
-          extra.innerHTML = '';
-          return;
+        const actionMeta = (_builtinActions || []).find(a => a.name === sel.value) || {};
+        const params = Array.isArray(actionMeta.parameters) ? actionMeta.parameters : [];
+        let html = '';
+
+        for (const p of params) {
+          if (p.type !== 'calendar') continue;
+          html += `
+            <label class="task-form-label">${p.label || 'Calendar'}${p.required ? ' *' : ''}</label>
+            <select id="task-form-action-calendar" class="task-form-input">
+              <option value="">Loading calendars…</option>
+            </select>
+          `;
         }
-        extra.innerHTML = `
-          <label class="task-form-label">Email triage rules</label>
-          <textarea id="task-form-urgent-email-prompt" class="task-form-input task-form-textarea" rows="4" placeholder="What should count as urgent? e.g. deadlines, blockers, people waiting outside."></textarea>
-          <div class="memory-desc" style="font-size:11px;margin-top:4px;">Pause/resume and schedule are controlled by this task. It tags urgent, reply-soon, newsletter, marketing, and spam. Urgent/reply-soon emails use your reminder settings.</div>
-        `;
-        const settings = await _fetchUrgentEmailSettings();
-        const promptEl = document.getElementById('task-form-urgent-email-prompt');
-        if (promptEl && !promptEl.dataset.loaded) {
-          promptEl.value = settings.urgent_email_prompt || '';
-          promptEl.dataset.loaded = '1';
+
+        if (sel.value === 'check_email_urgency') {
+          html += `
+            <label class="task-form-label">Email triage rules</label>
+            <textarea id="task-form-urgent-email-prompt" class="task-form-input task-form-textarea" rows="4" placeholder="What should count as urgent? e.g. deadlines, blockers, people waiting outside."></textarea>
+            <div class="memory-desc" style="font-size:11px;margin-top:4px;">Pause/resume and schedule are controlled by this task. It tags urgent, reply-soon, newsletter, marketing, and spam. Urgent/reply-soon emails use your reminder settings.</div>
+          `;
         }
-        const notifEl = document.getElementById('task-form-notif');
-        if (notifEl && !existing?.id) notifEl.checked = false;
+
+        extra.innerHTML = html;
+
+        if (params.some(p => p.type === 'calendar')) {
+          const calSel = document.getElementById('task-form-action-calendar');
+          if (calSel) {
+            const cals = await _fetchTaskCalendars();
+            calSel.innerHTML = '<option value="">Select a calendar…</option>';
+            for (const c of cals) {
+              const opt = document.createElement('option');
+              opt.value = c.href || c.id || '';
+              opt.textContent = c.name || (c.href || c.id || '').slice(0, 8);
+              calSel.appendChild(opt);
+            }
+            let existingHref = existingActionConfig.calendar_href || '';
+            // For existing tasks without an explicit calendar_href (created before this feature),
+            // use the first calendar as the fallback baseline so migration comparison works.
+            if (!existingHref && existing?.id && sel.value === 'extract_email_events' && cals.length > 0) {
+              existingHref = cals[0].href || cals[0].id || '';
+              existingActionConfig.calendar_href = existingHref;
+            }
+            if (existingHref) calSel.value = existingHref;
+          }
+        }
+
+        if (sel.value === 'check_email_urgency') {
+          const settings = await _fetchUrgentEmailSettings();
+          const promptEl = document.getElementById('task-form-urgent-email-prompt');
+          if (promptEl && !promptEl.dataset.loaded) {
+            promptEl.value = settings.urgent_email_prompt || '';
+            promptEl.dataset.loaded = '1';
+          }
+          const notifEl = document.getElementById('task-form-notif');
+          if (notifEl && !existing?.id) notifEl.checked = false;
+        }
       };
       _fetchActions().then(actions => {
         const sel = document.getElementById('task-form-action');
@@ -1444,6 +1507,33 @@ function _showForm(existing, initTaskType, initTriggerType) {
         return;
       }
       payload.action = action;
+
+      const actionMeta = (_builtinActions || []).find(a => a.name === action) || {};
+      const params = Array.isArray(actionMeta.parameters) ? actionMeta.parameters : [];
+      const actionCfg = {};
+      for (const p of params) {
+        if (p.type !== 'calendar') continue;
+        const calVal = (document.getElementById('task-form-action-calendar')?.value || '').trim();
+        if (p.required && !calVal) {
+          if (uiModule) uiModule.showError('Calendar selection is required for this action');
+          return;
+        }
+        if (calVal) actionCfg.calendar_href = calVal;
+      }
+      if (Object.keys(actionCfg).length) payload.prompt = JSON.stringify(actionCfg);
+
+      const oldCalendar = (existingActionConfig.calendar_href || '').trim();
+      const newCalendar = (actionCfg.calendar_href || '').trim();
+      if (existing?.id && existing.action === 'extract_email_events' && action === 'extract_email_events' && oldCalendar && newCalendar && oldCalendar !== newCalendar) {
+        const move = uiModule?.styledConfirm
+          ? await uiModule.styledConfirm(
+              'Move previously created email events from the old calendar to the newly selected calendar?',
+              { confirmText: 'Move events' }
+            )
+          : confirm('Move previously created email events from the old calendar to the newly selected calendar?');
+        payload.move_existing_events = !!move;
+      }
+
       if (action === 'check_email_urgency') {
         const urgentPrompt = document.getElementById('task-form-urgent-email-prompt')?.value || '';
         try {
@@ -1497,8 +1587,9 @@ function _showForm(existing, initTaskType, initTriggerType) {
       // Edit only when we have a real existing task (has an id). A draft
       // object passed for AI pre-fill has no id → create via POST.
       if (existing && existing.id) {
-        await _updateTask(existing.id, payload);
-        if (uiModule) uiModule.showToast('Task updated');
+        const updated = await _updateTask(existing.id, payload);
+        const moved = Number(updated?.moved_events || 0);
+        if (uiModule) uiModule.showToast(moved > 0 ? `Task updated · moved ${moved} event${moved !== 1 ? 's' : ''}` : 'Task updated');
       } else {
         await _createTask(payload);
         if (uiModule) uiModule.showToast('Task created');

@@ -10,7 +10,7 @@ from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from core.database import SessionLocal, ScheduledTask, TaskRun
+from core.database import SessionLocal, ScheduledTask, TaskRun, CalendarCal, CalendarEvent
 from core.constants import internal_api_base
 from src.auth_helpers import get_current_user
 from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
@@ -18,6 +18,124 @@ from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
 from routes.prefs_routes import _load_for_user, _save_for_user
 
 logger = logging.getLogger(__name__)
+
+
+_CALENDAR_ACTION_PARAMS = {
+    "extract_email_events": [{"name": "calendar_href", "label": "Calendar", "type": "calendar", "required": True}],
+    "classify_events": [{"name": "calendar_href", "label": "Calendar", "type": "calendar", "required": True}],
+    "tidy_calendar": [{"name": "calendar_href", "label": "Calendar", "type": "calendar", "required": True}],
+}
+_CALENDAR_ACTIONS = set(_CALENDAR_ACTION_PARAMS.keys())
+
+
+def _parse_action_prompt_json(raw_prompt: Optional[str]) -> dict:
+    if not raw_prompt or not isinstance(raw_prompt, str):
+        return {}
+    try:
+        obj = json.loads(raw_prompt)
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
+def _task_calendar_href(task: ScheduledTask) -> str:
+    cfg = _parse_action_prompt_json(getattr(task, "prompt", None))
+    return (cfg.get("calendar_href") or "").strip()
+
+
+def _get_owner_calendar(db, owner: Optional[str], calendar_href: str) -> CalendarCal:
+    q = db.query(CalendarCal).filter(CalendarCal.id == calendar_href)
+    if owner:
+        q = q.filter(CalendarCal.owner == owner)
+    cal = q.first()
+    if not cal:
+        raise HTTPException(400, "Selected calendar not found")
+    return cal
+
+
+def _validated_calendar_href(db, owner: Optional[str], action: Optional[str], raw_prompt: Optional[str]) -> str:
+    if (action or "") not in _CALENDAR_ACTIONS:
+        return ""
+    cfg = _parse_action_prompt_json(raw_prompt)
+    cal_href = (cfg.get("calendar_href") or "").strip()
+    if not cal_href:
+        raise HTTPException(400, "Calendar selection is required for this action")
+    _get_owner_calendar(db, owner, cal_href)
+    return cal_href
+
+
+def _move_extract_events_to_calendar(db, task: ScheduledTask, owner: Optional[str],
+                                     from_calendar_href: str, to_calendar_href: str,
+                                     moved_records: Optional[list[dict[str, Any]]] = None) -> int:
+    """Best-effort migration for events previously created by extract_email_events.
+
+    Prefer exact task markers (`[Task:<id>]`) now written into descriptions,
+    then fall back to run-window correlation for legacy events.
+    """
+    if not to_calendar_href or from_calendar_href == to_calendar_href:
+        return 0
+
+    from datetime import timedelta
+
+    moved_uids: set[str] = set()
+    moved_events: list[CalendarEvent] = []
+    marker = f"[Task:{task.id}]"
+
+    marker_q = db.query(CalendarEvent).join(CalendarCal).filter(
+        CalendarEvent.description.like(f"%{marker}%"),
+        CalendarEvent.calendar_id == from_calendar_href,
+    )
+    if owner:
+        marker_q = marker_q.filter(CalendarCal.owner == owner)
+    for ev in marker_q.all():
+        if ev.uid in moved_uids:
+            continue
+        moved_uids.add(ev.uid)
+        moved_events.append(ev)
+
+    # Legacy fallback: correlate auto-added events with this task's successful runs.
+    runs = (
+        db.query(TaskRun)
+        .filter(TaskRun.task_id == task.id, TaskRun.status == "success")
+        .order_by(TaskRun.started_at.desc())
+        .limit(400)
+        .all()
+    )
+    for run in runs:
+        if not run.started_at:
+            continue
+        start = run.started_at - timedelta(minutes=2)
+        finish_base = run.finished_at or (run.started_at + timedelta(minutes=8))
+        end = finish_base + timedelta(minutes=2)
+        q = db.query(CalendarEvent).join(CalendarCal).filter(
+            CalendarEvent.calendar_id == from_calendar_href,
+            CalendarEvent.created_at >= start,
+            CalendarEvent.created_at <= end,
+            CalendarEvent.description.like("[Auto-added from email]%"),
+        )
+        if owner:
+            q = q.filter(CalendarCal.owner == owner)
+        for ev in q.all():
+            if ev.uid in moved_uids:
+                continue
+            moved_uids.add(ev.uid)
+            moved_events.append(ev)
+
+    for ev in moved_events:
+        if moved_records is not None:
+            moved_records.append({
+                "uid": ev.uid,
+                "summary": ev.summary,
+                "description": ev.description,
+                "location": ev.location,
+                "dtstart": ev.dtstart,
+                "dtend": ev.dtend,
+                "all_day": bool(ev.all_day),
+                "is_utc": bool(getattr(ev, "is_utc", False)),
+                "rrule": ev.rrule or "",
+            })
+        ev.calendar_id = to_calendar_href
+    return len(moved_events)
 
 
 def _maybe_cascade_calendar_event(task) -> None:
@@ -171,6 +289,7 @@ class TaskUpdate(BaseModel):
     endpoint_url: Optional[str] = None
     then_task_id: Optional[str] = None
     notifications_enabled: Optional[bool] = None
+    move_existing_events: Optional[bool] = None
 
 
 def _display_task_name(t: ScheduledTask) -> str:
@@ -513,6 +632,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         task_id = str(uuid.uuid4())
         db = SessionLocal()
         try:
+            _validated_calendar_href(db, user, req.action if req.task_type == "action" else None, req.prompt)
             then_task_id = _validate_then_task_id(db, req.then_task_id, user)
             notifications_enabled = (
                 False if req.task_type == "action" and req.notifications_enabled is None
@@ -675,6 +795,11 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             if user and task.owner != user:
                 raise HTTPException(403, "Access denied")
 
+            old_action = task.action or ""
+            old_calendar_href = _task_calendar_href(task)
+            moved_events = 0
+            moved_records: list[dict[str, Any]] = []
+
             if req.name is not None:
                 task.name = req.name
             if req.prompt is not None:
@@ -744,9 +869,60 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                     cron_expression=task.cron_expression,
                 )
 
+            _validated_calendar_href(
+                db,
+                user,
+                task.action if (task.task_type or "llm") == "action" else None,
+                task.prompt,
+            )
+
+            new_action = task.action or ""
+            new_calendar_href = _task_calendar_href(task)
+            if (
+                bool(req.move_existing_events)
+                and old_action == "extract_email_events"
+                and new_action == "extract_email_events"
+                and old_calendar_href
+                and new_calendar_href
+                and old_calendar_href != new_calendar_href
+            ):
+                _get_owner_calendar(db, user, new_calendar_href)
+                moved_events = _move_extract_events_to_calendar(
+                    db,
+                    task,
+                    user,
+                    old_calendar_href,
+                    new_calendar_href,
+                    moved_records=moved_records,
+                )
+
             db.commit()
+
+            # Task-edit calendar migration bypasses the regular calendar route,
+            # so push remote CalDAV changes explicitly (best-effort).
+            if moved_records and old_calendar_href and new_calendar_href:
+                try:
+                    from src.caldav_writeback import writeback_event
+
+                    old_cal = db.query(CalendarCal).filter(CalendarCal.id == old_calendar_href).first()
+                    new_cal = db.query(CalendarCal).filter(CalendarCal.id == new_calendar_href).first()
+
+                    if old_cal and old_cal.source == "caldav":
+                        for ev_payload in moved_records:
+                            await writeback_event(user or "", "caldav", old_calendar_href, {
+                                "uid": ev_payload.get("uid")
+                            }, delete=True)
+
+                    if new_cal and new_cal.source == "caldav":
+                        for ev_payload in moved_records:
+                            await writeback_event(user or "", "caldav", new_calendar_href, ev_payload)
+                except Exception as e:
+                    logger.warning("Task calendar migration write-back failed: %s", e)
+
             db.refresh(task)
-            return _task_to_dict(task)
+            out = _task_to_dict(task)
+            out["moved_events"] = moved_events
+            return out
         finally:
             db.close()
 
@@ -1006,11 +1182,18 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         """List available built-in actions."""
         user = _owner(request)
         from src.builtin_actions import BUILTIN_ACTION_INFO
-        return {"actions": [
-            {"name": name, "description": desc}
-            for name, desc in BUILTIN_ACTION_INFO.items()
-            if name not in _ADMIN_ONLY_ACTIONS or _is_admin(user)
-        ]}
+        actions = []
+        for name, desc in BUILTIN_ACTION_INFO.items():
+            if name in _ADMIN_ONLY_ACTIONS and not _is_admin(user):
+                continue
+            item = {"name": name, "description": desc}
+            params = _CALENDAR_ACTION_PARAMS.get(name)
+            if params:
+                item["parameters"] = params
+            if name == "extract_email_events":
+                item["supports_move_existing_events"] = True
+            actions.append(item)
+        return {"actions": actions}
 
     @router.get("/meta/events")
     async def list_events(request: Request):

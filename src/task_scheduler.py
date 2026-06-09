@@ -1021,13 +1021,32 @@ class TaskScheduler:
             def _progress(message: str):
                 self._set_run_progress(run_id, message)
 
-            kwargs = {"owner": task.owner, "task_name": task.name, "progress_cb": _progress}
+            kwargs = {
+                "owner": task.owner,
+                "task_name": task.name,
+                "progress_cb": _progress,
+                "task_id": task.id,
+            }
             if task.action in ("run_script", "run_local", "ssh_command") and task.prompt:
                 kwargs["script" if task.action in ("run_script", "run_local") else "command"] = task.prompt
             # cookbook_serve carries its JSON config in task.prompt — feed it
             # through as `command` so action_cookbook_serve can json.loads it.
             elif task.action == "cookbook_serve" and task.prompt:
                 kwargs["command"] = task.prompt
+            elif task.action in ("extract_email_events", "classify_events", "tidy_calendar") and task.prompt:
+                try:
+                    cfg = json.loads(task.prompt)
+                    if isinstance(cfg, dict):
+                        cal_href = (cfg.get("calendar_href") or "").strip()
+                        cal_name = (cfg.get("calendar") or "").strip()
+                        if cal_href:
+                            kwargs["calendar_href"] = cal_href
+                        elif cal_name:
+                            kwargs["calendar"] = cal_name
+                except Exception:
+                    # Ignore malformed legacy prompt strings; action will use
+                    # its default-calendar fallback behavior.
+                    pass
             result, success = await action_fn(**kwargs)
             return result, success
         except TaskNoop:

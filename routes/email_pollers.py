@@ -77,7 +77,10 @@ async def _run_auto_summarize_once(do_summary: bool = True, do_reply: bool = Tru
                                    do_tag: bool = False, do_spam: bool = False,
                                    do_calendar: bool = False,
                                    days_back: int = 1,
-                                   progress_cb=None) -> str:
+                                   progress_cb=None,
+                                   calendar_href: str | None = None,
+                                   calendar_name: str | None = None,
+                                   task_id: str | None = None) -> str:
     """One iteration of the email scan. Temporarily flips settings flags
     so the existing background-loop logic runs exactly once for the requested ops."""
     settings = _load_settings()
@@ -91,7 +94,13 @@ async def _run_auto_summarize_once(do_summary: bool = True, do_reply: bool = Tru
     settings["email_auto_calendar"] = bool(do_calendar)
     _save_settings(settings)
     try:
-        return await _auto_summarize_pass(days_back=days_back, progress_cb=progress_cb)
+        return await _auto_summarize_pass(
+            days_back=days_back,
+            progress_cb=progress_cb,
+            calendar_href=calendar_href,
+            calendar_name=calendar_name,
+            task_id=task_id,
+        )
     finally:
         s2 = _load_settings()
         for k, v in prev.items():
@@ -129,7 +138,10 @@ def _latest_inbox_fallback_uids(conn, reconnect):
         return [], reconnect()
 
 
-async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None, progress_cb=None) -> str:
+async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None,
+                               progress_cb=None, calendar_href: str | None = None,
+                               calendar_name: str | None = None,
+                               task_id: str | None = None) -> str:
     """Single pass of the auto-summarize/reply scan.
 
     When account_id is None, iterates over every enabled account in
@@ -156,21 +168,45 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
             names = {}
         if len(ids) <= 1:
             # Single-account (or zero rows — fallback to legacy settings.json lookup)
-            return await _auto_summarize_pass_single(days_back=days_back, account_id=(ids[0] if ids else None), progress_cb=progress_cb)
+            return await _auto_summarize_pass_single(
+                days_back=days_back,
+                account_id=(ids[0] if ids else None),
+                progress_cb=progress_cb,
+                calendar_href=calendar_href,
+                calendar_name=calendar_name,
+                task_id=task_id,
+            )
         outs = []
         for idx, aid in enumerate(ids, start=1):
             try:
                 await _emit_progress(progress_cb, f"{names.get(aid, aid[:8])}: starting ({idx}/{len(ids)})")
-                result = await _auto_summarize_pass_single(days_back=days_back, account_id=aid, progress_cb=progress_cb)
+                result = await _auto_summarize_pass_single(
+                    days_back=days_back,
+                    account_id=aid,
+                    progress_cb=progress_cb,
+                    calendar_href=calendar_href,
+                    calendar_name=calendar_name,
+                    task_id=task_id,
+                )
                 outs.append(f"[{names.get(aid, aid[:8])}] {result}")
             except Exception as e:
                 logger.warning(f"auto-summarize pass failed for account {aid}: {e}")
                 outs.append(f"[{names.get(aid, aid[:8])}] error: {e}")
         return "\n".join(outs)
-    return await _auto_summarize_pass_single(days_back=days_back, account_id=account_id, progress_cb=progress_cb)
+    return await _auto_summarize_pass_single(
+        days_back=days_back,
+        account_id=account_id,
+        progress_cb=progress_cb,
+        calendar_href=calendar_href,
+        calendar_name=calendar_name,
+        task_id=task_id,
+    )
 
 
-async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None = None, progress_cb=None) -> str:
+async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None = None,
+                                      progress_cb=None, calendar_href: str | None = None,
+                                      calendar_name: str | None = None,
+                                      task_id: str | None = None) -> str:
     """Single pass of the auto-summarize/reply scan for ONE account.
     Reads current settings flags."""
     import asyncio
@@ -613,7 +649,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                             # Heuristic fallback: extract common details even if the LLM missed them
                                             _loc = (op.get("location") or "").strip()
                                             _base_desc = op.get("description", "")
-                                            _desc_parts = [f"[Auto-added from email] {_base_desc} (from: {sender})"]
+                                            _task_tag = f" [Task:{task_id}]" if task_id else ""
+                                            _desc_parts = [f"[Auto-added from email]{_task_tag} {_base_desc} (from: {sender})"]
                                             try:
                                                 import re as _re
                                                 # 1) Virtual meeting links
@@ -664,14 +701,19 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                                     _desc_parts.append(_lnk)
                                             except Exception:
                                                 pass
-                                            cal_args = json.dumps({
+                                            _cal_payload = {
                                                 "action": "create_event",
                                                 "summary": op["title"],
                                                 "dtstart": op["date"],
                                                 "dtend": _dtend,
                                                 "location": _loc,
                                                 "description": "\n\n".join(filter(None, _desc_parts)),
-                                            })
+                                            }
+                                            if calendar_href:
+                                                _cal_payload["calendar_href"] = calendar_href
+                                            elif calendar_name:
+                                                _cal_payload["calendar"] = calendar_name
+                                            cal_args = json.dumps(_cal_payload)
                                             r = await do_manage_calendar(cal_args, owner=_acct_owner)
                                             if r.get("exit_code", 0) == 0:
                                                 logger.info(f"[cal-extract] Created event: {op['title']} on {op['date']}")

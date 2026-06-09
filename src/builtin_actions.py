@@ -395,6 +395,8 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
         from core.database import SessionLocal, CalendarEvent
         from sqlalchemy import func
 
+        calendar_href = (kwargs.get("calendar_href") or "").strip() or None
+
         STATE_FILE = Path(TIDY_CALENDAR_STATE_FILE)
         last_watermark = None
         try:
@@ -407,14 +409,20 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
 
         db = SessionLocal()
         try:
-            newest = db.query(func.max(CalendarEvent.created_at)).scalar()
-            db.query(CalendarEvent).count()
+            newest_q = db.query(func.max(CalendarEvent.created_at))
+            events_q = db.query(CalendarEvent)
+            if calendar_href:
+                newest_q = newest_q.filter(CalendarEvent.calendar_id == calendar_href)
+                events_q = events_q.filter(CalendarEvent.calendar_id == calendar_href)
+
+            newest = newest_q.scalar()
+            events_q.count()
 
             # Short-circuit: nothing new since last run
             if last_watermark is not None and newest is not None and newest <= last_watermark:
                 raise TaskNoop(f"no new events since watermark {last_watermark.strftime('%Y-%m-%d %H:%M')}")
 
-            events = db.query(CalendarEvent).order_by(CalendarEvent.dtstart).all()
+            events = events_q.order_by(CalendarEvent.dtstart).all()
             # Build full seen-set from events at or before the watermark (known-clean).
             # Events after the watermark are candidates for deletion.
             seen = {}
@@ -590,15 +598,20 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
         from src.llm_core import llm_call_async
         import re as _re, json as _json
 
+        calendar_href = (kwargs.get("calendar_href") or "").strip() or None
+
         db = SessionLocal()
         try:
             now = datetime.utcnow()
             horizon = now + timedelta(days=30)
-            events = db.query(CalendarEvent).filter(
+            events_q = db.query(CalendarEvent).filter(
                 CalendarEvent.dtstart >= now,
                 CalendarEvent.dtstart <= horizon,
                 CalendarEvent.status != "cancelled",
-            ).all()
+            )
+            if calendar_href:
+                events_q = events_q.filter(CalendarEvent.calendar_id == calendar_href)
+            events = events_q.all()
             if not events:
                 return "No upcoming events to classify", True
 
@@ -754,11 +767,17 @@ async def action_extract_email_events(owner: str, **kwargs) -> Tuple[str, bool]:
     import asyncio as _aio
     try:
         from routes.email_pollers import _run_auto_summarize_once
+        calendar_href = (kwargs.get("calendar_href") or "").strip() or None
+        calendar_name = (kwargs.get("calendar") or "").strip() or None
+        task_id = (kwargs.get("task_id") or "").strip() or None
         try:
             # Hard wall-clock budget: 5 min total. Per-LLM call already has its own timeout.
             result = await _aio.wait_for(
                 _run_auto_summarize_once(
                     do_summary=False, do_reply=False, do_calendar=True, days_back=3,
+                    calendar_href=calendar_href,
+                    calendar_name=calendar_name,
+                    task_id=task_id,
                 ),
                 timeout=300,
             )
