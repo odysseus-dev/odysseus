@@ -11,10 +11,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import SessionLocal, ScheduledTask, TaskRun
-from core.middleware import INTERNAL_TOOL_USER
-from core.constants import internal_api_base
 from src.auth_helpers import get_current_user
-from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
+from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR, internal_api_base
 from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
 from routes.prefs_routes import _load_for_user, _save_for_user
 

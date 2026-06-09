@@ -8,6 +8,7 @@ These handle the actual execution logic for each tool type.
 import logging
 from typing import Dict, Optional
 
+from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE, internal_api_base
 from src.tool_utils import get_mcp_manager  # re-exported: tests patch src.tool_implementations.get_mcp_manager
 
 # System-domain tools were extracted to src/tools/system.py (slice 1,
@@ -112,4 +113,3 @@ def get_active_email() -> Optional[Dict[str, str]]:
 
 def clear_active_email() -> None:
     global _active_email_ref
-    _active_email_ref = None

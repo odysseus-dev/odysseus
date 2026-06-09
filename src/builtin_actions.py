@@ -13,8 +13,11 @@ from typing import Tuple
 
 from src.auth_helpers import owner_filter
 from core.platform_compat import IS_WINDOWS, find_bash
-from core.constants import internal_api_base
-from src.constants import DATA_DIR, DEEP_RESEARCH_DIR, TIDY_CALENDAR_STATE_FILE, EMAIL_URGENCY_CACHE_DIR, COOKBOOK_STATE_FILE
+from src.constants import (
+    DATA_DIR, DEEP_RESEARCH_DIR, TIDY_CALENDAR_STATE_FILE,
+    EMAIL_URGENCY_CACHE_DIR, COOKBOOK_STATE_FILE,
+    internal_api_base
+)
 from src.interactive_gate import wait_for_interactive_quiet
 
 logger = logging.getLogger(__name__)

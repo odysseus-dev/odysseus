@@ -23,6 +23,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from core.middleware import require_admin
+from src.constants import APP_VERSION
 from src.auth_helpers import get_current_user
 
 from companion import pairing as _pairing
@@ -86,7 +87,6 @@ def setup_companion_routes() -> APIRouter:
     def ping(request: Request):
         """Cheap, auth-validated health check. A 200 with ok=true confirms the
         host/port and credential are valid; middleware returns 401 otherwise."""
-        from core.constants import APP_VERSION
         return {
             "ok": True,
             "name": "odysseus",
@@ -98,7 +98,6 @@ def setup_companion_routes() -> APIRouter:
     def info(request: Request):
         """Server identity + coarse capability flags. `owner` is the caller's own
         identity (the token's owner for bearer callers)."""
-        from core.constants import APP_VERSION
         return {
             "name": "odysseus",
             "version": APP_VERSION,
