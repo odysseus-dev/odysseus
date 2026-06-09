@@ -1559,6 +1559,7 @@ async function initResearchSearchSettings() {
 async function initAgentSettings() {
   var toolsInput = el('set-agentMaxTools');
   var roundsInput = el('set-agentMaxRounds');
+  var supInput = el('set-agentSupervisorLadder');
   var msg = el('set-agentMsg');
   if (!toolsInput) return;
 
@@ -1567,6 +1568,7 @@ async function initAgentSettings() {
     var settings = await res.json();
     if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
     if (roundsInput && settings.agent_max_rounds) roundsInput.value = settings.agent_max_rounds;
+    if (supInput) supInput.checked = !!settings.agent_supervisor_ladder;
   } catch (e) {}
 
   // Clamp + coerce a raw input to an int in [lo, hi]; falls back to `dflt`
@@ -1584,23 +1586,27 @@ async function initAgentSettings() {
     if (roundsInput) roundsInput.value = rounds;
     var payload = { agent_max_tool_calls: tools };
     if (rounds != null) payload.agent_max_rounds = rounds;
+    if (supInput) payload.agent_supervisor_ladder = !!supInput.checked;
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
       msg.textContent = (tools > 0 ? 'Limit: ' + tools + ' tool calls' : 'Unlimited tool calls') +
-        (rounds != null ? ' · ' + rounds + ' steps/message' : '');
+        (rounds != null ? ' · ' + rounds + ' steps/message' : '') +
+        (supInput && supInput.checked ? ' · supervisor on' : '');
       msg.style.color = 'var(--fg)';
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
   toolsInput.addEventListener('change', save);
   if (roundsInput) roundsInput.addEventListener('change', save);
+  if (supInput) supInput.addEventListener('change', save);
   var cur = parseInt(toolsInput.value, 10) || 0;
   var curR = roundsInput ? (parseInt(roundsInput.value, 10) || 20) : null;
   msg.textContent = (cur > 0 ? 'Limit: ' + cur + ' tool calls' : 'Unlimited tool calls') +
-    (curR != null ? ' · ' + curR + ' steps/message' : '');
+    (curR != null ? ' · ' + curR + ' steps/message' : '') +
+    (supInput && supInput.checked ? ' · supervisor on' : '');
 }
 
 /* ═══════════════════════════════════════════
@@ -5042,7 +5048,7 @@ async function initUnifiedIntegrations() {
     });
     formEl.querySelectorAll('.uf-codex-revoke').forEach(btn => {
       btn.addEventListener('click', async () => {
-        if (!await window.styledConfirm(`Revoke this ${cfg.word} token? Terminal agents using it will lose access.`, { confirmText: 'Revoke', danger: true })) return;
+        if (!await window.styledConfirm(`Revoke this ${cfg.word} token? Integrations using it will lose access.`, { confirmText: 'Revoke', danger: true })) return;
         await fetch(`/api/tokens/${btn.dataset.tokenId}`, { method: 'DELETE', credentials: 'same-origin' });
         formEl.style.display = 'none';
         await renderList();

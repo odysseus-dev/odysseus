@@ -21,6 +21,7 @@ from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, ToolPolicy
+from src.tool_utils import get_mcp_manager
 from src.agent_tools import (
     parse_tool_blocks,
     strip_tool_blocks,
@@ -29,7 +30,6 @@ from src.agent_tools import (
     set_active_document,
     set_active_model,
     function_call_to_tool_block,
-    get_mcp_manager,
     FUNCTION_TOOL_SCHEMAS,
     TOOL_TAGS,
     ToolBlock,
@@ -171,6 +171,120 @@ _API_AGENT_RULES = """\
 - Examples:
   - After `create_session` returns id `89effa28`: "Created [New Chat](#session-89effa28) — click to switch."
   - Listing sessions: "1. [Big Chat](#session-abc123) — 2h ago, 2. [Code Review](#session-def456) — 5h ago\""""
+
+_AGENT_PREAMBLE = """\
+You are an AI assistant with tool access. Only the tools listed below are available for this turn.
+To use a tool, write a fenced code block with the tool name as the language tag. The block executes automatically and you see the output."""
+
+_AGENT_RULES = """\
+## Base rules
+- Only use tools when needed. For casual messages like "test", "yo", "thanks", answer normally.
+- If a needed tool/domain is missing from this turn, say what is missing briefly instead of pretending.
+- After a tool succeeds, do not second-guess it; reply with one short confirmation unless more work remains.
+- After a tool fails, retry with a concrete fix or state what is blocking you.
+- Finish only when the user's concrete request is actually done, or clearly state that you are blocked.
+- User identity facts/preferences ("my name is X", "call me X", "I live in X") use `manage_memory`, not contacts.
+"""
+
+_API_AGENT_RULES = """\
+## Base rules
+- Prefer native tool/function calling when tools are needed.
+- Only call tools when they materially help answer the request. For casual messages like "test", "yo", "thanks", answer normally.
+- You MUST use tools to take action; do not claim you did something without a tool result.
+- If a needed tool/domain is missing from this turn, say what is missing briefly instead of pretending.
+- Keep answers concise unless the user asks for depth.
+- After a tool succeeds, do not second-guess it; reply with one short confirmation unless more work remains.
+- After a tool fails, retry with a concrete fix or state what is blocking you.
+- Finish only when the user's concrete request is actually done, or clearly state that you are blocked.
+- User identity facts/preferences ("my name is X", "call me X", "I live in X") use `manage_memory`, not contacts.
+"""
+
+_LINK_RULES = """\
+## Link conventions
+When referencing app entities by id, use clickable markdown anchors:
+- Sessions: `[Name](#session-<id>)`
+- Documents: `[Title](#document-<id>)`
+- Notes: `[Title](#note-<id>)`
+- Emails: `[Subject](#email-<uid>)`
+- Calendar events: `[Summary](#event-<uid>)`
+- Tasks: `[Task name](#task-<id>)`
+- Skills: `[skill-name](#skill-<name>)`
+- Research jobs: `[Topic](#research-<session_id>)`
+"""
+
+_DOMAIN_RULES = {
+    "web": """\
+## Web rules
+- For web lookup/search/latest/current requests, use `web_search` or `web_fetch`.
+- Do not use shell, Python, curl, requests, or scraping code for web lookup unless web tools are unavailable or already failed.
+- "Research X" means `trigger_research`, not a one-off `web_search`, unless the user explicitly asks for a quick lookup.""",
+    "documents": """\
+## Document rules
+- For long code/content (>15 lines), use `create_document` instead of pasting into chat.
+- If an active document is open, "fix this", "add X", "change Y", etc. usually refers to that document.
+- Use `edit_document` for targeted changes. Use `update_document` only for genuine full rewrites.
+- For feedback/review/suggestions on an open document, use `suggest_document`.""",
+    "email": """\
+## Email rules
+- Email UIDs are the values after `UID:` in tool output, never list row numbers.
+- For latest/newest email, list with `max_results: 1`, `unread_only: false`, then read the returned UID if needed.
+- For named mailboxes/accounts, call `list_email_accounts` if needed and pass the exact `account` value.
+- Bulk email actions use `bulk_email` once with explicit UIDs; do not loop one message at a time.
+- "Open/start a reply" means open a draft via `ui_control open_email_reply`; only `reply_to_email` when the user clearly wants to send now.""",
+    "cookbook": """\
+## Cookbook/model-serving rules
+- Cookbook is the LLM-serving subsystem.
+- "What's running/serving" starts with `list_served_models`. "What's downloading" uses `list_downloads`.
+- Launch known models by checking `list_serve_presets` before raw `serve_model`.
+- Downloads/serves run on a Cookbook server; pass the named `host` when the user names one.
+- Do not launch model servers manually with bash/ssh/tmux. Use `serve_model`/`serve_preset` so the UI can track and stop them.
+- After a successful serve, verify with `list_served_models`; if an external server is running but invisible, use `adopt_served_model`.""",
+    "notes_calendar_tasks": """\
+## Notes/calendar/tasks rules
+- Notes/todos/reminders use `manage_notes`, not memory.
+- Calendar create/update/delete should call `manage_calendar` with `action=list_calendars` first.
+- Recurring/automatic/scheduled requests create a `manage_tasks` task; do not just perform the action once.""",
+    "ui": """\
+## UI rules
+- "Open/show <panel>" uses `ui_control open_panel <name>`.
+- Tool toggles like "turn off shell/search/research" use `ui_control toggle <name> <on|off>`, not memory.""",
+    "sessions": """\
+## Chat/session rules
+- Odysseus chats are sessions. Use `list_sessions`/`manage_session`; do not shell out looking for chat files.
+- Preserve clickable session links from tool output in your final answer.""",
+    "files": """\
+## File rules
+- Use file tools for real disk files. Use document tools only for editor documents.
+- Prefer `grep`, `glob`, and `ls` over shell equivalents when available.
+- Use `edit_file`/`write_file` for writes; avoid shell redirection/heredocs for editing files.""",
+    "settings": """\
+## Settings/API rules
+- Use `manage_settings` for preferences and tool enable/disable.
+- Use named tools over `app_api` when a named wrapper exists.
+- `app_api` is only for safe UI/API actions without a named tool; do not use it for shell, package installs, engine rebuilds, or sensitive auth/admin paths.""",
+}
+
+_DOMAIN_TOOL_MAP = {
+    "web": {"web_search", "web_fetch", "trigger_research", "manage_research"},
+    "documents": {"create_document", "edit_document", "update_document", "suggest_document", "manage_documents"},
+    "email": {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "archive_email", "delete_email", "mark_email_read", "resolve_contact", "manage_contact"},
+    "cookbook": {"download_model", "serve_model", "serve_preset", "list_serve_presets", "list_served_models", "stop_served_model", "tail_serve_output", "list_downloads", "cancel_download", "search_hf_models", "list_cached_models", "list_cookbook_servers", "adopt_served_model"},
+    "notes_calendar_tasks": {"manage_notes", "manage_calendar", "manage_tasks"},
+    "ui": {"ui_control"},
+    "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
+    "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls"},
+    "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
+}
+
+def _domain_rules_for_tools(tool_names: set) -> list[str]:
+    names = set(tool_names or set())
+    rules = []
+    for domain, domain_tools in _DOMAIN_TOOL_MAP.items():
+        if names & domain_tools:
+            rules.append(_DOMAIN_RULES[domain])
+    if names & {"create_session", "list_sessions", "manage_session", "manage_documents", "manage_notes", "manage_calendar", "manage_tasks", "manage_skills", "manage_research"}:
+        rules.append(_LINK_RULES)
+    return rules
 
 # Each tool section is keyed by tool name(s) it covers.
 # Sections with multiple tools use a tuple key.
@@ -341,7 +455,7 @@ If the user asks for a reminder/alarm before the event, pass `reminder_minutes` 
     "send_to_session": "- ```send_to_session``` — Send a message to another session. Line 1 = session_id, rest = message. Use for orchestrating work across sessions.",
     "search_chats": "- ```search_chats``` — Search past session transcripts for direct conversation evidence. Use when user asks 'did we discuss X?', 'find the conversation about Y', or when prior chat context is more appropriate than persistent memory.",
     "pipeline": "- ```pipeline``` — Run a multi-step AI pipeline. Args (JSON) with ordered steps, each specifying a model and prompt. Use for complex workflows.",
-    "ui_control": "- ```ui_control``` — Control the UI: toggle tools on/off, OPEN PANELS, open email reply drafts, switch models, change themes. Commands: `toggle <name> on/off` (names: bash/shell, web/search, research, incognito, document_editor/documents), `open_panel <name>` (panels: documents, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook), `open_email_reply <uid> <folder> <reply|reply-all|ai-reply>` (opens an email compose document, does NOT send), `set_mode agent/chat`, `switch_model <name>`, `set_theme <preset>`, `create_theme <name> <bg> <fg> <panel> <border> <accent>` (optional key=val for advanced colors AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false). \"open documents\" / \"open library\" / \"show gallery\" / \"open inbox\" / \"open notes\" / \"open cookbook\" all map to `open_panel <name>`. Theme presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute.",
+    "ui_control": "- ```ui_control``` — Control the UI: toggle tools on/off, OPEN PANELS, open email reply drafts, switch models, change themes. Commands: `toggle <name> on/off` (names: bash/shell, web/search, research, incognito, document_editor/documents), `open_panel <name>` (panels: documents, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook), `open_email_reply <uid> <folder> <reply|reply-all|ai-reply>` (opens an email compose document, does NOT send), `set_mode agent/chat`, `switch_model <name>`, `set_theme <preset>`, `create_theme <name> <bg> <fg> <panel> <border> <accent>` (optional key=val for advanced colors AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false). \"open documents\" / \"open library\" / \"show gallery\" / \"open inbox\" / \"open notes\" / \"open cookbook\" all map to `open_panel <name>`. Built-in theme presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute. For any other vibe/name, use create_theme.",
     "ask_user": "- ```ask_user``` — Ask the user a multiple-choice question when the task is genuinely ambiguous and the answer changes what you do next (pick an approach, confirm an assumption, choose a target). Args (JSON): {\"question\": \"...\", \"options\": [{\"label\": \"...\", \"description\": \"...\"?}, ...], \"multi\": false?}. 2-6 options. The user gets clickable buttons; calling this ENDS your turn and their choice comes back as your next message. Prefer sensible defaults — only ask when you truly can't proceed well without their input.",
     "update_plan": "- ```update_plan``` — While executing an approved plan, write the plan back: tick steps done or revise them. Args (JSON): {\"plan\": \"- [x] done step\\n- [ ] next step\"}. Always pass the COMPLETE checklist, not a diff. Call it after finishing each step (mark it `- [x]`) and whenever the user asks to change the plan. The user's docked plan window updates live. Does nothing if there's no active plan.",
     "list_served_models": "- ```list_served_models``` — Show what the Cookbook (LLM-serving subsystem) is currently running. NO args. Use this for ANY 'what's running' / 'what's serving' / 'show my cookbook' / 'is anything up' query. DO NOT shell out (`ps aux`, `docker ps`, etc.) — this tool is the source of truth. Failed serve tasks include recent logs plus diagnosis/retry suggestions; use those suggestions to call `serve_model` again with an adjusted command when appropriate.",
@@ -418,6 +532,7 @@ def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool 
             f"Available tools: {tool_list}.",
             _API_AGENT_RULES,
         ]
+        parts.extend(_domain_rules_for_tools(included))
         return "\n\n".join(parts)
 
     parts = [_AGENT_PREAMBLE]
@@ -454,6 +569,7 @@ def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool 
         parts.append(f"(Other tools available when needed: {hint})")
 
     parts.append(_AGENT_RULES)
+    parts.extend(_domain_rules_for_tools(included))
     return "\n\n".join(parts)
 
 
@@ -572,6 +688,117 @@ def _extract_last_user_message(messages: List[Dict]) -> str:
                 content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
             return content
     return ""
+
+
+_LOW_SIGNAL_RE = re.compile(r"^[\W_]*$", re.UNICODE)
+_EXPLICIT_CONTINUATION_RE = re.compile(
+    r"^\s*(?:"
+    r"yes|y|yeah|yep|ok|okay|sure|do it|go ahead|continue|carry on|"
+    r"run it|launch it|start it|use that|that one|same|the same|"
+    r"first|second|third|the first one|the second one|the third one|"
+    r"[123]|[abc]"
+    r")\s*[.!?]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_explicit_continuation(text: str) -> bool:
+    """Only these terse replies may inherit older user turns for tool retrieval."""
+    return bool(_EXPLICIT_CONTINUATION_RE.match(str(text or "").strip()))
+
+
+def _assistant_requested_followup(messages: List[Dict]) -> bool:
+    """True when the previous assistant turn asked for missing task details.
+
+    This allows natural replies like "buy milk" after "What would you like on
+    your to-do list?" to inherit the prior domain, without letting random
+    greetings inherit stale Cookbook/email/document context.
+    """
+    seen_latest_user = False
+    for msg in reversed(messages):
+        role = msg.get("role")
+        if role == "user" and not seen_latest_user:
+            seen_latest_user = True
+            continue
+        if not seen_latest_user:
+            continue
+        if role != "assistant":
+            continue
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
+        text = str(content or "").lower()
+        if "?" not in text:
+            return False
+        return bool(re.search(
+            r"\b(what would you like|what should|what do you want|which one|which model|"
+            r"what.+(?:todo|to-do|list|document|email|model|server|item)|"
+            r"any specific|give me|tell me)\b",
+            text,
+        ))
+    return False
+
+
+def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, object]:
+    """Classify only whether this turn deserves domain tool retrieval.
+
+    Normal chat should not inherit old Cookbook/email/document context. Recent
+    context is used only for explicit continuations ("yes", "do it", "1").
+    This function does not inject tools directly; selected tools later decide
+    which domain rule packs get appended to the system prompt.
+    """
+    text = str(last_user or "").strip()
+    continuation = _is_explicit_continuation(text) or _assistant_requested_followup(messages)
+    retrieval_query = _recent_context_for_retrieval(messages) if continuation else text
+    q = retrieval_query.lower()
+
+    if not text or bool(_LOW_SIGNAL_RE.match(text)):
+        return {
+            "low_signal": True,
+            "continuation": False,
+            "domains": set(),
+            "retrieval_query": text,
+        }
+
+    domains: Set[str] = set()
+
+    def has(*patterns: str) -> bool:
+        return any(re.search(p, q) for p in patterns)
+
+    if has(r"\b(cookbook|serve|serving|served|launch|start|preset|vllm|sglang|llama\.?cpp|ollama|download|downloading|pull|cached models?|running models?|model servers?|models? (?:are )?running|what models?|model picker|gpu box|kierkegaard|odysseus|ajax|qwen|gemma|llama|mistral|minimax)\b"):
+        domains.add("cookbook")
+    if has(r"\b(emails?|mails?|gmail|inbox|reply|forward|cc|bcc|send email|compose email|draft email|message chris|message him|message her)\b"):
+        domains.add("email")
+    if has(r"\b(note|todo|to-do|checklist|task list|remind me|reminder|buy|pickup|pick up)\b"):
+        domains.add("notes_calendar_tasks")
+    if has(r"\b(every day|every morning|every evening|recurring|automatically|cron|scheduled task|background task)\b"):
+        domains.add("notes_calendar_tasks")
+    if has(r"\b(calendar|event|meeting|appointment|schedule)\b"):
+        domains.add("notes_calendar_tasks")
+    if has(r"\b(documents?|docs?|draft|compose|poem|story|essay|outline|letter|edit|rewrite|proofread|suggest|feedback|review this|make a file)\b"):
+        domains.add("documents")
+    if "notes_calendar_tasks" not in domains and has(r"\bwrite\b"):
+        domains.add("documents")
+    if has(r"\b(search|web|google|look up|latest|news|current|weather|forecast|stock price|price of|website|url|https?://|www\.)\b"):
+        domains.add("web")
+    if has(r"\b(research|deep dive|investigate|look into)\b"):
+        domains.add("web")
+    if has(r"\b(open|show|toggle|turn on|turn off|disable|enable|switch model|change model|settings|theme|panel)\b"):
+        domains.add("ui")
+    if has(r"\b(session|chat history|rename chat|delete chat|archive chat|fork chat|list chats)\b"):
+        domains.add("sessions")
+    if has(r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash|python)\b"):
+        domains.add("files")
+    if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
+        domains.add("settings")
+
+    low_signal = not continuation and not domains
+    return {
+        "low_signal": low_signal,
+        "continuation": continuation,
+        "domains": domains,
+        "retrieval_query": retrieval_query,
+    }
 
 
 def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_chars: int = 600) -> str:
@@ -1522,9 +1749,18 @@ async def stream_agent_loop(
     _t0 = time.time()
     _needs_admin = _detect_admin_intent(messages)
     _last_user = _extract_last_user_message(messages)
-    # Tool retrieval keys on recent conversation context (last few user turns),
-    # not just the latest message, so short follow-ups don't drop just-used tools.
-    _retrieval_query = _recent_context_for_retrieval(messages) or _last_user
+    _intent = _classify_agent_request(messages, _last_user)
+    # Tool retrieval uses the latest message by default. It may inherit recent
+    # user turns only for explicit continuations ("yes", "do it", "1").
+    _retrieval_query = str(_intent.get("retrieval_query") or _last_user)
+    logger.info(
+        "[agent-intent] latest=%r continuation=%s low_signal=%s domains=%s retrieval_query=%r",
+        _last_user[:120],
+        bool(_intent.get("continuation")),
+        bool(_intent.get("low_signal")),
+        sorted(_intent.get("domains") or []),
+        _retrieval_query[:200],
+    )
     _mcp_disabled_map = _load_mcp_disabled_map() if mcp_mgr else {}
     if plan_mode and mcp_mgr:
         # Allow read-only MCP tools to investigate, block write/unknown ones:
@@ -1541,6 +1777,10 @@ async def stream_agent_loop(
     _t1 = time.time()
     if _relevant_tools:
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
+    if not guide_only and not _relevant_tools and bool(_intent.get("low_signal")):
+        from src.tool_index import ALWAYS_AVAILABLE
+        _relevant_tools = set(ALWAYS_AVAILABLE)
+        logger.info("[tool-rag] Low-signal agent message; skipping retrieval and using always-available tools only")
     if not guide_only and not _relevant_tools:
         try:
             from src.tool_index import get_tool_index, ALWAYS_AVAILABLE
@@ -1583,15 +1823,40 @@ async def stream_agent_loop(
         for keywords, tools in ToolIndex._KEYWORD_HINTS.items():
             if any(kw in ql for kw in keywords):
                 _relevant_tools.update(tools)
-        # Always include core document/memory tools
-        _relevant_tools.update({"create_document", "manage_memory", "manage_notes"})
         logger.info(f"[tool-rag] Keyword fallback selected: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
+
+    # If deterministic domain detection fired, seed the corresponding domain
+    # tools into the selected tool set. This is not direct prompt-pack
+    # injection: `_assemble_prompt()` still derives domain rules from the final
+    # tool names. It prevents obvious requests like "last 5 emails" from
+    # collapsing to only ask_user/manage_memory when vector retrieval misses or
+    # times out.
+    if not guide_only and _relevant_tools is not None:
+        for _domain in (_intent.get("domains") or set()):
+            _relevant_tools.update(_DOMAIN_TOOL_MAP.get(str(_domain), set()))
+        if "cookbook" in (_intent.get("domains") or set()):
+            _relevant_tools.update({
+                "list_served_models",
+                "list_downloads",
+                "list_cached_models",
+                "list_cookbook_servers",
+                "list_serve_presets",
+            })
+        if "email" in (_intent.get("domains") or set()):
+            _relevant_tools.add("ui_control")
+        if "web" in (_intent.get("domains") or set()):
+            _relevant_tools.update({"web_search", "web_fetch"})
+        if "ui" in (_intent.get("domains") or set()):
+            _relevant_tools.add("ui_control")
 
     # If a document is open the model needs the editing tools available
     # regardless of which selection path (RAG, keyword, caller-provided) ran
     # or what keywords were in the latest user message.
     if _relevant_tools is not None and active_document is not None:
         _relevant_tools.update({"edit_document", "update_document", "suggest_document"})
+
+    if _relevant_tools is not None:
+        logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
 
     prep_timings["tool_selection"] = time.time() - _t1
 

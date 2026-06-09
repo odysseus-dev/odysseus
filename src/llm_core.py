@@ -1060,7 +1060,9 @@ def list_model_ids(
         if provider == "ollama":
             models_url = _ollama_api_root(base_chat_url) + "/tags"
         else:
-            models_url = base_chat_url.replace("/chat/completions", "/models")
+            from src.endpoint_resolver import build_models_url
+
+            models_url = build_models_url(base_chat_url)
         r = httpx.get(models_url, headers=h, timeout=timeout)
         r.raise_for_status()
         data = r.json()

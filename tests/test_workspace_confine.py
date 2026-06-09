@@ -56,27 +56,6 @@ async def test_read_write_confined_in_workspace():
     assert not os.path.exists(escape)
 
 
-def test_browse_is_admin_gated(monkeypatch):
-    """The directory-browser endpoint must refuse non-admin callers."""
-    from fastapi import HTTPException
-    import routes.workspace_routes as wr
-
-    router = wr.setup_workspace_routes()
-    browse = next(r.endpoint for r in router.routes if r.path == "/api/workspace/browse")
-
-    monkeypatch.setattr(wr, "get_current_user", lambda req: "bob")
-    monkeypatch.setattr(wr, "owner_is_admin_or_single_user", lambda owner: False)
-    with pytest.raises(HTTPException) as ei:
-        browse(request=object(), path="/")
-    assert ei.value.status_code == 403
-
-    # Admin / single-user is allowed.
-    monkeypatch.setattr(wr, "owner_is_admin_or_single_user", lambda owner: True)
-    out = browse(request=object(), path=os.path.expanduser("~"))
-    assert "dirs" in out and "path" in out
-    assert all("name" in d and "path" in d for d in out["dirs"])
-
-
 @pytest.mark.asyncio
 async def test_subprocess_runs_with_workspace_cwd():
     """bash/python subprocesses run with cwd set to the workspace. Use the

@@ -890,10 +890,10 @@ function renderSkillsList() {
     });
   }
 
-  // Background-load the visible skills' SKILL.md so expanding any of them is
-  // instant (no first-time async fetch → no jump). Deferred so it never
-  // competes with the render/cascade paint.
-  setTimeout(_preloadVisibleMarkdown, 0);
+  // Do not eager-load every visible SKILL.md. On large skill libraries this
+  // creates dozens of simultaneous /api/skills/<name>/markdown requests during
+  // app startup and can peg uvicorn. Markdown is fetched lazily when a card is
+  // expanded.
 }
 
 // ---- Card expand / edit / actions ----
