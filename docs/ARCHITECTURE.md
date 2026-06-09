@@ -8,6 +8,9 @@ This document serves as a comprehensive overview of the system's architecture, i
 
 ## 1. Directory Structure
 
+<details>
+<summary>Click to expand directory tree</summary>
+
 ```text
 └── pewdiepie-archdaemon-odysseus/
     ├── README.md
@@ -1056,6 +1059,8 @@ This document serves as a comprehensive overview of the system's architecture, i
             └── pr-description-check.yml
 ```
 
+</details>
+
 ---
 
 ## 2. High-level System Overview
@@ -1635,6 +1640,15 @@ graph TD
 For maintenance, debugging, and offline operations, Odysseus includes a suite of Python CLI tools.
 
 ### Components
+- **`odysseus-*` commands**: A collection of scripts starting with `odysseus-` (e.g., `odysseus-backup`, `odysseus-logs`, `odysseus-sessions`, `odysseus-memory`) providing low-level access to the database and systems.
+- **`_lib/cli.py`**: A shared library simplifying the process of writing CLI tools, managing initialization, loading the `app.db`, and setting up rich console output.
+- **`update_database.py`**: An essential operational script to run schema migrations and ensure the database reflects the current SQLAlchemy models without data loss.
+- **`index_documents.py`**: A script to manually force re-indexing of documents into ChromaDB.
+- **`migrate_faiss_to_chroma.py`**: A historical migration script ensuring safe transfer of semantic memories.
+- **`check-docker-gpu.sh` & `check-docker-amd-gpu.sh`**: Utilities used during deployment to confirm the container runtime supports the hardware passthrough required.
+
+---
+
 ## 34. Deep Dive: Action Intents & Chat Routing (`src/action_intents.py`)
 
 Odysseus employs a lightweight routing heuristic to determine when a standard chat prompt should be promoted to full "agent mode" (invoking the agent loop and tools).
@@ -1765,7 +1779,59 @@ Testing streamed server-sent events mathematically ensures the frontend markdown
 - **Isolation**: These node tests run without a DOM (via `node:test` and `node:assert`), executing purely functional validations. If the streaming segmenter logic fails, the CI block is caught at the Node level, preventing UI degradation in production.
 
 
-## 41. Known Issues & Future Improvements
+## 41. Deep Dive: Vault & Secret Storage (`src/secret_storage.py`, `routes/vault_routes.py`)
+
+Odysseus provides an encrypted secret store, safeguarding credentials while ensuring usability.
+
+```mermaid
+graph TD
+    App[FastAPI Endpoints] --> SecretStore[src/secret_storage.py]
+    SecretStore --> KeyFile[.app_key (chmod 600)]
+    SecretStore --> SQLite[(data/app.db)]
+    App --> VaultRoute[routes/vault_routes.py]
+    VaultRoute --> VaultCLI[bw / Bitwarden CLI]
+    VaultCLI --> TokenFile[(data/vault.json)]
+```
+
+### Components
+- **Secret Storage (`src/secret_storage.py`)**: A Fernet-based symmetric encryption module. It generates an `.app_key` (secured with `0o600` permissions) to encrypt sensitive configuration data, such as IMAP/SMTP passwords, before storing them in the SQLite database. Encrypted rows are prepended with `enc:` to seamlessly handle unencrypted legacy values.
+- **Vault Integration (`routes/vault_routes.py`)**: A wrapper around the `bw` (Bitwarden / Vaultwarden) CLI. It allows admins to unlock their vault, caching the session token in `data/vault.json`. Passwords are deliberately passed via `stdin` rather than command-line arguments to prevent leakage into `ps` or `/proc/<pid>/cmdline`.
+
+---
+
+## 42. Deep Dive: Gallery & Media Editing
+
+Odysseus includes an AI-integrated gallery and media editor.
+
+### Components
+- **Gallery Routes (`routes/gallery_routes.py`)**: Exposes REST endpoints to query, filter, and upload images. All queries are heavily owner-scoped to ensure strict tenant isolation.
+- **Frontend State (`static/js/gallery.js`)**: Manages the multi-select interface, tag filtering, album sorting, and dynamic grid rendering.
+- **AI Editor (`static/js/editor/`)**: A complex, multi-layered HTML5 canvas application. Features include checkerboard backgrounds, mask creation tools (`wand.js`, `lasso.js`), image composition (`clone.js`), and direct hooks to the backend for AI-assisted operations like inpainting or background removal (`ai-inpaint.js`, `ai-rembg.js`).
+
+---
+
+## 43. Deep Dive: Prompt Engineering & Security (`src/preset_manager.py`, `src/prompt_security.py`)
+
+Managing the interaction between the system, the LLM, and external data is critical for both utility and safety.
+
+### Components
+- **Preset Manager (`src/preset_manager.py`)**: Maintains predefined system prompts, temperature configurations, and max token limits (`Code Analyze`, `Brainstorm`, `Reason`) as well as user-created templates. It performs atomic, concurrent-safe writes to `data/presets.json`.
+- **Prompt Security (`src/prompt_security.py`)**: Defends against prompt-injection attacks. Any text originating from a potentially untrusted source (emails, web results, external URLs) is sandboxed inside a `<<<UNTRUSTED_SOURCE_DATA>>>` boundary. The wrapper instructs the LLM strictly to treat the encapsulated content as data rather than executable instructions, preventing malicious documents from co-opting the agent.
+
+---
+
+## 44. Deep Dive: Threat Model (`THREAT_MODEL.md`)
+
+Odysseus's threat model acknowledges its nature as a privileged admin console.
+
+### Key Tenets
+1. **Admin Isolation**: Admins have full access (shell, files, MCP, etc.). Non-admin users are strictly segregated and cannot execute commands or read arbitrary files.
+2. **Internal Tool Loopback**: The agent loop talks back to the API over a secured loopback using a random, non-persisted `INTERNAL_TOOL_TOKEN`. Even if an agent operates on behalf of a non-admin, the backend explicitly verifies the user's privilege before allowing the loopback to execute an admin-only tool.
+3. **No Network Egress Sandbox**: Currently, tools executed by the LLM run directly as the app process user. A successful prompt-injection attack that escapes the `prompt_security.py` wrapper *could* execute shell commands, but only if the user is an admin.
+
+---
+
+## 45. Known Issues & Future Improvements
 
 While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
 
