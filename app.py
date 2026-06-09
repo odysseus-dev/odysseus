@@ -51,7 +51,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # Core imports
 from core.constants import (
     BASE_DIR, STATIC_DIR, SESSIONS_FILE,
-    REQUEST_TIMEOUT, OPENAI_API_KEY,
+    REQUEST_TIMEOUT, OPENAI_API_KEY, AUTH_FILE,
 )
 from core.database import SessionLocal, ApiToken
 from core.middleware import SecurityHeadersMiddleware, is_cors_preflight
@@ -472,6 +472,7 @@ components = initialize_managers(BASE_DIR, rag_manager)
 session_manager   = components["session_manager"]
 from src.assistant_log import set_session_manager as _set_asst_sm
 _set_asst_sm(session_manager)
+app.state.session_manager = session_manager
 memory_manager    = components["memory_manager"]
 memory_vector     = components.get("memory_vector")
 upload_handler    = components["upload_handler"]
@@ -528,9 +529,6 @@ upload_cleanup_task = None
 # emojis as flat SVG instead of system color glyphs.
 from routes.emoji_routes import setup_emoji_routes
 app.include_router(setup_emoji_routes())
-
-from routes.workspace_routes import setup_workspace_routes
-app.include_router(setup_workspace_routes())
 
 # Sessions
 from routes.session_routes import setup_session_routes
@@ -597,6 +595,10 @@ app.include_router(setup_model_routes(model_discovery))
 # GitHub Copilot device-flow login
 from routes.copilot_routes import setup_copilot_routes
 app.include_router(setup_copilot_routes())
+
+# ChatGPT Subscription device-flow login
+from routes.chatgpt_subscription_routes import setup_chatgpt_subscription_routes
+app.include_router(setup_chatgpt_subscription_routes())
 
 # TTS
 from routes.tts_routes import setup_tts_routes
@@ -954,7 +956,7 @@ async def _startup_event():
         owners = set()
         try:
             import json as _json
-            auth_path = "data/auth.json"
+            auth_path = AUTH_FILE
             with open(auth_path, encoding="utf-8") as f:
                 users = _json.load(f).get("users", {})
             owners.update(users.keys())
@@ -1001,7 +1003,7 @@ async def _startup_event():
     # does not make an existing library look empty after auth/account changes.
     try:
         import json as _json
-        auth_path = "data/auth.json"
+        auth_path = AUTH_FILE
         with open(auth_path, encoding="utf-8") as f:
             users = _json.load(f).get("users", {})
         primary_owner = None

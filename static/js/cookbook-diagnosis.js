@@ -610,11 +610,46 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
     ? `Suggested action: ${fixes[0].label}.`
     : 'Suggested action: copy the error and adjust the serve settings.');
 
-  // Simplified diagnosis card: just the error message + suggestion + fix
-  // button(s). Removed the fold toggle, copy button, and × dismiss — they
-  // made the card noisy without earning their keep. _diagCollapsed is kept
-  // as a stub so callers don't have to change.
   panel._diagCollapsed = false;
+
+  // Top-right toolbar: Copy bundle + × dismiss. Restored after user feedback
+  // — without them there's no way to quietly close a stale diagnosis or grab
+  // the full error+context for a forum/discord paste.
+  const toolbar = document.createElement('div');
+  toolbar.className = 'cookbook-diag-toolbar';
+  toolbar.style.cssText = 'display:flex;justify-content:flex-end;align-items:center;gap:4px;margin-bottom:-2px;';
+
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.className = 'cookbook-diag-copy';
+  copyBtn.title = 'Copy diagnosis details';
+  copyBtn.setAttribute('aria-label', 'Copy diagnosis');
+  copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+  copyBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const bundle = _diagnosisCopyBundle(task, diagnosis, sourceText, suggestionText);
+    try {
+      await navigator.clipboard.writeText(bundle);
+      copyBtn.classList.add('copied');
+      setTimeout(() => { if (copyBtn.isConnected) copyBtn.classList.remove('copied'); }, 1200);
+    } catch (_) {}
+  });
+
+  const dismissBtn = document.createElement('button');
+  dismissBtn.type = 'button';
+  dismissBtn.className = 'cookbook-diag-dismiss';
+  dismissBtn.title = 'Dismiss diagnosis';
+  dismissBtn.setAttribute('aria-label', 'Dismiss');
+  dismissBtn.textContent = '×';
+  dismissBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    panel._diagDismissed = diagnosis.message;
+    _clearDiagnosis(panel);
+  });
+
+  toolbar.appendChild(copyBtn);
+  toolbar.appendChild(dismissBtn);
+  diag.appendChild(toolbar);
 
   const body = document.createElement('div');
   body.className = 'cookbook-diag-body';

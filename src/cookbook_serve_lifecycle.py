@@ -19,7 +19,8 @@ import time
 from pathlib import Path
 
 import httpx
-from core.constants import DATA_DIR, internal_api_base
+from core.constants import internal_api_base
+from src.constants import COOKBOOK_STATE_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +131,7 @@ async def _stop_serve(session_id: str, remote_host: str = "", ssh_port: str = ""
 
 
 async def _tick() -> None:
-    state_path = Path(DATA_DIR) / "cookbook_state.json"
+    state_path = Path(COOKBOOK_STATE_FILE)
     if not state_path.exists():
         return
     try:

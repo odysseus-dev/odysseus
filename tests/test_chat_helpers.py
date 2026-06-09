@@ -69,6 +69,64 @@ def test_allowed_models_nonempty_list_still_restricts_without_new_flag(monkeypat
         )
 
 
+def test_no_restriction_allows_any_model(monkeypatch):
+    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "alice")
+
+    privs = {"allowed_models": [], "block_all_models": False, "max_messages_per_day": 0}
+    _enforce_chat_privileges(_Request(privs), _Session("provider/model-a"))
+    _enforce_chat_privileges(_Request(privs), _Session("provider/model-z"))
+
+
+def test_specific_allowlist_blocks_models_outside_it(monkeypatch):
+    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "alice")
+
+    privs = {
+        "allowed_models": ["gpt-4"],
+        "block_all_models": False,
+        "max_messages_per_day": 0,
+    }
+    _enforce_chat_privileges(_Request(privs), _Session("gpt-4"))
+    with pytest.raises(HTTPException) as exc:
+        _enforce_chat_privileges(_Request(privs), _Session("gpt-3.5"))
+    assert exc.value.status_code == 403
+
+
+def test_block_all_models_blocks_regardless_of_allowed_models_contents(monkeypatch):
+    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "alice")
+
+    # Even if allowed_models contains entries, block_all_models wins.
+    privs = {
+        "allowed_models": ["gpt-4", "gpt-3.5"],
+        "block_all_models": True,
+        "max_messages_per_day": 0,
+    }
+    with pytest.raises(HTTPException) as exc:
+        _enforce_chat_privileges(_Request(privs), _Session("gpt-4"))
+    assert exc.value.status_code == 403
+
+    with pytest.raises(HTTPException):
+        _enforce_chat_privileges(_Request(privs), _Session("anything-else"))
+
+
+def test_admin_user_is_never_blocked(monkeypatch):
+    from core.auth import ADMIN_PRIVILEGES
+
+    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "admin")
+
+    class _AdminAuthManager:
+        def get_privileges(self, username):
+            assert username == "admin"
+            return dict(ADMIN_PRIVILEGES)
+
+    class _AdminRequest:
+        def __init__(self):
+            self.app = type("App", (), {})()
+            self.app.state = type("State", (), {"auth_manager": _AdminAuthManager()})()
+
+    _enforce_chat_privileges(_AdminRequest(), _Session("provider/model-a"))
+    _enforce_chat_privileges(_AdminRequest(), _Session("anything-else"))
+
+
 class _FakeSession:
     def __init__(self, model="selected-model"):
         self.model = model
