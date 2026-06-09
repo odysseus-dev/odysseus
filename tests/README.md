@@ -33,6 +33,49 @@ the sub-area. The `area_*` names are registered in `pyproject.toml`; the dynamic
 `sub_*` names are registered before collection by `pytest_configure` in
 `tests/conftest.py`, so unknown-mark warnings still flag genuine typos.
 
+For common focused runs, use `tests/run_focus.py`. It validates area and
+sub-area names, accepts sub-areas with or without the `sub_` prefix, and passes
+extra pytest arguments after `--`:
+
+```bash
+python3 tests/run_focus.py --area security
+python3 tests/run_focus.py --area services --sub-area cookbook
+python3 tests/run_focus.py --sub-area sub_cookbook
+python3 tests/run_focus.py --keyword taxonomy
+python3 tests/run_focus.py --last-failed
+python3 tests/run_focus.py --dry-run --area services --sub-area cookbook
+python3 tests/run_focus.py --area services -- --maxfail=1 -q
+```
+
+### Fast lane and duration visibility
+
+`--fast` runs the fast lane: the tests that are *not* marked `slow` (it adds the
+marker expression `not slow`). It composes with `--area`/`--sub-area` using
+`and`. Because no tests may be marked `slow` yet, `--fast` can initially match
+the full focused selection; it becomes a real speed-up as `slow` marks are added
+from duration evidence. Use it for quick local or reviewer feedback; it does not
+replace broader focused or full-suite validation before merge.
+
+`--durations N` and `--durations-min FLOAT` add pytest's slowest-test reporting
+so you can see where time goes. They are reporting only and do not count as a
+focus selector, so `--durations` must be combined with a real selector
+(`--area`, `--sub-area`, `--keyword`, `--last-failed`, or `--fast`).
+
+Activate or otherwise use the project Python environment before running these
+commands. The examples use `python3` intentionally to avoid hard-coding a local
+venv path.
+
+```bash
+python3 tests/run_focus.py --fast
+python3 tests/run_focus.py --area services --fast
+python3 tests/run_focus.py --area services --durations 25
+python3 tests/run_focus.py --area services --fast --durations 25 --durations-min 0.05
+```
+
+The `slow` marker is opt-in. Mark a test `slow` only with duration evidence
+(from `--durations`), not by guessing - see the fast-lane policy in
+`TESTING_STANDARD.md`.
+
 ## Core principles
 
 - Keep PRs small and homogeneous: one kind of change per PR.

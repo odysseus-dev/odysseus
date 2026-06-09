@@ -40,9 +40,12 @@ def test_upload_validates_target_album_ownership():
 def test_list_albums_count_and_cover_are_owner_scoped():
     fns = _function_sources()
     body = fns["list_albums"]
-    # Both the per-album image count and the cover-fallback query must owner-scope
-    # by GalleryImage.owner (the album list itself already filters by owner).
-    assert body.count("GalleryImage.owner == user") >= 2
+    # The album list, per-album image count, explicit cover, and cover-fallback
+    # queries should all share the same gallery owner policy.
+    assert "q = _owner_filter(q, user, GalleryAlbum)" in body
+    assert "_count_q = _owner_filter(_count_q, user)" in body
+    assert "cover = _owner_filter(cover_q, user).first()" in body
+    assert "_cover_q = _owner_filter(_cover_q, user)" in body
 
 
 def test_delete_album_cleanup_is_owner_scoped():

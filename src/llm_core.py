@@ -563,8 +563,9 @@ def _build_chatgpt_responses_payload(
     }
     if not _restricts_temperature(model):
         payload["temperature"] = temperature
-    if max_tokens and max_tokens > 0:
-        payload["max_output_tokens"] = max_tokens
+    # ChatGPT Subscription Codex API does not support max_output_tokens —
+    # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
+    # Do not include it in the payload.
     return payload
 
 

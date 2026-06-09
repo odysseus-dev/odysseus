@@ -15,6 +15,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, Depends
 
 from src.auth_helpers import require_user
+from src.constants import COOKBOOK_STATE_FILE
 from pydantic import BaseModel
 
 from core.middleware import require_admin
@@ -72,7 +73,7 @@ def _cookbook_llm_endpoint_host(remote: str | None, cmd: str | None = None) -> s
 
 def setup_cookbook_routes() -> APIRouter:
     router = APIRouter(tags=["cookbook"])
-    _cookbook_state_path = Path(os.environ.get("DATA_DIR", "data")) / "cookbook_state.json"
+    _cookbook_state_path = Path(COOKBOOK_STATE_FILE)
 
     def _mask_secret(value: str) -> str:
         if not value:
