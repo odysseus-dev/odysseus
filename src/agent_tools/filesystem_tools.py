@@ -74,6 +74,7 @@ class EditFileTool:
             return {"error": "edit_file: old_string and new_string are identical", "exit_code": 1}
 
         def _apply():
+            """Helper function that performs the actual string replacement and file writing logic."""
             with open(path, "r", encoding="utf-8") as f:
                 original = f.read()
             count = original.count(old)
@@ -228,7 +229,7 @@ class LsTool:
         else:
             raw_path = _s.split("\n", 1)[0].strip()
         try:
-            root = _resolve_search_root(raw_path, workspace)
+            root = _resolve_search_root(raw_path)
         except ValueError as e:
             return {"error": f"ls: {e}", "exit_code": 1}
 
@@ -286,7 +287,7 @@ class GlobTool:
         if not pattern:
             return {"error": "glob: pattern is required", "exit_code": 1}
         try:
-            root = _resolve_search_root(str(args.get("path", "")), workspace)
+            root = _resolve_search_root(str(args.get("path", "")))
         except ValueError as e:
             return {"error": f"glob: {e}", "exit_code": 1}
 
@@ -351,7 +352,7 @@ class GrepTool:
             max_hits = _CODENAV_MAX_HITS
         max_hits = max(1, min(max_hits, _CODENAV_MAX_HITS))
         try:
-            root = _resolve_search_root(str(args.get("path", "")), workspace)
+            root = _resolve_search_root(str(args.get("path", "")))
         except ValueError as e:
             return {"error": f"grep: {e}", "exit_code": 1}
 

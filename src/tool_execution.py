@@ -425,6 +425,7 @@ async def _direct_fallback(
     tool: str,
     content: str,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    workspace: Optional[str] = None,
 ) -> Optional[Dict]:
     _subproc_env = {
         **os.environ,
