@@ -394,6 +394,8 @@ function _openSkillMenu(btn, card, sk, name, isPublished) {
   else mk(_ICON.approve, 'Publish', {}, () => _setSkillStatus(name, 'published'));
   mk(_ICON.edit, 'Edit', {}, async () => {
     if (!card.classList.contains('doclib-card-expanded')) await _expandSkillCard(card, name);
+    const existingEditor = card.querySelector('.skill-md-editor');
+    if (existingEditor) { existingEditor.focus(); return; }
     _toggleSkillEdit(card, name);
   });
   mk(_ICON.test, 'Test', {}, () => _testSkill(card, name));
