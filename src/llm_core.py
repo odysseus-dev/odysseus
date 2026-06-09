@@ -778,12 +778,25 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
     return payload
 
 def _build_anthropic_headers(headers):
-    """Convert Bearer auth to x-api-key for Anthropic."""
+    """Normalize auth headers for Anthropic.
+
+    A static API key authenticates via x-api-key, so a ``Bearer <api-key>`` is
+    converted. A subscription (OAuth) access token must stay
+    ``Authorization: Bearer`` and carry the oauth beta header instead — detect
+    those by prefix and leave them intact.
+    """
+    from src.claude_subscription import CLAUDE_OAUTH_BETA_HEADER, is_oauth_access_token
+
     h = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
     if headers:
         for k, v in headers.items():
             if k.lower() == "authorization" and isinstance(v, str) and v.startswith("Bearer "):
-                h["x-api-key"] = v[7:]
+                token = v[7:]
+                if is_oauth_access_token(token):
+                    h["Authorization"] = v
+                    h.setdefault("anthropic-beta", CLAUDE_OAUTH_BETA_HEADER)
+                else:
+                    h["x-api-key"] = token
             else:
                 h[k] = v
     return h
@@ -1148,6 +1161,11 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens)
+        # OAuth (Claude subscription) tokens must impersonate Claude Code — shape
+        # the payload like the ChatGPT provider does for Codex.
+        from src.claude_subscription import request_is_oauth, shape_payload_for_claude_code
+        if request_is_oauth(h):
+            payload = shape_payload_for_claude_code(payload)
     elif provider == "ollama":
         target_url = _normalize_ollama_url(url)
         payload = _build_ollama_payload(
@@ -1337,6 +1355,11 @@ async def llm_call_async(
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens)
+        # OAuth (Claude subscription) tokens must impersonate Claude Code — shape
+        # the payload like the ChatGPT provider does for Codex.
+        from src.claude_subscription import request_is_oauth, shape_payload_for_claude_code
+        if request_is_oauth(h):
+            payload = shape_payload_for_claude_code(payload)
     elif provider == "ollama":
         target_url = _normalize_ollama_url(url)
         h = {"Content-Type": "application/json"}
@@ -1452,6 +1475,11 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens, stream=True, tools=tools)
+        # OAuth (Claude subscription) tokens must impersonate Claude Code — shape
+        # the payload like the ChatGPT provider does for Codex.
+        from src.claude_subscription import request_is_oauth, shape_payload_for_claude_code
+        if request_is_oauth(h):
+            payload = shape_payload_for_claude_code(payload)
     elif provider == "ollama":
         target_url = _normalize_ollama_url(url)
         h = {"Content-Type": "application/json"}

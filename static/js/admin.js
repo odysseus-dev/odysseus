@@ -730,6 +730,13 @@ function initEndpointForm() {
   function _isDeviceAuthSelected() {
     return !!_selectedDeviceAuthProvider();
   }
+  // Claude subscription is an auth-code (paste) flow, not a poll-based device
+  // flow, so it is detected separately from PROVIDER_DEVICE_FLOWS.
+  function _selectedClaudeSubscription() {
+    const opt = _selectedProviderOption();
+    const flow = opt && opt.dataset ? opt.dataset.authFlow : '';
+    return flow === 'claude-subscription' || provider.value === 'claude-subscription';
+  }
   function _setApiFormForProvider() {
     const deviceAuthProvider = _selectedDeviceAuthProvider();
     const deviceAuthConfig = PROVIDER_DEVICE_FLOWS[deviceAuthProvider] || null;
@@ -738,11 +745,14 @@ function initEndpointForm() {
     const addBtn = el('adm-epAddBtn');
     const status = el('adm-deviceAuthStatus');
     const msg = _endpointMsg('api');
-    if (deviceAuthConfig) {
+    const claudeSub = _selectedClaudeSubscription();
+    if (deviceAuthConfig || claudeSub) {
       urlInput.value = '';
-      urlInput.placeholder = deviceAuthProvider === 'copilot'
-        ? 'GitHub Copilot uses GitHub account sign-in'
-        : 'ChatGPT Subscription uses OpenAI account sign-in';
+      urlInput.placeholder = claudeSub
+        ? 'Claude Subscription uses Claude.ai account sign-in'
+        : (deviceAuthProvider === 'copilot'
+          ? 'GitHub Copilot uses GitHub account sign-in'
+          : 'ChatGPT Subscription uses OpenAI account sign-in');
       urlInput.readOnly = true;
       if (apiKey) {
         apiKey.value = '';
@@ -831,7 +841,7 @@ function initEndpointForm() {
   }
 
   provider.addEventListener('change', () => {
-    if (_isDeviceAuthSelected()) {
+    if (_isDeviceAuthSelected() || _selectedClaudeSubscription()) {
       _setApiFormForProvider();
       _renderPickerMenu();
       _syncPickerCurrent();
@@ -928,7 +938,7 @@ function initEndpointForm() {
   const apiCancelTestBtn = el('adm-epApiCancelTestBtn');
   if (apiTestBtn) {
     apiTestBtn.addEventListener('click', async () => {
-      if (_isDeviceAuthSelected()) {
+      if (_isDeviceAuthSelected() || _selectedClaudeSubscription()) {
         const msg = _endpointMsg('api');
         msg.textContent = '';
         msg.className = '';
@@ -984,6 +994,10 @@ function initEndpointForm() {
     const deviceAuthProvider = _selectedDeviceAuthProvider();
     if (deviceAuthProvider) {
       await _startProviderDeviceAuth(deviceAuthProvider, el('adm-epAddBtn'));
+      return;
+    }
+    if (_selectedClaudeSubscription()) {
+      await _startClaudeSubscriptionAuth(el('adm-epAddBtn'));
       return;
     }
     const msg = _endpointMsg('api');
@@ -1147,6 +1161,97 @@ function initEndpointForm() {
       reset();
       showAuthError(formatDeviceFlowError(e));
     }
+  }
+
+  // Claude subscription: auth-code (PKCE) paste flow. Mirrors
+  // _startProviderDeviceAuth, but instead of polling it shows an authorize link
+  // plus a code input the user pastes back, then POSTs /complete.
+  async function _startClaudeSubscriptionAuth(triggerEl = null) {
+    if (deviceAuthPolling) return;
+    const status = el('adm-deviceAuthStatus') || _endpointMsg('api');
+    if (!status) return;
+    const triggerText = triggerEl ? triggerEl.textContent : '';
+    const reset = () => {
+      if (triggerEl) { triggerEl.disabled = false; triggerEl.textContent = triggerText || 'Add'; }
+      deviceAuthPolling = false;
+      _setApiFormForProvider();
+    };
+    const showAuthError = (text) => {
+      status.className = 'admin-error';
+      status.textContent = text + ' ';
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'admin-btn-sm';
+      retry.textContent = 'Try again';
+      retry.addEventListener('click', () => { _startClaudeSubscriptionAuth(triggerEl); });
+      status.appendChild(retry);
+    };
+    status.textContent = '';
+    status.className = 'adm-ep-inline-msg';
+    if (triggerEl) { triggerEl.disabled = true; triggerEl.textContent = 'Starting...'; }
+    deviceAuthPolling = true;
+    _setApiFormForProvider();
+    status.textContent = 'Starting Claude Subscription sign-in...';
+
+    let data;
+    try {
+      const resp = await fetch('/api/claude-subscription/start', { method: 'POST', credentials: 'same-origin' });
+      data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.detail || data.error || ('HTTP ' + resp.status));
+    } catch (e) {
+      reset();
+      showAuthError('Could not start sign-in (' + ((e && e.message) || 'error') + ').');
+      return;
+    }
+    if (!data.authorize_url || !data.login_id) {
+      reset();
+      showAuthError('Sign-in did not return an authorize URL.');
+      return;
+    }
+
+    status.className = '';
+    status.innerHTML =
+      '<div class="adm-copilot-panel">' +
+        '<div class="adm-copilot-wait"><span>Approve access, then paste the code below.</span></div>' +
+        '<a class="admin-btn-add adm-copilot-auth" href="' + encodeURI(data.authorize_url) + '" target="_blank" rel="noopener">Authorize with Claude ↗</a>' +
+        '<div class="adm-copilot-coderow">' +
+          '<input type="text" class="adm-claude-code-input" placeholder="Paste code" autocomplete="off" spellcheck="false" style="flex:1;min-width:0;" />' +
+          '<button type="button" class="admin-btn-sm adm-claude-connect">Connect</button>' +
+        '</div>' +
+      '</div>';
+    try { window.open(data.authorize_url, '_blank', 'noopener'); } catch (e) {}
+
+    const input = status.querySelector('.adm-claude-code-input');
+    const connectBtn = status.querySelector('.adm-claude-connect');
+    if (input) input.focus();
+    const doConnect = async () => {
+      const code = ((input && input.value) || '').trim();
+      if (!code) { if (input) input.focus(); return; }
+      if (connectBtn) { connectBtn.disabled = true; connectBtn.textContent = 'Connecting...'; }
+      let cd;
+      try {
+        const fd = new FormData();
+        fd.append('login_id', data.login_id);
+        fd.append('code', code);
+        const r = await fetch('/api/claude-subscription/complete', { method: 'POST', body: fd, credentials: 'same-origin' });
+        cd = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(cd.detail || cd.error || ('HTTP ' + r.status));
+      } catch (e) {
+        reset();
+        showAuthError('Sign-in failed (' + ((e && e.message) || 'error') + ').');
+        return;
+      }
+      const endpoint = cd.endpoint || {};
+      const n = ((endpoint && endpoint.models) || []).length;
+      status.className = 'admin-success';
+      status.textContent = 'Connected - ' + n + ' Claude Subscription model' + (n !== 1 ? 's' : '') + ' available.';
+      if (endpoint && endpoint.id) _recentlyAddedEpId = String(endpoint.id);
+      await loadEndpoints();
+      await _selectAddedModelInChat(endpoint || {});
+      reset();
+    };
+    if (connectBtn) connectBtn.addEventListener('click', doConnect);
+    if (input) input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doConnect(); } });
   }
 
   // API Key reveal toggle. The key inputs are hidden by default so the Add

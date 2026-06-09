@@ -566,7 +566,15 @@ def _resolve_probe_key(ep) -> Optional[str]:
 def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 10, with_tools: bool = False) -> dict:
     """Send a realistic completion request to a single model. Returns {status, latency_ms, error?}."""
     provider = _safe_detect_provider(base)
-    if _is_discovery_only_provider(provider):
+    _claude_oauth = False
+    try:
+        from src.claude_subscription import is_oauth_access_token
+        _claude_oauth = bool(api_key and is_oauth_access_token(api_key))
+    except Exception:
+        _claude_oauth = False
+    # Claude subscription needs full Claude Code impersonation (system prompt etc.)
+    # that a bare probe doesn't apply — treat it as discovery-only like ChatGPT.
+    if _is_discovery_only_provider(provider) or _claude_oauth:
         return {"status": "ok", "latency_ms": 0, "skipped": True}
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
@@ -682,6 +690,18 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
     provider = _safe_detect_provider(base)
+    # Claude subscription (OAuth) is discovery-only, like chatgpt-subscription:
+    # never probe it as an API-key Anthropic endpoint, which would send the OAuth
+    # token as x-api-key (401) or fall back to the outdated hardcoded list.
+    try:
+        from src.claude_subscription import (
+            fetch_available_models as _claude_fetch_models,
+            is_oauth_access_token,
+        )
+        if api_key and is_oauth_access_token(api_key):
+            return _claude_fetch_models(api_key, timeout=timeout) or []
+    except Exception:
+        pass
     if provider == "chatgpt-subscription":
         from src.chatgpt_subscription import fetch_available_models
         if api_key:
@@ -988,13 +1008,19 @@ def setup_model_routes(model_discovery):
         category = _classify_endpoint(base, kind)
         mode = _endpoint_refresh_mode(ep, kind)
         cached = _cached_model_ids(ep)
-        key = _refresh_key(base, getattr(ep, "api_key", None))
+        # Session-backed (subscription) endpoints store no api_key — resolve the
+        # current OAuth bearer so the probe authenticates correctly (and routes
+        # through the Claude discovery-only path) instead of probing unauthenticated.
+        api_key = getattr(ep, "api_key", None)
+        if not api_key and getattr(ep, "provider_auth_id", None):
+            api_key = _resolve_probe_key(ep)
+        key = _refresh_key(base, api_key)
         state = _refresh_state.get(key, {})
 
         info = {
             "id": getattr(ep, "id", ""),
             "base": base,
-            "api_key": getattr(ep, "api_key", None),
+            "api_key": api_key,
             "kind": kind,
             "category": category,
             "mode": mode,

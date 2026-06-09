@@ -70,6 +70,37 @@ def _endpoint_enabled_models(ep) -> list:
     return [m for m in _endpoint_cached_models(ep) if m not in hidden]
 
 
+def _resolve_provider_auth_credentials(auth_id: str, owner: Optional[str]) -> dict:
+    """Resolve refreshable session credentials, dispatching by stored provider.
+
+    A ``ModelEndpoint.provider_auth_id`` can point at any session-backed provider
+    (ChatGPT subscription, Claude subscription, ...). Look up which one it is,
+    then call that provider's resolver. Both return the same
+    ``{base_url, api_key, ...}`` shape.
+    """
+    provider = None
+    try:
+        from core.database import ProviderAuthSession, SessionLocal
+
+        db = SessionLocal()
+        try:
+            row = (
+                db.query(ProviderAuthSession.provider)
+                .filter(ProviderAuthSession.id == auth_id)
+                .first()
+            )
+            provider = row[0] if row else None
+        finally:
+            db.close()
+    except Exception:
+        provider = None
+    if provider == "claude-subscription":
+        from src.claude_subscription import resolve_runtime_credentials
+    else:
+        from src.chatgpt_subscription import resolve_runtime_credentials
+    return resolve_runtime_credentials(auth_id, owner=owner)
+
+
 def resolve_endpoint_runtime(ep, owner: Optional[str] = None) -> Tuple[str, Optional[str]]:
     """Resolve a ModelEndpoint row to its runtime base URL and bearer/API key.
 
@@ -81,9 +112,7 @@ def resolve_endpoint_runtime(ep, owner: Optional[str] = None) -> Tuple[str, Opti
     api_key = getattr(ep, "api_key", None)
     auth_id = getattr(ep, "provider_auth_id", None)
     if auth_id:
-        from src.chatgpt_subscription import resolve_runtime_credentials
-
-        creds = resolve_runtime_credentials(auth_id, owner=owner)
+        creds = _resolve_provider_auth_credentials(auth_id, owner)
         base = normalize_base(creds.get("base_url") or base)
         api_key = creds.get("api_key")
     return base, api_key
@@ -200,7 +229,15 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     provider = _detect_provider(base)
     headers: Dict[str, str] = {}
     if provider == "anthropic":
+        # An Anthropic subscription (OAuth) access token authenticates as
+        # `Authorization: Bearer` + the oauth beta header, NOT x-api-key. Both an
+        # API-key endpoint and a subscription endpoint live at api.anthropic.com,
+        # so the token prefix (sk-ant-oat...) is the discriminator.
         if api_key:
+            from src.claude_subscription import claude_oauth_headers, is_oauth_access_token
+
+            if is_oauth_access_token(api_key):
+                return claude_oauth_headers(api_key)
             headers["x-api-key"] = api_key
         headers["anthropic-version"] = "2023-06-01"
         return headers

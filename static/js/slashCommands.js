@@ -28,6 +28,7 @@ let API_BASE = '';
 let setupMode = false;
 let pendingSetupApiKey = '';
 let pendingSetupProvider = null;
+let pendingClaudeSubscriptionLogin = null;
 let setupIntroShown = false;
 
 // External references set via initSlashCommands
@@ -75,9 +76,15 @@ function _setupApiProviderChips() {
 }
 
 function _setupDeviceAuthProviderChips() {
-  return SETUP_DEVICE_AUTH_PROVIDERS.map(provider =>
+  const chips = SETUP_DEVICE_AUTH_PROVIDERS.map(provider =>
     '<span class="setup-clickable-provider" data-setup-kind="device-auth" data-setup-provider="' + provider.key + '" style="cursor:pointer;text-decoration:underline;margin-right:8px;" title="Run ' + provider.command + '">' + provider.name + '</span>'
-  ).join(' ');
+  );
+  // Claude subscription is auth-code (paste) rather than device-poll, so it uses
+  // its own kind; the click dispatch fills `/setup claude-subscription`.
+  chips.push(
+    '<span class="setup-clickable-provider" data-setup-kind="claude-subscription" data-setup-provider="claude-subscription" style="cursor:pointer;text-decoration:underline;margin-right:8px;" title="Run /setup claude-subscription">Claude Subscription</span>'
+  );
+  return chips.join(' ');
 }
 
 function _setupProviderFromInput(input) {
@@ -762,6 +769,12 @@ async function handleSetupWizard(mode, input) {
       await _setupProviderDeviceFlow(deviceAuthProvider);
       return;
     }
+    if (_isClaudeSubscriptionTopic(input)) {
+      _addMessage('user', input);
+      setupMode = false;
+      await _setupClaudeSubscription();
+      return;
+    }
     const paired = _extractSetupProviderCredential(input);
     const provider = paired?.provider || _setupProviderFromInput(input);
     if (!provider) {
@@ -779,6 +792,12 @@ async function handleSetupWizard(mode, input) {
     pendingSetupProvider = provider;
     setupMode = 'endpoint-key-for-provider';
     await _setupReply(`Paste your ${provider.name} API key.`);
+    return;
+  }
+
+  if (mode === 'claude-subscription-code') {
+    _showSetupUserBubble(input, false);
+    await _completeClaudeSubscription(input);
     return;
   }
 
@@ -4969,6 +4988,66 @@ function _clearSetupCommandInput() {
   }
 }
 
+// Claude subscription uses an authorization-code (PKCE) flow with a pasted code,
+// not the poll-based device flow — so it is handled separately from
+// SETUP_DEVICE_AUTH_PROVIDERS / runProviderDeviceFlow.
+const CLAUDE_SUBSCRIPTION_TOPICS = ['claude-subscription', 'claudesubscription', 'claude-sub', 'claude-max', 'claude-pro'];
+
+function _isClaudeSubscriptionTopic(topic) {
+  return CLAUDE_SUBSCRIPTION_TOPICS.includes(String(topic || '').trim().toLowerCase());
+}
+
+async function _setupClaudeSubscription() {
+  _clearSetupGuideMessages();
+  await _setupReply('Starting Claude Subscription sign-in...');
+  let data;
+  try {
+    const resp = await fetch('/api/claude-subscription/start', { method: 'POST', credentials: 'same-origin' });
+    data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || data.error || ('Request failed (HTTP ' + resp.status + ')'));
+  } catch (e) {
+    await _setupReply('Could not start Claude Subscription sign-in: ' + ((e && e.message) || 'unknown error'));
+    return;
+  }
+  if (!data.authorize_url || !data.login_id) {
+    await _setupReply('Claude Subscription sign-in did not return an authorize URL.');
+    return;
+  }
+  pendingClaudeSubscriptionLogin = data.login_id;
+  setupMode = 'claude-subscription-code';
+  slashReply(
+    '<div class="setup-guide-no-censor" style="display:grid;gap:6px;">' +
+      '<div>Open this URL, approve access, then paste the code it gives you back here.</div>' +
+      '<div><a href="' + uiModule.esc(data.authorize_url) + '" target="_blank" rel="noopener noreferrer">' + uiModule.esc(data.authorize_url) + '</a></div>' +
+    '</div>'
+  );
+  try { window.open(data.authorize_url, '_blank', 'noopener'); } catch (e) {}
+}
+
+async function _completeClaudeSubscription(code) {
+  const loginId = pendingClaudeSubscriptionLogin;
+  pendingClaudeSubscriptionLogin = null;
+  if (!loginId) {
+    await _setupReply('No pending Claude sign-in. Run /setup claude-subscription again.');
+    return;
+  }
+  let data;
+  try {
+    const fd = new FormData();
+    fd.append('login_id', loginId);
+    fd.append('code', String(code || '').trim());
+    const resp = await fetch('/api/claude-subscription/complete', { method: 'POST', body: fd, credentials: 'same-origin' });
+    data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || data.error || ('Request failed (HTTP ' + resp.status + ')'));
+  } catch (e) {
+    await _setupReply('Claude Subscription sign-in failed: ' + ((e && e.message) || 'unknown error'));
+    return;
+  }
+  const n = ((data.endpoint && data.endpoint.models) || []).length;
+  await _setupReply('Connected - ' + n + ' Claude Subscription model' + (n !== 1 ? 's' : '') + ' available.');
+  if (modelsModule) modelsModule.refreshModels(true);
+}
+
 async function _setupProviderDeviceFlow(providerKey) {
   _clearSetupGuideMessages();
   const config = PROVIDER_DEVICE_FLOWS[providerKey];
@@ -5026,6 +5105,10 @@ async function _cmdSetup(args, ctx) {
   const deviceAuthProvider = _setupDeviceAuthProviderFromInput(topic);
   if (deviceAuthProvider) {
     await _setupProviderDeviceFlow(deviceAuthProvider);
+    return true;
+  }
+  if (_isClaudeSubscriptionTopic(topic)) {
+    await _setupClaudeSubscription();
     return true;
   }
   const provider = _setupProviderFromInput(topic);
@@ -5786,7 +5869,7 @@ const COMMANDS = {
     category: 'Getting started',
     help: 'Add local or API model endpoints',
     handler: _cmdSetup,
-    usage: '/setup local URL  ·  /setup groq KEY  ·  /setup copilot  ·  /setup chatgpt-subscription',
+    usage: '/setup local URL  ·  /setup groq KEY  ·  /setup copilot  ·  /setup chatgpt-subscription  ·  /setup claude-subscription',
     // Provider subs so the autocomplete popup surfaces "/setup deepseek",
     // "/setup openai", etc. when the user types "/setup de". Each sub's
     // handler is a thin wrapper that re-prepends the sub name and
@@ -5805,6 +5888,7 @@ const COMMANDS = {
       ollama:     { help: 'Ollama Cloud',  usage: '/setup ollama KEY',          handler: (a, c) => _cmdSetup(['ollama',     ...a], c) },
       copilot:    { help: 'GitHub Copilot', usage: '/setup copilot',            handler: (a, c) => _cmdSetup(['copilot',    ...a], c) },
       'chatgpt-subscription': { help: 'ChatGPT Subscription', alias: ['codex'], usage: '/setup chatgpt-subscription', handler: (a, c) => _cmdSetup(['chatgpt-subscription', ...a], c) },
+      'claude-subscription': { help: 'Claude Subscription', alias: ['claudesubscription', 'claude-sub', 'claude-max', 'claude-pro'], usage: '/setup claude-subscription', handler: (a, c) => _cmdSetup(['claude-subscription', ...a], c) },
       local:      { help: 'Local model server (vLLM / LM Studio / llama.cpp / Ollama)',
                     usage: '/setup local http://localhost:8000/v1',
                     handler: (a, c) => _cmdSetup(['local', ...a], c) },
@@ -6377,7 +6461,7 @@ export function initSlashCommands(deps) {
       const providerName = providerEl.textContent.trim();
       const messageInput = document.getElementById('message');
       if (messageInput) {
-        const text = providerEl.dataset.setupKind === 'device-auth'
+        const text = (providerEl.dataset.setupKind === 'device-auth' || providerEl.dataset.setupKind === 'claude-subscription')
           ? '/setup ' + providerKey
           : providerName + ' sk-';
         messageInput.value = text;
