@@ -333,6 +333,7 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
     except Exception as e:
         logger.debug(f"Failed to query context length for {model} from {models_url}: {e}")
 
+
     # If standard endpoint didn't work or returned no context, try LM Studio /api/v1/models endpoint
     if not api_ctx and _is_local_endpoint(endpoint_url):
         # Construct the LM Studio API URL (assuming it's on same host/port as v1)
