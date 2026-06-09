@@ -1040,6 +1040,7 @@
                   <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
                 </svg>
                 <span>Skill</span>
+                <span class="overflow-active-dot"></span>
               </button>
               <button type="button" class="overflow-menu-item" id="overflow-rag-btn">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1078,6 +1079,14 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
             </svg>
+          </button>
+          <!-- Skill indicator (hidden until active) -->
+          <button type="button" class="input-icon-btn tool-indicator" title="Skill active — click to deactivate" id="skill-indicator-btn" style="display:none;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+            <span id="skill-indicator-name" style="font-size:11px;margin-left:2px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+            <svg class="tool-indicator-x" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
           </button>
           <!-- RAG toolbar indicator (hidden until active) -->
           <button type="button" class="input-icon-btn tool-indicator" title="RAG active — click to deactivate" id="rag-indicator-btn" style="display:none;">
@@ -1382,6 +1391,10 @@
           <button class="settings-nav-item" data-settings-tab="appearance">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 0 0 0 20 4 4 0 0 1 0-8 4 4 0 0 0 0-8"/></svg>
             <span>Appearance</span>
+          </button>
+          <button class="settings-nav-item" data-settings-tab="agent-context">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            <span>Agent Context</span>
           </button>
           <button class="settings-nav-item" data-settings-tab="shortcuts">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></svg>
@@ -1857,6 +1870,51 @@
 
         <!-- ═══ MEMORY TAB ═══ -->
         <!-- ═══ SHORTCUTS TAB ═══ -->
+        <!-- ═══ AGENT CONTEXT TAB ═══ -->
+        <div data-settings-panel="agent-context" class="hidden">
+          <div class="admin-card">
+            <h2>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6">
+                <line x1="4" y1="6" x2="20" y2="6"/>
+                <line x1="4" y1="12" x2="20" y2="12"/>
+                <line x1="4" y1="18" x2="20" y2="18"/>
+              </svg>
+              Layered Context & Priority
+            </h2>
+            <div class="admin-toggle-sub" style="margin-bottom:12px">Drag rows to change search priority, or use the toggles to enable/disable specific context sources.</div>
+            
+            <div id="agent-context-priority-container" style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;">
+              <!-- Populated dynamically -->
+            </div>
+            <div id="set-agentContextPriorityMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+          </div>
+
+          <div class="admin-card">
+            <h2>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+              </svg>
+              External Path Configurations
+            </h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Set locations for external instructions and skills directories.</div>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label">Global Instructions</label>
+                <input type="text" id="set-agentContextGlobalInstructionsPath" class="settings-select" placeholder="~/.agents/instructions.md" style="flex:1;">
+              </div>
+              <div class="settings-row" style="margin-top:8px;">
+                <label class="settings-label">Global Skills Dir</label>
+                <input type="text" id="set-agentContextGlobalSkillsPath" class="settings-select" placeholder="~/.agents/skills" style="flex:1;">
+              </div>
+              <div class="settings-row" style="margin-top:8px;">
+                <label class="settings-label">Custom Paths</label>
+                <input type="text" id="set-agentContextCustomSourcesPaths" class="settings-select" placeholder="Comma-separated files or directories" style="flex:1;">
+              </div>
+              <div id="set-agentContextPathsMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent); margin-top:4px;"></div>
+            </div>
+          </div>
+        </div>
+
         <div data-settings-panel="shortcuts" class="hidden">
           <div class="admin-card" style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;">
             <div>

@@ -1080,6 +1080,8 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
     def _verify_owner(skill: dict, user: Optional[str]):
         if user is None:
             return
+        if skill.get("read_only") is True:
+            return
         # SECURITY: strict check — previously `sk_owner and sk_owner != user`
         # let any user mutate/read a skill that happened to have no owner
         # field (legacy or un-stamped writes), since the truthiness guard
@@ -1117,23 +1119,21 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         a slash command the model would not normally be allowed to discover.
         """
         user = _owner(request)
-        all_skills = {s.get("name"): s for s in skills_manager.load(owner=user)}
         entries = []
-        for s in skills_manager.index_for(owner=user):
+        for s in skills_manager.load(owner=user):
             name = (s.get("name") or "").strip()
             if not name:
                 continue
-            full = all_skills.get(name) or {}
-            category = (s.get("category") or full.get("category") or "general").strip() or "general"
+            category = (s.get("category") or "general").strip() or "general"
             entries.append({
                 "type": "skill",
                 "token": f"/{name}",
                 "name": name,
                 "category": f"Skills / {category}",
-                "help": s.get("description") or full.get("description") or "",
+                "help": s.get("description") or "",
                 "usage": f"/{name} <request>",
-                "uses": int(full.get("uses") or 0),
-                "last_used": full.get("last_used"),
+                "uses": int(s.get("uses") or 0),
+                "last_used": s.get("last_used"),
             })
         entries.sort(key=lambda row: row["name"])
         return {"skills": entries, "count": len(entries)}
@@ -1389,7 +1389,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         request_text = (body.get("request") or "").strip() if isinstance(body, dict) else ""
 
         invokable = {
-            s.get("name"): s for s in skills_manager.index_for(owner=user)
+            s.get("name"): s for s in skills_manager.load(owner=user)
             if (s.get("name") or "").strip()
         }
         match = invokable.get(skill_id)
@@ -1635,6 +1635,8 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         match = next((s for s in skills if s.get("name") == skill_id or s.get("id") == skill_id), None)
         if not match:
             raise HTTPException(404, "Skill not found")
+        if match.get("read_only") is True:
+            raise HTTPException(403, "Cannot modify a read-only skill")
         _verify_owner(match, user)
         try:
             sk = Skill.from_markdown(new_content)
@@ -1682,6 +1684,8 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         match = next((s for s in skills if s.get("name") == skill_id or s.get("id") == skill_id), None)
         if not match:
             raise HTTPException(404, "Skill not found")
+        if match.get("read_only") is True:
+            raise HTTPException(403, "Cannot modify a read-only skill")
         _verify_owner(match, user)
 
         updates = body.dict(exclude_none=True)
@@ -1701,6 +1705,8 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         match = next((s for s in skills if s.get("name") == skill_id or s.get("id") == skill_id), None)
         if not match:
             raise HTTPException(404, "Skill not found")
+        if match.get("read_only") is True:
+            raise HTTPException(403, "Cannot delete a read-only skill")
         _verify_owner(match, user)
         ok = skills_manager.delete_skill(match.get("name"), owner=user)
         if not ok:

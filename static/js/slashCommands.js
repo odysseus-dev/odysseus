@@ -1640,6 +1640,16 @@ async function _cmdSkills(args, ctx) {
     return _invokeSkillByName(name, rest.slice(1).join(' ').trim(), ctx);
   }
 
+  // Fallback: if 'sub' is a valid skill name from the catalog, run it directly.
+  try {
+    const catalog = await _loadSkillSlashCatalog(false);
+    const matchedSkill = catalog.find(s => s.name.toLowerCase() === sub);
+    if (matchedSkill) {
+      const requestText = rest.join(' ').trim();
+      return _invokeSkillByName(matchedSkill.name, requestText, ctx);
+    }
+  } catch (_) {}
+
   slashReply('Usage: /skills list | search query | view name | use name request');
   return true;
 }

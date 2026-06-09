@@ -1828,38 +1828,54 @@ function initializeEventListeners() {
       item.appendChild(nameEl);
       item.appendChild(descEl);
       
-      item.addEventListener('click', async () => {
+      item.addEventListener('click', () => {
         dismissModal(skillAttachModal);
+        _syncSkillIndicator(name);
         if (uiModule && uiModule.showToast) {
-          uiModule.showToast(`Attaching skill: ${name}...`, 1500);
-        }
-        try {
-          const res = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(name)}/markdown`);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const data = await res.json();
-          const markdown = data.markdown || '';
-          
-          // Create File object
-          const file = new File([markdown], `${name}.md`, { type: 'text/markdown' });
-          file.isSkill = true;
-          file.skillName = name;
-          
-          if (fileHandlerModule && fileHandlerModule.addFiles) {
-            fileHandlerModule.addFiles([file]);
-            if (uiModule && uiModule.showToast) {
-              uiModule.showToast(`Skill attached: ${name}`);
-            }
-          }
-        } catch (err) {
-          if (uiModule && uiModule.showError) {
-            uiModule.showError(`Failed to attach skill: ${err.message}`);
-          }
+          uiModule.showToast(`Skill attached: ${name}`);
         }
       });
       
       skillAttachList.appendChild(item);
     });
   }
+
+  // ── Skill toggle (overflow + indicator) ──
+  window._attachedSkillName = null;
+  function _syncSkillIndicator(name) {
+    window._attachedSkillName = name || null;
+    const sessionId = window.sessionModule && typeof window.sessionModule.getCurrentSessionId === 'function'
+      ? window.sessionModule.getCurrentSessionId()
+      : null;
+    if (sessionId) {
+      if (name) {
+        localStorage.setItem('attached-skill-' + sessionId, name);
+      } else {
+        localStorage.removeItem('attached-skill-' + sessionId);
+      }
+    } else {
+      if (name) {
+        localStorage.setItem('attached-skill-pending', name);
+      } else {
+        localStorage.removeItem('attached-skill-pending');
+      }
+    }
+    const indicator = el('skill-indicator-btn');
+    const nameEl = el('skill-indicator-name');
+    const overflow = el('overflow-skill-btn');
+    if (indicator) {
+      indicator.style.display = name ? '' : 'none';
+      indicator.classList.toggle('active', !!name);
+    }
+    if (nameEl) {
+      nameEl.textContent = name || '';
+    }
+    if (overflow) {
+      overflow.classList.toggle('active', !!name);
+    }
+    updatePlusDot();
+  }
+  window._syncSkillIndicator = _syncSkillIndicator;
 
   // ── RAG toggle (overflow + indicator) ──
   function _syncRagIndicator(active) {
@@ -2291,6 +2307,24 @@ function initializeEventListeners() {
     compareIndicatorBtn.addEventListener('click', () => {
       if (compareModule && compareModule.isActive()) {
         compareModule.closeCompare();
+      }
+    });
+  }
+
+  // ── Skill indicator click ──
+  const skillIndicatorBtn = el('skill-indicator-btn');
+  if (skillIndicatorBtn) {
+    skillIndicatorBtn.addEventListener('click', () => {
+      const detachedSkill = window._attachedSkillName;
+      _syncSkillIndicator(null);
+      if (detachedSkill) {
+        const messageInput = el('message');
+        if (messageInput) {
+          messageInput.value = `I have detached the skill "${detachedSkill}".`;
+          if (uiModule.autoResize) uiModule.autoResize(messageInput);
+          const sb = document.querySelector('.send-btn');
+          if (sb) sb.click();
+        }
       }
     });
   }

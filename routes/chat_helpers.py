@@ -518,6 +518,8 @@ async def build_chat_context(
     use_enhanced_message: bool = False,
     agent_mode: bool = False,
     allow_tool_preprocessing: bool = True,
+    attached_skill_name: Optional[str] = None,
+    skills_manager: Optional[Any] = None,
 ) -> ChatContext:
     """Build the full context (preface + messages) for an LLM call.
 
@@ -541,19 +543,28 @@ async def build_chat_context(
     # Add user message to history
     add_user_message(sess, chat_handler, preprocessed, incognito=incognito)
 
+    # Resolve user
+    user = get_current_user(request)
+
     # Fire events
     if not incognito:
         fire_message_event(request, webhook_manager, session_id, sess, message, compare_mode)
 
     # Resolve user prefs
-    user = get_current_user(request)
     uprefs = load_prefs_for_user(user)
+
+    # Normalize attached skill name
+    from src.app_helpers import normalize_attached_skill_name
+    attached_skill_name = normalize_attached_skill_name(attached_skill_name)
 
     # Memory enabled?
     mem_enabled = not incognito and not no_memory and uprefs.get("memory_enabled", True)
     # Skills injection respects its own enable toggle (mirrors memory_enabled).
     # When off, the "Available skills" index is not added to the prompt.
     skills_enabled = not incognito and uprefs.get("skills_enabled", True)
+    if attached_skill_name:
+        # Suppress general skills catalog index if a skill is attached
+        skills_enabled = False
     if not allow_tool_preprocessing:
         mem_enabled = False
         skills_enabled = False
@@ -586,6 +597,7 @@ async def build_chat_context(
         agent_mode=agent_mode,
         incognito=incognito,
         use_skills=skills_enabled,
+        attached_skill_name=attached_skill_name,
     )
     if use_rag is not None:
         _preface_kwargs["use_rag"] = use_rag_val

@@ -36643,3 +36643,68 @@ body.theme-frosted .modal {
   gap: 4px;
   font-weight: 500;
 }
+
+/* Agent Context Priority List Styles */
+.priority-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+.priority-item:hover {
+  background: var(--hover);
+  border-color: color-mix(in srgb, var(--brand-color) 30%, var(--border));
+}
+.priority-item.dragging {
+  opacity: 0.95;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--brand-color) 25%, transparent);
+  border-color: var(--brand-color);
+  background: var(--panel);
+  cursor: grabbing;
+}
+.priority-item-handle {
+  cursor: grab;
+  opacity: 0.5;
+  font-size: 14px;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg);
+  padding: 4px;
+  transition: opacity 0.15s, color 0.15s;
+}
+.priority-item-handle:hover {
+  opacity: 1;
+  color: var(--brand-color);
+}
+.priority-item-handle:active {
+  cursor: grabbing;
+}
+.priority-item-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.priority-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.priority-item-desc {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  line-height: 1.3;
+}
+.priority-item-toggle {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+

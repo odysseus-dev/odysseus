@@ -615,6 +615,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (!skipBubble) { _autoNudges = 0; _autoContinuePending = false; }
       else if (_autoContinuePending) { _autoContinuePending = false; }
       const _pendingAttachInfo = fileHandlerModule.getPendingCount() ? fileHandlerModule.getPendingInfo() : null;
+      const skillName = window._attachedSkillName || null;
       // Pre-read importable file contents before upload clears pending files
       const IMPORTABLE_EXT = /\.(txt|py|js|ts|html|htm|css|md|json|csv|yml|yaml|sh|sql|rs|go|java|c|cpp|h|rb|php|xml|jsx|tsx|log|toml|ini|conf|env|vue|svelte|scss|sass|less)$/i;
       const _importableFiles = [];
@@ -820,6 +821,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
       }
+      fd.append('attached_skill_name', skillName || '');
 
 
       const abortCtrl = new AbortController();
@@ -3774,7 +3776,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     if (msgIndex < 0) return;
 
     const bodyEl = userMsgElement.querySelector('.body');
-    const currentText = bodyEl ? bodyEl.textContent.trim().replace(/\s*\[\d+ attachment\(s\)\]$/, '') : '';
+    const rawText = userMsgElement.dataset.raw || (bodyEl ? bodyEl.textContent : '') || '';
+    const currentText = rawText.trim().replace(/\s*\[\d+ attachment\(s\)\]$/, '');
 
     // Replace body with an editable textarea
     const editor = document.createElement('textarea');

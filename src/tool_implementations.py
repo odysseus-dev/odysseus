@@ -583,7 +583,11 @@ async def do_search_chats(query: str, limit: int = 20, owner: str | None = None)
 # Skills management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
+async def do_manage_skills(
+    content: str,
+    owner: Optional[str] = None,
+    attached_skill_name: Optional[str] = None,
+) -> Dict:
     """Handle manage_skills tool calls.
 
     SKILL.md-backed CRUD with progressive disclosure (Hermes-style). Actions:
@@ -608,6 +612,9 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
 
+    from src.app_helpers import normalize_attached_skill_name
+    attached_skill_name = normalize_attached_skill_name(attached_skill_name)
+
     action = (args.get("action") or "").lower()
     from services.memory.skills import SkillsManager
     from services.memory.skill_format import Skill, slugify
@@ -619,6 +626,8 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
 
     if action in ("list", "index", ""):
         all_skills = sm.load(owner=owner)
+        if attached_skill_name:
+            all_skills = [s for s in all_skills if s.get("name") == attached_skill_name]
         if not all_skills:
             return {"results": "No skills yet. Create one with action='add'."}
         published = [s for s in all_skills if s.get("status") == "published"]
@@ -637,6 +646,8 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
     if action == "view":
         if not name:
             return {"error": "name is required for view", "exit_code": 1}
+        if attached_skill_name and name != attached_skill_name:
+            return {"error": f"Skill {name!r} not found", "exit_code": 1}
         md = sm.read_skill_md(name, owner=owner)
         if md is None:
             return {"error": f"Skill {name!r} not found", "exit_code": 1}
@@ -645,6 +656,8 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
     if action == "view_ref":
         if not name:
             return {"error": "name is required for view_ref", "exit_code": 1}
+        if attached_skill_name and name != attached_skill_name:
+            return {"error": f"Skill {name!r} not found", "exit_code": 1}
         ref = (args.get("path") or "").strip()
         if not ref:
             return {"error": "path is required for view_ref", "exit_code": 1}
@@ -659,6 +672,8 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
                 "error": "name is required for add. Provide the exact slug the user should see, then report the returned name.",
                 "exit_code": 1,
             }
+        if attached_skill_name and name != attached_skill_name:
+            return {"error": f"Cannot add skill: only the attached skill {attached_skill_name!r} is active.", "exit_code": 1}
         proc = args.get("procedure")
         if proc is None:
             proc = args.get("steps") or []
@@ -720,6 +735,8 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
     if action == "edit":
         if not name:
             return {"error": "name is required for edit", "exit_code": 1}
+        if attached_skill_name and name != attached_skill_name:
+            return {"error": f"Skill {name!r} not found", "exit_code": 1}
         new_content = args.get("content")
         if not isinstance(new_content, str) or not new_content.strip():
             return {"error": "content (full SKILL.md) is required for edit", "exit_code": 1}
@@ -740,6 +757,8 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
     if action == "patch":
         if not name:
             return {"error": "name is required for patch", "exit_code": 1}
+        if attached_skill_name and name != attached_skill_name:
+            return {"error": f"Skill {name!r} not found", "exit_code": 1}
         old = args.get("old_string")
         new_str = args.get("new_string", "")
         if not isinstance(old, str) or not old:
@@ -764,6 +783,8 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
     if action == "publish":
         if not name:
             return {"error": "name is required for publish", "exit_code": 1}
+        if attached_skill_name and name != attached_skill_name:
+            return {"error": f"Skill {name!r} not found", "exit_code": 1}
         all_skills = sm.load(owner=owner)
         match = next((s for s in all_skills if s.get("name") == name), None)
         if not match:
@@ -777,6 +798,8 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
     if action == "delete":
         if not name:
             return {"error": "name is required for delete", "exit_code": 1}
+        if attached_skill_name and name != attached_skill_name:
+            return {"error": f"Skill {name!r} not found", "exit_code": 1}
         ok = sm.delete_skill(name, owner=owner)
         return {"results": f"Deleted skill `{name}`."} if ok else {"error": f"Skill {name!r} not found", "exit_code": 1}
 
@@ -784,7 +807,10 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         query = (args.get("query") or "").strip()
         if not query:
             return {"error": "query is required for search", "exit_code": 1}
-        results = sm.get_relevant_skills(query, sm.load(owner=owner), max_items=5)
+        candidates = sm.load(owner=owner)
+        if attached_skill_name:
+            candidates = [s for s in candidates if s.get("name") == attached_skill_name]
+        results = sm.get_relevant_skills(query, candidates, max_items=5)
         if not results:
             return {"results": "No matching skills found."}
         lines = []

@@ -5,7 +5,7 @@ Pure data models — no database logic, no side effects.
 These are simple datacontainers. All persistence is handled by SessionManager.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -43,6 +43,9 @@ class ChatMessage:
         result = {"role": self.role, "content": self.content}
         if self.metadata:
             result["metadata"] = self.metadata
+            for key in ("tool_calls", "tool_call_id", "name"):
+                if key in self.metadata:
+                    result[key] = self.metadata[key]
         return result
 
     def get(self, key: str, default=None):

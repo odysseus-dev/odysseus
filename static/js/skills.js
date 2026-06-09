@@ -184,11 +184,15 @@ function _matches(sk, query) {
 }
 
 function _statusPill(sk) {
+  if (sk.read_only) {
+    return '<span class="memory-cat-badge skill-status-pill" data-status="readonly" style="background:color-mix(in srgb, var(--color-warning, #e0a800) 25%, transparent)">read-only</span>';
+  }
   const s = sk.status || (sk._legacy ? 'legacy' : 'draft');
   if (s === 'published') return '<span class="memory-cat-badge skill-status-pill" data-status="published" style="background:color-mix(in srgb, var(--accent, #4ade80) 30%, transparent)">published</span>';
   if (s === 'draft')     return '<span class="memory-cat-badge skill-status-pill" data-status="draft" style="background:color-mix(in srgb, var(--fg) 14%, transparent)">draft</span>';
   return `<span class="memory-cat-badge skill-status-pill" data-status="${esc(s)}" style="opacity:0.6">${esc(s)}</span>`;
 }
+
 
 // Show a "teacher" badge for skills written by the auto-escalation
 // teacher loop. Lets the user tell at-a-glance which procedures were
@@ -391,18 +395,23 @@ function _openSkillMenu(btn, card, sk, name, isPublished) {
     item.addEventListener('click', (e) => { e.stopPropagation(); menu.remove(); onClick(); });
     menu.appendChild(item);
   };
-  if (isPublished) mk(_ICON.unpublish, 'Unpublish', {}, () => _setSkillStatus(name, 'draft'));
-  else mk(_ICON.approve, 'Publish', {}, () => _setSkillStatus(name, 'published'));
-  mk(_ICON.edit, 'Edit', {}, async () => {
-    if (!card.classList.contains('doclib-card-expanded')) await _expandSkillCard(card, name);
-    _toggleSkillEdit(card, name);
-  });
-  mk(_ICON.rename, 'Rename', {}, () => _renameSkill(name, card));
+  if (!sk.read_only) {
+    if (isPublished) mk(_ICON.unpublish, 'Unpublish', {}, () => _setSkillStatus(name, 'draft'));
+    else mk(_ICON.approve, 'Publish', {}, () => _setSkillStatus(name, 'published'));
+    mk(_ICON.edit, 'Edit', {}, async () => {
+      if (!card.classList.contains('doclib-card-expanded')) await _expandSkillCard(card, name);
+      _toggleSkillEdit(card, name);
+    });
+    mk(_ICON.rename, 'Rename', {}, () => _renameSkill(name, card));
+  }
   mk(_ICON.test, 'Test', {}, () => _testSkill(card, name));
   // Audit kicks off the bulk audit-all loop (test → judge → fix → retry → demote).
   // Starts at the top of the list and walks down.
   mk(_ICON.test, 'Audit', {}, () => _auditAllSkills());
-  mk(_ICON.del, 'Delete', { danger: true }, () => _deleteSkill(name, card));
+  if (!sk.read_only) {
+    mk(_ICON.del, 'Delete', { danger: true }, () => _deleteSkill(name, card));
+  }
+
 
   // Select — enters bulk-select mode and pre-selects this skill. Same pattern
   // as the email/documents/brain Select item, with the email bullet icon.
@@ -780,13 +789,18 @@ function renderSkillsList() {
     const btnRow = document.createElement('div');
     btnRow.className = 'doclib-action-btn-row';
     btnRow.appendChild(testBtn);
-    btnRow.appendChild(editBtn);
-    btnRow.appendChild(renameBtn);
-    btnRow.appendChild(delBtn);
+    if (!sk.read_only) {
+      btnRow.appendChild(editBtn);
+      btnRow.appendChild(renameBtn);
+      btnRow.appendChild(delBtn);
+    }
     rightGroup.appendChild(btnRow);
 
-    actions.appendChild(pubBtn);
+    if (!sk.read_only) {
+      actions.appendChild(pubBtn);
+    }
     actions.appendChild(rightGroup);
+
     preview.appendChild(actions);
     card.appendChild(preview);
 
