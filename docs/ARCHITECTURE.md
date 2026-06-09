@@ -6,7 +6,1059 @@ This document serves as a comprehensive overview of the system's architecture, i
 
 ---
 
-## 1. High-level System Overview
+## 1. Directory Structure
+
+```text
+└── pewdiepie-archdaemon-odysseus/
+    ├── README.md
+    ├── ACKNOWLEDGMENTS.md
+    ├── app.py
+    ├── build-macos-app.sh
+    ├── CONTRIBUTING.md
+    ├── docker-compose.gpu-amd.yml
+    ├── docker-compose.gpu-nvidia.yml
+    ├── docker-compose.yml
+    ├── Dockerfile
+    ├── install-service.sh
+    ├── launch-windows.ps1
+    ├── LICENSE
+    ├── odysseus-ui.service
+    ├── package.json
+    ├── pyproject.toml
+    ├── requirements-optional.txt
+    ├── requirements.txt
+    ├── ROADMAP.md
+    ├── SECURITY.md
+    ├── setup.py
+    ├── start-macos.sh
+    ├── THREAT_MODEL.md
+    ├── update_windows.bat
+    ├── .dockerignore
+    ├── .env.example
+    ├── companion/
+    │   ├── README.md
+    │   ├── __init__.py
+    │   ├── pairing.py
+    │   └── routes.py
+    ├── config/
+    │   └── searxng/
+    │       └── settings.yml
+    ├── core/
+    │   ├── __init__.py
+    │   ├── atomic_io.py
+    │   ├── auth.py
+    │   ├── constants.py
+    │   ├── database.py
+    │   ├── exceptions.py
+    │   ├── middleware.py
+    │   ├── models.py
+    │   ├── platform_compat.py
+    │   └── session_manager.py
+    ├── docker/
+    │   ├── entrypoint.sh
+    │   ├── gpu.amd.yml
+    │   └── gpu.nvidia.yml
+    ├── docs/
+    │   ├── bg.webm
+    │   ├── chat.webm
+    │   ├── compare.webm
+    │   ├── document.webm
+    │   ├── email-outlook.md
+    │   ├── gallery.webm
+    │   ├── index.html
+    │   ├── notes.webm
+    │   ├── pr-blocker-audit.md
+    │   ├── research.webm
+    │   └── theme.webm
+    ├── integrations/
+    │   ├── claude/
+    │   │   ├── README.md
+    │   │   └── skills/
+    │   │       └── odysseus/
+    │   │           ├── SKILL.md
+    │   │           └── scripts/
+    │   │               └── odysseus_api.py
+    │   └── codex/
+    │       ├── README.md
+    │       ├── scripts/
+    │       │   └── odysseus_api.py
+    │       ├── skills/
+    │       │   └── odysseus/
+    │       │       └── SKILL.md
+    │       └── .codex-plugin/
+    │           └── plugin.json
+    ├── licenses/
+    │   ├── DeepResearch-Apache-2.0.txt
+    │   ├── llmfit-MIT-LICENSE.txt
+    │   └── opencode-MIT-LICENSE.txt
+    ├── mcp_servers/
+    │   ├── __init__.py
+    │   ├── email_server.py
+    │   ├── image_gen_server.py
+    │   ├── memory_server.py
+    │   └── rag_server.py
+    ├── routes/
+    │   ├── __init__.py
+    │   ├── admin_wipe_routes.py
+    │   ├── api_token_routes.py
+    │   ├── assistant_routes.py
+    │   ├── auth_routes.py
+    │   ├── backup_routes.py
+    │   ├── calendar_routes.py
+    │   ├── chat_helpers.py
+    │   ├── chat_routes.py
+    │   ├── chatgpt_subscription_routes.py
+    │   ├── cleanup_routes.py
+    │   ├── codex_routes.py
+    │   ├── compare_routes.py
+    │   ├── contacts_routes.py
+    │   ├── cookbook_helpers.py
+    │   ├── cookbook_routes.py
+    │   ├── copilot_routes.py
+    │   ├── device_flow.py
+    │   ├── diagnostics_routes.py
+    │   ├── document_helpers.py
+    │   ├── document_routes.py
+    │   ├── editor_draft_routes.py
+    │   ├── email_helpers.py
+    │   ├── email_pollers.py
+    │   ├── email_routes.py
+    │   ├── embedding_routes.py
+    │   ├── emoji_routes.py
+    │   ├── font_routes.py
+    │   ├── gallery_helpers.py
+    │   ├── gallery_routes.py
+    │   ├── history_routes.py
+    │   ├── hwfit_routes.py
+    │   ├── mcp_routes.py
+    │   ├── memory_routes.py
+    │   ├── model_routes.py
+    │   ├── note_routes.py
+    │   ├── personal_routes.py
+    │   ├── prefs_routes.py
+    │   ├── preset_routes.py
+    │   ├── research_routes.py
+    │   ├── search_routes.py
+    │   ├── session_routes.py
+    │   ├── shell_routes.py
+    │   ├── signature_routes.py
+    │   ├── skills_routes.py
+    │   ├── stt_routes.py
+    │   ├── task_routes.py
+    │   ├── tts_routes.py
+    │   ├── upload_routes.py
+    │   ├── vault_routes.py
+    │   └── webhook_routes.py
+    ├── scripts/
+    │   ├── add_hwfit_models.py
+    │   ├── check-docker-amd-gpu.sh
+    │   ├── check-docker-gpu.sh
+    │   ├── claim_ownerless.py
+    │   ├── diffusion_server.py
+    │   ├── encode_previews.sh
+    │   ├── fix_paths.py
+    │   ├── hf_download.py
+    │   ├── index_documents.py
+    │   ├── migrate_faiss_to_chroma.py
+    │   ├── odysseus
+    │   ├── odysseus-backup
+    │   ├── odysseus-calendar
+    │   ├── odysseus-contacts
+    │   ├── odysseus-cookbook
+    │   ├── odysseus-docs
+    │   ├── odysseus-gallery
+    │   ├── odysseus-logs
+    │   ├── odysseus-mail
+    │   ├── odysseus-mcp
+    │   ├── odysseus-memory
+    │   ├── odysseus-notes
+    │   ├── odysseus-personal
+    │   ├── odysseus-preset
+    │   ├── odysseus-research
+    │   ├── odysseus-sessions
+    │   ├── odysseus-signature
+    │   ├── odysseus-skills
+    │   ├── odysseus-tasks
+    │   ├── odysseus-theme
+    │   ├── odysseus-webhook
+    │   ├── pr_blocker_audit.py
+    │   ├── update_database.py
+    │   ├── _completion/
+    │   │   ├── odysseus.bash
+    │   │   └── odysseus.zsh
+    │   ├── _lib/
+    │   │   ├── __init__.py
+    │   │   └── cli.py
+    │   └── demo_email/
+    │       ├── demo_account.py
+    │       ├── manage.sh
+    │       └── seed_demo_emails.py
+    ├── services/
+    │   ├── __init__.py
+    │   ├── docs/
+    │   │   ├── __init__.py
+    │   │   └── service.py
+    │   ├── faces/
+    │   │   └── __init__.py
+    │   ├── hwfit/
+    │   │   ├── __init__.py
+    │   │   ├── fit.py
+    │   │   ├── hardware.py
+    │   │   ├── image_models.py
+    │   │   ├── models.py
+    │   │   ├── profiles.py
+    │   │   └── data/
+    │   │       └── hf_models.json
+    │   ├── memory/
+    │   │   ├── __init__.py
+    │   │   ├── memory.py
+    │   │   ├── memory_extractor.py
+    │   │   ├── memory_vector.py
+    │   │   ├── service.py
+    │   │   ├── skill_extractor.py
+    │   │   ├── skill_format.py
+    │   │   ├── skill_importer.py
+    │   │   └── skills.py
+    │   ├── research/
+    │   │   ├── __init__.py
+    │   │   ├── research_handler.py
+    │   │   └── service.py
+    │   ├── search/
+    │   │   ├── __init__.py
+    │   │   ├── analytics.py
+    │   │   ├── cache.py
+    │   │   ├── content.py
+    │   │   ├── core.py
+    │   │   ├── providers.py
+    │   │   ├── query.py
+    │   │   ├── ranking.py
+    │   │   └── service.py
+    │   ├── shell/
+    │   │   ├── __init__.py
+    │   │   └── service.py
+    │   ├── stt/
+    │   │   ├── __init__.py
+    │   │   └── stt_service.py
+    │   ├── tts/
+    │   │   ├── __init__.py
+    │   │   └── tts_service.py
+    │   └── youtube/
+    │       ├── __init__.py
+    │       └── youtube_handler.py
+    ├── src/
+    │   ├── action_intents.py
+    │   ├── agent_loop.py
+    │   ├── agent_runs.py
+    │   ├── agent_tools.py
+    │   ├── ai_interaction.py
+    │   ├── api_key_manager.py
+    │   ├── app_helpers.py
+    │   ├── app_initializer.py
+    │   ├── assistant_log.py
+    │   ├── auth_helpers.py
+    │   ├── bg_jobs.py
+    │   ├── bg_monitor.py
+    │   ├── builtin_actions.py
+    │   ├── builtin_mcp.py
+    │   ├── caldav_sync.py
+    │   ├── caldav_writeback.py
+    │   ├── chat_handler.py
+    │   ├── chat_helpers.py
+    │   ├── chat_processor.py
+    │   ├── chatgpt_subscription.py
+    │   ├── chroma_client.py
+    │   ├── cleanup_service.py
+    │   ├── config.py
+    │   ├── constants.py
+    │   ├── context_budget.py
+    │   ├── context_compactor.py
+    │   ├── cookbook_serve_lifecycle.py
+    │   ├── copilot.py
+    │   ├── database.py
+    │   ├── deep_research.py
+    │   ├── document_actions.py
+    │   ├── document_processor.py
+    │   ├── email_thread_parser.py
+    │   ├── embedding_lanes.py
+    │   ├── embeddings.py
+    │   ├── endpoint_resolver.py
+    │   ├── event_bus.py
+    │   ├── exceptions.py
+    │   ├── generated_images.py
+    │   ├── goal_based_extractor.py
+    │   ├── integrations.py
+    │   ├── llm_core.py
+    │   ├── markitdown_runtime.py
+    │   ├── mcp_manager.py
+    │   ├── mcp_oauth.py
+    │   ├── memory.py
+    │   ├── memory_provider.py
+    │   ├── memory_vector.py
+    │   ├── model_context.py
+    │   ├── model_discovery.py
+    │   ├── pdf_form_doc.py
+    │   ├── pdf_forms.py
+    │   ├── pdf_runtime.py
+    │   ├── personal_docs.py
+    │   ├── preset_manager.py
+    │   ├── prompt_security.py
+    │   ├── rag_manager.py
+    │   ├── rag_singleton.py
+    │   ├── rag_vector.py
+    │   ├── rate_limiter.py
+    │   ├── readiness.py
+    │   ├── request_models.py
+    │   ├── research_handler.py
+    │   ├── research_utils.py
+    │   ├── secret_storage.py
+    │   ├── session_actions.py
+    │   ├── session_search.py
+    │   ├── settings.py
+    │   ├── settings_scrub.py
+    │   ├── task_endpoint.py
+    │   ├── task_scheduler.py
+    │   ├── teacher_escalation.py
+    │   ├── text_helpers.py
+    │   ├── tls_overrides.py
+    │   ├── tool_execution.py
+    │   ├── tool_implementations.py
+    │   ├── tool_index.py
+    │   ├── tool_parsing.py
+    │   ├── tool_policy.py
+    │   ├── tool_schemas.py
+    │   ├── tool_security.py
+    │   ├── tool_utils.py
+    │   ├── topic_analyzer.py
+    │   ├── upload_handler.py
+    │   ├── upload_limits.py
+    │   ├── url_safety.py
+    │   ├── url_security.py
+    │   ├── user_time.py
+    │   ├── visual_report.py
+    │   ├── webhook_manager.py
+    │   ├── youtube_handler.py
+    │   └── search/
+    │       ├── __init__.py
+    │       ├── analytics.py
+    │       ├── cache.py
+    │       ├── content.py
+    │       ├── core.py
+    │       ├── providers.py
+    │       ├── query.py
+    │       └── ranking.py
+    ├── static/
+    │   ├── app.js
+    │   ├── index.html
+    │   ├── login.html
+    │   ├── manifest.json
+    │   ├── style.css
+    │   ├── sw.js
+    │   ├── fonts/
+    │   │   ├── FiraCode-Light.woff2
+    │   │   ├── FiraCode-Regular.woff2
+    │   │   ├── FiraCode-SemiBold.woff2
+    │   │   ├── Inter-Medium.woff2
+    │   │   ├── Inter-Regular.woff2
+    │   │   ├── Inter-SemiBold.woff2
+    │   │   └── custom/
+    │   │       └── GohuFont.ttf
+    │   └── js/
+    │       ├── a11y.js
+    │       ├── admin.js
+    │       ├── assistant.js
+    │       ├── calendar.js
+    │       ├── censor.js
+    │       ├── chat.js
+    │       ├── chatRenderer.js
+    │       ├── chatStream.js
+    │       ├── codeRunner.js
+    │       ├── colorPicker.js
+    │       ├── composerArrowUpRecall.js
+    │       ├── cookbook-diagnosis.js
+    │       ├── cookbook-hwfit.js
+    │       ├── cookbook.js
+    │       ├── cookbookDownload.js
+    │       ├── cookbookProgressSignal.js
+    │       ├── cookbookRunning.js
+    │       ├── cookbookSchedule.js
+    │       ├── cookbookServe.js
+    │       ├── document.js
+    │       ├── documentLibrary.js
+    │       ├── dragSort.js
+    │       ├── emailInbox.js
+    │       ├── emailLibrary.js
+    │       ├── emojiPicker.js
+    │       ├── emojiShortcodes.js
+    │       ├── escMenuStack.js
+    │       ├── fileHandler.js
+    │       ├── gallery.js
+    │       ├── galleryEditor.js
+    │       ├── group.js
+    │       ├── init.js
+    │       ├── keyboard-shortcuts.js
+    │       ├── langIcons.js
+    │       ├── markdown.js
+    │       ├── memory.js
+    │       ├── modalManager.js
+    │       ├── modalSnap.js
+    │       ├── modelPicker.js
+    │       ├── models.js
+    │       ├── modelSort.js
+    │       ├── MODULE_SUMMARY.md
+    │       ├── notes.js
+    │       ├── package.json
+    │       ├── platform.js
+    │       ├── presets.js
+    │       ├── providerDeviceFlow.js
+    │       ├── providers.js
+    │       ├── rag.js
+    │       ├── researchSynapse.js
+    │       ├── search-chat.js
+    │       ├── search.js
+    │       ├── section-management.js
+    │       ├── sessions.js
+    │       ├── settings.js
+    │       ├── sidebar-layout.js
+    │       ├── signature.js
+    │       ├── skills.js
+    │       ├── slashAutocomplete.js
+    │       ├── slashCommands.js
+    │       ├── spinner.js
+    │       ├── storage.js
+    │       ├── streamingRenderer.js
+    │       ├── streamingSegmenter.js
+    │       ├── tasks.js
+    │       ├── theme.js
+    │       ├── tileManager.js
+    │       ├── tourAutoplay.js
+    │       ├── tourHints.js
+    │       ├── tts-ai.js
+    │       ├── ui.js
+    │       ├── voiceRecorder.js
+    │       ├── windowDrag.js
+    │       ├── windowResize.js
+    │       ├── calendar/
+    │       │   ├── reminders.js
+    │       │   └── utils.js
+    │       ├── color/
+    │       │   └── hex.js
+    │       ├── compare/
+    │       │   ├── icons.js
+    │       │   ├── index.js
+    │       │   ├── models.js
+    │       │   ├── panes.js
+    │       │   ├── probe.js
+    │       │   ├── scoreboard.js
+    │       │   ├── selector.js
+    │       │   ├── state.js
+    │       │   ├── stream.js
+    │       │   └── vote.js
+    │       ├── editor/
+    │       │   ├── ai-inpaint.js
+    │       │   ├── ai-models.js
+    │       │   ├── ai-rembg.js
+    │       │   ├── ai-tool-runner.js
+    │       │   ├── ai-tools-misc.js
+    │       │   ├── canvas-coords.js
+    │       │   ├── canvas-events.js
+    │       │   ├── canvas-transforms.js
+    │       │   ├── checkerboard.js
+    │       │   ├── clipboard-and-drop.js
+    │       │   ├── composite-helpers.js
+    │       │   ├── harmonize-masks.js
+    │       │   ├── history-panel.js
+    │       │   ├── keyboard-shortcuts.js
+    │       │   ├── layer-helpers.js
+    │       │   ├── layer-panel.js
+    │       │   ├── mask-utils.js
+    │       │   ├── shortcuts-popover.js
+    │       │   ├── slider-ux.js
+    │       │   ├── snap.js
+    │       │   ├── state.js
+    │       │   ├── stroke-pipeline.js
+    │       │   ├── stroke-tool-sliders.js
+    │       │   ├── wire-import.js
+    │       │   ├── wire-inpaint-controls.js
+    │       │   ├── wire-merge-buttons.js
+    │       │   ├── wire-selection-controls.js
+    │       │   ├── wire-topbar-menus.js
+    │       │   ├── wire-topbar-overflow.js
+    │       │   ├── wire-topbar.js
+    │       │   ├── filters/
+    │       │   │   ├── blur.js
+    │       │   │   └── edge-feather.js
+    │       │   ├── fx/
+    │       │   │   ├── adj-popup.js
+    │       │   │   ├── filter-string.js
+    │       │   │   ├── histogram.js
+    │       │   │   └── pixel-pass.js
+    │       │   └── tools/
+    │       │       ├── clone.js
+    │       │       ├── crop.js
+    │       │       ├── flood-fill.js
+    │       │       ├── lasso-mask.js
+    │       │       ├── lasso.js
+    │       │       ├── move.js
+    │       │       ├── stroke.js
+    │       │       ├── transform-drag.js
+    │       │       ├── transform-handles.js
+    │       │       ├── transform-session.js
+    │       │       └── wand.js
+    │       ├── emailLibrary/
+    │       │   ├── replyRecipients.js
+    │       │   ├── signatureFold.js
+    │       │   ├── state.js
+    │       │   └── utils.js
+    │       ├── markdown/
+    │       │   └── tableRow.js
+    │       ├── model/
+    │       │   └── matchKey.js
+    │       ├── research/
+    │       │   ├── jobs.js
+    │       │   └── panel.js
+    │       └── util/
+    │           └── ordinal.js
+    ├── tests/
+    │   ├── README.md
+    │   ├── _taxonomy.py
+    │   ├── bombadil-spec.ts
+    │   ├── conftest.py
+    │   ├── markdown_codefence_placeholder_regression.mjs
+    │   ├── test_action_intents.py
+    │   ├── test_action_intents_shell_verbs.py
+    │   ├── test_active_document_clear.py
+    │   ├── test_admin_device_flow_static.py
+    │   ├── test_admin_wipe_gallery.py
+    │   ├── test_agent_loop.py
+    │   ├── test_agent_rounds_exhausted.py
+    │   ├── test_agent_tools_truncate_nonstring.py
+    │   ├── test_ai_interaction_owner_scope.py
+    │   ├── test_amd_gpu_check_args.py
+    │   ├── test_anthropic_response_parse.py
+    │   ├── test_api_chat_security.py
+    │   ├── test_api_key_manager_corrupt_load.py
+    │   ├── test_api_key_manager_resilience.py
+    │   ├── test_api_token_routes.py
+    │   ├── test_api_token_user_route_gate.py
+    │   ├── test_app.py
+    │   ├── test_app_static_mime.py
+    │   ├── test_archived_sessions_model_filter.py
+    │   ├── test_ask_user_tool.py
+    │   ├── test_atomic_io.py
+    │   ├── test_auth_config_lock_concurrency.py
+    │   ├── test_auth_event_loop.py
+    │   ├── test_auth_regressions.py
+    │   ├── test_auth_require_privilege_nondict.py
+    │   ├── test_auth_session_revocation.py
+    │   ├── test_aux_llm_owner_scope.py
+    │   ├── test_backup_cli_security.py
+    │   ├── test_backup_import_cross_user_dedup.py
+    │   ├── test_backup_import_skills.py
+    │   ├── test_bg_jobs_store.py
+    │   ├── test_bg_monitor_stream.py
+    │   ├── test_blind_compare_redaction.py
+    │   ├── test_build_user_content_pdf_marker.py
+    │   ├── test_builtin_actions_nonstring.py
+    │   ├── test_builtin_actions_owner_scope.py
+    │   ├── test_builtin_memory_consolidation.py
+    │   ├── test_caldav_google_principal_url.py
+    │   ├── test_caldav_prune_parse_failure.py
+    │   ├── test_caldav_redirect_hardening.py
+    │   ├── test_caldav_sync_prune_local_events.py
+    │   ├── test_caldav_sync_uid_scope.py
+    │   ├── test_caldav_url_hardening.py
+    │   ├── test_caldav_url_nonstring.py
+    │   ├── test_caldav_writeback.py
+    │   ├── test_caldav_writeback_route.py
+    │   ├── test_calendar_cli_name.py
+    │   ├── test_calendar_event_contrast.py
+    │   ├── test_calendar_list_range_aliases.py
+    │   ├── test_calendar_owner_scope.py
+    │   ├── test_calendar_parse_dt_naive.py
+    │   ├── test_calendar_parse_dt_tonight.py
+    │   ├── test_calendar_recurrence.py
+    │   ├── test_calendar_rrule.py
+    │   ├── test_calendar_rrule_until_utc.py
+    │   ├── test_calendar_update_event_tz.py
+    │   ├── test_calendar_utils_dates_js.py
+    │   ├── test_censor_pref_js.py
+    │   ├── test_chat_attachment_picker.py
+    │   ├── test_chat_cached_model_normalization.py
+    │   ├── test_chat_helpers.py
+    │   ├── test_chat_image_routing.py
+    │   ├── test_chat_metrics.py
+    │   ├── test_chat_preprocess_tool_policy.py
+    │   ├── test_chat_route_tool_policy.py
+    │   ├── test_chat_stream_scope.py
+    │   ├── test_chat_tool_screenshot_xss.py
+    │   ├── test_chat_upload_limit_config.py
+    │   ├── test_chatgpt_subscription_routes.py
+    │   ├── test_check_outbound_url_nonstring.py
+    │   ├── test_chroma_client.py
+    │   ├── test_claim_ownerless_json.py
+    │   ├── test_cleanup_owner_scope.py
+    │   ├── test_cleanup_service_utcnow.py
+    │   ├── test_code_nav_tools.py
+    │   ├── test_compact_truncate_tool_call_args.py
+    │   ├── test_compaction_summary_failure.py
+    │   ├── test_companion_pairing.py
+    │   ├── test_companion_readonly.py
+    │   ├── test_compare_endpoint_owner_scope.py
+    │   ├── test_compare_js.py
+    │   ├── test_compare_stop_disconnect_poll.py
+    │   ├── test_composer_arrow_up_recall_js.py
+    │   ├── test_compute_next_run_monthly_clamp.py
+    │   ├── test_consolidate_memory_explicit_drops.py
+    │   ├── test_contacts_add_null_name.py
+    │   ├── test_contacts_carddav_security.py
+    │   ├── test_contacts_cli_rows.py
+    │   ├── test_contacts_vcard_parse.py
+    │   ├── test_context_budget.py
+    │   ├── test_context_cache_per_endpoint.py
+    │   ├── test_context_compactor.py
+    │   ├── test_context_compactor_nonstring.py
+    │   ├── test_cookbook_cli_state.py
+    │   ├── test_cookbook_cpu_only_serve.py
+    │   ├── test_cookbook_dependency_completion_regression.py
+    │   ├── test_cookbook_diagnosis.py
+    │   ├── test_cookbook_download_toast_duration.py
+    │   ├── test_cookbook_endpoint_registration.py
+    │   ├── test_cookbook_error_feedback.py
+    │   ├── test_cookbook_gemma4_thinking_template.py
+    │   ├── test_cookbook_helpers.py
+    │   ├── test_cookbook_package_detection.py
+    │   ├── test_cookbook_progress_signal_js.py
+    │   ├── test_cookbook_same_host_server_profiles_js.py
+    │   ├── test_copilot.py
+    │   ├── test_copilot_routes.py
+    │   ├── test_cors_preflight.py
+    │   ├── test_database_utcnow.py
+    │   ├── test_ddg_redirect_resolution.py
+    │   ├── test_deep_research_date_context.py
+    │   ├── test_deep_research_extraction_controls.py
+    │   ├── test_deep_research_parse_json_array_echo.py
+    │   ├── test_deep_research_search_error.py
+    │   ├── test_deep_research_synthesis_resilience.py
+    │   ├── test_delete_message_no_session.py
+    │   ├── test_delete_user_invalidates_token_cache.py
+    │   ├── test_delete_user_revokes_api_tokens.py
+    │   ├── test_deleted_session_sidebar_regression.py
+    │   ├── test_derive_title_nonstring.py
+    │   ├── test_device_flow_routes.py
+    │   ├── test_dialog_aria.py
+    │   ├── test_diffusion_server_security.py
+    │   ├── test_digest_windows.py
+    │   ├── test_direct_upload_limits.py
+    │   ├── test_doc_library_open_orphaned.py
+    │   ├── test_docs_cli_content_length.py
+    │   ├── test_docs_no_orphan_images.py
+    │   ├── test_docs_query_nondict_rows.py
+    │   ├── test_document_actions_nonstring.py
+    │   ├── test_document_ai_preview_refresh_js.py
+    │   ├── test_document_close_clears_active_route.py
+    │   ├── test_document_deeplink.py
+    │   ├── test_document_diff_discard_on_update_js.py
+    │   ├── test_document_editor_scroll.py
+    │   ├── test_document_library_delete_counters.py
+    │   ├── test_document_library_language_facet.py
+    │   ├── test_document_library_pdf_metadata.py
+    │   ├── test_document_pdf_marker.py
+    │   ├── test_document_processor_attachment_budget.py
+    │   ├── test_document_session_owner_scope.py
+    │   ├── test_document_tidy_null_timestamp.py
+    │   ├── test_document_tool_owner_scope.py
+    │   ├── test_edit_file.py
+    │   ├── test_editor_draft_payload.py
+    │   ├── test_email_decode_header.py
+    │   ├── test_email_envelope_recipients.py
+    │   ├── test_email_fallback_reconnect.py
+    │   ├── test_email_helpers_decode_header_spaces.py
+    │   ├── test_email_imap_timeout.py
+    │   ├── test_email_library_bulk_actions.py
+    │   ├── test_email_linkify_security_js.py
+    │   ├── test_email_owner_scope.py
+    │   ├── test_email_polly_imap_leak.py
+    │   ├── test_email_smtp_security.py
+    │   ├── test_email_split_border_css.py
+    │   ├── test_email_thread_parser_nonstring.py
+    │   ├── test_embedding_cache_confinement.py
+    │   ├── test_embedding_endpoint_config.py
+    │   ├── test_embedding_lanes.py
+    │   ├── test_embeddings.py
+    │   ├── test_emoji_shortcodes_js.py
+    │   ├── test_emoji_svg_hardening.py
+    │   ├── test_endpoint_owner_scope_followup.py
+    │   ├── test_endpoint_probing.py
+    │   ├── test_endpoint_resolver.py
+    │   ├── test_esc_menu_stack_js.py
+    │   ├── test_estimate_tokens_tool_calls.py
+    │   ├── test_extract_quotes.py
+    │   ├── test_extract_skill_json_nonstring.py
+    │   ├── test_extract_statistics.py
+    │   ├── test_extract_urls.py
+    │   ├── test_fenced_example_not_executed_for_native_models.py
+    │   ├── test_fenced_invoke_no_raw_xml.py
+    │   ├── test_font_routes.py
+    │   ├── test_fork_session_metadata.py
+    │   ├── test_form_markdown_roundtrip.py
+    │   ├── test_forwarded_message_divider.py
+    │   ├── test_function_call_non_object_args.py
+    │   ├── test_gallery_album_owner_scope.py
+    │   ├── test_gallery_cli_album_count.py
+    │   ├── test_gallery_cli_preview.py
+    │   ├── test_gallery_endpoint_matching.py
+    │   ├── test_gallery_endpoint_ssrf.py
+    │   ├── test_gallery_exif_orientation.py
+    │   ├── test_gallery_filename_confinement.py
+    │   ├── test_gallery_image_endpoint_owner_scope.py
+    │   ├── test_gallery_image_privileges.py
+    │   ├── test_gallery_owner_filter_single_user.py
+    │   ├── test_generated_image_confinement.py
+    │   ├── test_gmail_quote_attribution_js.py
+    │   ├── test_gpu_compose_standalone.py
+    │   ├── test_group_chat_storage.py
+    │   ├── test_helpers_import_state.py
+    │   ├── test_hex_to_rgb_js.py
+    │   ├── test_history_compact_tool_calls.py
+    │   ├── test_history_db_fallback_hidden.py
+    │   ├── test_history_order_by_timestamp_regression.py
+    │   ├── test_history_topics_owner_scope.py
+    │   ├── test_hwfit_amd.py
+    │   ├── test_hwfit_bandwidth_nonstring.py
+    │   ├── test_hwfit_macos.py
+    │   ├── test_hwfit_manual_backend.py
+    │   ├── test_hwfit_native_quant_labels.py
+    │   ├── test_hwfit_params_b_malformed.py
+    │   ├── test_hwfit_quant_formats.py
+    │   ├── test_hwfit_unified_nvidia.py
+    │   ├── test_hwfit_windows.py
+    │   ├── test_icloud_imap_full_fetch.py
+    │   ├── test_ics_escape.py
+    │   ├── test_ics_export_escaping.py
+    │   ├── test_ics_import_dedup_tz.py
+    │   ├── test_image_models_nondict_system.py
+    │   ├── test_image_models_nonstring_search.py
+    │   ├── test_imap_leak_fixes.py
+    │   ├── test_imap_mailbox_quoting.py
+    │   ├── test_inside_base_dir_nonstring.py
+    │   ├── test_integrations_store_shape.py
+    │   ├── test_internal_api_base.py
+    │   ├── test_is_youtube_url_nonstring.py
+    │   ├── test_is_youtube_url_nonstring_svc.py
+    │   ├── test_keybind_altgr_js.py
+    │   ├── test_lang_icon_null_opts_js.py
+    │   ├── test_llama_server_models_url.py
+    │   ├── test_llm_core_anthropic_cache.py
+    │   ├── test_llm_core_anthropic_temp_clamp.py
+    │   ├── test_llm_core_concurrency.py
+    │   ├── test_llm_core_fallback.py
+    │   ├── test_llm_core_ollama.py
+    │   ├── test_llm_core_reasoning.py
+    │   ├── test_llm_core_reasoning_content_fallback.py
+    │   ├── test_llm_core_sanitize_tool_calls.py
+    │   ├── test_llm_core_sse_no_space.py
+    │   ├── test_llm_core_streaming.py
+    │   ├── test_llm_core_system_msg_missing_content.py
+    │   ├── test_llm_core_temperature.py
+    │   ├── test_llm_core_usage_finish_delta.py
+    │   ├── test_lmstudio_discovery.py
+    │   ├── test_lmstudio_vision.py
+    │   ├── test_local_endpoint_api_key_js.py
+    │   ├── test_local_endpoint_js.py
+    │   ├── test_logs_cli_resolve_nonstring.py
+    │   ├── test_loop_breaker_runaway.py
+    │   ├── test_mail_cli_read_empty_fetch.py
+    │   ├── test_mail_cli_recipients.py
+    │   ├── test_manage_notes_owner_gate.py
+    │   ├── test_manage_settings_token_budget.py
+    │   ├── test_markdown_dom_xss_helpers.py
+    │   ├── test_markdown_rendering_js.py
+    │   ├── test_markdown_table_row_js.py
+    │   ├── test_markitdown_format_nonstring.py
+    │   ├── test_markitdown_runtime.py
+    │   ├── test_match_model_key_js.py
+    │   ├── test_mcp_cache_invalidation.py
+    │   ├── test_mcp_cli_env_serialize.py
+    │   ├── test_mcp_cli_json.py
+    │   ├── test_mcp_common_truncate.py
+    │   ├── test_mcp_email_decode_header_spaces.py
+    │   ├── test_mcp_manager.py
+    │   ├── test_mcp_oauth.py
+    │   ├── test_mcp_param_hint_hardening.py
+    │   ├── test_mcp_reconnect_args.py
+    │   ├── test_mcp_tool_params_in_prompt.py
+    │   ├── test_memory_bullet_extraction.py
+    │   ├── test_memory_cli_rows.py
+    │   ├── test_memory_extract_chat_nondict.py
+    │   ├── test_memory_extraction_parse.py
+    │   ├── test_memory_extractor_rows.py
+    │   ├── test_memory_extractor_vector_cross_tenant.py
+    │   ├── test_memory_extractor_vector_degraded.py
+    │   ├── test_memory_fallback_dislike.py
+    │   ├── test_memory_imports.py
+    │   ├── test_memory_provider.py
+    │   ├── test_memory_recall_nondict_rows.py
+    │   ├── test_memory_routes_session_owner.py
+    │   ├── test_memory_validate_entries_nondict.py
+    │   ├── test_merge_last_assistant_rows.py
+    │   ├── test_migrate_faiss_to_chroma.py
+    │   ├── test_modal_dock_composer_clearance.py
+    │   ├── test_model_context.py
+    │   ├── test_model_discovery_status.py
+    │   ├── test_model_helper_owner_scope.py
+    │   ├── test_model_name_tooltip.py
+    │   ├── test_model_routes.py
+    │   ├── test_model_sort_js.py
+    │   ├── test_new_chat_clears_input.py
+    │   ├── test_new_chat_model_preference.py
+    │   ├── test_nix_upload_text.py
+    │   ├── test_note_reminder_fire_scope.py
+    │   ├── test_notes_cli_items.py
+    │   ├── test_notes_dom_xss_helpers.py
+    │   ├── test_notes_select_esc_listener_js.py
+    │   ├── test_notes_update_due_date.py
+    │   ├── test_null_owner_gates.py
+    │   ├── test_odysseus_dispatcher.py
+    │   ├── test_og_image_extraction.py
+    │   ├── test_ollama_port_detection.py
+    │   ├── test_ordinal_suffix_js.py
+    │   ├── test_owned_document_query.py
+    │   ├── test_parse_due_time_first.py
+    │   ├── test_pdf_runtime.py
+    │   ├── test_personal_cli_rows.py
+    │   ├── test_personal_dir_symlink_escape.py
+    │   ├── test_personal_docs_exclusions.py
+    │   ├── test_personal_docs_keyword_nondict.py
+    │   ├── test_personal_docs_lists.py
+    │   ├── test_personal_docs_office_index.py
+    │   ├── test_personal_docs_pdf_index.py
+    │   ├── test_personal_docs_state_store.py
+    │   ├── test_personal_upload_isolation.py
+    │   ├── test_personal_upload_privilege.py
+    │   ├── test_plan_mode.py
+    │   ├── test_platform_compat.py
+    │   ├── test_popup_opener_isolation_js.py
+    │   ├── test_pr_blocker_audit.py
+    │   ├── test_prefs_atomic_write.py
+    │   ├── test_prefs_routes.py
+    │   ├── test_prefs_single_user_no_clobber.py
+    │   ├── test_preset_atomic_save.py
+    │   ├── test_preset_cli_invalid_entries.py
+    │   ├── test_preset_cli_set_corrupt_entry.py
+    │   ├── test_preset_cli_store.py
+    │   ├── test_preset_expand_owner_scope.py
+    │   ├── test_preset_fill_missing_defaults.py
+    │   ├── test_preset_local_storage_js.py
+    │   ├── test_preset_store_shape.py
+    │   ├── test_promote_image_fields.py
+    │   ├── test_prompt_security.py
+    │   ├── test_provider_classification.py
+    │   ├── test_provider_detection.py
+    │   ├── test_provider_device_flow_js.py
+    │   ├── test_provider_endpoints.py
+    │   ├── test_providers_mixtral_logo_js.py
+    │   ├── test_public_blocked_tool_nonstring.py
+    │   ├── test_question_type_detection.py
+    │   ├── test_rag_keyword_fallback_owner.py
+    │   ├── test_rag_manager_owner_compat.py
+    │   ├── test_rag_remove_directory_scope.py
+    │   ├── test_rag_server_directory_nonstring.py
+    │   ├── test_rag_vector_id_stability.py
+    │   ├── test_rate_limiter.py
+    │   ├── test_readiness.py
+    │   ├── test_readme_ascii_fenced.py
+    │   ├── test_rename_user_case_insensitive.py
+    │   ├── test_rename_user_token_cache.py
+    │   ├── test_replace_messages_multimodal.py
+    │   ├── test_reply_all_cc_nonstring_js.py
+    │   ├── test_reply_recipients_js.py
+    │   ├── test_research_chat_stream_owner.py
+    │   ├── test_research_cli_preview.py
+    │   ├── test_research_cli_status_filter.py
+    │   ├── test_research_cli_store.py
+    │   ├── test_research_endpoint_owner_scope.py
+    │   ├── test_research_handler_path_confinement.py
+    │   ├── test_research_handler_raw_nondict.py
+    │   ├── test_research_handler_sources_nondict.py
+    │   ├── test_research_owner_scope_routes.py
+    │   ├── test_research_probe_errors.py
+    │   ├── test_research_query_fallback.py
+    │   ├── test_research_report_read.py
+    │   ├── test_research_service.py
+    │   ├── test_research_session_id_validation.py
+    │   ├── test_research_source_link_xss.py
+    │   ├── test_research_utils.py
+    │   ├── test_research_utils_low_quality_nonstring.py
+    │   ├── test_reserved_username_admin_escalation.py
+    │   ├── test_resolve_endpoint_fallbacks.py
+    │   ├── test_resolve_session_auth_chatgpt.py
+    │   ├── test_resolve_upload_path_nondict.py
+    │   ├── test_review_regressions.py
+    │   ├── test_rewrite_persist_column.py
+    │   ├── test_sanitize_multimodal_merge.py
+    │   ├── test_schedule_email_offset_normalization.py
+    │   ├── test_scheduler_restart_doublefire.py
+    │   ├── test_scheduler_scheduled_time_validation.py
+    │   ├── test_search_analytics_defaults.py
+    │   ├── test_search_cache_invalidation.py
+    │   ├── test_search_config_no_key_leak.py
+    │   ├── test_search_config_provider_key.py
+    │   ├── test_search_content_block_source_index.py
+    │   ├── test_search_content_extraction_parity.py
+    │   ├── test_search_content_url_guards.py
+    │   ├── test_search_module_consolidation.py
+    │   ├── test_search_provider_json.py
+    │   ├── test_search_query.py
+    │   ├── test_search_query_entities_nonstring.py
+    │   ├── test_search_query_nonstring.py
+    │   ├── test_search_ranking.py
+    │   ├── test_search_ranking_recency.py
+    │   ├── test_search_ranking_sports_substring.py
+    │   ├── test_search_ranking_subject_substring.py
+    │   ├── test_search_service_nondict_rows.py
+    │   ├── test_searchservice_search_call.py
+    │   ├── test_searxng_image_pinned.py
+    │   ├── test_security_headers_middleware.py
+    │   ├── test_security_headers_pdf_preview.py
+    │   ├── test_security_regressions.py
+    │   ├── test_select_dropdown_theme_css.py
+    │   ├── test_sender_signature_skip_roles.py
+    │   ├── test_serve_profiles.py
+    │   ├── test_service_search_provider_guards.py
+    │   ├── test_services_research_low_quality_sources.py
+    │   ├── test_services_search_analytics_defaults.py
+    │   ├── test_session_actions_cleanup.py
+    │   ├── test_session_context_excludes_slash.py
+    │   ├── test_session_endpoint_owner_scope.py
+    │   ├── test_session_export_filename.py
+    │   ├── test_session_export_nonstring_content.py
+    │   ├── test_session_ghost_delete.py
+    │   ├── test_session_list_owner_scope.py
+    │   ├── test_session_manager_cleanup.py
+    │   ├── test_session_manager_persist_guard.py
+    │   ├── test_session_mode_helpers.py
+    │   ├── test_session_owner_attribution.py
+    │   ├── test_session_search.py
+    │   ├── test_sessions_cli.py
+    │   ├── test_settings_error_paths.py
+    │   ├── test_settings_scrub.py
+    │   ├── test_settings_store_shape.py
+    │   ├── test_setup_admin_user.py
+    │   ├── test_setup_device_auth_static.py
+    │   ├── test_shell_routes.py
+    │   ├── test_shell_service.py
+    │   ├── test_signature_cli_export.py
+    │   ├── test_signature_fold_js.py
+    │   ├── test_signature_fold_self_closing_br_js.py
+    │   ├── test_signature_route_hardening.py
+    │   ├── test_signature_settings_dom_xss.py
+    │   ├── test_skill_extractor_json.py
+    │   ├── test_skill_extractor_rows.py
+    │   ├── test_skill_extractor_stray_brace.py
+    │   ├── test_skill_importer.py
+    │   ├── test_skill_index_prompt_injection.py
+    │   ├── test_skill_save_no_rename.py
+    │   ├── test_skills_cli_preview.py
+    │   ├── test_skills_cli_rows.py
+    │   ├── test_skills_delete_owner.py
+    │   ├── test_skills_manager_owner_isolation.py
+    │   ├── test_skills_routes_nondict.py
+    │   ├── test_skills_routes_owner_update.py
+    │   ├── test_skills_tag_token_match.py
+    │   ├── test_slash_autocomplete_static.py
+    │   ├── test_snap_other_layers_nonarray_js.py
+    │   ├── test_speech_service_toggles.py
+    │   ├── test_split_chunks_no_duplicate_tail.py
+    │   ├── test_sqlite_foreign_keys.py
+    │   ├── test_src_search_query_nonstring.py
+    │   ├── test_streaming_segmenter_js.py
+    │   ├── test_strip_reasoning_prose_dataloss.py
+    │   ├── test_strip_think.py
+    │   ├── test_stt_leak.py
+    │   ├── test_task_chain_owner_scope.py
+    │   ├── test_task_scheduler_cancel.py
+    │   ├── test_task_scheduler_session_delivery.py
+    │   ├── test_task_session_folder.py
+    │   ├── test_tasks_cli_preview.py
+    │   ├── test_taxonomy.py
+    │   ├── test_teacher_audit_owner_scope.py
+    │   ├── test_teacher_eval_nonstring_reply.py
+    │   ├── test_theme_cli_store.py
+    │   ├── test_tls_overrides_scope.py
+    │   ├── test_tool_index_keyword_boundaries.py
+    │   ├── test_tool_parsing_nonstring.py
+    │   ├── test_tool_path_confinement.py
+    │   ├── test_tool_policy.py
+    │   ├── test_tool_rag_keyword_hints.py
+    │   ├── test_tool_support_heuristic.py
+    │   ├── test_tool_utils_import_clean.py
+    │   ├── test_topic_analyzer.py
+    │   ├── test_totp_failclosed.py
+    │   ├── test_truncate_message_count_regression.py
+    │   ├── test_tts_cache_stats.py
+    │   ├── test_tts_speed_malformed.py
+    │   ├── test_ui_control_rag_toggle.py
+    │   ├── test_unknown_tool_calls.py
+    │   ├── test_update_database_script.py
+    │   ├── test_update_plan_tool.py
+    │   ├── test_upload_error_surfaced.py
+    │   ├── test_upload_handler_atomicity.py
+    │   ├── test_upload_id_extension.py
+    │   ├── test_upload_id_validation.py
+    │   ├── test_upload_limits_centralized.py
+    │   ├── test_upload_multifile.py
+    │   ├── test_upload_routes_owner_scope.py
+    │   ├── test_url_safety.py
+    │   ├── test_user_time.py
+    │   ├── test_vault_password_not_in_argv.py
+    │   ├── test_venice_hosts.py
+    │   ├── test_vision_model_detection.py
+    │   ├── test_vision_owner_scope.py
+    │   ├── test_visual_report.py
+    │   ├── test_visual_report_icon_url.py
+    │   ├── test_visual_report_nonstring.py
+    │   ├── test_web_search_time_filter.py
+    │   ├── test_webhook_cli_mask.py
+    │   ├── test_webhook_sanitize_error_ipv6.py
+    │   ├── test_webhook_ssrf_resilience.py
+    │   ├── test_webhook_trigger_auth_exempt.py
+    │   ├── test_windows_update_script.py
+    │   ├── test_workspace_confine.py
+    │   ├── test_youtube_comments_timeout.py
+    │   ├── test_youtube_extract_id_nonstring.py
+    │   ├── test_youtube_svc_comments_nondict.py
+    │   ├── test_youtube_transcript_seg_nondict.py
+    │   ├── TESTING_STANDARD.md
+    │   ├── helpers/
+    │   │   ├── __init__.py
+    │   │   ├── cli_loader.py
+    │   │   ├── db_stubs.py
+    │   │   ├── import_state.py
+    │   │   └── sqlite_db.py
+    │   └── streaming/
+    │       ├── corpus.mjs
+    │       ├── invariant.test.mjs
+    │       ├── markdownHarness.mjs
+    │       └── segmenter.test.mjs
+    └── .github/
+        ├── pull_request_template.md
+        ├── ISSUE_TEMPLATE/
+        │   ├── bug_report.yml
+        │   ├── config.yml
+        │   └── feature_request.yml
+        ├── scripts/
+        │   ├── check-issue-description.js
+        │   └── check-pr-description.js
+        └── workflows/
+            ├── ci.yml
+            ├── docker-publish.yml
+            ├── issue-description-check.yml
+            └── pr-description-check.yml
+```
+
+---
+
+## 2. High-level System Overview
 
 At a high level, Odysseus is a client-server web application with an embedded background task runner. The backend is built in Python using **FastAPI**, while the frontend is a **Vanilla JavaScript** single-page application (SPA).
 
@@ -27,7 +1079,7 @@ graph TD
 
 ---
 
-## 2. Frontend Architecture (Vanilla JS)
+## 3. Frontend Architecture (Vanilla JS)
 
 The frontend avoids heavy frameworks like React or Vue, opting for vanilla JavaScript ES modules. This choice keeps the application lightweight and reduces build complexity.
 
@@ -48,7 +1100,7 @@ The frontend communicates with the backend primarily through standard REST APIs.
 
 ---
 
-## 3. Backend Architecture (FastAPI)
+## 4. Backend Architecture (FastAPI)
 
 The backend is built around a slim orchestrator (`app.py`), which glues together several sub-modules. It uses **FastAPI** for route handling and **SQLAlchemy** for database interactions.
 
@@ -61,7 +1113,7 @@ The backend is built around a slim orchestrator (`app.py`), which glues together
 
 ---
 
-## 4. Agent & AI Orchestration
+## 5. Agent & AI Orchestration
 
 The most complex part of the backend is the agent loop (`src/agent_loop.py`), which handles how the AI processes multi-step tasks.
 
@@ -89,7 +1141,7 @@ For self-hosted models that may struggle with complex tasks, Odysseus implements
 
 ---
 
-## 5. Data, Memory, and Storage
+## 6. Data, Memory, and Storage
 
 All data is kept local within the `data/` directory, adhering to the project's privacy-first ethos.
 
@@ -107,7 +1159,7 @@ All data is kept local within the `data/` directory, adhering to the project's p
 
 ---
 
-## 6. Integrations & Advanced Features
+## 7. Integrations & Advanced Features
 
 ### MCP (Model Context Protocol) Manager (`src/mcp_manager.py`)
 - Allows connecting external tool servers via standard IO (stdio), SSE, or HTTP.
@@ -124,7 +1176,7 @@ All data is kept local within the `data/` directory, adhering to the project's p
 
 ---
 
-## 7. Security & Authentication
+## 8. Security & Authentication
 
 Odysseus treats the self-hosted environment like an admin console due to powerful local tools (shell, file IO).
 
@@ -134,7 +1186,7 @@ Odysseus treats the self-hosted environment like an admin console due to powerfu
 
 ---
 
-## 8. Deployment & Local Serving (Cookbook)
+## 9. Deployment & Local Serving (Cookbook)
 
 Odysseus is designed to run anywhere, but Docker is recommended.
 
@@ -148,7 +1200,7 @@ The `hwfit` module analyzes the host machine (RAM, VRAM, GPU bandwidth) to score
 
 ---
 
-## 9. Future Upgrade Paths
+## 10. Future Upgrade Paths
 
 For developers looking to extend or upgrade Odysseus:
 
@@ -160,7 +1212,7 @@ For developers looking to extend or upgrade Odysseus:
 ---
 *Generated by Jules, Vibecoder.*
 
-## 10. Deep Dive: Frontend Architecture (Vanilla JS)
+## 11. Deep Dive: Frontend Architecture (Vanilla JS)
 
 The frontend uses Vanilla JavaScript with an ES module architecture centered around `static/app.js` and `static/js/`.
 
@@ -183,7 +1235,7 @@ graph TD
 
 ---
 
-## 11. Deep Dive: Backend Core & Routing (FastAPI)
+## 12. Deep Dive: Backend Core & Routing (FastAPI)
 
 The backend is structured around a centralized `app.py` that mounts numerous feature-specific routers defined in `routes/`.
 
@@ -204,7 +1256,7 @@ graph LR
 
 ---
 
-## 12. Deep Dive: Agent Orchestration, Tools & RAG
+## 13. Deep Dive: Agent Orchestration, Tools & RAG
 
 The Agent Loop is the brain of Odysseus, dynamically looping the LLM with local tools, semantic memory (RAG), and Teacher Escalation.
 
@@ -230,7 +1282,7 @@ graph TD
 
 ---
 
-## 13. Deep Dive: Deep Research & Web Integration
+## 14. Deep Dive: Deep Research & Web Integration
 
 Deep Research allows multi-step, autonomous information gathering resulting in a visually appealing HTML report.
 
@@ -253,7 +1305,7 @@ graph TD
 
 ---
 
-## 14. Deep Dive: Email & Calendar Sync
+## 15. Deep Dive: Email & Calendar Sync
 
 Odysseus features robust, local-first syncing for emails (IMAP/SMTP) and calendars (CalDAV).
 
@@ -274,7 +1326,7 @@ graph TD
 
 ---
 
-## 15. Deep Dive: Cookbook & Hardware Fitness
+## 16. Deep Dive: Cookbook & Hardware Fitness
 
 The "Cookbook" automatically analyzes host hardware to recommend, download, and serve models.
 
@@ -293,7 +1345,7 @@ graph LR
 
 ---
 
-## 16. Deep Dive: Integrations & Companion
+## 17. Deep Dive: Integrations & Companion
 
 Odysseus can pair with companion apps and handle external webhooks.
 
@@ -303,7 +1355,7 @@ Odysseus can pair with companion apps and handle external webhooks.
 
 ---
 
-## 17. Deep Dive: Deployment & Background Jobs
+## 18. Deep Dive: Deployment & Background Jobs
 
 Odysseus employs standard and GPU-accelerated Docker builds along with native OS scripts.
 
@@ -314,7 +1366,7 @@ Odysseus employs standard and GPU-accelerated Docker builds along with native OS
 
 ---
 
-## 18. Deep Dive: Core Utilities (`core/`)
+## 19. Deep Dive: Core Utilities (`core/`)
 
 The core utilities manage foundational backend state, security, and process infrastructure.
 
@@ -336,7 +1388,7 @@ graph TD
 
 ---
 
-## 19. Deep Dive: Background Services (`services/`)
+## 20. Deep Dive: Background Services (`services/`)
 
 The internal architecture separates discrete background jobs into standalone, stateless modules. These modules serve external integration requests triggered by the agent loop or via direct route access.
 
@@ -358,7 +1410,7 @@ graph TD
 
 ---
 
-## 20. Deep Dive: Built-in MCP Servers (`mcp_servers/`)
+## 21. Deep Dive: Built-in MCP Servers (`mcp_servers/`)
 
 Odysseus uses the **Model Context Protocol (MCP)** to register native functionalities into the LLM prompt. These servers act directly on the local database and API, standardizing internal functions as tools.
 
@@ -382,7 +1434,7 @@ graph TD
 
 ---
 
-## 21. Deep Dive: Testing and Tooling (`tests/`, `scripts/`)
+## 22. Deep Dive: Testing and Tooling (`tests/`, `scripts/`)
 
 A robust local environment requires automated regression assurance and operations tooling.
 
@@ -400,7 +1452,7 @@ graph TD
 - **Streaming Invariants (`tests/streaming/`)**: Node.js harness scripts ensuring the Server-Sent Event boundary (`streamingSegmenter.js`) accurately matches equivalent static Markdown rendering paths without leaking mid-generation tags.
 - **Operational CLI (`scripts/`)**: Repositories for standalone CLI ops, from database maintenance (`update_database.py`), headless model indexing (`index_documents.py`), hardware profiling scripts, and GitHub action analyzers (`pr_blocker_audit.py`).
 
-## 22. Deep Dive: API Routing & Controllers (`routes/`)
+## 23. Deep Dive: API Routing & Controllers (`routes/`)
 
 Odysseus isolates the API surface area from business logic through a highly modular router design. Instead of a monolithic routing file, the application features over 40 distinct route controllers in the `routes/` directory.
 
@@ -412,7 +1464,7 @@ Odysseus isolates the API surface area from business logic through a highly modu
 
 ---
 
-## 23. Deep Dive: Chat Processing & Engine Logic (`src/`)
+## 24. Deep Dive: Chat Processing & Engine Logic (`src/`)
 
 The core execution of conversational AI interactions lives primarily in `src/chat_processor.py`, `src/chat_handler.py`, and `src/agent_runs.py`.
 
@@ -435,7 +1487,7 @@ graph TD
 
 ---
 
-## 24. Deep Dive: Document & Workspace Logic
+## 25. Deep Dive: Document & Workspace Logic
 
 Odysseus supports an AI-assisted rich text and markdown editor.
 
@@ -445,7 +1497,7 @@ Odysseus supports an AI-assisted rich text and markdown editor.
 
 ---
 
-## 25. Deep Dive: Tasks, Background Jobs & Notes
+## 26. Deep Dive: Tasks, Background Jobs & Notes
 
 Odysseus implements a built-in scheduler to manage long-running operations and recurring events natively.
 
@@ -456,7 +1508,7 @@ Odysseus implements a built-in scheduler to manage long-running operations and r
 
 ---
 
-## 26. Deep Dive: File Uploads & Document Parsers
+## 27. Deep Dive: File Uploads & Document Parsers
 
 To extract and interpret user data natively, Odysseus incorporates several parsing strategies.
 
@@ -467,7 +1519,7 @@ To extract and interpret user data natively, Odysseus incorporates several parsi
 
 ---
 
-## 27. Deep Dive: Complete Frontend Layout (`static/js/`)
+## 28. Deep Dive: Complete Frontend Layout (`static/js/`)
 
 Odysseus' vanilla JS architecture is decentralized but tied together cleanly in `static/app.js`.
 
@@ -491,7 +1543,7 @@ graph TD
 
 ---
 
-## 28. Deep Dive: Testing Taxonomy (`tests/`, `TESTING_STANDARD.md`)
+## 29. Deep Dive: Testing Taxonomy (`tests/`, `TESTING_STANDARD.md`)
 
 Odysseus enforces a strict, deterministic testing strategy designed to eliminate order-dependence and global state leakage.
 
@@ -515,7 +1567,7 @@ graph TD
 
 ---
 
-## 29. Deep Dive: Companion Bridge (`companion/`)
+## 30. Deep Dive: Companion Bridge (`companion/`)
 
 The Companion Bridge provides an additive layer for Local Area Network (LAN) clients (like a mobile companion app) to securely discover and pair with the Odysseus server without duplicating core LLM logic.
 
@@ -535,7 +1587,7 @@ graph LR
 
 ---
 
-## 30. Deep Dive: Outgoing Webhooks (`src/webhook_manager.py`)
+## 31. Deep Dive: Outgoing Webhooks (`src/webhook_manager.py`)
 
 Odysseus can dispatch system events to external HTTP endpoints, allowing automation platforms like ntfy, Zapier, or custom scripts to react to chat completions and new sessions.
 
@@ -556,7 +1608,7 @@ graph TD
 
 ---
 
-## 31. Deep Dive: External Integrations (`integrations/`)
+## 32. Deep Dive: External Integrations (`integrations/`)
 
 Odysseus provides an integration layer that acts as a secure bridge for third-party AI agents (e.g., Claude Code, OpenAI integrations) to execute tools locally through the Odysseus server.
 
@@ -578,7 +1630,7 @@ graph TD
 
 ---
 
-## 32. Deep Dive: Operational CLI Scripts (`scripts/`)
+## 33. Deep Dive: Operational CLI Scripts (`scripts/`)
 
 For maintenance, debugging, and offline operations, Odysseus includes a suite of Python CLI tools.
 
@@ -675,114 +1727,45 @@ To leverage existing Copilot subscriptions without needing a separate OpenAI or 
 
 ---
 
-## 38. Known Issues & Future Improvements
 
-While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
+## 38. Deep Dive: Configuration & Third-party Services (`config/`, `licenses/`)
 
-### Frontend Monoliths
-- **Large Files**: Core modules like `chat.js` and `document.js` have grown significantly. Refactoring these into smaller, dedicated state machines or leveraging a lightweight reactive store would improve maintainability.
-- **Censoring (`censor.js`)**: The frontend uses regex to detect and blur sensitive information (API keys, passwords) in LLM responses. This is a heuristic approach and could be improved with more robust parsing or moved to a backend middleware for unified enforcement.
+Odysseus relies on several external components and strictly manages their configuration.
 
-### Testing & Stability
-- **Test Coverage**: While critical paths are covered, edge cases in streaming and hardware discovery (`hwfit`) could benefit from deeper integration tests across different OS environments.
-- **Background Jobs**: The `bg_jobs.py` system relies on writing exit-code files to track detached processes. A more robust IPC (Inter-Process Communication) or lightweight queue (like Redis or Celery, though contrary to the zero-config ethos) might be necessary if workloads increase.
-
-### Database Abstraction
-- Currently tightly coupled to SQLite. While SQLite is fantastic for single-user self-hosting, abstracting the ORM to easily support PostgreSQL would enable multi-user scaling or team deployments.
-
-## 34. Deep Dive: Action Intents & Chat Routing (`src/action_intents.py`)
-
-Odysseus employs a lightweight routing heuristic to determine when a standard chat prompt should be promoted to full "agent mode" (invoking the agent loop and tools).
-
-```mermaid
-graph TD
-    Input[User Prompt] --> Regex[Regex Intent Detection]
-    Regex --> |"can you search...", "read this..."| Agent[Promote to Agent Mode]
-    Regex --> |General question| Chat[Standard Chat Completion]
-    Agent --> LoadTools[Load Tools & System Prompt]
-    Chat --> LLM[LLM Generation]
-```
-
-### Purpose
-To avoid unnecessary LLM overhead, the system uses deterministic regex patterns to detect when a user is explicitly asking the assistant to take an action (e.g., "can you search...", "please read this file...") rather than simply asking a question.
-
-### Mechanics
-- **`ToolIntent`**: A dataclass that evaluates `needs_tools`, `category`, and `reason`.
-- **Patterns**: Scans for phrases like "can you", "would you", or specific verbs ("search", "read", "run") combined with action requests.
-- **Outcome**: If an action intent is detected, the frontend is signaled or the backend automatically escalates the chat into the agent loop, loading the necessary tools and system prompts.
+### Components
+- **`config/searxng/settings.yml`**: A pre-configured settings file for the SearXNG search aggregator. Odysseus mounts this into the SearXNG container to enforce specific output formats (JSON/HTML) and inject a secret key securely without requiring user intervention.
+- **`licenses/`**: The directory tracking open-source licenses for embedded components. Odysseus uses modified or integrated parts of tools like `DeepResearch` or `llmfit`, and this directory ensures proper MIT/Apache 2.0 attribution without bloating the root project directory.
 
 ---
 
-## 35. Deep Dive: Context Compaction (`src/context_compactor.py`)
+## 39. Deep Dive: Advanced Container Management (`docker/`)
 
-To prevent the LLM context window from overflowing during long sessions, Odysseus implements an automatic context compaction mechanism.
-
-```mermaid
-graph TD
-    History[Conversation History] --> Check[Estimate Token Count]
-    Check --> |Exceeds Threshold| Isolate[Isolate Oldest Messages]
-    Isolate --> Summarize[LLM Summarization Call]
-    Summarize --> DBUpdate[Replace Messages with Summary System Message]
-    DBUpdate --> NewHistory[Compacted Conversation History]
-    Check --> |Within Threshold| Proceed[Continue Normally]
-```
-
-### Purpose
-It ensures that long-running conversations do not crash due to token limits while preserving essential context and historical facts.
-
-### Mechanics
-- **Token Estimation**: Monitors the token count of the conversation history.
-- **Compaction Trigger**: When the context approaches a predefined limit, it isolates the oldest messages.
-- **Summarization**: It uses a fast LLM call (often a smaller model or the current one) to generate a dense summary of the oldest interactions.
-- **State Update**: Replaces the summarized block in the SQLite database with a single "system" message containing the summary, significantly reducing token usage while maintaining narrative continuity.
-
----
-
-## 36. Deep Dive: Built-in Actions & Scheduled Tasks (`src/builtin_actions.py`)
-
-Odysseus features a registry of native automation actions that can be executed periodically by the task scheduler without needing to spin up an LLM.
-
-```mermaid
-graph TD
-    Scheduler[src/task_scheduler.py] --> Dequeue[Dequeue TaskRun from DB]
-    Dequeue --> Lookup[Lookup Action in builtin_actions.py Registry]
-    Lookup --> Execute[Execute Native Python Function]
-    Execute --> |Success| Mark[Mark Last Run / Next Run]
-    Execute --> |TaskNoop| Skip[Skip Silently]
-```
-
-### Purpose
-Provides reliable, zero-cost execution for routine system maintenance and user-defined scheduled tasks.
-
-### Mechanics
-- **Registry**: Houses predefined python functions mapped to string identifiers (e.g., `system.tidy_calendar`, `system.poll_email`).
-- **`TaskNoop` Exception**: A silent exception used by actions to indicate there was nothing to do (e.g., no new emails, calendar already synced), preventing log spam.
-- **Execution**: The scheduler (`src/task_scheduler.py`) dequeues pending tasks from the database and invokes the corresponding function in `builtin_actions.py`.
-
----
-
-## 37. Deep Dive: Copilot Provider Support (`src/copilot.py`)
-
-Odysseus integrates natively with GitHub Copilot, allowing users with Copilot subscriptions to use Copilot's backing models as their LLM provider.
+The `docker/` directory contains critical infrastructure for securely and reliably hosting Odysseus on Linux environments.
 
 ```mermaid
 graph LR
-    User[User] --> |Authorizes Device Code| GH[GitHub OAuth]
-    GH --> |access_token| Odysseus
-    Odysseus --> |Headers + Token| CopilotAPI[api.githubcopilot.com/chat/completions]
+    Host[Host OS Bind Mounts] --> Volume[data/ permissions]
+    Volume --> Entry[docker/entrypoint.sh]
+    Entry --> |gosu PUID:PGID| App[FastAPI Application]
+    Compose[docker-compose.yml] --> |Includes| GPU[gpu.nvidia.yml / gpu.amd.yml]
 ```
 
-### Purpose
-To leverage existing Copilot subscriptions without needing a separate OpenAI or Anthropic API key.
-
-### Mechanics
-- **Device Flow Auth**: Implements the GitHub OAuth Device Flow. The user authorizes a device code in their browser, and Odysseus receives a long-lived `access_token`.
-- **API Emulation**: Copilot exposes an OpenAI-compatible endpoint (`/chat/completions`). `copilot.py` manages the injection of required, provider-specific headers (e.g., API version, editor-style User-Agent, and `x-initiator`).
-- **No Exchange Required**: Unlike some integrations, the bearer token is sent directly to the Copilot API without a secondary token exchange.
+### Components
+- **`entrypoint.sh`**: Fixes the #1 self-hosting footgun—root ownership of bind-mounted volumes. It reads `PUID` and `PGID` environment variables, creates a matching unprivileged user (`odysseus`), `chown`s the `/data` directory appropriately, and drops privileges via `gosu` before starting the application. This ensures users can interact with downloaded SQLite or memory databases on the host OS natively without permission denied errors.
+- **`gpu.nvidia.yml` & `gpu.amd.yml`**: Compose profiles that inject required hardware passthrough directives (`deploy.resources.reservations.devices` for NVIDIA, `/dev/kfd` and `/dev/dri` for AMD ROCm). The main compose file is kept minimal, while these profiles act as composable overlays depending on the user's hardware.
 
 ---
 
-## 38. Known Issues & Future Improvements
+## 40. Deep Dive: Streaming Invariant Tests (`tests/streaming/`)
+
+Testing streamed server-sent events mathematically ensures the frontend markdown parsing never tears or flashes mid-stream. Since the segmenter logic resides in `static/js/`, these tests are written natively in Node.js rather than Pytest.
+
+### Mechanics
+- **`invariant.test.mjs`**: The core correctness loop. It feeds a known Markdown corpus into the segmenter character-by-character. At every tick, it asserts that the sum of all finalized HTML chunks plus the live tail rendering matches what a static renderer would produce given the same exact prefix.
+- **Isolation**: These node tests run without a DOM (via `node:test` and `node:assert`), executing purely functional validations. If the streaming segmenter logic fails, the CI block is caught at the Node level, preventing UI degradation in production.
+
+
+## 41. Known Issues & Future Improvements
 
 While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
 
@@ -797,434 +1780,3 @@ While Odysseus is robust, its architecture reflects organic growth. Several area
 ### Database Abstraction
 - Currently tightly coupled to SQLite. While SQLite is fantastic for single-user self-hosting, abstracting the ORM to easily support PostgreSQL would enable multi-user scaling or team deployments.
 
-## 34. Deep Dive: Action Intents & Chat Routing (`src/action_intents.py`)
-
-Odysseus employs a lightweight routing heuristic to determine when a standard chat prompt should be promoted to full "agent mode" (invoking the agent loop and tools).
-
-```mermaid
-graph TD
-    Input[User Prompt] --> Regex[Regex Intent Detection]
-    Regex --> |"can you search...", "read this..."| Agent[Promote to Agent Mode]
-    Regex --> |General question| Chat[Standard Chat Completion]
-    Agent --> LoadTools[Load Tools & System Prompt]
-    Chat --> LLM[LLM Generation]
-```
-
-### Purpose
-To avoid unnecessary LLM overhead, the system uses deterministic regex patterns to detect when a user is explicitly asking the assistant to take an action (e.g., "can you search...", "please read this file...") rather than simply asking a question.
-
-### Mechanics
-- **`ToolIntent`**: A dataclass that evaluates `needs_tools`, `category`, and `reason`.
-- **Patterns**: Scans for phrases like "can you", "would you", or specific verbs ("search", "read", "run") combined with action requests.
-- **Outcome**: If an action intent is detected, the frontend is signaled or the backend automatically escalates the chat into the agent loop, loading the necessary tools and system prompts.
-
----
-
-## 35. Deep Dive: Context Compaction (`src/context_compactor.py`)
-
-To prevent the LLM context window from overflowing during long sessions, Odysseus implements an automatic context compaction mechanism.
-
-```mermaid
-graph TD
-    History[Conversation History] --> Check[Estimate Token Count]
-    Check --> |Exceeds Threshold| Isolate[Isolate Oldest Messages]
-    Isolate --> Summarize[LLM Summarization Call]
-    Summarize --> DBUpdate[Replace Messages with Summary System Message]
-    DBUpdate --> NewHistory[Compacted Conversation History]
-    Check --> |Within Threshold| Proceed[Continue Normally]
-```
-
-### Purpose
-It ensures that long-running conversations do not crash due to token limits while preserving essential context and historical facts.
-
-### Mechanics
-- **Token Estimation**: Monitors the token count of the conversation history.
-- **Compaction Trigger**: When the context approaches a predefined limit, it isolates the oldest messages.
-- **Summarization**: It uses a fast LLM call (often a smaller model or the current one) to generate a dense summary of the oldest interactions.
-- **State Update**: Replaces the summarized block in the SQLite database with a single "system" message containing the summary, significantly reducing token usage while maintaining narrative continuity.
-
----
-
-## 36. Deep Dive: Built-in Actions & Scheduled Tasks (`src/builtin_actions.py`)
-
-Odysseus features a registry of native automation actions that can be executed periodically by the task scheduler without needing to spin up an LLM.
-
-```mermaid
-graph TD
-    Scheduler[src/task_scheduler.py] --> Dequeue[Dequeue TaskRun from DB]
-    Dequeue --> Lookup[Lookup Action in builtin_actions.py Registry]
-    Lookup --> Execute[Execute Native Python Function]
-    Execute --> |Success| Mark[Mark Last Run / Next Run]
-    Execute --> |TaskNoop| Skip[Skip Silently]
-```
-
-### Purpose
-Provides reliable, zero-cost execution for routine system maintenance and user-defined scheduled tasks.
-
-### Mechanics
-- **Registry**: Houses predefined python functions mapped to string identifiers (e.g., `system.tidy_calendar`, `system.poll_email`).
-- **`TaskNoop` Exception**: A silent exception used by actions to indicate there was nothing to do (e.g., no new emails, calendar already synced), preventing log spam.
-- **Execution**: The scheduler (`src/task_scheduler.py`) dequeues pending tasks from the database and invokes the corresponding function in `builtin_actions.py`.
-
----
-
-## 37. Deep Dive: Copilot Provider Support (`src/copilot.py`)
-
-Odysseus integrates natively with GitHub Copilot, allowing users with Copilot subscriptions to use Copilot's backing models as their LLM provider.
-
-```mermaid
-graph LR
-    User[User] --> |Authorizes Device Code| GH[GitHub OAuth]
-    GH --> |access_token| Odysseus
-    Odysseus --> |Headers + Token| CopilotAPI[api.githubcopilot.com/chat/completions]
-```
-
-### Purpose
-To leverage existing Copilot subscriptions without needing a separate OpenAI or Anthropic API key.
-
-### Mechanics
-- **Device Flow Auth**: Implements the GitHub OAuth Device Flow. The user authorizes a device code in their browser, and Odysseus receives a long-lived `access_token`.
-- **API Emulation**: Copilot exposes an OpenAI-compatible endpoint (`/chat/completions`). `copilot.py` manages the injection of required, provider-specific headers (e.g., API version, editor-style User-Agent, and `x-initiator`).
-- **No Exchange Required**: Unlike some integrations, the bearer token is sent directly to the Copilot API without a secondary token exchange.
-
----
-
-## 38. Known Issues & Future Improvements
-
-While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
-
-### Frontend Monoliths
-- **Large Files**: Core modules like `chat.js` and `document.js` have grown significantly. Refactoring these into smaller, dedicated state machines or leveraging a lightweight reactive store would improve maintainability.
-- **Censoring (`censor.js`)**: The frontend uses regex to detect and blur sensitive information (API keys, passwords) in LLM responses. This is a heuristic approach and could be improved with more robust parsing or moved to a backend middleware for unified enforcement.
-
-### Testing & Stability
-- **Test Coverage**: While critical paths are covered, edge cases in streaming and hardware discovery (`hwfit`) could benefit from deeper integration tests across different OS environments.
-- **Background Jobs**: The `bg_jobs.py` system relies on writing exit-code files to track detached processes. A more robust IPC (Inter-Process Communication) or lightweight queue (like Redis or Celery, though contrary to the zero-config ethos) might be necessary if workloads increase.
-
-### Database Abstraction
-- Currently tightly coupled to SQLite. While SQLite is fantastic for single-user self-hosting, abstracting the ORM to easily support PostgreSQL would enable multi-user scaling or team deployments.
-
-## 34. Deep Dive: Action Intents & Chat Routing (`src/action_intents.py`)
-
-Odysseus employs a lightweight routing heuristic to determine when a standard chat prompt should be promoted to full "agent mode" (invoking the agent loop and tools).
-
-```mermaid
-graph TD
-    Input[User Prompt] --> Regex[Regex Intent Detection]
-    Regex --> |"can you search...", "read this..."| Agent[Promote to Agent Mode]
-    Regex --> |General question| Chat[Standard Chat Completion]
-    Agent --> LoadTools[Load Tools & System Prompt]
-    Chat --> LLM[LLM Generation]
-```
-
-### Purpose
-To avoid unnecessary LLM overhead, the system uses deterministic regex patterns to detect when a user is explicitly asking the assistant to take an action (e.g., "can you search...", "please read this file...") rather than simply asking a question.
-
-### Mechanics
-- **`ToolIntent`**: A dataclass that evaluates `needs_tools`, `category`, and `reason`.
-- **Patterns**: Scans for phrases like "can you", "would you", or specific verbs ("search", "read", "run") combined with action requests.
-- **Outcome**: If an action intent is detected, the frontend is signaled or the backend automatically escalates the chat into the agent loop, loading the necessary tools and system prompts.
-
----
-
-## 35. Deep Dive: Context Compaction (`src/context_compactor.py`)
-
-To prevent the LLM context window from overflowing during long sessions, Odysseus implements an automatic context compaction mechanism.
-
-```mermaid
-graph TD
-    History[Conversation History] --> Check[Estimate Token Count]
-    Check --> |Exceeds Threshold| Isolate[Isolate Oldest Messages]
-    Isolate --> Summarize[LLM Summarization Call]
-    Summarize --> DBUpdate[Replace Messages with Summary System Message]
-    DBUpdate --> NewHistory[Compacted Conversation History]
-    Check --> |Within Threshold| Proceed[Continue Normally]
-```
-
-### Purpose
-It ensures that long-running conversations do not crash due to token limits while preserving essential context and historical facts.
-
-### Mechanics
-- **Token Estimation**: Monitors the token count of the conversation history.
-- **Compaction Trigger**: When the context approaches a predefined limit, it isolates the oldest messages.
-- **Summarization**: It uses a fast LLM call (often a smaller model or the current one) to generate a dense summary of the oldest interactions.
-- **State Update**: Replaces the summarized block in the SQLite database with a single "system" message containing the summary, significantly reducing token usage while maintaining narrative continuity.
-
----
-
-## 36. Deep Dive: Built-in Actions & Scheduled Tasks (`src/builtin_actions.py`)
-
-Odysseus features a registry of native automation actions that can be executed periodically by the task scheduler without needing to spin up an LLM.
-
-```mermaid
-graph TD
-    Scheduler[src/task_scheduler.py] --> Dequeue[Dequeue TaskRun from DB]
-    Dequeue --> Lookup[Lookup Action in builtin_actions.py Registry]
-    Lookup --> Execute[Execute Native Python Function]
-    Execute --> |Success| Mark[Mark Last Run / Next Run]
-    Execute --> |TaskNoop| Skip[Skip Silently]
-```
-
-### Purpose
-Provides reliable, zero-cost execution for routine system maintenance and user-defined scheduled tasks.
-
-### Mechanics
-- **Registry**: Houses predefined python functions mapped to string identifiers (e.g., `system.tidy_calendar`, `system.poll_email`).
-- **`TaskNoop` Exception**: A silent exception used by actions to indicate there was nothing to do (e.g., no new emails, calendar already synced), preventing log spam.
-- **Execution**: The scheduler (`src/task_scheduler.py`) dequeues pending tasks from the database and invokes the corresponding function in `builtin_actions.py`.
-
----
-
-## 37. Deep Dive: Copilot Provider Support (`src/copilot.py`)
-
-Odysseus integrates natively with GitHub Copilot, allowing users with Copilot subscriptions to use Copilot's backing models as their LLM provider.
-
-```mermaid
-graph LR
-    User[User] --> |Authorizes Device Code| GH[GitHub OAuth]
-    GH --> |access_token| Odysseus
-    Odysseus --> |Headers + Token| CopilotAPI[api.githubcopilot.com/chat/completions]
-```
-
-### Purpose
-To leverage existing Copilot subscriptions without needing a separate OpenAI or Anthropic API key.
-
-### Mechanics
-- **Device Flow Auth**: Implements the GitHub OAuth Device Flow. The user authorizes a device code in their browser, and Odysseus receives a long-lived `access_token`.
-- **API Emulation**: Copilot exposes an OpenAI-compatible endpoint (`/chat/completions`). `copilot.py` manages the injection of required, provider-specific headers (e.g., API version, editor-style User-Agent, and `x-initiator`).
-- **No Exchange Required**: Unlike some integrations, the bearer token is sent directly to the Copilot API without a secondary token exchange.
-
----
-
-## 38. Known Issues & Future Improvements
-
-While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
-
-### Frontend Monoliths
-- **Large Files**: Core modules like `chat.js` and `document.js` have grown significantly. Refactoring these into smaller, dedicated state machines or leveraging a lightweight reactive store would improve maintainability.
-- **Censoring (`censor.js`)**: The frontend uses regex to detect and blur sensitive information (API keys, passwords) in LLM responses. This is a heuristic approach and could be improved with more robust parsing or moved to a backend middleware for unified enforcement.
-
-### Testing & Stability
-- **Test Coverage**: While critical paths are covered, edge cases in streaming and hardware discovery (`hwfit`) could benefit from deeper integration tests across different OS environments.
-- **Background Jobs**: The `bg_jobs.py` system relies on writing exit-code files to track detached processes. A more robust IPC (Inter-Process Communication) or lightweight queue (like Redis or Celery, though contrary to the zero-config ethos) might be necessary if workloads increase.
-
-### Database Abstraction
-- Currently tightly coupled to SQLite. While SQLite is fantastic for single-user self-hosting, abstracting the ORM to easily support PostgreSQL would enable multi-user scaling or team deployments.
-
----
-
-## 34. Deep Dive: Action Intents & Chat Routing (`src/action_intents.py`)
-
-Odysseus employs a lightweight routing heuristic to determine when a standard chat prompt should be promoted to full "agent mode" (invoking the agent loop and tools).
-
-```mermaid
-graph TD
-    Input[User Prompt] --> Regex[Regex Intent Detection]
-    Regex --> |"can you search...", "read this..."| Agent[Promote to Agent Mode]
-    Regex --> |General question| Chat[Standard Chat Completion]
-    Agent --> LoadTools[Load Tools & System Prompt]
-    Chat --> LLM[LLM Generation]
-```
-
-### Purpose
-To avoid unnecessary LLM overhead, the system uses deterministic regex patterns to detect when a user is explicitly asking the assistant to take an action (e.g., "can you search...", "please read this file...") rather than simply asking a question.
-
-### Mechanics
-- **`ToolIntent`**: A dataclass that evaluates `needs_tools`, `category`, and `reason`.
-- **Patterns**: Scans for phrases like "can you", "would you", or specific verbs ("search", "read", "run") combined with action requests.
-- **Outcome**: If an action intent is detected, the frontend is signaled or the backend automatically escalates the chat into the agent loop, loading the necessary tools and system prompts.
-
----
-
-## 35. Deep Dive: Context Compaction (`src/context_compactor.py`)
-
-To prevent the LLM context window from overflowing during long sessions, Odysseus implements an automatic context compaction mechanism.
-
-```mermaid
-graph TD
-    History[Conversation History] --> Check[Estimate Token Count]
-    Check --> |Exceeds Threshold| Isolate[Isolate Oldest Messages]
-    Isolate --> Summarize[LLM Summarization Call]
-    Summarize --> DBUpdate[Replace Messages with Summary System Message]
-    DBUpdate --> NewHistory[Compacted Conversation History]
-    Check --> |Within Threshold| Proceed[Continue Normally]
-```
-
-### Purpose
-It ensures that long-running conversations do not crash due to token limits while preserving essential context and historical facts.
-
-### Mechanics
-- **Token Estimation**: Monitors the token count of the conversation history.
-- **Compaction Trigger**: When the context approaches a predefined limit, it isolates the oldest messages.
-- **Summarization**: It uses a fast LLM call (often a smaller model or the current one) to generate a dense summary of the oldest interactions.
-- **State Update**: Replaces the summarized block in the SQLite database with a single "system" message containing the summary, significantly reducing token usage while maintaining narrative continuity.
-
----
-
-## 36. Deep Dive: Built-in Actions & Scheduled Tasks (`src/builtin_actions.py`)
-
-Odysseus features a registry of native automation actions that can be executed periodically by the task scheduler without needing to spin up an LLM.
-
-```mermaid
-graph TD
-    Scheduler[src/task_scheduler.py] --> Dequeue[Dequeue TaskRun from DB]
-    Dequeue --> Lookup[Lookup Action in builtin_actions.py Registry]
-    Lookup --> Execute[Execute Native Python Function]
-    Execute --> |Success| Mark[Mark Last Run / Next Run]
-    Execute --> |TaskNoop| Skip[Skip Silently]
-```
-
-### Purpose
-Provides reliable, zero-cost execution for routine system maintenance and user-defined scheduled tasks.
-
-### Mechanics
-- **Registry**: Houses predefined python functions mapped to string identifiers (e.g., `system.tidy_calendar`, `system.poll_email`).
-- **`TaskNoop` Exception**: A silent exception used by actions to indicate there was nothing to do (e.g., no new emails, calendar already synced), preventing log spam.
-- **Execution**: The scheduler (`src/task_scheduler.py`) dequeues pending tasks from the database and invokes the corresponding function in `builtin_actions.py`.
-
----
-
-## 37. Deep Dive: Copilot Provider Support (`src/copilot.py`)
-
-Odysseus integrates natively with GitHub Copilot, allowing users with Copilot subscriptions to use Copilot's backing models as their LLM provider.
-
-```mermaid
-graph LR
-    User[User] --> |Authorizes Device Code| GH[GitHub OAuth]
-    GH --> |access_token| Odysseus
-    Odysseus --> |Headers + Token| CopilotAPI[api.githubcopilot.com/chat/completions]
-```
-
-### Purpose
-To leverage existing Copilot subscriptions without needing a separate OpenAI or Anthropic API key.
-
-### Mechanics
-- **Device Flow Auth**: Implements the GitHub OAuth Device Flow. The user authorizes a device code in their browser, and Odysseus receives a long-lived `access_token`.
-- **API Emulation**: Copilot exposes an OpenAI-compatible endpoint (`/chat/completions`). `copilot.py` manages the injection of required, provider-specific headers (e.g., API version, editor-style User-Agent, and `x-initiator`).
-- **No Exchange Required**: Unlike some integrations, the bearer token is sent directly to the Copilot API without a secondary token exchange.
-
----
-
-## 38. Known Issues & Future Improvements
-
-While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
-
-### Frontend Monoliths
-- **Large Files**: Core modules like `chat.js` and `document.js` have grown significantly. Refactoring these into smaller, dedicated state machines or leveraging a lightweight reactive store would improve maintainability.
-- **Censoring (`censor.js`)**: The frontend uses regex to detect and blur sensitive information (API keys, passwords) in LLM responses. This is a heuristic approach and could be improved with more robust parsing or moved to a backend middleware for unified enforcement.
-
-### Testing & Stability
-- **Test Coverage**: While critical paths are covered, edge cases in streaming and hardware discovery (`hwfit`) could benefit from deeper integration tests across different OS environments.
-- **Background Jobs**: The `bg_jobs.py` system relies on writing exit-code files to track detached processes. A more robust IPC (Inter-Process Communication) or lightweight queue (like Redis or Celery, though contrary to the zero-config ethos) might be necessary if workloads increase.
-
-### Database Abstraction
-- Currently tightly coupled to SQLite. While SQLite is fantastic for single-user self-hosting, abstracting the ORM to easily support PostgreSQL would enable multi-user scaling or team deployments.
-
----
-
-## 34. Deep Dive: Action Intents & Chat Routing (`src/action_intents.py`)
-
-Odysseus employs a lightweight routing heuristic to determine when a standard chat prompt should be promoted to full "agent mode" (invoking the agent loop and tools).
-
-```mermaid
-graph TD
-    Input[User Prompt] --> Regex[Regex Intent Detection]
-    Regex --> |"can you search...", "read this..."| Agent[Promote to Agent Mode]
-    Regex --> |General question| Chat[Standard Chat Completion]
-    Agent --> LoadTools[Load Tools & System Prompt]
-    Chat --> LLM[LLM Generation]
-```
-
-### Purpose
-To avoid unnecessary LLM overhead, the system uses deterministic regex patterns to detect when a user is explicitly asking the assistant to take an action (e.g., "can you search...", "please read this file...") rather than simply asking a question.
-
-### Mechanics
-- **`ToolIntent`**: A dataclass that evaluates `needs_tools`, `category`, and `reason`.
-- **Patterns**: Scans for phrases like "can you", "would you", or specific verbs ("search", "read", "run") combined with action requests.
-- **Outcome**: If an action intent is detected, the frontend is signaled or the backend automatically escalates the chat into the agent loop, loading the necessary tools and system prompts.
-
----
-
-## 35. Deep Dive: Context Compaction (`src/context_compactor.py`)
-
-To prevent the LLM context window from overflowing during long sessions, Odysseus implements an automatic context compaction mechanism.
-
-```mermaid
-graph TD
-    History[Conversation History] --> Check[Estimate Token Count]
-    Check --> |Exceeds Threshold| Isolate[Isolate Oldest Messages]
-    Isolate --> Summarize[LLM Summarization Call]
-    Summarize --> DBUpdate[Replace Messages with Summary System Message]
-    DBUpdate --> NewHistory[Compacted Conversation History]
-    Check --> |Within Threshold| Proceed[Continue Normally]
-```
-
-### Purpose
-It ensures that long-running conversations do not crash due to token limits while preserving essential context and historical facts.
-
-### Mechanics
-- **Token Estimation**: Monitors the token count of the conversation history.
-- **Compaction Trigger**: When the context approaches a predefined limit, it isolates the oldest messages.
-- **Summarization**: It uses a fast LLM call (often a smaller model or the current one) to generate a dense summary of the oldest interactions.
-- **State Update**: Replaces the summarized block in the SQLite database with a single "system" message containing the summary, significantly reducing token usage while maintaining narrative continuity.
-
----
-
-## 36. Deep Dive: Built-in Actions & Scheduled Tasks (`src/builtin_actions.py`)
-
-Odysseus features a registry of native automation actions that can be executed periodically by the task scheduler without needing to spin up an LLM.
-
-```mermaid
-graph TD
-    Scheduler[src/task_scheduler.py] --> Dequeue[Dequeue TaskRun from DB]
-    Dequeue --> Lookup[Lookup Action in builtin_actions.py Registry]
-    Lookup --> Execute[Execute Native Python Function]
-    Execute --> |Success| Mark[Mark Last Run / Next Run]
-    Execute --> |TaskNoop| Skip[Skip Silently]
-```
-
-### Purpose
-Provides reliable, zero-cost execution for routine system maintenance and user-defined scheduled tasks.
-
-### Mechanics
-- **Registry**: Houses predefined python functions mapped to string identifiers (e.g., `system.tidy_calendar`, `system.poll_email`).
-- **`TaskNoop` Exception**: A silent exception used by actions to indicate there was nothing to do (e.g., no new emails, calendar already synced), preventing log spam.
-- **Execution**: The scheduler (`src/task_scheduler.py`) dequeues pending tasks from the database and invokes the corresponding function in `builtin_actions.py`.
-
----
-
-## 37. Deep Dive: Copilot Provider Support (`src/copilot.py`)
-
-Odysseus integrates natively with GitHub Copilot, allowing users with Copilot subscriptions to use Copilot's backing models as their LLM provider.
-
-```mermaid
-graph LR
-    User[User] --> |Authorizes Device Code| GH[GitHub OAuth]
-    GH --> |access_token| Odysseus
-    Odysseus --> |Headers + Token| CopilotAPI[api.githubcopilot.com/chat/completions]
-```
-
-### Purpose
-To leverage existing Copilot subscriptions without needing a separate OpenAI or Anthropic API key.
-
-### Mechanics
-- **Device Flow Auth**: Implements the GitHub OAuth Device Flow. The user authorizes a device code in their browser, and Odysseus receives a long-lived `access_token`.
-- **API Emulation**: Copilot exposes an OpenAI-compatible endpoint (`/chat/completions`). `copilot.py` manages the injection of required, provider-specific headers (e.g., API version, editor-style User-Agent, and `x-initiator`).
-- **No Exchange Required**: Unlike some integrations, the bearer token is sent directly to the Copilot API without a secondary token exchange.
-
----
-
-## 38. Known Issues & Future Improvements
-
-While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
-
-### Frontend Monoliths
-- **Large Files**: Core modules like `chat.js` and `document.js` have grown significantly. Refactoring these into smaller, dedicated state machines or leveraging a lightweight reactive store would improve maintainability.
-- **Censoring (`censor.js`)**: The frontend uses regex to detect and blur sensitive information (API keys, passwords) in LLM responses. This is a heuristic approach and could be improved with more robust parsing or moved to a backend middleware for unified enforcement.
-
-### Testing & Stability
-- **Test Coverage**: While critical paths are covered, edge cases in streaming and hardware discovery (`hwfit`) could benefit from deeper integration tests across different OS environments.
-- **Background Jobs**: The `bg_jobs.py` system relies on writing exit-code files to track detached processes. A more robust IPC (Inter-Process Communication) or lightweight queue (like Redis or Celery, though contrary to the zero-config ethos) might be necessary if workloads increase.
-
-### Database Abstraction
-- Currently tightly coupled to SQLite. While SQLite is fantastic for single-user self-hosting, abstracting the ORM to easily support PostgreSQL would enable multi-user scaling or team deployments.
