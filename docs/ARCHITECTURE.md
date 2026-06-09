@@ -1987,7 +1987,140 @@ To assemble context objects, record new learnings, and parse complex documents i
 - **`routes/compare_routes.py`, `routes/editor_draft_routes.py`, `src/pdf_form_doc.py`**: Specialized tools for editing rich text documents inside the interface, and generating PDFs inline based on text fields.
 ---
 
-## 56. Known Issues & Future Improvements
+
+## 57. Deep Dive: Event Bus & Application Readiness
+
+Odysseus incorporates a lightweight, in-memory event bus to trigger automated jobs without relying on heavyweight external message brokers (like Redis or RabbitMQ).
+
+```mermaid
+graph TD
+    System[Application Events] --> |fire_event| Bus[src/event_bus.py]
+    Bus --> |Loop create_task| Handler[_handle_event]
+    Handler --> |If threshold met| Scheduler[src/task_scheduler.py]
+    Scheduler --> DB[(SQLite ScheduledTasks)]
+```
+
+### Components
+- **Event Bus (`src/event_bus.py`)**: Provides a decoupled way to fire events (e.g., `session.created`, `message.sent`). It manages in-memory counters and triggers specific tasks via the scheduler when thresholds are crossed.
+- **Readiness Probes (`src/readiness.py`)**: Implements strict `GET /api/ready` logic. Beyond simple liveness, it executes real SQL (`SELECT 1`) to ensure the DB connection pool is functional, and tests write permissions to the `DATA_DIR`.
+- **Rate Limiter (`src/rate_limiter.py`)**: Uses an in-memory sliding window algorithm to throttle abuse of endpoints (e.g., token minting or login attempts) before the requests reach the deeper application logic.
+
+---
+
+## 58. Deep Dive: Compare Mode (Model Blind Testing)
+
+Compare mode provides a dual-pane, blind AB testing interface to evaluate the quality of multiple AI models side-by-side on identical prompts.
+
+```mermaid
+graph TD
+    UI[static/js/compare/index.js] --> |Setup Request| API[routes/compare_routes.py]
+    UI --> |Start SSE| Streams[static/js/compare/stream.js]
+    Streams --> |Left Pane| ModelA[Local / Remote Model A]
+    Streams --> |Right Pane| ModelB[Local / Remote Model B]
+    UI --> Vote[static/js/compare/vote.js]
+    Vote --> Scoreboard[static/js/compare/scoreboard.js]
+    Scoreboard --> DB[(SQLite Comparison Table)]
+```
+
+### Components
+- **Frontend State (`static/js/compare/`)**: Comprises numerous modular files handling the dual UI (`panes.js`), tracking connection health (`probe.js`), and managing the synchronized SSE streams for both models (`stream.js`). The models' identities remain obfuscated until a winner is declared (`vote.js`).
+- **Backend Routing (`routes/compare_routes.py`)**: Manages the API surface area for starting a comparison, validating model access, handling vote submission, and managing the `RecordVoteRequest` schema to compile metrics over time.
+
+---
+
+## 59. Deep Dive: AI Canvas Editor Architecture
+
+The rich image editor features a comprehensive, multi-layer HTML5 Canvas architecture integrated tightly with local backend AI operations.
+
+```mermaid
+graph TD
+    Canvas[HTML5 Canvas] --> Events[canvas-events.js]
+    Events --> State[state.js]
+    State --> Layers[layer-helpers.js / layer-panel.js]
+    State --> Tools[tools/ directory]
+    Tools --> |stroke, lasso, move| Canvas
+    Tools --> AI[AI Tools]
+    AI --> Inpaint[ai-inpaint.js]
+    AI --> Rembg[ai-rembg.js]
+    Inpaint --> API[routes/gallery_helpers.py]
+    Rembg --> API
+```
+
+### Components
+- **Core Canvas Logic (`static/js/editor/`)**: Managed by `state.js`, with interactions translated through `canvas-coords.js` and `canvas-events.js` to account for zooming and panning across the viewport.
+- **Tools & Effects**: Standard editing tools (move, crop, flood-fill) live in the `tools/` directory, while non-destructive overlays and visual filters reside in `fx/` and `filters/`.
+- **AI Integrations**: Specific files like `ai-inpaint.js` and `ai-rembg.js` hook into the active canvas state to generate masks (`mask-utils.js`), transmit them to the backend, and apply the returned images onto new, non-destructive canvas layers (`layer-helpers.js`).
+
+---
+
+## 60. Deep Dive: Cookbook UI State Machine
+
+The local model manager ("Cookbook") features a robust client-side state machine capable of tracking detached background processes safely across browser refreshes.
+
+```mermaid
+graph TD
+    User[Client] --> CookbookUI[cookbook.js]
+    CookbookUI --> Diagnosis[cookbook-diagnosis.js]
+    CookbookUI --> HWFit[cookbook-hwfit.js]
+    HWFit --> |Fetch Metrics| HWAPI[routes/hwfit_routes.py]
+    CookbookUI --> Actions[Download / Serve]
+    Actions --> Download[cookbookDownload.js]
+    Actions --> Serve[cookbookServe.js]
+    Download --> |SSE Tracking| Signal[cookbookProgressSignal.js]
+    Serve --> Running[cookbookRunning.js]
+```
+
+### Components
+- **UI Diagnostics (`static/js/cookbook-diagnosis.js`)**: Polling mechanisms to verify if background processes like `ollama` or `vllm` are accessible before allowing operations.
+- **Hardware Fitness Client (`static/js/cookbook-hwfit.js`)**: Renders the visual bars for required VRAM and Context Window budgeting based on the data provided by the backend's `fit.py` via `hwfit_routes.py`.
+- **Process Signals (`static/js/cookbookProgressSignal.js`, `cookbookRunning.js`)**: Tracks asynchronous SSE streams. If the browser tab is closed during a download, the next time the Cookbook is opened, `cookbookRunning.js` attempts to reconnect and parse the active system state to restore the progress bar seamlessly.
+
+---
+
+## 61. Deep Dive: Search Provider & Ranking Engine
+
+Odysseus implements a modular and extensible search abstraction tier, allowing swapping of underlying search providers while maintaining unified output format and caching.
+
+```mermaid
+graph TD
+    Agent[Deep Research / Web Search Tool] --> Core[src/search/core.py]
+    Core --> Cache[src/search/cache.py]
+    Cache --> |Miss| Providers[src/search/providers.py]
+    Providers --> |SearXNG, DuckDuckGo| Fetch[External Web]
+    Providers --> Ranking[src/search/ranking.py]
+    Ranking --> Stats[src/search/analytics.py]
+    Ranking --> |Return Standardized Format| Core
+```
+
+### Components
+- **Core Orchestrator (`src/search/core.py`, `services/search/`)**: Manages the flow of fetching configurations and routing the search term to the designated active provider.
+- **Caching (`src/search/cache.py`)**: Reduces outbound requests by locally caching queries with identical parameters.
+- **Provider Implementations (`src/search/providers.py`)**: Abstracts provider-specific API oddities (e.g., JSON handling from SearXNG vs raw HTTP scraping from DuckDuckGo) into a standardized `dict` format.
+- **Ranking & Analytics (`src/search/ranking.py`, `src/search/analytics.py`)**: Analyzes results to filter out spam or low-quality hits before they reach the LLM, tracking failure rates and error conditions centrally.
+
+---
+
+## 62. Deep Dive: Advanced Memory & Skills Pipeline
+
+Long-term semantic context goes beyond just storing facts; the system contains a dedicated pipeline for discovering, extracting, and importing structured "Skills".
+
+```mermaid
+graph TD
+    Input[Teacher LLM Output / File Import] --> Importer[services/memory/skill_importer.py]
+    Importer --> Format[services/memory/skill_format.py]
+    Format --> Extractor[services/memory/skill_extractor.py]
+    Extractor --> Validate[services/memory/skills.py]
+    Validate --> |Save .md to Disk| Storage[DATA_DIR/skills/]
+    Validate --> |Index Metadata| Memory[services/memory/memory.py]
+```
+
+### Components
+- **Skill Extraction (`services/memory/skill_extractor.py`)**: Uses intelligent parsing to derive structured procedure steps and preconditions from freeform conversation text or teacher model outputs.
+- **Skill Formatting (`services/memory/skill_format.py`)**: Ensures that every skill strictly adheres to the markdown specifications required for the Agent loop to parse it effectively (e.g., maintaining `SKILL.md` boundaries).
+- **Skill Importer (`services/memory/skill_importer.py`)**: Handles the ingest of external skill packs (like those from the integrations folder), safely validating content without trusting external metadata completely.
+- **Manager (`services/memory/skills.py`)**: The central service that orchestrates reading and writing skills to the local disk and synchronizing them with the Vector Database for semantic retrieval later.
+
+## 63. Known Issues & Future Improvements
 
 While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
 
