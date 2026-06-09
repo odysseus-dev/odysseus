@@ -189,7 +189,7 @@ def build_chat_url(base: str) -> str:
 
 def build_models_url(base: str) -> Optional[str]:
     """Return the provider-specific model-list endpoint URL for a base."""
-    base = resolve_url(base)
+    base = normalize_base(resolve_url(base))
     provider = _detect_provider(base)
     if provider == "nobodywho":
         return base  # no HTTP model list; llm_core.list_model_ids handles it

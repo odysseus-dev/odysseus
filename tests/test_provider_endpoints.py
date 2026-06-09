@@ -50,6 +50,9 @@ PROVIDER_CASES = [
     ("groq", "https://api.groq.com/openai/v1",
      "https://api.groq.com/openai/v1/chat/completions",
      "https://api.groq.com/openai/v1/models"),
+    ("nvidia", "https://integrate.api.nvidia.com/v1",
+     "https://integrate.api.nvidia.com/v1/chat/completions",
+     "https://integrate.api.nvidia.com/v1/models"),
     ("xai", "https://api.x.ai/v1",
      "https://api.x.ai/v1/chat/completions",
      "https://api.x.ai/v1/models"),
@@ -112,6 +115,7 @@ def test_headers_anthropic_without_key_still_sends_version():
     "https://api.x.ai/v1",
     "https://api.deepseek.com",
     "https://api.groq.com/openai/v1",
+    "https://integrate.api.nvidia.com/v1",
     "https://generativelanguage.googleapis.com/v1beta/openai",
 ])
 def test_headers_openai_style_use_bearer(base):
