@@ -305,6 +305,19 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         if not ok:
             raise HTTPException(400, "Cannot rename user")
 
+        def _rollback_auth_rename() -> bool:
+            # On self-rename the admin session has already moved to the new
+            # username, so the rollback must authenticate as the new user.
+            rollback_user = new_username if user == old_username else user
+            try:
+                return bool(auth_manager.rename_user(new_username, old_username, rollback_user))
+            except Exception as rollback_err:
+                logger.error(
+                    "Failed to roll back auth rename %s -> %s after owner migration failure: %s",
+                    new_username, old_username, rollback_err,
+                )
+                return False
+
         # Usernames are ownership keys for user data. Rename the common
         # owner-scoped DB rows so the account keeps access to its sessions,
         # docs, email accounts, tasks, etc.
@@ -330,6 +343,11 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 db.close()
         except Exception as e:
             logger.error("Failed to rename owner references %s -> %s: %s", old_username, new_username, e)
+            if not _rollback_auth_rename():
+                logger.error(
+                    "Auth rename %s -> %s could not be rolled back after owner migration failure",
+                    old_username, new_username,
+                )
             raise HTTPException(500, "Failed to rename user data")
 
         # Per-user prefs are JSON-backed, not SQL-backed.

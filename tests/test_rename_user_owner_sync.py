@@ -26,6 +26,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi import HTTPException
 
 
 def _route(router, name):
@@ -63,16 +64,66 @@ def rename_endpoint(monkeypatch, tmp_path):
     return _route(ar.setup_auth_routes(am), "rename_user"), am, tmp_path
 
 
-def _request(tmp_path, session_manager=None):
+def _request(tmp_path, session_manager=None, token="t"):
     state = SimpleNamespace(
         invalidate_token_cache=lambda: None,
         session_manager=session_manager,
     )
     return SimpleNamespace(
-        cookies={"odysseus_session": "t"},
+        cookies={"odysseus_session": token},
         app=SimpleNamespace(state=state),
         state=SimpleNamespace(current_user="admin"),
     )
+
+
+def _auth_manager_for_rollback_test(monkeypatch, tmp_path):
+    import core.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "_hash_password", lambda password: f"hash:{password}")
+    monkeypatch.setattr(auth_mod, "_verify_password", lambda password, hashed: hashed == f"hash:{password}")
+
+    am = auth_mod.AuthManager(str(tmp_path / "auth.json"))
+    assert am.create_user("admin", "pw-123456", is_admin=True) is True
+    assert am.create_user("alice", "pw-123456") is True
+    return am
+
+
+def _force_sql_owner_migration_failure(monkeypatch):
+    import core.database as cdb
+
+    class OwnerModel:
+        owner = "owner"
+
+    class FailingQuery:
+        def filter(self, *_args, **_kwargs):
+            return self
+
+        def update(self, *_args, **_kwargs):
+            raise RuntimeError("forced owner migration failure")
+
+    class FailingSession:
+        def __init__(self):
+            self.rolled_back = False
+            self.closed = False
+
+        def query(self, _model):
+            return FailingQuery()
+
+        def rollback(self):
+            self.rolled_back = True
+
+        def close(self):
+            self.closed = True
+
+    db = FailingSession()
+    monkeypatch.setattr(cdb, "SessionLocal", lambda: db)
+    monkeypatch.setattr(
+        cdb,
+        "Base",
+        SimpleNamespace(registry=SimpleNamespace(mappers=[SimpleNamespace(class_=OwnerModel)])),
+        raising=False,
+    )
+    return db
 
 
 # ---------------------------------------------------------------------------
@@ -365,7 +416,68 @@ def test_rename_usage_keys_case_insensitive(rename_endpoint):
 
 
 # ---------------------------------------------------------------------------
-# 5. P1 regression: rejected auth rename must not mutate file-backed stores
+# 5. Rollback: auth rename must be restored if SQL owner migration fails
+# ---------------------------------------------------------------------------
+
+def test_owner_migration_failure_rolls_back_auth_rename(monkeypatch, tmp_path):
+    import routes.auth_routes as ar
+
+    db = _force_sql_owner_migration_failure(monkeypatch)
+    am = _auth_manager_for_rollback_test(monkeypatch, tmp_path)
+    admin_token = am.create_session_trusted("admin")
+    alice_token = am.create_session_trusted("alice")
+    endpoint = _route(ar.setup_auth_routes(am), "rename_user")
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            endpoint(
+                "alice",
+                SimpleNamespace(username="alice2"),
+                _request(tmp_path, token=admin_token),
+            )
+        )
+
+    assert exc.value.status_code == 500
+    assert db.rolled_back is True
+    assert db.closed is True
+    assert "alice" in am.users
+    assert "alice2" not in am.users
+    assert am.get_username_for_token(alice_token) == "alice"
+    saved_users = json.loads((tmp_path / "auth.json").read_text(encoding="utf-8"))["users"]
+    assert "alice" in saved_users
+    assert "alice2" not in saved_users
+
+
+def test_self_rename_owner_migration_failure_rolls_back_auth_session(monkeypatch, tmp_path):
+    import routes.auth_routes as ar
+
+    db = _force_sql_owner_migration_failure(monkeypatch)
+    am = _auth_manager_for_rollback_test(monkeypatch, tmp_path)
+    admin_token = am.create_session_trusted("admin")
+    endpoint = _route(ar.setup_auth_routes(am), "rename_user")
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            endpoint(
+                "admin",
+                SimpleNamespace(username="chief"),
+                _request(tmp_path, token=admin_token),
+            )
+        )
+
+    assert exc.value.status_code == 500
+    assert db.rolled_back is True
+    assert db.closed is True
+    assert "admin" in am.users
+    assert "chief" not in am.users
+    assert am.get_username_for_token(admin_token) == "admin"
+    saved_users = json.loads((tmp_path / "auth.json").read_text(encoding="utf-8"))["users"]
+    assert "admin" in saved_users
+    assert "chief" not in saved_users
+
+
+# ---------------------------------------------------------------------------
+# 6. P1 regression: rejected auth rename must not mutate file-backed stores
 # ---------------------------------------------------------------------------
 
 def test_rejected_rename_does_not_mutate_files(monkeypatch, tmp_path):
