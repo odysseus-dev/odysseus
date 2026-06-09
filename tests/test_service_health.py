@@ -253,3 +253,220 @@ def test_collect_service_health_shape(monkeypatch):
     assert names == {"chromadb", "searxng", "ntfy", "email", "providers"}
     # Chroma healthy, everything else disabled → overall ok.
     assert out["overall"] == sh.OK
+
+
+# ── _safe_url: strip userinfo / query / fragment ──
+
+@pytest.mark.parametrize("raw,expected", [
+    ("http://user:pass@host:8080/path?api_key=secret#frag", "http://host:8080/path"),
+    ("https://admin:hunter2@searx.example.com/", "https://searx.example.com"),
+    ("http://ntfy.local:80?token=abc", "http://ntfy.local:80"),
+    ("host:8080", "host:8080"),
+    ("", ""),
+    (None, ""),
+])
+def test_safe_url_strips_secrets(raw, expected):
+    out = sh._safe_url(raw)
+    assert out == expected
+    for bad in ("pass", "secret", "hunter2", "abc", "token", "@"):
+        if raw and bad in raw and bad not in expected:
+            assert bad not in out
+
+
+# ── _classify_error: controlled categories, never raw text ──
+
+def test_classify_error_categories():
+    import socket
+    assert sh._classify_error(TimeoutError()) == "timeout"
+    assert sh._classify_error(socket.timeout()) == "timeout"
+    assert sh._classify_error(socket.gaierror()) == "dns_error"
+    assert sh._classify_error(ConnectionRefusedError()) == "connection_refused"
+    assert sh._classify_error(OSError("boom")) == "network_error"
+    assert sh._classify_error(ValueError("x")) == "error"
+
+
+# ── Sanitization in subsystem output (blocker #2) ──
+
+def test_searxng_meta_redacts_instance_url():
+    s = sh.searxng_health(
+        {"search_provider": "searxng",
+         "search_url": "http://user:s3cr3t@searx.local:8080/?token=zzz"},
+        http_get=lambda url, timeout: _resp(200),
+    )
+    blob = repr(s)
+    assert "s3cr3t" not in blob and "zzz" not in blob and "user:" not in blob
+    assert s["meta"]["instance"] == "http://searx.local:8080"
+
+
+def test_searxng_down_uses_error_category_not_raw_exception():
+    def boom(url, timeout):
+        raise RuntimeError("failed connecting to http://user:pw@searx.local secret-token")
+    s = sh.searxng_health(
+        {"search_provider": "searxng", "search_url": "http://searx.local"},
+        http_get=boom,
+    )
+    assert s["status"] == sh.DOWN
+    assert s["meta"]["error"] == "error"           # controlled category token
+    assert "secret-token" not in repr(s) and "pw@" not in repr(s)
+
+
+def test_ntfy_meta_redacts_userinfo_in_base():
+    intg = [{"preset": "ntfy", "enabled": True,
+             "base_url": "https://user:topsecret@ntfy.example.com"}]
+    seen = {}
+
+    def getter(url, timeout):
+        seen["url"] = url          # the probe itself may keep credentials
+        return _resp(200)
+
+    s = sh.ntfy_health(intg, {"reminder_channel": "ntfy"}, http_get=getter)
+    assert s["meta"]["base"] == "https://ntfy.example.com"
+    assert "topsecret" not in repr(s)
+
+
+def test_providers_name_fallback_is_sanitized():
+    # No display name → falls back to the base_url, which must be sanitized.
+    ep = {"base_url": "http://user:k3y@prov.local:9000/v1?api_key=zzz", "api_key": "sk-x"}
+    s = sh.providers_health([ep], probe=lambda b, k, t: ["m1"])
+    entry = s["meta"]["endpoints"][0]
+    assert entry["name"] == "http://prov.local:9000/v1"
+    assert "k3y" not in repr(s) and "zzz" not in repr(s) and "sk-x" not in repr(s)
+
+
+def test_providers_probe_exception_maps_to_category():
+    def boom(base, key, timeout):
+        raise RuntimeError(f"500 from {base} with key {key}")  # would leak base+key
+    s = sh.providers_health([_ep("a")], probe=boom)
+    assert s["status"] == sh.DOWN
+    assert s["meta"]["endpoints"][0]["error"] == "error"
+    assert "sk-secret" not in repr(s) and "http://a" not in repr(s)
+
+
+def test_email_connect_exception_maps_to_category():
+    def boom(account_id):
+        raise RuntimeError("login failed for user bob with password hunter2")
+    s = sh.email_health([_acct("a")], connect=boom)
+    assert s["status"] == sh.DOWN
+    assert s["meta"]["accounts"][0]["error"] == "error"
+    assert "hunter2" not in repr(s)
+
+
+# ── Bounded wall-clock (blocker #1) ──
+
+def test_providers_bounded_marks_slow_as_timeout(monkeypatch):
+    import time
+    monkeypatch.setattr(sh, "_FANOUT_BUDGET", 1)
+
+    def probe(base, key, timeout):
+        if "slow" in base:
+            time.sleep(10)          # would blow the budget if unbounded
+        return ["m1"]
+
+    eps = [{"name": "fast", "base_url": "http://fast", "api_key": "k"},
+           {"name": "slow", "base_url": "http://slow", "api_key": "k"}]
+    t0 = time.monotonic()
+    out = sh.providers_health(eps, probe=probe)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 4, f"providers_health not bounded: took {elapsed:.1f}s"
+    by = {e["name"]: e for e in out["meta"]["endpoints"]}
+    assert by["fast"]["ok"] is True
+    assert by["slow"]["ok"] is False and by["slow"]["error"] == "timeout"
+    assert out["status"] == sh.DEGRADED
+
+
+def test_providers_bounded_with_many_slow_endpoints(monkeypatch):
+    import time
+    monkeypatch.setattr(sh, "_FANOUT_BUDGET", 1)
+
+    def probe(base, key, timeout):
+        time.sleep(10)
+        return ["m1"]
+
+    eps = [{"name": f"ep{i}", "base_url": f"http://ep{i}", "api_key": "k"}
+           for i in range(25)]
+    t0 = time.monotonic()
+    out = sh.providers_health(eps, probe=probe)
+    elapsed = time.monotonic() - t0
+    # 25 endpoints * sleep would be huge if sequential; bounded keeps it ~budget.
+    assert elapsed < 4, f"not bounded with many endpoints: {elapsed:.1f}s"
+    assert out["status"] == sh.DOWN
+    assert all(e["error"] == "timeout" for e in out["meta"]["endpoints"])
+
+
+def test_email_bounded_marks_slow_as_timeout(monkeypatch):
+    import time
+    monkeypatch.setattr(sh, "_FANOUT_BUDGET", 1)
+
+    def connect(account_id):
+        if account_id == "slow":
+            time.sleep(10)
+        return _Conn()
+
+    accts = [_acct("fast"), _acct("slow")]
+    accts[1]["account_id"] = "slow"
+    t0 = time.monotonic()
+    out = sh.email_health(accts, connect=connect)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 4, f"email_health not bounded: took {elapsed:.1f}s"
+    by = {a["name"]: a for a in out["meta"]["accounts"]}
+    assert by["slow"]["error"] == "timeout"
+
+
+def test_collect_runs_subsystems_concurrently(monkeypatch):
+    # The aggregate is bounded by running the (internally-bounded) subsystems
+    # concurrently, so total wall-clock ≈ max(subsystem), not the sum. Each of
+    # the four network subsystems here sleeps ~0.6s; sequential would be ~2.4s.
+    import asyncio
+    import time
+    monkeypatch.setattr(sh, "_gather_inputs", lambda: {
+        "settings": {}, "integrations": [], "accounts": [], "endpoints": [],
+    })
+
+    def slow(name):
+        def _fn(*_a, **_k):
+            time.sleep(0.6)
+            return {"name": name, "status": sh.OK, "detail": "", "meta": {}}
+        return _fn
+
+    monkeypatch.setattr(sh, "searxng_health", slow("searxng"))
+    monkeypatch.setattr(sh, "ntfy_health", slow("ntfy"))
+    monkeypatch.setattr(sh, "email_health", slow("email"))
+    monkeypatch.setattr(sh, "providers_health", slow("providers"))
+
+    t0 = time.monotonic()
+    out = asyncio.run(sh.collect_service_health(None, None))
+    elapsed = time.monotonic() - t0
+    assert elapsed < 1.5, f"subsystems not concurrent: took {elapsed:.1f}s"
+    assert {s["name"] for s in out["services"]} == {
+        "chromadb", "searxng", "ntfy", "email", "providers"}
+
+
+def test_collect_aggregate_deadline_yields_controlled_result(monkeypatch):
+    # If the gather overruns the aggregate ceiling, the response is still a
+    # controlled {overall, services, timestamp} with each network subsystem
+    # marked down/timeout — never a hang or a raised exception.
+    import asyncio
+    import time
+    monkeypatch.setattr(sh, "_AGGREGATE_DEADLINE", 0.5)
+    monkeypatch.setattr(sh, "_SUBSYSTEM_DEADLINE", 0.4)
+    monkeypatch.setattr(sh, "_gather_inputs", lambda: {
+        "settings": {}, "integrations": [], "accounts": [], "endpoints": [],
+    })
+
+    async def _slow_gather(*coros, **_k):
+        for c in coros:                 # close unawaited coros to avoid warnings
+            close = getattr(c, "close", None)
+            if close:
+                close()
+        await asyncio.sleep(5)
+
+    # Force the outer wait_for to trip by making gather itself slow.
+    monkeypatch.setattr(sh.asyncio, "gather", _slow_gather)
+    t0 = time.monotonic()
+    out = asyncio.run(sh.collect_service_health(None, None))
+    elapsed = time.monotonic() - t0
+    assert elapsed < 2, f"aggregate deadline did not bound: {elapsed:.1f}s"
+    assert set(out) == {"overall", "services", "timestamp"}
+    net = [s for s in out["services"] if s["name"] != "chromadb"]
+    assert all(s["status"] == sh.DOWN and s["meta"].get("error") == "timeout"
+               for s in net)

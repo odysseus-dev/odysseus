@@ -17,14 +17,31 @@ Each probe returns:
 - down      — configured & enabled but unreachable / erroring
 - disabled  — not configured or turned off (not counted as a failure)
 
+Design notes (driven by review feedback):
+
+- **Bounded wall-clock.** Per-item probes (providers, email accounts) fan out
+  across a bounded thread pool with a hard total budget (`_FANOUT_BUDGET`);
+  stragglers are reported as a controlled `timeout` rather than blocking. The
+  aggregate adds a per-subsystem deadline (`_SUBSYSTEM_DEADLINE`) and an overall
+  ceiling (`_AGGREGATE_DEADLINE`), so the endpoint cannot hang regardless of how
+  many endpoints/accounts are configured or how slowly they respond.
+- **No secret leakage.** Even though the endpoint is admin-only, the response
+  never returns credential-bearing URLs or raw exception text: URLs are passed
+  through `_safe_url` (userinfo / query / fragment stripped) and failures are
+  mapped to controlled categories via `_classify_error`.
+
 The probe functions take their inputs as parameters (settings dict, account
-list, endpoint list, manager objects) and isolate the actual network call to
+list, endpoint list, manager objects) and isolate the network call to
 ``_http_get`` / injected callables, so they unit-test without touching the
 network.
 """
 
 import asyncio
+import concurrent.futures
 import logging
+import socket
+import ssl
+import time
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -39,18 +56,129 @@ DEGRADED = "degraded"
 DOWN = "down"
 DISABLED = "disabled"
 
-# Per-probe network budget. Kept short so the aggregate endpoint can't hang.
+# Timing budgets (seconds). _PROBE_TIMEOUT bounds a single network op;
+# _FANOUT_BUDGET bounds a whole fan-out (providers/email) regardless of count;
+# the aggregate layer adds a per-subsystem deadline and an overall ceiling.
 _PROBE_TIMEOUT = 4
+_PROBE_CONCURRENCY = 8
+_FANOUT_BUDGET = 8
+_SUBSYSTEM_DEADLINE = 10
+_AGGREGATE_DEADLINE = 14
+
+# Controlled, secret-free phrasing for each failure category.
+_ERROR_DETAIL = {
+    "timeout": "probe timed out",
+    "connection_refused": "connection refused",
+    "dns_error": "host could not be resolved",
+    "tls_error": "TLS handshake failed",
+    "network_error": "network error",
+    "http_error": "server returned an error response",
+    "auth_or_protocol_error": "authentication or protocol error",
+    "no_models": "endpoint returned no models",
+    "no_host": "no host configured",
+    "error": "probe failed",
+}
 
 
 def _svc(name: str, status: str, detail: str, **meta: Any) -> Dict[str, Any]:
     return {"name": name, "status": status, "detail": detail, "meta": dict(meta)}
 
 
+def _safe_url(url: Optional[str]) -> str:
+    """Strip credentials (userinfo), query, and fragment from a URL.
+
+    Keeps scheme / host / port / path so the report is still useful, but never
+    echoes `user:pass@`, `?api_key=…`, or `#…` back to the caller. Returns
+    "<redacted>" if the URL can't be parsed into at least a host.
+    """
+    if not url:
+        return ""
+    raw = url.strip()
+    try:
+        p = urlparse(raw if "://" in raw else "//" + raw)
+        host = p.hostname or ""
+        if not host:
+            return "<redacted>"
+        netloc = f"{host}:{p.port}" if p.port else host
+        path = (p.path or "").rstrip("/")
+        scheme = f"{p.scheme}://" if p.scheme else ""
+        return f"{scheme}{netloc}{path}"
+    except Exception:
+        return "<redacted>"
+
+
+def _classify_error(exc: BaseException) -> str:
+    """Map an exception to a controlled, secret-free category token.
+
+    Never returns `str(exc)` — httpx/imaplib exception text can embed the target
+    URL (which may carry credentials) or server-supplied detail.
+    """
+    if isinstance(exc, (asyncio.TimeoutError, concurrent.futures.TimeoutError,
+                        TimeoutError, socket.timeout)):
+        return "timeout"
+    name = type(exc).__name__
+    mod = (type(exc).__module__ or "")
+    if isinstance(exc, ssl.SSLError) or "SSL" in name or "Certificate" in name:
+        return "tls_error"
+    if isinstance(exc, socket.gaierror) or name in ("gaierror", "herror"):
+        return "dns_error"
+    if isinstance(exc, ConnectionRefusedError) or "ConnectionRefused" in name \
+            or name in ("ConnectError",):
+        return "connection_refused"
+    if "Timeout" in name:
+        return "timeout"
+    if mod.startswith("imaplib") or name in ("error", "abort", "readonly"):
+        return "auth_or_protocol_error"
+    if name == "HTTPStatusError":
+        return "http_error"
+    if name in ("ConnectTimeout", "ReadTimeout", "ReadError", "WriteError",
+                "PoolTimeout", "RemoteProtocolError", "NetworkError",
+                "ProxyError", "ProtocolError"):
+        return "network_error"
+    if isinstance(exc, OSError):
+        return "network_error"
+    return "error"
+
+
+def _detail_for(category: str) -> str:
+    return _ERROR_DETAIL.get(category, _ERROR_DETAIL["error"])
+
+
 def _http_get(url: str, timeout: float = _PROBE_TIMEOUT):
     """Single network entry point for the HTTP probes (monkeypatched in tests)."""
     import httpx
     return httpx.get(url, timeout=timeout)
+
+
+def _bounded_map(items: List[Any], worker: Callable[[int, Any], Dict[str, Any]],
+                 *, budget: float = _FANOUT_BUDGET,
+                 concurrency: int = _PROBE_CONCURRENCY) -> List[Optional[Dict[str, Any]]]:
+    """Run ``worker(index, item)`` across a bounded thread pool, in order.
+
+    `worker` must catch its own exceptions and return a per-item dict. Any item
+    not finished within `budget` seconds *in total* is left as ``None`` (the
+    caller substitutes a controlled `timeout` entry). The pool is shut down with
+    ``wait=False`` so stragglers never block the response — their own per-op
+    timeout reaps them shortly after.
+    """
+    n = len(items)
+    out: List[Optional[Dict[str, Any]]] = [None] * n
+    if n == 0:
+        return out
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(concurrency, n)))
+    futures = {ex.submit(worker, i, items[i]): i for i in range(n)}
+    try:
+        for fut in concurrent.futures.as_completed(futures, timeout=budget):
+            i = futures[fut]
+            try:
+                out[i] = fut.result()
+            except Exception as e:  # worker is expected to handle its own errors
+                out[i] = {"ok": False, "error": _classify_error(e)}
+    except concurrent.futures.TimeoutError:
+        pass  # unfinished items stay None → marked timeout by the caller
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
+    return out
 
 
 # ── ChromaDB (vector RAG + vector memory) ──
@@ -98,8 +226,9 @@ def searxng_health(settings: Dict[str, Any],
                    *, http_get: Callable = _http_get) -> Dict[str, Any]:
     """Non-intrusive reachability probe for the configured SearXNG instance.
 
-    Tries `/healthz`, falling back to the instance root; any status < 500 means
-    the instance answered. No search query is run.
+    Tries `/healthz` (2xx), falling back to the instance root (any non-5xx means
+    the host answered). No search query is run. The configured instance is
+    probed in full, but only its sanitized form is returned in `meta`.
     """
     provider = (settings.get("search_provider") or "searxng")
     if provider != "searxng":
@@ -109,10 +238,8 @@ def searxng_health(settings: Dict[str, Any],
     instance = _searxng_instance(settings)
     if not instance:
         return _svc("searxng", DISABLED, "No SearXNG instance configured.")
-    # /healthz is the preferred signal (must answer 2xx). If it's missing or
-    # erroring, fall back to the instance root and accept any non-5xx as
-    # "the host answered" — a search-engine UI returning 200/3xx/4xx is up.
-    last = "no response"
+    safe_instance = _safe_url(instance)
+    last_category = "error"
     for path, accept in (("/healthz", lambda c: 200 <= c < 300),
                          ("/", lambda c: 0 < c < 500)):
         try:
@@ -120,11 +247,12 @@ def searxng_health(settings: Dict[str, Any],
             code = getattr(r, "status_code", 0)
             if accept(code):
                 return _svc("searxng", OK, f"Reachable (HTTP {code}).",
-                            instance=instance, probed=path)
-            last = f"HTTP {code}"
+                            instance=safe_instance, probed=path, http_status=code)
+            last_category = "http_error"
         except Exception as e:  # connection refused, DNS, timeout, …
-            last = str(e)[:160]
-    return _svc("searxng", DOWN, f"Unreachable: {last}", instance=instance)
+            last_category = _classify_error(e)
+    return _svc("searxng", DOWN, f"Unreachable ({_detail_for(last_category)}).",
+                instance=safe_instance, error=last_category)
 
 
 # ── ntfy ──
@@ -143,7 +271,8 @@ def ntfy_health(integrations: List[Dict[str, Any]], settings: Dict[str, Any],
     """Non-intrusive ntfy probe via the server's built-in `/v1/health` route.
 
     No test notification is POSTed — `/v1/health` returns `{"healthy":true}`
-    without publishing to a topic.
+    without publishing to a topic. The request keeps whatever credentials the
+    configured base_url carries, but `meta.base` is sanitized.
     """
     channel = settings.get("reminder_channel") or "browser"
     intg = _ntfy_integration(integrations)
@@ -152,113 +281,119 @@ def ntfy_health(integrations: List[Dict[str, Any]], settings: Dict[str, Any],
                     reminder_channel=channel)
     raw = (intg.get("base_url") or "").strip()
     parsed = urlparse(raw)
-    base = (f"{parsed.scheme}://{parsed.netloc}"
-            if parsed.scheme and parsed.netloc else raw.rstrip("/"))
-    headers_url = base + "/v1/health"
+    probe_base = (f"{parsed.scheme}://{parsed.netloc}"
+                  if parsed.scheme and parsed.netloc else raw.rstrip("/"))
+    safe_base = _safe_url(raw)
     try:
-        r = http_get(headers_url, timeout=_PROBE_TIMEOUT)
+        r = http_get(probe_base + "/v1/health", timeout=_PROBE_TIMEOUT)
         code = getattr(r, "status_code", 0)
         if code and code < 500:
             return _svc("ntfy", OK, f"Reachable (HTTP {code}).",
-                        base=base, reminder_channel=channel)
-        return _svc("ntfy", DOWN, f"ntfy returned HTTP {code}.",
-                    base=base, reminder_channel=channel)
+                        base=safe_base, reminder_channel=channel, http_status=code)
+        return _svc("ntfy", DOWN, "Server returned an error response.",
+                    base=safe_base, reminder_channel=channel, error="http_error")
     except Exception as e:
-        return _svc("ntfy", DOWN, f"Unreachable: {str(e)[:160]}",
-                    base=base, reminder_channel=channel)
+        category = _classify_error(e)
+        return _svc("ntfy", DOWN, f"Unreachable ({_detail_for(category)}).",
+                    base=safe_base, reminder_channel=channel, error=category)
 
 
 # ── Email (IMAP) ──
 
 def email_health(accounts: List[Dict[str, Any]],
                  *, connect: Optional[Callable] = None) -> Dict[str, Any]:
-    """Try a short IMAP connect+logout per configured account.
+    """Try a short IMAP connect+logout per configured account, concurrently.
 
     All connect → ok. Some fail → degraded. All fail → down. No account
-    configured → disabled. `meta` never contains credentials.
+    configured → disabled. Bounded by `_FANOUT_BUDGET` regardless of count.
+    `meta` carries only the account label and a controlled error category —
+    never credentials or raw exception text.
     """
     if not accounts:
         return _svc("email", DISABLED, "No email accounts configured.")
     if connect is None:
-        from routes.email_helpers import _imap_connect as connect
+        from routes.email_helpers import _imap_connect
+        # Impose the service-health budget on the IMAP connect itself.
+        connect = lambda aid: _imap_connect(aid, timeout=_PROBE_TIMEOUT)  # noqa: E731
 
-    per_account = []
-    ok_count = 0
-    for acc in accounts:
-        name = acc.get("account_name") or acc.get("account_id") or "account"
-        host = acc.get("imap_host") or ""
-        if not host:
-            per_account.append({"name": name, "ok": False,
-                                "error": "no IMAP host configured"})
-            continue
+    def _label(acc: Dict[str, Any]) -> str:
+        return acc.get("account_name") or acc.get("account_id") or "account"
+
+    def _check(_i: int, acc: Dict[str, Any]) -> Dict[str, Any]:
+        name = _label(acc)
+        if not (acc.get("imap_host") or ""):
+            return {"name": name, "ok": False, "error": "no_host"}
         try:
             conn = connect(acc.get("account_id"))
             try:
                 conn.logout()
             except Exception:
                 pass
-            ok_count += 1
-            per_account.append({"name": name, "ok": True, "error": None})
+            return {"name": name, "ok": True, "error": None}
         except Exception as e:
-            per_account.append({"name": name, "ok": False,
-                                "error": str(e)[:160]})
+            return {"name": name, "ok": False, "error": _classify_error(e)}
 
-    total = len(per_account)
-    if ok_count == total:
-        return _svc("email", OK, f"{ok_count}/{total} mailbox(es) reachable.",
-                    accounts=per_account)
-    if ok_count == 0:
-        return _svc("email", DOWN, "No mailboxes reachable.",
-                    accounts=per_account)
-    return _svc("email", DEGRADED,
-                f"{ok_count}/{total} mailbox(es) reachable.",
-                accounts=per_account)
+    raw = _bounded_map(accounts, _check, budget=_FANOUT_BUDGET,
+                       concurrency=_PROBE_CONCURRENCY)
+    per_account = [r if r is not None
+                   else {"name": _label(accounts[i]), "ok": False, "error": "timeout"}
+                   for i, r in enumerate(raw)]
+    return _rollup_items("email", "mailbox(es)", per_account)
 
 
 # ── Provider endpoints ──
 
 def providers_health(endpoints: List[Dict[str, Any]],
                      *, probe: Optional[Callable] = None) -> Dict[str, Any]:
-    """Probe each enabled model endpoint's model list.
+    """Probe each enabled model endpoint's model list, concurrently.
 
     `endpoints` is a list of plain dicts ({name, base_url, api_key}) so this
     stays decoupled from the ORM and trivially testable. Non-empty model list
-    → reachable. All reachable → ok; some fail → degraded; all fail → down.
-    `meta` never contains api_key.
+    → reachable. Bounded by `_FANOUT_BUDGET` regardless of count. `meta` never
+    contains api_key or raw URLs — only a display name (or a sanitized URL when
+    no name is set) and a controlled error category.
     """
     if not endpoints:
         return _svc("providers", DISABLED, "No model endpoints configured.")
     if probe is None:
         from routes.model_routes import _probe_endpoint as probe
 
-    per_endpoint = []
-    ok_count = 0
-    for ep in endpoints:
-        name = ep.get("name") or ep.get("base_url") or "endpoint"
+    def _label(ep: Dict[str, Any]) -> str:
+        return ep.get("name") or _safe_url(ep.get("base_url")) or "endpoint"
+
+    def _check(_i: int, ep: Dict[str, Any]) -> Dict[str, Any]:
+        name = _label(ep)
         try:
             models = probe(ep.get("base_url"), ep.get("api_key"),
                            timeout=_PROBE_TIMEOUT) or []
         except Exception as e:
-            per_endpoint.append({"name": name, "ok": False,
-                                 "model_count": 0, "error": str(e)[:160]})
-            continue
+            return {"name": name, "ok": False, "model_count": 0,
+                    "error": _classify_error(e)}
         count = len(models)
-        if count:
-            ok_count += 1
-        per_endpoint.append({"name": name, "ok": bool(count),
-                             "model_count": count,
-                             "error": None if count else "no models returned"})
+        return {"name": name, "ok": bool(count), "model_count": count,
+                "error": None if count else "no_models"}
 
-    total = len(per_endpoint)
+    raw = _bounded_map(endpoints, _check, budget=_FANOUT_BUDGET,
+                       concurrency=_PROBE_CONCURRENCY)
+    per_endpoint = [r if r is not None
+                    else {"name": _label(endpoints[i]), "ok": False,
+                          "model_count": 0, "error": "timeout"}
+                    for i, r in enumerate(raw)]
+    return _rollup_items("providers", "endpoint(s)", per_endpoint, key="endpoints")
+
+
+def _rollup_items(name: str, noun: str, items: List[Dict[str, Any]],
+                  key: str = "accounts") -> Dict[str, Any]:
+    """Shared ok/degraded/down rollup for a list of per-item probe results."""
+    total = len(items)
+    ok_count = sum(1 for it in items if it.get("ok"))
     if ok_count == total:
-        return _svc("providers", OK, f"{ok_count}/{total} endpoint(s) reachable.",
-                    endpoints=per_endpoint)
-    if ok_count == 0:
-        return _svc("providers", DOWN, "No endpoints reachable.",
-                    endpoints=per_endpoint)
-    return _svc("providers", DEGRADED,
-                f"{ok_count}/{total} endpoint(s) reachable.",
-                endpoints=per_endpoint)
+        status, detail = OK, f"{ok_count}/{total} {noun} reachable."
+    elif ok_count == 0:
+        status, detail = DOWN, f"No {noun} reachable."
+    else:
+        status, detail = DEGRADED, f"{ok_count}/{total} {noun} reachable."
+    return _svc(name, status, detail, **{key: items})
 
 
 # ── Aggregate ──
@@ -313,12 +448,30 @@ def _gather_inputs() -> Dict[str, Any]:
             "accounts": accounts, "endpoints": endpoints}
 
 
+async def _run_subsystem(name: str, fn: Callable, *args: Any) -> Dict[str, Any]:
+    """Run one (sync) subsystem probe in a thread under a hard deadline.
+
+    A subsystem that overruns `_SUBSYSTEM_DEADLINE` (or raises) becomes a
+    controlled `down`/`timeout` entry instead of hanging or leaking the error.
+    """
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(fn, *args),
+                                      timeout=_SUBSYSTEM_DEADLINE)
+    except asyncio.TimeoutError:
+        return _svc(name, DOWN, _detail_for("timeout"), error="timeout")
+    except Exception as e:
+        category = _classify_error(e)
+        return _svc(name, DOWN, _detail_for(category), error=category)
+
+
 async def collect_service_health(rag_manager: Any = None,
                                  memory_vector: Any = None) -> Dict[str, Any]:
     """Run every probe and return {overall, services, timestamp}.
 
-    Blocking probes (IMAP, sync HTTP) run in worker threads so they don't block
-    the event loop, and they run concurrently with a bounded wall-clock.
+    Bounded end-to-end: in-process ChromaDB flags are read synchronously; the
+    four network subsystems run concurrently, each under `_SUBSYSTEM_DEADLINE`,
+    with an overall `_AGGREGATE_DEADLINE` backstop. Per-item probes inside
+    providers/email are themselves bounded by `_FANOUT_BUDGET`.
     """
     from datetime import datetime, timezone
 
@@ -328,23 +481,22 @@ async def collect_service_health(rag_manager: Any = None,
     # ChromaDB is in-process and synchronous (just reads flags).
     chroma = chromadb_health(rag_manager, memory_vector)
 
-    # The rest touch the network — fan out across threads.
-    results = await asyncio.gather(
-        asyncio.to_thread(searxng_health, settings),
-        asyncio.to_thread(ntfy_health, inputs["integrations"], settings),
-        asyncio.to_thread(email_health, inputs["accounts"]),
-        asyncio.to_thread(providers_health, inputs["endpoints"]),
-        return_exceptions=True,
-    )
     names = ["searxng", "ntfy", "email", "providers"]
-    services = [chroma]
-    for name, res in zip(names, results):
-        if isinstance(res, Exception):
-            logger.warning(f"service_health: {name} probe errored: {res}")
-            services.append(_svc(name, DOWN, f"Probe error: {str(res)[:160]}"))
-        else:
-            services.append(res)
+    coros = [
+        _run_subsystem("searxng", searxng_health, settings),
+        _run_subsystem("ntfy", ntfy_health, inputs["integrations"], settings),
+        _run_subsystem("email", email_health, inputs["accounts"]),
+        _run_subsystem("providers", providers_health, inputs["endpoints"]),
+    ]
+    try:
+        results = await asyncio.wait_for(asyncio.gather(*coros),
+                                         timeout=_AGGREGATE_DEADLINE)
+    except asyncio.TimeoutError:
+        # Hard backstop — should not normally fire given per-subsystem deadlines.
+        results = [_svc(n, DOWN, _detail_for("timeout"), error="timeout")
+                   for n in names]
 
+    services = [chroma, *results]
     return {
         "overall": _rollup(services),
         "services": services,
