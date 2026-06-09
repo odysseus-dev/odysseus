@@ -1217,8 +1217,28 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
             srv = db.query(McpServer).filter(McpServer.id == sid).first()
             if not srv:
                 return {"error": f"Server {sid} not found", "exit_code": 1}
-            srv.is_enabled = (action == "enable")
+            enabled = (action == "enable")
+            srv.is_enabled = enabled
             db.commit()
+            mcp = get_mcp_manager()
+            if mcp:
+                try:
+                    if enabled:
+                        _args = json.loads(srv.args) if srv.args else []
+                        _env = json.loads(srv.env) if srv.env else {}
+                        await mcp.connect_server(
+                            server_id=sid,
+                            name=srv.name,
+                            transport=srv.transport,
+                            command=srv.command,
+                            args=_args,
+                            env=_env,
+                            url=srv.url,
+                        )
+                    else:
+                        await mcp.disconnect_server(sid)
+                except Exception as e:
+                    logger.warning(f"MCP live {action} failed for {srv.name}: {e}")
             return {"response": f"MCP server '{srv.name}' {action}d", "exit_code": 0}
         finally:
             db.close()
