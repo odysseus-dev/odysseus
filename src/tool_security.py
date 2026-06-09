@@ -3,20 +3,9 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Optional, Set
 
 logger = logging.getLogger(__name__)
-
-
-def _auth_intentionally_disabled() -> bool:
-    """True when the operator has explicitly turned auth off (AUTH_ENABLED=false).
-
-    This is the intentional single-user / local self-host mode. Mirrors the
-    AUTH_ENABLED parsing in app.py / core.middleware so the tool layer agrees
-    with the request layer on what "no auth" means.
-    """
-    return os.getenv("AUTH_ENABLED", "true").strip().lower() == "false"
 
 
 # Tools regular/public users must not execute directly. These either expose
@@ -190,7 +179,9 @@ def owner_is_admin_or_single_user(owner: Optional[str]) -> bool:
 
         auth = AuthManager()
         if not auth.is_configured:
-            return _auth_intentionally_disabled()
+            from src.auth_helpers import _auth_disabled
+
+            return _auth_disabled()
         return bool(owner and auth.is_admin(owner))
     except Exception as exc:
         logger.warning("Unable to evaluate owner admin status: %s", exc)
