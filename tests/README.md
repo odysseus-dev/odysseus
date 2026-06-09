@@ -33,6 +33,20 @@ the sub-area. The `area_*` names are registered in `pyproject.toml`; the dynamic
 `sub_*` names are registered before collection by `pytest_configure` in
 `tests/conftest.py`, so unknown-mark warnings still flag genuine typos.
 
+For common focused runs, use `tests/run_focus.py`. It validates area and
+sub-area names, accepts sub-areas with or without the `sub_` prefix, and passes
+extra pytest arguments after `--`:
+
+```bash
+python3 tests/run_focus.py --area security
+python3 tests/run_focus.py --area services --sub-area cookbook
+python3 tests/run_focus.py --sub-area sub_cookbook
+python3 tests/run_focus.py --keyword taxonomy
+python3 tests/run_focus.py --last-failed
+python3 tests/run_focus.py --dry-run --area services --sub-area cookbook
+python3 tests/run_focus.py --area services -- --maxfail=1 -q
+```
+
 ## Core principles
 
 - Keep PRs small and homogeneous: one kind of change per PR.
