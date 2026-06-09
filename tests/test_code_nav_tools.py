@@ -14,6 +14,10 @@ def _run(tool, content):
     return asyncio.run(_direct_fallback(tool, content))
 
 
+def _run_workspace(tool, content, workspace):
+    return asyncio.run(_direct_fallback(tool, content, workspace=workspace))
+
+
 @pytest.fixture
 def repo():
     # Built under /tmp, which is on the default tool-path allowlist.
@@ -31,6 +35,22 @@ def repo():
         os.mkdir(g)
         with open(os.path.join(g, "config"), "w") as f:
             f.write("needle in git\n")
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.fixture
+def home_workspace():
+    # Keep this outside the default data/tmp tool roots so workspace-aware
+    # resolution is the only way code-nav tools can reach it.
+    root = tempfile.mkdtemp(
+        dir=os.path.expanduser("~"),
+        prefix=".odysseus_codenav_workspace_",
+    )
+    try:
+        with open(os.path.join(root, "agent_marker.py"), "w") as f:
+            f.write("# workspace needle\n")
         yield root
     finally:
         shutil.rmtree(root, ignore_errors=True)
@@ -88,6 +108,16 @@ def test_grep_python_fallback_when_no_rg(repo, monkeypatch):
     assert ".git/config" not in r["output"]
 
 
+def test_grep_searches_active_workspace_relative_path(home_workspace):
+    r = _run_workspace(
+        "grep",
+        '{"pattern": "workspace needle", "path": "."}',
+        workspace=home_workspace,
+    )
+    assert r["exit_code"] == 0
+    assert "agent_marker.py:1:" in r["output"]
+
+
 # ── glob ──────────────────────────────────────────────────────────────────
 
 def test_glob_py(repo):
@@ -107,6 +137,16 @@ def test_glob_requires_pattern(repo):
     assert r["exit_code"] == 1
 
 
+def test_glob_searches_active_workspace_relative_path(home_workspace):
+    r = _run_workspace(
+        "glob",
+        '{"pattern": "*.py", "path": "."}',
+        workspace=home_workspace,
+    )
+    assert r["exit_code"] == 0
+    assert "agent_marker.py" in r["output"]
+
+
 # ── ls ────────────────────────────────────────────────────────────────────
 
 def test_ls_lists_entries(repo):
@@ -121,6 +161,12 @@ def test_ls_path_outside_rejected(repo):
     r = _run("ls", '{"path": "/etc"}')
     assert r["exit_code"] == 1
     assert "outside the allowed roots" in r["error"]
+
+
+def test_ls_defaults_to_active_workspace(home_workspace):
+    r = _run_workspace("ls", "{}", workspace=home_workspace)
+    assert r["exit_code"] == 0
+    assert "agent_marker.py" in r["output"]
 
 
 # ── read_file line range ───────────────────────────────────────────────────

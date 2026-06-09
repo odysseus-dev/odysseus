@@ -214,13 +214,17 @@ def get_mcp_manager():
 
 
 
-def _resolve_search_root(raw_path: str) -> str:
+def _resolve_search_root(raw_path: str, workspace: Optional[str] = None) -> str:
     """Resolve + confine a code-nav path (grep/glob/ls).
 
     An empty path defaults to the agent's primary root (project data dir) and a
     supplied path is confined by the global allowlist + sensitive-file policy.
+    When a workspace is active, relative paths and the empty path resolve under
+    that workspace instead, matching read_file/write_file/edit_file behavior.
     """
     raw = (raw_path or "").strip()
+    if workspace:
+        return _resolve_tool_path_in_workspace(workspace, raw or ".")
     if not raw:
         roots = _tool_path_roots()
         return roots[0] if roots else os.path.realpath(".")
@@ -635,7 +639,9 @@ async def execute_tool_block(
         # Code-navigation tools — no MCP server; run the direct implementation.
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
-        result = await _direct_fallback(tool, content, progress_cb=progress_cb) \
+        result = await _direct_fallback(
+            tool, content, progress_cb=progress_cb, workspace=workspace
+        ) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
     elif tool == "create_document":
         title = content.split("\n")[0].strip()[:60]
