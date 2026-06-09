@@ -2120,7 +2120,91 @@ graph TD
 - **Skill Importer (`services/memory/skill_importer.py`)**: Handles the ingest of external skill packs (like those from the integrations folder), safely validating content without trusting external metadata completely.
 - **Manager (`services/memory/skills.py`)**: The central service that orchestrates reading and writing skills to the local disk and synchronizing them with the Vector Database for semantic retrieval later.
 
-## 63. Known Issues & Future Improvements
+
+## 64. Deep Dive: Agent Tools Subsystem (`src/agent_tools/`)
+
+Odysseus provides its agent loop with a suite of highly privileged, local-first tools. These are organized functionally to limit scope and ensure secure execution.
+
+```mermaid
+graph TD
+    Agent[Agent Loop] --> Executor[src/tool_execution.py]
+    Executor --> Policy[src/tool_policy.py]
+    Policy --> |Approved| Dispatcher
+    Dispatcher --> FS[src/agent_tools/filesystem_tools.py]
+    Dispatcher --> Bash[src/agent_tools/subprocess_tools.py]
+    Dispatcher --> Web[src/agent_tools/web_tools.py]
+```
+
+### Components
+- **Filesystem Tools (`src/agent_tools/filesystem_tools.py`)**: Provides concrete implementations for `read_file`, `write_file`, `list_directory`, etc. These tools are heavily sandboxed by the policy layer, meaning they generally cannot escape the `data/` directory unless explicitly authorized by an admin context.
+- **Subprocess Tools (`src/agent_tools/subprocess_tools.py`)**: Allows the agent to run arbitrary shell commands. It manages timeout constraints, captures `stdout` and `stderr` safely, and ensures long-running processes do not hang the main agent loop.
+- **Web Tools (`src/agent_tools/web_tools.py`)**: Includes utilities for fetching webpage content, often interacting with local headless browsers or `BeautifulSoup` to strip away visual clutter and return clean markdown directly to the agent's context.
+
+
+---
+
+## 65. Deep Dive: Internal Services (`services/`)
+
+The `services/` directory is reserved for self-contained, domain-specific modules that act as autonomous actors or external bridges, rather than core request/response routing.
+
+```mermaid
+graph TD
+    App[FastAPI App] --> HW[services/hwfit/]
+    App --> Faces[services/faces/]
+    App --> Audio[services/stt/ & services/tts/]
+```
+
+### Components
+- **Hardware Fitness (`services/hwfit/`)**: Profiles the host machine dynamically. It uses utilities like `nvidia-smi` (via Python wrappers) or macOS `sysctl` to estimate available VRAM and system memory, which is then communicated to the frontend so it can warn users before downloading models that are too large.
+- **Model Discovery (`services/faces/`)**: Aggregates the available "faces" or model personas. It polls connected providers (like a local Ollama instance or remote APIs) and synthesizes a unified list for the `modelPicker.js` UI, caching the results to prevent UI lag.
+- **Speech Processing (`services/stt/` & `services/tts/`)**: Manages the abstraction over audio processing. For STT, it can process Whisper models. For TTS, it manages integrations with local Kokoro-82M endpoints or falls back to browser-based synthesized voices, maintaining audio caches to speed up repeated text generations.
+
+
+---
+
+## 66. Deep Dive: Core Platform Mechanisms (`core/`)
+
+The `core/` package provides the foundational bedrock upon which the rest of the application runs. It handles the lowest-level concerns such as database connections, security headers, and cross-platform file IO.
+
+```mermaid
+graph TD
+    App[FastAPI] --> Middleware[core/middleware.py]
+    App --> IO[core/atomic_io.py]
+    App --> OS[core/platform_compat.py]
+    Middleware --> Security[CSP / Isolation]
+    IO --> Disk[Local FS]
+```
+
+### Components
+- **Atomic IO (`core/atomic_io.py`)**: Provides safe file-writing operations using temporary files and atomic renames. This ensures that a sudden power loss or application crash during a save operation (e.g., updating a `user_prefs.json`) does not result in a corrupted, zero-byte file.
+- **Platform Compatibility (`core/platform_compat.py`)**: Normalizes differences between Windows, macOS, and Linux. This includes abstracting file path creation, permission handling (which differs vastly between POSIX and NTFS), and process signal management.
+- **Security Middleware (`core/middleware.py`)**: Intercepts all incoming requests to inject critical headers. It enforces the Content Security Policy (CSP), mitigates clickjacking by preventing framing (except on specific routes like the PDF previewer), and ensures cross-origin isolation where necessary.
+
+
+---
+
+## 67. Deep Dive: Frontend Realtime Streaming & Chat
+
+The real-time conversational UI relies heavily on Server-Sent Events (SSE) to update the UI without dropping frames or blocking user input during long text generations.
+
+```mermaid
+graph TD
+    User[Client Input] --> Chat[static/js/chat.js]
+    Chat --> Fetch[POST /api/chat]
+    Fetch --> SSE[static/js/chatStream.js]
+    SSE --> Renderer[static/js/streamingRenderer.js]
+    SSE --> Segmenter[static/js/streamingSegmenter.js]
+    Segmenter --> DOM[Updates to Message Bubble]
+```
+
+### Components
+- **Chat Orchestrator (`static/js/chat.js` & `chatRenderer.js`)**: The primary controller that captures user inputs, manages auto-scrolling, and delegates message rendering. It keeps the local message state in sync with the server response.
+- **SSE Consumer (`static/js/chatStream.js`)**: Opens the event stream and listens to JSON lines. It handles network disconnects, error codes, and maps raw text deltas into actionable state updates for the renderer.
+- **Render Engine (`static/js/streamingRenderer.js` & `streamingSegmenter.js`)**: As tokens arrive sequentially, they are batched and flushed to the DOM. The segmenter handles complex boundary logic (e.g., detecting when a markdown code block ` ``` ` begins or ends) to ensure syntax highlighting is only applied once a block is complete, avoiding constant, CPU-heavy re-parsing of incomplete HTML.
+
+
+
+## 68. Known Issues & Future Improvements
 
 While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
 
