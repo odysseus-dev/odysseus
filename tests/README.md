@@ -150,15 +150,26 @@ Use for the repeated file-backed temp sqlite setup in tests.
   under test reads, and must keep the returned objects alive.
 - Do not use it as a general DB fixture framework.
 
+### `tests.helpers.db_stubs.make_core_db_stub`
+
+Use for small import-time `core.database` stubs with a placeholder
+`SessionLocal`.
+
+- Pass model names via `models` when MagicMock attributes are sufficient.
+- Pass `attributes` when an import needs exact placeholder values.
+- Set `install_core_package=True` only when the test also needs a fake parent
+  `core` module stub.
+- Keep custom fake sessions and route-specific database behavior local.
+
 ## What not to abstract yet
 
 Some remaining patterns should stay as-is for now rather than being forced into
 helpers:
 
 - Large mixed files such as security/review regression files.
-- Setup-oriented `sys.modules` stub installers.
+- Broad setup-oriented `sys.modules` stub installers.
 - One-off custom module patching.
-- DB/session/route setup, until it has been audited separately.
+- Custom DB session, route, and app setup.
 
 ## Validation expectations
 
@@ -178,7 +189,7 @@ Run validation locally before opening or approving a PR. Practical checks:
 
 1. Import-state cleanup - complete.
 2. Document helper conventions (this file).
-3. Audit fake DB / `SessionLocal` / route setup duplication.
-4. Add tiny helpers only when the repeated semantics are clear.
+3. Pilot the repeated import-time `core.database` stub helper.
+4. Add further tiny helpers only when the repeated semantics are clear.
 5. Start low-risk file moves only after helper conventions are documented.
 6. Avoid moving high-risk security/route regression files first.
