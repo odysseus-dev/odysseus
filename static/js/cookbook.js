@@ -1779,7 +1779,7 @@ function _renderRecipes() {
   html += `<button class="cookbook-btn cookbook-dl-btn" id="cookbook-dl-btn">Download</button>`;
   html += `</div>`;
   // Latest HF models that fit — collapsible card list
-  html += `<div style="margin-top:5px;position:relative;top:-3px;">`;
+  html += `<div style="margin-top:5px;position:relative;top:-7px;">`;
   html += `<div style="display:flex;gap:4px;align-items:center;">`;
   html += `<button type="button" class="memory-toolbar-btn" id="cookbook-hf-latest-toggle" style="flex:1;text-align:left;height:26px;display:flex;align-items:center;gap:6px;border-radius:4px;">`;
   html += `<span id="cookbook-hf-latest-arrow" style="display:inline-block;transition:transform 0.15s;pointer-events:none;">\u25B8</span>`;

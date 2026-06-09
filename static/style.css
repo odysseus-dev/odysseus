@@ -18938,6 +18938,8 @@ body.gallery-selecting .gallery-dl-btn,
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
+  position: relative;
+  top: -2px;
 }
 .cookbook-dep-rebuild:hover {
   background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
