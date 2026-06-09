@@ -399,3 +399,92 @@ graph TD
 - **Pytest Suite (`tests/`)**: High-coverage Python testing logic isolating the agent, session, search, and uploading modules.
 - **Streaming Invariants (`tests/streaming/`)**: Node.js harness scripts ensuring the Server-Sent Event boundary (`streamingSegmenter.js`) accurately matches equivalent static Markdown rendering paths without leaking mid-generation tags.
 - **Operational CLI (`scripts/`)**: Repositories for standalone CLI ops, from database maintenance (`update_database.py`), headless model indexing (`index_documents.py`), hardware profiling scripts, and GitHub action analyzers (`pr_blocker_audit.py`).
+
+## 22. Deep Dive: API Routing & Controllers (`routes/`)
+
+Odysseus isolates the API surface area from business logic through a highly modular router design. Instead of a monolithic routing file, the application features over 40 distinct route controllers in the `routes/` directory.
+
+### Routing Organization
+- **`app.py` Mounting:** The primary FastAPI application imports and mounts these routers using `include_router`.
+- **Feature Encapsulation:** Endpoints are strictly scoped to their domain. For instance, `document_routes.py` manages all `GET/POST /api/documents` operations, while `chat_routes.py` handles generation and SSE streams.
+- **Helper Extraction:** Complex or reusable logic inside a router is often extracted to a companion file (e.g., `chat_helpers.py`, `document_helpers.py`, `cookbook_helpers.py`).
+- **Security Scope:** Middleware ensures that endpoints are protected based on user roles. Most routers perform their own checks against `get_current_user` to restrict data access to the session owner. Certain administrative routes (`api_token_routes.py`, `webhook_routes.py`) mandate a higher privilege level via `require_admin`.
+
+---
+
+## 23. Deep Dive: Chat Processing & Engine Logic (`src/`)
+
+The core execution of conversational AI interactions lives primarily in `src/chat_processor.py`, `src/chat_handler.py`, and `src/agent_runs.py`.
+
+```mermaid
+graph TD
+    Client[Web UI] --> Route[routes/chat_routes.py]
+    Route --> CoreHandler[src/chat_handler.py]
+    CoreHandler --> AuthContext[Context & Security Checks]
+    CoreHandler --> Processor[src/chat_processor.py]
+    Processor --> |RAG/Search Injection| AgentLoop[src/agent_loop.py]
+    AgentLoop --> LLM[src/llm_core.py]
+    LLM -.-> |Stream Generator| Runs[src/agent_runs.py Background Task]
+    Runs -.-> |SSE| Client
+```
+
+### Components
+- **`chat_handler.py`:** Parses incoming chat requests, manages attachment validations, coerces sessions, and sets up the async streams.
+- **`chat_processor.py`:** Applies NLP tasks. It checks for stopwords, extracts URLs directly via regex for immediate search querying, and handles security logic (like `UNTRUSTED_CONTEXT_POLICY`) to sanitize unsafe context windows.
+- **`agent_runs.py`:** Implements detached agent-runs. The model streams text even if the browser drops the SSE connection. This module catches the stream into a replay buffer that users can re-subscribe to upon page refresh, preventing mid-thought data loss.
+
+---
+
+## 24. Deep Dive: Document & Workspace Logic
+
+Odysseus supports an AI-assisted rich text and markdown editor.
+
+### Components
+- **`src/document_processor.py`:** Determines if a document is code, text, or binary. Applies syntax formatting to specific extensions and prepares text to be manipulated by the LLM.
+- **`src/document_actions.py`:** Contains functions that process AI commands on documents (like inpainting, summarization, or translation) directly on the document body.
+
+---
+
+## 25. Deep Dive: Tasks, Background Jobs & Notes
+
+Odysseus implements a built-in scheduler to manage long-running operations and recurring events natively.
+
+### Components
+- **`src/task_scheduler.py`:** An asynchronous scheduler managing `ScheduledTask` entries from the database. It handles deduplication of API fetches with a TTL cache (`_shared_cache`) for simultaneous triggers and executes recurring tasks reliably.
+- **`src/bg_jobs.py`:** Runs heavy operations (like `ffmpeg`, model downloads, package installations via the `bash` tool) in a detached process. The agent writes exit-code status files rather than relying on live PIDs, guaranteeing survival across server restarts.
+- **`src/task_endpoint.py` / `src/note_routes.py`:** Expose endpoints for creating quick-capture notes, to-do lists, and scheduled actions that the system acts on periodically.
+
+---
+
+## 26. Deep Dive: File Uploads & Document Parsers
+
+To extract and interpret user data natively, Odysseus incorporates several parsing strategies.
+
+### Components
+- **`src/upload_handler.py`:** Governs file ingests. It standardizes sanitization (`secure_filename`), applies environment-defined limits (`upload_limits.py`), and moves the artifacts to `DATA_DIR/uploads`.
+- **`src/pdf_runtime.py` / `pdf_forms.py`:** Uses libraries like `PyMuPDF` (if installed) to parse PDF contents natively, extracting raw text and structure.
+- **`src/markitdown_runtime.py`:** Provides extraction for proprietary office formats (`.docx`, `.xlsx`, `.pptx`) converting them reliably into Markdown for the context window.
+
+---
+
+## 27. Deep Dive: Complete Frontend Layout (`static/js/`)
+
+Odysseus' vanilla JS architecture is decentralized but tied together cleanly in `static/app.js`.
+
+```mermaid
+graph TD
+    App[app.js Orchestrator] --> Storage[storage.js]
+    App --> DomainChat[chat.js, chatRenderer.js, chatStream.js]
+    App --> DomainDocs[document.js, editor/, markdown.js]
+    App --> DomainSettings[settings.js, models.js, presets.js, search.js]
+    App --> Components[ui.js, fileHandler.js, voiceRecorder.js]
+    App --> SubSystems[calendar.js, tasks.js, notes.js, emailLibrary.js]
+    DomainChat --> |SSE Streaming| Render[streamingRenderer.js]
+```
+
+### Module Families
+- **Core Wiring:** `app.js` and `init.js` bootstrap state. `storage.js` provides wrappers for LocalStorage persistence.
+- **Chat Engine:** The largest monolith (`chat.js`) directs UI transitions, handles form submissions, and manages abort controllers. Rendering output and applying markdown logic is handled via `chatRenderer.js`, `streamingRenderer.js`, and `streamingSegmenter.js`.
+- **Editors & Visuals:** `document.js` manages multiple tabs and state. `gallery.js` handles image assets and grids. The `editor/` sub-folder contains extensions for masking and specialized layout.
+- **Sub-Apps:** Major integrations are separated completely, e.g., `emailLibrary.js` (a full IMAP client UI), `calendar.js` (CalDAV sync rendering), `tasks.js`, and `notes.js`.
+- **Cookbook (Hardware Management):** The `cookbook*.js` modules execute complex, multi-step tasks across SSE streams, including diagnosis, hardware fitting, and download signaling.
