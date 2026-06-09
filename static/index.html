@@ -1379,6 +1379,10 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             <span>System</span>
           </button>
+          <button class="settings-nav-item admin-only" data-settings-tab="dashboard">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+            <span>Usage Metrics</span>
+          </button>
         </div>
         <div class="settings-panels">
 
@@ -2301,7 +2305,72 @@
           </div>
         </div>
 
-      </div>
+        <!-- ═══ USAGE METRICS TAB (admin-only) ═══ -->
+        <div data-settings-panel="dashboard" class="hidden" id="dash-panel">
+          <div class="admin-card" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+            <h2 style="margin:0;display:flex;align-items:center;gap:6px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.6"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+              Usage Metrics
+            </h2>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <select id="dash-period-select" class="settings-select" style="width:auto;min-width:100px;">
+                <option value="7">Last 7 days</option>
+                <option value="30" selected>Last 30 days</option>
+                <option value="90">Last 90 days</option>
+                <option value="365">Last year</option>
+              </select>
+              <button class="admin-btn-add" id="dash-refresh-btn" title="Refresh" style="padding:4px 10px;">↻</button>
+            </div>
+          </div>
+
+          <div id="dash-loading" style="text-align:center;padding:40px 0;opacity:0.5;">Loading metrics…</div>
+
+          <div id="dash-content" class="hidden">
+            <!-- Summary cards -->
+            <div id="dash-summary-grid" class="dash-summary-grid"></div>
+
+            <!-- Token usage over time -->
+            <div class="admin-card">
+              <h3 class="dash-section-title">Token Usage</h3>
+              <div style="position:relative;height:260px;">
+                <canvas id="dash-token-chart"></canvas>
+              </div>
+            </div>
+
+            <!-- Model distribution + Mode distribution -->
+            <div class="dash-chart-row">
+              <div class="admin-card" style="flex:1;min-width:0;">
+                <h3 class="dash-section-title">Models Used</h3>
+                <div style="position:relative;height:220px;">
+                  <canvas id="dash-model-chart"></canvas>
+                </div>
+              </div>
+              <div class="admin-card" style="flex:0.6;min-width:0;">
+                <h3 class="dash-section-title">Mode Split</h3>
+                <div style="position:relative;height:220px;">
+                  <canvas id="dash-mode-chart"></canvas>
+                </div>
+              </div>
+            </div>
+
+            <!-- Cost breakdown -->
+            <div class="admin-card">
+              <h3 class="dash-section-title">Cost by Model (Cloud)</h3>
+              <div style="position:relative;height:220px;">
+                <canvas id="dash-cost-chart"></canvas>
+                <div class="dash-chart-empty hidden" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;opacity:0.4;">No cloud API costs in this period.</div>
+              </div>
+            </div>
+
+            <!-- Local savings -->
+            <div class="admin-card dash-savings-card">
+              <h3 class="dash-section-title">💰 Local LLM Savings</h3>
+              <div class="admin-toggle-sub" style="margin-bottom:10px;">Estimated cost avoided by running models locally instead of using cloud APIs.</div>
+              <div id="dash-savings-detail"></div>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   </div>
