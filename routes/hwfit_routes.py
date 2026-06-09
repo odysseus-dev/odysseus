@@ -177,8 +177,14 @@ def setup_hwfit_routes():
             system["gpu_name"] = g["name"]
             system["active_group"] = {**g, "use_count": n}
 
-        if gpu_count != "":
-            n = int(gpu_count)
+        # Parse the optional count defensively (matches the gpu_group guard
+        # above): a non-numeric query param previously raised ValueError ->
+        # HTTP 500. A malformed value is ignored, same as omitting it.
+        try:
+            n = int(gpu_count) if gpu_count != "" else None
+        except ValueError:
+            n = None
+        if n is not None:
             if n == 0:
                 # RAM-only mode: rank against system memory, offload allowed.
                 system["has_gpu"] = False
