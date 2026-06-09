@@ -1433,7 +1433,7 @@ graph TD
 
 ### Components
 - **Hardware Fitness ([`services/hwfit/`](../services/hwfit/))**: Profiles the host machine dynamically. It uses utilities like `nvidia-smi` (via Python wrappers) or macOS `sysctl` to estimate available VRAM and system memory, which is then communicated to the frontend so it can warn users before downloading models that are too large.
-- **Model Discovery ([`services/faces/`](../services/faces/))**: Aggregates the available "faces" or model personas. It polls connected providers (like a local Ollama instance or remote APIs) and synthesizes a unified list for the [`modelPicker.js`](../static/js/modelPicker.js) UI, caching the results to prevent UI lag.
+- **AI Services (Faces) ([`services/faces/`](../services/faces/))**: A standalone worker and service module responsible for face detection and embedding services. It helps aggregate model personas ("faces") and exposes them to the frontend, allowing for rich, avatar-driven interactions in the UI (e.g., in [`modelPicker.js`](../static/js/modelPicker.js)).
 - **Speech Processing ([`services/stt/`](../services/stt/) & [`services/tts/`](../services/tts/))**: Manages the abstraction over audio processing. For STT, it can process Whisper models. For TTS, it manages integrations with local Kokoro-82M endpoints or falls back to browser-based synthesized voices, maintaining audio caches to speed up repeated text generations.
 
 
@@ -1653,12 +1653,12 @@ graph TD
 ```
 
 ### Purpose
-To avoid unnecessary LLM overhead, the system uses deterministic regex patterns to detect when a user is explicitly asking the assistant to take an action (e.g., "can you search...", "please read this file...") rather than simply asking a question.
+To avoid unnecessary LLM overhead and reduce latency/cost, the system uses deterministic regex patterns to detect when a user is explicitly asking the assistant to take an action (e.g., "can you search...", "please read this file...") rather than simply asking an informational question.
 
 ### Mechanics
 - **`ToolIntent`**: A dataclass that evaluates `needs_tools`, `category`, and `reason`.
-- **Patterns**: Scans for phrases like "can you", "would you", or specific verbs ("search", "read", "run") combined with action requests.
-- **Outcome**: If an action intent is detected, the frontend is signaled or the backend automatically escalates the chat into the agent loop, loading the necessary tools and system prompts.
+- **Patterns**: Scans for imperative verbs ("search", "read", "deploy"), modal questions ("can you", "would you"), UI/panel toggles, calendar lookups, and deep research invocations. It explicitly avoids triggering on explanatory questions (e.g., "how do I use grep?").
+- **Outcome**: If an action intent is detected, the frontend is signaled or the backend automatically escalates the chat into the agent loop, loading the necessary tools and system prompts. This keeps general conversational chat fast and cheap, while reserving the heavy, multi-prompt `Agent Loop` strictly for tool-use workflows.
 
 ---
 
@@ -1940,8 +1940,8 @@ graph TD
 ### Components
 - **Memory Server ([`mcp_servers/memory_server.py`](../mcp_servers/memory_server.py))**: Exposes facts, preferences, and events. Directly bridges to `MemoryManager` to index new vectors or delete outdated recollections.
 - **RAG Server ([`mcp_servers/rag_server.py`](../mcp_servers/rag_server.py))**: Gives the agent control over the semantic store, enabling it to add or remove paths from its own search index based on user instructions.
-- **Email Server ([`mcp_servers/email_server.py`](../mcp_servers/email_server.py))**: A massive suite of endpoints allowing the AI to query IMAP folders, download file attachments, and compose replies over SMTP.
-- **Image Generation ([`mcp_servers/image_gen_server.py`](../mcp_servers/image_gen_server.py))**: Proxies image generation commands to configured models (e.g., Dall-E 3, SDXL endpoints), resolving the image and inserting a URL response right back into the chat context.
+- **Email Server ([`mcp_servers/email_server.py`](../mcp_servers/email_server.py))**: A massive suite of endpoints allowing the AI to query IMAP folders, download file attachments, and compose replies over SMTP. Uses helper objects to fetch, decrypt headers, and generate outgoing drafts securely.
+- **Image Generation ([`mcp_servers/image_gen_server.py`](../mcp_servers/image_gen_server.py))**: Proxies image generation commands to configured models (e.g., Dall-E 3, SDXL endpoints), resolving the image, caching the blob securely in `DATA_DIR/generated_images/`, and inserting a URL response right back into the chat context.
 
 ---
 
@@ -2171,6 +2171,7 @@ Odysseus supports an AI-assisted rich text and markdown editor.
 ### Components
 - **[`src/document_processor.py`](../src/document_processor.py):** Determines if a document is code, text, or binary. Applies syntax formatting to specific extensions and prepares text to be manipulated by the LLM.
 - **[`src/document_actions.py`](../src/document_actions.py):** Contains functions that process AI commands on documents (like inpainting, summarization, or translation) directly on the document body.
+- **Document Editor Streaming:** Much like chat, document updates are streamed live to the UI via Server-Sent Events, ensuring that AI transformations (or collaborative sync updates) are rendered immediately in the markdown editor without requiring full page reloads. This relies heavily on invariants tested by the Node.js suite inside [`tests/streaming/`](../tests/streaming/).
 
 ---
 
@@ -2188,6 +2189,7 @@ This module handles isolated user contexts such as personal settings, contacts, 
 To ensure multi-tenancy and data isolation where users only interact with their configured environment.
 
 ### Components
+- **Personal Document RAG ([`services/docs/service.py`](../services/docs/service.py))**: A dedicated service wrapper `DocsService` that interfaces with the underlying `RAGManager`. It handles bulk directory indexing, querying the document vector index, and surfacing retrieval stats.
 - **[`routes/personal_routes.py`](../routes/personal_routes.py) & [`src/personal_docs.py`](../src/personal_docs.py)**: Handles user-specific document uploads that feed into their personalized RAG store.
 - **[`src/settings.py`](../src/settings.py) & [`src/settings_scrub.py`](../src/settings_scrub.py) & [`routes/prefs_routes.py`](../routes/prefs_routes.py)**: Manages reading and writing application preferences, including redacting (scrubbing) secrets before returning config to the client.
 - **[`routes/contacts_routes.py`](../routes/contacts_routes.py)**: Stores and retrieves contact lists used by agents for communication tasks.
@@ -2224,8 +2226,12 @@ To extract and interpret user data natively, Odysseus incorporates several parsi
 
 ### Components
 - **[`src/upload_handler.py`](../src/upload_handler.py):** Governs file ingests. It standardizes sanitization (`secure_filename`), applies environment-defined limits ([`upload_limits.py`](../src/upload_limits.py)), and moves the artifacts to `DATA_DIR/uploads`.
-- **[`src/pdf_runtime.py`](../src/pdf_runtime.py) / [`pdf_forms.py`](../src/pdf_forms.py):** Uses libraries like `PyMuPDF` (if installed) to parse PDF contents natively, extracting raw text and structure.
-- **[`src/markitdown_runtime.py`](../src/markitdown_runtime.py):** Provides extraction for proprietary office formats (`.docx`, `.xlsx`, `.pptx`) converting them reliably into Markdown for the context window.
+- **PDF Infrastructure ([`src/pdf_runtime.py`](../src/pdf_runtime.py), [`src/pdf_forms.py`](../src/pdf_forms.py), [`src/pdf_form_doc.py`](../src/pdf_form_doc.py))**:
+  - Uses `PyMuPDF` (when optionally installed) for robust PDF handling.
+  - Extracts text and parses fillable AcroForm fields.
+  - Features dynamic HTML-comment and markdown generation (`pdf_form_doc.py`) to turn a visual PDF form into an editable markdown document, preserving the hidden widget metadata in sidecar files.
+  - Provides advanced abilities like stamping user-drawn signature PNGs or text directly onto exact X/Y coordinates over a PDF page.
+- **Office Document Parsing ([`src/markitdown_runtime.py`](../src/markitdown_runtime.py)):** Provides extraction for proprietary office formats (`.docx`, `.xlsx`, `.pptx`) using the `markitdown` tool, converting complex structural elements into flat Markdown suitable for the LLM context window.
 
 ---
 
@@ -2344,8 +2350,11 @@ graph LR
 
 ### Components
 - **Hardware Discovery ([`services/hwfit/hardware.py`](../services/hwfit/hardware.py))**: Reads `/sys/class/drm`, `nvidia-smi`, or Windows WMI to accurately gauge CPU, RAM, GPU architectures, and VRAM availability.
-- **Fitness Scoring ([`services/hwfit/fit.py`](../services/hwfit/fit.py))**: Computes `_fit_score` based on required vs. available VRAM and ranks models for the user.
-- **Serve Lifecycle ([`src/cookbook_serve_lifecycle.py`](../src/cookbook_serve_lifecycle.py))**: Orchestrates the downloading and serving of models via `tmux` sessions.
+- **Fitness Scoring & Routing ([`services/hwfit/fit.py`](../services/hwfit/fit.py))**:
+  - Computes a dynamic `_fit_score` based on required vs. available VRAM and context window parameters.
+  - Manages quantization formats (e.g., distinguishing between GGUF for llama.cpp vs AWQ/FP8 for vLLM).
+  - Explicitly restricts consumer AMD hardware (RDNA) and Apple Silicon platforms to GGUF formats to ensure compatibility, hiding models that won't run locally.
+- **Serve Lifecycle ([`src/cookbook_serve_lifecycle.py`](../src/cookbook_serve_lifecycle.py))**: Orchestrates the downloading and serving of models via `tmux` sessions, hooking directly into local inference engines like vLLM or Ollama.
 
 ---
 
