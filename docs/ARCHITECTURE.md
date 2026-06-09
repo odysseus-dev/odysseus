@@ -6,7 +6,11 @@ This document serves as a comprehensive overview of the system's architecture, i
 
 ---
 
-## 1. Directory Structure
+## Overview & Structure
+<details>
+<summary>View Overview & Structure</summary>
+
+### Directory Structure
 
 <details>
 <summary>Click to expand directory tree</summary>
@@ -1063,7 +1067,11 @@ This document serves as a comprehensive overview of the system's architecture, i
 
 ---
 
-## 2. High-level System Overview
+### High-level System Overview
+
+<details>
+<summary>View High-level System Overview</summary>
+
 
 At a high level, Odysseus is a client-server web application with an embedded background task runner. The backend is built in Python using **FastAPI**, while the frontend is a **Vanilla JavaScript** single-page application (SPA).
 
@@ -1084,7 +1092,19 @@ graph TD
 
 ---
 
-## 3. Frontend Architecture (Vanilla JS)
+</details>
+
+</details>
+
+## Frontend Architecture
+<details>
+<summary>View Frontend Architecture</summary>
+
+### Frontend Architecture (Vanilla JS)
+
+<details>
+<summary>View Frontend Architecture (Vanilla JS)</summary>
+
 
 The frontend avoids heavy frameworks like React or Vue, opting for vanilla JavaScript ES modules. This choice keeps the application lightweight and reduces build complexity.
 
@@ -1105,7 +1125,183 @@ The frontend communicates with the backend primarily through standard REST APIs.
 
 ---
 
-## 4. Backend Architecture (FastAPI)
+</details>
+
+### Frontend Architecture (Vanilla JS)
+
+<details>
+<summary>View Frontend Architecture (Vanilla JS)</summary>
+
+
+The frontend uses Vanilla JavaScript with an ES module architecture centered around `static/app.js` and `static/js/`.
+
+```mermaid
+graph TD
+    HTML[index.html] --> AppJS[app.js Orchestrator]
+    AppJS --> Core[ui.js, storage.js, init.js]
+    AppJS --> FeatureA[chat.js, chatRenderer.js, chatStream.js]
+    AppJS --> FeatureB[document.js, gallery.js]
+    AppJS --> FeatureC[sessions.js, memory.js, search.js]
+    FeatureA --> UI[DOM Updates & SSE Rendering]
+```
+
+### Key Modules
+- **`app.js`**: The main entry point. Eagerly binds global event listeners (drag and drop, shortcuts) and initializes all feature modules.
+- **Chat Engine (`chat.js`, `chatStream.js`, `chatRenderer.js`)**: Handles chat session logic, submission, and SSE (Server-Sent Events) streaming. `chat.js` has a watchdog to detect stalled streams and recover them.
+- **Document Editor (`document.js`, `editor/`)**: A multi-tab markdown/HTML editor with AI integration. `document.js` manages state and SSE sync, while `editor/` has specialized tools (e.g., inpainting, masking).
+- **Session & Memory (`sessions.js`, `memory.js`)**: Manages CRUD for chat sessions and user vector memory.
+- **Component Specifics**: Modular features like UI helpers (`ui.js`), keyboard shortcuts, file handlers, voice recorders, and theming.
+
+---
+
+</details>
+
+### Complete Frontend Layout (`static/js/`)
+
+<details>
+<summary>View Complete Frontend Layout (`static/js/`)</summary>
+
+
+Odysseus' vanilla JS architecture is decentralized but tied together cleanly in `static/app.js`.
+
+```mermaid
+graph TD
+    App[app.js Orchestrator] --> Storage[storage.js]
+    App --> DomainChat[chat.js, chatRenderer.js, chatStream.js]
+    App --> DomainDocs[document.js, editor/, markdown.js]
+    App --> DomainSettings[settings.js, models.js, presets.js, search.js]
+    App --> Components[ui.js, fileHandler.js, voiceRecorder.js]
+    App --> SubSystems[calendar.js, tasks.js, notes.js, emailLibrary.js]
+    DomainChat --> |SSE Streaming| Render[streamingRenderer.js]
+```
+
+### Module Families
+- **Core Wiring:** `app.js` and `init.js` bootstrap state. `storage.js` provides wrappers for LocalStorage persistence.
+- **Chat Engine:** The largest monolith (`chat.js`) directs UI transitions, handles form submissions, and manages abort controllers. Rendering output and applying markdown logic is handled via `chatRenderer.js`, `streamingRenderer.js`, and `streamingSegmenter.js`.
+- **Editors & Visuals:** `document.js` manages multiple tabs and state. `gallery.js` handles image assets and grids. The `editor/` sub-folder contains extensions for masking and specialized layout.
+- **Sub-Apps:** Major integrations are separated completely, e.g., `emailLibrary.js` (a full IMAP client UI), `calendar.js` (CalDAV sync rendering), `tasks.js`, and `notes.js`.
+- **Cookbook (Hardware Management):** The `cookbook*.js` modules execute complex, multi-step tasks across SSE streams, including diagnosis, hardware fitting, and download signaling.
+
+---
+
+</details>
+
+### Frontend Realtime Streaming & Chat
+
+<details>
+<summary>View Frontend Realtime Streaming & Chat</summary>
+
+
+The real-time conversational UI relies heavily on Server-Sent Events (SSE) to update the UI without dropping frames or blocking user input during long text generations.
+
+```mermaid
+graph TD
+    User[Client Input] --> Chat[static/js/chat.js]
+    Chat --> Fetch[POST /api/chat]
+    Fetch --> SSE[static/js/chatStream.js]
+    SSE --> Renderer[static/js/streamingRenderer.js]
+    SSE --> Segmenter[static/js/streamingSegmenter.js]
+    Segmenter --> DOM[Updates to Message Bubble]
+```
+
+### Components
+- **Chat Orchestrator (`static/js/chat.js` & `chatRenderer.js`)**: The primary controller that captures user inputs, manages auto-scrolling, and delegates message rendering. It keeps the local message state in sync with the server response.
+- **SSE Consumer (`static/js/chatStream.js`)**: Opens the event stream and listens to JSON lines. It handles network disconnects, error codes, and maps raw text deltas into actionable state updates for the renderer.
+- **Render Engine (`static/js/streamingRenderer.js` & `streamingSegmenter.js`)**: As tokens arrive sequentially, they are batched and flushed to the DOM. The segmenter handles complex boundary logic (e.g., detecting when a markdown code block ` ``` ` begins or ends) to ensure syntax highlighting is only applied once a block is complete, avoiding constant, CPU-heavy re-parsing of incomplete HTML.
+
+
+
+</details>
+
+### UI & UX Helpers
+
+<details>
+<summary>View UI & UX Helpers</summary>
+
+
+Small foundational pieces to support the frontend SPA.
+
+### Purpose
+Provide localization, theming, and consistent rendering mechanics.
+
+### Components
+- **`routes/emoji_routes.py` & `routes/font_routes.py`**: Serves static SVGs and webfonts dynamically based on the current workspace themes.
+- **`src/text_helpers.py`**: Utilities for stripping reasoning chains or specific tokens from LLM output before presentation.
+- **`src/user_time.py`**: Manages timezone calculations so that when an agent is told "remind me tomorrow", it correctly translates to the user's localized time based on browser data.
+
+---
+
+</details>
+
+### Compare Mode (Model Blind Testing)
+
+<details>
+<summary>View Compare Mode (Model Blind Testing)</summary>
+
+
+Compare mode provides a dual-pane, blind AB testing interface to evaluate the quality of multiple AI models side-by-side on identical prompts.
+
+```mermaid
+graph TD
+    UI[static/js/compare/index.js] --> |Setup Request| API[routes/compare_routes.py]
+    UI --> |Start SSE| Streams[static/js/compare/stream.js]
+    Streams --> |Left Pane| ModelA[Local / Remote Model A]
+    Streams --> |Right Pane| ModelB[Local / Remote Model B]
+    UI --> Vote[static/js/compare/vote.js]
+    Vote --> Scoreboard[static/js/compare/scoreboard.js]
+    Scoreboard --> DB[(SQLite Comparison Table)]
+```
+
+### Components
+- **Frontend State (`static/js/compare/`)**: Comprises numerous modular files handling the dual UI (`panes.js`), tracking connection health (`probe.js`), and managing the synchronized SSE streams for both models (`stream.js`). The models' identities remain obfuscated until a winner is declared (`vote.js`).
+- **Backend Routing (`routes/compare_routes.py`)**: Manages the API surface area for starting a comparison, validating model access, handling vote submission, and managing the `RecordVoteRequest` schema to compile metrics over time.
+
+---
+
+</details>
+
+### AI Canvas Editor Architecture
+
+<details>
+<summary>View AI Canvas Editor Architecture</summary>
+
+
+The rich image editor features a comprehensive, multi-layer HTML5 Canvas architecture integrated tightly with local backend AI operations.
+
+```mermaid
+graph TD
+    Canvas[HTML5 Canvas] --> Events[canvas-events.js]
+    Events --> State[state.js]
+    State --> Layers[layer-helpers.js / layer-panel.js]
+    State --> Tools[tools/ directory]
+    Tools --> |stroke, lasso, move| Canvas
+    Tools --> AI[AI Tools]
+    AI --> Inpaint[ai-inpaint.js]
+    AI --> Rembg[ai-rembg.js]
+    Inpaint --> API[routes/gallery_helpers.py]
+    Rembg --> API
+```
+
+### Components
+- **Core Canvas Logic (`static/js/editor/`)**: Managed by `state.js`, with interactions translated through `canvas-coords.js` and `canvas-events.js` to account for zooming and panning across the viewport.
+- **Tools & Effects**: Standard editing tools (move, crop, flood-fill) live in the `tools/` directory, while non-destructive overlays and visual filters reside in `fx/` and `filters/`.
+- **AI Integrations**: Specific files like `ai-inpaint.js` and `ai-rembg.js` hook into the active canvas state to generate masks (`mask-utils.js`), transmit them to the backend, and apply the returned images onto new, non-destructive canvas layers (`layer-helpers.js`).
+
+---
+
+</details>
+
+</details>
+
+## Backend & Core Services
+<details>
+<summary>View Backend & Core Services</summary>
+
+### Backend Architecture (FastAPI)
+
+<details>
+<summary>View Backend Architecture (FastAPI)</summary>
+
 
 The backend is built around a slim orchestrator (`app.py`), which glues together several sub-modules. It uses **FastAPI** for route handling and **SQLAlchemy** for database interactions.
 
@@ -1118,7 +1314,216 @@ The backend is built around a slim orchestrator (`app.py`), which glues together
 
 ---
 
-## 5. Agent & AI Orchestration
+</details>
+
+### Backend Core & Routing (FastAPI)
+
+<details>
+<summary>View Backend Core & Routing (FastAPI)</summary>
+
+
+The backend is structured around a centralized `app.py` that mounts numerous feature-specific routers defined in `routes/`.
+
+```mermaid
+graph LR
+    Client --> FastAPI[app.py]
+    FastAPI --> Auth[Auth Middleware]
+    Auth --> Routers[Feature Routers routes/]
+    Routers --> DB[(SQLite Database core/models.py)]
+    Routers --> Logic[Core Logic src/]
+```
+
+### Core Components
+- **`app.py`**: The FastAPI application builder. Applies middleware (CORS, Auth, Security Headers) and uses `include_router` to mount ~40 specialized route modules (e.g., `chat_routes.py`, `email_routes.py`).
+- **`core/models.py`**: SQLAlchemy declarative base models. It defines the schema for `ChatMessage`, `Session`, `Document`, `EmailAccount`, `McpServer`, etc.
+- **`core/database.py`**: Manages the SQLite connection pool, SQLAlchemy engine, and encrypted text types.
+- **`core/session_manager.py`**: Handles transactional logic for session states and chat history persistence.
+
+---
+
+</details>
+
+### API Routing & Controllers (`routes/`)
+
+<details>
+<summary>View API Routing & Controllers (`routes/`)</summary>
+
+
+Odysseus isolates the API surface area from business logic through a highly modular router design. Instead of a monolithic routing file, the application features over 40 distinct route controllers in the `routes/` directory.
+
+### Routing Organization
+- **`app.py` Mounting:** The primary FastAPI application imports and mounts these routers using `include_router`.
+- **Feature Encapsulation:** Endpoints are strictly scoped to their domain. For instance, `document_routes.py` manages all `GET/POST /api/documents` operations, while `chat_routes.py` handles generation and SSE streams.
+- **Helper Extraction:** Complex or reusable logic inside a router is often extracted to a companion file (e.g., `chat_helpers.py`, `document_helpers.py`, `cookbook_helpers.py`).
+- **Security Scope:** Middleware ensures that endpoints are protected based on user roles. Most routers perform their own checks against `get_current_user` to restrict data access to the session owner. Certain administrative routes (`api_token_routes.py`, `webhook_routes.py`) mandate a higher privilege level via `require_admin`.
+
+---
+
+</details>
+
+### Core Utilities (`core/`)
+
+<details>
+<summary>View Core Utilities (`core/`)</summary>
+
+
+The core utilities manage foundational backend state, security, and process infrastructure.
+
+```mermaid
+graph TD
+    App[FastAPI application] --> Auth[core/auth.py]
+    App --> SessionMan[core/session_manager.py]
+    App --> Security[core/middleware.py]
+    SessionMan --> DB[(SQLite Database core/database.py)]
+    Auth --> DB
+    Security --> Headers[SecurityHeadersMiddleware]
+```
+
+### Components
+- **Session Management (`core/session_manager.py`)**: A centralized state machine holding in-memory references to user chat sessions and synchronizing them with SQLite. This module guarantees the transaction lifecycle, archiving inactive chats, tracking history, and purging deleted threads gracefully.
+- **Authentication (`core/auth.py`)**: Provides security logic for the web application and external integrations. It handles Bearer tokens for API integrations and user TOTP secrets.
+- **Security Middleware (`core/middleware.py`)**: Applies the `SecurityHeadersMiddleware`, issuing strict CSP boundaries, denying framing unless accessing specific isolated endpoints (like PDF previewers), and handling loopback agent requests securely.
+- **Platform Compatibility & Atomic IO (`core/platform_compat.py`, `core/atomic_io.py`)**: Tools for writing files atomically, safely spawning processes across Windows/Linux, translating paths over WSL boundaries, and resolving execution environments.
+
+---
+
+</details>
+
+### Core Platform Mechanisms (`core/`)
+
+<details>
+<summary>View Core Platform Mechanisms (`core/`)</summary>
+
+
+The `core/` package provides the foundational bedrock upon which the rest of the application runs. It handles the lowest-level concerns such as database connections, security headers, and cross-platform file IO.
+
+```mermaid
+graph TD
+    App[FastAPI] --> Middleware[core/middleware.py]
+    App --> IO[core/atomic_io.py]
+    App --> OS[core/platform_compat.py]
+    Middleware --> Security[CSP / Isolation]
+    IO --> Disk[Local FS]
+```
+
+### Components
+- **Atomic IO (`core/atomic_io.py`)**: Provides safe file-writing operations using temporary files and atomic renames. This ensures that a sudden power loss or application crash during a save operation (e.g., updating a `user_prefs.json`) does not result in a corrupted, zero-byte file.
+- **Platform Compatibility (`core/platform_compat.py`)**: Normalizes differences between Windows, macOS, and Linux. This includes abstracting file path creation, permission handling (which differs vastly between POSIX and NTFS), and process signal management.
+- **Security Middleware (`core/middleware.py`)**: Intercepts all incoming requests to inject critical headers. It enforces the Content Security Policy (CSP), mitigates clickjacking by preventing framing (except on specific routes like the PDF previewer), and ensures cross-origin isolation where necessary.
+
+
+---
+
+</details>
+
+### Internal Services (`services/`)
+
+<details>
+<summary>View Internal Services (`services/`)</summary>
+
+
+The `services/` directory is reserved for self-contained, domain-specific modules that act as autonomous actors or external bridges, rather than core request/response routing.
+
+```mermaid
+graph TD
+    App[FastAPI App] --> HW[services/hwfit/]
+    App --> Faces[services/faces/]
+    App --> Audio[services/stt/ & services/tts/]
+```
+
+### Components
+- **Hardware Fitness (`services/hwfit/`)**: Profiles the host machine dynamically. It uses utilities like `nvidia-smi` (via Python wrappers) or macOS `sysctl` to estimate available VRAM and system memory, which is then communicated to the frontend so it can warn users before downloading models that are too large.
+- **Model Discovery (`services/faces/`)**: Aggregates the available "faces" or model personas. It polls connected providers (like a local Ollama instance or remote APIs) and synthesizes a unified list for the `modelPicker.js` UI, caching the results to prevent UI lag.
+- **Speech Processing (`services/stt/` & `services/tts/`)**: Manages the abstraction over audio processing. For STT, it can process Whisper models. For TTS, it manages integrations with local Kokoro-82M endpoints or falls back to browser-based synthesized voices, maintaining audio caches to speed up repeated text generations.
+
+
+---
+
+</details>
+
+### Background Services (`services/`)
+
+<details>
+<summary>View Background Services (`services/`)</summary>
+
+
+The internal architecture separates discrete background jobs into standalone, stateless modules. These modules serve external integration requests triggered by the agent loop or via direct route access.
+
+```mermaid
+graph TD
+    Agent[Agent Loop] --> Shell[services/shell/service.py]
+    Agent --> Youtube[services/youtube/youtube_handler.py]
+    Client[Web Client] --> AudioIn[services/stt/stt_service.py]
+    Client --> AudioOut[services/tts/tts_service.py]
+    AudioOut --> Kokoro[Local Kokoro-82M model]
+    AudioIn --> Whisper[Local faster-whisper model]
+    Youtube --> YTDLP[yt-dlp]
+```
+
+### Components
+- **Shell Executor (`services/shell/`)**: Provides controlled subprocess execution capabilities complete with streaming outputs and rigid execution timeouts. Used to implement the "bash" native tool.
+- **Speech Processing (`services/stt/`, `services/tts/`)**: Wraps speech-to-text (Whisper/Browser API) and text-to-speech (Kokoro-82M on GPU/API endpoints). Integrates transparent fallback if models fail to load or aren't installed locally.
+- **YouTube Handler (`services/youtube/`)**: Employs `youtube_transcript_api` and `yt-dlp` to asynchronously pull video transcripts and high-voted comments for deep content context injection into the LLM.
+
+---
+
+</details>
+
+### Advanced Container Management (`docker/`)
+
+<details>
+<summary>View Advanced Container Management (`docker/`)</summary>
+
+
+The `docker/` directory contains critical infrastructure for securely and reliably hosting Odysseus on Linux environments.
+
+```mermaid
+graph LR
+    Host[Host OS Bind Mounts] --> Volume[data/ permissions]
+    Volume --> Entry[docker/entrypoint.sh]
+    Entry --> |gosu PUID:PGID| App[FastAPI Application]
+    Compose[docker-compose.yml] --> |Includes| GPU[gpu.nvidia.yml / gpu.amd.yml]
+```
+
+### Components
+- **`entrypoint.sh`**: Fixes the #1 self-hosting footgun—root ownership of bind-mounted volumes. It reads `PUID` and `PGID` environment variables, creates a matching unprivileged user (`odysseus`), `chown`s the `/data` directory appropriately, and drops privileges via `gosu` before starting the application. This ensures users can interact with downloaded SQLite or memory databases on the host OS natively without permission denied errors.
+- **`gpu.nvidia.yml` & `gpu.amd.yml`**: Compose profiles that inject required hardware passthrough directives (`deploy.resources.reservations.devices` for NVIDIA, `/dev/kfd` and `/dev/dri` for AMD ROCm). The main compose file is kept minimal, while these profiles act as composable overlays depending on the user's hardware.
+
+---
+
+</details>
+
+### Cookbook & System Utilities
+
+<details>
+<summary>View Cookbook & System Utilities</summary>
+
+
+A collection of operational scripts, setup hooks, and diagnostic endpoints.
+
+### Purpose
+To initialize the app predictably and provide developers insights into the running system.
+
+### Components
+- **`routes/cookbook_routes.py`, `routes/hwfit_routes.py`, `routes/diagnostics_routes.py`**: API endpoints exposing system load, GPU status (hardware fitness), and local recipes (cookbook).
+- **`routes/shell_routes.py`, `routes/upload_routes.py`, `routes/signature_routes.py`**: Handles standard terminal requests to the host OS and manages file IO/upload chunking.
+- **`src/app_helpers.py`, `src/app_initializer.py`, `src/constants.py`, `src/exceptions.py`**: Foundational bootstrap code. Bootstraps the SQLite tables, loads `.env` variables, and defines global exception classes.
+
+---
+
+</details>
+
+</details>
+
+## Agent & AI Orchestration
+<details>
+<summary>View Agent & AI Orchestration</summary>
+
+### Agent & AI Orchestration
+
+<details>
+<summary>View Agent & AI Orchestration</summary>
+
 
 The most complex part of the backend is the agent loop (`src/agent_loop.py`), which handles how the AI processes multi-step tasks.
 
@@ -1146,122 +1551,13 @@ For self-hosted models that may struggle with complex tasks, Odysseus implements
 
 ---
 
-## 6. Data, Memory, and Storage
+</details>
 
-All data is kept local within the `data/` directory, adhering to the project's privacy-first ethos.
+### Agent Orchestration, Tools & RAG
 
-### SQLite Database
-- **Relational Data:** Managed via SQLAlchemy (`data/app.db`).
-- **Stores:** Chats, sessions, API tokens, MCP server configs, Webhooks, user privileges, scheduled tasks, and calendar events.
+<details>
+<summary>View Agent Orchestration, Tools & RAG</summary>
 
-### ChromaDB (Vector Store)
-- **Semantic Memory:** Odysseus uses `ChromaDB` and ONNX `fastembed` for vector similarity search.
-- **`MemoryManager` (`src/memory.py`):** Extracts and stores long-term facts, preferences, and contacts. It uses hybrid search (Jaccard similarity + semantic keyword boosting) to inject relevant memories into the agent's context.
-
-### SkillsManager
-- Manages `SKILL.md` files representing procedures.
-- Published skills and teacher-escalation drafts are injected into the agent prompt based on relevance to the current conversation.
-
----
-
-## 7. Integrations & Advanced Features
-
-### MCP (Model Context Protocol) Manager (`src/mcp_manager.py`)
-- Allows connecting external tool servers via standard IO (stdio), SSE, or HTTP.
-- Dynamically converts MCP JSON schemas into OpenAI-compatible function calling schemas, injected into the agent loop.
-- Handles OAuth flows for tools requiring authentication.
-
-### Deep Research (`src/deep_research.py`)
-- An iterative `Think → Search → Extract → Synthesize` loop.
-- Generates sub-queries, executes searches via SearXNG (or others), extracts content from webpages using an LLM, and continuously synthesizes findings into a comprehensive final report.
-
-### Email & CalDAV
-- **Email:** Built-in IMAP/SMTP triage. It can summarize, auto-tag, and draft replies using AI.
-- **CalDAV:** Local-first calendar synchronization with external providers (Radicale, Nextcloud, Apple, Fastmail).
-
----
-
-## 8. Security & Authentication
-
-Odysseus treats the self-hosted environment like an admin console due to powerful local tools (shell, file IO).
-
-- **AuthManager (`core/auth.py`):** Handles bcrypt-hashed passwords and session cookies. Enabled by `AUTH_ENABLED=true`.
-- **API Tokens:** Supports Bearer token authentication for external integrations (like Webhooks or Zapier). Tokens are cached for performance and invalidated on change.
-- **Security Middleware:** `SecurityHeadersMiddleware` enforces safe browser headers. `AuthMiddleware` protects routes and validates proxy/tunnel forwarding headers to prevent auth bypass.
-
----
-
-## 9. Deployment & Local Serving (Cookbook)
-
-Odysseus is designed to run anywhere, but Docker is recommended.
-
-### Hardware Discovery (`services/hwfit/`)
-The `hwfit` module analyzes the host machine (RAM, VRAM, GPU bandwidth) to score HuggingFace models. Models fitting entirely in VRAM are prioritized.
-
-### Deployment Models
-- **Docker Compose:** The default setup runs Odysseus alongside ChromaDB and SearXNG.
-- **GPU Passthrough:** Special overlays (`docker-compose.gpu-nvidia.yml`, `docker-compose.gpu-amd.yml`) configure NVIDIA or AMD ROCm passthrough.
-- **Local Serving Engine:** The "Cookbook" dynamically installs and configures `vLLM` or `llama.cpp` in the local data directory, orchestrating inference via `tmux` sessions.
-
----
-
-## 10. Future Upgrade Paths
-
-For developers looking to extend or upgrade Odysseus:
-
-1. **Frontend Refactoring:** Break down massive modules like `chat.js` into smaller, more manageable state machines.
-2. **Database Migration:** Introduce an abstraction layer to support PostgreSQL, enabling scalability for small teams.
-3. **Enhanced Teacher Self-Eval:** Implement a "Tier 2" LLM-based self-evaluation step in `teacher_escalation.py` for more nuanced failure detection.
-4. **OAuth Authentication:** Integrate standard OAuth2 providers (GitHub, Google) for user login, augmenting the current username/password system.
-
----
-*Generated by Jules, Vibecoder.*
-
-## 11. Deep Dive: Frontend Architecture (Vanilla JS)
-
-The frontend uses Vanilla JavaScript with an ES module architecture centered around `static/app.js` and `static/js/`.
-
-```mermaid
-graph TD
-    HTML[index.html] --> AppJS[app.js Orchestrator]
-    AppJS --> Core[ui.js, storage.js, init.js]
-    AppJS --> FeatureA[chat.js, chatRenderer.js, chatStream.js]
-    AppJS --> FeatureB[document.js, gallery.js]
-    AppJS --> FeatureC[sessions.js, memory.js, search.js]
-    FeatureA --> UI[DOM Updates & SSE Rendering]
-```
-
-### Key Modules
-- **`app.js`**: The main entry point. Eagerly binds global event listeners (drag and drop, shortcuts) and initializes all feature modules.
-- **Chat Engine (`chat.js`, `chatStream.js`, `chatRenderer.js`)**: Handles chat session logic, submission, and SSE (Server-Sent Events) streaming. `chat.js` has a watchdog to detect stalled streams and recover them.
-- **Document Editor (`document.js`, `editor/`)**: A multi-tab markdown/HTML editor with AI integration. `document.js` manages state and SSE sync, while `editor/` has specialized tools (e.g., inpainting, masking).
-- **Session & Memory (`sessions.js`, `memory.js`)**: Manages CRUD for chat sessions and user vector memory.
-- **Component Specifics**: Modular features like UI helpers (`ui.js`), keyboard shortcuts, file handlers, voice recorders, and theming.
-
----
-
-## 12. Deep Dive: Backend Core & Routing (FastAPI)
-
-The backend is structured around a centralized `app.py` that mounts numerous feature-specific routers defined in `routes/`.
-
-```mermaid
-graph LR
-    Client --> FastAPI[app.py]
-    FastAPI --> Auth[Auth Middleware]
-    Auth --> Routers[Feature Routers routes/]
-    Routers --> DB[(SQLite Database core/models.py)]
-    Routers --> Logic[Core Logic src/]
-```
-
-### Core Components
-- **`app.py`**: The FastAPI application builder. Applies middleware (CORS, Auth, Security Headers) and uses `include_router` to mount ~40 specialized route modules (e.g., `chat_routes.py`, `email_routes.py`).
-- **`core/models.py`**: SQLAlchemy declarative base models. It defines the schema for `ChatMessage`, `Session`, `Document`, `EmailAccount`, `McpServer`, etc.
-- **`core/database.py`**: Manages the SQLite connection pool, SQLAlchemy engine, and encrypted text types.
-- **`core/session_manager.py`**: Handles transactional logic for session states and chat history persistence.
-
----
-
-## 13. Deep Dive: Agent Orchestration, Tools & RAG
 
 The Agent Loop is the brain of Odysseus, dynamically looping the LLM with local tools, semantic memory (RAG), and Teacher Escalation.
 
@@ -1287,70 +1583,256 @@ graph TD
 
 ---
 
-## 14. Deep Dive: Deep Research & Web Integration
+</details>
 
-Deep Research allows multi-step, autonomous information gathering resulting in a visually appealing HTML report.
+### Chat Processing & Engine Logic (`src/`)
 
-```mermaid
-graph TD
-    Query[Research Prompt] --> Plan[LLM Planning]
-    Plan --> Gen[Generate Sub-Queries]
-    Gen --> Search[Search via SearXNG]
-    Search --> Fetch[Fetch & Extract URL Content]
-    Fetch --> Synthesize[Synthesize Findings]
-    Synthesize --> |Iterate if needed| Gen
-    Synthesize --> Final[Generate Final Report]
-    Final --> Visual[visual_report.py HTML Render]
-```
+<details>
+<summary>View Chat Processing & Engine Logic (`src/`)</summary>
 
-### Components
-- **Deep Researcher (`src/deep_research.py`)**: The orchestration class. Implements an iterative think-search-extract-synthesize loop.
-- **Search Service (`services/search/`)**: Provides abstractions over search providers (SearXNG, DuckDuckGo) for ranking, caching, and querying.
-- **Visual Report (`src/visual_report.py`)**: Transforms the synthesized markdown report and JSON sources into a self-contained, themed HTML file with a table of contents and inline references.
 
----
-
-## 15. Deep Dive: Email & Calendar Sync
-
-Odysseus features robust, local-first syncing for emails (IMAP/SMTP) and calendars (CalDAV).
+The core execution of conversational AI interactions lives primarily in `src/chat_processor.py`, `src/chat_handler.py`, and `src/agent_runs.py`.
 
 ```mermaid
 graph TD
-    ExtCal[External CalDAV Server] <--> Sync[caldav_sync.py]
-    ExtMail[IMAP / SMTP Server] <--> MailPoll[email_pollers.py]
-    Sync <--> DB[(SQLite Local Cache)]
-    MailPoll <--> DB
-    MailPoll --> Parser[email_thread_parser.py]
-    MailPoll --> LLM[Auto Summarize & Classify]
+    Client[Web UI] --> Route[routes/chat_routes.py]
+    Route --> CoreHandler[src/chat_handler.py]
+    CoreHandler --> AuthContext[Context & Security Checks]
+    CoreHandler --> Processor[src/chat_processor.py]
+    Processor --> |RAG/Search Injection| AgentLoop[src/agent_loop.py]
+    AgentLoop --> LLM[src/llm_core.py]
+    LLM -.-> |Stream Generator| Runs[src/agent_runs.py Background Task]
+    Runs -.-> |SSE| Client
 ```
 
 ### Components
-- **CalDAV Sync (`src/caldav_sync.py`, `src/caldav_writeback.py`)**: Resolves CalDAV hosts, fetches `.ics` events, caches them locally, and pushes local edits back to the remote server.
-- **Email Pollers (`routes/email_pollers.py`)**: Background threads that poll IMAP folders, detect new mail, and run background LLM tasks to summarize, tag, or auto-reply.
-- **Thread Parser (`src/email_thread_parser.py`)**: An advanced HTML/plaintext parser that strips quotes, mashes headers, and normalizes email body contents for LLM consumption.
+- **`chat_handler.py`:** Parses incoming chat requests, manages attachment validations, coerces sessions, and sets up the async streams.
+- **`chat_processor.py`:** Applies NLP tasks. It checks for stopwords, extracts URLs directly via regex for immediate search querying, and handles security logic (like `UNTRUSTED_CONTEXT_POLICY`) to sanitize unsafe context windows.
+- **`agent_runs.py`:** Implements detached agent-runs. The model streams text even if the browser drops the SSE connection. This module catches the stream into a replay buffer that users can re-subscribe to upon page refresh, preventing mid-thought data loss.
 
 ---
 
-## 16. Deep Dive: Cookbook & Hardware Fitness
+</details>
 
-The "Cookbook" automatically analyzes host hardware to recommend, download, and serve models.
+### Chat Engine & Memory Components
+
+<details>
+<summary>View Chat Engine & Memory Components</summary>
+
+
+These files form the glue bridging conversational memory with the underlying agent loop.
+
+### Purpose
+To assemble context objects, record new learnings, and parse complex documents inline.
+
+### Components
+- **`routes/assistant_routes.py`, `src/assistant_log.py`**: Manages the persona traits of the primary assistant and logging of its internal monologue.
+- **`src/memory_provider.py`, `src/ai_interaction.py`**: The interface between raw text streams and the structured memory graph.
+- **`src/context_budget.py`**: Dynamically truncates conversational history so it fits securely within the model's configured input token limit.
+- **`routes/compare_routes.py`, `routes/editor_draft_routes.py`, `src/pdf_form_doc.py`**: Specialized tools for editing rich text documents inside the interface, and generating PDFs inline based on text fields.
+---
+
+
+</details>
+
+### Action Intents & Chat Routing (`src/action_intents.py`)
+
+<details>
+<summary>View Action Intents & Chat Routing (`src/action_intents.py`)</summary>
+
+
+Odysseus employs a lightweight routing heuristic to determine when a standard chat prompt should be promoted to full "agent mode" (invoking the agent loop and tools).
 
 ```mermaid
-graph LR
-    OS[OS / sysfs / WMI] --> HW[Hardware Discovery hardware.py]
-    HW --> Fit[Fitness Scoring fit.py]
-    Fit --> Serve[Model Serving cookbook_serve_lifecycle.py]
-    Serve --> Engine[vLLM / llama.cpp / tmux]
+graph TD
+    Input[User Prompt] --> Regex[Regex Intent Detection]
+    Regex --> |"can you search...", "read this..."| Agent[Promote to Agent Mode]
+    Regex --> |General question| Chat[Standard Chat Completion]
+    Agent --> LoadTools[Load Tools & System Prompt]
+    Chat --> LLM[LLM Generation]
 ```
 
-### Components
-- **Hardware Discovery (`services/hwfit/hardware.py`)**: Reads `/sys/class/drm`, `nvidia-smi`, or Windows WMI to accurately gauge CPU, RAM, GPU architectures, and VRAM availability.
-- **Fitness Scoring (`services/hwfit/fit.py`)**: Computes `_fit_score` based on required vs. available VRAM and ranks models for the user.
-- **Serve Lifecycle (`src/cookbook_serve_lifecycle.py`)**: Orchestrates the downloading and serving of models via `tmux` sessions.
+### Purpose
+To avoid unnecessary LLM overhead, the system uses deterministic regex patterns to detect when a user is explicitly asking the assistant to take an action (e.g., "can you search...", "please read this file...") rather than simply asking a question.
+
+### Mechanics
+- **`ToolIntent`**: A dataclass that evaluates `needs_tools`, `category`, and `reason`.
+- **Patterns**: Scans for phrases like "can you", "would you", or specific verbs ("search", "read", "run") combined with action requests.
+- **Outcome**: If an action intent is detected, the frontend is signaled or the backend automatically escalates the chat into the agent loop, loading the necessary tools and system prompts.
 
 ---
 
-## 17. Deep Dive: Integrations & Companion
+</details>
+
+### Agent Tools Subsystem (`src/agent_tools/`)
+
+<details>
+<summary>View Agent Tools Subsystem (`src/agent_tools/`)</summary>
+
+
+Odysseus provides its agent loop with a suite of highly privileged, local-first tools. These are organized functionally to limit scope and ensure secure execution.
+
+```mermaid
+graph TD
+    Agent[Agent Loop] --> Executor[src/tool_execution.py]
+    Executor --> Policy[src/tool_policy.py]
+    Policy --> |Approved| Dispatcher
+    Dispatcher --> FS[src/agent_tools/filesystem_tools.py]
+    Dispatcher --> Bash[src/agent_tools/subprocess_tools.py]
+    Dispatcher --> Web[src/agent_tools/web_tools.py]
+```
+
+### Components
+- **Filesystem Tools (`src/agent_tools/filesystem_tools.py`)**: Provides concrete implementations for `read_file`, `write_file`, `list_directory`, etc. These tools are heavily sandboxed by the policy layer, meaning they generally cannot escape the `data/` directory unless explicitly authorized by an admin context.
+- **Subprocess Tools (`src/agent_tools/subprocess_tools.py`)**: Allows the agent to run arbitrary shell commands. It manages timeout constraints, captures `stdout` and `stderr` safely, and ensures long-running processes do not hang the main agent loop.
+- **Web Tools (`src/agent_tools/web_tools.py`)**: Includes utilities for fetching webpage content, often interacting with local headless browsers or `BeautifulSoup` to strip away visual clutter and return clean markdown directly to the agent's context.
+
+
+---
+
+</details>
+
+### Built-in Actions & Scheduled Tasks (`src/builtin_actions.py`)
+
+<details>
+<summary>View Built-in Actions & Scheduled Tasks (`src/builtin_actions.py`)</summary>
+
+
+Odysseus features a registry of native automation actions that can be executed periodically by the task scheduler without needing to spin up an LLM.
+
+```mermaid
+graph TD
+    Scheduler[src/task_scheduler.py] --> Dequeue[Dequeue TaskRun from DB]
+    Dequeue --> Lookup[Lookup Action in builtin_actions.py Registry]
+    Lookup --> Execute[Execute Native Python Function]
+    Execute --> |Success| Mark[Mark Last Run / Next Run]
+    Execute --> |TaskNoop| Skip[Skip Silently]
+```
+
+### Purpose
+Provides reliable, zero-cost execution for routine system maintenance and user-defined scheduled tasks.
+
+### Mechanics
+- **Registry**: Houses predefined python functions mapped to string identifiers (e.g., `system.tidy_calendar`, `system.poll_email`).
+- **`TaskNoop` Exception**: A silent exception used by actions to indicate there was nothing to do (e.g., no new emails, calendar already synced), preventing log spam.
+- **Execution**: The scheduler (`src/task_scheduler.py`) dequeues pending tasks from the database and invokes the corresponding function in `builtin_actions.py`.
+
+---
+
+</details>
+
+</details>
+
+## Data, Memory & RAG
+<details>
+<summary>View Data, Memory & RAG</summary>
+
+### Data, Memory, and Storage
+
+<details>
+<summary>View Data, Memory, and Storage</summary>
+
+
+All data is kept local within the `data/` directory, adhering to the project's privacy-first ethos.
+
+### SQLite Database
+- **Relational Data:** Managed via SQLAlchemy (`data/app.db`).
+- **Stores:** Chats, sessions, API tokens, MCP server configs, Webhooks, user privileges, scheduled tasks, and calendar events.
+
+### ChromaDB (Vector Store)
+- **Semantic Memory:** Odysseus uses `ChromaDB` and ONNX `fastembed` for vector similarity search.
+- **`MemoryManager` (`src/memory.py`):** Extracts and stores long-term facts, preferences, and contacts. It uses hybrid search (Jaccard similarity + semantic keyword boosting) to inject relevant memories into the agent's context.
+
+### SkillsManager
+- Manages `SKILL.md` files representing procedures.
+- Published skills and teacher-escalation drafts are injected into the agent prompt based on relevance to the current conversation.
+
+---
+
+</details>
+
+### Model Configuration & RAG Core
+
+<details>
+<summary>View Model Configuration & RAG Core</summary>
+
+
+The system coordinates between multiple LLM backends (local Ollama, OpenAI, Anthropic) while also maintaining a persistent RAG index.
+
+### Purpose
+Provides a unified layer to interact with LLMs and Vector Embeddings, hiding the implementation specifics from the main Agent Loop.
+
+### Components
+- **`routes/model_routes.py` & `src/model_discovery.py`**: Automatically polls APIs (e.g., standard `localhost:11434`) to list available models. `model_discovery.py` aggregates these lists and surfaces them to the UI.
+- **`src/model_context.py` & `src/endpoint_resolver.py`**: Resolves logical model names to concrete endpoint URLs and handles context window limit calculations to prevent prompt overflow.
+- **`routes/embedding_routes.py` & `src/embeddings.py` & `src/embedding_lanes.py`**: Configures the semantic search backend. Manages switching between external API embeddings (like OpenAI text-embedding-ada-002) and local fastembed onnx models.
+- **`src/chroma_client.py`, `src/rag_singleton.py`, `src/rag_vector.py`**: Wrapper clients for the ChromaDB vector store, managing RAG collection logic and querying similarities.
+
+---
+
+</details>
+
+### Advanced Memory & Skills Pipeline
+
+<details>
+<summary>View Advanced Memory & Skills Pipeline</summary>
+
+
+Long-term semantic context goes beyond just storing facts; the system contains a dedicated pipeline for discovering, extracting, and importing structured "Skills".
+
+```mermaid
+graph TD
+    Input[Teacher LLM Output / File Import] --> Importer[services/memory/skill_importer.py]
+    Importer --> Format[services/memory/skill_format.py]
+    Format --> Extractor[services/memory/skill_extractor.py]
+    Extractor --> Validate[services/memory/skills.py]
+    Validate --> |Save .md to Disk| Storage[DATA_DIR/skills/]
+    Validate --> |Index Metadata| Memory[services/memory/memory.py]
+```
+
+### Components
+- **Skill Extraction (`services/memory/skill_extractor.py`)**: Uses intelligent parsing to derive structured procedure steps and preconditions from freeform conversation text or teacher model outputs.
+- **Skill Formatting (`services/memory/skill_format.py`)**: Ensures that every skill strictly adheres to the markdown specifications required for the Agent loop to parse it effectively (e.g., maintaining `SKILL.md` boundaries).
+- **Skill Importer (`services/memory/skill_importer.py`)**: Handles the ingest of external skill packs (like those from the integrations folder), safely validating content without trusting external metadata completely.
+- **Manager (`services/memory/skills.py`)**: The central service that orchestrates reading and writing skills to the local disk and synchronizing them with the Vector Database for semantic retrieval later.
+
+
+</details>
+
+</details>
+
+## Features & Integrations
+<details>
+<summary>View Features & Integrations</summary>
+
+### Integrations & Advanced Features
+
+<details>
+<summary>View Integrations & Advanced Features</summary>
+
+
+### MCP (Model Context Protocol) Manager (`src/mcp_manager.py`)
+- Allows connecting external tool servers via standard IO (stdio), SSE, or HTTP.
+- Dynamically converts MCP JSON schemas into OpenAI-compatible function calling schemas, injected into the agent loop.
+- Handles OAuth flows for tools requiring authentication.
+
+### Deep Research (`src/deep_research.py`)
+- An iterative `Think → Search → Extract → Synthesize` loop.
+- Generates sub-queries, executes searches via SearXNG (or others), extracts content from webpages using an LLM, and continuously synthesizes findings into a comprehensive final report.
+
+### Email & CalDAV
+- **Email:** Built-in IMAP/SMTP triage. It can summarize, auto-tag, and draft replies using AI.
+- **CalDAV:** Local-first calendar synchronization with external providers (Radicale, Nextcloud, Apple, Fastmail).
+
+---
+
+</details>
+
+### Integrations & Companion
+
+<details>
+<summary>View Integrations & Companion</summary>
+
 
 Odysseus can pair with companion apps and handle external webhooks.
 
@@ -1360,62 +1842,86 @@ Odysseus can pair with companion apps and handle external webhooks.
 
 ---
 
-## 18. Deep Dive: Deployment & Background Jobs
+</details>
 
-Odysseus employs standard and GPU-accelerated Docker builds along with native OS scripts.
+### Companion Bridge (`companion/`)
 
-- **Docker Entrypoints (`docker/entrypoint.sh`)**: Runs PUID/PGID matching to ensure bind-mounted volumes don't suffer from root-ownership permission issues.
-- **Docker Compose Profiles (`docker-compose.gpu-nvidia.yml`, `docker-compose.gpu-amd.yml`)**: Extend the base deployment with passthrough configuration for hardware acceleration.
-- **Native Launchers (`launch-windows.ps1`, `start-macos.sh`)**: Automate Venv creation, dependency installation, and server binding on native OSes.
-- **Task Scheduler (`src/task_scheduler.py`, `src/bg_jobs.py`)**: Background loops that execute delayed actions, background research runs, ping reminders, and cron-scheduled tasks.
+<details>
+<summary>View Companion Bridge (`companion/`)</summary>
+
+
+The Companion Bridge provides an additive layer for Local Area Network (LAN) clients (like a mobile companion app) to securely discover and pair with the Odysseus server without duplicating core LLM logic.
+
+```mermaid
+graph LR
+    Client[Mobile Companion App] --> |GET /api/companion/ping| Bridge[Companion Bridge routes]
+    Client --> |GET /api/companion/info| Bridge
+    Client --> |GET /api/companion/models| Bridge
+    Browser[Admin Browser Session] --> |POST /api/companion/pair| Mint[Token Minting]
+    Mint --> |Returns JSON Token| QRCode[QR Code / API Response]
+    QRCode -.-> |Scanned / Copied| Client
+```
+
+### Components & Posture
+- **Capabilities & Discovery (`companion/routes.py`)**: Endpoints like `/api/companion/info` and `/api/companion/models` allow an authenticated client to discover what AI providers, tools, and endpoints the server makes available. Model requests scope strictly to the authenticated user.
+- **Pairing Flow & CSRF Security (`companion/pairing.py`)**: To pair a new device, an admin session requests a one-time API pairing token. The server enforces strict CSRF protections by requiring this token minting to be an explicit `POST` operation, protected by a `SameSite=Lax` cookie policy. The `GET /pair` route only returns an HTML form, preventing unintended token minting via cross-site GET navigations.
 
 ---
 
-## 19. Deep Dive: Core Utilities (`core/`)
+</details>
 
-The core utilities manage foundational backend state, security, and process infrastructure.
+### External Integrations (`integrations/`)
+
+<details>
+<summary>View External Integrations (`integrations/`)</summary>
+
+
+Odysseus provides an integration layer that acts as a secure bridge for third-party AI agents (e.g., Claude Code, OpenAI integrations) to execute tools locally through the Odysseus server.
 
 ```mermaid
 graph TD
-    App[FastAPI application] --> Auth[core/auth.py]
-    App --> SessionMan[core/session_manager.py]
-    App --> Security[core/middleware.py]
-    SessionMan --> DB[(SQLite Database core/database.py)]
-    Auth --> DB
-    Security --> Headers[SecurityHeadersMiddleware]
+    Agent[Claude Code / External Agent] --> |HTTP Bearer Token| Codex[routes/codex_routes.py]
+    Codex --> Auth[Token Validation & Scope Check]
+    Auth --> |Forbidden Tools| Reject[403 Forbidden]
+    Auth --> |Allowed| ToolIndex[Tool Dispatch src/agent_tools.py]
+    ToolIndex --> LocalTools[Local OS / Database / Memory]
+    LocalTools --> Codex
+    Codex --> Agent
 ```
 
-### Components
-- **Session Management (`core/session_manager.py`)**: A centralized state machine holding in-memory references to user chat sessions and synchronizing them with SQLite. This module guarantees the transaction lifecycle, archiving inactive chats, tracking history, and purging deleted threads gracefully.
-- **Authentication (`core/auth.py`)**: Provides security logic for the web application and external integrations. It handles Bearer tokens for API integrations and user TOTP secrets.
-- **Security Middleware (`core/middleware.py`)**: Applies the `SecurityHeadersMiddleware`, issuing strict CSP boundaries, denying framing unless accessing specific isolated endpoints (like PDF previewers), and handling loopback agent requests securely.
-- **Platform Compatibility & Atomic IO (`core/platform_compat.py`, `core/atomic_io.py`)**: Tools for writing files atomically, safely spawning processes across Windows/Linux, translating paths over WSL boundaries, and resolving execution environments.
+### Components & Posture
+- **The "Codex" Abstraction (`routes/codex_routes.py`)**: Historically named "codex", this router exposes the canonical, scope-gated API endpoints (`/api/codex/*`) that external agents hit to list available tools and execute them.
+- **Plugin Bundles (`integrations/claude/`)**: Directories like `integrations/claude` contain ready-to-use skill bundles (`SKILL.md` and wrapper scripts). A user installs this into their external agent (like Anthropic's `claude-code` CLI).
+- **Scope Enforcement**: API tokens generated for integrations are heavily scope-gated. If an external agent attempts to execute a tool (e.g., `bash` or `read_file`) that the user has not explicitly enabled in the Integrations UI, Odysseus rejects the request. This ensures external platforms cannot access the host machine unconditionally.
 
 ---
 
-## 20. Deep Dive: Background Services (`services/`)
+</details>
 
-The internal architecture separates discrete background jobs into standalone, stateless modules. These modules serve external integration requests triggered by the agent loop or via direct route access.
+### Integrations & MCP Extensibility
 
-```mermaid
-graph TD
-    Agent[Agent Loop] --> Shell[services/shell/service.py]
-    Agent --> Youtube[services/youtube/youtube_handler.py]
-    Client[Web Client] --> AudioIn[services/stt/stt_service.py]
-    Client --> AudioOut[services/tts/tts_service.py]
-    AudioOut --> Kokoro[Local Kokoro-82M model]
-    AudioIn --> Whisper[Local faster-whisper model]
-    Youtube --> YTDLP[yt-dlp]
-```
+<details>
+<summary>View Integrations & MCP Extensibility</summary>
+
+
+The system natively supports adding extensions via the Model Context Protocol (MCP) and third-party subscriptions.
+
+### Purpose
+Provides dynamic loading of tools that aren't natively compiled into the python source.
 
 ### Components
-- **Shell Executor (`services/shell/`)**: Provides controlled subprocess execution capabilities complete with streaming outputs and rigid execution timeouts. Used to implement the "bash" native tool.
-- **Speech Processing (`services/stt/`, `services/tts/`)**: Wraps speech-to-text (Whisper/Browser API) and text-to-speech (Kokoro-82M on GPU/API endpoints). Integrates transparent fallback if models fail to load or aren't installed locally.
-- **YouTube Handler (`services/youtube/`)**: Employs `youtube_transcript_api` and `yt-dlp` to asynchronously pull video transcripts and high-voted comments for deep content context injection into the LLM.
+- **`routes/mcp_routes.py` & `src/builtin_mcp.py` & `src/mcp_oauth.py`**: Scaffolds the setup and oauth workflows required to integrate external MCP servers (e.g., Google Drive, GitHub) via stdio or HTTP.
+- **`routes/copilot_routes.py`, `routes/chatgpt_subscription_routes.py`, `src/chatgpt_subscription.py`**: Modules handling proxying requests to proprietary endpoints like GitHub Copilot or ChatGPT by intercepting subscription headers, emulating an OpenAI-compatible interface.
 
 ---
 
-## 21. Deep Dive: Built-in MCP Servers (`mcp_servers/`)
+</details>
+
+### Built-in MCP Servers (`mcp_servers/`)
+
+<details>
+<summary>View Built-in MCP Servers (`mcp_servers/`)</summary>
+
 
 Odysseus uses the **Model Context Protocol (MCP)** to register native functionalities into the LLM prompt. These servers act directly on the local database and API, standardizing internal functions as tools.
 
@@ -1439,60 +1945,226 @@ graph TD
 
 ---
 
-## 22. Deep Dive: Testing and Tooling (`tests/`, `scripts/`)
+</details>
 
-A robust local environment requires automated regression assurance and operations tooling.
+### Copilot Provider Support (`src/copilot.py`)
+
+<details>
+<summary>View Copilot Provider Support (`src/copilot.py`)</summary>
+
+
+Odysseus integrates natively with GitHub Copilot, allowing users with Copilot subscriptions to use Copilot's backing models as their LLM provider.
 
 ```mermaid
-graph TD
-    TestRunner[Pytest] --> PythonTests[tests/test_*.py]
-    TestRunnerNode[Node.js test] --> StreamingTests[tests/streaming/*.test.mjs]
-    StreamingTests --> Segmenter[static/js/streamingSegmenter.js]
-    CLI[scripts/_lib/cli.py] --> OdyScripts[scripts/odysseus-*]
-    OdyScripts --> Core[Core Python Application]
+graph LR
+    User[User] --> |Authorizes Device Code| GH[GitHub OAuth]
+    GH --> |access_token| Odysseus
+    Odysseus --> |Headers + Token| CopilotAPI[api.githubcopilot.com/chat/completions]
 ```
 
-### Components
-- **Pytest Suite (`tests/`)**: High-coverage Python testing logic isolating the agent, session, search, and uploading modules.
-- **Streaming Invariants (`tests/streaming/`)**: Node.js harness scripts ensuring the Server-Sent Event boundary (`streamingSegmenter.js`) accurately matches equivalent static Markdown rendering paths without leaking mid-generation tags.
-- **Operational CLI (`scripts/`)**: Repositories for standalone CLI ops, from database maintenance (`update_database.py`), headless model indexing (`index_documents.py`), hardware profiling scripts, and GitHub action analyzers (`pr_blocker_audit.py`).
+### Purpose
+To leverage existing Copilot subscriptions without needing a separate OpenAI or Anthropic API key.
 
-## 23. Deep Dive: API Routing & Controllers (`routes/`)
-
-Odysseus isolates the API surface area from business logic through a highly modular router design. Instead of a monolithic routing file, the application features over 40 distinct route controllers in the `routes/` directory.
-
-### Routing Organization
-- **`app.py` Mounting:** The primary FastAPI application imports and mounts these routers using `include_router`.
-- **Feature Encapsulation:** Endpoints are strictly scoped to their domain. For instance, `document_routes.py` manages all `GET/POST /api/documents` operations, while `chat_routes.py` handles generation and SSE streams.
-- **Helper Extraction:** Complex or reusable logic inside a router is often extracted to a companion file (e.g., `chat_helpers.py`, `document_helpers.py`, `cookbook_helpers.py`).
-- **Security Scope:** Middleware ensures that endpoints are protected based on user roles. Most routers perform their own checks against `get_current_user` to restrict data access to the session owner. Certain administrative routes (`api_token_routes.py`, `webhook_routes.py`) mandate a higher privilege level via `require_admin`.
+### Mechanics
+- **Device Flow Auth**: Implements the GitHub OAuth Device Flow. The user authorizes a device code in their browser, and Odysseus receives a long-lived `access_token`.
+- **API Emulation**: Copilot exposes an OpenAI-compatible endpoint (`/chat/completions`). `copilot.py` manages the injection of required, provider-specific headers (e.g., API version, editor-style User-Agent, and `x-initiator`).
+- **No Exchange Required**: Unlike some integrations, the bearer token is sent directly to the Copilot API without a secondary token exchange.
 
 ---
 
-## 24. Deep Dive: Chat Processing & Engine Logic (`src/`)
 
-The core execution of conversational AI interactions lives primarily in `src/chat_processor.py`, `src/chat_handler.py`, and `src/agent_runs.py`.
+</details>
 
-```mermaid
-graph TD
-    Client[Web UI] --> Route[routes/chat_routes.py]
-    Route --> CoreHandler[src/chat_handler.py]
-    CoreHandler --> AuthContext[Context & Security Checks]
-    CoreHandler --> Processor[src/chat_processor.py]
-    Processor --> |RAG/Search Injection| AgentLoop[src/agent_loop.py]
-    AgentLoop --> LLM[src/llm_core.py]
-    LLM -.-> |Stream Generator| Runs[src/agent_runs.py Background Task]
-    Runs -.-> |SSE| Client
-```
+</details>
 
-### Components
-- **`chat_handler.py`:** Parses incoming chat requests, manages attachment validations, coerces sessions, and sets up the async streams.
-- **`chat_processor.py`:** Applies NLP tasks. It checks for stopwords, extracts URLs directly via regex for immediate search querying, and handles security logic (like `UNTRUSTED_CONTEXT_POLICY`) to sanitize unsafe context windows.
-- **`agent_runs.py`:** Implements detached agent-runs. The model streams text even if the browser drops the SSE connection. This module catches the stream into a replay buffer that users can re-subscribe to upon page refresh, preventing mid-thought data loss.
+## Core Systems (Search, Auth, Files)
+<details>
+<summary>View Core Systems (Search, Auth, Files)</summary>
+
+### Security & Authentication
+
+<details>
+<summary>View Security & Authentication</summary>
+
+
+Odysseus treats the self-hosted environment like an admin console due to powerful local tools (shell, file IO).
+
+- **AuthManager (`core/auth.py`):** Handles bcrypt-hashed passwords and session cookies. Enabled by `AUTH_ENABLED=true`.
+- **API Tokens:** Supports Bearer token authentication for external integrations (like Webhooks or Zapier). Tokens are cached for performance and invalidated on change.
+- **Security Middleware:** `SecurityHeadersMiddleware` enforces safe browser headers. `AuthMiddleware` protects routes and validates proxy/tunnel forwarding headers to prevent auth bypass.
 
 ---
 
-## 25. Deep Dive: Document & Workspace Logic
+</details>
+
+### Authentication & User Management
+
+<details>
+<summary>View Authentication & User Management</summary>
+
+
+The system uses a combination of route handling and helper logic to manage access control.
+
+### Purpose
+To authenticate incoming requests, issue and validate tokens, and provide device-flow authorization when needed.
+
+### Components
+- **`routes/auth_routes.py` & `src/auth_helpers.py`**: Manages user login, session token validation, and password verification. Contains core logic to authenticate against the user database and generate JWT tokens or session cookies.
+- **`routes/device_flow.py`**: Facilitates the OAuth 2.0 Device Authorization Grant, allowing head-less devices (like a companion app) to securely pair with the server.
+- **`src/api_key_manager.py`**: Manages the lifecycle and verification of static API keys, providing an alternative to standard login for external integrations calling into Odysseus endpoints.
+
+---
+
+</details>
+
+### Vault & Secret Storage (`src/secret_storage.py`, `routes/vault_routes.py`)
+
+<details>
+<summary>View Vault & Secret Storage (`src/secret_storage.py`, `routes/vault_routes.py`)</summary>
+
+
+Odysseus provides an encrypted secret store, safeguarding credentials while ensuring usability.
+
+```mermaid
+graph TD
+    App[FastAPI Endpoints] --> SecretStore[src/secret_storage.py]
+    SecretStore --> KeyFile[.app_key (chmod 600)]
+    SecretStore --> SQLite[(data/app.db)]
+    App --> VaultRoute[routes/vault_routes.py]
+    VaultRoute --> VaultCLI[bw / Bitwarden CLI]
+    VaultCLI --> TokenFile[(data/vault.json)]
+```
+
+### Components
+- **Secret Storage (`src/secret_storage.py`)**: A Fernet-based symmetric encryption module. It generates an `.app_key` (secured with `0o600` permissions) to encrypt sensitive configuration data, such as IMAP/SMTP passwords, before storing them in the SQLite database. Encrypted rows are prepended with `enc:` to seamlessly handle unencrypted legacy values.
+- **Vault Integration (`routes/vault_routes.py`)**: A wrapper around the `bw` (Bitwarden / Vaultwarden) CLI. It allows admins to unlock their vault, caching the session token in `data/vault.json`. Passwords are deliberately passed via `stdin` rather than command-line arguments to prevent leakage into `ps` or `/proc/<pid>/cmdline`.
+
+---
+
+</details>
+
+### Threat Model (`THREAT_MODEL.md`)
+
+<details>
+<summary>View Threat Model (`THREAT_MODEL.md`)</summary>
+
+
+Odysseus's threat model acknowledges its nature as a privileged admin console.
+
+### Key Tenets
+1. **Admin Isolation**: Admins have full access (shell, files, MCP, etc.). Non-admin users are strictly segregated and cannot execute commands or read arbitrary files.
+2. **Internal Tool Loopback**: The agent loop talks back to the API over a secured loopback using a random, non-persisted `INTERNAL_TOOL_TOKEN`. Even if an agent operates on behalf of a non-admin, the backend explicitly verifies the user's privilege before allowing the loopback to execute an admin-only tool.
+3. **No Network Egress Sandbox**: Currently, tools executed by the LLM run directly as the app process user. A successful prompt-injection attack that escapes the `prompt_security.py` wrapper *could* execute shell commands, but only if the user is an admin.
+
+---
+
+</details>
+
+### Prompt Engineering & Security (`src/preset_manager.py`, `src/prompt_security.py`)
+
+<details>
+<summary>View Prompt Engineering & Security (`src/preset_manager.py`, `src/prompt_security.py`)</summary>
+
+
+Managing the interaction between the system, the LLM, and external data is critical for both utility and safety.
+
+### Components
+- **Preset Manager (`src/preset_manager.py`)**: Maintains predefined system prompts, temperature configurations, and max token limits (`Code Analyze`, `Brainstorm`, `Reason`) as well as user-created templates. It performs atomic, concurrent-safe writes to `data/presets.json`.
+- **Prompt Security (`src/prompt_security.py`)**: Defends against prompt-injection attacks. Any text originating from a potentially untrusted source (emails, web results, external URLs) is sandboxed inside a `<<<UNTRUSTED_SOURCE_DATA>>>` boundary. The wrapper instructs the LLM strictly to treat the encapsulated content as data rather than executable instructions, preventing malicious documents from co-opting the agent.
+
+---
+
+</details>
+
+### Search Provider & Ranking Engine
+
+<details>
+<summary>View Search Provider & Ranking Engine</summary>
+
+
+Odysseus implements a modular and extensible search abstraction tier, allowing swapping of underlying search providers while maintaining unified output format and caching.
+
+```mermaid
+graph TD
+    Agent[Deep Research / Web Search Tool] --> Core[src/search/core.py]
+    Core --> Cache[src/search/cache.py]
+    Cache --> |Miss| Providers[src/search/providers.py]
+    Providers --> |SearXNG, DuckDuckGo| Fetch[External Web]
+    Providers --> Ranking[src/search/ranking.py]
+    Ranking --> Stats[src/search/analytics.py]
+    Ranking --> |Return Standardized Format| Core
+```
+
+### Components
+- **Core Orchestrator (`src/search/core.py`, `services/search/`)**: Manages the flow of fetching configurations and routing the search term to the designated active provider.
+- **Caching (`src/search/cache.py`)**: Reduces outbound requests by locally caching queries with identical parameters.
+- **Provider Implementations (`src/search/providers.py`)**: Abstracts provider-specific API oddities (e.g., JSON handling from SearXNG vs raw HTTP scraping from DuckDuckGo) into a standardized `dict` format.
+- **Ranking & Analytics (`src/search/ranking.py`, `src/search/analytics.py`)**: Analyzes results to filter out spam or low-quality hits before they reach the LLM, tracking failure rates and error conditions centrally.
+
+---
+
+</details>
+
+### Deep Research & Web Integration
+
+<details>
+<summary>View Deep Research & Web Integration</summary>
+
+
+Deep Research allows multi-step, autonomous information gathering resulting in a visually appealing HTML report.
+
+```mermaid
+graph TD
+    Query[Research Prompt] --> Plan[LLM Planning]
+    Plan --> Gen[Generate Sub-Queries]
+    Gen --> Search[Search via SearXNG]
+    Search --> Fetch[Fetch & Extract URL Content]
+    Fetch --> Synthesize[Synthesize Findings]
+    Synthesize --> |Iterate if needed| Gen
+    Synthesize --> Final[Generate Final Report]
+    Final --> Visual[visual_report.py HTML Render]
+```
+
+### Components
+- **Deep Researcher (`src/deep_research.py`)**: The orchestration class. Implements an iterative think-search-extract-synthesize loop.
+- **Search Service (`services/search/`)**: Provides abstractions over search providers (SearXNG, DuckDuckGo) for ranking, caching, and querying.
+- **Visual Report (`src/visual_report.py`)**: Transforms the synthesized markdown report and JSON sources into a self-contained, themed HTML file with a table of contents and inline references.
+
+---
+
+</details>
+
+### Research & Topic Analysis
+
+<details>
+<summary>View Research & Topic Analysis</summary>
+
+
+An advanced capability of the system is recursive, Deep Research where agents investigate topics deeply.
+
+### Purpose
+To facilitate complex web searching, summarization, and extracting topic intent from queries.
+
+### Components
+- **`routes/research_routes.py` & `src/research_handler.py`**: Manages the API surface and underlying orchestration to spin off long-running deep research loops.
+- **`src/research_utils.py` & `routes/search_routes.py`**: Utilities for parsing web scrape data and routes to interface with SearXNG backends for general querying.
+- **`src/topic_analyzer.py` & `src/goal_based_extractor.py`**: Analyzes the generated content dynamically to form a structured summary or determine if the research goal has been met.
+
+---
+
+</details>
+
+</details>
+
+## Workspace & Apps
+<details>
+<summary>View Workspace & Apps</summary>
+
+### Document & Workspace Logic
+
+<details>
+<summary>View Document & Workspace Logic</summary>
+
 
 Odysseus supports an AI-assisted rich text and markdown editor.
 
@@ -1502,7 +2174,34 @@ Odysseus supports an AI-assisted rich text and markdown editor.
 
 ---
 
-## 26. Deep Dive: Tasks, Background Jobs & Notes
+</details>
+
+### Personal & Workspace Data
+
+<details>
+<summary>View Personal & Workspace Data</summary>
+
+
+This module handles isolated user contexts such as personal settings, contacts, and workspace-specific document storage.
+
+### Purpose
+To ensure multi-tenancy and data isolation where users only interact with their configured environment.
+
+### Components
+- **`routes/personal_routes.py` & `src/personal_docs.py`**: Handles user-specific document uploads that feed into their personalized RAG store.
+- **`src/settings.py` & `src/settings_scrub.py` & `routes/prefs_routes.py`**: Manages reading and writing application preferences, including redacting (scrubbing) secrets before returning config to the client.
+- **`routes/contacts_routes.py`**: Stores and retrieves contact lists used by agents for communication tasks.
+- **`routes/backup_routes.py` & `routes/admin_wipe_routes.py`**: Administrative endpoints to export the entire workspace data as zip or to perform dangerous reset operations safely.
+
+---
+
+</details>
+
+### Tasks, Background Jobs & Notes
+
+<details>
+<summary>View Tasks, Background Jobs & Notes</summary>
+
 
 Odysseus implements a built-in scheduler to manage long-running operations and recurring events natively.
 
@@ -1513,7 +2212,13 @@ Odysseus implements a built-in scheduler to manage long-running operations and r
 
 ---
 
-## 27. Deep Dive: File Uploads & Document Parsers
+</details>
+
+### File Uploads & Document Parsers
+
+<details>
+<summary>View File Uploads & Document Parsers</summary>
+
 
 To extract and interpret user data natively, Odysseus incorporates several parsing strategies.
 
@@ -1524,155 +2229,50 @@ To extract and interpret user data natively, Odysseus incorporates several parsi
 
 ---
 
-## 28. Deep Dive: Complete Frontend Layout (`static/js/`)
+</details>
 
-Odysseus' vanilla JS architecture is decentralized but tied together cleanly in `static/app.js`.
+### Gallery & Media Editing
 
-```mermaid
-graph TD
-    App[app.js Orchestrator] --> Storage[storage.js]
-    App --> DomainChat[chat.js, chatRenderer.js, chatStream.js]
-    App --> DomainDocs[document.js, editor/, markdown.js]
-    App --> DomainSettings[settings.js, models.js, presets.js, search.js]
-    App --> Components[ui.js, fileHandler.js, voiceRecorder.js]
-    App --> SubSystems[calendar.js, tasks.js, notes.js, emailLibrary.js]
-    DomainChat --> |SSE Streaming| Render[streamingRenderer.js]
-```
+<details>
+<summary>View Gallery & Media Editing</summary>
 
-### Module Families
-- **Core Wiring:** `app.js` and `init.js` bootstrap state. `storage.js` provides wrappers for LocalStorage persistence.
-- **Chat Engine:** The largest monolith (`chat.js`) directs UI transitions, handles form submissions, and manages abort controllers. Rendering output and applying markdown logic is handled via `chatRenderer.js`, `streamingRenderer.js`, and `streamingSegmenter.js`.
-- **Editors & Visuals:** `document.js` manages multiple tabs and state. `gallery.js` handles image assets and grids. The `editor/` sub-folder contains extensions for masking and specialized layout.
-- **Sub-Apps:** Major integrations are separated completely, e.g., `emailLibrary.js` (a full IMAP client UI), `calendar.js` (CalDAV sync rendering), `tasks.js`, and `notes.js`.
-- **Cookbook (Hardware Management):** The `cookbook*.js` modules execute complex, multi-step tasks across SSE streams, including diagnosis, hardware fitting, and download signaling.
 
----
-
-## 29. Deep Dive: Testing Taxonomy (`tests/`, `TESTING_STANDARD.md`)
-
-Odysseus enforces a strict, deterministic testing strategy designed to eliminate order-dependence and global state leakage.
-
-```mermaid
-graph TD
-    TestRunner[Pytest Runner] --> Collection[conftest.py / _taxonomy.py]
-    Collection --> Tags[Taxonomy Area Tags]
-    Tags --> Unit[tests/ unit / helpers]
-    Tags --> Routes[tests/ routes integration]
-    Tags --> Services[tests/ services / background]
-    Tags --> Security[tests/ security / isolation]
-    TestRunnerNode[Node.js Runner] --> JS[tests/ streaming/*.mjs]
-    Unit -.-> |Import State Isolation| Module[Core Modules]
-```
-
-### Components & Principles
-- **Taxonomy Tags (`tests/_taxonomy.py`)**: Tests are categorized (e.g., `security`, `routes`, `cli`, `js`) during collection based on filename conventions.
-- **Determinism & Isolation (`tests/helpers/import_state.py`)**: Tests are heavily isolated. `sys.modules`, `os.environ`, and `cwd` are strictly guarded against cross-test leakage, preventing order-dependent execution failures.
-- **In-memory Default (`tests/conftest.py`)**: Pytest initiates with a fallback in-memory SQLite database to prevent collection-time side-effects within the user's `data/` directory.
-- **Behavior-First Validation**: The testing philosophy strongly discourages `read_text()` or `ast.parse` style source code checks. Tests are required to exercise routing, database interactions, and module calls directly, prioritizing real-world execution state over text inspection.
-
----
-
-## 30. Deep Dive: Companion Bridge (`companion/`)
-
-The Companion Bridge provides an additive layer for Local Area Network (LAN) clients (like a mobile companion app) to securely discover and pair with the Odysseus server without duplicating core LLM logic.
-
-```mermaid
-graph LR
-    Client[Mobile Companion App] --> |GET /api/companion/ping| Bridge[Companion Bridge routes]
-    Client --> |GET /api/companion/info| Bridge
-    Client --> |GET /api/companion/models| Bridge
-    Browser[Admin Browser Session] --> |POST /api/companion/pair| Mint[Token Minting]
-    Mint --> |Returns JSON Token| QRCode[QR Code / API Response]
-    QRCode -.-> |Scanned / Copied| Client
-```
-
-### Components & Posture
-- **Capabilities & Discovery (`companion/routes.py`)**: Endpoints like `/api/companion/info` and `/api/companion/models` allow an authenticated client to discover what AI providers, tools, and endpoints the server makes available. Model requests scope strictly to the authenticated user.
-- **Pairing Flow & CSRF Security (`companion/pairing.py`)**: To pair a new device, an admin session requests a one-time API pairing token. The server enforces strict CSRF protections by requiring this token minting to be an explicit `POST` operation, protected by a `SameSite=Lax` cookie policy. The `GET /pair` route only returns an HTML form, preventing unintended token minting via cross-site GET navigations.
-
----
-
-## 31. Deep Dive: Outgoing Webhooks (`src/webhook_manager.py`)
-
-Odysseus can dispatch system events to external HTTP endpoints, allowing automation platforms like ntfy, Zapier, or custom scripts to react to chat completions and new sessions.
-
-```mermaid
-graph TD
-    EventBus[Event Bus / Agent Loop] --> |session.created, chat.completed| Manager[src/webhook_manager.py]
-    Manager --> |Lookup Subscriptions| DB[(SQLite Webhooks)]
-    Manager --> |Validate URL| SSRF[SSRF Security Layer]
-    SSRF --> |Block Private IP| Drop[Discard]
-    SSRF --> |Permit| Dispatch[HTTPX Async POST]
-    Dispatch --> |X-Odysseus-Signature| External[External Webhook URL]
-```
-
-### Components & Security
-- **Event Dispatch**: Monitored events trigger `webhook_manager.dispatch(event_type, payload)` asynchronously in the background.
-- **SSRF Protection (`_PRIVATE_NETWORKS`)**: To prevent Server-Side Request Forgery, where a user configures a webhook to attack internal infrastructure (e.g., querying `127.0.0.1` or `10.0.x.x`), the webhook manager strictly resolves target domains and drops requests bound for private, loopback, or link-local subnets.
-- **Signature Validation**: Outgoing requests include an `X-Odysseus-Signature` header computed via HMAC-SHA256, allowing external recipients to verify that the webhook legitimately originated from Odysseus and hasn't been tampered with.
-
----
-
-## 32. Deep Dive: External Integrations (`integrations/`)
-
-Odysseus provides an integration layer that acts as a secure bridge for third-party AI agents (e.g., Claude Code, OpenAI integrations) to execute tools locally through the Odysseus server.
-
-```mermaid
-graph TD
-    Agent[Claude Code / External Agent] --> |HTTP Bearer Token| Codex[routes/codex_routes.py]
-    Codex --> Auth[Token Validation & Scope Check]
-    Auth --> |Forbidden Tools| Reject[403 Forbidden]
-    Auth --> |Allowed| ToolIndex[Tool Dispatch src/agent_tools.py]
-    ToolIndex --> LocalTools[Local OS / Database / Memory]
-    LocalTools --> Codex
-    Codex --> Agent
-```
-
-### Components & Posture
-- **The "Codex" Abstraction (`routes/codex_routes.py`)**: Historically named "codex", this router exposes the canonical, scope-gated API endpoints (`/api/codex/*`) that external agents hit to list available tools and execute them.
-- **Plugin Bundles (`integrations/claude/`)**: Directories like `integrations/claude` contain ready-to-use skill bundles (`SKILL.md` and wrapper scripts). A user installs this into their external agent (like Anthropic's `claude-code` CLI).
-- **Scope Enforcement**: API tokens generated for integrations are heavily scope-gated. If an external agent attempts to execute a tool (e.g., `bash` or `read_file`) that the user has not explicitly enabled in the Integrations UI, Odysseus rejects the request. This ensures external platforms cannot access the host machine unconditionally.
-
----
-
-## 33. Deep Dive: Operational CLI Scripts (`scripts/`)
-
-For maintenance, debugging, and offline operations, Odysseus includes a suite of Python CLI tools.
+Odysseus includes an AI-integrated gallery and media editor.
 
 ### Components
-- **`odysseus-*` commands**: A collection of scripts starting with `odysseus-` (e.g., `odysseus-backup`, `odysseus-logs`, `odysseus-sessions`, `odysseus-memory`) providing low-level access to the database and systems.
-- **`_lib/cli.py`**: A shared library simplifying the process of writing CLI tools, managing initialization, loading the `app.db`, and setting up rich console output.
-- **`update_database.py`**: An essential operational script to run schema migrations and ensure the database reflects the current SQLAlchemy models without data loss.
-- **`index_documents.py`**: A script to manually force re-indexing of documents into ChromaDB.
-- **`migrate_faiss_to_chroma.py`**: A historical migration script ensuring safe transfer of semantic memories.
-- **`check-docker-gpu.sh` & `check-docker-amd-gpu.sh`**: Utilities used during deployment to confirm the container runtime supports the hardware passthrough required.
+- **Gallery Routes (`routes/gallery_routes.py`)**: Exposes REST endpoints to query, filter, and upload images. All queries are heavily owner-scoped to ensure strict tenant isolation.
+- **Frontend State (`static/js/gallery.js`)**: Manages the multi-select interface, tag filtering, album sorting, and dynamic grid rendering.
+- **AI Editor (`static/js/editor/`)**: A complex, multi-layered HTML5 canvas application. Features include checkerboard backgrounds, mask creation tools (`wand.js`, `lasso.js`), image composition (`clone.js`), and direct hooks to the backend for AI-assisted operations like inpainting or background removal (`ai-inpaint.js`, `ai-rembg.js`).
 
 ---
 
-## 34. Deep Dive: Action Intents & Chat Routing (`src/action_intents.py`)
+</details>
 
-Odysseus employs a lightweight routing heuristic to determine when a standard chat prompt should be promoted to full "agent mode" (invoking the agent loop and tools).
+### Session & History Management
 
-```mermaid
-graph TD
-    Input[User Prompt] --> Regex[Regex Intent Detection]
-    Regex --> |"can you search...", "read this..."| Agent[Promote to Agent Mode]
-    Regex --> |General question| Chat[Standard Chat Completion]
-    Agent --> LoadTools[Load Tools & System Prompt]
-    Chat --> LLM[LLM Generation]
-```
+<details>
+<summary>View Session & History Management</summary>
+
+
+A core feature of the agent UI is managing conversational sessions and historical context over time.
 
 ### Purpose
-To avoid unnecessary LLM overhead, the system uses deterministic regex patterns to detect when a user is explicitly asking the assistant to take an action (e.g., "can you search...", "please read this file...") rather than simply asking a question.
+To persist user chats across reloads, prune stale data, and provide search functionalities over past conversations.
 
-### Mechanics
-- **`ToolIntent`**: A dataclass that evaluates `needs_tools`, `category`, and `reason`.
-- **Patterns**: Scans for phrases like "can you", "would you", or specific verbs ("search", "read", "run") combined with action requests.
-- **Outcome**: If an action intent is detected, the frontend is signaled or the backend automatically escalates the chat into the agent loop, loading the necessary tools and system prompts.
+### Components
+- **`routes/session_routes.py` & `src/session_actions.py`**: Manages REST API endpoints for loading, renaming, and exporting chat sessions. Handles state logic like creating new empty sessions.
+- **`src/session_search.py` & `routes/history_routes.py`**: Powers the UI's sidebar history lookup. `session_search.py` performs the database lookups across raw JSON blobs containing chat history.
+- **`routes/cleanup_routes.py` & `src/cleanup_service.py`**: Manages garbage collection of orphaned session data, preventing the SQLite database from bloating infinitely with abandoned drafts.
 
 ---
 
-## 35. Deep Dive: Context Compaction (`src/context_compactor.py`)
+</details>
+
+### Context Compaction (`src/context_compactor.py`)
+
+<details>
+<summary>View Context Compaction (`src/context_compactor.py`)</summary>
+
 
 To prevent the LLM context window from overflowing during long sessions, Odysseus implements an automatic context compaction mechanism.
 
@@ -1697,363 +2297,65 @@ It ensures that long-running conversations do not crash due to token limits whil
 
 ---
 
-## 36. Deep Dive: Built-in Actions & Scheduled Tasks (`src/builtin_actions.py`)
+</details>
 
-Odysseus features a registry of native automation actions that can be executed periodically by the task scheduler without needing to spin up an LLM.
+### Email & Calendar Sync
+
+<details>
+<summary>View Email & Calendar Sync</summary>
+
+
+Odysseus features robust, local-first syncing for emails (IMAP/SMTP) and calendars (CalDAV).
 
 ```mermaid
 graph TD
-    Scheduler[src/task_scheduler.py] --> Dequeue[Dequeue TaskRun from DB]
-    Dequeue --> Lookup[Lookup Action in builtin_actions.py Registry]
-    Lookup --> Execute[Execute Native Python Function]
-    Execute --> |Success| Mark[Mark Last Run / Next Run]
-    Execute --> |TaskNoop| Skip[Skip Silently]
+    ExtCal[External CalDAV Server] <--> Sync[caldav_sync.py]
+    ExtMail[IMAP / SMTP Server] <--> MailPoll[email_pollers.py]
+    Sync <--> DB[(SQLite Local Cache)]
+    MailPoll <--> DB
+    MailPoll --> Parser[email_thread_parser.py]
+    MailPoll --> LLM[Auto Summarize & Classify]
 ```
 
-### Purpose
-Provides reliable, zero-cost execution for routine system maintenance and user-defined scheduled tasks.
-
-### Mechanics
-- **Registry**: Houses predefined python functions mapped to string identifiers (e.g., `system.tidy_calendar`, `system.poll_email`).
-- **`TaskNoop` Exception**: A silent exception used by actions to indicate there was nothing to do (e.g., no new emails, calendar already synced), preventing log spam.
-- **Execution**: The scheduler (`src/task_scheduler.py`) dequeues pending tasks from the database and invokes the corresponding function in `builtin_actions.py`.
+### Components
+- **CalDAV Sync (`src/caldav_sync.py`, `src/caldav_writeback.py`)**: Resolves CalDAV hosts, fetches `.ics` events, caches them locally, and pushes local edits back to the remote server.
+- **Email Pollers (`routes/email_pollers.py`)**: Background threads that poll IMAP folders, detect new mail, and run background LLM tasks to summarize, tag, or auto-reply.
+- **Thread Parser (`src/email_thread_parser.py`)**: An advanced HTML/plaintext parser that strips quotes, mashes headers, and normalizes email body contents for LLM consumption.
 
 ---
 
-## 37. Deep Dive: Copilot Provider Support (`src/copilot.py`)
+</details>
 
-Odysseus integrates natively with GitHub Copilot, allowing users with Copilot subscriptions to use Copilot's backing models as their LLM provider.
+### Cookbook & Hardware Fitness
+
+<details>
+<summary>View Cookbook & Hardware Fitness</summary>
+
+
+The "Cookbook" automatically analyzes host hardware to recommend, download, and serve models.
 
 ```mermaid
 graph LR
-    User[User] --> |Authorizes Device Code| GH[GitHub OAuth]
-    GH --> |access_token| Odysseus
-    Odysseus --> |Headers + Token| CopilotAPI[api.githubcopilot.com/chat/completions]
-```
-
-### Purpose
-To leverage existing Copilot subscriptions without needing a separate OpenAI or Anthropic API key.
-
-### Mechanics
-- **Device Flow Auth**: Implements the GitHub OAuth Device Flow. The user authorizes a device code in their browser, and Odysseus receives a long-lived `access_token`.
-- **API Emulation**: Copilot exposes an OpenAI-compatible endpoint (`/chat/completions`). `copilot.py` manages the injection of required, provider-specific headers (e.g., API version, editor-style User-Agent, and `x-initiator`).
-- **No Exchange Required**: Unlike some integrations, the bearer token is sent directly to the Copilot API without a secondary token exchange.
-
----
-
-
-## 38. Deep Dive: Configuration & Third-party Services (`config/`, `licenses/`)
-
-Odysseus relies on several external components and strictly manages their configuration.
-
-### Components
-- **`config/searxng/settings.yml`**: A pre-configured settings file for the SearXNG search aggregator. Odysseus mounts this into the SearXNG container to enforce specific output formats (JSON/HTML) and inject a secret key securely without requiring user intervention.
-- **`licenses/`**: The directory tracking open-source licenses for embedded components. Odysseus uses modified or integrated parts of tools like `DeepResearch` or `llmfit`, and this directory ensures proper MIT/Apache 2.0 attribution without bloating the root project directory.
-
----
-
-## 39. Deep Dive: Advanced Container Management (`docker/`)
-
-The `docker/` directory contains critical infrastructure for securely and reliably hosting Odysseus on Linux environments.
-
-```mermaid
-graph LR
-    Host[Host OS Bind Mounts] --> Volume[data/ permissions]
-    Volume --> Entry[docker/entrypoint.sh]
-    Entry --> |gosu PUID:PGID| App[FastAPI Application]
-    Compose[docker-compose.yml] --> |Includes| GPU[gpu.nvidia.yml / gpu.amd.yml]
+    OS[OS / sysfs / WMI] --> HW[Hardware Discovery hardware.py]
+    HW --> Fit[Fitness Scoring fit.py]
+    Fit --> Serve[Model Serving cookbook_serve_lifecycle.py]
+    Serve --> Engine[vLLM / llama.cpp / tmux]
 ```
 
 ### Components
-- **`entrypoint.sh`**: Fixes the #1 self-hosting footgun—root ownership of bind-mounted volumes. It reads `PUID` and `PGID` environment variables, creates a matching unprivileged user (`odysseus`), `chown`s the `/data` directory appropriately, and drops privileges via `gosu` before starting the application. This ensures users can interact with downloaded SQLite or memory databases on the host OS natively without permission denied errors.
-- **`gpu.nvidia.yml` & `gpu.amd.yml`**: Compose profiles that inject required hardware passthrough directives (`deploy.resources.reservations.devices` for NVIDIA, `/dev/kfd` and `/dev/dri` for AMD ROCm). The main compose file is kept minimal, while these profiles act as composable overlays depending on the user's hardware.
+- **Hardware Discovery (`services/hwfit/hardware.py`)**: Reads `/sys/class/drm`, `nvidia-smi`, or Windows WMI to accurately gauge CPU, RAM, GPU architectures, and VRAM availability.
+- **Fitness Scoring (`services/hwfit/fit.py`)**: Computes `_fit_score` based on required vs. available VRAM and ranks models for the user.
+- **Serve Lifecycle (`src/cookbook_serve_lifecycle.py`)**: Orchestrates the downloading and serving of models via `tmux` sessions.
 
 ---
 
-## 40. Deep Dive: Streaming Invariant Tests (`tests/streaming/`)
+</details>
 
-Testing streamed server-sent events mathematically ensures the frontend markdown parsing never tears or flashes mid-stream. Since the segmenter logic resides in `static/js/`, these tests are written natively in Node.js rather than Pytest.
+### Cookbook UI State Machine
 
-### Mechanics
-- **`invariant.test.mjs`**: The core correctness loop. It feeds a known Markdown corpus into the segmenter character-by-character. At every tick, it asserts that the sum of all finalized HTML chunks plus the live tail rendering matches what a static renderer would produce given the same exact prefix.
-- **Isolation**: These node tests run without a DOM (via `node:test` and `node:assert`), executing purely functional validations. If the streaming segmenter logic fails, the CI block is caught at the Node level, preventing UI degradation in production.
+<details>
+<summary>View Cookbook UI State Machine</summary>
 
-
-## 41. Deep Dive: Vault & Secret Storage (`src/secret_storage.py`, `routes/vault_routes.py`)
-
-Odysseus provides an encrypted secret store, safeguarding credentials while ensuring usability.
-
-```mermaid
-graph TD
-    App[FastAPI Endpoints] --> SecretStore[src/secret_storage.py]
-    SecretStore --> KeyFile[.app_key (chmod 600)]
-    SecretStore --> SQLite[(data/app.db)]
-    App --> VaultRoute[routes/vault_routes.py]
-    VaultRoute --> VaultCLI[bw / Bitwarden CLI]
-    VaultCLI --> TokenFile[(data/vault.json)]
-```
-
-### Components
-- **Secret Storage (`src/secret_storage.py`)**: A Fernet-based symmetric encryption module. It generates an `.app_key` (secured with `0o600` permissions) to encrypt sensitive configuration data, such as IMAP/SMTP passwords, before storing them in the SQLite database. Encrypted rows are prepended with `enc:` to seamlessly handle unencrypted legacy values.
-- **Vault Integration (`routes/vault_routes.py`)**: A wrapper around the `bw` (Bitwarden / Vaultwarden) CLI. It allows admins to unlock their vault, caching the session token in `data/vault.json`. Passwords are deliberately passed via `stdin` rather than command-line arguments to prevent leakage into `ps` or `/proc/<pid>/cmdline`.
-
----
-
-## 42. Deep Dive: Gallery & Media Editing
-
-Odysseus includes an AI-integrated gallery and media editor.
-
-### Components
-- **Gallery Routes (`routes/gallery_routes.py`)**: Exposes REST endpoints to query, filter, and upload images. All queries are heavily owner-scoped to ensure strict tenant isolation.
-- **Frontend State (`static/js/gallery.js`)**: Manages the multi-select interface, tag filtering, album sorting, and dynamic grid rendering.
-- **AI Editor (`static/js/editor/`)**: A complex, multi-layered HTML5 canvas application. Features include checkerboard backgrounds, mask creation tools (`wand.js`, `lasso.js`), image composition (`clone.js`), and direct hooks to the backend for AI-assisted operations like inpainting or background removal (`ai-inpaint.js`, `ai-rembg.js`).
-
----
-
-## 43. Deep Dive: Prompt Engineering & Security (`src/preset_manager.py`, `src/prompt_security.py`)
-
-Managing the interaction between the system, the LLM, and external data is critical for both utility and safety.
-
-### Components
-- **Preset Manager (`src/preset_manager.py`)**: Maintains predefined system prompts, temperature configurations, and max token limits (`Code Analyze`, `Brainstorm`, `Reason`) as well as user-created templates. It performs atomic, concurrent-safe writes to `data/presets.json`.
-- **Prompt Security (`src/prompt_security.py`)**: Defends against prompt-injection attacks. Any text originating from a potentially untrusted source (emails, web results, external URLs) is sandboxed inside a `<<<UNTRUSTED_SOURCE_DATA>>>` boundary. The wrapper instructs the LLM strictly to treat the encapsulated content as data rather than executable instructions, preventing malicious documents from co-opting the agent.
-
----
-
-## 44. Deep Dive: Threat Model (`THREAT_MODEL.md`)
-
-Odysseus's threat model acknowledges its nature as a privileged admin console.
-
-### Key Tenets
-1. **Admin Isolation**: Admins have full access (shell, files, MCP, etc.). Non-admin users are strictly segregated and cannot execute commands or read arbitrary files.
-2. **Internal Tool Loopback**: The agent loop talks back to the API over a secured loopback using a random, non-persisted `INTERNAL_TOOL_TOKEN`. Even if an agent operates on behalf of a non-admin, the backend explicitly verifies the user's privilege before allowing the loopback to execute an admin-only tool.
-3. **No Network Egress Sandbox**: Currently, tools executed by the LLM run directly as the app process user. A successful prompt-injection attack that escapes the `prompt_security.py` wrapper *could* execute shell commands, but only if the user is an admin.
-
----
-
-## 45. Deep Dive: Authentication & User Management
-
-The system uses a combination of route handling and helper logic to manage access control.
-
-### Purpose
-To authenticate incoming requests, issue and validate tokens, and provide device-flow authorization when needed.
-
-### Components
-- **`routes/auth_routes.py` & `src/auth_helpers.py`**: Manages user login, session token validation, and password verification. Contains core logic to authenticate against the user database and generate JWT tokens or session cookies.
-- **`routes/device_flow.py`**: Facilitates the OAuth 2.0 Device Authorization Grant, allowing head-less devices (like a companion app) to securely pair with the server.
-- **`src/api_key_manager.py`**: Manages the lifecycle and verification of static API keys, providing an alternative to standard login for external integrations calling into Odysseus endpoints.
-
----
-
-## 46. Deep Dive: Session & History Management
-
-A core feature of the agent UI is managing conversational sessions and historical context over time.
-
-### Purpose
-To persist user chats across reloads, prune stale data, and provide search functionalities over past conversations.
-
-### Components
-- **`routes/session_routes.py` & `src/session_actions.py`**: Manages REST API endpoints for loading, renaming, and exporting chat sessions. Handles state logic like creating new empty sessions.
-- **`src/session_search.py` & `routes/history_routes.py`**: Powers the UI's sidebar history lookup. `session_search.py` performs the database lookups across raw JSON blobs containing chat history.
-- **`routes/cleanup_routes.py` & `src/cleanup_service.py`**: Manages garbage collection of orphaned session data, preventing the SQLite database from bloating infinitely with abandoned drafts.
-
----
-
-## 47. Deep Dive: Personal & Workspace Data
-
-This module handles isolated user contexts such as personal settings, contacts, and workspace-specific document storage.
-
-### Purpose
-To ensure multi-tenancy and data isolation where users only interact with their configured environment.
-
-### Components
-- **`routes/personal_routes.py` & `src/personal_docs.py`**: Handles user-specific document uploads that feed into their personalized RAG store.
-- **`src/settings.py` & `src/settings_scrub.py` & `routes/prefs_routes.py`**: Manages reading and writing application preferences, including redacting (scrubbing) secrets before returning config to the client.
-- **`routes/contacts_routes.py`**: Stores and retrieves contact lists used by agents for communication tasks.
-- **`routes/backup_routes.py` & `routes/admin_wipe_routes.py`**: Administrative endpoints to export the entire workspace data as zip or to perform dangerous reset operations safely.
-
----
-
-## 48. Deep Dive: Model Configuration & RAG Core
-
-The system coordinates between multiple LLM backends (local Ollama, OpenAI, Anthropic) while also maintaining a persistent RAG index.
-
-### Purpose
-Provides a unified layer to interact with LLMs and Vector Embeddings, hiding the implementation specifics from the main Agent Loop.
-
-### Components
-- **`routes/model_routes.py` & `src/model_discovery.py`**: Automatically polls APIs (e.g., standard `localhost:11434`) to list available models. `model_discovery.py` aggregates these lists and surfaces them to the UI.
-- **`src/model_context.py` & `src/endpoint_resolver.py`**: Resolves logical model names to concrete endpoint URLs and handles context window limit calculations to prevent prompt overflow.
-- **`routes/embedding_routes.py` & `src/embeddings.py` & `src/embedding_lanes.py`**: Configures the semantic search backend. Manages switching between external API embeddings (like OpenAI text-embedding-ada-002) and local fastembed onnx models.
-- **`src/chroma_client.py`, `src/rag_singleton.py`, `src/rag_vector.py`**: Wrapper clients for the ChromaDB vector store, managing RAG collection logic and querying similarities.
-
----
-
-## 49. Deep Dive: Tooling, Execution & Security
-
-Odysseus dynamically gives tools to the LLMs, requiring strict security boundaries.
-
-### Purpose
-To execute code and filesystem tools securely while protecting the host machine from rogue LLM behavior.
-
-### Components
-- **`src/tool_execution.py` & `src/tool_utils.py`**: Core executors that actually perform requested actions, like appending to a file or running a bash command.
-- **`src/tool_parsing.py` & `src/tool_schemas.py`**: Maps unstructured LLM responses (JSON or XML) into strictly typed Pydantic models for execution.
-- **`src/tool_policy.py` & `src/tool_security.py`**: Enforces rules about which tools an agent can call. Blocks read/write paths outside the designated `/data` workspace unless running as an explicit administrator.
-- **`src/url_safety.py` & `src/url_security.py` & `src/tls_overrides.py`**: Analyzes generated outbound URLs (e.g., web scraping calls) to ensure they are external, preventing Server Side Request Forgery (SSRF) onto local networks.
-
----
-
-## 50. Deep Dive: Research & Topic Analysis
-
-An advanced capability of the system is recursive, Deep Research where agents investigate topics deeply.
-
-### Purpose
-To facilitate complex web searching, summarization, and extracting topic intent from queries.
-
-### Components
-- **`routes/research_routes.py` & `src/research_handler.py`**: Manages the API surface and underlying orchestration to spin off long-running deep research loops.
-- **`src/research_utils.py` & `routes/search_routes.py`**: Utilities for parsing web scrape data and routes to interface with SearXNG backends for general querying.
-- **`src/topic_analyzer.py` & `src/goal_based_extractor.py`**: Analyzes the generated content dynamically to form a structured summary or determine if the research goal has been met.
-
----
-
-## 51. Deep Dive: Integrations & MCP Extensibility
-
-The system natively supports adding extensions via the Model Context Protocol (MCP) and third-party subscriptions.
-
-### Purpose
-Provides dynamic loading of tools that aren't natively compiled into the python source.
-
-### Components
-- **`routes/mcp_routes.py` & `src/builtin_mcp.py` & `src/mcp_oauth.py`**: Scaffolds the setup and oauth workflows required to integrate external MCP servers (e.g., Google Drive, GitHub) via stdio or HTTP.
-- **`routes/copilot_routes.py`, `routes/chatgpt_subscription_routes.py`, `src/chatgpt_subscription.py`**: Modules handling proxying requests to proprietary endpoints like GitHub Copilot or ChatGPT by intercepting subscription headers, emulating an OpenAI-compatible interface.
-
----
-
-## 52. Deep Dive: Multimedia & Background Tasks
-
-The system handles more than just text generation, acting as an ambient AI workspace.
-
-### Purpose
-To handle audio processing (TTS/STT), gallery imaging, background scheduling, and calendar synchronization.
-
-### Components
-- **`routes/stt_routes.py` & `routes/tts_routes.py`**: Fast endpoints interfacing with whisper (or remote endpoints) for speech-to-text and text-to-speech.
-- **`routes/gallery_helpers.py` & `src/generated_images.py`**: Helper logic routing for AI image generation (e.g., Stable Diffusion) and parsing EXIF data.
-- **`routes/task_routes.py`, `routes/calendar_routes.py`, `src/bg_monitor.py`**: Core routing for user-scheduled tasks and cron jobs. `bg_monitor.py` polls for detached subprocesses to ensure background routines complete cleanly.
-
----
-
-## 53. Deep Dive: UI & UX Helpers
-
-Small foundational pieces to support the frontend SPA.
-
-### Purpose
-Provide localization, theming, and consistent rendering mechanics.
-
-### Components
-- **`routes/emoji_routes.py` & `routes/font_routes.py`**: Serves static SVGs and webfonts dynamically based on the current workspace themes.
-- **`src/text_helpers.py`**: Utilities for stripping reasoning chains or specific tokens from LLM output before presentation.
-- **`src/user_time.py`**: Manages timezone calculations so that when an agent is told "remind me tomorrow", it correctly translates to the user's localized time based on browser data.
-
----
-
-## 54. Deep Dive: Cookbook & System Utilities
-
-A collection of operational scripts, setup hooks, and diagnostic endpoints.
-
-### Purpose
-To initialize the app predictably and provide developers insights into the running system.
-
-### Components
-- **`routes/cookbook_routes.py`, `routes/hwfit_routes.py`, `routes/diagnostics_routes.py`**: API endpoints exposing system load, GPU status (hardware fitness), and local recipes (cookbook).
-- **`routes/shell_routes.py`, `routes/upload_routes.py`, `routes/signature_routes.py`**: Handles standard terminal requests to the host OS and manages file IO/upload chunking.
-- **`src/app_helpers.py`, `src/app_initializer.py`, `src/constants.py`, `src/exceptions.py`**: Foundational bootstrap code. Bootstraps the SQLite tables, loads `.env` variables, and defines global exception classes.
-
----
-
-## 55. Deep Dive: Chat Engine & Memory Components
-
-These files form the glue bridging conversational memory with the underlying agent loop.
-
-### Purpose
-To assemble context objects, record new learnings, and parse complex documents inline.
-
-### Components
-- **`routes/assistant_routes.py`, `src/assistant_log.py`**: Manages the persona traits of the primary assistant and logging of its internal monologue.
-- **`src/memory_provider.py`, `src/ai_interaction.py`**: The interface between raw text streams and the structured memory graph.
-- **`src/context_budget.py`**: Dynamically truncates conversational history so it fits securely within the model's configured input token limit.
-- **`routes/compare_routes.py`, `routes/editor_draft_routes.py`, `src/pdf_form_doc.py`**: Specialized tools for editing rich text documents inside the interface, and generating PDFs inline based on text fields.
----
-
-
-## 57. Deep Dive: Event Bus & Application Readiness
-
-Odysseus incorporates a lightweight, in-memory event bus to trigger automated jobs without relying on heavyweight external message brokers (like Redis or RabbitMQ).
-
-```mermaid
-graph TD
-    System[Application Events] --> |fire_event| Bus[src/event_bus.py]
-    Bus --> |Loop create_task| Handler[_handle_event]
-    Handler --> |If threshold met| Scheduler[src/task_scheduler.py]
-    Scheduler --> DB[(SQLite ScheduledTasks)]
-```
-
-### Components
-- **Event Bus (`src/event_bus.py`)**: Provides a decoupled way to fire events (e.g., `session.created`, `message.sent`). It manages in-memory counters and triggers specific tasks via the scheduler when thresholds are crossed.
-- **Readiness Probes (`src/readiness.py`)**: Implements strict `GET /api/ready` logic. Beyond simple liveness, it executes real SQL (`SELECT 1`) to ensure the DB connection pool is functional, and tests write permissions to the `DATA_DIR`.
-- **Rate Limiter (`src/rate_limiter.py`)**: Uses an in-memory sliding window algorithm to throttle abuse of endpoints (e.g., token minting or login attempts) before the requests reach the deeper application logic.
-
----
-
-## 58. Deep Dive: Compare Mode (Model Blind Testing)
-
-Compare mode provides a dual-pane, blind AB testing interface to evaluate the quality of multiple AI models side-by-side on identical prompts.
-
-```mermaid
-graph TD
-    UI[static/js/compare/index.js] --> |Setup Request| API[routes/compare_routes.py]
-    UI --> |Start SSE| Streams[static/js/compare/stream.js]
-    Streams --> |Left Pane| ModelA[Local / Remote Model A]
-    Streams --> |Right Pane| ModelB[Local / Remote Model B]
-    UI --> Vote[static/js/compare/vote.js]
-    Vote --> Scoreboard[static/js/compare/scoreboard.js]
-    Scoreboard --> DB[(SQLite Comparison Table)]
-```
-
-### Components
-- **Frontend State (`static/js/compare/`)**: Comprises numerous modular files handling the dual UI (`panes.js`), tracking connection health (`probe.js`), and managing the synchronized SSE streams for both models (`stream.js`). The models' identities remain obfuscated until a winner is declared (`vote.js`).
-- **Backend Routing (`routes/compare_routes.py`)**: Manages the API surface area for starting a comparison, validating model access, handling vote submission, and managing the `RecordVoteRequest` schema to compile metrics over time.
-
----
-
-## 59. Deep Dive: AI Canvas Editor Architecture
-
-The rich image editor features a comprehensive, multi-layer HTML5 Canvas architecture integrated tightly with local backend AI operations.
-
-```mermaid
-graph TD
-    Canvas[HTML5 Canvas] --> Events[canvas-events.js]
-    Events --> State[state.js]
-    State --> Layers[layer-helpers.js / layer-panel.js]
-    State --> Tools[tools/ directory]
-    Tools --> |stroke, lasso, move| Canvas
-    Tools --> AI[AI Tools]
-    AI --> Inpaint[ai-inpaint.js]
-    AI --> Rembg[ai-rembg.js]
-    Inpaint --> API[routes/gallery_helpers.py]
-    Rembg --> API
-```
-
-### Components
-- **Core Canvas Logic (`static/js/editor/`)**: Managed by `state.js`, with interactions translated through `canvas-coords.js` and `canvas-events.js` to account for zooming and panning across the viewport.
-- **Tools & Effects**: Standard editing tools (move, crop, flood-fill) live in the `tools/` directory, while non-destructive overlays and visual filters reside in `fx/` and `filters/`.
-- **AI Integrations**: Specific files like `ai-inpaint.js` and `ai-rembg.js` hook into the active canvas state to generate masks (`mask-utils.js`), transmit them to the backend, and apply the returned images onto new, non-destructive canvas layers (`layer-helpers.js`).
-
----
-
-## 60. Deep Dive: Cookbook UI State Machine
 
 The local model manager ("Cookbook") features a robust client-side state machine capable of tracking detached background processes safely across browser refreshes.
 
@@ -2077,134 +2379,278 @@ graph TD
 
 ---
 
-## 61. Deep Dive: Search Provider & Ranking Engine
+</details>
 
-Odysseus implements a modular and extensible search abstraction tier, allowing swapping of underlying search providers while maintaining unified output format and caching.
+### Tooling, Execution & Security
 
-```mermaid
-graph TD
-    Agent[Deep Research / Web Search Tool] --> Core[src/search/core.py]
-    Core --> Cache[src/search/cache.py]
-    Cache --> |Miss| Providers[src/search/providers.py]
-    Providers --> |SearXNG, DuckDuckGo| Fetch[External Web]
-    Providers --> Ranking[src/search/ranking.py]
-    Ranking --> Stats[src/search/analytics.py]
-    Ranking --> |Return Standardized Format| Core
-```
+<details>
+<summary>View Tooling, Execution & Security</summary>
+
+
+Odysseus dynamically gives tools to the LLMs, requiring strict security boundaries.
+
+### Purpose
+To execute code and filesystem tools securely while protecting the host machine from rogue LLM behavior.
 
 ### Components
-- **Core Orchestrator (`src/search/core.py`, `services/search/`)**: Manages the flow of fetching configurations and routing the search term to the designated active provider.
-- **Caching (`src/search/cache.py`)**: Reduces outbound requests by locally caching queries with identical parameters.
-- **Provider Implementations (`src/search/providers.py`)**: Abstracts provider-specific API oddities (e.g., JSON handling from SearXNG vs raw HTTP scraping from DuckDuckGo) into a standardized `dict` format.
-- **Ranking & Analytics (`src/search/ranking.py`, `src/search/analytics.py`)**: Analyzes results to filter out spam or low-quality hits before they reach the LLM, tracking failure rates and error conditions centrally.
+- **`src/tool_execution.py` & `src/tool_utils.py`**: Core executors that actually perform requested actions, like appending to a file or running a bash command.
+- **`src/tool_parsing.py` & `src/tool_schemas.py`**: Maps unstructured LLM responses (JSON or XML) into strictly typed Pydantic models for execution.
+- **`src/tool_policy.py` & `src/tool_security.py`**: Enforces rules about which tools an agent can call. Blocks read/write paths outside the designated `/data` workspace unless running as an explicit administrator.
+- **`src/url_safety.py` & `src/url_security.py` & `src/tls_overrides.py`**: Analyzes generated outbound URLs (e.g., web scraping calls) to ensure they are external, preventing Server Side Request Forgery (SSRF) onto local networks.
 
 ---
 
-## 62. Deep Dive: Advanced Memory & Skills Pipeline
+</details>
 
-Long-term semantic context goes beyond just storing facts; the system contains a dedicated pipeline for discovering, extracting, and importing structured "Skills".
+### Multimedia & Background Tasks
 
-```mermaid
-graph TD
-    Input[Teacher LLM Output / File Import] --> Importer[services/memory/skill_importer.py]
-    Importer --> Format[services/memory/skill_format.py]
-    Format --> Extractor[services/memory/skill_extractor.py]
-    Extractor --> Validate[services/memory/skills.py]
-    Validate --> |Save .md to Disk| Storage[DATA_DIR/skills/]
-    Validate --> |Index Metadata| Memory[services/memory/memory.py]
-```
-
-### Components
-- **Skill Extraction (`services/memory/skill_extractor.py`)**: Uses intelligent parsing to derive structured procedure steps and preconditions from freeform conversation text or teacher model outputs.
-- **Skill Formatting (`services/memory/skill_format.py`)**: Ensures that every skill strictly adheres to the markdown specifications required for the Agent loop to parse it effectively (e.g., maintaining `SKILL.md` boundaries).
-- **Skill Importer (`services/memory/skill_importer.py`)**: Handles the ingest of external skill packs (like those from the integrations folder), safely validating content without trusting external metadata completely.
-- **Manager (`services/memory/skills.py`)**: The central service that orchestrates reading and writing skills to the local disk and synchronizing them with the Vector Database for semantic retrieval later.
+<details>
+<summary>View Multimedia & Background Tasks</summary>
 
 
-## 64. Deep Dive: Agent Tools Subsystem (`src/agent_tools/`)
+The system handles more than just text generation, acting as an ambient AI workspace.
 
-Odysseus provides its agent loop with a suite of highly privileged, local-first tools. These are organized functionally to limit scope and ensure secure execution.
-
-```mermaid
-graph TD
-    Agent[Agent Loop] --> Executor[src/tool_execution.py]
-    Executor --> Policy[src/tool_policy.py]
-    Policy --> |Approved| Dispatcher
-    Dispatcher --> FS[src/agent_tools/filesystem_tools.py]
-    Dispatcher --> Bash[src/agent_tools/subprocess_tools.py]
-    Dispatcher --> Web[src/agent_tools/web_tools.py]
-```
+### Purpose
+To handle audio processing (TTS/STT), gallery imaging, background scheduling, and calendar synchronization.
 
 ### Components
-- **Filesystem Tools (`src/agent_tools/filesystem_tools.py`)**: Provides concrete implementations for `read_file`, `write_file`, `list_directory`, etc. These tools are heavily sandboxed by the policy layer, meaning they generally cannot escape the `data/` directory unless explicitly authorized by an admin context.
-- **Subprocess Tools (`src/agent_tools/subprocess_tools.py`)**: Allows the agent to run arbitrary shell commands. It manages timeout constraints, captures `stdout` and `stderr` safely, and ensures long-running processes do not hang the main agent loop.
-- **Web Tools (`src/agent_tools/web_tools.py`)**: Includes utilities for fetching webpage content, often interacting with local headless browsers or `BeautifulSoup` to strip away visual clutter and return clean markdown directly to the agent's context.
-
+- **`routes/stt_routes.py` & `routes/tts_routes.py`**: Fast endpoints interfacing with whisper (or remote endpoints) for speech-to-text and text-to-speech.
+- **`routes/gallery_helpers.py` & `src/generated_images.py`**: Helper logic routing for AI image generation (e.g., Stable Diffusion) and parsing EXIF data.
+- **`routes/task_routes.py`, `routes/calendar_routes.py`, `src/bg_monitor.py`**: Core routing for user-scheduled tasks and cron jobs. `bg_monitor.py` polls for detached subprocesses to ensure background routines complete cleanly.
 
 ---
 
-## 65. Deep Dive: Internal Services (`services/`)
+</details>
 
-The `services/` directory is reserved for self-contained, domain-specific modules that act as autonomous actors or external bridges, rather than core request/response routing.
+</details>
 
-```mermaid
-graph TD
-    App[FastAPI App] --> HW[services/hwfit/]
-    App --> Faces[services/faces/]
-    App --> Audio[services/stt/ & services/tts/]
-```
+## Infrastructure, Ops & Testing
+<details>
+<summary>View Infrastructure, Ops & Testing</summary>
 
-### Components
-- **Hardware Fitness (`services/hwfit/`)**: Profiles the host machine dynamically. It uses utilities like `nvidia-smi` (via Python wrappers) or macOS `sysctl` to estimate available VRAM and system memory, which is then communicated to the frontend so it can warn users before downloading models that are too large.
-- **Model Discovery (`services/faces/`)**: Aggregates the available "faces" or model personas. It polls connected providers (like a local Ollama instance or remote APIs) and synthesizes a unified list for the `modelPicker.js` UI, caching the results to prevent UI lag.
-- **Speech Processing (`services/stt/` & `services/tts/`)**: Manages the abstraction over audio processing. For STT, it can process Whisper models. For TTS, it manages integrations with local Kokoro-82M endpoints or falls back to browser-based synthesized voices, maintaining audio caches to speed up repeated text generations.
+### Deployment & Local Serving (Cookbook)
+
+<details>
+<summary>View Deployment & Local Serving (Cookbook)</summary>
 
 
----
+Odysseus is designed to run anywhere, but Docker is recommended.
 
-## 66. Deep Dive: Core Platform Mechanisms (`core/`)
+### Hardware Discovery (`services/hwfit/`)
+The `hwfit` module analyzes the host machine (RAM, VRAM, GPU bandwidth) to score HuggingFace models. Models fitting entirely in VRAM are prioritized.
 
-The `core/` package provides the foundational bedrock upon which the rest of the application runs. It handles the lowest-level concerns such as database connections, security headers, and cross-platform file IO.
-
-```mermaid
-graph TD
-    App[FastAPI] --> Middleware[core/middleware.py]
-    App --> IO[core/atomic_io.py]
-    App --> OS[core/platform_compat.py]
-    Middleware --> Security[CSP / Isolation]
-    IO --> Disk[Local FS]
-```
-
-### Components
-- **Atomic IO (`core/atomic_io.py`)**: Provides safe file-writing operations using temporary files and atomic renames. This ensures that a sudden power loss or application crash during a save operation (e.g., updating a `user_prefs.json`) does not result in a corrupted, zero-byte file.
-- **Platform Compatibility (`core/platform_compat.py`)**: Normalizes differences between Windows, macOS, and Linux. This includes abstracting file path creation, permission handling (which differs vastly between POSIX and NTFS), and process signal management.
-- **Security Middleware (`core/middleware.py`)**: Intercepts all incoming requests to inject critical headers. It enforces the Content Security Policy (CSP), mitigates clickjacking by preventing framing (except on specific routes like the PDF previewer), and ensures cross-origin isolation where necessary.
-
+### Deployment Models
+- **Docker Compose:** The default setup runs Odysseus alongside ChromaDB and SearXNG.
+- **GPU Passthrough:** Special overlays (`docker-compose.gpu-nvidia.yml`, `docker-compose.gpu-amd.yml`) configure NVIDIA or AMD ROCm passthrough.
+- **Local Serving Engine:** The "Cookbook" dynamically installs and configures `vLLM` or `llama.cpp` in the local data directory, orchestrating inference via `tmux` sessions.
 
 ---
 
-## 67. Deep Dive: Frontend Realtime Streaming & Chat
+</details>
 
-The real-time conversational UI relies heavily on Server-Sent Events (SSE) to update the UI without dropping frames or blocking user input during long text generations.
+### Deployment & Background Jobs
+
+<details>
+<summary>View Deployment & Background Jobs</summary>
+
+
+Odysseus employs standard and GPU-accelerated Docker builds along with native OS scripts.
+
+- **Docker Entrypoints (`docker/entrypoint.sh`)**: Runs PUID/PGID matching to ensure bind-mounted volumes don't suffer from root-ownership permission issues.
+- **Docker Compose Profiles (`docker-compose.gpu-nvidia.yml`, `docker-compose.gpu-amd.yml`)**: Extend the base deployment with passthrough configuration for hardware acceleration.
+- **Native Launchers (`launch-windows.ps1`, `start-macos.sh`)**: Automate Venv creation, dependency installation, and server binding on native OSes.
+- **Task Scheduler (`src/task_scheduler.py`, `src/bg_jobs.py`)**: Background loops that execute delayed actions, background research runs, ping reminders, and cron-scheduled tasks.
+
+---
+
+</details>
+
+### Event Bus & Application Readiness
+
+<details>
+<summary>View Event Bus & Application Readiness</summary>
+
+
+Odysseus incorporates a lightweight, in-memory event bus to trigger automated jobs without relying on heavyweight external message brokers (like Redis or RabbitMQ).
 
 ```mermaid
 graph TD
-    User[Client Input] --> Chat[static/js/chat.js]
-    Chat --> Fetch[POST /api/chat]
-    Fetch --> SSE[static/js/chatStream.js]
-    SSE --> Renderer[static/js/streamingRenderer.js]
-    SSE --> Segmenter[static/js/streamingSegmenter.js]
-    Segmenter --> DOM[Updates to Message Bubble]
+    System[Application Events] --> |fire_event| Bus[src/event_bus.py]
+    Bus --> |Loop create_task| Handler[_handle_event]
+    Handler --> |If threshold met| Scheduler[src/task_scheduler.py]
+    Scheduler --> DB[(SQLite ScheduledTasks)]
 ```
 
 ### Components
-- **Chat Orchestrator (`static/js/chat.js` & `chatRenderer.js`)**: The primary controller that captures user inputs, manages auto-scrolling, and delegates message rendering. It keeps the local message state in sync with the server response.
-- **SSE Consumer (`static/js/chatStream.js`)**: Opens the event stream and listens to JSON lines. It handles network disconnects, error codes, and maps raw text deltas into actionable state updates for the renderer.
-- **Render Engine (`static/js/streamingRenderer.js` & `streamingSegmenter.js`)**: As tokens arrive sequentially, they are batched and flushed to the DOM. The segmenter handles complex boundary logic (e.g., detecting when a markdown code block ` ``` ` begins or ends) to ensure syntax highlighting is only applied once a block is complete, avoiding constant, CPU-heavy re-parsing of incomplete HTML.
+- **Event Bus (`src/event_bus.py`)**: Provides a decoupled way to fire events (e.g., `session.created`, `message.sent`). It manages in-memory counters and triggers specific tasks via the scheduler when thresholds are crossed.
+- **Readiness Probes (`src/readiness.py`)**: Implements strict `GET /api/ready` logic. Beyond simple liveness, it executes real SQL (`SELECT 1`) to ensure the DB connection pool is functional, and tests write permissions to the `DATA_DIR`.
+- **Rate Limiter (`src/rate_limiter.py`)**: Uses an in-memory sliding window algorithm to throttle abuse of endpoints (e.g., token minting or login attempts) before the requests reach the deeper application logic.
+
+---
+
+</details>
+
+### Outgoing Webhooks (`src/webhook_manager.py`)
+
+<details>
+<summary>View Outgoing Webhooks (`src/webhook_manager.py`)</summary>
 
 
+Odysseus can dispatch system events to external HTTP endpoints, allowing automation platforms like ntfy, Zapier, or custom scripts to react to chat completions and new sessions.
 
-## 68. Known Issues & Future Improvements
+```mermaid
+graph TD
+    EventBus[Event Bus / Agent Loop] --> |session.created, chat.completed| Manager[src/webhook_manager.py]
+    Manager --> |Lookup Subscriptions| DB[(SQLite Webhooks)]
+    Manager --> |Validate URL| SSRF[SSRF Security Layer]
+    SSRF --> |Block Private IP| Drop[Discard]
+    SSRF --> |Permit| Dispatch[HTTPX Async POST]
+    Dispatch --> |X-Odysseus-Signature| External[External Webhook URL]
+```
+
+### Components & Security
+- **Event Dispatch**: Monitored events trigger `webhook_manager.dispatch(event_type, payload)` asynchronously in the background.
+- **SSRF Protection (`_PRIVATE_NETWORKS`)**: To prevent Server-Side Request Forgery, where a user configures a webhook to attack internal infrastructure (e.g., querying `127.0.0.1` or `10.0.x.x`), the webhook manager strictly resolves target domains and drops requests bound for private, loopback, or link-local subnets.
+- **Signature Validation**: Outgoing requests include an `X-Odysseus-Signature` header computed via HMAC-SHA256, allowing external recipients to verify that the webhook legitimately originated from Odysseus and hasn't been tampered with.
+
+---
+
+</details>
+
+### Configuration & Third-party Services (`config/`, `licenses/`)
+
+<details>
+<summary>View Configuration & Third-party Services (`config/`, `licenses/`)</summary>
+
+
+Odysseus relies on several external components and strictly manages their configuration.
+
+### Components
+- **`config/searxng/settings.yml`**: A pre-configured settings file for the SearXNG search aggregator. Odysseus mounts this into the SearXNG container to enforce specific output formats (JSON/HTML) and inject a secret key securely without requiring user intervention.
+- **`licenses/`**: The directory tracking open-source licenses for embedded components. Odysseus uses modified or integrated parts of tools like `DeepResearch` or `llmfit`, and this directory ensures proper MIT/Apache 2.0 attribution without bloating the root project directory.
+
+---
+
+</details>
+
+### Operational CLI Scripts (`scripts/`)
+
+<details>
+<summary>View Operational CLI Scripts (`scripts/`)</summary>
+
+
+For maintenance, debugging, and offline operations, Odysseus includes a suite of Python CLI tools.
+
+### Components
+- **`odysseus-*` commands**: A collection of scripts starting with `odysseus-` (e.g., `odysseus-backup`, `odysseus-logs`, `odysseus-sessions`, `odysseus-memory`) providing low-level access to the database and systems.
+- **`_lib/cli.py`**: A shared library simplifying the process of writing CLI tools, managing initialization, loading the `app.db`, and setting up rich console output.
+- **`update_database.py`**: An essential operational script to run schema migrations and ensure the database reflects the current SQLAlchemy models without data loss.
+- **`index_documents.py`**: A script to manually force re-indexing of documents into ChromaDB.
+- **`migrate_faiss_to_chroma.py`**: A historical migration script ensuring safe transfer of semantic memories.
+- **`check-docker-gpu.sh` & `check-docker-amd-gpu.sh`**: Utilities used during deployment to confirm the container runtime supports the hardware passthrough required.
+
+---
+
+</details>
+
+### Testing and Tooling (`tests/`, `scripts/`)
+
+<details>
+<summary>View Testing and Tooling (`tests/`, `scripts/`)</summary>
+
+
+A robust local environment requires automated regression assurance and operations tooling.
+
+```mermaid
+graph TD
+    TestRunner[Pytest] --> PythonTests[tests/test_*.py]
+    TestRunnerNode[Node.js test] --> StreamingTests[tests/streaming/*.test.mjs]
+    StreamingTests --> Segmenter[static/js/streamingSegmenter.js]
+    CLI[scripts/_lib/cli.py] --> OdyScripts[scripts/odysseus-*]
+    OdyScripts --> Core[Core Python Application]
+```
+
+### Components
+- **Pytest Suite (`tests/`)**: High-coverage Python testing logic isolating the agent, session, search, and uploading modules.
+- **Streaming Invariants (`tests/streaming/`)**: Node.js harness scripts ensuring the Server-Sent Event boundary (`streamingSegmenter.js`) accurately matches equivalent static Markdown rendering paths without leaking mid-generation tags.
+- **Operational CLI (`scripts/`)**: Repositories for standalone CLI ops, from database maintenance (`update_database.py`), headless model indexing (`index_documents.py`), hardware profiling scripts, and GitHub action analyzers (`pr_blocker_audit.py`).
+
+</details>
+
+### Testing Taxonomy (`tests/`, `TESTING_STANDARD.md`)
+
+<details>
+<summary>View Testing Taxonomy (`tests/`, `TESTING_STANDARD.md`)</summary>
+
+
+Odysseus enforces a strict, deterministic testing strategy designed to eliminate order-dependence and global state leakage.
+
+```mermaid
+graph TD
+    TestRunner[Pytest Runner] --> Collection[conftest.py / _taxonomy.py]
+    Collection --> Tags[Taxonomy Area Tags]
+    Tags --> Unit[tests/ unit / helpers]
+    Tags --> Routes[tests/ routes integration]
+    Tags --> Services[tests/ services / background]
+    Tags --> Security[tests/ security / isolation]
+    TestRunnerNode[Node.js Runner] --> JS[tests/ streaming/*.mjs]
+    Unit -.-> |Import State Isolation| Module[Core Modules]
+```
+
+### Components & Principles
+- **Taxonomy Tags (`tests/_taxonomy.py`)**: Tests are categorized (e.g., `security`, `routes`, `cli`, `js`) during collection based on filename conventions.
+- **Determinism & Isolation (`tests/helpers/import_state.py`)**: Tests are heavily isolated. `sys.modules`, `os.environ`, and `cwd` are strictly guarded against cross-test leakage, preventing order-dependent execution failures.
+- **In-memory Default (`tests/conftest.py`)**: Pytest initiates with a fallback in-memory SQLite database to prevent collection-time side-effects within the user's `data/` directory.
+- **Behavior-First Validation**: The testing philosophy strongly discourages `read_text()` or `ast.parse` style source code checks. Tests are required to exercise routing, database interactions, and module calls directly, prioritizing real-world execution state over text inspection.
+
+---
+
+</details>
+
+### Streaming Invariant Tests (`tests/streaming/`)
+
+<details>
+<summary>View Streaming Invariant Tests (`tests/streaming/`)</summary>
+
+
+Testing streamed server-sent events mathematically ensures the frontend markdown parsing never tears or flashes mid-stream. Since the segmenter logic resides in `static/js/`, these tests are written natively in Node.js rather than Pytest.
+
+### Mechanics
+- **`invariant.test.mjs`**: The core correctness loop. It feeds a known Markdown corpus into the segmenter character-by-character. At every tick, it asserts that the sum of all finalized HTML chunks plus the live tail rendering matches what a static renderer would produce given the same exact prefix.
+- **Isolation**: These node tests run without a DOM (via `node:test` and `node:assert`), executing purely functional validations. If the streaming segmenter logic fails, the CI block is caught at the Node level, preventing UI degradation in production.
+
+
+</details>
+
+</details>
+
+## Future
+<details>
+<summary>View Future</summary>
+
+### Future Upgrade Paths
+
+<details>
+<summary>View Future Upgrade Paths</summary>
+
+
+For developers looking to extend or upgrade Odysseus:
+
+1. **Frontend Refactoring:** Break down massive modules like `chat.js` into smaller, more manageable state machines.
+2. **Database Migration:** Introduce an abstraction layer to support PostgreSQL, enabling scalability for small teams.
+3. **Enhanced Teacher Self-Eval:** Implement a "Tier 2" LLM-based self-evaluation step in `teacher_escalation.py` for more nuanced failure detection.
+4. **OAuth Authentication:** Integrate standard OAuth2 providers (GitHub, Google) for user login, augmenting the current username/password system.
+
+---
+*Generated by Jules, Vibecoder.*
+
+</details>
+
+### Known Issues & Future Improvements
+
+<details>
+<summary>View Known Issues & Future Improvements</summary>
+
 
 While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
 
@@ -2219,3 +2665,7 @@ While Odysseus is robust, its architecture reflects organic growth. Several area
 ### Database Abstraction
 - Currently tightly coupled to SQLite. While SQLite is fantastic for single-user self-hosting, abstracting the ORM to easily support PostgreSQL would enable multi-user scaling or team deployments.
 
+
+</details>
+
+</details>
