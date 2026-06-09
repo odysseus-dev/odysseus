@@ -13,7 +13,6 @@ import chatStream from './chatStream.js';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
 import { svgifyEmoji } from './markdown.js';
-import planWindowModule from './planWindow.js';
 import spinnerModule from './spinner.js';
 import presetsModule from './presets.js';
 import fileHandlerModule from './fileHandler.js';
@@ -111,35 +110,6 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   let _streamSessionId = null; // Session ID for the currently active reader loop
   let _lastReaderActivity = 0; // Timestamp of last reader.read() success — used to detect frozen streams
   let _webLockRelease = null;  // Function to release the Web Lock held during streaming
-  let _forcePlanOff = false;   // One-shot: suppress plan_mode for the next send (Approve & Run)
-
-  // ── Plan store: the latest proposed/approved checklist for the CURRENT chat ──
-  // Kept so (a) it can be sent back each turn and pinned in context (a long plan
-  // on a weak model survives history truncation), and (b) the plan window can be
-  // re-opened/docked at any time via the plan-button menu. Stored per session in
-  // localStorage so it survives a reload mid-execution.
-  function _setStoredPlan(text) {
-    const sid = sessionModule.getCurrentSessionId();
-    if (!sid || !text || !text.trim()) return;
-    Storage.setJSON(Storage.KEYS.PLAN, { sid, text });
-    // Live-refresh the plan window if it's open (shows progress as the agent
-    // restates the checklist with [x]).
-    try {
-      if (planWindowModule.isPlanWindowOpen && planWindowModule.isPlanWindowOpen()) {
-        planWindowModule.openPlanWindow(text, null);
-      }
-    } catch (_) {}
-  }
-  function _getStoredPlan() {
-    const sid = sessionModule.getCurrentSessionId();
-    const rec = Storage.getJSON(Storage.KEYS.PLAN, null);
-    return (rec && rec.sid === sid && rec.text) ? rec.text : '';
-  }
-  // A line like "- [ ] step" / "- [x] step" marks a GitHub-style checklist.
-  const _CHECKLIST_RE = /^\s*[-*]\s+\[[ xX]\]\s+/m;
-  // Exposed for app.js (plan-button menu) — re-open the stored plan window.
-  window._getStoredPlan = _getStoredPlan;
-  window.planWindowModule = planWindowModule;
 
   /** Check if an SSE reader is still actively connected for a session. */
   function hasActiveStream(sessionId) {
@@ -839,22 +809,6 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (el('bash-toggle').checked) {
         fd.append('allow_bash', 'true');
       }
-      // Plan mode: agent investigates read-only and proposes a plan to approve.
-      // Only meaningful in agent mode, and never alongside deep research.
-      // _forcePlanOff is a one-shot set by "Approve & Run" so the execution turn
-      // runs with full tools even though the Plan toggle is still on.
-      const _planToggle = el('plan-toggle');
-      const planTurn = !_forcePlanOff && isAgentMode && _planToggle && _planToggle.checked && !el('research-toggle').checked;
-      _forcePlanOff = false;
-      if (planTurn) {
-        fd.append('plan_mode', 'true');
-        fd.set('mode', 'agent');
-      } else if (isAgentMode) {
-        // Executing (not proposing): send the stored plan back so the backend
-        // pins it in context and the agent can always re-reference it.
-        const _sp = _getStoredPlan();
-        if (_sp) fd.append('approved_plan', _sp);
-      }
       const ragChk = el('rag-toggle');
       if (ragChk && !ragChk.checked) {
         fd.append('use_rag', 'false');
@@ -862,10 +816,6 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       const incognitoChk = el('incognito-toggle');
       if (incognitoChk && incognitoChk.checked) {
         fd.append('incognito', 'true');
-      }
-      const _ws = (Storage.KEYS && Storage.get(Storage.KEYS.WORKSPACE, '')) || '';
-      if (_ws) {
-        fd.append('workspace', _ws);
       }
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
@@ -2770,61 +2720,6 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         // Attach footer to the last visible bubble (roundHolder for multi-round agent, holder for single)
         const footerTarget = (roundHolder && roundHolder !== holder && roundHolder.style.display !== 'none') ? roundHolder : holder;
         footerTarget.appendChild(createMsgFooter(footerTarget));
-        // Capture any checklist this message produced as the current plan — both
-        // the initial proposal AND restated progress during execution. Keeps the
-        // stored plan (and the docked plan window) in sync with the latest state.
-        if (accumulated && _CHECKLIST_RE.test(accumulated)) {
-          _setStoredPlan(accumulated);
-        }
-        // Plan mode: the agent has proposed a plan — offer to approve & execute it.
-        // Approving re-sends with plan_mode suppressed (full tools) for one turn.
-        if (planTurn && accumulated.trim()) {
-          const _planText = accumulated;
-          const _runApproved = () => {
-            _approveWrap.remove();
-            _forcePlanOff = true;
-            // Persist the approved plan for THIS chat so it's (a) re-sent and
-            // pinned in context every execution turn, and (b) re-openable via the
-            // plan-button menu. Do this BEFORE flipping the toggle, since the menu
-            // intercept keys off a stored plan existing.
-            _setStoredPlan(_planText);
-            // Approving exits plan mode for good — turn it OFF directly (NOT via
-            // the button's click, which would now open the plan menu instead of
-            // toggling) so execution and every follow-up keep full write tools.
-            try { if (window._setPlanMode) window._setPlanMode(false); } catch (_) {}
-            const _inp = el('message');
-            if (_inp) {
-              _inp.value = 'Approved — execute the plan. The full approved checklist is pinned '
-                + 'for you under "## ACTIVE PLAN"; do NOT go looking for it in tasks, notes, or '
-                + 'memory. Work through it in order, and after each step call the update_plan tool '
-                + 'with the full checklist and that step marked `- [x]`. Do the next unchecked item '
-                + 'until all are done.';
-              _inp.dispatchEvent(new Event('input'));
-            }
-            // Show a clean bubble; the full instruction still goes to the model.
-            _displayOverride = 'Approved the plan.';
-            handleChatSubmit({ preventDefault() {} });
-          };
-          var _approveWrap = document.createElement('div');
-          _approveWrap.className = 'plan-approve-bar';
-          const _approveBtn = document.createElement('button');
-          _approveBtn.type = 'button';
-          _approveBtn.className = 'plan-approve-btn';
-          _approveBtn.textContent = 'Approve & Run';
-          _approveBtn.addEventListener('click', _runApproved);
-          // Open the plan in a draggable, side-dockable window (reuses the
-          // shared modal framework). Approving from the window runs it too.
-          const _openBtn = document.createElement('button');
-          _openBtn.type = 'button';
-          _openBtn.className = 'plan-open-btn';
-          _openBtn.textContent = 'Open in window';
-          _openBtn.addEventListener('click', () => {
-            planWindowModule.openPlanWindow(_planText, _runApproved);
-          });
-          _approveWrap.appendChild(_approveBtn);
-          _approveWrap.appendChild(_openBtn);
-          footerTarget.appendChild(_approveWrap);
-        }
         // Add "View Report" link for completed research
         if (_researchingStreamIds.has(streamSessionId)) {
           _appendViewReportLink(footerTarget, streamSessionId);

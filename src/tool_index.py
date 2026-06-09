@@ -332,6 +332,10 @@ class ToolIndex:
         r"|\bat\s+\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)\b",  # at 7:30 am / at 7am
         re.I,
     )
+    _WEB_RE = re.compile(
+        r"https?://|www\.|\b(?:visit|open|fetch|check|read)\s+(?:this\s+)?(?:url|link|site|website|page)\b",
+        re.I,
+    )
 
     # Keyword hints: if the query mentions these words, force-include the tools.
     _KEYWORD_HINTS = {
@@ -493,6 +497,11 @@ class ToolIndex:
         # the agent can actually create the cron job instead of fumbling.
         if self._SCHEDULE_RE.search(ql):
             base.add("manage_tasks")
+        # URL/site requests need web tools even when embedding retrieval is
+        # stubbed/unavailable. Keep this structural, not always-on, so trivial
+        # prompts do not drag web schemas into the agent context.
+        if self._WEB_RE.search(query):
+            base.update({"web_search", "web_fetch"})
         return base
 
 
