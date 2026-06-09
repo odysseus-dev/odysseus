@@ -81,10 +81,13 @@ def _lookup_pricing(model_name: str) -> Dict[str, float]:
     if not model_name:
         return _FALLBACK_PRICING
     lower = model_name.lower()
+    best_key = ""
+    best_pricing = _FALLBACK_PRICING
     for key, pricing in MODEL_PRICING.items():
-        if key in lower:
-            return pricing
-    return _FALLBACK_PRICING
+        if key in lower and len(key) > len(best_key):
+            best_key = key
+            best_pricing = pricing
+    return best_pricing
 
 
 def _compute_cost(model: str, input_tokens: int, output_tokens: int) -> float:
