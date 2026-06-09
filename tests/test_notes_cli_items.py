@@ -1,31 +1,12 @@
-import importlib.machinery
-import importlib.util
-import sys
-import types
-from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
-
-ROOT = Path(__file__).resolve().parents[1]
-
-
-def _load_cli(monkeypatch):
-    db_stub = types.ModuleType("core.database")
-    db_stub.SessionLocal = MagicMock()
-    db_stub.Note = MagicMock()
-    monkeypatch.setitem(sys.modules, "core.database", db_stub)
-
-    path = ROOT / "scripts" / "odysseus-notes"
-    loader = importlib.machinery.SourceFileLoader("odysseus_notes_cli", str(path))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
+from tests.helpers.cli_loader import load_script
+from tests.helpers.db_stubs import make_core_db_stub
 
 
 def test_serialize_ignores_invalid_note_items(monkeypatch):
-    cli = _load_cli(monkeypatch)
+    make_core_db_stub(monkeypatch, models=["Note"])
+    cli = load_script("odysseus-notes")
     note = SimpleNamespace(
         id="n1",
         title="Checklist",
@@ -46,7 +27,8 @@ def test_serialize_ignores_invalid_note_items(monkeypatch):
 
 
 def test_serialize_keeps_list_note_items(monkeypatch):
-    cli = _load_cli(monkeypatch)
+    make_core_db_stub(monkeypatch, models=["Note"])
+    cli = load_script("odysseus-notes")
     note = SimpleNamespace(
         id="n1",
         title="Checklist",

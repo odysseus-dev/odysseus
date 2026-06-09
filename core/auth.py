@@ -30,14 +30,24 @@ DEFAULT_PRIVILEGES = {
     "can_manage_memory": True,
     "max_messages_per_day": 0,
     "allowed_models": [],
+    "allowed_models_restricted": False,
+    # Explicit "block every model" sentinel. An empty `allowed_models` list is
+    # ambiguous — it's also what gets sent when the admin clicks "[All]" — so
+    # we need a dedicated flag to express "this user may use no models at all"
+    # distinctly from "this user has no restriction".
+    "block_all_models": False,
 }
 
 # Admins get everything
 ADMIN_PRIVILEGES = {k: (True if isinstance(v, bool) else (0 if isinstance(v, int) else [])) for k, v in DEFAULT_PRIVILEGES.items()}
+ADMIN_PRIVILEGES["allowed_models_restricted"] = False
+# Admins must never be blocked from using models — the generic dict
+# comprehension above flips every boolean default to True, which would be
+# backwards for this sentinel.
+ADMIN_PRIVILEGES["block_all_models"] = False
 
-DEFAULT_AUTH_PATH = os.path.join(
-    Path(__file__).parent.parent, "data", "auth.json"
-)
+from src.constants import AUTH_FILE
+DEFAULT_AUTH_PATH = AUTH_FILE
 TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 
 # Usernames the auth + middleware layer reserve as internal "synthetic owner"
@@ -76,6 +86,10 @@ class AuthManager:
         # Guards mutations of self._sessions and the on-disk sessions.json.
         # Validate/create/revoke run concurrently from the FastAPI threadpool.
         self._sessions_lock = threading.RLock()
+        # Guards all mutations of self._config and the on-disk auth.json so
+        # concurrent create/delete/rename/privilege operations don't interleave
+        # and corrupt the user database.
+        self._config_lock = threading.Lock()
         # Guards the first-run setup check-and-write so concurrent requests
         # cannot both observe is_configured==False and both create admin accounts.
         self._setup_lock = threading.Lock()
@@ -172,8 +186,9 @@ class AuthManager:
 
     @signup_enabled.setter
     def signup_enabled(self, value: bool):
-        self._config["signup_enabled"] = value
-        self._save()
+        with self._config_lock:
+            self._config["signup_enabled"] = value
+            self._save()
 
     @property
     def is_configured(self) -> bool:
@@ -198,17 +213,18 @@ class AuthManager:
         if username in RESERVED_USERNAMES:
             logger.warning("Refused to create reserved username '%s'", username)
             return False
-        if username in self.users:
-            return False
-        if "users" not in self._config:
-            self._config["users"] = {}
-        self._config["users"][username] = {
-            "password_hash": _hash_password(password),
-            "created": time.time(),
-            "is_admin": is_admin,
-            "privileges": dict(ADMIN_PRIVILEGES if is_admin else DEFAULT_PRIVILEGES),
-        }
-        self._save()
+        with self._config_lock:
+            if username in self.users:
+                return False
+            if "users" not in self._config:
+                self._config["users"] = {}
+            self._config["users"][username] = {
+                "password_hash": _hash_password(password),
+                "created": time.time(),
+                "is_admin": is_admin,
+                "privileges": dict(ADMIN_PRIVILEGES if is_admin else DEFAULT_PRIVILEGES),
+            }
+            self._save()
         logger.info(f"Created user '{username}' (admin={is_admin})")
         return True
 
@@ -221,14 +237,15 @@ class AuthManager:
         their cookie expired naturally (default ~30 days).
         """
         username = username.strip().lower()
-        if username not in self.users:
-            return False
-        if username == requesting_user:
-            return False
-        if not self.users.get(requesting_user, {}).get("is_admin"):
-            return False
-        del self._config["users"][username]
-        self._save()
+        with self._config_lock:
+            if username not in self.users:
+                return False
+            if username == requesting_user:
+                return False
+            if not self.users.get(requesting_user, {}).get("is_admin"):
+                return False
+            del self._config["users"][username]
+            self._save()
         # Purge all sessions belonging to this user. validate_token doesn't
         # cross-check `self.users`, so without this step a deleted user's
         # cookie keeps authenticating.
@@ -266,14 +283,15 @@ class AuthManager:
         if new_username in RESERVED_USERNAMES:
             logger.warning("Refused to rename '%s' into reserved username '%s'", old_username, new_username)
             return False
-        if old_username not in self.users:
-            return False
-        if new_username in self.users:
-            return False
-        if not self.users.get(requesting_user, {}).get("is_admin"):
-            return False
-        self._config.setdefault("users", {})[new_username] = self._config["users"].pop(old_username)
-        self._save()
+        with self._config_lock:
+            if old_username not in self.users:
+                return False
+            if new_username in self.users:
+                return False
+            if not self.users.get(requesting_user, {}).get("is_admin"):
+                return False
+            self._config.setdefault("users", {})[new_username] = self._config["users"].pop(old_username)
+            self._save()
 
         renamed_sessions = 0
         with self._sessions_lock:
@@ -311,17 +329,18 @@ class AuthManager:
     def set_privileges(self, username: str, privileges: Dict[str, Any]) -> bool:
         """Update privileges for a user. Can't modify admin privileges."""
         username = username.strip().lower()
-        if username not in self.users:
-            return False
-        if self.users[username].get("is_admin"):
-            return False  # admins always have full access
-        # Only allow known privilege keys
-        current = self.get_privileges(username)
-        for k, v in privileges.items():
-            if k in DEFAULT_PRIVILEGES:
-                current[k] = v
-        self._config["users"][username]["privileges"] = current
-        self._save()
+        with self._config_lock:
+            if username not in self.users:
+                return False
+            if self.users[username].get("is_admin"):
+                return False  # admins always have full access
+            # Only allow known privilege keys
+            current = self.get_privileges(username)
+            for k, v in privileges.items():
+                if k in DEFAULT_PRIVILEGES:
+                    current[k] = v
+            self._config["users"][username]["privileges"] = current
+            self._save()
         logger.info(f"Updated privileges for '{username}': {current}")
         return True
 
@@ -331,8 +350,9 @@ class AuthManager:
             return False
         if not _verify_password(current_password, self.users[username]["password_hash"]):
             return False
-        self._config["users"][username]["password_hash"] = _hash_password(new_password)
-        self._save()
+        with self._config_lock:
+            self._config["users"][username]["password_hash"] = _hash_password(new_password)
+            self._save()
         return True
 
     # ------------------------------------------------------------------
@@ -350,8 +370,9 @@ class AuthManager:
         if username not in self.users:
             return None
         secret = pyotp.random_base32()
-        self._config["users"][username]["totp_secret_pending"] = secret
-        self._save()
+        with self._config_lock:
+            self._config["users"][username]["totp_secret_pending"] = secret
+            self._save()
         return secret
 
     def totp_get_provisioning_uri(self, username: str, secret: str) -> str:
@@ -370,13 +391,14 @@ class AuthManager:
         if not totp.verify(code, valid_window=1):
             return False
         # Enable 2FA
-        self._config["users"][username]["totp_secret"] = secret
-        self._config["users"][username]["totp_enabled"] = True
-        self._config["users"][username].pop("totp_secret_pending", None)
-        # Generate backup codes
-        backup = [secrets.token_hex(4) for _ in range(8)]
-        self._config["users"][username]["totp_backup_codes"] = backup
-        self._save()
+        with self._config_lock:
+            self._config["users"][username]["totp_secret"] = secret
+            self._config["users"][username]["totp_enabled"] = True
+            self._config["users"][username].pop("totp_secret_pending", None)
+            # Generate backup codes
+            backup = [secrets.token_hex(4) for _ in range(8)]
+            self._config["users"][username]["totp_backup_codes"] = backup
+            self._save()
         logger.info(f"2FA enabled for '{username}'")
         return True
 
@@ -395,9 +417,10 @@ class AuthManager:
         # Check backup codes first
         backup = user.get("totp_backup_codes", [])
         if code in backup:
-            backup.remove(code)
-            self._config["users"][username]["totp_backup_codes"] = backup
-            self._save()
+            with self._config_lock:
+                backup.remove(code)
+                self._config["users"][username]["totp_backup_codes"] = backup
+                self._save()
             logger.info(f"Backup code used for '{username}' ({len(backup)} remaining)")
             return True
         totp = pyotp.TOTP(secret)
@@ -408,11 +431,12 @@ class AuthManager:
         username = username.strip().lower()
         if not self.verify_password(username, password):
             return False
-        self._config["users"][username].pop("totp_secret", None)
-        self._config["users"][username].pop("totp_secret_pending", None)
-        self._config["users"][username].pop("totp_backup_codes", None)
-        self._config["users"][username]["totp_enabled"] = False
-        self._save()
+        with self._config_lock:
+            self._config["users"][username].pop("totp_secret", None)
+            self._config["users"][username].pop("totp_secret_pending", None)
+            self._config["users"][username].pop("totp_backup_codes", None)
+            self._config["users"][username]["totp_enabled"] = False
+            self._save()
         logger.info(f"2FA disabled for '{username}'")
         return True
 
@@ -431,6 +455,12 @@ class AuthManager:
         username = username.strip().lower()
         if not self.verify_password(username, password):
             return None
+        return self.create_session_trusted(username)
+
+    def create_session_trusted(self, username: str) -> str:
+        """Issue a session token for an already-verified user.
+        Call only after verify_password (and TOTP if enabled) have passed."""
+        username = username.strip().lower()
         token = secrets.token_hex(32)
         with self._sessions_lock:
             self._sessions[token] = {

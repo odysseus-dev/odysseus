@@ -6,6 +6,7 @@
 
 import uiModule from './ui.js';
 import { splitTableRow } from './markdown/tableRow.js';
+import { replaceEmojiShortcodes, hasEmojiShortcode } from './emojiShortcodes.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -35,6 +36,17 @@ function linkHtml(text, url) {
   return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${safeText}</a>`;
 }
 
+function _isModelEndpointUrl(rawUrl) {
+  try {
+    const parsed = new URL(String(rawUrl || ''), window.location.origin);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    const path = parsed.pathname.replace(/\/+$/, '');
+    return path === '/v1';
+  } catch (_) {
+    return false;
+  }
+}
+
 /**
  * Sanitize the raw-HTML fragments that mdToHtml deliberately preserves from
  * the source text — <details> blocks (collapsible agent output) and <a> tags
@@ -60,8 +72,20 @@ const _ALLOWED_HTML_BAD_TAGS = new Set([
   'SVG', 'MATH',
 ]);
 const _ALLOWED_HTML_URL_ATTRS = new Set([
-  'href', 'src', 'xlink:href', 'action', 'formaction', 'background', 'poster',
+  'href', 'src', 'srcset', 'xlink:href', 'action', 'formaction', 'background', 'poster',
 ]);
+
+function _compactUrlSchemeValue(value) {
+  return String(value || '').replace(/[\u0000-\u0020\u007f-\u009f]+/g, '').toLowerCase();
+}
+
+function _isDangerousUrl(value) {
+  return /^(javascript|vbscript|data):/.test(_compactUrlSchemeValue(value));
+}
+
+function _isDangerousSrcset(value) {
+  return String(value || '').split(',').some(candidate => _isDangerousUrl(candidate));
+}
 
 function _cleanAllowedHtmlOnce(htmlString) {
   const tpl = document.createElement('template');
@@ -82,11 +106,17 @@ function _cleanAllowedHtmlOnce(htmlString) {
         el.removeAttribute(attr.name);
         continue;
       }
+      if (name === 'style') {
+        const value = _compactUrlSchemeValue(attr.value);
+        if (/javascript:|vbscript:|data:|expression\(/.test(value)) {
+          el.removeAttribute(attr.name);
+        }
+        continue;
+      }
       // Neutralize javascript:/vbscript:/data: in URL-bearing attributes.
       // Strip control/space chars first so e.g. "java\tscript:" can't slip by.
       if (_ALLOWED_HTML_URL_ATTRS.has(name)) {
-        const value = (attr.value || '').replace(/[\x00-\x20]+/g, '').toLowerCase();
-        if (/^(javascript|vbscript|data):/.test(value)) {
+        if (name === 'srcset' ? _isDangerousSrcset(attr.value) : _isDangerousUrl(attr.value)) {
           el.removeAttribute(attr.name);
         }
       }
@@ -116,8 +146,13 @@ function sanitizeAllowedHtml(html) {
  * Check if text has unclosed think tag
  */
 export function hasUnclosedThinkTag(text) {
-  const openCount = (text.match(/<think(?:ing)?>/gi) || []).length;
-  const closeCount = (text.match(/<\/think(?:ing)?>/gi) || []).length;
+  text = text || '';
+  const openCount =
+    (text.match(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>/gi) || []).length
+    + (text.match(/<\|channel>thought/gi) || []).length;
+  const closeCount =
+    (text.match(/<\/(?:think(?:ing)?|thought)>/gi) || []).length
+    + (text.match(/<channel\|>/gi) || []).length;
   return openCount > closeCount;
 }
 
@@ -125,8 +160,25 @@ export function startsWithReasoningPrefix(text) {
   return /^\s*(?:thinking(?:\s+process)?\s*:|the user |i need |i should |i will |they are |the question |i can )/i.test(text || '');
 }
 
+export function normalizeThinkingMarkup(text) {
+  if (!text) return text;
+  let normalized = text;
+  normalized = normalized.replace(/<thought(\s+[^>]*)?>/gi, (_m, attrs = '') => `<think${attrs || ''}>`);
+  normalized = normalized.replace(/<\/thought>/gi, '</think>');
+  normalized = normalized.replace(/<\|channel>thought\s*\n?([\s\S]*?)<channel\|>\s*/gi, (_m, content = '') => {
+    const thought = String(content || '').trim();
+    return thought ? `<think>${thought}</think>\n` : '';
+  });
+  normalized = normalized.replace(/<\|channel>response\s*\n?([\s\S]*?)<channel\|>/gi, (_m, content = '') => content || '');
+  normalized = normalized.replace(/<\|channel>response\s*\n?/gi, '');
+  normalized = normalized.replace(/<channel\|>/gi, '');
+  return normalized;
+}
+
 function normalizePlainThinking(text) {
-  if (!text || /<think/i.test(text)) return text;
+  if (!text) return text;
+  text = normalizeThinkingMarkup(text);
+  if (/<think/i.test(text)) return text;
 
   const trimmed = text.trimStart();
   if (!startsWithReasoningPrefix(trimmed)) return text;
@@ -220,11 +272,21 @@ export function extractThinkingBlocks(text) {
   // (b) Cut-off mid-generation — there's already real reply text before the
   //     opener. Drop from the tag onward as before (it's truncated thinking).
   if (hasUnclosedThinkTag(normalized)) {
-    const strayOpener = cleanContent.match(/^\s*<think(?:ing)?(?:\s+[^>]*)?>([\s\S]*)$/i);
-    if (strayOpener) {
-      cleanContent = strayOpener[1];
+    const gemmaThoughtStart = cleanContent.search(/<\|channel>thought/i);
+    if (gemmaThoughtStart >= 0) {
+      const leakedThought = cleanContent
+        .slice(gemmaThoughtStart)
+        .replace(/^<\|channel>thought\s*\n?/i, '')
+        .trim();
+      if (gemmaThoughtStart === 0 && leakedThought) thinkingBlocks.push(leakedThought);
+      cleanContent = cleanContent.slice(0, gemmaThoughtStart);
     } else {
-      cleanContent = cleanContent.replace(/<think(?:ing)?(?:\s+[^>]*)?>[\s\S]*$/gi, '');
+      const strayOpener = cleanContent.match(/^\s*<think(?:ing)?(?:\s+[^>]*)?>([\s\S]*)$/i);
+      if (strayOpener) {
+        cleanContent = strayOpener[1];
+      } else {
+        cleanContent = cleanContent.replace(/<think(?:ing)?(?:\s+[^>]*)?>[\s\S]*$/gi, '');
+      }
     }
   }
 
@@ -276,6 +338,17 @@ function createThinkingSection(thinkingContent, index = 0, thinkingTime = null) 
   `;
 }
 
+function createTaskCompletedMarker() {
+  return `
+    <div class="task-completed-marker" role="status" aria-label="Task completed">
+      <span class="task-completed-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </span>
+      <span>Task completed</span>
+    </div>
+  `;
+}
+
 /**
  * Process text and render with thinking sections
  */
@@ -316,8 +389,19 @@ function _useSvgEmoji() {
   return typeof document === 'undefined' || !document.body?.classList.contains('text-emojis');
 }
 
-export function svgifyEmoji(html) {
-  if (!_useSvgEmoji() || !html || !_EMOJI_RE.test(html)) return html;
+// `opts.shortcodes` (default true) controls the issue-#345 `:name:` → emoji
+// expansion. Chat passes it through as true; document/email body renderers pass
+// false so author-typed `:shortcode:` text stays literal (see mdToHtml callers).
+// The Unicode-emoji → monochrome-SVG pass always runs regardless, so a real 😀
+// in a document still renders as the themed line icon as it always has.
+export function svgifyEmoji(html, opts) {
+  if (!_useSvgEmoji() || !html) return html;
+  const allowShortcodes = !opts || opts.shortcodes !== false;
+  // Two reasons to walk the HTML: real Unicode emoji to turn into SVG icons,
+  // or `:shortcode:` text the model emitted instead of an emoji (issue #345).
+  const hasUnicode = _EMOJI_RE.test(html);
+  const hasShortcode = allowShortcodes && hasEmojiShortcode(html);
+  if (!hasUnicode && !hasShortcode) return html;
   const parts = html.split(/(<[^>]*>)/);   // odd indices = tags
   let codeDepth = 0;
   for (let i = 0; i < parts.length; i++) {
@@ -327,7 +411,13 @@ export function svgifyEmoji(html) {
       else if (/^<\/(pre|code)\s*>/.test(t)) codeDepth = Math.max(0, codeDepth - 1);
       continue;
     }
-    if (codeDepth === 0 && _EMOJI_RE.test(parts[i])) parts[i] = _svgifyText(parts[i]);
+    if (codeDepth !== 0) continue;
+    let seg = parts[i];
+    // Expand shortcodes to Unicode first, then both they and any pre-existing
+    // Unicode emoji get rendered as the same monochrome line icons below.
+    if (hasShortcode) seg = replaceEmojiShortcodes(seg);
+    if (_EMOJI_RE.test(seg)) seg = _svgifyText(seg);
+    parts[i] = seg;
   }
   return parts.join('');
 }
@@ -354,6 +444,9 @@ export function processWithThinking(text) {
   const { thinkingBlocks, content, thinkingTime } = extractThinkingBlocks(text);
 
   let html = '';
+  let visibleContent = content || '';
+  const doneOnly = /^\s*\[DONE\]\s*$/i.test(visibleContent);
+  const hadTrailingDone = !doneOnly && /(?:^|\n)\s*\[DONE\]\s*$/i.test(visibleContent);
 
   // Add thinking sections (collapsed by default)
   thinkingBlocks.forEach((block, index) => {
@@ -361,8 +454,12 @@ export function processWithThinking(text) {
   });
 
   // Add the actual content
-  if (content) {
-    html += mdToHtml(content);
+  if (doneOnly) {
+    html += createTaskCompletedMarker();
+  } else {
+    if (hadTrailingDone) visibleContent = visibleContent.replace(/\n?\s*\[DONE\]\s*$/i, '').trimEnd();
+    if (visibleContent) html += mdToHtml(visibleContent);
+    if (hadTrailingDone) html += createTaskCompletedMarker();
   }
 
   return _useSvgEmoji() ? svgifyEmoji(html) : html;
@@ -371,7 +468,7 @@ export function processWithThinking(text) {
 /**
  * Convert markdown to HTML
  */
-export function mdToHtml(src) {
+export function mdToHtml(src, opts) {
   const allowedHtmlBlocks = [];
   const codeBlocks = [];
   const mermaidBlocks = [];
@@ -456,9 +553,11 @@ export function mdToHtml(src) {
   // allowlist keeps it from matching file names / versions ("package.json",
   // "node.js", "v1.2.3"); the required start/[\s(<] prefix means domains
   // already inside an http link (preceded by "//") or an email ("@") are
-  // skipped. Trailing sentence punctuation is kept outside the link.
+  // skipped. Require the TLD to end at a real domain boundary so dotted code
+  // identifiers like `sklearn.metrics` do not link `sklearn.me` and leave
+  // placeholder fragments in the remaining text.
   s = s.replace(
-    /(^|[\s(<])((?:www\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|ai|co|dev|app|gov|edu|news|info|tech|xyz|me)(?:\/[^\s<>"'`\])]*)?)/gi,
+    /(^|[\s(<])((?:www\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|ai|co|dev|app|gov|edu|news|info|tech|xyz|me)(?=$|[\/\s<>"'`\]).,;:!?])(?:\/[^\s<>"'`\])]*)?)/gi,
     (match, prefix, domain) => {
       const trail = (domain.match(/[.,;:!?)]+$/) || [''])[0];
       const core = trail ? domain.slice(0, -trail.length) : domain;
@@ -585,10 +684,20 @@ export function mdToHtml(src) {
   s = s.replace(/^(\d+)\. (.*)$/gm, '<oli>$2</oli>');
   s = s.replace(/(?:^|\n)(<oli>[\s\S]*?)(?=\n(?!<oli>)|$)/g, m => `<ol>${m.trim().replace(/<\/?oli>/g, (t) => t === '<oli>' ? '<li>' : '</li>')}</ol>`);
 
-  // Unordered lists
+  // GitHub-style task lists (- [ ] / - [x]) → checkbox items. Must run before
+  // the generic unordered-list rule so the "- " prefix isn't consumed first.
+  // Emits <uli> (with a class) so the unordered-list wrapper below treats it
+  // as a list item. Used by plan mode: plan + progress render as a checklist.
+  s = s.replace(/^(?:- |\* )\[([ xX])\] (.*)$/gm, (_m, mark, text) => {
+    const done = mark.toLowerCase() === 'x';
+    return `<uli class="task-item${done ? ' task-done' : ''}"><span class="task-check" aria-hidden="true"></span><span class="task-text">${text}</span></uli>`;
+  });
+
+  // Unordered lists. <uli> may carry attributes (task-item class), so the
+  // wrapper preserves them when converting <uli ...> → <li ...>.
   s = s.replace(/^(?:- |\* )(.*)$/gm, '<uli>$1</uli>');
-  s = s.replace(/(^|\n)((?:<uli>[^\n]*<\/uli>(?:\n|$))+)/g, (_, prefix, block) =>
-    `${prefix}<ul>${block.trim().replace(/<\/?uli>/g, (t) => t === '<uli>' ? '<li>' : '</li>')}</ul>`);
+  s = s.replace(/(^|\n)((?:<uli\b[^>]*>[^\n]*<\/uli>(?:\n|$))+)/g, (_, prefix, block) =>
+    `${prefix}<ul>${block.trim().replace(/<uli\b([^>]*)>/g, '<li$1>').replace(/<\/uli>/g, '</li>')}</ul>`);
 
   // Blockquotes
   s = s.replace(/^&gt; (.*)$/gm, '<bq>$1</bq>');
@@ -596,7 +705,7 @@ export function mdToHtml(src) {
     `<blockquote>${m.trim().replace(/<\/?bq>/g, (t) => t === '<bq>' ? '<p>' : '</p>')}</blockquote>`);
 
   // Paragraphs - but NOT for code block placeholders or allowed HTML
-  s = s.replace(/^(?!<h\d|<ul>|<ol>|<li>|<oli>|<pre>|<blockquote>|<bq>|<hr>|___CODE_BLOCK_|___ALLOWED_HTML_|___MATH_BLOCK_|___MERMAID_BLOCK_)([^\n]+)$/gm, '<p>$1</p>');
+  s = s.replace(/^(?!<h\d|<ul>|<ol>|<li|<oli>|<\/li>|<pre>|<blockquote>|<bq>|<hr>|___CODE_BLOCK_|___ALLOWED_HTML_|___MATH_BLOCK_|___MERMAID_BLOCK_)([^\n]+)$/gm, '<p>$1</p>');
 
   // Line breaks within paragraphs
   s = s.replace(/<p>([\s\S]*?)<\/p>/g, (match, content) => {
@@ -628,7 +737,7 @@ export function mdToHtml(src) {
     s = s.replace(`___CODE_BLOCK_${index}___`, block);
   });
 
-  return _useSvgEmoji() ? svgifyEmoji(s) : s;
+  return _useSvgEmoji() ? svgifyEmoji(s, opts) : s;
 }
 
 /**
@@ -686,6 +795,7 @@ const markdownModule = {
   createCollapsible,
   hasUnclosedThinkTag,
   extractThinkingBlocks,
+  normalizeThinkingMarkup,
   startsWithReasoningPrefix,
   renderMermaid
 };
@@ -794,6 +904,124 @@ document.addEventListener('click', function(e) {
       for (const m of mutations) {
         for (const node of m.addedNodes) {
           if (node.nodeType === 1) _apply(node);
+        }
+      }
+    }).observe(root, { childList: true, subtree: true });
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start, { once: true });
+  } else {
+    start();
+  }
+})();
+
+function _endpointNameFromUrl(url) {
+  try {
+    const parsed = new URL(url, window.location.origin);
+    return parsed.host || parsed.hostname || 'Model endpoint';
+  } catch (_) {
+    return 'Model endpoint';
+  }
+}
+
+function _appendEndpointAddButtons(root) {
+  if (!root || !root.querySelectorAll) return;
+  const anchors = root.matches?.('a[href]')
+    ? [root]
+    : [...root.querySelectorAll('a[href]')];
+  for (const anchor of anchors) {
+    if (anchor.dataset.endpointAddChecked === '1') continue;
+    anchor.dataset.endpointAddChecked = '1';
+    const href = anchor.getAttribute('href') || '';
+    if (!_isModelEndpointUrl(href)) continue;
+    if (anchor.nextElementSibling?.classList?.contains('model-endpoint-add-btn')) continue;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'model-endpoint-add-btn';
+    btn.dataset.endpointUrl = new URL(href, window.location.origin).href.replace(/\/+$/, '');
+    btn.title = 'Add this OpenAI-compatible endpoint to the model picker';
+    btn.innerHTML = '<span aria-hidden="true">+</span><span>Add to model picker</span>';
+    anchor.insertAdjacentElement('afterend', btn);
+  }
+}
+
+async function _registerEndpointFromButton(btn) {
+  const baseUrl = String(btn?.dataset?.endpointUrl || '').trim();
+  if (!baseUrl || !_isModelEndpointUrl(baseUrl)) return;
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span aria-hidden="true">...</span><span>Adding</span>';
+  try {
+    const existingRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+    if (existingRes.ok) {
+      const endpoints = await existingRes.json();
+      const existing = Array.isArray(endpoints)
+        ? endpoints.find((ep) => String(ep.base_url || '').replace(/\/+$/, '') === baseUrl)
+        : null;
+      if (existing) {
+        btn.classList.add('added');
+        btn.innerHTML = '<span aria-hidden="true">✓</span><span>Already added</span>';
+        window.dispatchEvent(new CustomEvent('ge:model-endpoints-updated', { detail: { baseUrl } }));
+        if (window.modelsModule?.refreshModels) window.modelsModule.refreshModels(true);
+        if (window.sessionModule?.updateModelPicker) window.sessionModule.updateModelPicker();
+        uiModule.showToast?.(`Already in model picker: ${existing.name || _endpointNameFromUrl(baseUrl)}`);
+        return;
+      }
+    }
+
+    const parsed = new URL(baseUrl, window.location.origin);
+    const fd = new FormData();
+    fd.append('base_url', baseUrl);
+    fd.append('name', _endpointNameFromUrl(baseUrl));
+    fd.append('model_type', 'llm');
+    fd.append('endpoint_kind', 'auto');
+    fd.append('skip_probe', 'true');
+    if (/^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(parsed.hostname)) {
+      fd.append('container_local', 'true');
+    }
+    const res = await fetch('/api/model-endpoints', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: fd,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`HTTP ${res.status}${body ? ': ' + body.slice(0, 160) : ''}`);
+    }
+    btn.classList.add('added');
+    btn.innerHTML = '<span aria-hidden="true">✓</span><span>Added</span>';
+    window.dispatchEvent(new CustomEvent('ge:model-endpoints-updated', { detail: { baseUrl } }));
+    if (window.modelsModule?.refreshModels) await window.modelsModule.refreshModels(true);
+    if (window.sessionModule?.updateModelPicker) window.sessionModule.updateModelPicker();
+    uiModule.showToast?.(`Model endpoint added: ${_endpointNameFromUrl(baseUrl)}`);
+  } catch (err) {
+    btn.disabled = false;
+    btn.innerHTML = original;
+    uiModule.showError?.(`Add endpoint failed: ${err.message || err}`);
+  }
+}
+
+(function _watchModelEndpointLinks() {
+  if (window._modelEndpointLinkWatcherWired) return;
+  window._modelEndpointLinkWatcherWired = true;
+
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest?.('.model-endpoint-add-btn');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    _registerEndpointFromButton(btn);
+  });
+
+  const start = () => {
+    const root = document.body;
+    if (!root) return;
+    _appendEndpointAddButtons(root);
+    new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        for (const node of m.addedNodes) {
+          if (node.nodeType === 1) _appendEndpointAddButtons(node);
         }
       }
     }).observe(root, { childList: true, subtree: true });
