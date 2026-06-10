@@ -6,6 +6,10 @@ httpx
 pydantic>=2.0
 pydantic-settings>=2.0
 SQLAlchemy
+# PostgreSQL driver. Optional at runtime — only imported by SQLAlchemy when
+# DATABASE_URL uses a postgresql:// scheme. SQLite remains the zero-config
+# default; psycopg is pulled in so Postgres-backed deploys work out of the box.
+psycopg2-binary
 pypdf
 beautifulsoup4
 charset-normalizer

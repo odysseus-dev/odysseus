@@ -33,6 +33,13 @@ class TimestampMixin:
 from src.constants import DATA_DIR, AUTH_FILE, MEMORY_FILE, USER_PREFS_FILE, SETTINGS_FILE
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR}/app.db")
 
+# Whether the configured backend is SQLite. The legacy `_migrate_*` helpers
+# below reach past SQLAlchemy and open the DB file directly with the sqlite3
+# module to run idempotent ALTER TABLE upgrades on pre-existing SQLite files.
+# On Postgres those helpers are inapplicable: the schema is built complete by
+# Base.metadata.create_all() (see init_db), so they short-circuit via this flag.
+IS_SQLITE = DATABASE_URL.startswith("sqlite")
+
 # Create engine
 engine = create_engine(
     DATABASE_URL,
@@ -1628,8 +1635,18 @@ def init_db():
     Initialize the database by creating all tables.
     Should be called when starting the application.
     """
-    _migrate_model_endpoints()
+    # Legacy in-place SQLite upgrades. These open the DB file directly with the
+    # sqlite3 module to ALTER pre-existing tables created by older app versions.
+    # On Postgres the schema below (create_all) is already complete and current,
+    # and the sqlite3-based helpers are inapplicable — so the whole legacy
+    # upgrade chain is SQLite-only. (_migrate_model_endpoints can recreate the
+    # model_endpoints table, so it too must stay behind this guard.)
+    if IS_SQLITE:
+        _migrate_model_endpoints()
     Base.metadata.create_all(bind=engine)
+    if not IS_SQLITE:
+        # Postgres: schema is fully created above; no in-place file migrations.
+        return
     _migrate_add_hidden_models_column()
     _migrate_add_cached_models_column()
     _migrate_add_pinned_models_column()
