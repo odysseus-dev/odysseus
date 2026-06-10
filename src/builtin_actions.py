@@ -348,6 +348,18 @@ async def action_run_local(owner: str, script: str = "", **kwargs) -> Tuple[str,
     return await _run_subprocess(script, shell=True, timeout=300, label="Script")
 
 
+async def action_run_sandbox(
+    owner: str, script: str = "", language: str = "python", network: bool = False, **kwargs
+) -> Tuple[str, bool]:
+    """Run a code snippet inside the isolated Docker sandbox (no network by
+    default). See src/sandbox_manager.py for the container hardening."""
+    if not script:
+        return "No code specified", False
+    from src.sandbox_manager import run as run_in_sandbox
+
+    return await run_in_sandbox(script, language=language, network=bool(network))
+
+
 async def action_tidy_research(owner: str, **kwargs) -> Tuple[str, bool]:
     """Remove only broken research files (empty or unparseable JSON).
 
@@ -2232,6 +2244,7 @@ BUILTIN_ACTIONS = {
     "ssh_command": action_ssh_command,
     "run_script": action_run_script,
     "run_local": action_run_local,
+    "run_sandbox": action_run_sandbox,
     "test_skills": action_test_skills,
     "audit_skills": action_audit_skills,
     "check_email_urgency": action_check_email_urgency,
@@ -2253,6 +2266,7 @@ BUILTIN_ACTION_INFO = {
     "learn_sender_signatures": "LLM learns each sender's signature from 3+ of their recent emails; cached per address so future renders fold sigs reliably without heuristics",
     "ssh_command": "Run a shell command on a local or remote host",
     "run_script": "Run a script locally or on ODYSSEUS_SCRIPT_HOST",
+    "run_sandbox": "Run a Python/Node/Bash snippet in an isolated Docker container (Ubuntu 22.04, no network by default)",
     "test_skills": "Run the per-skill Test on every skill: agent run + LLM judge → records verdict on the skill (pass/needs_work/fail/inconclusive). Advisory only — never rewrites or demotes anything.",
     "audit_skills": "Audit unaudited skills after enough new skills are added: test, narrow metadata, self-edit/retry, optional teacher rewrite, tag duplicates/trivial skills, and publish/draft using the auto-approve threshold.",
     "check_email_urgency": "Scan unread emails hourly, tag urgent/reply-soon/newsletter/marketing/spam, and send a reminder when a new email needs a fast reply.",
