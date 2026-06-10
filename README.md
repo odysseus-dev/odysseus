@@ -472,6 +472,12 @@ Help is welcome. The best entry points are fresh-install testing, provider setup
 bugs, mobile/editor polish, docs, and small focused refactors. See
 [ROADMAP.md](ROADMAP.md) for the current help-wanted list.
 
+### Proxmox Community Scripts contribution scaffold
+For Proxmox-targeted deployment work, see
+[`docs/deployment/proxmox-community-scripts.md`](docs/deployment/proxmox-community-scripts.md).
+It includes a repository-local LXC installer + model-tier helper intended to be
+ported into Community Scripts (ProxmoxVED first, then upstream).
+
 ## Configuration
 Most setup is done inside the app with `/setup` or **Settings**. Use `.env`
 for deployment-level defaults and secrets you want present before first boot.
