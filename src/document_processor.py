@@ -17,10 +17,20 @@ MIN_INLINE_ATTACHMENT_SLICE = 500
 
 
 def _is_text_file(path: str) -> bool:
-    """Check if file has text extension."""
+    """Check if file has a text/code extension.
+
+    Must cover every extension _process_text_file can render: an attached
+    .go/.rs/.ts/.sql/.cpp/.java/... file otherwise failed this gate, fell
+    through to office-document processing, and was replaced by a stub — its
+    source code never reached the model (silent data loss for the attachment).
+    """
     return any(
         path.lower().endswith(ext)
-        for ext in (".txt", ".py", ".html", ".htm", ".md", ".json", ".csv", ".log", ".js", ".nix")
+        for ext in (
+            ".txt", ".py", ".html", ".htm", ".md", ".json", ".csv", ".log", ".js",
+            ".nix", ".css", ".sh", ".yml", ".yaml", ".xml", ".sql", ".cpp", ".c",
+            ".java", ".go", ".rs", ".php", ".rb", ".ts", ".jsx", ".tsx",
+        )
     )
 
 
