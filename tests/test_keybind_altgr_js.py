@@ -23,6 +23,7 @@ Firefox and some Linux setups historically did not report it (the guard is a
 no-op there, i.e. pre-fix behaviour, not a regression).
 """
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -181,3 +182,97 @@ def test_plain_ctrl_shortcut_unaffected():
     # Non-alt combos were never AltGr-ambiguous and must keep matching.
     ev = {"ctrlKey": True, "altKey": False, "shiftKey": False, "key": "k"}
     assert _matches(ev, "ctrl+k", altgraph=False, is_mac=False) is True
+
+
+# --- The remaining Ctrl/Cmd-key handlers route through the shared guard -------
+#
+# Follow-up to the original AltGr fix: four more keydown handlers gated only on
+# `(e.ctrlKey || e.metaKey)` could false-fire on the no-glyph AltGr keystroke the
+# same way. They live as inline, DOM-coupled listeners inside large modules
+# (document.js / notes.js / calendar.js) with no `node` unit harness — so, exactly
+# like test_document_deeplink.py, we pin the source-level invariant that each one
+# is wired through `isAltGrEvent`. The PREDICATE's actual AltGr/macOS/no-AltGraph
+# behaviour is what is proven against real JS by the node-driven tests above
+# (_is_altgr / _matches); these pins only assert the four call sites delegate to
+# it, so a guard can't be silently dropped or forgotten on one of the siblings.
+# notes.js Ctrl+C is deliberately NOT rewired: its pre-existing `&& !e.altKey`
+# already excludes AltGr, and swapping it would loosen Mac Cmd+Option+C — so we
+# pin that it stays put.
+#
+# Matching is whitespace-normalised (see `_wired`): a cosmetic reflow — a
+# line-wrap, an indent change, extra spaces around an operator — must not fail a
+# pin while the guard is still in place. Reordering the operands WOULD break the
+# match, which is intended: that is a semantic edit and the point where a
+# maintainer should re-confirm the condition still does what the pin claims.
+
+_DOCUMENT_JS = _REPO / "static" / "js" / "document.js"
+_NOTES_JS = _REPO / "static" / "js" / "notes.js"
+_CALENDAR_JS = _REPO / "static" / "js" / "calendar.js"
+
+
+def _src(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _norm(s: str) -> str:
+    """Collapse runs of whitespace to a single space so source pins survive a
+    cosmetic reflow but still catch a real change to the guard expression."""
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _wired(path: Path, snippet: str) -> bool:
+    return _norm(snippet) in _norm(_src(path))
+
+
+def test_document_js_imports_shared_altgr_guard():
+    assert _wired(_DOCUMENT_JS, "import { isAltGrEvent } from './platform.js';")
+
+
+def test_notes_js_imports_shared_altgr_guard():
+    assert _wired(_NOTES_JS, "import { isAltGrEvent } from './platform.js';")
+
+
+def test_calendar_js_imports_shared_altgr_guard():
+    assert _wired(_CALENDAR_JS, "import { isAltGrEvent } from './platform.js';")
+
+
+def test_markdown_format_shortcut_guards_altgr():
+    # Ctrl+B/I/K markdown formatting fires inside the doc-editor textarea while
+    # typing; AltGr+b/i/k produce no glyph on common non-US layouts, so without
+    # the guard prose typing would wrap the selection in markdown markup.
+    assert _wired(
+        _DOCUMENT_JS,
+        "lang === 'markdown' && (e.ctrlKey || e.metaKey) && !isAltGrEvent(e)",
+    )
+
+
+def test_doc_find_shortcut_guards_altgr():
+    # Ctrl+F find-bar; preventDefault+stopPropagation would otherwise eat the key.
+    assert _wired(_DOCUMENT_JS, "(e.ctrlKey || e.metaKey) && !isAltGrEvent(e) && e.key === 'f'")
+
+
+def test_notes_undo_shortcut_guards_altgr():
+    # Ctrl+Z note-undo (the inField early-return already blunts most exposure,
+    # but the guard keeps it consistent with its siblings).
+    assert _wired(
+        _NOTES_JS,
+        "(e.ctrlKey || e.metaKey) && !isAltGrEvent(e) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey",
+    )
+
+
+def test_calendar_undo_shortcut_guards_altgr():
+    # Calendar Ctrl+Z undo — same document-level, inField-gated handler as notes.js
+    # Ctrl+Z, but written as an early-return, so the guard sits in the bail clause.
+    assert _wired(
+        _CALENDAR_JS,
+        "!(e.ctrlKey || e.metaKey) || isAltGrEvent(e) || e.key !== 'z' || e.shiftKey",
+    )
+
+
+def test_notes_copy_shortcut_keeps_existing_altkey_guard():
+    # Intentionally untouched: !e.altKey already excludes the AltGr no-glyph case,
+    # and switching to isAltGrEvent would re-enable Cmd+Option+C on macOS.
+    assert _wired(
+        _NOTES_JS,
+        "(e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C') && !e.shiftKey && !e.altKey",
+    )

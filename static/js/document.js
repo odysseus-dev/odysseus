@@ -16,6 +16,7 @@ import spinnerModule from './spinner.js';
 import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documentLibrary.js';
 import signatureModule from './signature.js';
 import * as Modals from './modalManager.js';
+import { isAltGrEvent } from './platform.js';
 
   let API_BASE = '';
   let isOpen = false;
@@ -4835,7 +4836,7 @@ import * as Modals from './modalManager.js';
         }
         // Markdown shortcuts (only when language is markdown)
         const lang = document.getElementById('doc-language-select')?.value;
-        if (lang === 'markdown' && (e.ctrlKey || e.metaKey)) {
+        if (lang === 'markdown' && (e.ctrlKey || e.metaKey) && !isAltGrEvent(e)) {
           if (e.key === 'b') { e.preventDefault(); applyMdFormat('bold'); }
           else if (e.key === 'i') { e.preventDefault(); applyMdFormat('italic'); }
           else if (e.key === 'k') { e.preventDefault(); applyMdFormat('link'); }
@@ -4942,7 +4943,7 @@ import * as Modals from './modalManager.js';
 
       // Intercept Ctrl+F on the editor pane
       pane.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        if ((e.ctrlKey || e.metaKey) && !isAltGrEvent(e) && e.key === 'f') {
           e.preventDefault();
           e.stopPropagation();
           _openFindBar();

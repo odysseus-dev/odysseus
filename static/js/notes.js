@@ -10,6 +10,7 @@ import { attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 import { applyEdgeDock, clearDockSide } from './modalSnap.js';
+import { isAltGrEvent } from './platform.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -1363,7 +1364,7 @@ export function openPanel() {
     const inField = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
     // Ctrl/Cmd+Z anywhere in the panel — undo the last note action. Skip when
     // typing in a field so the browser's normal text-undo still works.
-    if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+    if ((e.ctrlKey || e.metaKey) && !isAltGrEvent(e) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
       if (inField) return;
       if (_undoStack.length === 0) return;
       e.preventDefault();

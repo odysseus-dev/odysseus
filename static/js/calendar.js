@@ -8,6 +8,7 @@ import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { attachColorPicker } from './colorPicker.js';
 import { bindMenuDismiss } from './escMenuStack.js';
+import { isAltGrEvent } from './platform.js';
 import {
   WEEKDAYS, MONTHS, MON_SHORT,
   CAL_PALETTE, CAL_COLORS, _CAL_CUSTOM_GRADIENT, _TYPE_PALETTE,
@@ -2379,7 +2380,7 @@ function _popAndRunCalUndo() {
 if (typeof window !== 'undefined' && !window._calUndoBound) {
   window._calUndoBound = true;
   document.addEventListener('keydown', (e) => {
-    if (!(e.ctrlKey || e.metaKey) || e.key !== 'z' || e.shiftKey) return;
+    if (!(e.ctrlKey || e.metaKey) || isAltGrEvent(e) || e.key !== 'z' || e.shiftKey) return;
     // Skip if the user's typing in a real field — let the browser's text undo run.
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
