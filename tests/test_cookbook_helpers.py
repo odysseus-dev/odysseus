@@ -10,6 +10,7 @@ from routes.cookbook_helpers import (
     _cached_model_scan_script,
     _append_llama_cpp_linux_accel_build_lines,
     _append_pip_install_runner_lines,
+    _append_realesrgan_py313_basicsr_workaround,
     _append_serve_exit_code_lines,
     _append_serve_preflight_exit_lines,
     _llama_cpp_rebuild_cmd,
@@ -824,3 +825,38 @@ def test_cached_model_scan_runs_additional_hf_cache(tmp_path):
     assert rec["size_bytes"] == len(b"abc123")
     assert rec["has_incomplete"] is False
     assert rec["is_diffusion"] is False
+
+
+# -- #3734: Real-ESRGAN / BasicSR install on Python 3.13 --
+
+def test_realesrgan_py313_workaround_is_scoped_to_realesrgan():
+    lines = []
+
+    _append_realesrgan_py313_basicsr_workaround(lines, 'python -m pip install --no-cache-dir "playwright"')
+
+    assert lines == []
+
+
+def test_realesrgan_py313_workaround_patches_basicsr_before_install():
+    lines = []
+
+    _append_realesrgan_py313_basicsr_workaround(lines, 'python -m pip install --no-cache-dir "realesrgan"')
+    script = "\n".join(lines)
+
+    assert script.startswith("python - <<'PY'")
+    assert "sys.version_info < (3, 13)" in script
+    assert "basicsr==1.4.2" in script
+    assert "namespace = {}" in script
+    assert "return namespace['__version__']" in script
+    assert "ODYSSEUS_PREFLIGHT_EXIT=$?" in script
+
+
+def test_realesrgan_py313_workaround_uses_same_python_executable():
+    lines = []
+
+    _append_realesrgan_py313_basicsr_workaround(
+        lines,
+        "'/opt/ody venv/bin/python3' -m pip install --no-cache-dir realesrgan",
+    )
+
+    assert lines[0].startswith("'/opt/ody venv/bin/python3' - <<'PY'")

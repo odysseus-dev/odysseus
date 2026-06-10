@@ -156,17 +156,68 @@ def lmstudio_supports_vision(url: str, model: str) -> Optional[bool]:
     return None
 
 
+# (host, port, model) -> (capabilities_list | None, expiry); None = endpoint
+# isn't Ollama / doesn't report capabilities for this model.
+_ollama_caps_cache: dict = {}
+
+
+def _probe_ollama_capabilities(url: str, model: str) -> Optional[list]:
+    """Return Ollama's reported capabilities for `model` via /api/show, or
+    None when the endpoint isn't Ollama, is unreachable, or runs a version
+    that predates the capabilities field (short-TTL cached; transient errors
+    uncached)."""
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    key = (host, parsed.port, model)
+    now = time.time()
+    cached = _ollama_caps_cache.get(key)
+    if cached is not None and cached[1] > now:
+        return cached[0]
+    authority = host if parsed.port is None else f"{host}:{parsed.port}"
+    probe_url = f"{parsed.scheme or 'http'}://{authority}/api/show"
+    try:
+        r = httpx.post(probe_url, json={"model": model}, timeout=1.0)
+    except Exception:
+        return None
+    try:
+        data = r.json() if r.is_success else {}
+    except Exception:
+        data = {}
+    caps = data.get("capabilities")
+    caps = caps if isinstance(caps, list) else None
+    _ollama_caps_cache[key] = (caps, now + _PROVIDER_FINGERPRINT_TTL)
+    return caps
+
+
+def ollama_supports_vision(url: str, model: str) -> Optional[bool]:
+    """Read `model`'s vision capability from Ollama's /api/show, or None when
+    the endpoint isn't Ollama or doesn't report capabilities (so callers fall
+    back). Fixes vision models like qwen3.5:9b being misclassified as
+    text-only: their tags carry no "vl"/"vision" marker, so the name-based
+    heuristic silently swaps the image for a caption."""
+    if not model:
+        return None
+    # Never probe a remote provider; Ollama is always a local/LAN host.
+    if not _is_local_host(urlparse(url).hostname):
+        return None
+    caps = _probe_ollama_capabilities(url, model.strip())
+    if caps is None:
+        return None
+    return "vision" in caps
+
+
 def model_supports_vision(model_name: str, endpoint_url: str = "") -> bool:
     """Whether a model accepts images, using the endpoint's reported
-    capability when available (LM Studio) and falling back to name-based
-    detection otherwise."""
+    capability when available (LM Studio, Ollama) and falling back to
+    name-based detection otherwise."""
     if endpoint_url:
-        try:
-            advertised = lmstudio_supports_vision(endpoint_url, model_name or "")
-        except Exception:
-            advertised = None
-        if advertised is not None:
-            return advertised
+        for probe in (lmstudio_supports_vision, ollama_supports_vision):
+            try:
+                advertised = probe(endpoint_url, model_name or "")
+            except Exception:
+                advertised = None
+            if advertised is not None:
+                return advertised
     return is_vision_model(model_name)
 
 

@@ -39,6 +39,7 @@ from routes.cookbook_helpers import (
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
+    _append_realesrgan_py313_basicsr_workaround,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
     _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     ModelDownloadRequest, ServeRequest,
@@ -1306,6 +1307,8 @@ def setup_cookbook_routes() -> APIRouter:
             elif "vllm" in req.cmd:
                 ps_lines.append('Write-Host "ERROR: vLLM is not supported on Windows. Use Ollama or llama.cpp instead."')
                 ps_lines.append('exit 1')
+            if is_pip_install:
+                _append_realesrgan_py313_basicsr_workaround(ps_lines, req.cmd, powershell=True)
             ps_lines.append(req.cmd)
             if is_pip_install:
                 ps_lines.append('if ($LASTEXITCODE -eq 0) { Write-Host ""; Write-Host "DOWNLOAD_OK" }')
@@ -1505,6 +1508,8 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('exec bash -i')
 
             if not handled_ollama_serve and not handled_ollama_sidecar_probe:
+                if is_pip_install:
+                    _append_realesrgan_py313_basicsr_workaround(runner_lines, req.cmd)
                 _append_serve_preflight_exit_lines(
                     runner_lines,
                     keep_shell_open=not local_windows,
