@@ -1691,8 +1691,16 @@ def _extract_report_title(markdown_text: str, fallback: str):
     candidates.sort(key=lambda t: (t[0], t[1].start()))
     if candidates:
         _level, match, title = candidates[0]
-        stripped = markdown_text[:match.start()] + markdown_text[match.end():]
-        return title, stripped.lstrip()
+        # Only strip the heading from the body when it is the document's own top
+        # heading (so it doesn't duplicate the hero h1). If it's a later section
+        # heading chosen because earlier headings were generic placeholders,
+        # leave it in place; removing it would orphan that section's body and
+        # drop the section from the table of contents.
+        is_top_heading = re.search(r'^#{1,6} ', markdown_text[:match.start()], re.MULTILINE) is None
+        if is_top_heading:
+            stripped = markdown_text[:match.start()] + markdown_text[match.end():]
+            return title, stripped.lstrip()
+        return title, markdown_text
     return fallback, markdown_text
 
 
