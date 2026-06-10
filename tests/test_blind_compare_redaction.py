@@ -22,31 +22,23 @@ import importlib
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from tests.helpers.import_state import clear_module, preserve_import_state
+
 _REPO = Path(__file__).resolve().parent.parent
 
-# Mirror tests/test_session_ghost_delete.py exactly: stub only the ORM *class*
-# modules and import the REAL core.session_manager + src.auth_helpers. pytest
-# caches routes.session_routes after the first import, so stubbing auth_helpers /
-# session_manager here would poison the shared module for the sibling session
-# tests (whichever file is collected first wins). Matching their stub set keeps
-# the cached module identical regardless of collection order.
-_ABSENT = object()
-_TEMP_STUBS = ("core.database", "core.models", "src.request_models")
-_saved = {name: sys.modules.get(name, _ABSENT) for name in _TEMP_STUBS}
-_saved["core.session_manager"] = sys.modules.get("core.session_manager", _ABSENT)
-try:
+# Stub only the ORM class modules and import the real core.session_manager so
+# the cached routes.session_routes is identical regardless of collection order.
+# preserve_import_state restores both sys.modules and parent-package attributes
+# after the block, preventing stub leakage into siblings.
+_TEMP_STUBS = ("core.database", "core.models")
+with preserve_import_state(*_TEMP_STUBS, "core.session_manager", "routes.session_routes"):
     for _name in _TEMP_STUBS:
         sys.modules[_name] = MagicMock(name=_name)
     if isinstance(sys.modules.get("core.session_manager"), MagicMock):
         del sys.modules["core.session_manager"]
+    clear_module("routes.session_routes")
     importlib.import_module("core.session_manager")
     import routes.session_routes as SR  # noqa: E402
-finally:
-    for _name, _val in _saved.items():
-        if _val is _ABSENT:
-            sys.modules.pop(_name, None)
-        else:
-            sys.modules[_name] = _val
 
 
 # ── backend: GET /api/sessions model redaction ─────────────────────────────

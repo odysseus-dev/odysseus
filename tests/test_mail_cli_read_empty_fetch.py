@@ -1,10 +1,10 @@
-import importlib.machinery
-import importlib.util
 import sys
-from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+
+from tests.helpers.cli_loader import load_script
+from tests.helpers.db_stubs import make_core_db_stub
 
 
 class _Conn:
@@ -38,20 +38,14 @@ def _load_mail_cli(monkeypatch):
     pollers = ModuleType("routes.email_pollers")
     pollers._scheduled_poll_once = lambda: {}
     pollers._run_auto_summarize_once = lambda **kwargs: ""
-    core_mod = ModuleType("core")
-    database_mod = ModuleType("core.database")
-    database_mod.SessionLocal = object
-    database_mod.EmailAccount = object
     monkeypatch.setitem(sys.modules, "routes.email_helpers", helpers)
     monkeypatch.setitem(sys.modules, "routes.email_pollers", pollers)
-    monkeypatch.setitem(sys.modules, "core", core_mod)
-    monkeypatch.setitem(sys.modules, "core.database", database_mod)
-    path = Path(__file__).resolve().parent.parent / "scripts" / "odysseus-mail"
-    loader = importlib.machinery.SourceFileLoader("odysseus_mail_cli_read_test", str(path))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
+    make_core_db_stub(
+        monkeypatch,
+        attributes={"SessionLocal": object, "EmailAccount": object},
+        install_core_package=True,
+    )
+    return load_script("odysseus-mail")
 
 
 def test_cmd_read_handles_empty_fetch_payload(monkeypatch):

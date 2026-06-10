@@ -1999,9 +1999,13 @@ export function initDragSort() {
   });
 }
 
-// Hash-based routing: navigate between sessions with browser back/forward
+// Hash-based routing: navigate between sessions with browser back/forward.
+// Skip entity-prefixed hashes (document-, note-, etc.) — those are handled
+// by their own click handlers in chatRenderer.js and must not trigger
+// session navigation (which would reset the active chat).
 window.addEventListener('hashchange', () => {
   const hashId = window.location.hash.replace('#', '');
+  if (/^(document|note|image|email|event|task|skill|research)-/.test(hashId)) return;
   if (hashId && hashId !== currentSessionId) {
     const target = sessions.find(s => s.id === hashId && !s.archived);
     if (target) selectSession(hashId);
@@ -2157,7 +2161,14 @@ async function _checkServerStream(sessionId) {
     // Skip if this is a research stream — research has its own progress UI
     if (info.mode === 'research' || info.is_research) return;
 
-    // Server is still streaming — show spinner and poll
+    // Live-resume the detached run: replay its buffer then stream live tokens
+    // (#2539). Falls back to the spinner+poll path below if unavailable.
+    if (window.chatModule && window.chatModule.resumeStream) {
+      const attached = await window.chatModule.resumeStream(sessionId);
+      if (attached) return;
+    }
+
+    // Fallback: server is still streaming, show spinner and poll.
     const box = document.getElementById('chat-history');
     if (!box) return;
 
@@ -2173,12 +2184,26 @@ async function _checkServerStream(sessionId) {
     box.appendChild(holder);
     uiModule.scrollHistory();
 
+    // sessions.js executes before chat.js in module order, so window.chatModule
+    // may not be set yet when _checkServerStream first runs. Retry resumeStream
+    // on the first poll tick where it becomes available.
+    let _resumeRetried = false;
     const pollId = setInterval(async () => {
       if (getCurrentSessionId() !== sessionId) {
         clearInterval(pollId);
         spinner.destroy();
         if (holder.parentNode) holder.remove();
         return;
+      }
+      if (!_resumeRetried && window.chatModule && window.chatModule.resumeStream) {
+        _resumeRetried = true;
+        const attached = await window.chatModule.resumeStream(sessionId);
+        if (attached) {
+          clearInterval(pollId);
+          spinner.destroy();
+          if (holder.parentNode) holder.remove();
+          return;
+        }
       }
       try {
         const r = await fetch(`${API_BASE}/api/chat/stream_status/${sessionId}`);
