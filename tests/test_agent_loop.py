@@ -343,6 +343,64 @@ class TestAppendToolResultsNativeContent:
         assert "tool output" in messages[1]["content"]
 
 
+class TestAppendToolResultsKimiReasoning:
+    """Kimi Code rejects multi-turn tool calls when prior assistant tool_call
+    messages lose their reasoning_content field."""
+
+    def _native(self):
+        return [{"id": "call_1", "name": "write_file", "arguments": "{}"}]
+
+    def test_kimi_preserves_prior_reasoning_on_tool_calls(self):
+        messages = [{
+            "role": "assistant",
+            "content": None,
+            "reasoning_content": "round 1 thinking",
+            "tool_calls": [{
+                "id": "call_0",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": "{}"},
+            }],
+        }, {
+            "role": "tool",
+            "tool_call_id": "call_0",
+            "content": "file contents",
+        }]
+        _append_tool_results(
+            messages, "", self._native(), [{}], ["ok"],
+            used_native=True, round_num=2,
+            round_reasoning="round 2 thinking",
+            endpoint_url="https://api.kimi.com/coding/v1/chat/completions",
+        )
+        first = messages[0]
+        second = messages[2]
+        assert first["reasoning_content"] == "round 1 thinking"
+        assert second["reasoning_content"] == "round 2 thinking"
+
+    def test_non_kimi_still_strips_prior_reasoning(self):
+        messages = [{
+            "role": "assistant",
+            "content": None,
+            "reasoning_content": "old reasoning",
+            "tool_calls": [{
+                "id": "call_0",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": "{}"},
+            }],
+        }, {
+            "role": "tool",
+            "tool_call_id": "call_0",
+            "content": "file contents",
+        }]
+        _append_tool_results(
+            messages, "", self._native(), [{}], ["ok"],
+            used_native=True, round_num=2,
+            round_reasoning="new reasoning",
+            endpoint_url="https://api.openai.com/v1/chat/completions",
+        )
+        assert "reasoning_content" not in messages[0]
+        assert messages[2]["reasoning_content"] == "new reasoning"
+
+
 class TestAppendToolResultsThoughtSignature:
     """Gemini 3 returns an opaque thought_signature (in extra_content) with each
     function call and rejects the follow-up turn with HTTP 400 unless it is

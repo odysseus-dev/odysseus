@@ -16536,8 +16536,9 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 /* Hide the overlay once the field has real content. */
 .skill-hint-input:not(:placeholder-shown) ~ .skill-rich-ph { display: none; }
 .skill-md-editor {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 1 1 min(80dvh, 56rem);
+  height: min(80dvh, 56rem);
+  min-height: 4rem;
   width: 100%;
   box-sizing: border-box;
   resize: none;

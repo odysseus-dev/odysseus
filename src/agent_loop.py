@@ -15,7 +15,12 @@ import logging
 from typing import AsyncGenerator, List, Dict, Optional, Set
 from urllib.parse import urlparse
 
-from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
+from src.llm_core import (
+    stream_llm,
+    stream_llm_with_fallback,
+    _is_ollama_native_url,
+    _requires_reasoning_content_on_tool_calls,
+)
 from src.model_context import estimate_tokens
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
@@ -359,7 +364,7 @@ Edit an EXISTING file by exact string replacement. PREFER this over bash (sed/ec
 <language>
 <content>
 ```
-Create a NEW document in the editor panel. Only use when the user explicitly asks for a new file/document. If a document is already open in the editor, the user's request "fix this", "add X", "change Y", etc. refers to THAT document — use edit_document, never create_document.""",
+Create a NEW document in the editor panel. Only use when the user explicitly asks for a new file/document. If a document is already open in the editor, the user's request "fix this", "add X", "change Y", etc. refers to THAT document — use edit_document, never create_document. For interactive apps/games/UIs the user should try in-browser, use language="html" — they can preview with the editor Run (▶) button; Python scripts run here but have no interactive stdin/GUI.""",
 
     "edit_document": """\
 ```edit_document
@@ -600,7 +605,7 @@ _API_HOSTS = frozenset([
     "api.deepseek.com", "deepseek.com",
     "api.together.xyz", "api.fireworks.ai",
     "api.perplexity.ai", "api.x.ai",
-    "ollama.com", "api.venice.ai",
+    "ollama.com", "api.venice.ai", "api.kimi.com",
     "api.githubcopilot.com",
     # Local OpenAI-compatible endpoints (llama.cpp, vLLM, LM Studio, etc.).
     # Without these, `_is_api_model` falls back to keyword sniffing on the
@@ -1415,6 +1420,7 @@ def _append_tool_results(
     used_native: bool,
     round_num: int,
     round_reasoning: str = "",
+    endpoint_url: str = "",
 ):
     """Append tool execution results back into the message history for the next LLM round.
 
@@ -1423,18 +1429,24 @@ def _append_tool_results(
     rejects follow-up requests in thinking mode that don't include the
     prior reasoning.
 
+    Kimi Code / Moonshot thinking models are stricter: every assistant message
+    that carries tool_calls must retain its reasoning_content across rounds.
+
     NOTE: it is NOT universally ignored. Nemotron's chat template re-injects
     EVERY prior `reasoning_content` as a <think> block, and this agent loop is
     trimmed only once (before the loop), so across rounds the reasoning piles
     up unbounded — bloating context and feeding the model its own prior
     reasoning, which reinforces repetition/looping. So keep reasoning_content
     on the MOST RECENT assistant turn only: enough for DeepSeek continuity,
-    without the per-round accumulation.
+    without the per-round accumulation — except for Kimi/Moonshot, which
+    requires the full history.
     """
-    # Strip reasoning_content from earlier assistant turns; only the newest keeps it.
-    for _m in messages:
-        if _m.get("role") == "assistant":
-            _m.pop("reasoning_content", None)
+    preserve_all_reasoning = _requires_reasoning_content_on_tool_calls(endpoint_url)
+    if not preserve_all_reasoning:
+        # Strip reasoning_content from earlier assistant turns; only the newest keeps it.
+        for _m in messages:
+            if _m.get("role") == "assistant":
+                _m.pop("reasoning_content", None)
     if used_native and native_tool_calls:
         assistant_msg = {"role": "assistant"}
         # When the model emitted ONLY tool calls (no prose), content must be
@@ -1447,6 +1459,8 @@ def _append_tool_results(
         assistant_msg["content"] = round_response if round_response.strip() else None
         if round_reasoning:
             assistant_msg["reasoning_content"] = round_reasoning
+        elif preserve_all_reasoning:
+            assistant_msg["reasoning_content"] = ""
         assistant_msg["tool_calls"] = [
             {
                 "id": tc.get("id", f"call_{round_num}_{j}"),
@@ -2923,12 +2937,18 @@ async def stream_agent_loop(
         # Feed results back to LLM for next round
         _append_tool_results(messages, round_response, native_tool_calls,
                              tool_results, tool_result_texts, used_native, round_num,
-                             round_reasoning=round_reasoning)
+                             round_reasoning=round_reasoning, endpoint_url=endpoint_url)
 
         # Emit agent_step event
         yield (
             f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
         )
+
+        # Emit a checkpoint so the route layer can save tool events on disconnect
+        if tool_events:
+            yield (
+                f'data: {json.dumps({"type": "tool_checkpoint", "tool_events": tool_events})}\n\n'
+            )
 
         # Separator in accumulated response
         full_response += "\n\n"

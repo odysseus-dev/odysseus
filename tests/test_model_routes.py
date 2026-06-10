@@ -205,6 +205,9 @@ class TestMatchProviderCurated:
     def test_ollama_url(self):
         assert _match_provider_curated("https://ollama.com/api", "openai") == "ollama"
 
+    def test_kimi_code_url(self):
+        assert _match_provider_curated("https://api.kimi.com/coding/v1", "openai") == "kimi-code"
+
     def test_no_url_match_returns_provider(self):
         assert _match_provider_curated("https://localhost:1234", "openai") == "openai"
 
@@ -311,6 +314,12 @@ class TestCurateModels:
         curated, extra = _curate_models(models, "unknown_provider")
         assert curated == models
         assert extra == []
+
+    def test_kimi_code_partitions(self):
+        models = ["kimi-for-coding", "other-model"]
+        curated, extra = _curate_models(models, "kimi-code")
+        assert "kimi-for-coding" in curated
+        assert "other-model" in extra
 
     def test_curated_sorted_by_priority(self):
         models = ["gpt-4o-mini", "gpt-4o", "o3"]

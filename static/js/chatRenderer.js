@@ -2233,7 +2233,12 @@ export function addMessage(role, content, modelName, metadata) {
             const cutoff = rawText;
             const msgInput = document.getElementById('message');
             if (msgInput) {
-              msgInput.value = 'Your previous response was interrupted. It ended with:\n\n' + cutoff.slice(-500) + '\n\nDo NOT repeat what you already said. Continue exactly from where you were cut off.';
+              const _savedTools = (metadata.tool_events || []).map(e => e.tool || e.name).filter(Boolean);
+              const _uniqueSavedTools = [...new Set(_savedTools)];
+              const _savedToolNote = _uniqueSavedTools.length
+                ? '\n\nTools already called this turn (do NOT call these again): ' + _uniqueSavedTools.join(', ') + '.'
+                : '';
+              msgInput.value = 'Your previous response was interrupted. It ended with:\n\n' + cutoff.slice(-500) + _savedToolNote + '\n\nDo NOT repeat what you already said. Continue exactly from where you were cut off.';
               const sb = document.querySelector('.send-btn');
               if (sb) sb.click();
             }

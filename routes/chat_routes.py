@@ -1107,6 +1107,7 @@ def setup_chat_routes(
                 _answered_by = None  # set if the selected model failed and a fallback answered
                 _requested_model = sess.model
                 _actual_model = None
+                _last_tool_events = []  # latest checkpoint of tool events (for interrupt saves)
                 try:
                     from src.settings import get_setting
                     from src.agent_tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
@@ -1179,6 +1180,10 @@ def setup_chat_routes(
                                     _actual_model = data.get("model") or _actual_model
                                     data["requested_model"] = _requested_model
                                     yield f'data: {json.dumps(data)}\n\n'
+                                elif data.get("type") == "tool_checkpoint":
+                                    # Internal event: update the saved tool events snapshot so
+                                    # an interrupt save includes what tools ran this turn.
+                                    _last_tool_events = data.get("tool_events", [])
                                 elif data.get("type") == "metrics":
                                     last_metrics = data.get("data", {})
                                     _reported_model = last_metrics.get("model")
@@ -1225,13 +1230,16 @@ def setup_chat_routes(
                     try:
                         if full_response:
                             logger.info("Client disconnected mid-stream for session %s, saving partial response (%d chars)", session, len(full_response))
+                            _interrupt_base2 = {
+                                "stopped": True,
+                                "model": _actual_model or _answered_by or _requested_model,
+                                "requested_model": _requested_model,
+                            }
+                            if _last_tool_events:
+                                _interrupt_base2["tool_events"] = _last_tool_events
                             _stopped_content2, _stopped_md2 = clean_thinking_for_save(
                                 full_response,
-                                {
-                                    "stopped": True,
-                                    "model": _actual_model or _answered_by or _requested_model,
-                                    "requested_model": _requested_model,
-                                },
+                                _interrupt_base2,
                             )
                             sess.add_message(ChatMessage("assistant", _stopped_content2, metadata=_stopped_md2))
                             if not incognito:

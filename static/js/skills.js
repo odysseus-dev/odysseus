@@ -394,6 +394,8 @@ function _openSkillMenu(btn, card, sk, name, isPublished) {
   else mk(_ICON.approve, 'Publish', {}, () => _setSkillStatus(name, 'published'));
   mk(_ICON.edit, 'Edit', {}, async () => {
     if (!card.classList.contains('doclib-card-expanded')) await _expandSkillCard(card, name);
+    const existingEditor = card.querySelector('.skill-md-editor');
+    if (existingEditor) { existingEditor.focus(); return; }
     _toggleSkillEdit(card, name);
   });
   mk(_ICON.test, 'Test', {}, () => _testSkill(card, name));
@@ -1012,6 +1014,22 @@ async function _expandSkillCard(card, name) {
 
 // Swap the read-only <pre> for an editable <textarea> (and back). The
 // Edit button toggles; a Save button commits via the markdown endpoint.
+function _cancelSkillEdit(card) {
+  const preview = card.querySelector('.skill-card-preview');
+  if (!preview) return;
+  const ta = preview.querySelector('.skill-md-editor');
+  const pre = preview.querySelector('.skill-md-pre');
+  if (pre) {
+    pre.textContent = card._editSnapshot != null ? card._editSnapshot : pre.textContent;
+    pre.style.display = '';
+  }
+  if (ta) ta.remove();
+  delete card._editSnapshot;
+  preview.querySelector('.skill-edit-cancel')?.remove();
+  const editBtn = [...preview.querySelectorAll('.doclib-card-action-btn')].find(b => /Edit|Save/.test(b.textContent));
+  if (editBtn) editBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Edit';
+}
+
 function _toggleSkillEdit(card, name) {
   const preview = card.querySelector('.skill-card-preview');
   if (!preview) return;
@@ -1022,10 +1040,11 @@ function _toggleSkillEdit(card, name) {
     return;
   }
   const pre = preview.querySelector('.skill-md-pre');
+  card._editSnapshot = (card._md != null ? card._md : (pre ? pre.textContent : '')) || '';
   const ta = document.createElement('textarea');
   ta.className = 'skill-md-editor';
   ta.spellcheck = false;
-  ta.value = (card._md != null ? card._md : (pre ? pre.textContent : '')) || '';
+  ta.value = card._editSnapshot;
   ta.addEventListener('click', (e) => e.stopPropagation());
   if (pre) pre.style.display = 'none';
   preview.insertBefore(ta, preview.querySelector('.doclib-card-expanded-actions'));
@@ -1033,6 +1052,13 @@ function _toggleSkillEdit(card, name) {
   // Flip the Edit button label to "Save".
   const editBtn = [...preview.querySelectorAll('.doclib-card-action-btn')].find(b => /Edit|Save/.test(b.textContent));
   if (editBtn) editBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save';
+  if (editBtn && !preview.querySelector('.skill-edit-cancel')) {
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'doclib-card-text-btn doclib-card-action-btn skill-edit-cancel';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', (e) => { e.stopPropagation(); _cancelSkillEdit(card); });
+    editBtn.insertAdjacentElement('afterend', cancelBtn);
+  }
 }
 
 async function _saveSkillEdit(card, name) {
@@ -1048,6 +1074,7 @@ async function _saveSkillEdit(card, name) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     // Refresh the cached markdown so the preload/expand show the new text.
     _mdCache.set(name, ta.value);
+    delete card._editSnapshot;
     uiModule.showToast('Saved');
     await loadSkills();  // re-render (frontmatter changes like name/status may have changed)
   } catch (e) {
