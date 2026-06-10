@@ -249,42 +249,10 @@ def _uid_from_fetch_meta(meta_b: bytes) -> str:
     return m.group(1).decode() if m else ""
 
 
-def _smtp_ready(cfg: dict) -> bool:
-    return bool(cfg.get("smtp_host") and cfg.get("smtp_user") and cfg.get("smtp_password"))
-
-
-def _resolve_send_config(account_id: str | None = None, owner: str = "") -> dict:
-    """Resolve an account for outbound SMTP.
-
-    If the caller explicitly picked an account, use only that account and
-    return a clear error when it cannot send. If no account was picked and
-    the default is receive-only, fall back to the first SMTP-capable account
-    owned by the same user.
-    """
-    cfg = _get_email_config(account_id, owner=owner)
-    if _smtp_ready(cfg):
-        return cfg
-    if account_id:
-        raise ValueError(f"Email account {cfg.get('account_name') or account_id} has no SMTP configured")
-    try:
-        from core.database import SessionLocal as _SL, EmailAccount as _EA
-        from sqlalchemy import and_, or_
-        db = _SL()
-        try:
-            q = db.query(_EA).filter(_EA.enabled == True)  # noqa: E712
-            if owner:
-                unowned = or_(_EA.owner == None, _EA.owner == "")  # noqa: E711
-                same_mailbox = or_(_EA.imap_user == owner, _EA.from_address == owner)
-                q = q.filter(or_(_EA.owner == owner, and_(unowned, same_mailbox)))
-            for row in q.order_by(_EA.is_default.desc(), _EA.created_at.asc()).all():
-                trial = _get_email_config(account_id=row.id, owner=owner)
-                if _smtp_ready(trial):
-                    return trial
-        finally:
-            db.close()
-    except Exception as e:
-        logger.debug(f"SMTP-capable account fallback failed: {e}")
-    raise ValueError("No SMTP-capable email account configured")
+# _smtp_ready and _resolve_send_config moved to src/services/email_send.py
+# (ARCH-P7-01 / P8-T14); imported FROM the service so the route layer depends on
+# the service, not vice-versa. Re-exported here for any importer of email_routes.
+from src.services.email_send import _smtp_ready, _resolve_send_config  # noqa: F401
 
 
 def _store_email_flag(conn, uid: str, flag: str, add: bool = True) -> bool:
@@ -2135,7 +2103,7 @@ def setup_email_routes():
 
         # Use 'mixed' if we have attachments, 'alternative' otherwise
         has_attachments = bool(req.attachments)
-        logger.info(f"Sending email to {req.to}: subject={req.subject!r}, attachments={req.attachments}")
+        logger.debug(f"Sending email to {req.to}: subject={req.subject!r}, attachments={req.attachments}")
         if has_attachments:
             outer = MIMEMultipart("mixed")
             body_container = MIMEMultipart("alternative")
@@ -2209,7 +2177,7 @@ def setup_email_routes():
                     _recipients,
                     outer_str,
                 )
-                logger.info(f"Email sent to {_to_label}: {_subject}")
+                logger.debug(f"Email sent to {_to_label}: {_subject}")
                 delivery_result = {
                     "success": True,
                     "account_id": cfg.get("account_id") or _account_id,
@@ -2345,7 +2313,7 @@ def setup_email_routes():
         if err:
             logger.error(f"Failed to save draft: {err}")
             return {"success": False, "error": err}
-        logger.info(f"Draft saved: {req.subject}")
+        logger.debug(f"Draft saved: {req.subject}")
         return {"success": True, "message": "Draft saved"}
 
     @router.post("/extract-style")

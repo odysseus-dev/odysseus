@@ -12,6 +12,7 @@ Run from the repo root so the app's modules import cleanly.
 """
 from __future__ import annotations
 
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -25,7 +26,10 @@ from src.secret_storage import encrypt  # noqa: E402
 
 NAME = "Demo"
 IMAP_USER = "demo@odysseus.local"
-IMAP_PASSWORD = "demodemo"
+IMAP_PASSWORD = os.environ.get("DEMO_IMAP_PASSWORD", "")
+if not IMAP_PASSWORD:
+    print("ERROR: set DEMO_IMAP_PASSWORD env var before running demo account setup.", file=sys.stderr)
+    raise SystemExit(1)
 # Owner empty-string => same list as the real Default account (switchable in the
 # account dropdown).
 OWNER = ""

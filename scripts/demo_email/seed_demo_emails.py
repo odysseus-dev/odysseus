@@ -34,7 +34,10 @@ import os
 HOST = os.getenv("DEMO_IMAP_HOST", "localhost")
 PORT = int(os.getenv("DEMO_IMAP_PORT", "31143"))
 USER = os.getenv("DEMO_IMAP_USER", "demo@odysseus.local")
-PASSWORD = os.getenv("DEMO_IMAP_PASSWORD", "demodemo")
+PASSWORD = os.getenv("DEMO_IMAP_PASSWORD", "")
+if not PASSWORD:
+    print("ERROR: set DEMO_IMAP_PASSWORD env var.", file=sys.stderr)
+    raise SystemExit(1)
 
 # Marker header on every message we create — lets a human (or a future cleanup)
 # tell demo mail apart at a glance.

@@ -11,6 +11,7 @@ Security fixes are handled on the default branch until formal releases are cut.
 - Keep `AUTH_ENABLED=true` for any network-accessible deployment.
 - Keep `LOCALHOST_BYPASS=false` outside local development.
 - Set `SECURE_COOKIES=true` when Odysseus is served through HTTPS by a trusted reverse proxy or private access gateway.
+- Back up `data/.app_key` alongside `data/app.db` — it is the Fernet master key for all encrypted database secrets. See README for the `APP_KEY` env var alternative.
 - Use HTTPS when exposing the app beyond localhost.
 - Put the authenticated Odysseus web/API entrypoint behind a trusted reverse proxy or private access layer such as Cloudflare Access, Tailscale, or a VPN.
 - Keep ChromaDB, SearXNG, ntfy, Ollama, vLLM, llama.cpp, databases, and raw model/provider APIs internal-only.
@@ -22,6 +23,45 @@ Security fixes are handled on the default branch until formal releases are cut.
 - Rotate API keys, webhook secrets, and Odysseus API tokens if they appear in logs, screenshots, demos, or shared chats.
 - Treat shell, model-serving, MCP, email, calendar, and vault features as privileged admin functionality.
 - Common internal-only ports are Odysseus `7000`, SearXNG `8080`, ntfy `8091`, ChromaDB `8100`, Ollama `11434`, and local model/provider APIs such as `8000-8020`.
+
+## Password Reset Token Delivery (COMP-P5-001 / OBS-P5-01 — Design Decision)
+
+Odysseus has no built-in email (SMTP) for password reset. The reset token is
+instead printed directly to the **server console** (stdout) by design. The
+operator reads it there and pastes it into the browser reset form. The audit
+log records that a reset was requested but intentionally **omits the token** so
+it is never forwarded to log aggregators.
+
+**If you ship server stdout/stderr to a log-aggregation system** (Splunk,
+Datadog, Loki, CloudWatch, etc.) you should disable the console-delivery
+channel and implement your own out-of-band mechanism:
+
+```
+RESET_TOKEN_TO_CONSOLE=false
+```
+
+When this variable is set to `false`, the token is **not** printed to the
+console. You must then deliver it through your own channel (e.g. a webhook,
+email relay, or pager integration) — without a delivery channel the reset
+flow will not complete. The `audit_event` record `password_reset_request`
+continues to fire (without the token value) so you know a reset was triggered.
+
+The default value of `RESET_TOKEN_TO_CONSOLE` is `true` (console delivery
+active), which is correct for the single-operator / local-network deployment
+model Odysseus targets.
+
+## Sensitive File Storage
+
+The following files in `data/` hold secrets and must be kept private. They are excluded from version control via `.gitignore`.
+
+| File | Contents | Required mode |
+|---|---|---|
+| `data/sessions.json` | Plaintext session bearer tokens (64 hex chars, 7-day TTL). Any holder of a token has full authenticated access. | 0600 |
+| `data/auth.json` | User accounts and bcrypt password hashes. | 0600 |
+| `data/.app_key` | Fernet master key used to encrypt IMAP/SMTP passwords at rest. | 0600 |
+| `data/vault.json` | Vaultwarden `BW_SESSION` key. Grants access to the configured Bitwarden vault. | 0600 |
+
+Never commit these files to version control. If any token is exposed, rotate immediately: delete `data/sessions.json` to invalidate all sessions, regenerate `data/.app_key` and re-encrypt stored credentials, and rotate the Bitwarden session.
 
 ## Publishing A Fork
 

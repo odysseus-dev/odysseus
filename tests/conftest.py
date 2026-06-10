@@ -53,7 +53,11 @@ if "src.database" not in sys.modules:
     _db = types.ModuleType("src.database")
     _db.SessionLocal = MagicMock()
     _db.ModelEndpoint = MagicMock()
+    _db.Webhook = MagicMock()
     sys.modules["src.database"] = _db
+elif not hasattr(sys.modules["src.database"], "Webhook"):
+    # Patch Webhook into an already-cached stub (e.g. from a prior test run)
+    sys.modules["src.database"].Webhook = MagicMock()
 
 # Pre-import core.models before test_agent_loop.py's module-level stubs
 # run (it replaces sys.modules['core.models'] with a MagicMock during

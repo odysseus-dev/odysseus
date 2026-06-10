@@ -22,6 +22,7 @@ from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, ToolPolicy
 from src.tool_utils import get_mcp_manager
+from src.services.prefs import _load_for_user as _load_prefs
 from src.agent_tools import (
     parse_tool_blocks,
     strip_tool_blocks,
@@ -1107,7 +1108,6 @@ def _build_system_prompt(
             _skills_on = True
             _prefs = {}
             try:
-                from routes.prefs_routes import _load_for_user as _load_prefs
                 _prefs = _load_prefs(owner) or {}
                 _skills_on = _prefs.get("skills_enabled", True)
             except Exception:

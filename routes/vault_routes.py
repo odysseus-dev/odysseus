@@ -18,6 +18,8 @@ from pydantic import BaseModel
 from core.middleware import require_admin
 from core.platform_compat import IS_WINDOWS, safe_chmod, which_tool
 from src.constants import VAULT_FILE as _VAULT_FILE
+from src.audit_log import audit_event
+from src.auth_helpers import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +125,28 @@ class VaultLoginRequest(BaseModel):
     master_password: str
 
 
-def setup_vault_routes():
+def _get_session(cfg: dict, api_key_manager=None) -> str:
+    """Return the decrypted BW_SESSION, or the raw value if no key manager.
+
+    ``InvalidToken`` is caught as the expected legacy-plaintext migration case
+    (the stored value pre-dates encryption).  Any other exception is logged as
+    a warning so decrypt failures are observable in production logs.
+    """
+    from cryptography.fernet import InvalidToken
+    raw = cfg.get("session", "")
+    if not raw or api_key_manager is None:
+        return raw
+    try:
+        return api_key_manager.decrypt_api_key(raw)
+    except InvalidToken:
+        # Pre-migration plaintext session — return as-is.
+        return raw
+    except Exception:
+        logger.warning("vault: unexpected error decrypting BW_SESSION; returning raw value")
+        return raw
+
+
+def setup_vault_routes(api_key_manager=None):
     router = APIRouter(prefix="/api/vault", tags=["vault"])
 
     @router.get("/config")
@@ -175,7 +198,7 @@ def setup_vault_routes():
             return {"ok": False, "error": f"Login failed: {stderr[:300]}"}
         # bw login --raw prints session key on success (when 2FA disabled)
         if stdout:
-            cfg["session"] = stdout
+            cfg["session"] = api_key_manager.encrypt_api_key(stdout) if api_key_manager else stdout
             cfg["unlocked_at"] = datetime.utcnow().isoformat()
             _save_config(cfg)
         return {"ok": True}
@@ -197,9 +220,11 @@ def setup_vault_routes():
         if not session:
             return {"ok": False, "error": "bw returned empty session"}
         cfg = _load_config()
-        cfg["session"] = session
+        cfg["session"] = api_key_manager.encrypt_api_key(session) if api_key_manager else session
         cfg["unlocked_at"] = datetime.utcnow().isoformat()
         _save_config(cfg)
+        actor = get_current_user(request) or "anon"
+        audit_event(actor, "vault_unlock", "BW_SESSION refreshed", level="WARNING")
         return {"ok": True, "message": "Vault unlocked"}
 
     @router.post("/lock")
@@ -210,6 +235,8 @@ def setup_vault_routes():
         cfg.pop("session", None)
         cfg.pop("unlocked_at", None)
         _save_config(cfg)
+        actor = get_current_user(request) or "anon"
+        audit_event(actor, "vault_lock", "session cleared")
         # Also tell bw to lock
         await _run_bw(["lock"])
         return {"ok": True, "message": "Vault locked"}

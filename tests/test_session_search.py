@@ -246,7 +246,11 @@ def test_chat_messages_fts_migration_backfills_and_tracks_inserts(tmp_path, monk
     )
     conn.close()
 
-    monkeypatch.setattr(cdb, "DATABASE_URL", f"sqlite:///{db_path}")
+    # _migrate_chat_messages_fts moved to core.db_migrations (P8-T9) and reads
+    # DATABASE_URL from that module's namespace; patch it where the function now
+    # lives. cdb._migrate_chat_messages_fts is still a valid re-export.
+    from core import db_migrations as cdbm
+    monkeypatch.setattr(cdbm, "DATABASE_URL", f"sqlite:///{db_path}")
 
     cdb._migrate_chat_messages_fts()
 

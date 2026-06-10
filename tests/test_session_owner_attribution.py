@@ -55,6 +55,24 @@ _MANAGED = _TEMP_STUBS + ("core.session_manager", "routes.session_routes")
 with preserve_import_state(*_MANAGED):
     for _name in _TEMP_STUBS:
         _set_module_and_parent_attr(_name, MagicMock(name=_name))
+
+    # Our get_db_session(factory) seam must stay functional under the stub so the
+    # per-test SessionLocal patches keep reaching _verify_session_owner.
+    from contextlib import contextmanager as _ctxmgr
+
+    @_ctxmgr
+    def _stub_get_db_session(session_factory=None):
+        _db = (session_factory or sys.modules['core.database'].SessionLocal)()
+        try:
+            yield _db
+            _db.commit()
+        except Exception:
+            _db.rollback()
+            raise
+        finally:
+            _db.close()
+
+    sys.modules['core.database'].get_db_session = _stub_get_db_session
     # Clear sys.modules AND the parent package attribute for the modules we
     # re-import so the stubbed import below yields fresh modules with no stale
     # binding reachable behind them.

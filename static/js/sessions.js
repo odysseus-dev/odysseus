@@ -827,6 +827,10 @@ function _renderSessionListImpl() {
 
     list.innerHTML = '';
     list.appendChild(_frag);
+    if (list.children.length === 0) {
+      list.innerHTML = '<div class="session-list-empty">No sessions yet. <button class="session-new-btn-inline" id="sidebar-new-session-inline">Start a chat</button></div>';
+      document.getElementById('sidebar-new-session-inline')?.addEventListener('click', () => document.getElementById('sidebar-new-chat-btn')?.click());
+    }
     _postRenderSessionList(list);
     return;
   }
@@ -1087,6 +1091,10 @@ function _renderSessionListImpl() {
   // Flush all built elements into the list in one operation
   list.innerHTML = '';
   list.appendChild(_frag);
+  if (list.children.length === 0) {
+    list.innerHTML = '<div class="session-list-empty">No sessions yet. <button class="session-new-btn-inline" id="sidebar-new-session-inline">Start a chat</button></div>';
+    document.getElementById('sidebar-new-session-inline')?.addEventListener('click', () => document.getElementById('sidebar-new-chat-btn')?.click());
+  }
 
   _postRenderSessionList(list);
 }
@@ -1484,7 +1492,7 @@ export async function loadSessions() {
     }
   } catch (error) {
     console.error('Error in loadSessions:', error);
-    uiModule.showError('Failed to load sessions: ' + error.message);
+    uiModule.showError('Could not load sessions. Check your connection and try again.');
   }
 }
 
@@ -1740,7 +1748,7 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
 
   } catch (error) {
     console.error('Error in selectSession:', error);
-    uiModule.showError('Failed to load session: ' + error.message);
+    uiModule.showError('Could not load session. Please try again.');
   } finally {
     // Ensure memories are loaded after session selection
     if (window.memoryModule && window.memoryModule.loadMemories) {
@@ -2804,7 +2812,16 @@ function _renderLibChats(grid) {
   const stats = document.getElementById('lib-stats');
   if (stats) stats.textContent = `(${filtered.length})`;
 
-  if (!filtered.length) { grid.innerHTML = '<div class="doclib-empty">No chats found</div>'; return; }
+  if (!filtered.length) {
+    if (_lib.search) {
+      grid.innerHTML = '<div class="doclib-empty">No chats match "' + _lib.search.replace(/"/g, '&quot;') + '". <button class="doclib-clear-filter-btn">Clear filter</button></div>';
+      const cf = grid.querySelector('.doclib-clear-filter-btn');
+      if (cf) cf.addEventListener('click', () => { _lib.search = ''; const si = document.getElementById('lib-search-input'); if (si) si.value = ''; _renderLibGrid(); });
+    } else {
+      grid.innerHTML = '<div class="doclib-empty">No chats found</div>';
+    }
+    return;
+  }
   grid.innerHTML = '';
   for (const s of filtered) {
     const card = _buildLibCard(s.id, s.name || 'Untitled', s.message_count || 0, (s.model || '').split('/').pop(), s.updated_at, s.id === currentSessionId);
@@ -2853,7 +2870,7 @@ async function _renderLibArchive(grid) {
       });
       grid.appendChild(card);
     }
-  } catch (e) { console.error('Library archive error:', e); grid.innerHTML = '<div class="doclib-empty">Failed to load archive</div>'; }
+  } catch (e) { console.error('Library archive error:', e); grid.innerHTML = '<div class="doclib-empty">Could not load archive. <button class="doclib-retry-btn">Retry</button></div>'; const retryBtn = grid.querySelector('.doclib-retry-btn'); if (retryBtn) retryBtn.addEventListener('click', () => _renderLibArchive(grid)); }
 }
 
 async function _renderLibDocuments(grid) {

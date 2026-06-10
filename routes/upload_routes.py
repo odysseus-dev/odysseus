@@ -1,7 +1,6 @@
 # routes/upload_routes.py
 import os
 import time
-import json
 import asyncio
 from fastapi import APIRouter, Request, File, UploadFile, HTTPException
 from typing import List
@@ -29,33 +28,18 @@ def setup_upload_routes(upload_handler):
             return False
 
     def _resolve_upload_path(file_id: str) -> str:
-        from src.constants import UPLOAD_DIR
-        upload_root = getattr(upload_handler, "upload_dir", UPLOAD_DIR)
-        direct = os.path.join(upload_root, file_id)
-        if os.path.lexists(direct):
-            if not _path_inside_upload_dir(direct):
-                raise HTTPException(403, "Access denied")
-            if os.path.isfile(direct):
-                return direct
-            raise HTTPException(404, "File not found")
-
-        for root, _dirs, files in os.walk(upload_root, followlinks=False):
-            if file_id not in files:
-                continue
-            path = os.path.join(root, file_id)
-            if not _path_inside_upload_dir(path):
-                raise HTTPException(403, "Access denied")
-            if os.path.isfile(path):
-                return path
-            raise HTTPException(404, "File not found")
-
-        raise HTTPException(404, "File not found")
+        path = upload_handler._find_upload_path(file_id)
+        if not path:
+            raise HTTPException(404, {"code": "FILE_NOT_FOUND", "detail": "File not found"})
+        if not _path_inside_upload_dir(path):
+            raise HTTPException(403, {"code": "ACCESS_DENIED", "detail": "Access denied"})
+        return path
     
     @router.post("")
     async def api_upload(request: Request, files: List[UploadFile] = File(...)):
         """Upload files with enhanced security and organization."""
         if not files:
-            raise HTTPException(400, "No files uploaded")
+            raise HTTPException(400, {"code": "NO_FILES", "detail": "No files uploaded"})
             
         client_ip = request.client.host if request.client else "unknown"
         out = []
@@ -73,7 +57,7 @@ def setup_upload_routes(upload_handler):
         if recent_uploads >= upload_handler.max_concurrent_uploads:
             raise HTTPException(
                 status_code=429,
-                detail=f"Maximum concurrent uploads ({upload_handler.max_concurrent_uploads}) exceeded"
+                detail={"code": "UPLOAD_LIMIT_EXCEEDED", "detail": f"Maximum concurrent uploads ({upload_handler.max_concurrent_uploads}) exceeded"},
             )
         
         for u in files:
@@ -97,7 +81,7 @@ def setup_upload_routes(upload_handler):
                 continue
         
         if not out:
-            raise HTTPException(500, "All file uploads failed")
+            raise HTTPException(500, {"code": "ALL_UPLOADS_FAILED", "detail": "All file uploads failed"})
             
         return {"files": out}
     
@@ -116,7 +100,7 @@ def setup_upload_routes(upload_handler):
             return upload_handler.get_upload_stats()
         except Exception as e:
             logger.error(f"Failed to get upload stats: {e}")
-            raise HTTPException(500, "Failed to get upload statistics")
+            raise HTTPException(500, {"code": "STATS_ERROR", "detail": "Failed to get upload statistics"})
 
     @router.get("/{file_id}")
     async def download_file(request: Request, file_id: str, thumb: int = 0):
@@ -124,27 +108,21 @@ def setup_upload_routes(upload_handler):
         JPEG thumbnail for images (used by chat attachment previews) so the
         client isn't downloading the full-resolution photo just to show it tiny."""
         if not upload_handler.validate_upload_id(file_id):
-            raise HTTPException(400, "Invalid file ID")
+            raise HTTPException(400, {"code": "INVALID_FILE_ID", "detail": "Invalid file ID"})
         import mimetypes as _mt
-        # Look up original filename and owner from uploads.json
-        original_name = file_id
-        info = None
-        uploads_db = os.path.join(_upload_root(), "uploads.json")
-        if os.path.exists(uploads_db):
-            with open(uploads_db, encoding="utf-8") as f:
-                db = json.load(f)
-            info = next((fi for fi in db.values() if fi.get("id") == file_id), None)
-            if info:
-                original_name = info.get("name", file_id)
+        # Look up original filename and owner from the mtime-cached index.
+        # Uses asyncio.to_thread internally so the event loop is never blocked.
+        info = await upload_handler.get_upload_info_async(file_id)
+        original_name = info.get("name", file_id) if info else file_id
         auth_mgr = getattr(request.app.state, "auth_manager", None)
         auth_configured = bool(auth_mgr and auth_mgr.is_configured)
         current_user = get_current_user(request)
         file_owner = info.get("owner") if info else None
         if auth_configured:
             if not current_user:
-                raise HTTPException(403, "Access denied")
+                raise HTTPException(403, {"code": "ACCESS_DENIED", "detail": "Access denied"})
             if file_owner != current_user and not auth_mgr.is_admin(current_user):
-                raise HTTPException(404, "File not found")
+                raise HTTPException(404, {"code": "FILE_NOT_FOUND", "detail": "File not found"})
         path = _resolve_upload_path(file_id)
         mime = (info or {}).get("mime") or _mt.guess_type(path)[0] or "application/octet-stream"
         from fastapi.responses import FileResponse
@@ -180,14 +158,8 @@ def setup_upload_routes(upload_handler):
         )
 
     def _load_upload_info(file_id: str):
-        """Look up the uploads.json record for a file_id, with owner/auth checks."""
-        info = None
-        uploads_db = os.path.join(_upload_root(), "uploads.json")
-        if os.path.exists(uploads_db):
-            with open(uploads_db, encoding="utf-8") as f:
-                db = json.load(f)
-            info = next((fi for fi in db.values() if fi.get("id") == file_id), None)
-        return info
+        """Look up the uploads.json record for a file_id via the handler cache."""
+        return upload_handler.get_upload_info(file_id)
 
     def _vision_cache_path(file_id: str) -> str:
         cache_dir = os.path.join(_upload_root(), ".vision")
@@ -200,7 +172,7 @@ def setup_upload_routes(upload_handler):
         Cached under UPLOAD_DIR/.vision/{file_id}.txt — first call computes,
         subsequent loads are instant. Pass force=1 to recompute."""
         if not upload_handler.validate_upload_id(file_id):
-            raise HTTPException(400, "Invalid file ID")
+            raise HTTPException(400, {"code": "INVALID_FILE_ID", "detail": "Invalid file ID"})
         info = _load_upload_info(file_id)
         auth_mgr = getattr(request.app.state, "auth_manager", None)
         auth_configured = bool(auth_mgr and auth_mgr.is_configured)
@@ -208,14 +180,14 @@ def setup_upload_routes(upload_handler):
         file_owner = info.get("owner") if info else None
         if auth_configured:
             if not current_user:
-                raise HTTPException(403, "Access denied")
+                raise HTTPException(403, {"code": "ACCESS_DENIED", "detail": "Access denied"})
             if file_owner != current_user and not auth_mgr.is_admin(current_user):
-                raise HTTPException(404, "File not found")
+                raise HTTPException(404, {"code": "FILE_NOT_FOUND", "detail": "File not found"})
         path = _resolve_upload_path(file_id)
         import mimetypes as _mt
         mime = (info or {}).get("mime") or _mt.guess_type(path)[0] or ""
         if not mime.startswith("image/"):
-            raise HTTPException(400, "Not an image")
+            raise HTTPException(400, {"code": "NOT_AN_IMAGE", "detail": "Not an image"})
         cache_path = _vision_cache_path(file_id)
         if not force and os.path.exists(cache_path):
             try:
@@ -227,8 +199,8 @@ def setup_upload_routes(upload_handler):
         try:
             text = analyze_image_with_vl(path, owner=current_user) or ""
         except Exception as e:
-            logger.error(f"Vision analysis failed for {file_id}: {e}")
-            raise HTTPException(500, f"Vision analysis failed: {e}")
+            logger.error(f"Vision analysis failed for {file_id}: {e}", exc_info=True)
+            raise HTTPException(500, {"code": "VISION_ANALYSIS_FAILED", "detail": "Vision analysis failed"})
         try:
             with open(cache_path, "w", encoding="utf-8") as f:
                 f.write(text)
@@ -241,24 +213,24 @@ def setup_upload_routes(upload_handler):
         """Persist a user-edited vision/OCR text for an attachment. Stored in
         the same cache file so the chat send picks it up as the override."""
         if not upload_handler.validate_upload_id(file_id):
-            raise HTTPException(400, "Invalid file ID")
+            raise HTTPException(400, {"code": "INVALID_FILE_ID", "detail": "Invalid file ID"})
         info = _load_upload_info(file_id)
         if not info:
-            raise HTTPException(404, "File not found")
+            raise HTTPException(404, {"code": "FILE_NOT_FOUND", "detail": "File not found"})
         auth_mgr = getattr(request.app.state, "auth_manager", None)
         auth_configured = bool(auth_mgr and auth_mgr.is_configured)
         current_user = get_current_user(request)
         file_owner = info.get("owner")
         if auth_configured:
             if not current_user:
-                raise HTTPException(403, "Access denied")
+                raise HTTPException(403, {"code": "ACCESS_DENIED", "detail": "Access denied"})
             if file_owner != current_user and not auth_mgr.is_admin(current_user):
-                raise HTTPException(404, "File not found")
+                raise HTTPException(404, {"code": "FILE_NOT_FOUND", "detail": "File not found"})
         _resolve_upload_path(file_id)
         body = await request.json()
         text = (body or {}).get("text", "")
         if not isinstance(text, str):
-            raise HTTPException(400, "text must be a string")
+            raise HTTPException(400, {"code": "INVALID_FIELD", "detail": "text must be a string"})
         with open(_vision_cache_path(file_id), "w", encoding="utf-8") as f:
             f.write(text)
         return {"ok": True}

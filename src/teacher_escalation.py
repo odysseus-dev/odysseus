@@ -14,7 +14,7 @@ Detection tiers:
   Tier 1: regex on tool outputs + agent reply. Catches the "Unknown
           action 'switch'" / "I don't have a tool" / "Could you tell
           me which one?" type failures. Free, instant.
-  Tier 2 (TODO): LLM self-eval for ambiguous cases. Not in first cut.
+  Tier 2: LLM self-eval for ambiguous cases — not yet implemented.
 
 If Tier 1 fires FAILURE, call the teacher with the full failed
 context. Skill is only saved if the teacher's response itself passes

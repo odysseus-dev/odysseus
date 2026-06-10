@@ -86,7 +86,9 @@ def test_default_settings_registers_hard_max_key():
 def test_alias_map_registers_friendly_names():
     """`manage_settings` should accept 'hard max' and friends."""
     from pathlib import Path
-    src = Path("src/tool_implementations.py").read_text()
+    # do_manage_settings (which defines the alias map) was extracted into
+    # src/tools/management_tools.py (P8-T3); read the literals there.
+    src = Path("src/tools/management_tools.py").read_text()
     assert '"hard max": "agent_input_token_hard_max"' in src
     assert '"token budget cap": "agent_input_token_hard_max"' in src
     assert '"input budget cap": "agent_input_token_hard_max"' in src

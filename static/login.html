@@ -291,6 +291,31 @@
     <span id="toggleText">Don't have an account? </span>
     <a id="toggleLink" href="#">Sign up</a>
   </div>
+
+  <div class="toggle" id="forgotArea" style="display:none">
+    <a id="forgotLink" href="#">Forgot password?</a>
+  </div>
+
+  <div id="resetPanel" style="display:none">
+    <h2 style="font-size:1.1rem;margin-bottom:1rem;text-align:center;">Reset Password</h2>
+    <div class="error" id="resetError" role="alert" aria-live="assertive"></div>
+    <div id="resetSuccess" role="status" aria-live="polite" style="display:none;color:var(--green);font-size:0.85rem;margin-bottom:0.75rem;text-align:center;"></div>
+    <label for="resetUsername">Username</label>
+    <input id="resetUsername" name="resetUsername" type="text" placeholder="Username" autocomplete="username">
+    <label for="resetToken">Server token</label>
+    <input id="resetToken" name="resetToken" type="text" placeholder="Paste server token here" autocomplete="off">
+    <label for="resetNewPassword">New password</label>
+    <div class="pw-wrapper">
+      <input id="resetNewPassword" name="resetNewPassword" type="password" placeholder="New password (min 8 chars)" autocomplete="new-password">
+      <button type="button" class="pw-toggle" id="resetPwToggle" aria-label="Show password">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>
+      </button>
+    </div>
+    <button type="button" id="resetSubmitBtn">Set New Password</button>
+    <div class="toggle" style="margin-top:0.75rem;">
+      <a id="resetBackLink" href="#">Back to sign in</a>
+    </div>
+  </div>
 </main>
 
 <footer class="version-label" id="version-label"></footer>
@@ -322,6 +347,13 @@
   const toggleArea = document.getElementById('toggleArea');
   const toggleLink = document.getElementById('toggleLink');
   const toggleText = document.getElementById('toggleText');
+  const forgotArea = document.getElementById('forgotArea');
+  const forgotLink = document.getElementById('forgotLink');
+  const resetPanel = document.getElementById('resetPanel');
+  const resetBackLink = document.getElementById('resetBackLink');
+  const resetSubmitBtn = document.getElementById('resetSubmitBtn');
+  const resetError = document.getElementById('resetError');
+  const resetSuccess = document.getElementById('resetSuccess');
 
   let mode = 'login'; // 'login' | 'signup' | 'setup'
   let signupAllowed = false;
@@ -337,6 +369,7 @@
       confirmGroup.style.display = 'block';
       submitBtn.textContent = 'Create Admin Account';
       toggleArea.style.display = 'none';
+      forgotArea.style.display = 'none';
       rememberToggle.style.display = 'none';
     } else if (m === 'signup') {
       setupNote.style.display = 'none';
@@ -345,6 +378,7 @@
       toggleArea.style.display = 'block';
       toggleText.textContent = 'Already have an account? ';
       toggleLink.textContent = 'Sign in';
+      forgotArea.style.display = 'none';
       rememberToggle.style.display = 'none';
     } else {
       setupNote.style.display = 'none';
@@ -353,6 +387,7 @@
       toggleArea.style.display = signupAllowed ? 'block' : 'none';
       toggleText.textContent = "Don't have an account? ";
       toggleLink.textContent = 'Sign up';
+      forgotArea.style.display = 'block';
       rememberToggle.style.display = '';
     }
   }
@@ -529,6 +564,87 @@
   }
   wireToggle('pwToggle', 'password');
   wireToggle('pwToggleConfirm', 'confirmPassword');
+  wireToggle('resetPwToggle', 'resetNewPassword');
+
+  // ── Forgot-password / reset-panel flow ──────────────────────────────
+  forgotLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    form.style.display = 'none';
+    toggleArea.style.display = 'none';
+    forgotArea.style.display = 'none';
+    resetError.style.display = 'none';
+    resetSuccess.style.display = 'none';
+    resetPanel.style.display = 'block';
+    // Pre-fill username from the login input
+    const u = document.getElementById('username');
+    document.getElementById('resetUsername').value = u ? u.value : '';
+    document.getElementById('resetToken').value = '';
+    document.getElementById('resetNewPassword').value = '';
+    // A11Y: move focus into the reset panel so keyboard users don't lose context.
+    document.getElementById('resetUsername').focus();
+  });
+
+  resetBackLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    resetPanel.style.display = 'none';
+    form.style.display = '';
+    setMode(mode); // re-applies toggleArea / forgotArea visibility
+    // A11Y: restore focus to the login username field so keyboard users can
+    // continue without tabbing from the top of the page.
+    document.getElementById('username').focus();
+  });
+
+  resetSubmitBtn.addEventListener('click', async () => {
+    resetError.style.display = 'none';
+    resetSuccess.style.display = 'none';
+    const username = document.getElementById('resetUsername').value.trim();
+    const token = document.getElementById('resetToken').value.trim();
+    const newPassword = document.getElementById('resetNewPassword').value;
+
+    if (!username) {
+      resetError.textContent = 'Please enter your username.';
+      resetError.style.display = 'block';
+      return;
+    }
+
+    resetSubmitBtn.disabled = true;
+    try {
+      if (!token) {
+        // Phase 1: request the token (print to server log)
+        const res = await fetch('/api/auth/reset-request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Could not send reset request. Try again.');
+        resetSuccess.textContent = data.message || 'Check the server log for your reset token, then paste it above.';
+        resetSuccess.style.display = 'block';
+      } else {
+        // Phase 2: confirm the reset
+        if (newPassword.length < 8) {
+          resetError.textContent = 'New password must be at least 8 characters.';
+          resetError.style.display = 'block';
+          resetSubmitBtn.disabled = false;
+          return;
+        }
+        const res = await fetch('/api/auth/reset-confirm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, new_password: newPassword }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Could not reset password. Check the token and try again.');
+        resetSuccess.textContent = 'Password updated — please sign in.';
+        resetSuccess.style.display = 'block';
+        setTimeout(() => resetBackLink.click(), 2000);
+      }
+    } catch (err) {
+      resetError.textContent = err.message || 'Something went wrong. Please try again.';
+      resetError.style.display = 'block';
+    }
+    resetSubmitBtn.disabled = false;
+  });
 })();
 
 // Prevent login button and eye toggles from stealing focus on mobile (keeps keyboard open)

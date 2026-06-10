@@ -71,7 +71,9 @@ services:
     restart: unless-stopped
 
   chromadb:
-    image: docker.io/chromadb/chroma:latest
+    # Pinned, not :latest — bump deliberately after testing a newer tag.
+    # Current stable: 0.6.3. See https://github.com/chroma-core/chroma/releases
+    image: docker.io/chromadb/chroma:0.6.3
     ports:
       - "${CHROMADB_BIND:-127.0.0.1}:8100:8000"
     volumes:
@@ -131,7 +133,9 @@ services:
     restart: unless-stopped
 
   ntfy:
-    image: docker.io/binwiederhier/ntfy
+    # Pinned, not bare — bump deliberately after testing a newer tag.
+    # Current stable: v2.11.0. See https://github.com/binwiederhier/ntfy/releases
+    image: docker.io/binwiederhier/ntfy:v2.11.0
     command: serve
     ports:
       - "${NTFY_BIND:-127.0.0.1}:8091:80"

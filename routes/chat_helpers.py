@@ -1,4 +1,4 @@
-"""Shared helpers for chat routes — context building, post-response tasks, auth resolution."""
+"""Shared helpers for chat routes â€” context building, post-response tasks, auth resolution."""
 
 import asyncio
 import json
@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from core.models import ChatMessage
-from core.database import SessionLocal
+from core.database import SessionLocal, get_db_session
 from core.database import Session as DBSession, ModelEndpoint
 from src.llm_core import normalize_model_id
 from src.endpoint_resolver import normalize_base
@@ -23,7 +23,7 @@ from fastapi import HTTPException
 logger = logging.getLogger(__name__)
 
 
-# ── Data containers ────────────────────────────────────────────────────── #
+# â”€â”€ Data containers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ #
 
 @dataclass
 class PresetInfo:
@@ -65,7 +65,7 @@ class ChatContext:
     auto_opened_docs: list = field(default_factory=list)
 
 
-# ── Helpers ────────────────────────────────────────────────────────────── #
+# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ #
 
 def _enforce_chat_privileges(request, sess) -> None:
     """Apply the per-user privilege gates (allowed_models + max_messages_per_day)
@@ -90,7 +90,7 @@ def _enforce_chat_privileges(request, sess) -> None:
     privs = auth_manager.get_privileges(user) or {}
 
     # Explicit "block everything" sentinel takes precedence over the
-    # allowlist — it's the only way to distinguish "user clicked [None]"
+    # allowlist â€” it's the only way to distinguish "user clicked [None]"
     # (block all) from "user clicked [All]" (no restriction), since both
     # otherwise produce an empty `allowed_models` list.
     if privs.get("block_all_models"):
@@ -108,8 +108,7 @@ def _enforce_chat_privileges(request, sess) -> None:
 
     from datetime import datetime as _dt, timedelta as _td
     from core.database import Session as _DbSess, ChatMessage as _Cm
-    db = SessionLocal()
-    try:
+    with get_db_session(SessionLocal) as db:
         count = (
             db.query(_Cm)
             .join(_DbSess, _Cm.session_id == _DbSess.id)
@@ -118,8 +117,6 @@ def _enforce_chat_privileges(request, sess) -> None:
                     _Cm.timestamp >= _dt.utcnow() - _td(days=1))
             .count()
         )
-    finally:
-        db.close()
     if count >= cap:
         raise HTTPException(429, f"Daily message limit reached ({cap}). Try again in 24 hours.")
 
@@ -167,15 +164,15 @@ async def auto_name_session(session_manager, sess):
             return
 
         # max_tokens big enough that reasoning models (Minimax M2,
-        # DeepSeek R1, QwQ, etc.) have headroom for <think>…</think>
-        # plus the actual title — 200 used to clip them mid-reasoning
+        # DeepSeek R1, QwQ, etc.) have headroom for <think>â€¦</think>
+        # plus the actual title â€” 200 used to clip them mid-reasoning
         # so strip_think left an empty string and no rename happened.
         # Timeout matches: 60s gives slow local reasoners room to finish.
         title = await llm_call_async(
             t_url,
             t_model,
             [
-                {"role": "system", "content": "Generate a short title (3-6 words, no quotes) for a conversation that starts with this message. Reply with ONLY the title, nothing else. Do NOT include any thinking, reasoning, or explanation — just the title."},
+                {"role": "system", "content": "Generate a short title (3-6 words, no quotes) for a conversation that starts with this message. Reply with ONLY the title, nothing else. Do NOT include any thinking, reasoning, or explanation â€” just the title."},
                 {"role": "user", "content": first_msg},
             ],
             temperature=0.3,
@@ -215,8 +212,7 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
 
     current_url = sess.endpoint_url or ""
     owner = getattr(sess, "owner", None)
-    db = SessionLocal()
-    try:
+    with get_db_session(SessionLocal) as db:
         q = db.query(ModelEndpoint).filter(
             ModelEndpoint.is_enabled == True
         )
@@ -224,8 +220,10 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
             from src.auth_helpers import owner_filter
             q = owner_filter(q, ModelEndpoint, owner)
         endpoints = q.all()
-    finally:
-        db.close()
+        # Detach before the context manager commits/closes so the network
+        # probes below can still read endpoint attributes (expire_on_commit
+        # would otherwise raise DetachedInstanceError).
+        db.expunge_all()
 
     for ep in endpoints:
         base = normalize_base(ep.base_url)
@@ -254,7 +252,7 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
                 models = json.loads(ep.cached_models or "[]")
             if not models:
                 continue
-            # Found a working endpoint — update session
+            # Found a working endpoint â€” update session
             new_model = models[0]
             chat_url = build_chat_url(base)
             new_headers = build_headers(api_key, base)
@@ -265,16 +263,12 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
             sess.headers = new_headers
 
             # Persist
-            _db = SessionLocal()
-            try:
+            with get_db_session(SessionLocal) as _db:
                 _db.query(DBSession).filter(DBSession.id == session_id).update({
                     "model": new_model,
                     "endpoint_url": chat_url,
                     "headers": persisted_headers,
                 })
-                _db.commit()
-            finally:
-                _db.close()
 
             logger.info(f"Fallback: switched session {session_id} from {current_url} to {ep.name} ({new_model})")
             return {
@@ -371,7 +365,7 @@ def _has_auth_keys(headers) -> bool:
 
 
 def resolve_session_auth(sess, session_id: str, owner: Optional[str] = None):
-    """Ensure session has auth headers — resolve from endpoint DB if missing."""
+    """Ensure session has auth headers â€” resolve from endpoint DB if missing."""
     try:
         from src.chatgpt_subscription import is_chatgpt_subscription_base
         is_chatgpt_subscription = is_chatgpt_subscription_base(getattr(sess, "endpoint_url", "") or "")
@@ -383,11 +377,10 @@ def resolve_session_auth(sess, session_id: str, owner: Optional[str] = None):
 
     try:
         from src.endpoint_resolver import build_headers, resolve_endpoint_runtime
-        db = SessionLocal()
-        try:
-            target_url = getattr(sess, "endpoint_url", "") or ""
-            if not target_url:
-                return
+        target_url = getattr(sess, "endpoint_url", "") or ""
+        if not target_url:
+            return
+        with get_db_session(SessionLocal) as db:
             q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
             if owner:
                 # Missing headers usually means "recover from the saved endpoint".
@@ -426,11 +419,8 @@ def resolve_session_auth(sess, session_id: str, owner: Optional[str] = None):
                 if owner:
                     update_q = update_q.filter(DBSession.owner == owner)
                 update_q.update({"headers": sess.headers})
-                db.commit()
                 logger.info(f"Resolved and persisted auth headers for session {session_id} from endpoint {ep.name}")
                 return
-        finally:
-            db.close()
     except Exception as e:
         logger.warning(f"Failed to resolve session headers: {e}")
 
@@ -463,36 +453,34 @@ def _normalize_model_id_from_cache(sess) -> Optional[str]:
     if not session_base:
         return None
 
-    db = SessionLocal()
     try:
-        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
-        owner = getattr(sess, "owner", None)
-        if owner:
-            from src.auth_helpers import owner_filter
-            q = owner_filter(q, ModelEndpoint, owner)
-        endpoints = q.all()
-        for ep in endpoints:
-            try:
-                if normalize_base(getattr(ep, "base_url", "") or "") != session_base:
+        with get_db_session(SessionLocal) as db:
+            q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+            owner = getattr(sess, "owner", None)
+            if owner:
+                from src.auth_helpers import owner_filter
+                q = owner_filter(q, ModelEndpoint, owner)
+            endpoints = q.all()
+            for ep in endpoints:
+                try:
+                    if normalize_base(getattr(ep, "base_url", "") or "") != session_base:
+                        continue
+                except Exception:
                     continue
-            except Exception:
-                continue
 
-            raw_models = getattr(ep, "cached_models", None)
-            if not raw_models:
-                continue
-            try:
-                models = json.loads(raw_models) if isinstance(raw_models, str) else raw_models
-            except Exception:
-                continue
+                raw_models = getattr(ep, "cached_models", None)
+                if not raw_models:
+                    continue
+                try:
+                    models = json.loads(raw_models) if isinstance(raw_models, str) else raw_models
+                except Exception:
+                    continue
 
-            matched = _match_cached_model_id(requested, models)
-            if matched:
-                return matched
+                matched = _match_cached_model_id(requested, models)
+                if matched:
+                    return matched
     except Exception as e:
         logger.debug("Cached model normalization skipped: %s", e)
-    finally:
-        db.close()
 
     return None
 
@@ -521,7 +509,7 @@ async def build_chat_context(
 ) -> ChatContext:
     """Build the full context (preface + messages) for an LLM call.
 
-    This is the shared logic between /chat and /chat_stream — preset extraction,
+    This is the shared logic between /chat and /chat_stream â€” preset extraction,
     message preprocessing, memory/RAG/web injection, compaction, normalization.
     """
     # Preset
@@ -529,7 +517,7 @@ async def build_chat_context(
 
     # Preprocess message (CoT, YouTube, VL images, build content). The
     # auto_opened_docs collector captures any docs created server-side
-    # (e.g. fillable PDF → markdown editor doc) so the chat route can
+    # (e.g. fillable PDF â†’ markdown editor doc) so the chat route can
     # announce them to the frontend before streaming.
     auto_opened_docs: list = []
     preprocessed = await preprocess(
@@ -615,7 +603,7 @@ async def build_chat_context(
     # Build messages
     messages = preface + sess.get_context_messages()
 
-    # Current date/time — injected as a standalone *user*-role context message
+    # Current date/time â€” injected as a standalone *user*-role context message
     # placed immediately before the latest user turn, NOT folded into the
     # system prompt. Its text changes every minute, and local OpenAI-compatible
     # backends (llama.cpp / LM Studio) key their KV-cache prefix off the
@@ -663,17 +651,14 @@ def accumulate_token_usage(session_id: str, metrics: dict):
     out_t = metrics.get("output_tokens", 0)
     if not (in_t or out_t):
         return
-    db = SessionLocal()
     try:
-        db_s = db.query(DBSession).filter(DBSession.id == session_id).first()
-        if db_s:
-            db_s.total_input_tokens = (db_s.total_input_tokens or 0) + in_t
-            db_s.total_output_tokens = (db_s.total_output_tokens or 0) + out_t
-            db.commit()
+        with get_db_session(SessionLocal) as db:
+            db_s = db.query(DBSession).filter(DBSession.id == session_id).first()
+            if db_s:
+                db_s.total_input_tokens = (db_s.total_input_tokens or 0) + in_t
+                db_s.total_output_tokens = (db_s.total_output_tokens or 0) + out_t
     except Exception:
-        db.rollback()
-    finally:
-        db.close()
+        pass
 
 
 def _normalize_thinking(text: str) -> str:
@@ -772,7 +757,7 @@ def _normalize_thinking(text: str) -> str:
                 reply = '\n'.join(lines[i:])
                 return '<think>' + think + '</think>\n' + reply
 
-        # Try within-line split — model mashed thinking + reply on one line
+        # Try within-line split â€” model mashed thinking + reply on one line
         # Look for reply pattern after a period or sentence end
         for p in reply_starts:
             # Match: "...reasoning text.Reply text" or "...reasoning text. Reply text"
@@ -816,7 +801,7 @@ def _extract_thinking_meta(text: str) -> dict | None:
         reply = think_match.group(2).strip()
         # Only strip the thinking out into metadata when there's an actual reply
         # left over. If reply is empty (model hit max_tokens inside <think>, or
-        # the turn was reasoning-only), keep the raw text as content — otherwise
+        # the turn was reasoning-only), keep the raw text as content â€” otherwise
         # the saved message has empty content and the bubble looks blank on
         # reload. The renderer's processWithThinking still extracts the <think>
         # block visually at display time, so nothing changes for the normal case.
@@ -916,7 +901,7 @@ def save_assistant_response(
         session_manager.save_sessions()
 
     # Return the persisted message's DB id so the stream can wire it onto the
-    # freshly-rendered bubble — lets the user edit/delete a just-streamed reply
+    # freshly-rendered bubble â€” lets the user edit/delete a just-streamed reply
     # without reloading. Incognito returns None: those messages are ephemeral,
     # so we don't hand out an edit/delete handle for them.
     if incognito:
@@ -933,7 +918,7 @@ def save_assistant_response(
 
 def _is_session_stream_active(session_id: str) -> bool:
     """Best-effort check for "is a chat completion currently streaming for
-    this session?" — used to keep background extraction from overlapping a
+    this session?" â€” used to keep background extraction from overlapping a
     main completion and competing for the local backend's processing slots
     (issue #2927). Lazily imports the route module's live registry to avoid
     a circular import (chat_routes imports this module at load time)."""
@@ -958,7 +943,7 @@ async def _run_extraction_jobs_sequentially(session_id: str, jobs: list, max_wai
     own conversation.
     """
     # Wait for the triggering turn's own stream to finish winding down (it
-    # almost always already has by the time this task gets scheduled — this
+    # almost always already has by the time this task gets scheduled â€” this
     # is a small safety margin, not the primary mechanism).
     waited = 0.0
     poll = 0.25
@@ -1004,20 +989,20 @@ def run_post_response_tasks(
     """Fire background tasks after a completed response: memory extraction, webhooks, auto-name, skill extraction.
 
     Memory/skill extraction are queued to run *sequentially*, after the main
-    completion stream for this session has fully wound down — never
+    completion stream for this session has fully wound down â€” never
     concurrently with it or with each other. As diagnosed in issue #2927,
     firing these "side" LLM calls in parallel with the main chat completion
     makes them compete for the local backend's limited processing slots
     (llama.cpp defaults to 4), evicting the main conversation's cached
     checkpoint and forcing a full prompt re-evaluation on the next turn. By
     the time this function runs the main response is already saved, but the
-    extraction calls themselves are still async — queuing them through
+    extraction calls themselves are still async â€” queuing them through
     ``_queue_background_extraction`` keeps them from overlapping the *next*
     turn's request too.
     """
     _extraction_jobs: list = []
 
-    # Memory extraction — only every 4th message pair to avoid excess LLM calls
+    # Memory extraction â€” only every 4th message pair to avoid excess LLM calls
     _msg_count = len(sess.history) if hasattr(sess, 'history') else 0
     _should_extract = (_msg_count >= 4) and (_msg_count % 4 == 0)
     if allow_background_extraction and not incognito and not compare_mode and _should_extract and uprefs.get("auto_memory", True):
@@ -1032,10 +1017,10 @@ def run_post_response_tasks(
         )))
 
     # Skill extraction from complex agent runs. Only when the user actually
-    # chose agent mode — not a chat we auto-escalated for a notes/calendar
+    # chose agent mode â€” not a chat we auto-escalated for a notes/calendar
     # intent, and never in incognito/compare.
     auto_skills_enabled = bool(uprefs.get("auto_skills", True))
-    # Quiet by default — full gate/dispatch/start trace runs at DEBUG so
+    # Quiet by default â€” full gate/dispatch/start trace runs at DEBUG so
     # users can re-enable diagnostics with LOG_LEVEL=DEBUG when something
     # silently breaks. INFO-level only shows the outcome inside
     # maybe_extract_skill (Auto-extracted / dropped / failed).
@@ -1055,7 +1040,7 @@ def run_post_response_tasks(
     ):
         if skills_manager is None:
             logger.warning(
-                "[skill-extract] gate PASSED but skills_manager is None — "
+                "[skill-extract] gate PASSED but skills_manager is None â€” "
                 "extraction skipped. (Bug: caller didn't pass skills_manager.)"
             )
         else:

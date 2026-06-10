@@ -8,6 +8,12 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, Tuple
+from src.services.prefs import _load_for_user as _prefs_load_for_user
+from src.services.email_send import (
+    _resolve_send_config as _email_resolve_send_config,
+    _send_smtp_message as _email_send_smtp_message,
+    _get_email_config as _email_get_email_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1560,10 +1566,7 @@ class TaskScheduler:
             explicit = target
 
         try:
-            from routes.email_routes import _resolve_send_config
-            from routes.email_helpers import _send_smtp_message
-
-            cfg = _resolve_send_config(owner=task.owner or "")
+            cfg = _email_resolve_send_config(owner=task.owner or "")
             to_addr = explicit or cfg.get("from_address") or cfg.get("smtp_user") or ""
             if not to_addr:
                 raise RuntimeError("No email recipient resolved for task output")
@@ -1577,7 +1580,7 @@ class TaskScheduler:
             msg["X-Odysseus-Kind"] = "task"
             msg["X-Odysseus-Ref"] = str(task.id)
             msg.set_content(result or "")
-            _send_smtp_message(cfg, from_addr, [to_addr], msg.as_string(), timeout=30)
+            _email_send_smtp_message(cfg, from_addr, [to_addr], msg.as_string(), timeout=30)
             logger.info("Task %s emailed result to %s (%sb)", task.id, to_addr, len(result or ""))
         except Exception as e:
             logger.error("Task %s email delivery failed: %s", task.id, e, exc_info=True)
@@ -1887,8 +1890,7 @@ class TaskScheduler:
         # the legacy `email_from` setting and the per-account DB rows.
         recipient = None
         try:
-            from routes.email_helpers import _get_email_config
-            cfg = _get_email_config() or {}
+            cfg = _email_get_email_config() or {}
             recipient = cfg.get("from_address") or None
         except Exception as _e:
             logger.debug(f"_deliver_via_mcp: email config lookup failed: {_e}")
@@ -1969,8 +1971,7 @@ class TaskScheduler:
         """Create default housekeeping tasks for this owner (idempotent per action)."""
         from core.database import SessionLocal, ScheduledTask
         try:
-            from routes.prefs_routes import _load_for_user
-            _prefs = _load_for_user(owner) or {}
+            _prefs = _prefs_load_for_user(owner) or {}
         except Exception:
             _prefs = {}
         tasks_enabled = bool(_prefs.get("tasks_enabled"))

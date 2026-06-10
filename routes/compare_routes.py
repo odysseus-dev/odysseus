@@ -9,7 +9,8 @@ from typing import List
 from pydantic import BaseModel
 import logging
 
-from core.database import Comparison, SessionLocal
+from core.database import SessionLocal  # patchable test seam
+from core.database import Comparison, get_db_session
 from core.session_manager import SessionManager
 from src.auth_helpers import get_current_user
 from routes.session_routes import _reject_raw_endpoint_url_for_non_admin
@@ -27,7 +28,7 @@ def _owned_endpoint_by_url(db, base_url, owner):
     owner = private, "the model picker only shows the endpoint to that user") and
     holds a decrypted `api_key`. start_comparison copies the matched row's api_key
     into the caller-owned [CMP] session's headers, which then drives that session's
-    /api/chat_stream calls — so an UNSCOPED base_url match would let a user mint a
+    /api/chat_stream calls â€” so an UNSCOPED base_url match would let a user mint a
     comparison bound to ANOTHER user's private endpoint and spend that owner's
     api_key / reach whatever base_url they configured. Mirrors
     session_routes._owned_endpoint. A null/empty owner is a no-op (single-user /
@@ -125,7 +126,7 @@ def setup_compare_routes(session_manager: SessionManager):
             ]:
                 # Prefer an explicit endpoint id: it pins the EXACT registered
                 # endpoint (and its api_key), even when two endpoints visible to
-                # the caller share a base_url with different keys — a URL-only
+                # the caller share a base_url with different keys â€” a URL-only
                 # match would copy whichever row sorts first, i.e. possibly the
                 # wrong key. Fall back to URL resolution only for legacy / admin
                 # raw-URL callers that don't send an id.
@@ -135,7 +136,7 @@ def setup_compare_routes(session_manager: SessionManager):
                     if ep is None:
                         # An id the caller can't see (wrong owner / deleted) must
                         # NOT silently fall back to a same-URL row with a different
-                        # key — that's exactly the mix-up ids exist to prevent.
+                        # key â€” that's exactly the mix-up ids exist to prevent.
                         raise HTTPException(404, "Model endpoint not found")
                     # The id already resolved the endpoint; ignore any raw URL the
                     # caller also sent and dial the stored config instead.
@@ -166,7 +167,7 @@ def setup_compare_routes(session_manager: SessionManager):
                 # base URL (the same value owner scoping + endpoint validation
                 # already vetted) so the session dials exactly where the stored
                 # config points. The raw `endpoint` only survives for callers
-                # allowed to pass one — admins / single-user mode, where
+                # allowed to pass one â€” admins / single-user mode, where
                 # `_reject_raw_endpoint_url_for_non_admin` is a no-op and `ep`
                 # is None. Mirrors the registered-endpoint path in session_routes.
                 session_endpoint_url = (
@@ -180,7 +181,7 @@ def setup_compare_routes(session_manager: SessionManager):
         finally:
             db.close()
 
-        # Both endpoints validated — only now create the ephemeral [CMP]
+        # Both endpoints validated â€” only now create the ephemeral [CMP]
         # sessions and copy any resolved headers.
         for sid, model, session_endpoint_url, headers in resolved:
             name = f"[CMP] {slot_name[sid]}" if blind else f"[CMP] {model.split('/')[-1]}"
@@ -198,8 +199,7 @@ def setup_compare_routes(session_manager: SessionManager):
                     s.headers = headers
 
         # Store comparison record
-        db = SessionLocal()
-        try:
+        with get_db_session(SessionLocal) as db:
             comp = Comparison(
                 id=comp_id,
                 prompt=prompt,
@@ -216,9 +216,6 @@ def setup_compare_routes(session_manager: SessionManager):
                 owner=user,
             )
             db.add(comp)
-            db.commit()
-        finally:
-            db.close()
 
         # In blind mode, withhold the model identities AND the left/right
         # mapping from the response. The client already knows model_a/model_b
@@ -242,12 +239,11 @@ def setup_compare_routes(session_manager: SessionManager):
     ):
         """Record the user's vote and reveal model names if blind."""
         user = get_current_user(request)
-        db = SessionLocal()
-        try:
+        with get_db_session(SessionLocal) as db:
             comp = db.query(Comparison).filter(Comparison.id == comp_id).first()
             if not comp:
                 raise HTTPException(404, "Comparison not found")
-            # SECURITY: strict ownership — null-owner Comparisons were
+            # SECURITY: strict ownership â€” null-owner Comparisons were
             # accessible to every user.
             if user and comp.owner != user:
                 raise HTTPException(404, "Comparison not found")
@@ -266,7 +262,6 @@ def setup_compare_routes(session_manager: SessionManager):
                 raise HTTPException(400, "winner must be 'left', 'right', or 'tie'")
 
             comp.voted_at = datetime.utcnow()
-            db.commit()
 
             return {
                 "winner": comp.winner,
@@ -277,8 +272,6 @@ def setup_compare_routes(session_manager: SessionManager):
                     "right": comp.model_a if mapping["right"] == "a" else comp.model_b,
                 },
             }
-        finally:
-            db.close()
 
     @router.post("/record")
     def record_comparison(request: Request, body: RecordVoteRequest):
@@ -295,8 +288,7 @@ def setup_compare_routes(session_manager: SessionManager):
         else:
             blind_mapping = None
 
-        db = SessionLocal()
-        try:
+        with get_db_session(SessionLocal) as db:
             comp = Comparison(
                 id=comp_id,
                 prompt=body.prompt[:500],
@@ -311,9 +303,6 @@ def setup_compare_routes(session_manager: SessionManager):
                 owner=user,
             )
             db.add(comp)
-            db.commit()
-        finally:
-            db.close()
 
         return {"status": "ok", "id": comp_id}
 
@@ -321,8 +310,7 @@ def setup_compare_routes(session_manager: SessionManager):
     def list_comparisons(request: Request):
         """List past comparisons."""
         user = get_current_user(request)
-        db = SessionLocal()
-        try:
+        with get_db_session(SessionLocal) as db:
             q = db.query(Comparison)
             if user:
                 q = q.filter(Comparison.owner == user)
@@ -340,26 +328,20 @@ def setup_compare_routes(session_manager: SessionManager):
                 }
                 for c in comps
             ]
-        finally:
-            db.close()
 
     @router.delete("/{comp_id}")
     def delete_comparison(request: Request, comp_id: str):
         """Delete a comparison and its ephemeral sessions."""
         user = get_current_user(request)
-        db = SessionLocal()
-        try:
+        with get_db_session(SessionLocal) as db:
             comp = db.query(Comparison).filter(Comparison.id == comp_id).first()
             if not comp:
                 raise HTTPException(404, "Comparison not found")
-            # SECURITY: strict ownership — null-owner Comparisons were
+            # SECURITY: strict ownership â€” null-owner Comparisons were
             # accessible to every user.
             if user and comp.owner != user:
                 raise HTTPException(404, "Comparison not found")
             db.delete(comp)
-            db.commit()
-            return {"status": "deleted"}
-        finally:
-            db.close()
+        return {"status": "deleted"}
 
     return router

@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 from core.atomic_io import atomic_write_json as _atomic_write_json  # noqa: E402
+from src.audit_log import audit_event
 
 DEFAULT_PRIVILEGES = {
     "can_use_agent": True,
@@ -101,6 +102,10 @@ class AuthManager:
         # Guards the first-run setup check-and-write so concurrent requests
         # cannot both observe is_configured==False and both create admin accounts.
         self._setup_lock = threading.Lock()
+        # Guards in-flight password reset tokens so concurrent reset requests
+        # cannot race on the same token or the same user's token slot.
+        self._reset_lock = threading.Lock()
+        self._reset_tokens: Dict[str, Dict] = {}
         self._load()
         self._load_sessions()
         self._migrate_single_user()
@@ -150,7 +155,7 @@ class AuthManager:
         try:
             with self._sessions_lock:
                 snapshot = dict(self._sessions)
-            _atomic_write_json(self._sessions_path, snapshot)
+            _atomic_write_json(self._sessions_path, snapshot, mode=0o600)
         except Exception as e:
             logger.error(f"Failed to save sessions: {e}")
 
@@ -213,7 +218,7 @@ class AuthManager:
             self._save()
 
     def _save(self):
-        _atomic_write_json(self.auth_path, self._config, indent=2)
+        _atomic_write_json(self.auth_path, self._config, indent=2, mode=0o600)
 
     @property
     def users(self) -> Dict[str, Any]:
@@ -265,6 +270,7 @@ class AuthManager:
             }
             self._save()
         logger.info(f"Created user '{username}' (admin={is_admin})")
+        audit_event("system", "user_create", f"username={username!r} admin={is_admin}")
         return True
 
     def delete_user(self, username: str, requesting_user: str) -> bool:
@@ -314,6 +320,7 @@ class AuthManager:
         if revoked:
             self._save_sessions()
         logger.info(f"Deleted user '{username}' (by {requesting_user}); revoked {revoked} active session(s)")
+        audit_event(requesting_user, "user_delete", f"username={username!r} sessions_revoked={revoked}", level="WARNING")
         return True
 
     def rename_user(self, old_username: str, new_username: str, requesting_user: str) -> bool:
@@ -349,6 +356,7 @@ class AuthManager:
             "Renamed user '%s' -> '%s' (by %s); updated %d active session(s)",
             old_username, new_username, requesting_user, renamed_sessions,
         )
+        audit_event(requesting_user, "user_rename", f"old={old_username!r} new={new_username!r}")
         return True
 
     def is_admin(self, username: str) -> bool:
@@ -369,7 +377,7 @@ class AuthManager:
         stored = user.get("privileges", {})
         return {**DEFAULT_PRIVILEGES, **stored}
 
-    def set_privileges(self, username: str, privileges: Dict[str, Any]) -> bool:
+    def set_privileges(self, username: str, privileges: Dict[str, Any], requesting_user: str = "system") -> bool:
         """Update privileges for a user. Can't modify admin privileges."""
         username = username.strip().lower()
         with self._config_lock:
@@ -385,6 +393,7 @@ class AuthManager:
             self._config["users"][username]["privileges"] = current
             self._save()
         logger.info(f"Updated privileges for '{username}': {current}")
+        audit_event(requesting_user, "privilege_grant", f"username={username!r}", level="WARNING")
         return True
 
     def change_password(self, username: str, current_password: str, new_password: str) -> bool:
@@ -396,6 +405,150 @@ class AuthManager:
         with self._config_lock:
             self._config["users"][username]["password_hash"] = _hash_password(new_password)
             self._save()
+        audit_event(username, "password_change", f"username={username!r}")
+        return True
+
+    def prune_reset_tokens(self) -> int:
+        """Remove all expired entries from the in-memory reset-token store.
+
+        REL-P5-001: Called on startup and periodically so stale entries don't
+        accumulate in long-running deployments.  Returns the number of entries
+        pruned.
+        """
+        now = time.time()
+        with self._reset_lock:
+            before = len(self._reset_tokens)
+            self._reset_tokens = {
+                t: entry for t, entry in self._reset_tokens.items()
+                if entry.get("expiry", 0) > now
+            }
+            pruned = before - len(self._reset_tokens)
+        if pruned:
+            logger.debug("Pruned %d expired reset token(s)", pruned)
+        return pruned
+
+    def generate_reset_token(self, username: str) -> Optional[str]:
+        """Generate a short-lived password-reset token for an operator-console flow.
+
+        Returns None if the username is unknown. The token is printed to the server
+        log at WARNING level so the operator can copy-paste it into the reset UI.
+        No email is required — this matches the single-operator deployment model.
+        """
+        username = username.strip().lower()
+        if username not in self.users:
+            return None
+        token = secrets.token_urlsafe(32)
+        with self._reset_lock:
+            # Prune any previous token for this user first.
+            self._reset_tokens = {
+                t: entry for t, entry in self._reset_tokens.items()
+                if entry.get("username") != username
+            }
+            self._reset_tokens[token] = {
+                "username": username,
+                "expiry": time.time() + 900,
+            }
+        # COMP-P5-001 / OBS-P5-01: Full-token console output is the *intended*
+        # delivery channel for this no-SMTP, single-operator deployment. The
+        # operator reads the token from the server console and pastes it into
+        # the reset UI. The audit_event below intentionally omits the token so
+        # it never ends up in aggregated audit logs.
+        #
+        # Operators shipping server logs to a log-aggregation system should set
+        # RESET_TOKEN_TO_CONSOLE=false and implement an alternative out-of-band
+        # delivery mechanism. See SECURITY.md for guidance.
+        if os.getenv("RESET_TOKEN_TO_CONSOLE", "true").strip().lower() != "false":
+            print(
+                f"\n*** PASSWORD RESET TOKEN (delivery) ***\n"
+                f"  User   : {username}\n"
+                f"  Token  : {token}\n"
+                f"  Expires: 15 minutes\n"
+                f"  Paste the token above into the reset form in the browser.\n"
+                f"  To suppress this output set RESET_TOKEN_TO_CONSOLE=false\n"
+                f"  and use an out-of-band delivery mechanism.\n",
+                flush=True,
+            )
+        else:
+            logger.warning(
+                "PASSWORD RESET TOKEN for '%s' generated but RESET_TOKEN_TO_CONSOLE=false "
+                "— deliver the token via your out-of-band mechanism.",
+                username,
+            )
+        audit_event(username, "password_reset_request", f"username={username!r}")
+        return token
+
+    def consume_reset_token(self, token: str, new_password: str) -> bool:
+        """Validate a reset token and set a new password.
+
+        Returns False if the token is missing, expired, or the new password is too
+        short.  On success the token is consumed (single-use) and all active sessions
+        for that user are revoked.
+
+        REL-P5-001 / REL-P5-002: The token is not removed from _reset_tokens until
+        the config write succeeds. This closes the two-lock gap: a concurrent
+        delete_user between the old reset-lock release and the config-lock acquisition
+        would have permanently consumed the token leaving the user unable to retry.
+        Now the token stays in the dict until the password is actually written; a
+        user whose account was deleted mid-flight sees False but can request a fresh
+        token (which generate_reset_token would also return None for — consistent).
+        """
+        if len(new_password) < 8:
+            return False
+        # Phase 1: validate and peek at the token (do not delete yet).
+        with self._reset_lock:
+            entry = self._reset_tokens.get(token)
+            if not entry:
+                return False
+            if time.time() > entry["expiry"]:
+                self._reset_tokens.pop(token, None)
+                return False
+            username = entry["username"]
+        # Phase 2: write the new password under _config_lock while still
+        # holding a logical claim on the token (it's still in _reset_tokens
+        # so a replay in this tiny window won't succeed — it would need
+        # _reset_lock to delete, and we'll delete it in phase 3).
+        with self._config_lock:
+            if username not in self.users:
+                # User was deleted between token validation and now.
+                # Remove the orphaned token and return False so the caller
+                # sees a clean "invalid token" rather than a misleading error.
+                with self._reset_lock:
+                    self._reset_tokens.pop(token, None)
+                return False
+            self._config["users"][username]["password_hash"] = _hash_password(new_password)
+            self._save()
+        # Phase 3: password written — now consume the token so it can't replay.
+        with self._reset_lock:
+            self._reset_tokens.pop(token, None)
+        self.revoke_user_sessions(username)
+        logger.warning(
+            "password_reset_complete for '%s'", username
+        )
+        audit_event(username, "password_reset_complete", f"username={username!r}", level="WARNING")
+        return True
+
+    def admin_set_password(self, requesting_admin: str, target_user: str, new_password: str) -> bool:
+        """Admin-bypass password reset — no token required.
+
+        Returns False if requesting_admin is not an admin or target_user does not
+        exist.  Revokes all sessions for target_user and emits an audit event.
+        """
+        requesting_admin = requesting_admin.strip().lower()
+        target_user = target_user.strip().lower()
+        if not self.users.get(requesting_admin, {}).get("is_admin"):
+            return False
+        with self._config_lock:
+            if target_user not in self.users:
+                return False
+            self._config["users"][target_user]["password_hash"] = _hash_password(new_password)
+            self._save()
+        self.revoke_user_sessions(target_user)
+        audit_event(
+            requesting_admin,
+            "admin_password_reset",
+            f"target={target_user!r}",
+            level="WARNING",
+        )
         return True
 
     # ------------------------------------------------------------------

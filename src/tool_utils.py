@@ -22,6 +22,21 @@ def get_mcp_manager():
     return _mcp_manager
 
 # ---------------------------------------------------------------------------
+# API Key Manager singleton (consumed by the vault tools)
+# ---------------------------------------------------------------------------
+
+_api_key_manager = None
+
+def set_api_key_manager(manager):
+    """Register the APIKeyManager instance so the vault tools can reach it."""
+    global _api_key_manager
+    _api_key_manager = manager
+
+def get_api_key_manager():
+    """Return the registered APIKeyManager, or None if not yet wired."""
+    return _api_key_manager
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:

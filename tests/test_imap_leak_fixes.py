@@ -240,6 +240,7 @@ def test_mcp_download_attachment_logs_out_on_select_failure(monkeypatch):
 def test_imap_connect_shuts_down_socket_on_login_failure(monkeypatch):
     """A failed login() must close the already-connected socket, not leak it."""
     import routes.email_helpers as helpers
+    import src.services.email_send as email_send_svc  # the impl module whose globals _imap_connect reads
 
     captured = {}
     conn = MagicMock()
@@ -248,14 +249,14 @@ def test_imap_connect_shuts_down_socket_on_login_failure(monkeypatch):
     ))
     conn.login = MagicMock(side_effect=imaplib.IMAP4.error(b"AUTHENTICATE failed."))
 
-    monkeypatch.setattr(helpers, "_get_email_config", lambda *a, **kw: {
+    monkeypatch.setattr(email_send_svc, "_get_email_config", lambda *a, **kw: {
         "imap_host": "imap.example.com",
         "imap_port": 993,
         "imap_starttls": False,
         "imap_user": "user@example.com",
         "imap_password": "wrong",
     })
-    monkeypatch.setattr(helpers, "_open_imap_connection", lambda *a, **kw: conn)
+    monkeypatch.setattr(email_send_svc, "_open_imap_connection", lambda *a, **kw: conn)
 
     raised = False
     try:

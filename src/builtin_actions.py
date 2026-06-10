@@ -14,6 +14,20 @@ from src.auth_helpers import owner_filter
 from core.platform_compat import IS_WINDOWS, find_bash
 from core.constants import internal_api_base
 from src.constants import DATA_DIR, DEEP_RESEARCH_DIR, TIDY_CALENDAR_STATE_FILE, EMAIL_URGENCY_CACHE_DIR, COOKBOOK_STATE_FILE
+from src.services.email_send import (
+    _run_auto_summarize_once as _email_run_auto_summarize_once,
+    _imap_connect as _email_imap_connect,
+    _decode_header as _email_decode_header,
+    _init_scheduled_db as _email_init_scheduled_db,
+    get_scheduled_db_path as _email_scheduled_db_path,
+)
+from src.services.note_reminder import dispatch_reminder as _dispatch_reminder
+from src.services.skill_runner import (
+    _run_skill_test_once, _skill_test_task,
+    _resolve_audit_models as _skill_resolve_audit_models,
+    _run_audit_all_job as _skill_run_audit_all_job,
+    get_skill_audit_jobs as _get_skill_audit_jobs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -504,8 +518,7 @@ def _result_has_work(result: str | None) -> bool:
 async def action_summarize_emails(owner: str, **kwargs) -> Tuple[str, bool]:
     """Run one pass of email summary background processing."""
     try:
-        from routes.email_pollers import _run_auto_summarize_once
-        result = await _run_auto_summarize_once(do_summary=True, do_reply=False)
+        result = await _email_run_auto_summarize_once(do_summary=True, do_reply=False)
         if not _result_has_work(result):
             raise TaskNoop(f"summarize: {result or 'no new emails'}")
         return result, True
@@ -517,8 +530,7 @@ async def action_summarize_emails(owner: str, **kwargs) -> Tuple[str, bool]:
 async def action_draft_email_replies(owner: str, **kwargs) -> Tuple[str, bool]:
     """Run one pass of AI reply drafting."""
     try:
-        from routes.email_pollers import _run_auto_summarize_once
-        result = await _run_auto_summarize_once(
+        result = await _email_run_auto_summarize_once(
             do_summary=False,
             do_reply=True,
             days_back=7,
@@ -766,11 +778,10 @@ async def action_extract_email_events(owner: str, **kwargs) -> Tuple[str, bool]:
     and auto-add them to the calendar."""
     import asyncio as _aio
     try:
-        from routes.email_pollers import _run_auto_summarize_once
         try:
             # Hard wall-clock budget: 5 min total. Per-LLM call already has its own timeout.
             result = await _aio.wait_for(
-                _run_auto_summarize_once(
+                _email_run_auto_summarize_once(
                     do_summary=False, do_reply=False, do_calendar=True, days_back=3,
                 ),
                 timeout=300,
@@ -809,7 +820,8 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         import email as _email_mod
         import asyncio as _aio
         from datetime import datetime as _dt, timedelta as _td
-        from routes.email_helpers import _imap_connect, SCHEDULED_DB
+        from routes.email_helpers import _imap_connect
+        SCHEDULED_DB = _email_scheduled_db_path()
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
 
@@ -1133,7 +1145,6 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
     try:
         from services.memory.skills import SkillsManager
         from src.constants import DATA_DIR
-        from routes.skills_routes import _run_skill_test_once, _skill_test_task
         from src.endpoint_resolver import resolve_endpoint
 
         # #3 SCOPE GUARD: refuse to run on a None/empty owner — otherwise
@@ -1247,15 +1258,13 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
     try:
         from services.memory.skills import SkillsManager
         from src.constants import DATA_DIR
-        from routes.skills_routes import (
-            _resolve_audit_models, _run_audit_all_job, _skill_audit_jobs,
-        )
 
         if not owner:
             return "audit_skills requires an owner — refusing to run without scope.", False
 
         key = (owner or "",)
-        existing = _skill_audit_jobs.get(key)
+        _audit_jobs = _get_skill_audit_jobs()
+        existing = _audit_jobs.get(key)
         if existing and existing.get("status") == "running":
             raise TaskNoop("skill audit already running")
 
@@ -1268,7 +1277,7 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
         if not names:
             raise TaskNoop("no unaudited skills")
 
-        url, model, headers, teacher = _resolve_audit_models()
+        url, model, headers, teacher = _skill_resolve_audit_models()
         try:
             from src.llm_core import seconds_since_model_activity
             recent = seconds_since_model_activity(url, model)
@@ -1281,7 +1290,7 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
             )
 
         import time as _time
-        _skill_audit_jobs[key] = {
+        _audit_jobs[key] = {
             "status": "running", "scope": "scheduled-unchecked", "model": model,
             "teacher": teacher[1] if teacher else None,
             "total": len(names), "done": 0, "current": None,
@@ -1291,8 +1300,8 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
             ],
             "started": _time.time(), "cancel": False,
         }
-        await _run_audit_all_job(key, sm, names, url, model, headers, teacher, owner)
-        job = _skill_audit_jobs.get(key, {})
+        await _skill_run_audit_all_job(key, sm, names, url, model, headers, teacher, owner)
+        job = _audit_jobs.get(key, {})
         counts = {}
         for r in job.get("results", []):
             k = r.get("result") or "unknown"
@@ -1420,8 +1429,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                         pass
                 body = "\n\n".join(p for p in body_parts if p) or title
                 try:
-                    from routes.note_routes import dispatch_reminder
-                    await dispatch_reminder(
+                    await _dispatch_reminder(
                         title=title, note_body=body, note_id=n.id,
                         owner=n.owner or owner or "",
                     )
@@ -1479,7 +1487,6 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         from datetime import datetime as _dt, timedelta as _td
         from pathlib import Path as _P
         from core.database import SessionLocal as _SL, EmailAccount as _EA
-        from routes.email_helpers import _imap_connect, _decode_header
         from src.endpoint_resolver import resolve_endpoint, resolve_utility_fallback_candidates
         from src.llm_core import llm_call_async_with_fallback
 
@@ -1791,10 +1798,9 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         # classified items; message_id lives on the cached verdict so this is cheap.
         try:
             import sqlite3 as _sql3
-            from routes.email_helpers import SCHEDULED_DB, _init_scheduled_db
             from datetime import datetime as _dt2
-            _init_scheduled_db()
-            _conn = _sql3.connect(SCHEDULED_DB)
+            _email_init_scheduled_db()
+            _conn = _sql3.connect(_email_scheduled_db_path())
             try:
                 for _key, _v in per_uid_scores.items():
                     _msg_id = (_v.get("message_id") or "").strip()
@@ -1913,8 +1919,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 # Call dispatch_reminder DIRECTLY (no HTTP/auth roundtrip — the
                 # endpoint version 401's the background scheduler because it
                 # has no session cookie).
-                from routes.note_routes import dispatch_reminder
-                dispatch_result = await dispatch_reminder(
+                dispatch_result = await _dispatch_reminder(
                     title=title, note_body=body, note_id="urgent-email",
                     owner=owner or "",
                 )

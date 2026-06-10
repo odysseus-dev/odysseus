@@ -1,45 +1,45 @@
-fastapi
-uvicorn
-python-multipart
-python-dotenv
-httpx
-pydantic>=2.0
-pydantic-settings>=2.0
-SQLAlchemy
-pypdf
-beautifulsoup4
-charset-normalizer
-numpy
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+python-multipart>=0.0.9,<1
+python-dotenv>=1.0,<2
+httpx>=0.27,<1
+pydantic>=2.0,<3
+pydantic-settings>=2.0,<3
+SQLAlchemy>=2.0,<3
+pypdf>=4.0,<6
+beautifulsoup4>=4.12,<5
+charset-normalizer>=3.3,<4
+numpy>=1.26,<3
 # Vector store + local embeddings for RAG, semantic memory, and tool
 # selection. Used on core agent paths, so installed by default — the app
 # still degrades to keyword fallback if they're ever missing.
 # chromadb-client is the lightweight HTTP client (talks to a standalone
 # ChromaDB service); fastembed runs local ONNX embeddings.
-chromadb-client
-fastembed
-youtube-transcript-api
+chromadb-client>=0.5,<1
+fastembed>=0.3,<1
+youtube-transcript-api>=0.6,<1
 # Markdown rendering for research reports (src/visual_report.py).
 # Imported at module-top so it's a hard core dep, not optional.
-markdown
+markdown>=3.6,<4
 # HTML sanitizer for rendered research reports (src/visual_report.py). Report
 # content is untrusted (LLM output over crawled pages) and report pages run
 # under a relaxed CSP, so the rendered HTML is allowlist-sanitized.
-nh3
+nh3>=0.2,<1
 # Calendar .ics import/export (routes/calendar_routes.py).
-icalendar
+icalendar>=5.0,<7
 # Recurrence rule expansion for calendar events (routes/calendar_routes.py).
 # Imported directly as dateutil.rrule — make it explicit even though caldav
 # pulls it in transitively.
-python-dateutil
+python-dateutil>=2.9,<3
 # CalDAV sync (src/caldav_sync.py). Handles PROPFIND discovery + REPORT
 # fetch across Radicale, Nextcloud, Apple, Fastmail; we'd be reinventing
 # the protocol without it.
-caldav
-cryptography
-bcrypt
-mcp
-pyotp
-qrcode[pil]
-croniter
-pytest
-pytest-asyncio
+caldav>=1.3,<2
+cryptography>=42,<46
+bcrypt>=4.0,<5
+mcp>=1.0,<2
+pyotp>=2.9,<3
+qrcode[pil]>=7.4,<9
+croniter>=2.0,<4
+pytest>=8.0,<9
+pytest-asyncio>=0.23,<1

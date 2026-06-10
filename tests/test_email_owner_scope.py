@@ -48,6 +48,8 @@ def test_email_ai_cache_tables_are_owner_scoped_and_migrate_legacy_rows(tmp_path
 
     db_path = tmp_path / "scheduled_emails.db"
     monkeypatch.setattr(email_helpers, "SCHEDULED_DB", db_path)
+    import src.services.email_send as _email_send
+    monkeypatch.setattr(_email_send, "SCHEDULED_DB", db_path)
 
     conn = sqlite3.connect(db_path)
     conn.execute(
@@ -124,6 +126,8 @@ async def test_ai_reply_cache_lookup_is_owner_scoped(tmp_path, monkeypatch):
 
     db_path = tmp_path / "scheduled_emails.db"
     monkeypatch.setattr(email_helpers, "SCHEDULED_DB", db_path)
+    import src.services.email_send as _email_send
+    monkeypatch.setattr(_email_send, "SCHEDULED_DB", db_path)
     monkeypatch.setattr(email_routes, "SCHEDULED_DB", db_path)
     email_helpers._init_scheduled_db()
 
@@ -173,6 +177,8 @@ async def test_scheduled_email_routes_are_owner_scoped(tmp_path, monkeypatch):
 
     db_path = tmp_path / "scheduled_emails.db"
     monkeypatch.setattr(email_helpers, "SCHEDULED_DB", db_path)
+    import src.services.email_send as _email_send
+    monkeypatch.setattr(_email_send, "SCHEDULED_DB", db_path)
     monkeypatch.setattr(email_routes, "SCHEDULED_DB", db_path)
     email_helpers._init_scheduled_db()
 
@@ -215,6 +221,8 @@ def test_scheduled_poller_resolves_config_with_row_owner(tmp_path, monkeypatch):
 
     db_path = tmp_path / "scheduled_emails.db"
     monkeypatch.setattr(email_helpers, "SCHEDULED_DB", db_path)
+    import src.services.email_send as _email_send
+    monkeypatch.setattr(_email_send, "SCHEDULED_DB", db_path)
     monkeypatch.setattr(email_pollers, "SCHEDULED_DB", db_path)
     email_helpers._init_scheduled_db()
 

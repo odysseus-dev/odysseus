@@ -44,6 +44,12 @@ class _Db:
         self.note = note
         self.closed = False
 
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
     def query(self, model):
         return _Query(self.note)
 

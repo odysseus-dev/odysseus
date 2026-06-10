@@ -3839,7 +3839,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         if (submitBtn) submitBtn.click();
       } catch (err) {
         console.error('Edit failed:', err);
-        if (uiModule) uiModule.showError('Edit failed: ' + err.message);
+        if (uiModule) uiModule.showError('Could not edit that message. Try again.');
         bodyEl.innerHTML = originalHTML;
       }
     });
@@ -3930,7 +3930,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (submitBtn) submitBtn.click();
     } catch (err) {
       console.error('Resend failed:', err);
-      if (uiModule) uiModule.showError('Resend failed: ' + err.message);
+      if (uiModule) uiModule.showError('Could not resend. Try again.');
     }
   }
 
@@ -4044,7 +4044,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
     } catch (err) {
       console.error('Regenerate failed:', err);
-      if (uiModule) uiModule.showError('Regenerate failed: ' + err.message);
+      if (uiModule) uiModule.showError('Could not regenerate the response. Try again.');
     }
   }
 
@@ -4209,7 +4209,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (uiModule) uiModule.showToast(`Forked → ${data.name}`);
     } catch (err) {
       console.error('Fork failed:', err);
-      if (uiModule) uiModule.showError('Fork failed: ' + err.message);
+      if (uiModule) uiModule.showError('Could not fork the session. Try again.');
     }
   }
 
@@ -4559,7 +4559,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (uiModule) uiModule.showToast('Message deleted');
     } catch (err) {
       console.error('Delete failed:', err);
-      if (uiModule) uiModule.showError('Delete failed: ' + err.message);
+      if (uiModule) uiModule.showError('Could not delete that message. Try again.');
     }
   }
 
@@ -4644,7 +4644,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         if (uiModule) uiModule.showToast('Message edited');
       } catch (err) {
         console.error('Edit failed:', err);
-        if (uiModule) uiModule.showError('Edit failed: ' + err.message);
+        if (uiModule) uiModule.showError('Could not edit that message. Try again.');
       }
     });
   }
@@ -4805,7 +4805,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       _killRwSpin();
       // Restore original content on failure
       if (bodyEl) bodyEl.innerHTML = oldHtml;
-      if (uiModule) uiModule.showError('Rewrite failed: ' + err.message);
+      if (uiModule) uiModule.showError('Could not rewrite the response. Try again.');
     }
   }
 

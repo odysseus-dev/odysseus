@@ -344,7 +344,8 @@ Odysseus is a self-hosted workspace with powerful local tools: shell access, fil
 
 - Keep `AUTH_ENABLED=true` for any network-accessible deployment.
 - Keep `LOCALHOST_BYPASS=false` outside local development.
-- Use `SECURE_COOKIES=true` when Odysseus is served through HTTPS by a trusted reverse proxy or private access gateway.
+- Session cookies are automatically marked `Secure` when Odysseus detects an HTTPS request (or `X-Forwarded-Proto: https` from a reverse proxy). For plain-HTTP localhost installs cookies remain non-Secure without any extra config. Set `SECURE_COOKIES=true` to force the flag on regardless of scheme (recommended for proxy/private-gateway deployments).
+- `data/.app_key` is the Fernet master key used to encrypt secrets stored in the database (email passwords, API keys, signatures). Back it up alongside `data/app.db`. Losing this file makes all encrypted rows permanently unreadable. Alternatively, supply the key via the `APP_KEY` environment variable (base64url-encoded Fernet key) so it can be managed by a secret manager or Docker secret.
 - Do not expose it directly to the public internet without HTTPS and a trusted reverse proxy or private access layer.
 - Keep `.env`, `data/`, `logs/`, databases, uploads, generated media, backups, auth/session files, API keys, and model/provider tokens out of Git and private shares. They are ignored by default.
 - Review `data/auth.json` after first boot: disable open signup unless you intentionally want it, make only your own account admin, and keep demo/test accounts non-admin.
@@ -363,7 +364,7 @@ Odysseus serves plain HTTP on its app port. Docker Compose binds Odysseus and th
 3. Put the authenticated Odysseus web/API entrypoint behind that layer.
 4. Keep raw service and model ports internal-only.
 
-Cloudflare Access, Tailscale, Caddy, nginx, and Traefik can all fit this pattern; none are required by Odysseus. If your access layer reaches Odysseus on the same host, proxy to `http://127.0.0.1:7000` and keep `AUTH_ENABLED=true`, `LOCALHOST_BYPASS=false`, and `SECURE_COOKIES=true`.
+Cloudflare Access, Tailscale, Caddy, nginx, and Traefik can all fit this pattern; none are required by Odysseus. If your access layer reaches Odysseus on the same host, proxy to `http://127.0.0.1:7000` and keep `AUTH_ENABLED=true` and `LOCALHOST_BYPASS=false`. Ensure your proxy passes `X-Forwarded-Proto: https` (most do by default) — Odysseus will then automatically mark session cookies `Secure`. Alternatively, set `SECURE_COOKIES=true` explicitly.
 
 Common internal-only ports from the default docs/compose setup:
 
@@ -397,7 +398,7 @@ Key settings:
 | `APP_PORT` | `7000` | Docker Compose host port for the web UI. |
 | `AUTH_ENABLED` | `true` | Enable/disable login |
 | `LOCALHOST_BYPASS` | `false` | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
-| `SECURE_COOKIES` | `false` | Set true when serving Odysseus through HTTPS at a trusted proxy or private access gateway. |
+| `SECURE_COOKIES` | auto (scheme-aware) | Marks session cookies Secure. Automatically `true` for HTTPS (or `X-Forwarded-Proto: https`), `false` for plain HTTP. Set explicitly to override: `true` forces Secure on (recommended for reverse-proxy/HTTPS deploys), `false` forces it off. |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | Database connection string |
 | `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |
 | `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |

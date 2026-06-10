@@ -13,6 +13,7 @@ import logging
 import uuid
 import time
 from typing import Dict, Optional, Tuple
+from src.services.prefs import _load as _load_prefs
 
 from src.constants import GENERATED_IMAGES_DIR
 
@@ -90,6 +91,14 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
     else:
         model_name = spec
 
+    # PERF-P7-03: the endpoint rows are READ-ONLY here (base_url / api_key /
+    # provider_auth_id / cached_models are the only fields used downstream).
+    # Snapshot them to plain objects and CLOSE the DB session before any httpx
+    # model-list probe, so a session is never held open across network I/O.
+    # resolve_endpoint_runtime() only reads attributes off the snapshot;
+    # refresh-aware credential resolution opens its own short-lived session.
+    from types import SimpleNamespace
+
     db = SessionLocal()
     try:
         query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
@@ -97,62 +106,71 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
             query = query.filter(ModelEndpoint.name.ilike(f"%{target_endpoint_name}%"))
         if owner:
             query = owner_filter(query, ModelEndpoint, owner)
-        endpoints = query.all()
-
-        if not endpoints:
-            raise ValueError("No enabled endpoints found" +
-                             (f" matching '{target_endpoint_name}'" if target_endpoint_name else ""))
-
-        for ep in endpoints:
-            try:
-                base, api_key = resolve_endpoint_runtime(ep, owner=owner)
-            except Exception:
-                continue
-            provider = _detect_provider(base)
-            headers = build_headers(api_key, base)
-
-            if provider == "anthropic":
-                # Anthropic: match against hardcoded model list
-                matched = None
-                for am in ANTHROPIC_MODELS:
-                    if model_name.lower() in am.lower() or am.lower() in model_name.lower():
-                        matched = am
-                        break
-                if matched:
-                    return build_chat_url(base), matched, headers
-            else:
-                # OpenAI-compatible and native Ollama: probe the provider's model list.
-                try:
-                    models_url = build_models_url(base)
-                    if models_url:
-                        r = httpx.get(models_url, headers=headers, timeout=5)
-                        r.raise_for_status()
-                        data = r.json()
-                        model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
-                        if not model_ids:
-                            model_ids = [
-                                m.get("name") or m.get("model")
-                                for m in (data.get("models") or [])
-                                if m.get("name") or m.get("model")
-                            ]
-                    else:
-                        model_ids = json.loads(ep.cached_models or "[]")
-                except Exception:
-                    model_ids = []
-
-                # Exact match first
-                for mid in model_ids:
-                    if mid.lower() == model_name.lower():
-                        return build_chat_url(base), mid, headers
-
-                # Partial match
-                for mid in model_ids:
-                    if model_name.lower() in mid.lower() or mid.lower() in model_name.lower():
-                        return build_chat_url(base), mid, headers
-
-        raise ValueError(f"Model '{spec}' not found on any configured endpoint")
+        endpoints = [
+            SimpleNamespace(
+                base_url=ep.base_url,
+                api_key=ep.api_key,
+                provider_auth_id=ep.provider_auth_id,
+                cached_models=ep.cached_models,
+            )
+            for ep in query.all()
+        ]
     finally:
         db.close()
+
+    if not endpoints:
+        raise ValueError("No enabled endpoints found" +
+                         (f" matching '{target_endpoint_name}'" if target_endpoint_name else ""))
+
+    # Session is closed; the probing loop below runs with no DB session open.
+    for ep in endpoints:
+        try:
+            base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+        except Exception:
+            continue
+        provider = _detect_provider(base)
+        headers = build_headers(api_key, base)
+
+        if provider == "anthropic":
+            # Anthropic: match against hardcoded model list
+            matched = None
+            for am in ANTHROPIC_MODELS:
+                if model_name.lower() in am.lower() or am.lower() in model_name.lower():
+                    matched = am
+                    break
+            if matched:
+                return build_chat_url(base), matched, headers
+        else:
+            # OpenAI-compatible and native Ollama: probe the provider's model list.
+            try:
+                models_url = build_models_url(base)
+                if models_url:
+                    r = httpx.get(models_url, headers=headers, timeout=5)
+                    r.raise_for_status()
+                    data = r.json()
+                    model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+                    if not model_ids:
+                        model_ids = [
+                            m.get("name") or m.get("model")
+                            for m in (data.get("models") or [])
+                            if m.get("name") or m.get("model")
+                        ]
+                else:
+                    model_ids = json.loads(ep.cached_models or "[]")
+            except Exception:
+                model_ids = []
+
+            # Exact match first
+            for mid in model_ids:
+                if mid.lower() == model_name.lower():
+                    return build_chat_url(base), mid, headers
+
+            # Partial match
+            for mid in model_ids:
+                if model_name.lower() in mid.lower() or mid.lower() in model_name.lower():
+                    return build_chat_url(base), mid, headers
+
+    raise ValueError(f"Model '{spec}' not found on any configured endpoint")
 
 
 # ---------------------------------------------------------------------------
@@ -1398,7 +1416,6 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         ]
         custom_themes = {}
         try:
-            from routes.prefs_routes import _load as _load_prefs
             custom_themes = _load_prefs().get("custom-themes", {}) or {}
         except Exception:
             pass

@@ -76,7 +76,39 @@ class RenameUserRequest(BaseModel):
 class SetOpenRegistrationRequest(BaseModel):
     enabled: bool
 
+
+class ResetRequestBody(BaseModel):
+    username: str
+
+
+class ResetConfirmBody(BaseModel):
+    token: str
+    new_password: str
+
 SESSION_COOKIE = "odysseus_session"
+
+
+def _should_use_secure_cookie(request) -> bool:
+    """Determine whether the session cookie should carry the Secure flag.
+
+    Decision order:
+    1. ``SECURE_COOKIES=true``  → force on  (explicit operator override)
+    2. ``SECURE_COOKIES=false`` → force off (explicit opt-out, e.g. plain-HTTP dev)
+    3. Not set                  → infer from the incoming request scheme:
+         - ``https`` direct connection, or
+         - ``X-Forwarded-Proto: https`` (reverse-proxy deploy)
+         → ``True``; plain ``http`` → ``False``.
+    """
+    env_val = os.getenv("SECURE_COOKIES", "").strip().lower()
+    if env_val == "true":
+        return True
+    if env_val == "false":
+        return False
+    # Auto-detect from scheme / trusted proxy header
+    headers = getattr(request, "headers", None) or {}
+    forwarded_proto = headers.get("x-forwarded-proto", "").lower()
+    scheme = forwarded_proto or getattr(getattr(request, "url", None), "scheme", "")
+    return scheme == "https"
 
 
 def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
@@ -85,6 +117,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     _login_limiter = RateLimiter(max_requests=15, window_seconds=60)
     _signup_limiter = RateLimiter(max_requests=3, window_seconds=300)
     _setup_limiter = RateLimiter(max_requests=3, window_seconds=300)
+    _reset_limiter = RateLimiter(max_requests=5, window_seconds=900)
 
     def _get_current_user(request: Request) -> Optional[str]:
         token = request.cookies.get(SESSION_COOKIE)
@@ -144,7 +177,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             value=token,
             httponly=True,
             samesite="lax",
-            secure=os.getenv("SECURE_COOKIES", "false").lower() == "true",
+            secure=_should_use_secure_cookie(request),
             path="/",
         )
         if body.remember:
@@ -190,6 +223,30 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, "Current password is incorrect")
         await asyncio.to_thread(auth_manager.revoke_user_sessions, user, current_token)
         return {"ok": True}
+
+    @router.post("/reset-request")
+    async def reset_request(body: ResetRequestBody, request: Request):
+        """Initiate a password reset. Token is printed to the server log (no email).
+        Always returns 200 with a generic message to prevent username enumeration."""
+        if not _reset_limiter.check(request.client.host):
+            raise HTTPException(429, "Too many requests — try again later")
+        await asyncio.to_thread(auth_manager.generate_reset_token, body.username)
+        return {
+            "ok": True,
+            "message": "If that username exists, a reset token has been printed to the server log.",
+        }
+
+    @router.post("/reset-confirm")
+    async def reset_confirm(body: ResetConfirmBody, request: Request):
+        """Confirm a password reset using the token from the server log."""
+        if not _reset_limiter.check(request.client.host):
+            raise HTTPException(429, "Too many requests — try again later")
+        if len(body.new_password) < 8:
+            raise HTTPException(400, "Password must be at least 8 characters")
+        ok = await asyncio.to_thread(auth_manager.consume_reset_token, body.token, body.new_password)
+        if not ok:
+            raise HTTPException(400, "Invalid or expired reset token")
+        return {"ok": True, "message": "Password updated. Please sign in."}
 
     # ------------------------------------------------------------------
     # Two-factor authentication
@@ -276,7 +333,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
         body = await request.json()
-        ok = auth_manager.set_privileges(username, body)
+        ok = auth_manager.set_privileges(username, body, requesting_user=user)
         if not ok:
             raise HTTPException(404, "User not found or is admin")
         return {"ok": True, "privileges": auth_manager.get_privileges(username)}
@@ -323,9 +380,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         # docs, email accounts, tasks, etc.
         try:
             from sqlalchemy import func
-            from core.database import Base, SessionLocal
-            db = SessionLocal()
-            try:
+            from core.database import Base, get_db_session as _get_db_session
+            with _get_db_session() as db:
                 for mapper in Base.registry.mappers:
                     model = mapper.class_
                     if not hasattr(model, "owner"):
@@ -335,12 +391,6 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                         .filter(func.lower(model.owner) == old_username)
                         .update({"owner": new_username}, synchronize_session=False)
                     )
-                db.commit()
-            except Exception:
-                db.rollback()
-                raise
-            finally:
-                db.close()
         except Exception as e:
             logger.error("Failed to rename owner references %s -> %s: %s", old_username, new_username, e)
             if not _rollback_auth_rename():

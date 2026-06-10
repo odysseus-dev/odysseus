@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from core.middleware import require_admin
 from src.auth_helpers import get_current_user
 from src.settings import load_settings, save_settings, load_features, save_features
+from src.audit_log import audit_event
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
         """Export all user data as a downloadable JSON file."""
         require_admin(request)
         user = get_current_user(request)
+        audit_event(user or "anon", "pii_export", f"exported_by={user!r}", level="WARNING")
 
         # Memories (filtered by owner when auth is enabled)
         memories = memory_manager.load(owner=user)
@@ -64,6 +66,7 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
         """Import user data from a previously exported JSON file. Merges with existing data."""
         require_admin(request)
         user = get_current_user(request)
+        audit_event(user or "anon", "data_import", f"imported_by={user!r}", level="WARNING")
         try:
             body = await request.json()
         except Exception:

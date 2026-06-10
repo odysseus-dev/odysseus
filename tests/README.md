@@ -195,8 +195,9 @@ Run validation locally before opening or approving a PR. Practical checks:
 ## Current roadmap
 
 1. Import-state cleanup - complete.
-2. Document helper conventions (this file).
-3. Pilot the repeated import-time `core.database` stub helper.
-4. Add further tiny helpers only when the repeated semantics are clear.
-5. Start low-risk file moves only after helper conventions are documented.
-6. Avoid moving high-risk security/route regression files first.
+2. Document helper conventions (this file) - complete.
+3. Pilot the repeated import-time `core.database` stub helper - pending.
+4. Audit fake DB / `SessionLocal` / route setup duplication - pending.
+5. Add further tiny helpers only when the repeated semantics are clear - pending.
+6. Start low-risk file moves only after helper conventions are documented - pending.
+7. Avoid moving high-risk security/route regression files first - pending.

@@ -34,6 +34,24 @@ _TEMP_STUBS = ("core.database", "core.models")
 with preserve_import_state(*_TEMP_STUBS, "core.session_manager", "routes.session_routes"):
     for _name in _TEMP_STUBS:
         sys.modules[_name] = MagicMock(name=_name)
+        # Provide a REAL get_db_session over the stub: route code calls
+        # get_db_session(SessionLocal) passing its (test-patched) module global,
+        # so the stub must honor the factory instead of auto-mocking.
+        from contextlib import contextmanager as _ctxmgr
+
+        @_ctxmgr
+        def _stub_get_db_session(session_factory=None):
+            _db = (session_factory or sys.modules['core.database'].SessionLocal)()
+            try:
+                yield _db
+                _db.commit()
+            except Exception:
+                _db.rollback()
+                raise
+            finally:
+                _db.close()
+
+        sys.modules['core.database'].get_db_session = _stub_get_db_session
     if isinstance(sys.modules.get("core.session_manager"), MagicMock):
         del sys.modules["core.session_manager"]
     clear_module("routes.session_routes")

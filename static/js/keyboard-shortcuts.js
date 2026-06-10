@@ -192,6 +192,10 @@ export function initKeyboardShortcuts(modules) {
       return;
     }
     if (_matchesCombo(e, kb.delete_session)) {
+      const active = document.activeElement;
+      const tag = active ? active.tagName : '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' ||
+          (active && active.isContentEditable)) return;
       e.preventDefault();
       const sid = sessionModule && sessionModule.getCurrentSessionId();
       if (!sid) return;

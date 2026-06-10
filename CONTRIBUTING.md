@@ -40,7 +40,7 @@ pip install -r requirements.txt
 python -m uvicorn app:app --host 0.0.0.0 --port 7000
 ```
 
-Windows is not actively tested. Docker on Linux or a Linux/macOS manual install is the safer path for now.
+Windows is supported via Docker (recommended) and via manual install. Some features (e.g. python-magic MIME detection, symlinked HuggingFace model caches) may require extra setup on Windows — see the project README for notes.
 
 ## Running Checks
 

@@ -3,6 +3,7 @@ import json
 import logging
 from typing import Dict
 from cryptography.fernet import Fernet, InvalidToken
+from core.platform_compat import safe_chmod
 
 logger = logging.getLogger(__name__)
 
@@ -11,25 +12,38 @@ class APIKeyManager:
         self.data_dir = data_dir
         self.api_keys_file = os.path.join(data_dir, "api_keys.json")
         self.key_file = os.path.join(data_dir, ".key")
-        
+        self._key: bytes | None = None  # cached after first load; safe_chmod only on creation
+
     def get_or_create_key(self) -> bytes:
-        """Get or create encryption key for API keys"""
+        """Get or create encryption key for API keys.
+
+        The key is cached in ``self._key`` after the first load so subsequent
+        encrypt/decrypt calls avoid redundant disk reads and ``safe_chmod``
+        calls on every invocation.  ``safe_chmod`` is still called once on
+        *creation* to enforce 0o600 permissions on a freshly written key file.
+        """
+        if self._key is not None:
+            return self._key
         if os.path.exists(self.key_file):
             with open(self.key_file, 'rb') as f:
-                return f.read()
+                key = f.read()
+            # Do NOT call safe_chmod here on every read — that is a PERF-P2-001
+            # finding; permissions are enforced once at creation time below.
         else:
             key = Fernet.generate_key()
             with open(self.key_file, 'wb') as f:
                 f.write(key)
-            return key
-    
+            safe_chmod(self.key_file, 0o600)
+        self._key = key
+        return key
+
     def encrypt_api_key(self, api_key: str) -> str:
         """Encrypt an API key"""
         if not api_key:
             return ""
         f = Fernet(self.get_or_create_key())
         return f.encrypt(api_key.encode()).decode()
-    
+
     def decrypt_api_key(self, encrypted_key: str) -> str:
         """Decrypt an API key"""
         if not encrypted_key:
@@ -67,10 +81,10 @@ class APIKeyManager:
         write them back as plaintext, which then fails to decrypt on the next
         load() and silently drops those providers.
         """
+        from core.atomic_io import atomic_write_json as _atomic_write_json  # deferred: avoids core/__init__ at module load
         keys = self._load_raw()
         keys[provider] = self.encrypt_api_key(api_key)
-        with open(self.api_keys_file, 'w', encoding="utf-8") as f:
-            json.dump(keys, f)
+        _atomic_write_json(self.api_keys_file, keys, mode=0o600)
 
     def load(self) -> Dict[str, str]:
         """Load and decrypt API keys"""

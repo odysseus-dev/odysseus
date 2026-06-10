@@ -32,11 +32,14 @@ def test_cache_eviction_tolerates_already_removed_key():
     original = llm_core._response_cache
     cache = PhantomKeysCache()
     for i in range(130):  # exceed the 128 cap so the eviction branch runs
-        cache[f"k{i}"] = "x"
+        cache[f"k{i}"] = ("x", 0.0)  # store as (value, timestamp) tuples as the cache does
     llm_core._response_cache = cache
     try:
         llm_core._set_cached_response("new-key", "y")  # must not raise
-        assert dict.get(cache, "new-key") == "y"
+        # _set_cached_response stores (response, timestamp) tuples; unwrap the value.
+        stored = dict.get(cache, "new-key")
+        assert stored is not None, "key should be present after _set_cached_response"
+        assert stored[0] == "y", f"Expected stored value 'y', got: {stored[0]}"
     finally:
         llm_core._response_cache = original
 

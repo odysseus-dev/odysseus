@@ -29,6 +29,8 @@ def schedule(tmp_path, monkeypatch):
 
     db_path = tmp_path / "scheduled_emails.db"
     monkeypatch.setattr(email_helpers, "SCHEDULED_DB", db_path)
+    import src.services.email_send as _email_send
+    monkeypatch.setattr(_email_send, "SCHEDULED_DB", db_path)
     monkeypatch.setattr(email_routes, "SCHEDULED_DB", db_path)
     email_helpers._init_scheduled_db()
     router = email_routes.setup_email_routes()

@@ -11,6 +11,7 @@ import logging
 from typing import Any
 
 from src.constants import SETTINGS_FILE, FEATURES_FILE
+from src.services.prefs import _load_for_user as _prefs_load_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -260,8 +261,7 @@ def get_user_setting(key: str, owner: str = "", default: Any = None) -> Any:
     """
     if owner and key in _PER_USER_KEYS:
         try:
-            from routes.prefs_routes import _load_for_user
-            prefs = _load_for_user(owner) or {}
+            prefs = _prefs_load_for_user(owner) or {}
             if key in prefs and prefs[key] not in (None, ""):
                 return prefs[key]
         except Exception:

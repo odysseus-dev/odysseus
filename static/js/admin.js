@@ -320,7 +320,7 @@ function initAddUser() {
       const data = await res.json();
       if (res.ok) { msg.textContent = 'User created'; msg.className = 'admin-success'; el('adm-newUsername').value = ''; el('adm-newPassword').value = ''; el('adm-newIsAdmin').checked = false; loadUsers(); }
       else { msg.textContent = data.detail || 'Failed'; msg.className = 'admin-error'; }
-    } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
+    } catch (e) { console.error('Add user request failed:', e); msg.textContent = 'Could not create user — check your connection and try again.'; msg.className = 'admin-error'; }
     el('adm-addBtn').disabled = false;
   });
 }
@@ -1033,7 +1033,7 @@ function initEndpointForm() {
           msg.className = 'admin-success';
         }
       } else { msg.textContent = d.detail || 'Failed'; msg.className = 'admin-error'; }
-    } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
+    } catch (e) { console.error('Add endpoint request failed:', e); msg.textContent = 'Could not add endpoint — check your connection and try again.'; msg.className = 'admin-error'; }
     btn.disabled = false; btn.textContent = 'Add';
   });
 
@@ -1352,7 +1352,7 @@ function initEndpointForm() {
             : 'Added (offline — will retry on next load)';
           msg.className = d.online ? 'admin-success' : 'admin-error';
         } else { msg.textContent = d.detail || 'Failed'; msg.className = 'admin-error'; }
-      } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
+      } catch (e) { console.error('Add local endpoint request failed:', e); msg.textContent = 'Could not add endpoint — check your connection and try again.'; msg.className = 'admin-error'; }
       localAddBtn.disabled = false; localAddBtn.textContent = 'Add';
     });
   }
@@ -2234,7 +2234,7 @@ function initTokenForm() {
         loadTokens();
       }
       else { msg.textContent = data.detail || 'Failed'; msg.className = 'admin-error'; }
-    } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
+    } catch (e) { console.error('Create token request failed:', e); msg.textContent = 'Could not create token — check your connection and try again.'; msg.className = 'admin-error'; }
   });
   el('adm-tokenCopyBtn').addEventListener('click', () => {
     const val = el('adm-tokenValue').textContent;
@@ -2371,10 +2371,21 @@ function initCalDAV() {
         body: JSON.stringify({ caldav_url: urlIn.value, caldav_username: userIn.value, caldav_password: passIn.value }),
       });
       const d = await res.json();
-      status.textContent = d.ok ? 'Saved' : 'Error';
-      status.style.color = d.ok ? 'var(--green)' : 'var(--red)';
-    } catch (e) { status.textContent = 'Error'; status.style.color = 'var(--red)'; }
-    setTimeout(() => { status.textContent = ''; status.style.color = ''; }, 3000);
+      if (d.ok) {
+        status.textContent = 'Settings saved';
+        status.style.color = 'var(--green)';
+        setTimeout(() => { status.textContent = ''; status.style.color = ''; }, 5000);
+      } else {
+        status.textContent = 'Save failed: ' + (d.detail || d.error || 'server error');
+        status.style.color = 'var(--red)';
+        // No auto-dismiss for errors — operator needs to see the detail
+      }
+    } catch (e) {
+      console.error('CalDAV save failed:', e);
+      status.textContent = 'Save failed — check your connection';
+      status.style.color = 'var(--red)';
+      // No auto-dismiss for errors
+    }
   });
 
   testBtn.addEventListener('click', async () => {
