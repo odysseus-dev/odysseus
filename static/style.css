@@ -3703,8 +3703,11 @@ body.bg-pattern-sparkles {
       font-family:inherit;
       font-size:inherit;
       line-height:1.6;
-      resize:vertical;
+      resize:both;
       box-sizing:border-box;
+      min-height:200px;
+      min-width:min(360px, 100%);
+      max-width:100%;
     }
     .msg-edit-textarea:focus { outline:1px solid var(--hl-function, #61afef); border-color:var(--hl-function, #61afef); }
     .msg-edit-bar {
@@ -3812,8 +3815,11 @@ body.bg-pattern-sparkles {
       width:100%; background:var(--bg); color:var(--fg);
       border:1px solid var(--border); border-radius:6px;
       padding:8px; font-family:inherit; font-size:0.95rem;
-      resize:vertical; outline:none;
-      min-height:80px;
+      resize:both; outline:none;
+      min-height:160px;
+      min-width:min(360px, 100%);
+      max-width:100%;
+      box-sizing:border-box;
     }
     .edit-textarea:focus { border-color:var(--red); }
     .edit-save-btn, .edit-cancel-btn {
