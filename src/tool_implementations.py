@@ -1238,6 +1238,26 @@ async def do_api_call(content: str) -> Dict:
 # Notes / checklists management tool
 # ---------------------------------------------------------------------------
 
+def _normalize_checklist_items(items_raw):
+    """Coerce checklist items into the {text, done} shape every consumer
+    assumes. Models routinely ignore the object schema and emit a bare list
+    of strings (``["buy milk", "walk dog"]``); stored verbatim, those crash
+    the list / toggle_item paths (and the HTTP toggle route) with
+    ``'str' object has no attribute 'get'``. Returns the input unchanged when
+    it is not a list (None, etc.)."""
+    if not isinstance(items_raw, list):
+        return items_raw
+    out = []
+    for it in items_raw:
+        if isinstance(it, dict):
+            out.append(it)
+        elif isinstance(it, str):
+            out.append({"text": it, "done": False})
+        else:
+            out.append({"text": str(it), "done": False})
+    return out
+
+
 async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_notes tool calls: CRUD on notes and checklists."""
     import uuid as _uuid
@@ -1335,6 +1355,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             items_raw = args.get("checklist_items")
             if items_raw is None:
                 items_raw = args.get("items")
+            items_raw = _normalize_checklist_items(items_raw)
             items_json = json.dumps(items_raw) if items_raw is not None else None
             note_type = args.get("note_type", "checklist" if items_raw else "note")
             # Accept natural-language due_date ("tomorrow at 1pm") in
@@ -1428,7 +1449,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             if new_items is None:
                 new_items = args.get("items")
             if new_items is not None:
-                note.items = json.dumps(new_items)
+                note.items = json.dumps(_normalize_checklist_items(new_items))
                 flag_modified(note, "items")
             if "pinned" in args:
                 note.pinned = args["pinned"]
@@ -1459,7 +1480,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 return {"error": "Note not found", "exit_code": 1}
             if not note.items:
                 return {"error": "Note has no checklist items", "exit_code": 1}
-            items = json.loads(note.items)
+            items = _normalize_checklist_items(json.loads(note.items))
             if index < 0 or index >= len(items):
                 return {"error": f"Item index {index} out of range (0-{len(items)-1})", "exit_code": 1}
             items[index]["done"] = not items[index].get("done", False)

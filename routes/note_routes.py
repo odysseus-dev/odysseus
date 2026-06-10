@@ -836,6 +836,11 @@ def setup_note_routes(task_scheduler=None):
             items = json.loads(note.items)
             if index < 0 or index >= len(items):
                 raise HTTPException(400, f"Item index {index} out of range")
+            # Items may have been stored as bare strings (a model that ignored
+            # the {text, done} schema), which would crash `.get(...)` below with
+            # an unhandled 500. Coerce in place so toggling stays robust.
+            if not isinstance(items[index], dict):
+                items[index] = {"text": str(items[index]), "done": False}
             items[index]["done"] = not items[index].get("done", False)
             note.items = json.dumps(items)
             flag_modified(note, "items")
