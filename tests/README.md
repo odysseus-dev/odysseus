@@ -33,6 +33,56 @@ the sub-area. The `area_*` names are registered in `pyproject.toml`; the dynamic
 `sub_*` names are registered before collection by `pytest_configure` in
 `tests/conftest.py`, so unknown-mark warnings still flag genuine typos.
 
+For common focused runs, use `tests/run_focus.py`. It validates area and
+sub-area names, accepts sub-areas with or without the `sub_` prefix, and passes
+extra pytest arguments after `--`:
+
+```bash
+python3 tests/run_focus.py --area security
+python3 tests/run_focus.py --area services --sub-area cookbook
+python3 tests/run_focus.py --sub-area sub_cookbook
+python3 tests/run_focus.py --keyword taxonomy
+python3 tests/run_focus.py --last-failed
+python3 tests/run_focus.py --dry-run --area services --sub-area cookbook
+python3 tests/run_focus.py --area services -- --maxfail=1 -q
+```
+
+### Fast lane and duration visibility
+
+`--fast` runs the fast lane: the tests that are *not* marked `slow` (it adds the
+marker expression `not slow`). It composes with `--area`/`--sub-area` using
+`and`. Because no tests may be marked `slow` yet, `--fast` can initially match
+the full focused selection; it becomes a real speed-up as `slow` marks are added
+from duration evidence. Use it for quick local or reviewer feedback; it does not
+replace broader focused or full-suite validation before merge.
+
+`--durations N` and `--durations-min FLOAT` add pytest's slowest-test reporting
+so you can see where time goes. They are reporting only and do not count as a
+focus selector, so `--durations` must be combined with a real selector
+(`--area`, `--sub-area`, `--keyword`, `--last-failed`, or `--fast`).
+
+Activate or otherwise use the project Python environment before running these
+commands. The examples use `python3` intentionally to avoid hard-coding a local
+venv path.
+
+```bash
+python3 tests/run_focus.py --fast
+python3 tests/run_focus.py --area services --fast
+python3 tests/run_focus.py --area services --durations 25
+python3 tests/run_focus.py --area services --fast --durations 25 --durations-min 0.05
+```
+
+The `slow` marker is opt-in. Mark a test `slow` only with duration evidence
+(from `--durations`), not by guessing - see the fast-lane policy in
+`TESTING_STANDARD.md`. `--fast` is for quick reviewer feedback and must not
+replace the full suite before merge. A `slow` mark only excludes a test from the
+fast lane; the test stays runnable directly, e.g.:
+
+```bash
+python3 -m pytest tests/test_auth_config_lock_concurrency.py
+python3 -m pytest -m slow
+```
+
 ## Core principles
 
 - Keep PRs small and homogeneous: one kind of change per PR.
@@ -107,15 +157,26 @@ Use for the repeated file-backed temp sqlite setup in tests.
   under test reads, and must keep the returned objects alive.
 - Do not use it as a general DB fixture framework.
 
+### `tests.helpers.db_stubs.make_core_db_stub`
+
+Use for small import-time `core.database` stubs with a placeholder
+`SessionLocal`.
+
+- Pass model names via `models` when MagicMock attributes are sufficient.
+- Pass `attributes` when an import needs exact placeholder values.
+- Set `install_core_package=True` only when the test also needs a fake parent
+  `core` module stub.
+- Keep custom fake sessions and route-specific database behavior local.
+
 ## What not to abstract yet
 
 Some remaining patterns should stay as-is for now rather than being forced into
 helpers:
 
 - Large mixed files such as security/review regression files.
-- Setup-oriented `sys.modules` stub installers.
+- Broad setup-oriented `sys.modules` stub installers.
 - One-off custom module patching.
-- DB/session/route setup, until it has been audited separately.
+- Custom DB session, route, and app setup.
 
 ## Validation expectations
 
@@ -135,7 +196,7 @@ Run validation locally before opening or approving a PR. Practical checks:
 
 1. Import-state cleanup - complete.
 2. Document helper conventions (this file).
-3. Audit fake DB / `SessionLocal` / route setup duplication.
-4. Add tiny helpers only when the repeated semantics are clear.
+3. Pilot the repeated import-time `core.database` stub helper.
+4. Add further tiny helpers only when the repeated semantics are clear.
 5. Start low-risk file moves only after helper conventions are documented.
 6. Avoid moving high-risk security/route regression files first.
