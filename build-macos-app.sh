@@ -154,6 +154,10 @@ chmod +x "$APP/Contents/MacOS/$APP_NAME"
 # Refresh Finder's icon cache for the new bundle.
 touch "$APP"
 
+# ── Sign the app bundle (ad-hoc) so BTM allows background subprocesses ──
+echo "Signing app bundle (ad-hoc)..."
+codesign --force --deep --sign - "$APP"
+
 # ── .dmg (drag-to-Applications) ──
 echo "Packaging dist/$APP_NAME.dmg"
 STAGE="$(mktemp -d)/dmg"
