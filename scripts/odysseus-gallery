@@ -79,7 +79,19 @@ def cmd_list(args):
                 fail(f"no album named {args.album!r}")
             q = q.filter(GalleryImage.album_id == al.id)
         if args.tag:
-            q = q.filter(GalleryImage.tags.ilike(f"%{args.tag}%"))
+            # Mirror the web route: a tag pill string may stack several tags
+            # comma-separated, each narrowing the result set (AND), and each
+            # matches EITHER the manual `tags` or the AI-generated `ai_tags`
+            # column. The old code matched the whole string (comma included)
+            # against `tags` only, so it ignored ai_tags and never stacked.
+            from sqlalchemy import or_ as _or
+            for one in (t.strip() for t in args.tag.split(",")):
+                if not one:
+                    continue
+                q = q.filter(_or(
+                    GalleryImage.tags.ilike(f"%{one}%"),
+                    GalleryImage.ai_tags.ilike(f"%{one}%"),
+                ))
         q = q.order_by(GalleryImage.created_at.desc()).limit(args.limit)
         emit([_serialize_image(i) for i in q.all()], args)
     finally:
