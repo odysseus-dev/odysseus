@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Odysseus
+Comment=Start Odysseus AI workspace
+Exec=bash -c "cd /home/fireboy/odysseus && source venv/bin/activate && python odysseus_tray.py"
+Icon=utilities-terminal
+Terminal=false
+Type=Application
+Categories=Utility;
+StartupNotify=false
