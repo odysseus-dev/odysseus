@@ -1101,7 +1101,10 @@ class TaskScheduler:
             if "page" in line.lower() and "/" in line:
                 continue
             # Parse: [1778] Re: Subject From: Name | Date
-            m = _re.match(r'\[?\d+\]?\s*(?:↩️\s*|📎\s*|🔵\s*|⭐\s*)?(.+?)(?:\s*From:\s*(.+?))?(?:\s*\|\s*(\S+))?$', line)
+            # Date group must allow spaces ("Jun 2", "Mon 10:30"): with (\S+)
+            # a spaced date could not match, so the non-greedy sender group
+            # expanded to swallow "Name | Jun 2" into the sender. Use (.+?).
+            m = _re.match(r'\[?\d+\]?\s*(?:↩️\s*|📎\s*|🔵\s*|⭐\s*)?(.+?)(?:\s*From:\s*(.+?))?(?:\s*\|\s*(.+?))?$', line)
             if m:
                 subject = m.group(1).strip().rstrip('|').strip()
                 sender = (m.group(2) or "").strip().rstrip('|').strip()
