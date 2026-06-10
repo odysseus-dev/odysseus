@@ -8,6 +8,7 @@ The LLM decides when to use tools by writing fenced code blocks.
 
 import asyncio
 import collections
+import os
 import json
 import re
 import time
@@ -869,6 +870,7 @@ def _build_system_prompt(
     compact: bool = False,
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
+    workspace: Optional[str] = None,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
@@ -936,6 +938,27 @@ def _build_system_prompt(
         _datetime_message = current_datetime_context_message()
     except Exception:
         pass
+
+    # Workspace context — tells the agent where the active project lives.
+    # When ODYSSEUS_WORKSPACE is set, the agent gets a clear project-root
+    # reference so it never gets lost defaulting back to the Odysseus data dir.
+    _workspace_message = None
+    _ws_path = workspace or os.environ.get("ODYSSEUS_WORKSPACE", "").strip()
+    if _ws_path and os.path.isdir(_ws_path):
+        _workspace_message = {
+            "role": "user",
+            "content": (
+                f"## Workspace\n"
+                f"Your current project workspace is: {_ws_path}\n"
+                f"This is the root directory for all file operations. "
+                f"When the user mentions files or directories, resolve "
+                f"relative paths against this workspace. Use ls, read_file, "
+                f"write_file, edit_file, glob, and grep here first — not "
+                f"the Odysseus data directory. If you need to find where "
+                f"something lives, start from this directory."
+            ),
+            "_protected": True,
+        }
 
     # Document context is kept as a SEPARATE message (not merged into the tool
     # prompt) so the context trimmer doesn't destroy it when truncating the
@@ -1273,6 +1296,9 @@ def _build_system_prompt(
         last_user_idx += 1
     if _datetime_message:
         merged.insert(last_user_idx, _datetime_message)
+        last_user_idx += 1
+    if _workspace_message:
+        merged.insert(last_user_idx, _workspace_message)
 
     return merged, mcp_schemas
 
@@ -1998,6 +2024,7 @@ async def stream_agent_loop(
         compact=_is_api_model,
         owner=owner,
         suppress_local_context=guide_only,
+        workspace=workspace,
     )
     if plan_mode and not guide_only:
         # Steer the model to investigate-then-propose. Hard tool gating handles
