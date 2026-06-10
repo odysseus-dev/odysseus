@@ -8,6 +8,7 @@ import themeModule from './theme.js';
 import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
 import { registerMenuDismiss, dismissTopMenu, dismissOrRemove } from './escMenuStack.js';
+import { t } from './i18n.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -219,7 +220,7 @@ _initHoverCardSpaceToggle();
 export async function copyToClipboard(text) {
   try {
     await navigator.clipboard.writeText(text);
-    showToast('Copied');
+    showToast(t('ui.js.ui_copied', null, 'Copied'));
   }
   catch {
     const ta = document.createElement('textarea');
@@ -229,7 +230,7 @@ export async function copyToClipboard(text) {
     ta.select();
     document.execCommand('copy');
     document.body.removeChild(ta);
-    showToast('Copied');
+    showToast(t('ui.js.ui_copied', null, 'Copied'));
   }
 }
 
@@ -570,7 +571,7 @@ export function el(id) {
  * Styled confirm dialog — replaces native browser confirm().
  * Returns a Promise<boolean>.
  */
-export function styledConfirm(message, { confirmText = 'Confirm', cancelText = 'Cancel', danger = false } = {}) {
+export function styledConfirm(message, { confirmText = t('ui.js.ui_confirm', null, 'Confirm'), cancelText = t('ui.js.ui_cancel', null, 'Cancel'), danger = false } = {}) {
   return new Promise(resolve => {
     // Reuse or create the modal
     let overlay = document.getElementById('styled-confirm-overlay');
@@ -580,7 +581,7 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
       overlay.className = 'modal';
       overlay.innerHTML =
         '<div class="modal-content styled-confirm-box" role="dialog" aria-modal="true" aria-labelledby="styled-confirm-title" aria-describedby="styled-confirm-msg">' +
-          '<div class="modal-header"><h4 id="styled-confirm-title">Confirm</h4></div>' +
+          '<div class="modal-header"><h4 id="styled-confirm-title">' + t('ui.js.ui_confirm', null, 'Confirm') + '</h4></div>' +
           '<div class="modal-body"><p id="styled-confirm-msg"></p></div>' +
           '<div class="modal-footer">' +
             '<button id="styled-confirm-cancel"></button>' +
@@ -652,11 +653,11 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
  * Resolves to the trimmed string the user typed, or null on Cancel / Escape / backdrop.
  */
 export function styledPrompt(message, {
-  title = 'Name',
+  title = t('ui.js.ui_name', null, 'Name'),
   defaultValue = '',
   placeholder = '',
-  confirmText = 'Save',
-  cancelText = 'Cancel',
+  confirmText = t('ui.js.ui_save', null, 'Save'),
+  cancelText = t('ui.js.ui_cancel', null, 'Cancel'),
   maxLength = 80,
 } = {}) {
   return new Promise(resolve => {

@@ -7,6 +7,7 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { clearDockSide } from './modalSnap.js';
 import { sortModelIds } from './modelSort.js';
 import { isAltGrEvent } from './platform.js';
+import { t } from './i18n.js';
 
 let initialized = false;
 let modalEl = null;
@@ -1623,7 +1624,7 @@ function initAppearance() {
       if (window.UI_VIS_ADMIN_ONLY && window.UI_VIS_ADMIN_ONLY.has(key) && !chk.checked && !window._isAdmin) {
         chk.checked = true;
         if (uiModule && uiModule.showToast) {
-          uiModule.showToast('Only admins can hide Settings.');
+          uiModule.showToast(t('ui.js.settings_admins_only_hide', null, 'Only admins can hide Settings.'));
         }
         return;
       }
@@ -1636,17 +1637,17 @@ function initAppearance() {
         try {
           ok = await (uiModule && uiModule.styledConfirm
             ? uiModule.styledConfirm(
-                'Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.',
-                { confirmText: 'Hide', cancelText: 'Cancel' }
+                t('ui.js.settings_hide_cog_confirm', null, 'Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.'),
+                { confirmText: t('ui.js.settings_hide', null, 'Hide'), cancelText: t('ui.js.ui_cancel', null, 'Cancel') }
               )
-            : Promise.resolve(window.confirm('Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.')));
+            : Promise.resolve(window.confirm(t('ui.js.settings_hide_cog_confirm', null, 'Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.'))));
         } catch (_) { ok = false; }
         if (!ok) {
           chk.checked = true;
           return;
         }
         if (uiModule && uiModule.showToast) {
-          uiModule.showToast('Settings cog hidden — type /settings to bring it back.', 5000);
+          uiModule.showToast(t('ui.js.settings_cog_hidden', null, 'Settings cog hidden — type /settings to bring it back.'), 5000);
         }
       }
 
@@ -1980,7 +1981,7 @@ async function initShortcuts() {
       });
       // Update global keybinds so they take effect immediately
       window._odysseusKeybinds = keybinds;
-      if (uiModule && uiModule.showToast) uiModule.showToast('Shortcut saved');
+      if (uiModule && uiModule.showToast) uiModule.showToast(t('ui.js.settings_shortcut_saved', null, 'Shortcut saved'));
     } catch (e) {
       console.error('Failed to save keybinds:', e);
     }
@@ -1991,7 +1992,7 @@ async function initShortcuts() {
       keybinds = { ...SHORTCUT_DEFAULTS };
       render();
       await saveKeybinds();
-      if (uiModule && uiModule.showToast) uiModule.showToast('Shortcuts reset to defaults');
+      if (uiModule && uiModule.showToast) uiModule.showToast(t('ui.js.settings_shortcuts_reset', null, 'Shortcuts reset to defaults'));
     });
   }
 
@@ -2703,7 +2704,7 @@ async function initEmailAccountsSettings() {
       });
       row.querySelector('.email-acc-del-btn')?.addEventListener('click', async (e) => {
         e.stopPropagation();
-        if (!await window.styledConfirm(`Delete account "${accs.find(a => a.id === id)?.name}"?`, { confirmText: 'Delete', danger: true })) return;
+        if (!await window.styledConfirm(t('ui.js.settings_delete_account_confirm', { name: accs.find(a => a.id === id)?.name }, 'Delete account "{name}"?'), { confirmText: t('ui.js.ui_delete', null, 'Delete'), danger: true })) return;
         await fetch(`/api/email/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
         renderList();
       });
@@ -3224,7 +3225,7 @@ async function initIntegrations() {
 
   // Delete
   async function doDelete(id) {
-    if (!await window.styledConfirm('Delete this integration?', { confirmText: 'Delete', danger: true })) return;
+    if (!await window.styledConfirm(t('ui.js.settings_delete_integration_confirm', null, 'Delete this integration?'), { confirmText: t('ui.js.ui_delete', null, 'Delete'), danger: true })) return;
     try {
       await fetch(`/api/auth/integrations/${id}`, { method: 'DELETE', credentials: 'same-origin' });
       if (editingId === id) { formCard.style.display = 'none'; editingId = null; }
@@ -3452,7 +3453,7 @@ async function initUnifiedIntegrations() {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const intgName = btn.dataset.intgName || 'this integration';
-        if (!await window.styledConfirm(`Remove "${intgName}"?`, { confirmText: 'Remove', danger: true })) return;
+        if (!await window.styledConfirm(t('ui.js.settings_remove_confirm', { name: intgName }, 'Remove "{name}"?'), { confirmText: t('ui.js.settings_remove', null, 'Remove'), danger: true })) return;
         const type = btn.dataset.intgType;
         const id = btn.dataset.intgId;
         try {
@@ -3871,7 +3872,7 @@ async function initUnifiedIntegrations() {
       if (btn) { btn.textContent = 'Exporting...'; btn.disabled = true; }
       try {
         const res = await fetch(`/api/contacts/export?format=${encodeURIComponent(format)}`, { credentials: 'same-origin' });
-        if (!res.ok) throw new Error('Export failed');
+        if (!res.ok) throw new Error(t('ui.js.settings_export_failed', null, 'Export failed'));
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -3882,7 +3883,7 @@ async function initUnifiedIntegrations() {
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       } catch (_) {
-        uiModule.showError ? uiModule.showError('Export failed') : alert('Export failed');
+        uiModule.showError ? uiModule.showError(t('ui.js.settings_export_failed', null, 'Export failed')) : alert(t('ui.js.settings_export_failed', null, 'Export failed'));
       } finally {
         if (btn) { btn.textContent = orig; btn.disabled = false; }
       }
@@ -3925,10 +3926,10 @@ async function initUnifiedIntegrations() {
         if (vcfParts.length) await _postImport({ vcf: vcfParts.join('\n') });
         if (csvParts.length) await _postImport({ csv: csvParts.join('\n') });
         if (!vcfParts.length && !csvParts.length) throw new Error('No contact data found');
-        const msg = `Imported ${imported}/${total}` + (failed ? ` (${failed} failed)` : '');
+        const msg = t('ui.js.settings_imported', { imported, total }, 'Imported {imported}/{total}') + (failed ? ' ' + t('ui.js.settings_import_failed_count', { count: failed }, '({count} failed)') : '');
         uiModule.showToast ? uiModule.showToast(msg) : null;
       } catch (err) {
-        uiModule.showError ? uiModule.showError(err?.message || 'Import failed') : alert(err?.message || 'Import failed');
+        uiModule.showError ? uiModule.showError(err?.message || t('ui.js.settings_import_failed', null, 'Import failed')) : alert(err?.message || t('ui.js.settings_import_failed', null, 'Import failed'));
       } finally {
         if (btn) { btn.textContent = orig; btn.disabled = false; }
         e.target.value = '';
@@ -4013,8 +4014,8 @@ async function initUnifiedIntegrations() {
       });
       row.querySelector('.contact-del')?.addEventListener('click', async () => {
         const ok = uiModule.styledConfirm
-          ? await uiModule.styledConfirm('Delete this contact?', { confirmText: 'Delete', danger: true })
-          : window.confirm('Delete this contact?');
+          ? await uiModule.styledConfirm(t('ui.js.settings_delete_contact_confirm', null, 'Delete this contact?'), { confirmText: t('ui.js.ui_delete', null, 'Delete'), danger: true })
+          : window.confirm(t('ui.js.settings_delete_contact_confirm', null, 'Delete this contact?'));
         if (!ok) return;
         try {
           await fetch('/api/contacts/' + encodeURIComponent(uid), { method: 'DELETE', credentials: 'same-origin' });
@@ -4606,7 +4607,7 @@ async function initUnifiedIntegrations() {
     });
 
     el('uf-vault-logout').addEventListener('click', async () => {
-      if (!await window.styledConfirm('Log out of Bitwarden CLI? You\'ll need to re-enter your master password to log back in.', { confirmText: 'Log out' })) return;
+      if (!await window.styledConfirm(t('ui.js.settings_vault_logout_confirm', null, "Log out of Bitwarden CLI? You'll need to re-enter your master password to log back in."), { confirmText: t('ui.js.settings_log_out', null, 'Log out') })) return;
       msg('Logging out...');
       try {
         await fetch('/api/vault/logout', { method: 'POST', credentials: 'same-origin' });
@@ -5048,7 +5049,7 @@ async function initUnifiedIntegrations() {
     });
     formEl.querySelectorAll('.uf-codex-revoke').forEach(btn => {
       btn.addEventListener('click', async () => {
-        if (!await window.styledConfirm(`Revoke this ${cfg.word} token? Integrations using it will lose access.`, { confirmText: 'Revoke', danger: true })) return;
+        if (!await window.styledConfirm(t('ui.js.settings_revoke_confirm', { word: cfg.word }, 'Revoke this {word} token? Integrations using it will lose access.'), { confirmText: t('ui.js.settings_revoke', null, 'Revoke'), danger: true })) return;
         await fetch(`/api/tokens/${btn.dataset.tokenId}`, { method: 'DELETE', credentials: 'same-origin' });
         formEl.style.display = 'none';
         await renderList();

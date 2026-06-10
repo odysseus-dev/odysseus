@@ -28,6 +28,7 @@
 import { previewZoneAt, clearPreview, snapModalToZone } from './tileManager.js';
 import { suspendDock, resumeDock, clearRightDock, applyEdgeDock } from './modalSnap.js';
 import { dismissOrRemove } from './escMenuStack.js';
+import { t } from './i18n.js';
 
 const _state = new Map(); // id -> { restoreFn, closeFn, railBtnId, isMinimized, restoreMinHeight }
 
@@ -1362,7 +1363,7 @@ export function injectMinimizeButton(modal, modalId) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'modal-minimize-btn';
-  btn.title = 'Minimize';
+  btn.title = t('ui.js.modal_minimize', null, 'Minimize');
   btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="18" x2="19" y2="18"/></svg>';
   // Anchor the _/X pair to the right edge regardless of the header's
   // justify-content. Some headers (cookbook) use `space-between`, which

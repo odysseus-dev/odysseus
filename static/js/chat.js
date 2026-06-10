@@ -24,6 +24,7 @@ import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handle
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
+import { t } from './i18n.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
@@ -521,7 +522,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
     // --- API key guard: warn if message looks like an API key ---
     if (API_KEY_RE.test(msg.trim())) {
-      if (!await window.styledConfirm('This looks like an API key. Sending it to the AI could expose it.\n\nDid you mean to use /setup instead?', { confirmText: 'Send anyway', danger: true })) {
+      if (!await window.styledConfirm(t('ui.js.chat_apikey_warning', null, 'This looks like an API key. Sending it to the AI could expose it.\n\nDid you mean to use /setup instead?'), { confirmText: t('ui.js.chat_send_anyway', null, 'Send anyway'), danger: true })) {
         _releaseSendFlag();
         return;
       }
@@ -1782,7 +1783,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 // Model went offline — switched to fallback
                 var _fbData = json.data || {};
                 uiModule.showToast(
-                  `Model ${_fbData.old_model || '?'} offline — switched to ${_fbData.new_model || '?'}`,
+                  t('ui.js.chat_model_fallback', { old: _fbData.old_model || '?', new: _fbData.new_model || '?' }, 'Model {old} offline — switched to {new}'),
                   5000
                 );
                 // Update the model picker to reflect the new model
@@ -1814,7 +1815,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 if (!_isBg) {
                   var _selM = _shortModel(json.selected_model || '');
                   var _ansM = _shortModel(json.answered_by || '');
-                  uiModule.showToast('⚠ ' + _selM + ' failed — answered by ' + _ansM, 6000);
+                  uiModule.showToast(t('ui.js.chat_model_failed', { selected: _selM, answered: _ansM }, '⚠ {selected} failed — answered by {answered}'), 6000);
                   if (holder) {
                     var _rEl = holder.querySelector('.role');
                     if (_rEl) {
@@ -1955,7 +1956,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 holder._memoriesUsed = json.data;
               } else if (json.type === 'compacted') {
                 if (!_isBg) {
-                  uiModule.showToast('Context compacted — older messages summarized');
+                  uiModule.showToast(t('ui.js.chat_context_compacted', null, 'Context compacted — older messages summarized'));
                 }
               } else if (json.type === 'metrics') {
                 metrics = json.data;
@@ -3835,7 +3836,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         if (submitBtn) submitBtn.click();
       } catch (err) {
         console.error('Edit failed:', err);
-        if (uiModule) uiModule.showError('Edit failed: ' + err.message);
+        if (uiModule) uiModule.showError(t('ui.js.chat_edit_failed', { error: err.message }, 'Edit failed: {error}'));
         bodyEl.innerHTML = originalHTML;
       }
     });
@@ -3891,7 +3892,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     // The common case is a regen during a pre-upload race where the bubble
     // never had an `[data-file-id]` to scrape.
     if (!text && !_ids.length) {
-      if (uiModule?.showError) uiModule.showError('Nothing to resend — message has no text and no attachments yet (try again after the upload finishes).');
+      if (uiModule?.showError) uiModule.showError(t('ui.js.chat_nothing_to_resend', null, 'Nothing to resend — message has no text and no attachments yet (try again after the upload finishes).'));
       return;
     }
 
@@ -3926,7 +3927,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (submitBtn) submitBtn.click();
     } catch (err) {
       console.error('Resend failed:', err);
-      if (uiModule) uiModule.showError('Resend failed: ' + err.message);
+      if (uiModule) uiModule.showError(t('ui.js.chat_resend_failed', { error: err.message }, 'Resend failed: {error}'));
     }
   }
 
@@ -3956,7 +3957,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     }
 
     if (userIndex < 0) {
-      if (uiModule) uiModule.showError('Could not find the user message to regenerate');
+      if (uiModule) uiModule.showError(t('ui.js.chat_regen_no_user_msg', null, 'Could not find the user message to regenerate'));
       return;
     }
 
@@ -3996,7 +3997,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     // because the attachments themselves are the message. Bail only if there
     // is no text AND no attachments to send.
     if (!userText && !_pendingRegenAttachments.length) {
-      if (uiModule) uiModule.showError('Nothing to regenerate — the user message has no text and no attachments');
+      if (uiModule) uiModule.showError(t('ui.js.chat_nothing_to_regenerate', null, 'Nothing to regenerate — the user message has no text and no attachments'));
       return;
     }
 
@@ -4040,7 +4041,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
     } catch (err) {
       console.error('Regenerate failed:', err);
-      if (uiModule) uiModule.showError('Regenerate failed: ' + err.message);
+      if (uiModule) uiModule.showError(t('ui.js.chat_regenerate_failed', { error: err.message }, 'Regenerate failed: {error}'));
     }
   }
 
@@ -4202,10 +4203,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
       await sessionModule.loadSessions();
       await sessionModule.selectSession(data.id);
-      if (uiModule) uiModule.showToast(`Forked → ${data.name}`);
+      if (uiModule) uiModule.showToast(t('ui.js.chat_forked', { name: data.name }, 'Forked → {name}'));
     } catch (err) {
       console.error('Fork failed:', err);
-      if (uiModule) uiModule.showError('Fork failed: ' + err.message);
+      if (uiModule) uiModule.showError(t('ui.js.chat_fork_failed', { error: err.message }, 'Fork failed: {error}'));
     }
   }
 
@@ -4540,7 +4541,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       // error output shown before a model was selected, #1428). Just remove the
       // DOM so the "x" works regardless.
       domToRemove.forEach(el => el.remove());
-      if (uiModule) uiModule.showToast('Message deleted');
+      if (uiModule) uiModule.showToast(t('ui.js.chat_message_deleted', null, 'Message deleted'));
       return;
     }
 
@@ -4552,10 +4553,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       });
       if (!res.ok) throw new Error('Server error ' + res.status);
       domToRemove.forEach(el => el.remove());
-      if (uiModule) uiModule.showToast('Message deleted');
+      if (uiModule) uiModule.showToast(t('ui.js.chat_message_deleted', null, 'Message deleted'));
     } catch (err) {
       console.error('Delete failed:', err);
-      if (uiModule) uiModule.showError('Delete failed: ' + err.message);
+      if (uiModule) uiModule.showError(t('ui.js.chat_delete_failed', { error: err.message }, 'Delete failed: {error}'));
     }
   }
 
@@ -4611,7 +4612,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (newContent === originalRaw) { cleanup(); return; }
 
       const msgId = msgElement.dataset.dbId;
-      if (!msgId) { if (uiModule) uiModule.showError('Cannot edit: message ID not found'); cleanup(); return; }
+      if (!msgId) { if (uiModule) uiModule.showError(t('ui.js.chat_cannot_edit_no_id', null, 'Cannot edit: message ID not found')); cleanup(); return; }
 
       const sessionId = sessionModule.getCurrentSessionId();
       if (!sessionId) { cleanup(); return; }
@@ -4637,10 +4638,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         }
 
         cleanup();
-        if (uiModule) uiModule.showToast('Message edited');
+        if (uiModule) uiModule.showToast(t('ui.js.chat_message_edited', null, 'Message edited'));
       } catch (err) {
         console.error('Edit failed:', err);
-        if (uiModule) uiModule.showError('Edit failed: ' + err.message);
+        if (uiModule) uiModule.showError(t('ui.js.chat_edit_failed', { error: err.message }, 'Edit failed: {error}'));
       }
     });
   }
@@ -4659,7 +4660,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     const oldHtml = aiMsgElement.querySelector('.body')?.innerHTML || '';
 
     if (!oldRaw.trim()) {
-      if (uiModule) uiModule.showError('No text to rewrite');
+      if (uiModule) uiModule.showError(t('ui.js.chat_no_text_to_rewrite', null, 'No text to rewrite'));
       return;
     }
 
@@ -4801,7 +4802,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       _killRwSpin();
       // Restore original content on failure
       if (bodyEl) bodyEl.innerHTML = oldHtml;
-      if (uiModule) uiModule.showError('Rewrite failed: ' + err.message);
+      if (uiModule) uiModule.showError(t('ui.js.chat_rewrite_failed', { error: err.message }, 'Rewrite failed: {error}'));
     }
   }
 
@@ -4906,7 +4907,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       }
     } catch (e) {
       console.error('open attachment as document failed', e);
-      import('./ui.js').then(m => m.showError && m.showError('Could not open attachment')).catch(() => {});
+      import('./ui.js').then(m => m.showError && m.showError(t('ui.js.chat_attachment_open_failed', null, 'Could not open attachment'))).catch(() => {});
       window.open(url, '_blank');  // fallback so the file is still reachable
     }
   }
