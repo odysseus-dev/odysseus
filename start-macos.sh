@@ -162,6 +162,14 @@ fi
 echo "▶ Preparing Odysseus…"
 ODYSSEUS_SKIP_RUN_HINT=1 ./venv/bin/python setup.py
 
+# Setup-only mode (used by service-macos.sh install): everything is prepared,
+# skip the foreground launch.
+if [ -n "$ODYSSEUS_SETUP_ONLY" ]; then
+  trap - ERR
+  echo "✓ Setup complete."
+  exit 0
+fi
+
 # Local provider bootstrap.
 #     On Apple Silicon macOS, Apfel is treated as a sibling local model server
 #     to Ollama: if Homebrew has it installed, we start its OpenAI-compatible

@@ -915,16 +915,13 @@ def _detect_provider(url: str) -> str:
         return "openrouter"
     if _host_match(url, "groq.com"):
         return "groq"
-<<<<<<< ours
     if _host_match(url, "nvidia.com"):
         return "nvidia"
+    if _host_match(url, "perplexity.ai"):
+        return "perplexity"
     from src.chatgpt_subscription import is_chatgpt_subscription_base
     if is_chatgpt_subscription_base(url):
         return "chatgpt-subscription"
-=======
-    if _host_match(url, "perplexity.ai"):
-        return "perplexity"
->>>>>>> theirs
     from src.copilot import is_copilot_base
     if is_copilot_base(url):
         return "copilot"
@@ -1004,12 +1001,9 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
     if _host_match(url, "opencode.ai/zen"): return "OpenCode Zen"
     if _host_match(url, "groq.com"): return "Groq"
-<<<<<<< ours
+    if _host_match(url, "perplexity.ai"): return "Perplexity"
     from src.chatgpt_subscription import is_chatgpt_subscription_base
     if is_chatgpt_subscription_base(url): return "ChatGPT Subscription"
-=======
-    if _host_match(url, "perplexity.ai"): return "Perplexity"
->>>>>>> theirs
     from src.copilot import is_copilot_base
     if is_copilot_base(url): return "GitHub Copilot"
     if _host_match(url, "mistral.ai"): return "Mistral"
