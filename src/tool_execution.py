@@ -451,6 +451,82 @@ async def _document_tool_dispatch(
     return None
 
 
+# Filesystem extensions whose write_file outputs are surfaced as documents in
+# the web UI (the file panel lists DB-backed Document rows, not the filesystem,
+# so a bare write_file to /tmp would otherwise be invisible — the "where are my
+# files" problem). Binaries / unknown types are skipped.
+_DOC_REGISTER_LANG = {
+    ".md": "markdown", ".markdown": "markdown", ".txt": "text", ".rst": "text",
+    ".log": "text", ".json": "json", ".yaml": "yaml", ".yml": "yaml",
+    ".toml": "text", ".ini": "text", ".csv": "text", ".html": "html",
+    ".htm": "html", ".xml": "xml", ".svg": "svg", ".py": "python",
+    ".js": "javascript", ".ts": "javascript", ".sh": "bash", ".sql": "sql",
+    ".css": "css",
+}
+_DOC_REGISTER_MAX_CHARS = 200_000
+
+
+async def register_file_as_document(path: str, body: str,
+                                    session_id: Optional[str] = None,
+                                    owner: Optional[str] = None) -> Optional[str]:
+    """Surface a file written by `write_file` as a session Document so it shows
+    in the UI. Title = basename; a second write to the same name updates the
+    existing doc as a new version (no duplicates). Best-effort; returns the
+    title on success, else None."""
+    import uuid as _uuid
+    if not session_id:
+        return None
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in _DOC_REGISTER_LANG:
+        return None
+    if body and len(body) > _DOC_REGISTER_MAX_CHARS:
+        return None
+    title = os.path.basename(path) or path
+    language = _DOC_REGISTER_LANG[ext]
+    try:
+        from src.database import SessionLocal, Document, DocumentVersion, Session as DbSession
+        db = SessionLocal()
+        try:
+            _sess = db.query(DbSession).filter(DbSession.id == session_id).first()
+            if owner is not None and (not _sess or _sess.owner != owner):
+                return None
+            _owner = _sess.owner if _sess else None
+            existing = (db.query(Document)
+                        .filter(Document.session_id == session_id,
+                                Document.title == title,
+                                Document.archived == False)  # noqa: E712
+                        .order_by(Document.created_at.desc()).first())
+            if existing:
+                existing.current_content = body
+                existing.language = language
+                existing.version_count = (existing.version_count or 1) + 1
+                existing.is_active = True
+                db.add(DocumentVersion(id=str(_uuid.uuid4()), document_id=existing.id,
+                                       version_number=existing.version_count, content=body,
+                                       summary="Updated via write_file", source="ai"))
+                db.commit()
+            else:
+                doc_id = str(_uuid.uuid4())
+                db.add(Document(id=doc_id, session_id=session_id, title=title,
+                                language=language, current_content=body,
+                                version_count=1, is_active=True, owner=_owner))
+                db.add(DocumentVersion(id=str(_uuid.uuid4()), document_id=doc_id,
+                                       version_number=1, content=body,
+                                       summary="Created via write_file", source="ai"))
+                db.commit()
+            try:
+                from src.event_bus import fire_event
+                fire_event("document_created", _owner)
+            except Exception:
+                pass
+            return title
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(f"register_file_as_document failed for {path}: {e}")
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
@@ -515,6 +591,38 @@ async def execute_tool_block(
                 return desc, result
         except (ValueError, TypeError):
             pass
+
+    # Tool-name-as-shell-command mistake: model writes ```bash\nwrite_file /path\n```
+    # (or read_file/create_document/...) instead of a ```write_file fenced block.
+    # The shell would just say "command not found", which the model misreads as a
+    # real failure. Catch it and teach the correct format.
+    _NON_SHELL_TOOLS = {"write_file", "read_file", "create_document", "edit_document",
+                        "update_document", "edit_file", "manage_notes", "manage_memory"}
+    if tool in ("bash", "sh", "shell"):
+        _first_tok = (content.strip().split() or [""])[0]
+        if _first_tok in _NON_SHELL_TOOLS:
+            return (f"{tool}: misformatted tool call", {
+                "error": (
+                    f"`{_first_tok}` is a TOOL, not a shell command — don't run it inside "
+                    f"a ```{tool} block. Call it as its own fenced block, e.g.:\n"
+                    "```write_file\n/abs/path/to/file.md\n<file contents here>\n```\n"
+                    "(first line = absolute path, everything after = the file body)."),
+                "exit_code": 1,
+            })
+
+    # write_file with no body (path-only or empty) — the model fumbled the format.
+    if tool == "write_file":
+        _wlines = content.split("\n", 1)
+        if not _wlines[0].strip() or len(_wlines) < 2 or not _wlines[1].strip():
+            return ("write_file: misformatted tool call", {
+                "error": (
+                    "write_file needs the path on the FIRST line and the file body on the "
+                    "following lines, all inside one ```write_file block:\n"
+                    "```write_file\n/abs/path/to/file.md\n# Title\n\nbody...\n```\n"
+                    "Use an absolute path. For a document the user should see in the UI, "
+                    "prefer ```create_document."),
+                "exit_code": 1,
+            })
 
     # Reject tools that the user has disabled for this request
     if disabled_tools and tool in disabled_tools:
@@ -662,6 +770,20 @@ async def execute_tool_block(
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
         result = await _call_mcp_tool(tool, content, progress_cb=progress_cb)
+        # Surface a written text file in the UI: the file panel lists DB-backed
+        # documents, not the filesystem, so a bare write_file to /tmp is
+        # otherwise invisible. Best-effort.
+        if (tool == "write_file" and session_id and isinstance(result, dict)
+                and result.get("exit_code") == 0):
+            try:
+                _wl = content.split("\n", 1)
+                _reg = await register_file_as_document(
+                    _wl[0].strip(), _wl[1] if len(_wl) > 1 else "",
+                    session_id=session_id, owner=owner)
+                if _reg:
+                    result = {**result, "registered_document": _reg}
+            except Exception:
+                logger.debug("write_file doc registration failed", exc_info=True)
     elif tool in ("grep", "glob", "ls"):
         # Code-navigation tools — no MCP server; run the direct implementation.
         first_line = content.split(chr(10))[0][:80]

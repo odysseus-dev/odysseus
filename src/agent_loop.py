@@ -183,7 +183,8 @@ _AGENT_RULES = """\
 - After a tool succeeds, do not second-guess it; reply with one short confirmation unless more work remains.
 - After a tool fails, retry with a concrete fix or state what is blocking you.
 - Finish only when the user's concrete request is actually done, or clearly state that you are blocked.
-- When the user asks for the result AS A FILE / REPORT / DOCUMENT ("write a report", "save to an .md file", "give me a summary document"), the deliverable IS the file — produce it with `write_file` (a concrete path) or `create_document`, then say where it is. Do NOT substitute a short inline summary; a turn asked for a report file but that only typed prose is NOT done.
+- When the user asks for the result AS A FILE / REPORT / DOCUMENT ("write a report", "save to an .md file", "give me a summary document"), the deliverable IS the file — produce it with `write_file` (a concrete path) or `create_document`, then say where it is. Do NOT substitute a short inline summary; a turn asked for a report file but that only typed prose is NOT done. For something the user should browse/keep, prefer `create_document` (it shows up in the UI).
+- PATHS: your shell / `write_file` working directory is the app's own data dir, NOT the user's folder. ALWAYS use ABSOLUTE paths for files you create or look for (e.g. `/tmp/x/report.md`); `cd` into the target folder before operating in it; and to check your own output, look at the absolute path you wrote to — never assume `.` or `find .` covers the user's directory.
 - User identity facts/preferences ("my name is X", "call me X", "I live in X") use `manage_memory`, not contacts.
 """
 
@@ -197,7 +198,8 @@ _API_AGENT_RULES = """\
 - After a tool succeeds, do not second-guess it; reply with one short confirmation unless more work remains.
 - After a tool fails, retry with a concrete fix or state what is blocking you.
 - Finish only when the user's concrete request is actually done, or clearly state that you are blocked.
-- When the user asks for the result AS A FILE / REPORT / DOCUMENT ("write a report", "save to an .md file", "give me a summary document"), the deliverable IS the file — produce it with `write_file` (a concrete path) or `create_document`, then say where it is. Do NOT substitute a short inline summary; a turn asked for a report file but that only typed prose is NOT done.
+- When the user asks for the result AS A FILE / REPORT / DOCUMENT ("write a report", "save to an .md file", "give me a summary document"), the deliverable IS the file — produce it with `write_file` (a concrete path) or `create_document`, then say where it is. Do NOT substitute a short inline summary; a turn asked for a report file but that only typed prose is NOT done. For something the user should browse/keep, prefer `create_document` (it shows up in the UI).
+- PATHS: your shell / `write_file` working directory is the app's own data dir, NOT the user's folder. ALWAYS use ABSOLUTE paths for files you create or look for (e.g. `/tmp/x/report.md`); `cd` into the target folder before operating in it; and to check your own output, look at the absolute path you wrote to — never assume `.` or `find .` covers the user's directory.
 - User identity facts/preferences ("my name is X", "call me X", "I live in X") use `manage_memory`, not contacts.
 """
 
