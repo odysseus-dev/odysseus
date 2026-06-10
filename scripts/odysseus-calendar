@@ -75,6 +75,14 @@ def _calendar_name(ev: "CalendarEvent") -> str:
     return name if isinstance(name, str) else ""
 
 
+def _calendar_event_count(cal: "CalendarCal") -> int:
+    events = getattr(cal, "events", None)
+    try:
+        return len(events) if events is not None else 0
+    except TypeError:
+        return 0
+
+
 def _serialize_event(ev: "CalendarEvent") -> dict:
     return {
         "uid": ev.uid,
@@ -147,7 +155,7 @@ def cmd_calendars(args) -> None:
                 "name": c.name,
                 "color": c.color or "",
                 "source": c.source or "local",
-                "event_count": len(c.events),
+                "event_count": _calendar_event_count(c),
             } for c in cals
         ], args)
     finally:
