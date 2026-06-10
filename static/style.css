@@ -13809,6 +13809,14 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   margin: 0.6em 0;
   opacity: 0.8;
 }
+.doc-md-preview img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.6em 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
 
 /* ---- Active state for doc action icon buttons ---- */
 .doc-action-icon-btn.active {

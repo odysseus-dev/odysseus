@@ -535,6 +535,22 @@ export function mdToHtml(src, opts) {
     '$1[#$2](#$2)',
   );
 
+  // Convert markdown images ![alt](url) BEFORE the link pass — otherwise the
+  // link regex below consumes the [alt](url) tail and leaves a stray "!". The
+  // tag is stashed as an allowed-HTML placeholder so it survives the later
+  // <>-escaping pass (same path as <a>/<details>); sanitizeAllowedHtml scrubs
+  // event-handler attrs and neutralizes javascript:/data: URLs on restore, so
+  // an `onerror=` payload can't ride in. safeLinkUrl pins src to http/https.
+  s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (match, alt, url) => {
+    const safeUrl = safeLinkUrl(url);
+    if (!safeUrl) return escapeHtml(alt);
+    const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
+    allowedHtmlBlocks.push(sanitizeAllowedHtml(
+      `<img src="${escapeHtml(safeUrl)}" alt="${escapeHtml(alt)}" loading="lazy">`
+    ));
+    return placeholder;
+  });
+
   // Convert markdown links [text](url) to clickable links
   // Internal #hash links navigate in-page; external links open in new tab
   s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {

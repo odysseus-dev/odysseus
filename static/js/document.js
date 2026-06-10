@@ -2678,9 +2678,70 @@ import * as Modals from './modalManager.js';
   }
 
   async function _handleAttachUpload(e) {
-    const files = e.target.files;
+    // Snapshot to a real array BEFORE resetting the input — `e.target.files`
+    // is a live FileList that `e.target.value = ''` empties, which would drop
+    // the selection before the upload runs.
+    const files = Array.from(e.target.files || []);
     e.target.value = ''; // reset for next upload
-    await _uploadComposeFiles(files);
+    // Email compose docs collect attachments as chips (sent with the message).
+    // Every other doc type is a text editor — drop the file inline as a link
+    // (image markdown only for images in a markdown doc, where it renders) so
+    // the paperclip actually inserts something (issue #2271: attaching an image
+    // to a document silently did nothing for non-email docs).
+    const doc = docs.get(activeDocId);
+    if (doc && doc.language === 'email') {
+      await _uploadComposeFiles(files);
+    } else {
+      await _insertUploadedFiles(files);
+    }
+  }
+
+  // Upload picked files to the shared /api/upload store and insert a reference
+  // at the caret — image markdown for images (renders in preview), a plain link
+  // for everything else. Mirrors the upload convention used by notes/calendar.
+  async function _insertUploadedFiles(files) {
+    const list = Array.from(files || []);
+    if (list.length === 0) return;
+    const ta = document.getElementById('doc-editor-textarea');
+    if (!ta) return;
+    // Only markdown docs render the inserted reference. CSV/SVG are structured
+    // source (table / XML) — injecting a markdown line corrupts them, so skip
+    // the inline embed there. Image markdown is reserved for markdown docs;
+    // every other text/code doc gets a plain link, inert but a valid reference.
+    const doc = docs.get(activeDocId);
+    const lang = ((doc && doc.language) || 'markdown').toLowerCase();
+    if (lang === 'csv' || lang === 'svg') {
+      if (uiModule && uiModule.showToast) uiModule.showToast(`Can't embed attachments in a ${lang.toUpperCase()} document`);
+      return;
+    }
+    const isMarkdownDoc = lang === 'markdown';
+    const snippets = [];
+    for (const file of list) {
+      try {
+        const fd = new FormData();
+        fd.append('files', file);
+        const res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: fd, credentials: 'same-origin' });
+        const data = await res.json();
+        const meta = data.files && data.files[0];
+        if (!meta || !meta.id) throw new Error(data.error || 'Upload failed');
+        const url = `${API_BASE}/api/upload/${meta.id}`;
+        // Strip []() from the label so a stray bracket in the filename can't
+        // break the markdown.
+        const label = (meta.name || file.name || 'file').replace(/[\[\]()]/g, '');
+        // Image markdown only renders in markdown preview; elsewhere a plain
+        // link avoids emitting a broken `![]` that never resolves.
+        const isImage = isMarkdownDoc && (meta.mime || file.type || '').startsWith('image/');
+        snippets.push(isImage ? `![${label}](${url})` : `[${label}](${url})`);
+      } catch (err) {
+        if (uiModule && uiModule.showError) uiModule.showError(`Failed to attach ${file.name}: ${err.message || err}`);
+      }
+    }
+    if (snippets.length === 0) return;
+    // Land the reference on its own line so images render as blocks. _replaceRange
+    // fires an input event, which drives the existing autosave/auto-create path.
+    const start = ta.selectionStart, end = ta.selectionEnd;
+    const lead = start > 0 && ta.value[start - 1] !== '\n' ? '\n' : '';
+    _replaceRange(ta, start, end, lead + snippets.join('\n') + '\n');
   }
 
   function _renderComposeAttachments() {
