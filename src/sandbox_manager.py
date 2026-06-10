@@ -190,7 +190,10 @@ def run_sync(
             network=network, memory=memory, cpus=cpus, pids=pids,
         )
         try:
-            result = subprocess.run(
+            # argv is a fixed list (no shell=True); the snippet is written to a
+            # file and mounted read-only, never passed as an argument, so user
+            # input cannot inject extra commands.
+            result = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
                 argv, capture_output=True, text=True, timeout=timeout,
             )
         except subprocess.TimeoutExpired:

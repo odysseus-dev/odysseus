@@ -83,6 +83,24 @@ def test_missing_image_without_autobuild(monkeypatch):
     assert "not built" in out
 
 
+def test_timeout_cleans_up_container(monkeypatch):
+    # A long-running snippet must time out and force-remove its container.
+    monkeypatch.setattr(sb, "docker_available", lambda: True)
+    monkeypatch.setattr(sb, "image_exists", lambda: True)
+
+    def fake_run(argv, **kwargs):
+        raise sb.subprocess.TimeoutExpired(cmd=argv, timeout=kwargs.get("timeout"))
+
+    removed = []
+    monkeypatch.setattr(sb.subprocess, "run", fake_run)
+    monkeypatch.setattr(sb, "_force_remove", lambda name: removed.append(name))
+
+    out, ok = sb.run_sync("while True: pass", language="python", timeout=1)
+    assert ok is False
+    assert "timed out" in out
+    assert len(removed) == 1  # the leftover container was cleaned up
+
+
 # ── builtin action registration ───────────────────────────────────────────
 
 def test_run_sandbox_action_registered():

@@ -7,15 +7,21 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Python 3, pip, and Node.js 20 (NodeSource) + npm. Cleaned up to keep the image
-# small.
+# Python 3, pip, and Node.js 20 + npm. Node comes from NodeSource via its signed
+# apt repo (import key -> add signed source) rather than `curl | bash`, so the
+# build is deterministic and not exposed to an upstream install script.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         python3 \
         python3-pip \
         ca-certificates \
         curl \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+        gnupg \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+        | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+        > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
