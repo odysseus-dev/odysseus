@@ -213,6 +213,7 @@ HOUSEKEEPING_DEFAULTS = {
     "classify_events":      {"name": "Calendar Classify Events", "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 6,18 * * *", "ship_paused": True, "legacy_names": ["Classify Calendar Events"]},
     "check_email_urgency":   {"name": "Email Tags",               "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 * * * *", "ship_paused": True, "old_cron_expressions": ["*/15 * * * *"], "legacy_names": ["Email Triage", "Urgent Email"]},
     "audit_skills":          {"name": "Skills Audit",             "trigger_type": "event", "trigger_event": "skill_added", "trigger_count": 5, "schedule": None, "scheduled_time": None, "cron_expression": None, "legacy_names": ["Audit Skills"]},
+    "handle_agent_signal":   {"name": "Agent Signal Handler",       "trigger_type": "event", "trigger_event": "email_received", "trigger_count": 1, "schedule": None, "scheduled_time": None, "cron_expression": None, "legacy_names": ["Handle Email Signal"], "ship_paused": True},
 }
 
 RETIRED_HOUSEKEEPING_ACTIONS = frozenset({
@@ -973,6 +974,7 @@ class TaskScheduler:
         "test_skills",
         "audit_skills",
         "consolidate_memory",
+        "handle_agent_signal",
     })
 
     def _task_needs_model_slot(self, task_id: str) -> bool:
@@ -1022,6 +1024,30 @@ class TaskScheduler:
                 self._set_run_progress(run_id, message)
 
             kwargs = {"owner": task.owner, "task_name": task.name, "progress_cb": _progress}
+
+            # Forward event payload so builtin actions can access event context.
+            # The payload is consumed once (cleared after read) to prevent
+            # re-injection on retry.
+            trigger_payload = getattr(task, "trigger_payload", None)
+            if trigger_payload:
+                try:
+                    kwargs["payload"] = json.loads(trigger_payload) if isinstance(trigger_payload, str) else trigger_payload
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                # Clear after forwarding so the action doesn't see stale data
+                try:
+                    task.trigger_payload = None
+                    # We need a DB session to persist this; use a short-lived one
+                    from core.database import SessionLocal
+                    _db = SessionLocal()
+                    try:
+                        _db.merge(task)
+                        _db.commit()
+                    finally:
+                        _db.close()
+                except Exception:
+                    pass
+
             if task.action in ("run_script", "run_local", "ssh_command") and task.prompt:
                 kwargs["script" if task.action in ("run_script", "run_local") else "command"] = task.prompt
             # cookbook_serve carries its JSON config in task.prompt — feed it
@@ -1366,6 +1392,38 @@ class TaskScheduler:
                     from src.tool_index import BUILTIN_TOOL_DESCRIPTIONS
                     all_tools = set(BUILTIN_TOOL_DESCRIPTIONS.keys())
                     disabled_tools = all_tools - set(enabled)
+            except Exception:
+                pass
+
+        # ── Inject event payload context for agentic event-triggered tasks ──
+        # If this task was triggered by fire_event() with a payload, the payload
+        # is stored in task.trigger_payload. Inject it into the system prompt so
+        # the agent understands why it was invoked and can act on the context.
+        trigger_payload = getattr(task, "trigger_payload", None)
+        if trigger_payload:
+            try:
+                payload_data = json.loads(trigger_payload) if isinstance(trigger_payload, str) else trigger_payload
+                if payload_data:
+                    event_context = json.dumps(payload_data, indent=2, default=str)
+                    system_prompt += (
+                        f"\n\n## Event Trigger Context\n"
+                        f"This task was triggered by an event. Here is the context payload:\n"
+                        f"```json\n{event_context}\n```\n"
+                        f"Use your available tools to handle this appropriately. "
+                        f"You can read the related email, check the calendar, create notes, "
+                        f"send replies, or take any other action that fits the context. "
+                        f"After you have processed this event, conclude with what you did."
+                    )
+                    logger.info(
+                        f"Injected event payload into task '{task.name}': "
+                        f"{json.dumps({k: v for k, v in payload_data.items() if k != 'body'})[:200]}"
+                    )
+            except (json.JSONDecodeError, TypeError, Exception) as _pex:
+                logger.debug(f"Could not parse trigger_payload for task '{task.name}': {_pex}")
+            # Clear payload after reading so it is not re-injected on retry
+            try:
+                task.trigger_payload = None
+                db.commit()
             except Exception:
                 pass
 
@@ -1815,7 +1873,15 @@ class TaskScheduler:
             (RESEARCH_DATA_DIR / f"{session_id}.json").write_text(json.dumps(payload), encoding="utf-8")
             try:
                 from src.event_bus import fire_event
-                fire_event("research_completed", task.owner or None)
+                fire_event("research_completed", task.owner or None, payload={
+                    "event": "research_completed",
+                    "session_id": session_id,
+                    "query": (task.prompt or task.name or "Scheduled research")[:200],
+                    "category": "scheduled",
+                    "source_count": len(payload.get("sources", [])),
+                    "task_id": task.id,
+                    "task_name": task.name,
+                })
             except Exception:
                 logger.debug("research_completed event dispatch failed", exc_info=True)
         except Exception as e:

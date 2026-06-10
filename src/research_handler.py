@@ -632,7 +632,14 @@ class ResearchHandler:
             logger.info(f"Research result saved to {path}")
             try:
                 from src.event_bus import fire_event
-                fire_event("research_completed", entry.get("owner") or None)
+                fire_event("research_completed", entry.get("owner") or None, payload={
+                    "event": "research_completed",
+                    "session_id": session_id,
+                    "query": (entry.get("query") or "")[:200],
+                    "category": entry.get("category") or "",
+                    "source_count": len(sources),
+                    "status": entry.get("status", "completed"),
+                })
             except Exception:
                 logger.debug("research_completed event dispatch failed", exc_info=True)
         except Exception as e:

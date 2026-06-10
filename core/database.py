@@ -578,6 +578,7 @@ class ScheduledTask(TimestampMixin, Base):
     max_steps      = Column(Integer, nullable=True)       # max agent loop iterations (null=unlimited)
     email_results  = Column(Boolean, default=True)        # email results to character.email_to
     notifications_enabled = Column(Boolean, default=True) # per-task on/off for completion notifications
+    trigger_payload = Column(Text, nullable=True)            # JSON payload carried from fire_event() to task execution
 
     session = relationship("Session", backref=backref("scheduled_tasks", cascade="save-update, merge"))
     then_task = relationship("ScheduledTask", remote_side=[id], foreign_keys=[then_task_id])
@@ -1719,6 +1720,19 @@ def _migrate_seed_email_account():
         logging.getLogger(__name__).warning(f"seed email account migration: {e}")
 
 
+def _migrate_add_trigger_payload():
+    """Add trigger_payload column to scheduled_tasks for event bus payload forwarding."""
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(scheduled_tasks)"))]
+            if "trigger_payload" not in cols:
+                conn.execute(text("ALTER TABLE scheduled_tasks ADD COLUMN trigger_payload TEXT"))
+                conn.commit()
+                logging.getLogger(__name__).info("Added trigger_payload column to scheduled_tasks")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"trigger_payload migration: {e}")
+
+
 # WARNING: Foreign-key enforcement is enabled globally for all SQLite connections.
 # Any future migrations or schema changes that temporarily violate foreign-key
 # constraints will fail. To perform such operations, foreign_keys must be
@@ -1758,6 +1772,7 @@ def init_db():
     _migrate_add_mcp_oauth_tokens_column()
     _migrate_add_task_v2_columns()
     _migrate_add_notifications_enabled()
+    _migrate_add_trigger_payload()
     _migrate_drop_ping_notes_tasks()
     _migrate_add_crew_member_id()
     _migrate_add_assistant_columns()

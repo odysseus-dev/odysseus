@@ -438,7 +438,13 @@ async def do_create_session(content: str, session_id: Optional[str] = None, owne
             sess.headers = headers
         try:
             from src.event_bus import fire_event
-            fire_event("session_created", owner)
+            fire_event("session_created", owner, payload={
+                "event": "session_created",
+                "session_id": sid,
+                "name": name[:100],
+                "model": model,
+                "endpoint_url": url,
+            })
         except Exception:
             logger.debug("session_created event dispatch failed", exc_info=True)
 
@@ -921,7 +927,15 @@ async def do_manage_session(content: str, session_id: Optional[str] = None, owne
                 new_sess.add_message(InMemoryMsg(msg["role"], msg["content"]))
             try:
                 from src.event_bus import fire_event
-                fire_event("session_created", owner)
+                fire_event("session_created", owner, payload={
+                    "event": "session_created",
+                    "session_id": new_sid,
+                    "name": f"Fork: {source.name}"[:100],
+                    "model": source.model,
+                    "endpoint_url": source.endpoint_url,
+                    "source_session": target_sid,
+                    "fork": True,
+                })
             except Exception:
                 logger.debug("session_created event dispatch failed", exc_info=True)
 
@@ -1005,7 +1019,12 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
                 pass
         try:
             from src.event_bus import fire_event
-            fire_event("memory_added", owner)
+            fire_event("memory_added", owner, payload={
+                "event": "memory_added",
+                "memory_id": entry["id"],
+                "category": category,
+                "text": text[:300],
+            })
         except Exception:
             logger.debug("memory_added event dispatch failed", exc_info=True)
 

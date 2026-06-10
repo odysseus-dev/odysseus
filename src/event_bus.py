@@ -2,7 +2,10 @@
 event_bus.py
 
 Lightweight event bus for triggering automation tasks based on events
-like session creation, message sends, etc.
+like session creation, message sends, etc. Supports payload propagation:
+callers pass structured data (e.g., email UID, subject, from) that gets
+stored on the triggered ScheduledTask and injected into the agent context
+when the task executes.
 """
 
 import asyncio
@@ -10,7 +13,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from src.constants import AUTH_FILE
 
@@ -30,17 +33,26 @@ def get_task_scheduler():
     return _task_scheduler
 
 
-def fire_event(event_name: str, owner: Optional[str] = None):
+def fire_event(event_name: str, owner: Optional[str] = None, payload: Optional[Dict[str, Any]] = None):
     """Fire an event — increments counters and triggers tasks that hit threshold.
+
+    Args:
+        event_name: Name of the event (e.g. "email_received", "session_created")
+        owner: Username of the owner/triggering user
+        payload: Optional structured data carried with the event. Stored on
+                 the triggered ScheduledTask and injected into the agent's
+                 context when the task executes. Examples:
+                 - email_received: {"uid": "90186", "subject": "...", "from": "...", "account": "gmail"}
+                 - session_created: {"session_id": "abc123", "model": "..."}
 
     Safe to call from both sync and async contexts.
     """
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_handle_event(event_name, owner))
+        loop.create_task(_handle_event(event_name, owner, payload))
     except RuntimeError:
         # No running loop — run in a new one (shouldn't happen in FastAPI)
-        asyncio.run(_handle_event(event_name, owner))
+        asyncio.run(_handle_event(event_name, owner, payload))
 
 
 def _resolve_event_owner(owner: Optional[str]) -> Optional[str]:
@@ -69,8 +81,13 @@ def _resolve_event_owner(owner: Optional[str]) -> Optional[str]:
     return None
 
 
-async def _handle_event(event_name: str, owner: Optional[str] = None):
-    """Process an event: increment counters, fire tasks that hit their threshold."""
+async def _handle_event(event_name: str, owner: Optional[str] = None, payload: Optional[Dict[str, Any]] = None):
+    """Process an event: increment counters, fire tasks that hit their threshold.
+
+    If a payload is provided, it is serialised to JSON and stored on each
+    matching task's ``trigger_payload`` column. The payload overwrites any
+    previous value so the task always receives the *latest* event context.
+    """
     from core.database import SessionLocal, ScheduledTask
 
     resolved_owner = _resolve_event_owner(owner)
@@ -90,9 +107,18 @@ async def _handle_event(event_name: str, owner: Optional[str] = None):
         if not tasks:
             return
 
+        # Serialise the payload once so we can store it on every matching task
+        payload_json = json.dumps(payload) if payload is not None else None
+
         for task in tasks:
             threshold = task.trigger_count or 1
             task.trigger_counter = (task.trigger_counter or 0) + 1
+
+            # Store the event payload so the task handler can access it.
+            # Overwrites the previous payload so the task always gets the
+            # *most recent* event context at the time the counter hit.
+            if payload_json is not None:
+                task.trigger_payload = payload_json
 
             if task.trigger_counter >= threshold:
                 task.trigger_counter = 0

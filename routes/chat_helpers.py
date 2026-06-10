@@ -343,7 +343,12 @@ def fire_message_event(request, webhook_manager, session_id: str, sess, message:
         }))
     from src.event_bus import fire_event
     user = get_current_user(request)
-    fire_event("message_sent", user)
+    fire_event("message_sent", user, payload={
+        "event": "message_sent",
+        "session_id": session_id,
+        "model": getattr(sess, "model", None) or "",
+        "message_preview": message[:200],
+    })
 
 
 def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:

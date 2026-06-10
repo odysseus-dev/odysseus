@@ -439,7 +439,13 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             })
         # Fire event for automation tasks
         from src.event_bus import fire_event
-        fire_event("session_created", user)
+        fire_event("session_created", user, payload={
+            "event": "session_created",
+            "session_id": sid,
+            "name": (session.name or "")[:100],
+            "model": model_to_use or "",
+            "endpoint_url": endpoint_url or "",
+        })
         return SessionResponse(
             id=sid,
             name=session.name,
@@ -873,7 +879,13 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         session.headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
         session_manager.save_sessions()
         from src.event_bus import fire_event
-        fire_event("session_created", user)
+        fire_event("session_created", user, payload={
+            "event": "session_created",
+            "session_id": sid,
+            "name": "",
+            "model": model or "",
+            "endpoint_url": "https://api.openai.com/v1/chat/completions",
+        })
         return {"id": sid, "name": "", "model": model}
     
     @router.post("/session/{session_id}/important")

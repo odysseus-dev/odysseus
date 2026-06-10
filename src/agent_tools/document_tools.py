@@ -318,7 +318,13 @@ class CreateDocumentTool:
             set_active_document(doc_id)
             try:
                 from src.event_bus import fire_event
-                fire_event("document_created", _owner)
+                fire_event("document_created", _owner, payload={
+                    "event": "document_created",
+                    "doc_id": doc_id,
+                    "title": (title or "Untitled")[:200],
+                    "language": language,
+                    "session_id": session_id,
+                })
             except Exception:
                 logger.debug("document_created event dispatch failed", exc_info=True)
 

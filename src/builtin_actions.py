@@ -2219,6 +2219,191 @@ async def action_cookbook_serve(
     return f"Launched {repo_id} (session {sid})", True
 
 
+async def action_handle_agent_signal(
+    owner: str,
+    task_name: str = "",
+    progress_cb=None,
+    payload: dict | None = None,
+    **kwargs,
+) -> Tuple[str, bool]:
+    """Handle an event signal with context-aware processing.
+
+    This action is the bridge between the event bus and the agent.
+    When an event fires with a structured payload (e.g., ``email_received``
+    with uid, subject, from), this action uses the payload to decide what
+    to do and returns a meaningful result.
+
+    The payload is forwarded automatically by the task scheduler when the
+    task's ``trigger_payload`` column is set (via ``fire_event(payload=...)``).
+    """
+    if not payload:
+        raise TaskNoop("No payload to process")
+
+    event = payload.get("event", "unknown")
+    logger.info(
+        "handle_agent_signal: owner=%s event=%s payload_keys=%s",
+        owner, event, list(payload.keys()),
+    )
+
+    # Route to the appropriate handler based on event type.
+    # Each handler can inspect the payload, invoke the LLM, and take action.
+    if event == "email_received":
+        return await _agent_handle_email_received(owner, payload, progress_cb)
+    elif event == "session_created":
+        return await _agent_handle_session_created(owner, payload, progress_cb)
+    elif event == "document_created":
+        return await _agent_handle_document_created(owner, payload, progress_cb)
+    elif event == "memory_added":
+        return await _agent_handle_memory_added(owner, payload, progress_cb)
+    elif event == "research_completed":
+        return await _agent_handle_research_completed(owner, payload, progress_cb)
+    else:
+        # Unknown event — log and no-op so we don't spam Activity
+        logger.debug("handle_agent_signal: unhandled event %s for %s", event, owner)
+        raise TaskNoop(f"No handler for event: {event}")
+
+
+async def _agent_handle_email_received(
+    owner: str, payload: dict, progress_cb=None,
+) -> Tuple[str, bool]:
+    """Process an email_received event.
+
+    Uses LLM to analyse the email subject/from, determine if it needs
+    immediate action, and logs the result to the assistant chat.
+    """
+    subject = payload.get("subject", "") or ""
+    from_name = payload.get("from_name", "") or ""
+    from_addr = payload.get("from_address", "") or ""
+    uid = payload.get("uid", "") or ""
+    account = payload.get("account", "default")
+    summary = payload.get("summary", "")
+
+    if not subject and not from_addr:
+        raise TaskNoop("email_received payload missing subject/from")
+
+    # Quick heuristic: skip obviously auto-generated mail
+    _skip_prefixes = ("noreply", "no-reply", "donotreply", "notifications", "mailer-daemon")
+    local_part = (from_addr or "").split("@", 1)[0].lower().replace(".", "")
+    if any(local_part.startswith(skip) for skip in _skip_prefixes):
+        logger.debug("email_received: skipped auto-generated from=%s subj=%s", from_addr, subject)
+        raise TaskNoop(f"Auto-generated email from {from_addr}: {subject[:60]}")
+
+    # Try to use the LLM for a quick triage
+    try:
+        from src.endpoint_resolver import resolve_endpoint
+        from src.llm_core import llm_call_async
+
+        url, model, headers = resolve_endpoint("utility", owner=owner)
+        if not url or not model:
+            url, model, headers = resolve_endpoint("default", owner=owner)
+
+        if url and model:
+            prompt = (
+                f"An email was received. Analyse it briefly and say if it needs action.\n\n"
+                f"From: {from_name} <{from_addr}>\n"
+                f"Subject: {subject}\n"
+                f"{'Summary: ' + summary[:800] if summary else ''}\n\n"
+                f"Reply with one of: NEEDS_ACTION (meeting request, question, task), "
+                f"INFORMATIONAL (newsletter, notification), or SKIP (spam, auto-generated). "
+                f"Then one sentence why."
+            )
+            result = await llm_call_async(
+                url=url, model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1, max_tokens=200, timeout=30,
+            )
+            verdict = (result or "").strip()[:300]
+            logger.info("email_received LLM verdict: %s", verdict)
+
+            # Log to assistant chat so the user sees the analysis
+            try:
+                from src.assistant_log import log_to_assistant
+                log_to_assistant(
+                    owner,
+                    f"📬 New email from {from_name}: \"{subject[:100]}\"\n"
+                    f"→ {verdict}",
+                    category="Email",
+                )
+            except Exception:
+                pass
+
+            return f"Email analysed: {verdict}", True
+    except Exception as e:
+        logger.debug("email_received LLM analysis failed: %s", e)
+
+    # Fallback: simple heuristic
+    _action_keywords = ["meeting", "question", "can you", "please", "urgent", "deadline",
+                        "confirm", "schedule", "appointment", "reply", "rsvp"]
+    _needs_action = any(kw in subject.lower() for kw in _action_keywords)
+
+    try:
+        from src.assistant_log import log_to_assistant
+        log_to_assistant(
+            owner,
+            f"📬 New email: {from_name} — \"{subject[:100]}\""
+            + (" ⚡ needs action" if _needs_action else " ℹ️ informational"),
+            category="Email",
+        )
+    except Exception:
+        pass
+
+    if _needs_action:
+        return f"New email needs action: {from_name} — {subject[:100]}", True
+    raise TaskNoop(f"Informational email from {from_name}: {subject[:60]}")
+
+
+async def _agent_handle_session_created(
+    owner: str, payload: dict, progress_cb=None,
+) -> Tuple[str, bool]:
+    """Process a session_created event."""
+    name = payload.get("name", "") or ""
+    model = payload.get("model", "") or ""
+    is_fork = payload.get("fork", False)
+    if is_fork:
+        logger.debug("session_created: fork '%s' for %s", name, owner)
+        raise TaskNoop(f"Session fork: {name}")
+    logger.debug("session_created: '%s' model=%s for %s", name, model, owner)
+    raise TaskNoop(f"New session: {name}")
+
+
+async def _agent_handle_document_created(
+    owner: str, payload: dict, progress_cb=None,
+) -> Tuple[str, bool]:
+    """Process a document_created event."""
+    title = payload.get("title", "") or ""
+    language = payload.get("language", "") or ""
+    logger.debug("document_created: '%s' (%s) for %s", title, language, owner)
+    raise TaskNoop(f"Document created: {title} ({language})")
+
+
+async def _agent_handle_memory_added(
+    owner: str, payload: dict, progress_cb=None,
+) -> Tuple[str, bool]:
+    """Process a memory_added event."""
+    category = payload.get("category", "fact")
+    text = (payload.get("text", "") or "")[:80]
+    logger.debug("memory_added: [%s] %s for %s", category, text, owner)
+    raise TaskNoop(f"Memory added: [{category}] {text}")
+
+
+async def _agent_handle_research_completed(
+    owner: str, payload: dict, progress_cb=None,
+) -> Tuple[str, bool]:
+    """Process a research_completed event."""
+    query = (payload.get("query", "") or "")[:100]
+    source_count = payload.get("source_count", 0)
+    try:
+        from src.assistant_log import log_to_assistant
+        log_to_assistant(
+            owner,
+            f"🔬 Research completed: \"{query}\" — {source_count} source(s) synthesised",
+            category="Research",
+        )
+    except Exception:
+        pass
+    return f"Research completed: {query} ({source_count} sources)", True
+
+
 BUILTIN_ACTIONS = {
     "tidy_sessions": action_tidy_sessions,
     "tidy_documents": action_tidy_documents,
@@ -2239,6 +2424,7 @@ BUILTIN_ACTIONS = {
     "audit_skills": action_audit_skills,
     "check_email_urgency": action_check_email_urgency,
     "cookbook_serve": action_cookbook_serve,
+    "handle_agent_signal": action_handle_agent_signal,
     # ping_notes removed from the registry — runs only inside `_note_pings_loop`.
 }
 
@@ -2259,4 +2445,5 @@ BUILTIN_ACTION_INFO = {
     "test_skills": "Run the per-skill Test on every skill: agent run + LLM judge → records verdict on the skill (pass/needs_work/fail/inconclusive). Advisory only — never rewrites or demotes anything.",
     "audit_skills": "Audit unaudited skills after enough new skills are added: test, narrow metadata, self-edit/retry, optional teacher rewrite, tag duplicates/trivial skills, and publish/draft using the auto-approve threshold.",
     "check_email_urgency": "Scan unread emails hourly, tag urgent/reply-soon/newsletter/marketing/spam, and send a reminder when a new email needs a fast reply.",
+    "handle_agent_signal": "Process an event signal (email_received, session_created, etc.) with context-aware analysis. Routes to the appropriate handler based on event type, uses LLM for triage where available, and logs results to the assistant chat.",
 }

@@ -105,7 +105,12 @@ def _email_tag_owner_clause(account_id: str | None, owner: str = "") -> tuple[st
 
 
 def _record_email_received_events(owner: str, account_id: str | None, folder: str, emails: list[dict]):
-    """Baseline inbox messages, then fire `email_received` for new arrivals."""
+    """Baseline inbox messages, then fire `email_received` for new arrivals.
+
+    Each new email fires the event with a structured payload so agentic tasks
+    triggered by ``email_received`` have the context needed to act:
+    subject, from, uid, account, and summary (if cached).
+    """
     if not owner or (folder or "INBOX").upper() != "INBOX" or not emails:
         return
     try:
@@ -113,9 +118,12 @@ def _record_email_received_events(owner: str, account_id: str | None, folder: st
         account_key = (account_id or "default").strip() or "default"
         now = datetime.utcnow().isoformat() + "Z"
         keys = []
+        # Build a lookup from message_key -> first matching email dict
+        key_to_email = {}
         for e in emails:
             key = (e.get("message_id") or e.get("uid") or "").strip()
-            if key and key not in keys:
+            if key and key not in key_to_email:
+                key_to_email[key] = e
                 keys.append(key)
         if not keys:
             return
@@ -152,9 +160,24 @@ def _record_email_received_events(owner: str, account_id: str | None, folder: st
             conn.close()
 
         if count and new_keys:
-            for _ in new_keys[:50]:
-                fire_event("email_received", owner)
-            logger.info("Fired email_received for %d new message(s)", min(len(new_keys), 50))
+            for key in new_keys[:50]:
+                email = key_to_email.get(key, {})
+                payload = {
+                    "event": "email_received",
+                    "uid": email.get("uid", ""),
+                    "message_id": email.get("message_id", ""),
+                    "subject": (email.get("subject") or "")[:200],
+                    "from_name": (email.get("from_name") or "")[:100],
+                    "from_address": email.get("from_address", ""),
+                    "account": account_key,
+                    "has_attachments": email.get("has_attachments", False),
+                }
+                # Include cached AI summary if available
+                cached_summary = email.get("cached_summary")
+                if cached_summary:
+                    payload["summary"] = cached_summary[:500]
+                fire_event("email_received", owner, payload=payload)
+            logger.info("Fired email_received with payload for %d new message(s)", min(len(new_keys), 50))
     except Exception:
         logger.debug("email_received event detection skipped", exc_info=True)
 

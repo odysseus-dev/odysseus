@@ -499,7 +499,15 @@ def setup_history_routes(session_manager) -> APIRouter:
                 new_session.add_message(ChatMessage(msg.role, msg.content, meta))
             try:
                 from src.event_bus import fire_event
-                fire_event("session_created", getattr(source, 'owner', None))
+                fire_event("session_created", getattr(source, 'owner', None), payload={
+                    "event": "session_created",
+                    "session_id": new_id,
+                    "name": fork_name[:100],
+                    "model": source.model or "",
+                    "endpoint_url": source.endpoint_url or "",
+                    "source_session": getattr(source, 'session_id', None) or new_id,
+                    "fork": True,
+                })
             except Exception:
                 logger.debug("session_created event dispatch failed", exc_info=True)
 

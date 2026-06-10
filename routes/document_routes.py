@@ -144,7 +144,13 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             db.refresh(doc)
             try:
                 from src.event_bus import fire_event
-                fire_event("document_created", doc.owner)
+                fire_event("document_created", doc.owner, payload={
+                    "event": "document_created",
+                    "doc_id": doc_id,
+                    "title": (req.title or "Untitled")[:200],
+                    "language": language,
+                    "session_id": req.session_id,
+                })
             except Exception:
                 logger.debug("document_created event dispatch failed", exc_info=True)
             return _doc_to_dict(doc)
