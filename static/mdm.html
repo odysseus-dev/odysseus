@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>MDM — Odysseus</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='4' y='4' width='24' height='24' rx='3' fill='%238888'/%3E%3Cpath d='M12 12h8M12 17h6M12 22h4' stroke='%23000' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+  <style>
+    :root { --mdm-bg: #1e2228; --mdm-card: #282c34; --mdm-border: #3a3f4a; --mdm-accent: #61afef; --mdm-green: #50fa7b; --mdm-red: #e06c75; --mdm-fg: #9cdef2; --mdm-muted: #6b7280; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: var(--mdm-bg); color: var(--mdm-fg); padding: 20px; min-height: 100vh; }
+    .mdm-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding: 16px 20px; background: var(--mdm-card); border-radius: 12px; border: 1px solid var(--mdm-border); }
+    .mdm-header h1 { font-size: 20px; font-weight: 600; color: var(--mdm-accent); }
+    #mdm-stats-bar { display: flex; gap: 20px; font-size: 13px; color: var(--mdm-muted); }
+    #mdm-stats-bar span { background: var(--mdm-bg); padding: 4px 12px; border-radius: 6px; border: 1px solid var(--mdm-border); }
+    .stat-value { color: var(--mdm-fg); font-weight: 600; }
+    .mdm-tabs { display: flex; gap: 4px; margin-bottom: 20px; background: var(--mdm-card); border-radius: 10px; padding: 4px; border: 1px solid var(--mdm-border); }
+    .mdm-tabs button { flex: 1; padding: 10px; border: none; background: transparent; color: var(--mdm-muted); cursor: pointer; border-radius: 8px; font-size: 13px; font-weight: 500; transition: all .15s; }
+    .mdm-tabs button:hover { color: var(--mdm-fg); background: rgba(255,255,255,0.05); }
+    .mdm-tabs button.active { background: var(--mdm-accent); color: #fff; font-weight: 600; }
+    .mdm-panel { display: none; }
+    .mdm-panel.active { display: block; }
+    .card { background: var(--mdm-card); border: 1px solid var(--mdm-border); border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+    .card-header { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--mdm-muted); margin-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 8px 10px; color: var(--mdm-muted); font-weight: 500; border-bottom: 1px solid var(--mdm-border); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+    td { padding: 8px 10px; border-bottom: 1px solid var(--mdm-border); }
+    tr:hover td { background: rgba(255,255,255,0.03); }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+    .badge-active { background: rgba(80,250,123,0.15); color: var(--mdm-green); }
+    .badge-inactive { background: rgba(224,108,117,0.15); color: var(--mdm-red); }
+    .badge-pending { background: rgba(240,173,78,0.15); color: #f0ad4e; }
+    .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all .15s; }
+    .btn-primary { background: var(--mdm-accent); color: #fff; }
+    .btn-primary:hover { filter: brightness(1.1); }
+    .btn-danger { background: var(--mdm-red); color: #fff; }
+    .btn-sm { padding: 4px 10px; font-size: 11px; }
+    .filters { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    .filters input, .filters select { padding: 6px 10px; background: var(--mdm-bg); border: 1px solid var(--mdm-border); border-radius: 6px; color: var(--mdm-fg); font-size: 13px; }
+    .filters input::placeholder { color: var(--mdm-muted); }
+    .filters button { padding: 6px 14px; }
+    .jauge { display: flex; align-items: center; gap: 16px; padding: 12px; background: var(--mdm-bg); border-radius: 8px; }
+    .jauge-ring { width: 80px; height: 80px; border-radius: 50%; position: relative; }
+    .jauge-ring svg { transform: rotate(-90deg); }
+    .jauge-ring text { font-size: 18px; font-weight: 700; fill: var(--mdm-fg); }
+    .jauge-info { flex: 1; }
+    .jauge-info .row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+    .jauge-info .row .label { color: var(--mdm-muted); }
+    .models-list { display: flex; flex-wrap: wrap; gap: 4px; }
+    .models-list .tag { padding: 2px 8px; background: var(--mdm-bg); border-radius: 4px; font-size: 11px; border: 1px solid var(--mdm-border); }
+  </style>
+</head>
+<body>
+  <div class="mdm-header">
+    <h1>MDM &mdash; Gestion iPad/iPhone</h1>
+    <div id="mdm-stats-bar">
+      <span>Devices: <strong class="stat-value" id="s-total">0</strong></span>
+      <span>Capacit&eacute;: <strong class="stat-value" id="s-cap">0</strong>Go</span>
+      <span>Utilis&eacute;: <strong class="stat-value" id="s-used">0</strong>Go</span>
+      <span>Matchs: <strong class="stat-value" id="s-matches">0</strong></span>
+    </div>
+  </div>
+
+  <nav class="mdm-tabs" id="mdm-tabs">
+    <button class="active" data-tab="explorer">Explorer</button>
+    <button data-tab="profiles">Profils</button>
+    <button data-tab="matching">Cantique</button>
+    <button data-tab="capacity">Capacit&eacute;</button>
+    <button data-tab="autofill">Autofill</button>
+  </nav>
+
+  <div id="mdm-content">
+    <div id="panel-explorer" class="mdm-panel active">
+      <div class="card">
+        <div class="filters">
+          <input id="f-search" placeholder="Rechercher...">
+          <input id="f-modele" placeholder="Mod&egrave;le">
+          <input id="f-ios" placeholder="iOS min" style="width:80px">
+          <select id="f-type"><option value="">Tous types</option><option>iPad</option><option>iPhone</option></select>
+          <button class="btn btn-primary btn-sm" id="btn-search">Chercher</button>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <button class="btn btn-primary btn-sm" id="btn-add-device">+ Ajouter</button>
+          <button class="btn btn-sm" id="btn-import-csv">Importer CSV</button>
+          <input type="file" id="file-input" accept=".csv,.xlsx" style="display:none">
+        </div>
+        <table><thead><tr><th>UDID</th><th>Mod&egrave;le</th><th>iOS</th><th>Capacit&eacute;</th><th>Utilisation</th><th>Statut</th><th>Actions</th></tr></thead><tbody id="device-table"></tbody></table>
+        <div id="device-pagination" style="display:flex;justify-content:center;gap:8px;margin-top:12px"></div>
+      </div>
+    </div>
+
+    <div id="panel-profiles" class="mdm-panel">
+      <div class="card">
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <button class="btn btn-primary btn-sm" id="btn-add-profile">+ Nouveau profil</button>
+        </div>
+        <table><thead><tr><th>Nom</th><th>Cat&eacute;gorie</th><th>iOS min</th><th>Statut</th><th>Actions</th></tr></thead><tbody id="profile-table"></tbody></table>
+      </div>
+    </div>
+
+    <div id="panel-matching" class="mdm-panel">
+      <div class="card">
+        <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+          <button class="btn btn-primary" id="btn-run-match">Lancer Cantique</button>
+          <span id="match-status" style="font-size:13px;color:var(--mdm-muted)"></span>
+        </div>
+        <table><thead><tr><th>Device</th><th>Profil</th><th>Score</th><th>Actions</th></tr></thead><tbody id="match-table"></tbody></table>
+      </div>
+    </div>
+
+    <div id="panel-capacity" class="mdm-panel">
+      <div class="card">
+        <div class="jauge" id="capacity-jauge"></div>
+      </div>
+      <div class="card">
+        <div class="card-header">R&eacute;partition par mod&egrave;le</div>
+        <div class="models-list" id="models-list"></div>
+      </div>
+      <div class="card">
+        <div class="card-header">Simulation</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input id="sim-count" placeholder="Nombre" style="width:80px">
+          <select id="sim-type"><option value="add">Ajouter</option><option value="remove">Supprimer</option><option value="upgrade">Mise &agrave; jour</option></select>
+          <button class="btn btn-primary btn-sm" id="btn-simulate">Simuler</button>
+        </div>
+        <div id="sim-result" style="margin-top:12px;font-size:13px;color:var(--mdm-fg)"></div>
+      </div>
+    </div>
+
+    <div id="panel-autofill" class="mdm-panel">
+      <div class="card">
+        <div class="card-header">Application automatique des configurations</div>
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <button class="btn btn-primary" id="btn-flow-reconcile">Reconciliation compl&egrave;te</button>
+          <button class="btn btn-primary" id="btn-flow-match-apply">Match + Apply</button>
+        </div>
+        <div id="flow-result" style="font-size:13px"></div>
+      </div>
+    </div>
+  </div>
+
+  <script nonce="{{CSP_NONCE}}">
+  const API = window.location.origin + '/api/mdm';
+  async function api(path, opts = {}) {
+    try {
+      const res = await fetch(API + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || e.errors?.join(', ') || res.statusText); }
+      return await res.json();
+    } catch(e) { document.getElementById('match-status').textContent = 'Erreur: ' + e.message; throw e; }
+  }
+  function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+  document.getElementById('mdm-tabs').addEventListener('click', e => {
+    const btn = e.target.closest('[data-tab]'); if (!btn) return;
+    document.querySelectorAll('.mdm-tabs button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.mdm-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+  });
+
+  async function refreshStats() {
+    try {
+      const s = await api('/stats');
+      document.getElementById('s-total').textContent = s.total_devices || 0;
+      document.getElementById('s-cap').textContent = (s.capacite_go || 0).toFixed(0);
+      document.getElementById('s-used').textContent = (s.utilise_go || 0).toFixed(0);
+      document.getElementById('s-matches').textContent = s.matches_total || 0;
+    } catch(e) {}
+  }
+
+  async function loadExplorer() {
+    const search = document.getElementById('f-search').value;
+    const modele = document.getElementById('f-modele').value;
+    const ios = document.getElementById('f-ios').value;
+    const type = document.getElementById('f-type').value;
+    const filters = {};
+    if (search) filters.search = search;
+    if (modele) filters.modele = modele;
+    if (ios) filters.ios_version = ios;
+    if (type) filters.type_appareil = type;
+    try {
+      const data = await api('/devices?filters=' + encodeURIComponent(JSON.stringify(filters)));
+      const tbody = document.getElementById('device-table');
+      tbody.innerHTML = (data.devices || []).map(d => '<tr><td>' + esc(d.udid || '') + '</td><td>' + esc(d.modele) + '</td><td>' + esc(d.ios_version) + '</td><td>' + d.capacite_go + 'Go</td><td>' + (d.taux_utilisation || 0) + '%</td><td><span class="badge ' + (d.est_actif ? 'badge-active' : 'badge-inactive') + '">' + (d.est_actif ? 'Actif' : 'Inactif') + '</span></td><td><button class="btn btn-sm btn-danger" onclick="deleteDevice(\'' + d.id + '\')">Suppr</button></td></tr>').join('');
+    } catch(e) {}
+  }
+
+  async function deleteDevice(id) {
+    if (!confirm('Supprimer ce device ?')) return;
+    await api('/devices/' + id, { method: 'DELETE' });
+    await loadExplorer();
+    await refreshStats();
+  }
+
+  document.getElementById('btn-search').addEventListener('click', loadExplorer);
+  document.getElementById('f-search').addEventListener('keydown', e => { if (e.key === 'Enter') loadExplorer(); });
+
+  async function loadProfiles() {
+    try {
+      const data = await api('/profiles');
+      document.getElementById('profile-table').innerHTML = (data || []).map(p => {
+        const isNormalized = p.payload_json && p.payload_json.ios_compat === '17.0';
+        return '<tr><td>' + esc(p.nom) + (isNormalized ? ' <span class="badge badge-active" style="font-size:10px">iOS17</span>' : '') + '</td><td>' + esc(p.categorie || '-') + '</td><td>' + esc(p.ios_min_version || 'Toutes') + '</td><td><span class="badge ' + (p.est_actif ? 'badge-active' : 'badge-inactive') + '">' + (p.est_actif ? 'Actif' : 'Inactif') + '</span></td><td><button class="btn btn-sm btn-primary" onclick="normalizeProfile(\'' + p.id + '\')" title="Normaliser iOS 17">iOS17</button> <button class="btn btn-sm btn-danger" onclick="deleteProfile(\'' + p.id + '\')">Suppr</button></td></tr>';
+      }).join('');
+    } catch(e) {}
+  }
+
+  async function deleteProfile(id) {
+    if (!confirm('Supprimer ce profil ?')) return;
+    await api('/profiles/' + id, { method: 'DELETE' });
+    await loadProfiles();
+  }
+
+  async function normalizeProfile(id) {
+    if (!confirm('Normaliser ce profil pour iOS 17 (supprime mots de passe, iCloud, restrictions obsolètes) ?')) return;
+    try {
+      const r = await api('/profiles/' + id + '/normalize', { method: 'POST' });
+      await loadProfiles();
+    } catch(e) { alert(e.message); }
+  }
+
+  async function runMatch() {
+    document.getElementById('match-status').textContent = 'Calcul en cours...';
+    try {
+      const data = await api('/match', { method: 'POST', body: JSON.stringify({ top_k: 3 }) });
+      const tbody = document.getElementById('match-table');
+      tbody.innerHTML = (data.matches || []).map(m => '<tr><td>' + esc(m.device_udid || m.device_id) + '</td><td>' + esc(m.profile_nom || m.profile_id) + '</td><td><strong>' + (m.score * 100).toFixed(1) + '%</strong></td><td><button class="btn btn-sm btn-primary" onclick="applyMatch(\'' + m.id + '\')">Appliquer</button></td></tr>').join('');
+      document.getElementById('match-status').textContent = data.total + ' match(s) trouv\u00e9s';
+      await refreshStats();
+    } catch(e) { document.getElementById('match-status').textContent = 'Erreur: ' + e.message; }
+  }
+
+  async function applyMatch(id) {
+    await api('/match/' + id + '/apply', { method: 'POST' });
+    document.getElementById('match-status').textContent = 'Match appliqu\u00e9 !';
+    await runMatch();
+  }
+
+  async function loadCapacity() {
+    try {
+      const d = await api('/capacity');
+      const total = d.capacite_totale_go || 0;
+      const used = d.utilise_go || 0;
+      const pct = d.taux_utilisation || 0;
+      const r = 36, circ = 2 * Math.PI * r;
+      document.getElementById('capacity-jauge').innerHTML = '<div class="jauge-ring"><svg width="90" height="90" viewBox="0 0 90 90"><circle cx="45" cy="45" r="' + r + '" fill="none" stroke="var(--mdm-border)" stroke-width="8"/><circle cx="45" cy="45" r="' + r + '" fill="none" stroke="' + (pct > 80 ? 'var(--mdm-red)' : 'var(--mdm-green)') + '" stroke-width="8" stroke-dasharray="' + circ + '" stroke-dashoffset="' + (circ * (1 - pct/100)) + '" stroke-linecap="round"/><text x="45" y="45" text-anchor="middle" dominant-baseline="central" font-size="16">' + pct.toFixed(0) + '%</text></svg></div><div class="jauge-info"><div class="row"><span class="label">Total</span><span>' + total.toFixed(0) + ' Go</span></div><div class="row"><span class="label">Utilis\u00e9</span><span>' + used.toFixed(0) + ' Go</span></div><div class="row"><span class="label">Libre</span><span>' + (total - used).toFixed(0) + ' Go</span></div><div class="row"><span class="label">Appareils</span><span>' + (d.total_devices || 0) + '</span></div></div>';
+      if (d.models) {
+        document.getElementById('models-list').innerHTML = Object.entries(d.models).map(([m, c]) => '<span class="tag">' + esc(m) + ': ' + c + '</span>').join('');
+      }
+    } catch(e) {}
+  }
+
+  document.getElementById('btn-simulate').addEventListener('click', async () => {
+    const count = parseInt(document.getElementById('sim-count').value) || 1;
+    const type = document.getElementById('sim-type').value;
+    try {
+      const r = await api('/capacity/simulate', { method: 'POST', body: JSON.stringify({ type, count }) });
+      document.getElementById('sim-result').innerHTML = '<strong>' + esc(r.scenario || '') + '</strong><br>Actuel: ' + (r.current?.devices || 0) + ' devices, ' + (r.current?.capacite_go || 0).toFixed(0) + 'Go<br>Projet\u00e9: ' + (r.projected?.devices || 0) + ' devices, ' + (r.projected?.capacite_go || 0).toFixed(0) + 'Go';
+    } catch(e) { document.getElementById('sim-result').textContent = 'Erreur: ' + e.message; }
+  });
+
+  document.getElementById('btn-flow-reconcile').addEventListener('click', async () => {
+    document.getElementById('flow-result').textContent = 'R\u00e9conciliation en cours...';
+    try {
+      const r = await api('/flow/reconcile');
+      document.getElementById('flow-result').innerHTML = 'Devices: ' + (r.devices_count || 0) + ' | Profils: ' + (r.profiles_count || 0) + ' | Matchs: ' + (r.matches_count || 0) + ' | Autofill: ' + (r.autofill?.success || 0) + ' appliqu\u00e9(s)';
+      await refreshStats();
+    } catch(e) { document.getElementById('flow-result').textContent = 'Erreur: ' + e.message; }
+  });
+
+  document.getElementById('btn-flow-match-apply').addEventListener('click', async () => {
+    document.getElementById('flow-result').textContent = 'Match + Apply en cours...';
+    try {
+      const r = await api('/flow/match-apply?top_k=3');
+      document.getElementById('flow-result').innerHTML = 'Matchs: ' + (r.matched || 0) + ' | Appliqu\u00e9s: ' + (r.applied || 0);
+      await refreshStats();
+    } catch(e) { document.getElementById('flow-result').textContent = 'Erreur: ' + e.message; }
+  });
+
+  document.getElementById('btn-add-device').addEventListener('click', () => {
+    const udid = prompt('UDID:'); if (!udid) return;
+    const modele = prompt('Mod\u00e8le (iPad Pro):') || 'iPad Pro';
+    const ios = prompt('iOS version (18.0):') || '18.0';
+    const cap = parseInt(prompt('Capacit\u00e9 (Go):') || '128');
+    api('/devices', { method: 'POST', body: JSON.stringify({ udid, modele, ios_version: ios, capacite_go: cap }) }).then(() => { loadExplorer(); refreshStats(); }).catch(e => alert(e.message));
+  });
+
+  document.getElementById('btn-add-profile').addEventListener('click', () => {
+    const nom = prompt('Nom du profil:'); if (!nom) return;
+    const cat = prompt('Cat\u00e9gorie (ex: Scolaire, Kiosque, Standard):') || 'Standard';
+    const jsonRaw = prompt('Payload JSON (laisser vide pour aucun):') || '{}';
+    let payload_json = {};
+    try { payload_json = JSON.parse(jsonRaw); } catch(e) { alert('JSON invalide, utilisation du payload vide'); }
+    api('/profiles', { method: 'POST', body: JSON.stringify({ nom, categorie: cat, payload_json }) }).then(() => { loadProfiles(); }).catch(e => alert(e.message));
+  });
+
+  document.getElementById('btn-import-csv').addEventListener('click', () => document.getElementById('file-input').click());
+  document.getElementById('file-input').addEventListener('change', async e => {
+    const file = e.target.files[0]; if (!file) return;
+    const form = new FormData(); form.append('file', file);
+    try {
+      const res = await fetch(API + '/devices/import', { method: 'POST', body: form });
+      const d = await res.json();
+      alert('Import\u00e9: ' + (d.imported || 0) + ' / ' + (d.total || 0) + (d.errors?.length ? '\nErreurs: ' + d.errors.join(', ') : ''));
+      await loadExplorer();
+      await refreshStats();
+    } catch(e) { alert(e.message); }
+    e.target.value = '';
+  });
+
+  document.getElementById('btn-run-match').addEventListener('click', runMatch);
+
+  refreshStats();
+  loadExplorer();
+  loadProfiles();
+  loadCapacity();
+  setInterval(refreshStats, 30000);
+  </script>
+</body>
+</html>

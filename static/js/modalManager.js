@@ -1404,6 +1404,7 @@ const _AUTO_WIRE = {
   // Email already has its own #email-unread-dot inline next to the title —
   // don't add a second modalManager badge that lands at the right edge.
   'email-lib-modal':      { rail: null,             sidebar: null },
+  'mdm-modal':            { rail: 'rail-mdm',       sidebar: 'tool-mdm-btn' },
   'research-overlay':     { rail: 'rail-research',  sidebar: 'tool-research-btn' },
   'theme-modal':          { rail: null,             sidebar: 'tool-theme-btn' },
   'settings-modal':       { rail: null,             sidebar: 'tool-settings-btn' },

@@ -721,6 +721,14 @@ app.include_router(setup_contacts_routes())
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 
+# MDM (Mobile Device Management)
+from src.mdm.application.orchestrator import MDMOrchestrator
+mdm_orchestrator = MDMOrchestrator()
+app.state.mdm_orchestrator = mdm_orchestrator
+from routes.mdm_routes import setup_mdm_routes
+app.include_router(setup_mdm_routes(mdm_orchestrator))
+logger.info("MDM routes initialized")
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
@@ -781,6 +789,10 @@ async def serve_library(request: Request):
 async def serve_backgrounds(request: Request):
     """Sandbox page for prototyping background effects. No auth required."""
     return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/backgrounds.html"))
+
+@app.get("/mdm")
+async def serve_mdm(request: Request):
+    return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/mdm.html"))
 
 @app.get("/login")
 async def serve_login(request: Request):
@@ -890,6 +902,14 @@ async def _startup_event():
             logger.warning(f"MCP startup failed (non-critical): {type(e).__name__}: {e}")
 
     _startup_tasks.append(asyncio.create_task(_startup_mcp_connections()))
+
+    # MDM orchestrator startup — init pools, run migrations
+    try:
+        await mdm_orchestrator.init()
+        _startup_tasks.append(asyncio.create_task(mdm_orchestrator.warmup()))
+        logger.info("MDM orchestrator started")
+    except Exception as e:
+        logger.warning("MDM orchestrator startup failed (non-critical): %s", e)
 
     # Pre-warm the RAG tool index off the request path. Loading the local
     # embedding model + opening ChromaDB + indexing the built-in tools is a
@@ -1097,4 +1117,9 @@ async def _shutdown_event():
         await mcp_manager.disconnect_all()
     except Exception as e:
         logger.warning(f"MCP shutdown error: {e}")
+    # MDM shutdown
+    try:
+        await mdm_orchestrator.shutdown()
+    except Exception as e:
+        logger.warning(f"MDM shutdown error: {e}")
     logger.info("Application shutdown complete")
