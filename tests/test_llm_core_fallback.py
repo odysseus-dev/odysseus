@@ -55,6 +55,21 @@ def test_no_fallback_event_when_primary_succeeds(monkeypatch):
     assert not any('"fallback"' in c for c in chunks)
 
 
+def test_waiting_event_does_not_block_pre_content_fallback(monkeypatch):
+    def per_model(model):
+        if model == "primary":
+            return [
+                'data: {"type": "model_waiting", "model": "primary", "elapsed": 5}\n\n',
+                'event: error\ndata: {"status": 504, "text": "timeout"}\n\n',
+            ]
+        return ['data: {"delta": "hello"}\n\n', "data: [DONE]\n\n"]
+
+    chunks = _run_fallback(monkeypatch, per_model)
+    assert any('"model_waiting"' in c for c in chunks)
+    assert any('"fallback"' in c for c in chunks)
+    assert any('"delta": "hello"' in c for c in chunks)
+
+
 def test_dedupe_candidates_keeps_first_of_each_route():
     """(url, model) is the route key; later repeats are dropped, order preserved,
     the first tuple (with its headers) kept, malformed entries filtered."""

@@ -1494,6 +1494,18 @@ def setup_cookbook_routes() -> APIRouter:
                 if remote and _ollama_host in ("0.0.0.0", "::"):
                     runner_lines.append('echo "[odysseus] WARNING: remote Ollama will bind to ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT} so Odysseus can reach it from this host."')
                     runner_lines.append('echo "[odysseus] Ollama has no built-in authentication; expose this only on a trusted LAN/VPN or provide an explicit OLLAMA_HOST with your own access controls."')
+                # Free GPU VRAM before starting Ollama: kill any orphaned vLLM
+                # engine cores left from previous launches. vLLM holds ~14.5 GB
+                # of VRAM even after the API server exits, starving Ollama.
+                # Idempotent and no-op if no vLLM process is running.
+                runner_lines.append('echo "[odysseus] Checking for orphaned vLLM processes hogging GPU VRAM..."')
+                runner_lines.append('_vllm_pids="$(pgrep -f "VLLM::EngineCore\|vllm serve" 2>/dev/null || true)"')
+                runner_lines.append('if [ -n "$_vllm_pids" ]; then')
+                runner_lines.append('  echo "[odysseus] Killing stale vLLM process(es): $_vllm_pids"')
+                runner_lines.append('  kill -9 $_vllm_pids 2>/dev/null || true')
+                runner_lines.append('  sleep 2')
+                runner_lines.append('  echo "[odysseus] VRAM freed for Ollama."')
+                runner_lines.append('fi')
                 runner_lines.append('echo "Starting ollama server on ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}..."')
                 runner_lines.append('OLLAMA_HOST="${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}" ollama serve')
                 runner_lines.append('_ody_exit=$?')

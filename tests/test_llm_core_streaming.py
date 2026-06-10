@@ -14,12 +14,15 @@ from src import llm_core
 
 
 class _FakeResp:
-    def __init__(self, lines):
+    def __init__(self, lines, delay=0):
         self._lines = lines
+        self._delay = delay
         self.status_code = 200
 
     async def aiter_lines(self):
         for ln in self._lines:
+            if self._delay:
+                await asyncio.sleep(self._delay)
             yield ln
 
     async def aread(self):
@@ -27,11 +30,12 @@ class _FakeResp:
 
 
 class _FakeStreamCtx:
-    def __init__(self, lines):
+    def __init__(self, lines, delay=0):
         self._lines = lines
+        self._delay = delay
 
     async def __aenter__(self):
-        return _FakeResp(self._lines)
+        return _FakeResp(self._lines, self._delay)
 
     async def __aexit__(self, *a):
         return False
@@ -43,6 +47,55 @@ class _FakeClient:
 
     def stream(self, method, url, **kw):
         return _FakeStreamCtx(self._lines)
+
+
+class _FakeResponsesStreamClient:
+    def __init__(self, lines, seen, delay=0):
+        self._lines = lines
+        self.seen = seen
+        self.delay = delay
+
+    def stream(self, method, url, **kw):
+        self.seen["method"] = method
+        self.seen["url"] = url
+        self.seen["json"] = kw.get("json")
+        return _FakeStreamCtx(self._lines, self.delay)
+
+
+class _FakeResponsesClient:
+    def __init__(self, payload, seen):
+        self._payload = payload
+        self.seen = seen
+
+    def stream(self, method, url, **kw):
+        self.seen["method"] = method
+        self.seen["url"] = url
+        self.seen["json"] = kw.get("json")
+        lines = ["data: " + json.dumps({"type": "response.completed", "response": self._payload})]
+        return _FakeStreamCtx(lines)
+
+    async def post(self, url, **kw):
+        self.seen["url"] = url
+        self.seen["json"] = kw.get("json")
+        request = llm_core.httpx.Request("POST", url)
+        return llm_core.httpx.Response(200, request=request, json=self._payload)
+
+
+class _SlowResponsesClient(_FakeResponsesClient):
+    def __init__(self, payload, seen, delay=0.03):
+        super().__init__(payload, seen)
+        self.delay = delay
+
+    async def post(self, url, **kw):
+        await asyncio.sleep(self.delay)
+        return await super().post(url, **kw)
+
+    def stream(self, method, url, **kw):
+        self.seen["method"] = method
+        self.seen["url"] = url
+        self.seen["json"] = kw.get("json")
+        lines = ["data: " + json.dumps({"type": "response.completed", "response": self._payload})]
+        return _FakeStreamCtx(lines, self.delay)
 
 
 def _drive(monkeypatch, lines, model="gemini-3.1-pro-preview-customtools"):
@@ -75,6 +128,260 @@ def _drive(monkeypatch, lines, model="gemini-3.1-pro-preview-customtools"):
 
 def _sse(delta):
     return "data: " + json.dumps({"choices": [{"delta": delta}]})
+
+
+def _responses_sse(payload):
+    return "data: " + json.dumps(payload)
+
+
+def test_gpt55_pro_uses_responses_api_bridge(monkeypatch):
+    llm_core._response_cache.clear()
+    seen = {}
+    payload = {
+        "output": [
+            {
+                "type": "message",
+                "content": [{"type": "output_text", "text": "OK from pro"}],
+            }
+        ],
+        "usage": {"input_tokens": 11, "output_tokens": 3},
+    }
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: _FakeResponsesClient(payload, seen))
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
+    monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
+    monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)
+
+    async def run():
+        chunks = []
+        async for chunk in llm_core.stream_llm(
+            "https://api.openai.com/v1/chat/completions",
+            "gpt-5.5-pro",
+            [{"role": "user", "content": "hi"}],
+            headers={"Authorization": "Bearer k"},
+            max_tokens=25,
+            tools=[{"type": "function", "function": {"name": "bash", "parameters": {}}}],
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(run())
+    assert seen["url"] == "https://api.openai.com/v1/responses"
+    assert "messages" not in seen["json"]
+    assert seen["json"]["input"] == [{"type": "message", "role": "user", "content": "hi"}]
+    assert seen["json"]["max_output_tokens"] == 25
+    assert seen["json"]["tools"] == [
+        {
+            "type": "function",
+            "name": "bash",
+            "description": "",
+            "parameters": {"type": "object", "properties": {}},
+            "strict": False,
+        }
+    ]
+    assert any('"delta": "OK from pro"' in c for c in chunks)
+    assert any('"input_tokens": 11' in c and '"output_tokens": 3' in c for c in chunks)
+    assert chunks[-1] == "data: [DONE]\n\n"
+
+
+def test_gpt55_pro_streams_responses_sse_events(monkeypatch):
+    seen = {}
+    lines = [
+        _responses_sse({"type": "response.output_text.delta", "delta": "hel"}),
+        _responses_sse({"type": "response.output_text.delta", "delta": "lo"}),
+        _responses_sse({
+            "type": "response.completed",
+            "response": {"usage": {"input_tokens": 7, "output_tokens": 2}},
+        }),
+    ]
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: _FakeResponsesStreamClient(lines, seen))
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
+    monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
+    monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)
+
+    async def run():
+        events = []
+        async for chunk in llm_core.stream_llm(
+            "https://api.openai.com/v1/chat/completions",
+            "gpt-5.5-pro",
+            [{"role": "user", "content": "hi"}],
+            headers={"Authorization": "Bearer k"},
+        ):
+            for ln in chunk.split("\n"):
+                if ln.startswith("data: ") and ln[6:] != "[DONE]":
+                    events.append(json.loads(ln[6:]))
+        return events
+
+    events = asyncio.run(run())
+    assert seen["url"] == "https://api.openai.com/v1/responses"
+    assert seen["json"]["stream"] is True
+    assert [e.get("delta") for e in events if "delta" in e] == ["hel", "lo"]
+    assert any(e.get("type") == "usage" and e["data"]["input_tokens"] == 7 for e in events)
+
+
+def test_responses_bridge_emits_waiting_events_during_slow_call(monkeypatch):
+    llm_core._response_cache.clear()
+    seen = {}
+    payload = {
+        "output": [
+            {
+                "type": "message",
+                "content": [{"type": "output_text", "text": "done"}],
+            }
+        ]
+    }
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: _SlowResponsesClient(payload, seen))
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
+    monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
+    monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)
+    monkeypatch.setattr(llm_core, "RESPONSES_WAIT_EVENT_INTERVAL", 0.01)
+
+    async def run():
+        events = []
+        async for chunk in llm_core.stream_llm(
+            "https://api.openai.com/v1/chat/completions",
+            "gpt-5.5-pro",
+            [{"role": "user", "content": "hi"}],
+            headers={"Authorization": "Bearer k"},
+        ):
+            for ln in chunk.split("\n"):
+                if ln.startswith("data: ") and ln[6:] != "[DONE]":
+                    events.append(json.loads(ln[6:]))
+        return events
+
+    events = asyncio.run(run())
+    assert events[0]["type"] == "model_waiting"
+    assert events[0]["model"] == "gpt-5.5-pro"
+    assert any(e.get("delta") == "done" for e in events)
+
+
+def test_gpt55_still_uses_chat_stream(monkeypatch):
+    seen = {}
+
+    class CapturingClient(_FakeClient):
+        def stream(self, method, url, **kw):
+            seen["url"] = url
+            seen["json"] = kw.get("json")
+            return super().stream(method, url, **kw)
+
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: CapturingClient([_sse({"content": "hi"}), "data: [DONE]"]))
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
+    monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
+    monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)
+
+    async def run():
+        return [chunk async for chunk in llm_core.stream_llm(
+            "https://api.openai.com/v1/chat/completions",
+            "gpt-5.5",
+            [{"role": "user", "content": "hi"}],
+        )]
+
+    asyncio.run(run())
+    assert seen["url"] == "https://api.openai.com/v1/chat/completions"
+    assert seen["json"]["stream"] is True
+    assert seen["json"]["messages"] == [{"role": "user", "content": "hi"}]
+
+
+def test_saved_responses_endpoint_is_not_double_appended(monkeypatch):
+    seen = {}
+    payload = {"output": [{"type": "message", "content": [{"type": "output_text", "text": "OK"}]}]}
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: _FakeResponsesClient(payload, seen))
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
+    monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
+    monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)
+
+    async def run():
+        return [chunk async for chunk in llm_core.stream_llm(
+            "https://api.openai.com/v1/responses",
+            "gpt-5.5-pro",
+            [{"role": "user", "content": "hi"}],
+        )]
+
+    asyncio.run(run())
+    assert seen["url"] == "https://api.openai.com/v1/responses"
+
+
+def test_responses_bridge_emits_function_calls(monkeypatch):
+    seen = {}
+    payload = {
+        "output": [
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "web_search",
+                "arguments": '{"query":"cats"}',
+            }
+        ],
+    }
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: _FakeResponsesClient(payload, seen))
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
+    monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
+    monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)
+
+    async def run():
+        events = []
+        async for chunk in llm_core.stream_llm(
+            "https://api.openai.com/v1/chat/completions",
+            "gpt-5.5-pro",
+            [{"role": "user", "content": "search"}],
+        ):
+            for ln in chunk.split("\n"):
+                if ln.startswith("data: ") and ln[6:] != "[DONE]":
+                    events.append(json.loads(ln[6:]))
+        return events
+
+    events = asyncio.run(run())
+    calls = next(e["calls"] for e in events if e.get("type") == "tool_calls")
+    assert calls == [{"id": "call_1", "name": "web_search", "arguments": '{"query":"cats"}'}]
+
+
+def test_responses_stream_emits_tool_argument_deltas(monkeypatch):
+    seen = {}
+    lines = [
+        _responses_sse({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "create_document",
+                "arguments": "",
+            },
+        }),
+        _responses_sse({
+            "type": "response.function_call_arguments.delta",
+            "output_index": 0,
+            "delta": '{"title":"N',
+        }),
+        _responses_sse({
+            "type": "response.function_call_arguments.done",
+            "output_index": 0,
+            "name": "create_document",
+            "call_id": "call_1",
+            "arguments": '{"title":"Note"}',
+        }),
+        _responses_sse({"type": "response.completed", "response": {}}),
+    ]
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: _FakeResponsesStreamClient(lines, seen))
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
+    monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
+    monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)
+
+    async def run():
+        events = []
+        async for chunk in llm_core.stream_llm(
+            "https://api.openai.com/v1/chat/completions",
+            "gpt-5.5-pro",
+            [{"role": "user", "content": "write a note"}],
+        ):
+            for ln in chunk.split("\n"):
+                if ln.startswith("data: ") and ln[6:] != "[DONE]":
+                    events.append(json.loads(ln[6:]))
+        return events
+
+    events = asyncio.run(run())
+    assert any(e.get("type") == "tool_call_delta" and e.get("arg_delta") == '{"title":"N' for e in events)
+    calls = next(e["calls"] for e in events if e.get("type") == "tool_calls")
+    assert calls == [{"id": "call_1", "name": "create_document", "arguments": '{"title":"Note"}'}]
 
 
 def test_parallel_calls_with_null_index_do_not_collide(monkeypatch):

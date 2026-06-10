@@ -9,6 +9,7 @@ import threading
 import re
 from fastapi import HTTPException
 from typing import Optional, Dict, List, Tuple
+from src.model_capabilities import requires_openai_responses_api
 from src.model_context import get_context_length, DEFAULT_CONTEXT
 from urllib.parse import urlparse
 
@@ -22,6 +23,9 @@ class LLMConfig:
     MAX_RETRIES = 3
     RETRY_DELAY = 0.5
     STREAM_TIMEOUT = 300
+
+
+RESPONSES_WAIT_EVENT_INTERVAL = 5.0
 
 
 # Cache for LLM responses
@@ -1434,6 +1438,9 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+    elif requires_openai_responses_api(url, model):
+        target_url = _responses_url_from_chat_url(url)
+        payload = _build_responses_payload(model, messages_copy, temperature, max_tokens)
     else:
         target_url = url
         if provider == "copilot":
@@ -1462,6 +1469,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             response = _parse_anthropic_response(data)
         elif provider == "ollama":
             response = _parse_ollama_response(data)
+        elif requires_openai_responses_api(url, model):
+            response, _, _ = _parse_responses_response(data)
         else:
             msg = data["choices"][0]["message"]
             response = msg.get("content") or msg.get("reasoning_content") or ""
@@ -1550,6 +1559,7 @@ async def llm_call_async(
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
+    use_responses_api = requires_openai_responses_api(url, model)
     messages_copy = _sanitize_llm_messages(messages)
 
     # Consolidate multiple system messages into one at the start.
@@ -1627,6 +1637,10 @@ async def llm_call_async(
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+    elif use_responses_api:
+        target_url = _responses_url_from_chat_url(url)
+        h = _provider_headers(provider, headers)
+        payload = _build_responses_payload(model, messages_copy, temperature, max_tokens)
     else:
         target_url = url
         h = _provider_headers(provider, headers)
@@ -1679,6 +1693,8 @@ async def llm_call_async(
                     response = _parse_anthropic_response(data)
                 elif provider == "ollama":
                     response = _parse_ollama_response(data)
+                elif use_responses_api:
+                    response, _, _ = _parse_responses_response(data)
                 else:
                     msg = data["choices"][0]["message"]
                     response = msg.get("content") or msg.get("reasoning_content") or ""
@@ -1714,6 +1730,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
       - data: [DONE]                       — end of stream
     """
     provider = _detect_provider(url)
+    use_responses_api = requires_openai_responses_api(url, model)
     messages_copy = _sanitize_llm_messages(messages)
 
     # Consolidate multiple system messages into one at the start.
@@ -1747,6 +1764,10 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)
         payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
+    elif use_responses_api:
+        target_url = _responses_url_from_chat_url(url)
+        payload = _build_responses_payload(model, messages_copy, temperature, max_tokens, tools=tools, stream=True)
+        h = _provider_headers(provider, headers)
     else:
         target_url = url
         payload = {
@@ -1844,6 +1865,124 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         except Exception as e:
             logger.error(f"ChatGPT Subscription stream error: {e}")
             yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+        return
+
+    if use_responses_api:
+        response_timeout = httpx.Timeout(
+            connect=3.0,
+            read=max(float(timeout), 900.0),
+            write=30.0,
+            pool=5.0,
+        )
+        next_line_task = None
+        try:
+            client = _get_http_client()
+            started = time.monotonic()
+            streamed_text = False
+            completed_calls: List[Dict] = []
+            call_acc: Dict[str, Dict] = {}
+
+            async with client.stream('POST', target_url, json=payload, headers=h, timeout=response_timeout) as r:
+                _clear_host_dead(target_url)
+                status_code = getattr(r, "status_code", 200)
+                if status_code != 200:
+                    raw = (await r.aread()).decode(errors="replace")
+                    friendly = _format_upstream_error(status_code, raw, target_url)
+                    yield f'event: error\ndata: {json.dumps({"status": status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    return
+
+                line_iter = r.aiter_lines().__aiter__()
+                while True:
+                    if next_line_task is None:
+                        next_line_task = asyncio.create_task(line_iter.__anext__())
+                    try:
+                        line = await asyncio.wait_for(
+                            asyncio.shield(next_line_task),
+                            timeout=RESPONSES_WAIT_EVENT_INTERVAL,
+                        )
+                        next_line_task = None
+                    except asyncio.TimeoutError:
+                        elapsed = int(time.monotonic() - started)
+                        yield f'data: {json.dumps({"type": "model_waiting", "model": model, "elapsed": elapsed, "message": f"Still waiting for {model} ({elapsed}s)"})}\n\n'
+                        continue
+                    except StopAsyncIteration:
+                        break
+
+                    if not line or line.startswith("event:"):
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+
+                    raw_data = line[5:].strip()
+                    if raw_data == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(raw_data)
+                    except Exception:
+                        continue
+                    if not isinstance(event, dict):
+                        continue
+
+                    event_type = event.get("type")
+                    if event_type == "response.output_text.delta":
+                        delta = event.get("delta") or ""
+                        if delta:
+                            streamed_text = True
+                            yield f'data: {json.dumps({"delta": delta})}\n\n'
+                    elif event_type == "response.output_item.added":
+                        _record_responses_stream_call(call_acc, event)
+                    elif event_type == "response.output_item.done":
+                        _record_responses_stream_call(call_acc, event)
+                    elif event_type == "response.function_call_arguments.delta":
+                        key = _responses_stream_call_key(event)
+                        call = call_acc.setdefault(key, {"id": "", "name": "", "arguments": ""})
+                        arg_delta = event.get("delta") or ""
+                        call["arguments"] += arg_delta
+                        if arg_delta and call.get("name") in ("create_document", "update_document", "edit_document"):
+                            yield f'data: {json.dumps({"type": "tool_call_delta", "index": event.get("output_index", 0), "name": call["name"], "arg_delta": arg_delta})}\n\n'
+                    elif event_type == "response.function_call_arguments.done":
+                        key = _responses_stream_call_key(event)
+                        call = call_acc.setdefault(key, {"id": "", "name": "", "arguments": ""})
+                        if event.get("call_id"):
+                            call["id"] = event["call_id"]
+                        if event.get("name"):
+                            call["name"] = event["name"]
+                        if event.get("arguments") is not None:
+                            call["arguments"] = event.get("arguments") or "{}"
+                    elif event_type == "response.completed":
+                        response_data = event.get("response") if isinstance(event.get("response"), dict) else {}
+                        text, parsed_calls, usage = _parse_responses_response(response_data)
+                        if text and not streamed_text:
+                            yield f'data: {json.dumps({"delta": text})}\n\n'
+                        completed_calls = parsed_calls
+                        if usage.get("input_tokens") or usage.get("output_tokens"):
+                            yield f'data: {json.dumps({"type": "usage", "data": usage})}\n\n'
+                        break
+                    elif event_type in {"response.failed", "error"}:
+                        err = event.get("error") or (event.get("response") or {}).get("error") or {}
+                        err_msg = err.get("message") if isinstance(err, dict) else str(err or "Responses stream failed")
+                        yield f'event: error\ndata: {json.dumps({"error": err_msg, "status": 502})}\n\n'
+                        return
+
+            calls = _responses_stream_calls(call_acc) or completed_calls
+            if calls:
+                yield f'data: {json.dumps({"type": "tool_calls", "calls": calls})}\n\n'
+            yield "data: [DONE]\n\n"
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            _cooled = _mark_host_dead(target_url)
+            _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
+            logger.warning(f"Responses stream connect to {target_url} failed: {e}{_tail}")
+            yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
+        except httpx.ReadTimeout:
+            yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
+        except httpx.NetworkError:
+            yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
+        except Exception as e:
+            logger.error(f"Responses stream error: {e}")
+            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+        finally:
+            if next_line_task is not None and not next_line_task.done():
+                next_line_task.cancel()
         return
 
     # ── Native Ollama streaming ──
@@ -2301,6 +2440,16 @@ def _summarize_stream_error(err_chunk: Optional[str]) -> str:
     return "primary model failed"
 
 
+def _stream_chunk_counts_as_output(chunk: str) -> bool:
+    if not chunk.startswith("data: ") or chunk.startswith("data: [DONE]"):
+        return False
+    try:
+        data = json.loads(chunk[6:])
+    except Exception:
+        return True
+    return data.get("type") not in {"model_actual", "model_waiting"}
+
+
 async def stream_llm_with_fallback(candidates, messages, **kwargs):
     """Wrap stream_llm with an ordered fallback chain.
 
@@ -2339,15 +2488,7 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
                     break
                 yield chunk
                 continue
-            # Any data chunk other than the terminal [DONE] means real output.
-            if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
-                try:
-                    event_data = json.loads(chunk[6:])
-                except Exception:
-                    event_data = {}
-                if event_data.get("type") == "model_actual":
-                    yield chunk
-                    continue
+            if _stream_chunk_counts_as_output(chunk):
                 # First real output from a NON-primary candidate: tell the client
                 # the selected model failed and another answered. Without this the
                 # fallback is invisible — a misconfigured provider looks like it

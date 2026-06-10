@@ -76,6 +76,31 @@ done
 # nvcc" even when the GPU itself is fully visible to the container.
 export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
 
+# CUDA runtime libraries from pip-installed nvidia packages may not be in
+# the system library path. vLLM's C extension (vllm._C) links against
+# libcudart.so.13 etc. at import time — add the cu13 lib directory to the
+# ldconfig cache so the dynamic linker finds them. Idempotent: ldconfig
+# handles duplicate entries gracefully.
+# CUDA runtime libraries: check multiple possible locations where pip-installed
+# nvidia packages could land — system path (pip install without --user) and
+# bind-mount path (pip install --user, which Cookbook uses).
+CU13_LIB=""
+for candidate in \
+    /usr/local/lib/python3.12/site-packages/nvidia/cu13/lib \
+    /app/.local/lib/python3.12/site-packages/nvidia/cu13/lib; do
+    if [ -d "$candidate" ]; then
+        CU13_LIB="$candidate"
+        break
+    fi
+done
+if [ -n "$CU13_LIB" ]; then
+    echo "$CU13_LIB" > /etc/ld.so.conf.d/cuda13-docker.conf
+    ldconfig
+fi
+# Fallback: LD_LIBRARY_PATH for the running process (catches cases where
+# ldconfig doesn't apply to the current process tree in time).
+export LD_LIBRARY_PATH="${CU13_LIB:+$CU13_LIB:}$LD_LIBRARY_PATH"
+
 # Make Cookbook-installed Python CLIs visible after `pip install --user`.
 # vLLM and helper scripts land here because /app is the non-root user's HOME.
 export PATH="/app/.local/bin:$PATH"

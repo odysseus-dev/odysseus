@@ -68,3 +68,26 @@ def test_no_rounds_exhausted_on_normal_finish(monkeypatch):
     # A plain answer (no tool block) -> done-break on round 1 -> no event.
     events = _run_loop(monkeypatch, "All done, here is your answer.", max_rounds=2)
     assert not any(e.get("type") == "rounds_exhausted" for e in events), events
+
+
+def test_model_waiting_events_pass_through_agent_loop(monkeypatch):
+    _patch_common(monkeypatch)
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        yield f'data: {json.dumps({"type": "model_waiting", "model": "gpt-5.5-pro", "elapsed": 5})}\n\n'
+        yield f'data: {json.dumps({"delta": "Done."})}\n\n'
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+
+    gen = al.stream_agent_loop(
+        "http://x/v1",
+        "gpt-5.5-pro",
+        [{"role": "user", "content": "answer slowly"}],
+        max_rounds=2,
+        relevant_tools={"bash"},
+    )
+    events = _types(_collect(gen))
+    waiting = next(e for e in events if e.get("type") == "model_waiting")
+    assert waiting["model"] == "gpt-5.5-pro"
+    assert any(e.get("delta") == "Done." for e in events)

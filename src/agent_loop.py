@@ -2387,6 +2387,8 @@ async def stream_agent_loop(
                         actual_model = data.get("model") or actual_model
                         data["requested_model"] = requested_model
                         yield f"data: {json.dumps(data)}\n\n"
+                    elif data.get("type") == "model_waiting":
+                        yield chunk
                     elif "delta" in data:
                         if not first_token_received:
                             time_to_first_token = time.time() - total_start
