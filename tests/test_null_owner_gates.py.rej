@@ -1,0 +1,13 @@
+diff a/tests/test_null_owner_gates.py b/tests/test_null_owner_gates.py	(rejected hunks)
+@@ -153,7 +153,10 @@ def test_document_owner_filter_applies_owner_clause():
+ # gallery._owner_filter
+ # ---------------------------------------------------------------------------
+ 
+-def test_gallery_owner_filter_blocks_anonymous():
++def test_gallery_owner_filter_blocks_anonymous(monkeypatch):
++    # Multi-tenant: auth is ON, so a None user is an anonymous caller, not the
++    # single-user operator → must be blocked.
++    monkeypatch.setenv("AUTH_ENABLED", "true")
+     from routes.gallery_routes import _owner_filter
+     fake_q = MagicMock()
+     out = _owner_filter(fake_q, user=None)

@@ -1794,6 +1794,31 @@ def _empty_response_fallback(
     return _error_msg, f'data: {json.dumps({"delta": _error_msg})}\n\n'
 
 
+async def _first_token_guard(agen, timeout_s):
+    it = agen.__aiter__()
+    first = True
+    while True:
+        try:
+            chunk = await (asyncio.wait_for(it.__anext__(), timeout_s) if first else it.__anext__())
+        except StopAsyncIteration:
+            return
+        except asyncio.TimeoutError:
+            try:
+                await it.aclose()
+            except Exception:
+                pass
+            msg = (
+                f"The model accepted the request but sent no response within {int(timeout_s)}s. "
+                "In agent mode this usually means the prompt plus tool definitions exceed the "
+                "model's context window, or the model doesn't support tool calling. Raise the "
+                "model's context length (e.g. 8192+ in LM Studio) or switch to a tool-capable model."
+            )
+            yield f'event: error\ndata: {json.dumps({"text": msg, "error": msg, "status": 504})}\n\n'
+            return
+        first = False
+        yield chunk
+
+
 PLAN_MODE_DIRECTIVE = (
     "## PLAN MODE — OVERRIDES EVERYTHING ELSE BELOW\n"
     "You are in PLAN MODE. Your ONLY job this turn is to PROPOSE a plan. You have "
@@ -2447,6 +2472,7 @@ async def stream_agent_loop(
             _wants_mcp = any(kw in _last_content for kw in _MCP_KEYWORDS)
             all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
+        agent_first_token_timeout = int(get_setting("agent_first_token_timeout_seconds", 60) or 60)
         _dispatch_timeout = max(endpoint_timeout, agent_stream_timeout)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]
@@ -2461,7 +2487,7 @@ async def stream_agent_loop(
         # complementary cap for the rare stream that trickles bytes forever and
         # so never trips the inactivity timeout. Generous — only catches runaway.
         _round_deadline = time.time() + max(agent_stream_timeout * 4, 1200)
-        async for chunk in stream_llm_with_fallback(
+        async for chunk in _first_token_guard(stream_llm_with_fallback(
             _candidates,
             messages,
             temperature=temperature,
@@ -2470,7 +2496,7 @@ async def stream_agent_loop(
             tools=all_tool_schemas if all_tool_schemas else None,
             timeout=agent_stream_timeout,
             session_id=session_id,
-        ):
+        ), agent_first_token_timeout):
             if time.time() > _round_deadline:
                 logger.warning(f"[agent] round {round_num} stream exceeded wall-clock deadline; cutting off")
                 break

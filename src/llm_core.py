@@ -2514,6 +2514,87 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
         return
 
+    # ── Gemini-native streaming ──
+    if google_native:
+        _google_tool_calls: List[Dict] = []
+
+        def _google_emit_tool_calls():
+            if not _google_tool_calls:
+                return None
+            return f'data: {json.dumps({"type": "tool_calls", "calls": _google_tool_calls})}\n\n'
+
+        try:
+            client = _get_http_client()
+            async with client.stream("POST", target_url, json=payload, headers=h, timeout=stream_timeout) as r:
+                _clear_host_dead(target_url)
+                if r.status_code != 200:
+                    raw = (await r.aread()).decode(errors="replace")
+                    friendly = _format_upstream_error(r.status_code, raw, target_url)
+                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    return
+                async for line in r.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data:
+                        continue
+                    if data == "[DONE]":
+                        tc_event = _google_emit_tool_calls()
+                        if tc_event:
+                            yield tc_event
+                        yield "data: [DONE]\n\n"
+                        return
+                    if not data.startswith("{"):
+                        continue
+                    try:
+                        j = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+
+                    usage = j.get("usageMetadata") or j.get("usage") or {}
+                    if usage:
+                        input_tokens = usage.get("promptTokenCount") or usage.get("input_tokens") or usage.get("prompt_tokens") or 0
+                        output_tokens = usage.get("candidatesTokenCount") or usage.get("output_tokens") or usage.get("completion_tokens") or 0
+                        if input_tokens or output_tokens:
+                            yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": input_tokens, "output_tokens": output_tokens}})}\n\n'
+
+                    text, calls, _usage = _parse_google_response(j)
+                    if text:
+                        yield f'data: {json.dumps({"delta": text})}\n\n'
+                    for call in calls:
+                        idx = len(_google_tool_calls)
+                        if call.get("name") or not _google_tool_calls:
+                            _google_tool_calls.append({"id": f"call_{idx}", "name": "", "arguments": ""})
+                        else:
+                            idx = len(_google_tool_calls) - 1
+                        slot = _google_tool_calls[idx]
+                        if call.get("id"):
+                            slot["id"] = call["id"]
+                        if call.get("name"):
+                            slot["name"] = call["name"]
+                        if call.get("arguments"):
+                            slot["arguments"] = call["arguments"]
+                        if call.get("extra_content"):
+                            slot["extra_content"] = call["extra_content"]
+
+                tc_event = _google_emit_tool_calls()
+                if tc_event:
+                    yield tc_event
+                yield "data: [DONE]\n\n"
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            _cooled = _mark_host_dead(target_url)
+            _tail = f" â€” host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " â€” transient, will retry"
+            logger.warning(f"Gemini stream connect to {target_url} failed: {e}{_tail}")
+            yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
+        except httpx.ReadTimeout:
+            yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
+        except httpx.NetworkError:
+            yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
+        except Exception as e:
+            logger.error(f"Gemini stream error: {e}")
+            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+        return
+
     # ── OpenAI-compatible streaming ──
     # Accumulate native tool_calls across streaming chunks
     _tc_acc: Dict[int, Dict] = {}  # index -> {id, name, arguments}

@@ -1,0 +1,450 @@
+diff a/routes/email_helpers.py b/routes/email_helpers.py	(rejected hunks)
+@@ -530,6 +530,28 @@ def _init_scheduled_db():
+     # action: the LLM extracts the common trailing block across N emails
+     # from each sender; the renderer folds it consistently for every
+     # future email from that address.
++    conn.execute("""
++        CREATE TABLE IF NOT EXISTS email_snoozes (
++            message_id TEXT,
++            owner TEXT DEFAULT '',
++            account_id TEXT,
++            uid TEXT,
++            folder TEXT,
++            wake_at TEXT NOT NULL,
++            created_at TEXT NOT NULL,
++            PRIMARY KEY (message_id, owner)
++        )
++    """)
++    conn.execute("""
++        CREATE TABLE IF NOT EXISTS email_pgp_keys (
++            account_id TEXT,
++            owner TEXT DEFAULT '',
++            public_key TEXT,
++            secret_key_enc TEXT,
++            encrypt_by_default INTEGER DEFAULT 0,
++            PRIMARY KEY (account_id, owner)
++        )
++    """)
+     conn.execute("""
+         CREATE TABLE IF NOT EXISTS sender_signatures (
+             from_address TEXT PRIMARY KEY,
+@@ -542,9 +564,379 @@ def _init_scheduled_db():
+     """)
+     conn.commit()
+     conn.close()
++    _migrate_encrypt_email_cache()
++    _purge_stale_email_cache()
+ 
+ 
+-_init_scheduled_db()
++def _migrate_encrypt_email_cache():
++    """One-time encrypt of legacy plaintext AI cache columns."""
++    import sqlite3
++    from src.secret_storage import encrypt as _enc
++    tables_cols = [
++        ("email_summaries", ["summary"]),
++        ("email_ai_replies", ["reply"]),
++        ("email_tags", ["tags", "spam_reason"]),
++        ("email_urgency_alerts", ["reason"]),
++    ]
++    try:
++        conn = sqlite3.connect(SCHEDULED_DB)
++        for table, cols in tables_cols:
++            try:
++                info = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
++            except Exception:
++                continue
++            for col in cols:
++                if col not in info:
++                    continue
++                rows = conn.execute(
++                    f"SELECT rowid, {col} FROM {table} WHERE {col} IS NOT NULL AND {col} != ''"
++                ).fetchall()
++                for rowid, val in rows:
++                    if not val or str(val).startswith("enc:"):
++                        continue
++                    conn.execute(
++                        f"UPDATE {table} SET {col}=? WHERE rowid=?",
++                        (_enc(str(val)), rowid),
++                    )
++        conn.commit()
++        conn.close()
++    except Exception as e:
++        logger.warning(f"email cache encryption migration skipped: {e}")
++
++
++SOURCE_PART_PREVIEW_MAX = 256 * 1024
++
++
++def encrypt_cache_field(value: str) -> str:
++    if not value:
++        return value or ""
++    from src.secret_storage import encrypt as _enc
++    return _enc(value)
++
++
++def decrypt_cache_field(value: str) -> str:
++    if not value:
++        return value or ""
++    from src.secret_storage import decrypt as _dec
++    return _dec(value)
++
++
++def email_ai_local_only_enabled() -> bool:
++    try:
++        return bool(_load_settings().get("email_ai_local_only", False))
++    except Exception:
++        return False
++
++
++def email_ai_local_only_error(url: str | None) -> str | None:
++    """Return a user-facing error when local-only mode blocks a remote endpoint."""
++    if not email_ai_local_only_enabled():
++        return None
++    if not url:
++        return "Email AI: no endpoint configured"
++    from src.model_context import _is_local_endpoint
++    if not _is_local_endpoint(url):
++        return (
++            "Email AI is set to local models only. "
++            "Configure a local model in Cookbook or disable the setting in Settings → Email."
++        )
++    return None
++
++
++def build_message_source(msg, raw: bytes) -> dict:
++    """Structured view-source payload: headers, MIME parts, base64 RFC822."""
++    import base64
++
++    headers = [{"name": k, "value": v} for k, v in msg.items()]
++    attachments_by_name = {
++        (a.get("filename") or "", a.get("content_type") or ""): a.get("index")
++        for a in _list_attachments_from_msg(msg)
++    }
++    parts = []
++    part_num = 0
++    for part in msg.walk():
++        if part.is_multipart():
++            continue
++        ct = part.get_content_type()
++        cd = str(part.get("Content-Disposition", ""))
++        cd_lower = cd.lower()
++        filename = part.get_filename()
++        if filename:
++            filename = _decode_header(filename)
++        disposition = (
++            "attachment" if "attachment" in cd_lower
++            else ("inline" if "inline" in cd_lower else "body")
++        )
++        payload = part.get_payload(decode=True) or b""
++        size = len(payload)
++        entry = {
++            "part": part_num,
++            "content_type": ct,
++            "charset": part.get_content_charset() or "",
++            "filename": filename or "",
++            "size": size,
++            "disposition": disposition,
++        }
++        dl_key = (filename or "", ct)
++        if dl_key in attachments_by_name:
++            entry["download_index"] = attachments_by_name[dl_key]
++        is_body_text = (
++            ct in ("text/plain", "text/html")
++            and "attachment" not in cd_lower
++        )
++        if is_body_text and payload:
++            charset = part.get_content_charset() or "utf-8"
++            text = payload.decode(charset, errors="replace")
++            truncated = len(text) > SOURCE_PART_PREVIEW_MAX
++            if truncated:
++                text = text[:SOURCE_PART_PREVIEW_MAX]
++            entry["body"] = text
++            if truncated:
++                entry["truncated"] = True
++        parts.append(entry)
++        part_num += 1
++    return {
++        "size": len(raw),
++        "headers": headers,
++        "parts": parts,
++        "raw_rfc822": base64.b64encode(raw).decode("ascii"),
++    }
++
++
++_EMAIL_AUDIT_LOG = Path(__file__).resolve().parent.parent / "logs" / "email_audit.log"
++
++
++def log_email_audit(event: str, *, owner: str = "", **fields) -> None:
++    """Append-only audit trail — metadata only, never mail bodies."""
++    try:
++        _EMAIL_AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
++        detail = " ".join(f"{k}={v!r}" for k, v in fields.items() if v not in (None, ""))
++        line = f"{datetime.utcnow().isoformat(timespec='seconds')} {event} owner={owner!r} {detail}".strip()
++        with _EMAIL_AUDIT_LOG.open("a", encoding="utf-8") as fh:
++            fh.write(line + "\n")
++    except Exception:
++        logger.debug("email audit log write failed", exc_info=True)
++
++
++def _active_snoozed_uids(owner: str, account_id: str | None, folder: str) -> set[str]:
++    """UIDs hidden from inbox until wake_at."""
++    import sqlite3
++    from datetime import datetime as _dt
++    now = _dt.utcnow().isoformat()
++    owner_clause, owner_params = _email_cache_owner_clause(owner)
++    try:
++        conn = sqlite3.connect(SCHEDULED_DB)
++        q = (
++            f"SELECT uid FROM email_snoozes WHERE folder=? AND wake_at > ? AND {owner_clause}"
++        )
++        params = [folder, now, *owner_params]
++        if account_id:
++            q += " AND (account_id IS NULL OR account_id = '' OR account_id = ?)"
++            params.append(account_id)
++        rows = conn.execute(q, params).fetchall()
++        conn.close()
++        return {str(r[0]) for r in rows if r and r[0]}
++    except Exception:
++        return set()
++
++
++def _list_email_accounts_for_owner(owner: str = "") -> list[dict]:
++    """Enabled accounts scoped to an owner (for unified inbox)."""
++    from core.database import SessionLocal as _SL, EmailAccount as _EA
++    try:
++        db = _SL()
++        try:
++            q = db.query(_EA).filter(_EA.enabled == True)  # noqa: E712
++            if owner:
++                q = q.filter(_EA.owner == owner)
++            rows = q.order_by(_EA.is_default.desc(), _EA.created_at.asc()).all()
++            return [_get_email_config(r.id) for r in rows]
++        finally:
++            db.close()
++    except Exception as e:
++        logger.debug(f"_list_email_accounts_for_owner failed: {e}")
++        return [_get_email_config(owner=owner)]
++
++
++def _thread_root_id(message_id: str, in_reply_to: str, references: str) -> str:
++    import re as _re
++    refs: list[str] = _re.findall(r"<[^>]+>", references or "")
++    irt = (in_reply_to or "").strip()
++    if irt and irt not in refs:
++        refs.append(irt)
++    if refs:
++        return refs[0].strip()
++    return (message_id or "").strip()
++
++
++def group_emails_by_thread(emails: list[dict]) -> list[dict]:
++    """Collapse list rows to one entry per thread (newest message surfaces)."""
++    buckets: dict[str, dict] = {}
++    counts: dict[str, int] = {}
++    for e in emails:
++        root = _thread_root_id(
++            e.get("message_id", ""),
++            e.get("in_reply_to", ""),
++            e.get("references", ""),
++        ) or str(e.get("message_id") or f"uid:{e.get('uid')}")
++        counts[root] = counts.get(root, 0) + 1
++        prev = buckets.get(root)
++        if not prev or (e.get("date_epoch") or 0) > (prev.get("date_epoch") or 0):
++            buckets[root] = dict(e)
++    out = []
++    for root, row in buckets.items():
++        row["thread_root"] = root
++        row["thread_count"] = counts.get(root, 1)
++        out.append(row)
++    out.sort(key=lambda x: x.get("date_epoch") or 0.0, reverse=True)
++    return out
++
++
++def upsert_email_snooze(
++    *,
++    message_id: str,
++    owner: str,
++    account_id: str | None,
++    uid: str,
++    folder: str,
++    wake_at: str,
++) -> None:
++    import sqlite3
++    from datetime import datetime as _dt
++    conn = sqlite3.connect(SCHEDULED_DB)
++    conn.execute(
++        """
++        INSERT INTO email_snoozes (message_id, owner, account_id, uid, folder, wake_at, created_at)
++        VALUES (?, ?, ?, ?, ?, ?, ?)
++        ON CONFLICT(message_id, owner) DO UPDATE SET
++          account_id=excluded.account_id, uid=excluded.uid, folder=excluded.folder,
++          wake_at=excluded.wake_at, created_at=excluded.created_at
++        """,
++        (
++            message_id or f"uid:{uid}",
++            owner or "",
++            account_id or "",
++            str(uid),
++            folder,
++            wake_at,
++            _dt.utcnow().isoformat(),
++        ),
++    )
++    conn.commit()
++    conn.close()
++
++
++def delete_email_snooze(*, message_id: str, owner: str) -> bool:
++    import sqlite3
++    conn = sqlite3.connect(SCHEDULED_DB)
++    cur = conn.execute(
++        "DELETE FROM email_snoozes WHERE message_id=? AND owner=?",
++        (message_id, owner or ""),
++    )
++    conn.commit()
++    deleted = cur.rowcount > 0
++    conn.close()
++    return deleted
++
++
++def sweep_expired_snoozes() -> int:
++    """Remove snooze rows whose wake time has passed (messages resurface in inbox)."""
++    import sqlite3
++    from datetime import datetime as _dt
++    now = _dt.utcnow().isoformat()
++    try:
++        conn = sqlite3.connect(SCHEDULED_DB)
++        cur = conn.execute("DELETE FROM email_snoozes WHERE wake_at <= ?", (now,))
++        conn.commit()
++        n = cur.rowcount or 0
++        conn.close()
++        return n
++    except Exception:
++        return 0
++
++
++def clear_email_ai_cache_for_owner(owner: str) -> int:
++    """Delete all AI cache rows for one owner."""
++    import sqlite3
++    tables = ("email_summaries", "email_ai_replies", "email_tags", "email_urgency_alerts")
++    owner_clause, owner_params = _email_cache_owner_clause(owner)
++    total = 0
++    try:
++        conn = sqlite3.connect(SCHEDULED_DB)
++        for table in tables:
++            try:
++                cur = conn.execute(f"DELETE FROM {table} WHERE {owner_clause}", owner_params)
++                total += cur.rowcount or 0
++            except Exception:
++                continue
++        conn.commit()
++        conn.close()
++    except Exception as e:
++        logger.debug(f"clear_email_ai_cache_for_owner failed: {e}")
++    return total
++
++
++def maybe_pgp_encrypt_outbound(
++    account_id: str | None,
++    owner: str,
++    recipients: list[str],
++    body_plain: str,
++    body_html: str,
++) -> tuple[str, str, str | None]:
++    """Optional PGP encrypt when account has keys configured (pgpy if installed)."""
++    import sqlite3
++    try:
++        conn = sqlite3.connect(SCHEDULED_DB)
++        row = conn.execute(
++            "SELECT public_key, secret_key_enc, encrypt_by_default FROM email_pgp_keys "
++            "WHERE account_id=? AND owner=?",
++            (account_id or "", owner or ""),
++        ).fetchone()
++        conn.close()
++    except Exception:
++        return body_plain, body_html, None
++    if not row or not row[0] or not int(row[2] or 0):
++        return body_plain, body_html, None
++    try:
++        from pgpy import PGPMessage, PGPKey  # type: ignore
++        from src.secret_storage import decrypt as _decrypt_secret
++    except Exception:
++        logger.info("PGP keys configured but pgpy/secret decrypt unavailable — sending plaintext")
++        return body_plain, body_html, "pgpy_unavailable"
++    try:
++        sec = _decrypt_secret(row[1] or "")
++        key, _ = PGPKey.from_blob(sec)
++        msg = PGPMessage.new(body_plain or body_html or "")
++        encrypted = str(key.encrypt(msg))
++        return encrypted, f"<pre>{encrypted}</pre>", None
++    except Exception as e:
++        logger.warning(f"PGP encrypt failed, sending plaintext: {e}")
++        return body_plain, body_html, str(e)
++
++
++def _purge_stale_email_cache() -> None:
++    """Drop AI cache rows older than settings.email_cache_retention_days."""
++    import sqlite3
++    try:
++        days = int(_load_settings().get("email_cache_retention_days") or 0)
++    except (TypeError, ValueError):
++        days = 0
++    if days <= 0:
++        return
++    from datetime import datetime as _dt, timedelta as _td
++    cutoff = (_dt.utcnow() - _td(days=days)).isoformat()
++    tables = ("email_summaries", "email_ai_replies", "email_tags", "email_urgency_alerts")
++    try:
++        conn = sqlite3.connect(SCHEDULED_DB)
++        for table in tables:
++            try:
++                conn.execute(f"DELETE FROM {table} WHERE created_at < ?", (cutoff,))
++            except Exception:
++                continue
++        conn.commit()
++        conn.close()
++    except Exception as e:
++        logger.debug(f"email cache retention purge skipped: {e}")
+ 
+ 
+ def _load_settings():
+@@ -703,6 +1095,15 @@ def _coerce_imap_timeout_seconds(raw: str | None) -> int:
+ def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int = _IMAP_TIMEOUT_SECONDS):
+     """Open an IMAP connection using the configured security mode."""
+     port = int(port or 993)
++    # Port 993 is implicit TLS (IMAPS). Plain IMAP + STARTTLS on 993 hangs on
++    # most servers because they speak SSL immediately — a common mis-click in
++    # Settings since STARTTLS defaults to on.
++    if port == 993 and starttls:
++        logger.warning(
++            "IMAP port 993 with STARTTLS enabled for %s — using implicit SSL (IMAPS) instead",
++            host,
++        )
++        starttls = False
+     if starttls:
+         conn = imaplib.IMAP4(host, port, timeout=timeout)
+         conn.starttls()
+@@ -1020,12 +1421,15 @@ def _list_attachments_from_msg(msg):
+             filename = f"attachment_{idx}.{ext}"
+         payload = part.get_payload(decode=True)
+         size = len(payload) if payload else 0
++        raw_cid = part.get("Content-ID", "") or ""
++        content_id = raw_cid.strip().strip("<>").strip() if raw_cid else ""
+         attachments.append({
+             "index": idx,
+             "filename": filename,
+             "content_type": ct,
+             "size": size,
+             "is_inline": "inline" in cd.lower(),
++            "content_id": content_id,
+         })
+         idx += 1
+     return attachments
+@@ -1443,3 +1847,6 @@ class SendEmailRequest(BaseModel):
+ 
+ class ExtractStyleRequest(BaseModel):
+     sample_count: Optional[int] = 20
++
++
++_init_scheduled_db()
