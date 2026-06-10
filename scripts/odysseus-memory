@@ -90,7 +90,7 @@ def cmd_add(args):
     # add_entry doesn't save by default — the call in chat does it
     # after dedup checks. Persist here so a one-shot CLI add sticks.
     all_entries = _manager().load_all()
-    if not any(e.get("id") == entry.get("id") for e in all_entries):
+    if not any(isinstance(e, dict) and e.get("id") == entry.get("id") for e in all_entries):
         all_entries.append(entry)
         _manager().save(all_entries)
     emit(entry, args)
