@@ -25,6 +25,20 @@
   let workEmoteTimer = null;
   let thinkOpen = false; // inside a <think>…</think> block streamed via deltas
 
+  // ── Loop-detection swearing ────────────────────────────────────────────
+  // The frog loses its patience when the model starts going in circles.
+  const SWEARS = ['бляя…', 'да ёб твою мать…', 'опять?!', 'ну сколько можно…', 'да блин!', 'сука, снова…', 'ну ё-моё…'];
+  // Strong signals — swear right away.
+  const LOOP_PHRASE_RE = /\b(?:try(?:ing)? again|retry(?:ing)?|once more|one more time|failed again|same error|still (?:fails|failing|not working))\b|(?:попробу[юем]+\s+(?:еще|ещё)|та же ошибка)/i;
+  // Weak signals — need a few hits per turn before the frog cracks.
+  const LOOP_WORD_RE = /\bagain\b|опять|снова|еще раз|ещё раз/i;
+  const SWEAR_COOLDOWN = 25000;
+  let swearAt = 0;
+  let againHits = 0;
+  let lastToolSig = '';
+  let toolRepeats = 0;
+  let sayTimer = null;
+
   const FROG_SVG = `
 <svg class="frog-svg" viewBox="0 0 140 120" aria-hidden="true">
   <ellipse cx="28" cy="109" rx="16" ry="7" fill="#4e9a51"/>
@@ -81,6 +95,7 @@
     root.className = 'frog-idle';
     root.title = 'Frog-coder \u{1F438} — click to hide me';
     root.innerHTML = CLOUD_HTML + FROG_SVG +
+      '<div class="frog-say" aria-hidden="true"></div>' +
       '<div class="frog-emotes" aria-hidden="true"></div>' +
       '<button class="frog-restore" title="Bring the frog back" aria-label="Show frog pet">\u{1F438}</button>';
     document.body.appendChild(root);
@@ -129,12 +144,37 @@
     setTimeout(() => el.remove(), 2500); // belt-and-braces cleanup
   }
 
+  function say(text) {
+    if (!root || root.classList.contains('frog-min')) return;
+    const bubble = root.querySelector('.frog-say');
+    if (!bubble) return;
+    bubble.textContent = text;
+    bubble.classList.add('frog-say-visible');
+    root.classList.add('frog-annoyed');
+    emote('\u{1F4A2}', true); // 💢
+    clearTimeout(sayTimer);
+    sayTimer = setTimeout(() => {
+      bubble.classList.remove('frog-say-visible');
+      root.classList.remove('frog-annoyed');
+    }, 2800);
+  }
+
+  function swear() {
+    const now = Date.now();
+    if (now - swearAt < SWEAR_COOLDOWN) return;
+    swearAt = now;
+    say(SWEARS[Math.floor(Math.random() * SWEARS.length)]);
+  }
+
   window.frogPet = {
     // A new request went out — frog waits for the model, pondering.
     onStart() {
       build();
       clearTimeout(happyTimer);
       thinkOpen = false;
+      againHits = 0;
+      lastToolSig = '';
+      toolRepeats = 0;
       setMood('thinking');
     },
     // One hook per SSE event from chat.js; `thinking` is chat.js's live flag.
@@ -149,6 +189,15 @@
         setMood('typing');
         const t = String(json.tool || '').toLowerCase();
         emote(TOOL_EMOJI[t] || '\u{1F527}');
+        // Same tool + same command twice in a row = the model is going in circles.
+        const sig = t + '|' + String(json.command || '').slice(0, 80);
+        if (sig === lastToolSig) {
+          toolRepeats++;
+          if (toolRepeats >= 2) swear();
+        } else {
+          lastToolSig = sig;
+          toolRepeats = 1;
+        }
         return;
       }
       if (json.thinking) { setMood('thinking'); return; } // vLLM/DeepSeek reasoning deltas
@@ -158,6 +207,12 @@
         if (close > open) thinkOpen = false;
         else if (open >= 0) thinkOpen = true;
         setMood(thinkOpen || thinking ? 'thinking' : 'typing');
+        if (LOOP_PHRASE_RE.test(json.delta)) {
+          swear();
+        } else if (LOOP_WORD_RE.test(json.delta)) {
+          againHits++;
+          if (againHits >= 3) { againHits = 0; swear(); }
+        }
       } else if (json.type === 'doc_stream_delta') {
         setMood('typing');
       }

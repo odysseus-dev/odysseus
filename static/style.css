@@ -36828,3 +36828,44 @@ body.theme-frosted .modal {
   #frog-pet .frog-svg, #frog-pet .frog-lids circle, #frog-pet .frog-hand-l,
   #frog-pet .frog-hand-r, #frog-pet .frog-spiral, #frog-pet .frog-lap-logo { animation: none !important; }
 }
+
+/* Frog swearing at model loops: speech bubble + annoyed half-lidded eyes */
+#frog-pet .frog-say {
+  position: absolute;
+  top: -16px;
+  right: -6px;
+  max-width: 160px;
+  padding: 6px 10px;
+  background: var(--bg-secondary, #fff);
+  border: 1.5px solid var(--border, #ccc);
+  border-radius: 12px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--fg, #222);
+  white-space: nowrap;
+  opacity: 0;
+  transform: scale(0.5) translateY(8px);
+  transform-origin: bottom left;
+  transition: opacity 0.18s, transform 0.18s;
+  pointer-events: none;
+  z-index: 1;
+}
+#frog-pet .frog-say::after {
+  content: '';
+  position: absolute;
+  bottom: -7px;
+  left: 18px;
+  width: 10px;
+  height: 10px;
+  background: var(--bg-secondary, #fff);
+  border-right: 1.5px solid var(--border, #ccc);
+  border-bottom: 1.5px solid var(--border, #ccc);
+  transform: rotate(45deg);
+}
+#frog-pet .frog-say.frog-say-visible { opacity: 1; transform: scale(1) translateY(0); }
+/* Annoyed: lids drop halfway over the eyes, pupils flat ahead */
+#frog-pet.frog-annoyed .frog-lids circle {
+  animation: none;
+  transform: scaleY(0.6) translateY(-4px);
+}
+#frog-pet.frog-annoyed .frog-pupils { transform: translateY(1px); }
