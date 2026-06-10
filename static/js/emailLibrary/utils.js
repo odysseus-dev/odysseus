@@ -112,12 +112,40 @@ export function _formatBubbleDate(iso) {
   } catch (_) { return ''; }
 }
 
+// Split a recipient header into individual addresses, honoring commas that
+// sit inside a quoted display name ("Doe, John" <john@x.com>) or inside angle
+// brackets. A bare String.split(',') would cut such a name in two. Mirrors the
+// quote/angle-aware splitter in emailLibrary.js.
+export function _splitRecipientList(raw) {
+  const out = [];
+  let cur = '';
+  let quote = false;
+  let angle = false;
+  const s = String(raw || '');
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s[i];
+    if (ch === '"' && s[i - 1] !== '\\') quote = !quote;
+    else if (ch === '<' && !quote) angle = true;
+    else if (ch === '>' && !quote) angle = false;
+    if (ch === ',' && !quote && !angle) {
+      const part = cur.trim();
+      if (part) out.push(part);
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  const tail = cur.trim();
+  if (tail) out.push(tail);
+  return out;
+}
+
 // Format a raw "to" address string ("Foo <foo@x.com>, bar@y.com") into a
 // short, readable list — display names when present, just the local part
 // of the email otherwise, and ", +N" once there are more than 2 recipients.
 export function _formatRecipients(raw) {
   if (!raw) return '';
-  const addrs = String(raw).split(',').map(s => s.trim()).filter(Boolean);
+  const addrs = _splitRecipientList(raw);
   if (!addrs.length) return '';
   const friendly = addrs.map(a => {
     const m = a.match(/^\s*"?([^"<]+?)"?\s*<[^>]+>\s*$/);
