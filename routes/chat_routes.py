@@ -635,7 +635,7 @@ def setup_chat_routes(
             # leak a doc that belongs to a DIFFERENT session.
             if not active_doc:
                 try:
-                    from src.tool_implementations import get_active_document
+                    from src.agent_tools.document_tools import get_active_document
                     _mem_id = get_active_document()
                     if _mem_id:
                         _mem_q = _doc_db.query(DBDocument).filter(DBDocument.id == _mem_id)
