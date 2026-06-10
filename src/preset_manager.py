@@ -188,3 +188,15 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
         """Save group chat presets."""
         self.presets["group_presets"] = groups
         return self.save(self.presets)
+
+
+# Register the multi-agent experts + orchestrator ("experts") as built-in
+# presets so they show up in the picker and can be selected like any other
+# preset. Defined alongside the router logic in src/expert_router.py to keep a
+# single source of truth; setdefault never clobbers a user-edited entry, and
+# PresetManager.load() heals existing presets.json files forward (see the
+# missing-built-in fill in load()).
+from src.expert_router import expert_presets_for_picker  # noqa: E402
+
+for _expert_id, _expert_entry in expert_presets_for_picker().items():
+    PresetManager.DEFAULT_PRESETS.setdefault(_expert_id, _expert_entry)
