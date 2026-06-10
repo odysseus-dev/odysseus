@@ -1021,6 +1021,21 @@ def _api_key_fingerprint(api_key: Optional[str]) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
 
 
+def _default_chat_model(visible):
+    """Pick the default CHAT model from a visible model list.
+
+    Mirrors every other default-selection site (endpoint add at _first_chat_model
+    seeding, endpoint_resolver, research_routes): prefer the first model that
+    isn't an embedding/tts/whisper/dall-e/etc. entry, so the chat default is not
+    pinned to a non-chat model a provider happens to list first. Falls back to
+    the first visible id.
+    """
+    if not visible:
+        return ""
+    from src.endpoint_resolver import _first_chat_model
+    return _first_chat_model(visible) or visible[0]
+
+
 def setup_model_routes(model_discovery):
     router = APIRouter(prefix="/api")
 
@@ -2106,7 +2121,7 @@ def setup_model_routes(model_discovery):
                 try:
                     visible = _visible_models(ep.cached_models, getattr(ep, "hidden_models", None), getattr(ep, "pinned_models", None))
                     if visible:
-                        model = visible[0]
+                        model = _default_chat_model(visible)
                 except Exception:
                     pass
             return {"endpoint_id": ep.id, "endpoint_url": chat_url, "model": model}
