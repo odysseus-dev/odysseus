@@ -934,6 +934,29 @@ async def _startup_event():
             logger.warning(f"Tool index warmup failed (non-critical): {type(e).__name__}: {e}")
 
     _startup_tasks.append(asyncio.create_task(_warmup_tool_index()))
+
+    # Re-point the LM Studio endpoint at the current Windows-host IP. Under
+    # WSL2 NAT the gateway IP can change across reboots, which would strand
+    # the endpoint row and any task endpoint_url that embeds the old host.
+    async def _sync_lmstudio():
+        try:
+            from src.lmstudio_sync import sync_lmstudio_endpoint
+            base = await sync_lmstudio_endpoint()
+            if base:
+                logger.info(f"[startup] LM Studio endpoint synced: {base}")
+            else:
+                logger.warning("[startup] LM Studio unreachable on all candidate host IPs")
+        except Exception as e:
+            logger.warning(f"LM Studio endpoint sync failed (non-critical): {e}")
+
+    _startup_tasks.append(asyncio.create_task(_sync_lmstudio()))
+
+    # Telegram bridge (no-op until a token is configured).
+    try:
+        from services.telegram.bot import get_telegram_bridge
+        await get_telegram_bridge().start()
+    except Exception as e:
+        logger.warning(f"Telegram bridge start failed (non-critical): {e}")
     # Warmup: ping all known LLM endpoints to prime connections
     async def _warmup_endpoints():
         try:
@@ -1103,6 +1126,11 @@ async def _startup_event():
 
 async def _shutdown_event():
     logger.info("Application shutting down...")
+    try:
+        from services.telegram.bot import get_telegram_bridge
+        await get_telegram_bridge().stop()
+    except Exception:
+        pass
     if upload_cleanup_task:
         upload_cleanup_task.cancel()
         try:

@@ -1,0 +1,15 @@
+[Unit]
+Description=Odysseus UI
+After=network.target
+
+[Service]
+Type=simple
+User=sept
+WorkingDirectory=/home/sept/odysseus
+ExecStart=/home/sept/odysseus/venv/bin/uvicorn app:app --port 7000 --host 0.0.0.0
+Restart=always
+RestartSec=3
+EnvironmentFile=-/home/sept/odysseus/.env
+
+[Install]
+WantedBy=multi-user.target

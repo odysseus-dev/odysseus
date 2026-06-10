@@ -118,6 +118,11 @@ DEFAULT_SETTINGS = {
     "tool_path_extra_roots": [],
     "task_endpoint_id": "",
     "task_model": "",
+    # Telegram bridge. Token is Fernet-encrypted (src.secret_storage) — write it
+    # via TelegramBridge.set_token() / scripts/set_telegram_token.py. chat_id binds
+    # automatically on the first /start to the bot.
+    "overseer_telegram_token": "",
+    "overseer_telegram_chat_id": "",
     "default_endpoint_id": "",
     "default_model": "",
     # Ordered fallback chain for the default chat model. Each entry is
