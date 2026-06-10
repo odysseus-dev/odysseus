@@ -1803,14 +1803,25 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 cal = _ensure_default_calendar(db, owner)
 
             all_day = bool(args.get("all_day", False))
+            # All-day events are date-only. Parsing them through the tz-aware
+            # path (parse_due_for_user) tagged the bare date with the user's
+            # offset and converted to UTC, rolling the date back a day for any
+            # positive offset (JST/CET/AEST — most of the world): "2026-06-10"
+            # became 2026-06-09. Parse all-day dates as naive calendar dates.
             try:
-                dtstart, dtstart_is_utc = _parse_event_dt(dtstart_str)
+                if all_day:
+                    dtstart, dtstart_is_utc = _parse_dt(dtstart_str), False
+                else:
+                    dtstart, dtstart_is_utc = _parse_event_dt(dtstart_str)
             except ValueError as e:
                 return {"error": f"Could not parse dtstart {dtstart_str!r}: {e}", "exit_code": 1}
             dtend_raw = args.get("dtend") or args.get("end") or args.get("end_time")
             if dtend_raw:
                 try:
-                    dtend, dtend_is_utc = _parse_event_dt(dtend_raw)
+                    if all_day:
+                        dtend, dtend_is_utc = _parse_dt(dtend_raw), False
+                    else:
+                        dtend, dtend_is_utc = _parse_event_dt(dtend_raw)
                     dtstart_is_utc = dtstart_is_utc or dtend_is_utc
                 except ValueError as e:
                     return {"error": f"Could not parse dtend {dtend_raw!r}: {e}", "exit_code": 1}
