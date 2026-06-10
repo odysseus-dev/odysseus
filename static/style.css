@@ -8392,6 +8392,56 @@ button.hamburger {
 /* Hide thinking sections globally via settings toggle */
 body.hide-thinking .thinking-section { display: none !important; }
 
+/* Collapsible long code blocks — folds a wall of code like the thinking /
+   bash-output dropdowns. Native <details>, collapsed by default. */
+.code-collapse {
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.code-collapse > .code-collapse-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.85em;
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+  list-style: none;
+}
+.code-collapse > .code-collapse-summary::-webkit-details-marker { display: none; }
+.code-collapse > .code-collapse-summary:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.code-collapse-toggle {
+  width: 0; height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+.code-collapse[open] > .code-collapse-summary .code-collapse-toggle {
+  transform: rotate(90deg);
+}
+.code-collapse-lang {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+  text-transform: lowercase;
+}
+.code-collapse-meta {
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+.code-collapse > pre {
+  margin: 0;
+  border-radius: 0;
+  border-top: 1px solid var(--border);
+}
+
 /* Thinking process styles — colors follow theme accent */
 .msg .body .stream-content {
   width: 100%;
