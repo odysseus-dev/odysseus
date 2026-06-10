@@ -196,7 +196,16 @@ function _bindEvents() {
 
   // Initial unread count check, refresh every 60s
   _refreshUnreadCount();
-  setInterval(_refreshUnreadCount, 60000);
+  let _emailPollInterval = setInterval(_refreshUnreadCount, 60000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && _emailPollInterval) {
+      clearInterval(_emailPollInterval);
+      _emailPollInterval = null;
+    } else if (!document.hidden && !_emailPollInterval) {
+      _refreshUnreadCount();
+      _emailPollInterval = setInterval(_refreshUnreadCount, 60000);
+    }
+  });
   prewarmEmailLibrary({ delay: 3000 });
 
   // Deep-link: #email=<folder>:<uid> opens the library and expands that card

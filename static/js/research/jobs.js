@@ -28,15 +28,26 @@ function _markDismissed(ids) {
 
 let _activePollInterval = null;
 
+function _startActivePoll() {
+  if (_activePollInterval) return;
+  _reconnectActive();
+  _activePollInterval = setInterval(() => { _reconnectActive(); }, 12000);
+}
+
+function _stopActivePoll() {
+  if (_activePollInterval) {
+    clearInterval(_activePollInterval);
+    _activePollInterval = null;
+  }
+}
+
 export function init(apiBase) {
   _apiBase = apiBase;
-  _reconnectActive();
-  // Poll for active sessions periodically so research started elsewhere
-  // (e.g. by the agent via trigger_research) gets adopted into the
-  // sidebar — _reconnectActive only ran once at load before, so
-  // agent-started jobs never appeared until a page reload.
-  if (_activePollInterval) clearInterval(_activePollInterval);
-  _activePollInterval = setInterval(() => { _reconnectActive(); }, 12000);
+  _startActivePoll();
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { _stopActivePoll(); }
+    else { _startActivePoll(); }
+  });
 }
 
 // Allow an immediate adopt when the chat stream signals a new research

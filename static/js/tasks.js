@@ -2725,6 +2725,10 @@ function stopNotificationPolling() {
 
 // Start polling on module load
 startNotificationPolling();
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { stopNotificationPolling(); }
+  else { startNotificationPolling(); }
+});
 
 const tasksModule = { openTasks, closeTasks, isTasksOpen, startNotificationPolling, stopNotificationPolling };
 export default tasksModule;
