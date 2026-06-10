@@ -1299,7 +1299,7 @@ body.bg-pattern-sparkles {
 
     /* Domino expand: every time a section goes from .collapsed → open
        (toggleCollapse in section-management.js adds .section-just-expanded
-       for ~700ms), the .list-item children cascade in one after another,
+       for ~700ms), the section rows cascade in one after another,
        same feel as the chat input's tools menu. Each row springs in
        from a tiny offset below + scaled-down, staggered by nth-child. */
     .section.section-just-expanded :is(.list-item, .models-row) {
