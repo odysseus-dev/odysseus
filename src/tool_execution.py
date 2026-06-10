@@ -86,16 +86,27 @@ def _is_sensitive_path(resolved: str) -> bool:
     return False
 
 
-def _tool_path_roots() -> list[str]:
+def _tool_path_roots(workspace: Optional[str] = None) -> list[str]:
     """Return the list of directory roots that read_file / write_file
     may touch. Default: project data/ + system temp dirs. Extra roots
     are loaded from the ``tool_path_extra_roots`` setting.
+    If *workspace* is provided (the active project directory for the
+    current session), it is automatically included as an allowed root.
     """
     roots: list[str] = []
 
     # Project data directory — the agent's primary workspace.
     from src.constants import DATA_DIR
     roots.append(DATA_DIR)
+
+    # Active workspace — the project directory the user is working in.
+    if workspace:
+        roots.append(workspace)
+
+    # ODYSSEUS_WORKSPACE env var — auto-include the active project directory.
+    env_workspace = os.environ.get("ODYSSEUS_WORKSPACE", "").strip()
+    if env_workspace:
+        roots.append(env_workspace)
 
     # Developer Mode: grant access to the project source code if enabled.
     if os.environ.get("ODYSSEUS_DEVELOPER_MODE", "").lower() in ("1", "true", "yes"):
@@ -140,7 +151,7 @@ def _tool_path_roots() -> list[str]:
     return out
 
 
-def _resolve_tool_path(raw_path: str) -> str:
+def _resolve_tool_path(raw_path: str, workspace: Optional[str] = None) -> str:
     """Resolve and confine a model-supplied path.
 
     Order of checks:
@@ -163,7 +174,7 @@ def _resolve_tool_path(raw_path: str) -> str:
             f"(e.g. .ssh, .gnupg) or matches a sensitive filename"
         )
 
-    for root in _tool_path_roots():
+    for root in _tool_path_roots(workspace=workspace):
         if resolved == root:
             return resolved
         try:
