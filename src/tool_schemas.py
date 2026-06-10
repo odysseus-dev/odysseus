@@ -1186,6 +1186,69 @@ FUNCTION_TOOL_SCHEMAS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_image",
+            "description": "Generate an AI image from a text prompt. Specify model, size, and quality.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Image description / text prompt"},
+                    "model": {"type": "string", "description": "Model name (e.g. 'dall-e-3', 'flux')"},
+                    "size": {"type": "string", "description": "Image size WxH (e.g. '1024x1024', '1792x1024')"},
+                    "quality": {"type": "string", "description": "Quality (e.g. 'standard', 'hd')"},
+                },
+                "required": ["prompt"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_research",
+            "description": "List, read, or delete saved deep research results from the Library. Use for 'open/read/find/delete my research' — to START new research use trigger_research instead.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "read", "delete"], "description": "Action: list all, read one by id, or delete one by id"},
+                    "id": {"type": "string", "description": "Research result id (for read/delete); 8-char prefix is fine"},
+                    "search": {"type": "string", "description": "Filter list results by keyword"},
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate_task",
+            "description": "Delegate a self-contained task to a fresh sub-agent LLM call. Use for research, analysis, code generation, or any complex multi-step task you want handled in an isolated context. The sub-agent runs without tools — it thinks and returns a text result.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "description": {"type": "string", "description": "Short label describing the task (e.g. 'Analyze auth patterns')"},
+                    "prompt": {"type": "string", "description": "Full task description and instructions for the sub-agent"},
+                    "model": {"type": "string", "description": "Model to use for the sub-agent (default: uses the configured default model)"},
+                },
+                "required": ["prompt"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "load_skill",
+            "description": "Load a skill's full SKILL.md instructions into context. Call this BEFORE doing domain work — there may already be a published or teacher-authored draft procedure that prescribes the correct steps. Pass no arguments to list all available skills.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Skill name (kebab-case slug, e.g. 'build-macos-apps'). Omit to list available skills."},
+                },
+                "required": []
+            }
+        }
+    },
 ]
 
 

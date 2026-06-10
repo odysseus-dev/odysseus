@@ -712,6 +712,114 @@ async def do_pipeline(content: str, session_id: Optional[str] = None, owner: Opt
 
 
 # ---------------------------------------------------------------------------
+# Sub-agent delegation
+# ---------------------------------------------------------------------------
+
+async def do_delegate_task(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+    """Delegate a self-contained task to a fresh sub-agent LLM call.
+
+    Content format (JSON):
+      {"description": "Short label for the task",
+       "prompt": "The full task description / instructions",
+       "model": "claude-sonnet-4" (optional)}
+
+    Or line format:
+      Line 1: description (short label)
+      Line 2+: prompt (full task instructions)
+    """
+    from src.llm_core import llm_call_async
+
+    try:
+        args = json.loads(content.strip())
+        description = args.get("description", "")
+        prompt = args.get("prompt", "")
+        model_spec = args.get("model", "auto")
+    except (json.JSONDecodeError, TypeError):
+        lines = content.strip().split("\n")
+        description = lines[0].strip() if lines else ""
+        prompt = "\n".join(lines[1:]).strip() if len(lines) > 1 else lines[0].strip() if lines else ""
+        model_spec = "auto"
+
+    if not prompt:
+        return {"error": "No task prompt provided", "exit_code": 1}
+
+    try:
+        url, model, headers = _resolve_model(model_spec, owner=owner)
+    except ValueError as e:
+        return {"error": f"Model resolution failed: {e}", "exit_code": 1}
+
+    system_msg = (
+        "You are a sub-agent running a delegated task. "
+        "Focus only on the task described. Be thorough but concise. "
+        "Return your result directly — do not ask follow-up questions."
+    )
+
+    messages = [
+        {"role": "system", "content": system_msg},
+        {"role": "user", "content": prompt},
+    ]
+
+    try:
+        response = await llm_call_async(
+            url, model, messages, headers=headers, timeout=AI_CHAT_TIMEOUT
+        )
+        if len(response) > 8000:
+            response = response[:8000] + "\n... (truncated)"
+
+        return {
+            "delegate_result": response,
+            "delegate_model": model,
+            "delegate_description": description,
+            "exit_code": 0,
+        }
+    except Exception as e:
+        logger.error(f"delegate_task failed: {e}")
+        return {"error": f"Delegate task failed: {e}", "exit_code": 1}
+
+
+# ---------------------------------------------------------------------------
+# Skill loading tool
+# ---------------------------------------------------------------------------
+
+async def do_load_skill(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+    """Load a skill's full SKILL.md content into the agent's context.
+
+    Content format:
+      Line 1: skill name (e.g. "build-macos-apps")
+
+    This is the dedicated tool for loading skills — use BEFORE doing domain
+    work to check if there's an authoritative procedure for the task.
+    """
+    from services.memory.skills import SkillsManager
+    from src.constants import DATA_DIR
+
+    name = content.strip().split("\n")[0].strip()
+    if not name:
+        # List available skills if no name given
+        sm = SkillsManager(DATA_DIR)
+        all_skills = sm.load(owner=owner)
+        if not all_skills:
+            return {"results": "No skills available. Create one with manage_skills action='add'.", "exit_code": 0}
+        published = [s for s in all_skills if s.get("status") == "published"]
+        drafts = [s for s in all_skills if s.get("status") == "draft"]
+        lines = ["## Available skills"]
+        for s in sorted(published, key=lambda x: x["name"]):
+            lines.append(f"- **{s['name']}** ({s.get('category','general')}): {s.get('description','')}")
+        if drafts:
+            lines.append("\n### Drafts (teacher-authored, pending publication)")
+            for s in sorted(drafts, key=lambda x: x["name"]):
+                lines.append(f"- **{s['name']}** [draft]: {s.get('description','')}")
+        return {"results": "\n".join(lines), "exit_code": 0}
+
+    sm = SkillsManager(DATA_DIR)
+    md = sm.read_skill_md(name, owner=owner)
+    if md is None:
+        return {"error": f"Skill {name!r} not found. Use load_skill with no name to list available skills.", "exit_code": 1}
+
+    return {"results": md, "exit_code": 0}
+
+
+# ---------------------------------------------------------------------------
 # Session management tool
 # ---------------------------------------------------------------------------
 
@@ -1838,6 +1946,16 @@ async def dispatch_ai_tool(
         problem = content.split("\n", 1)[-1].strip()[:60]
         desc = f"ask_teacher: {problem}"
         result = await do_ask_teacher(content, session_id, owner=owner)
+
+    elif tool == "delegate_task":
+        desc_text = content.split("\n")[0].strip()[:60]
+        desc = f"delegate_task: {desc_text}"
+        result = await do_delegate_task(content, session_id, owner=owner)
+
+    elif tool == "load_skill":
+        name = content.split("\n")[0].strip()[:40]
+        desc = f"load_skill: {name}"
+        result = await do_load_skill(content, session_id, owner=owner)
 
     else:
         desc = f"unknown ai tool: {tool}"
