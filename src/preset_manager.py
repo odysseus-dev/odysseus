@@ -160,11 +160,16 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
 
     def get_user_templates(self) -> list:
         """Get user-saved character templates."""
-        return self.presets.get("user_templates", [])
+        templates = self.presets.get("user_templates", [])
+        if not isinstance(templates, list):
+            return []
+        return [t for t in templates if isinstance(t, dict)]
 
     def save_user_template(self, template: dict) -> bool:
         """Save a new user template or update existing by id."""
-        templates = self.presets.get("user_templates", [])
+        if not isinstance(template, dict):
+            return False
+        templates = self.get_user_templates()
         # Update existing if same id
         existing = next((i for i, t in enumerate(templates) if t.get("id") == template.get("id")), None)
         if existing is not None:
@@ -176,7 +181,7 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
 
     def delete_user_template(self, template_id: str) -> bool:
         """Delete a user template by id."""
-        templates = self.presets.get("user_templates", [])
+        templates = self.get_user_templates()
         self.presets["user_templates"] = [t for t in templates if t.get("id") != template_id]
         return self.save(self.presets)
 
