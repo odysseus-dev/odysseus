@@ -27,7 +27,7 @@
 
   // ── Loop-detection swearing ────────────────────────────────────────────
   // The frog loses its patience when the model starts going in circles.
-  const SWEARS = ['бляя…', 'да ёб твою мать…', 'опять?!', 'ну сколько можно…', 'да блин!', 'сука, снова…', 'ну ё-моё…'];
+  const SWEARS = ['бляя...', 'ебана...', 'сука...', 'ё-моё...', 'сколько можно...'];
   // Strong signals — swear right away.
   const LOOP_PHRASE_RE = /\b(?:try(?:ing)? again|retry(?:ing)?|once more|one more time|failed again|same error|still (?:fails|failing|not working))\b|(?:попробу[юем]+\s+(?:еще|ещё)|та же ошибка)/i;
   // Weak signals — need a few hits per turn before the frog cracks.
