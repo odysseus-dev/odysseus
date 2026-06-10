@@ -1204,7 +1204,8 @@ def _extract_html(msg):
 
 def _extract_text(msg):
     if msg.is_multipart():
-        text_parts = []
+        plain_parts = []
+        html_text = None
         for part in msg.walk():
             ct = part.get_content_type()
             cd = str(part.get("Content-Disposition", ""))
@@ -1212,8 +1213,8 @@ def _extract_text(msg):
                 payload = part.get_payload(decode=True)
                 if payload:
                     charset = part.get_content_charset() or "utf-8"
-                    text_parts.append(payload.decode(charset, errors="replace"))
-            elif ct == "text/html" and not text_parts and "attachment" not in cd:
+                    plain_parts.append(payload.decode(charset, errors="replace"))
+            elif ct == "text/html" and html_text is None and "attachment" not in cd:
                 payload = part.get_payload(decode=True)
                 if payload:
                     charset = part.get_content_charset() or "utf-8"
@@ -1221,8 +1222,14 @@ def _extract_text(msg):
                     text = re.sub(r"<br\s*/?>", "\n", raw_html, flags=re.I)
                     text = re.sub(r"<[^>]+>", "", text)
                     text = html.unescape(text)
-                    text_parts.append(text.strip())
-        return "\n".join(text_parts)
+                    html_text = text.strip()
+        # Prefer the plain-text part(s). Only fall back to the HTML rendering
+        # when there is NO plain part. The old code gated the HTML branch on
+        # `not text_parts`, so when the HTML part appeared BEFORE the plain
+        # part in walk() order, both were appended and the body was duplicated.
+        if plain_parts:
+            return "\n".join(plain_parts)
+        return html_text or ""
     else:
         payload = msg.get_payload(decode=True)
         if payload:
