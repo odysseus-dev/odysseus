@@ -1638,6 +1638,7 @@ def setup_cookbook_routes() -> APIRouter:
     async def server_test(request: Request, host: str | None = None, port: str | None = None):
         """Test remote server connectivity by specifying a host and port.
         """
+        require_admin(request)
         host = _validate_remote_host(host)
         if not host:
             raise HTTPException(400, "host is required")
