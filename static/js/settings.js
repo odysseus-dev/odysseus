@@ -23,10 +23,34 @@ function safeRasterDataUrl(raw) {
 /* ── Tab switching ── */
 const ADMIN_TABS = new Set(['services', 'integrations', 'tools', 'users', 'system', 'dashboard']);
 
+const SETTINGS_TAB_BLURBS = {
+  services: 'Connect local and cloud model endpoints for chat and images.',
+  ai: 'Default chat model, utility model, and related AI behavior.',
+  search: 'Search API used for web search and deep research.',
+  integrations: 'All external service connections in one place.',
+  email: 'Email writing style and links to account setup in Integrations.',
+  reminders: 'How fired note reminders are delivered (browser, email, ntfy).',
+  appearance: 'Toggle on/off visibility of tools and modules across the interface.',
+  shortcuts: 'Click a shortcut to rebind; press Escape to cancel.',
+  account: 'Profile, password, and two-factor authentication.',
+  tools: 'Enable or disable tools available to the AI agent.',
+  users: 'User accounts, open signup, and per-user privileges.',
+  system: 'Backup, import, tokens, webhooks, and server maintenance.',
+};
+
+function syncSettingsTabBlurb(tab) {
+  const blurb = document.getElementById('settings-tab-blurb');
+  if (!blurb) return;
+  const text = SETTINGS_TAB_BLURBS[tab] || '';
+  blurb.textContent = text;
+  blurb.style.display = text ? '' : 'none';
+}
+
 function initTabs() {
   modalEl.querySelectorAll('[data-settings-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
       const tab = btn.dataset.settingsTab;
+      syncSettingsTabBlurb(tab);
       // Lazy-init admin when first clicking an admin tab
       if (ADMIN_TABS.has(tab) && window.adminModule && typeof window.adminModule.open === 'function') {
         window.adminModule.open(tab);
