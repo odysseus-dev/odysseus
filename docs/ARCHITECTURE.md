@@ -17,34 +17,20 @@ This document serves as a comprehensive overview of the system's architecture, i
 
 ```text
 └── pewdiepie-archdaemon-odysseus/
-    ├── README.md
-    ├── ACKNOWLEDGMENTS.md
-    ├── app.py
-    ├── build-macos-app.sh
-    ├── CONTRIBUTING.md
-    ├── docker-compose.gpu-amd.yml
-    ├── docker-compose.gpu-nvidia.yml
-    ├── docker-compose.yml
-    ├── Dockerfile
-    ├── install-service.sh
-    ├── launch-windows.ps1
-    ├── LICENSE
-    ├── odysseus-ui.service
-    ├── package-lock.json
-    ├── package.json
-    ├── pyproject.toml
-    ├── requirements-optional.txt
-    ├── requirements.txt
-    ├── ROADMAP.md
-    ├── SECURITY.md
-    ├── setup.py
-    ├── start-macos.sh
-    ├── THREAT_MODEL.md
-    ├── update_windows.bat
-    ├── .dockerignore
-    ├── .env.example
-    ├── .gitattributes
-    ├── .gitignore
+    ├── .github/
+    │   ├── ISSUE_TEMPLATE/
+    │   │   ├── bug_report.yml
+    │   │   ├── config.yml
+    │   │   └── feature_request.yml
+    │   ├── scripts/
+    │   │   ├── check-issue-description.js
+    │   │   └── check-pr-description.js
+    │   ├── workflows/
+    │   │   ├── ci.yml
+    │   │   ├── docker-publish.yml
+    │   │   ├── issue-description-check.yml
+    │   │   └── pr-description-check.yml
+    │   └── pull_request_template.md
     ├── companion/
     │   ├── README.md
     │   ├── __init__.py
@@ -70,40 +56,26 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   └── gpu.nvidia.yml
     ├── docs/
     │   ├── ARCHITECTURE.md
-    │   ├── bg.webm
-    │   ├── chat.gif
-    │   ├── chat.webm
-    │   ├── compare.gif
-    │   ├── compare.webm
-    │   ├── document.gif
-    │   ├── document.webm
     │   ├── email-outlook.md
-    │   ├── gallery.webm
     │   ├── index.html
-    │   ├── notes.gif
-    │   ├── notes.webm
-    │   ├── odysseus.jpg
-    │   ├── pr-blocker-audit.md
-    │   ├── research.gif
-    │   ├── research.webm
-    │   └── theme.webm
+    │   └── pr-blocker-audit.md
     ├── integrations/
     │   ├── claude/
-    │   │   ├── README.md
-    │   │   └── skills/
-    │   │       └── odysseus/
-    │   │           ├── SKILL.md
-    │   │           └── scripts/
-    │   │               └── odysseus_api.py
+    │   │   ├── skills/
+    │   │   │   └── odysseus/
+    │   │   │       ├── scripts/
+    │   │   │       │   └── odysseus_api.py
+    │   │   │       └── SKILL.md
+    │   │   └── README.md
     │   └── codex/
-    │       ├── README.md
+    │       ├── .codex-plugin/
+    │       │   └── plugin.json
     │       ├── scripts/
     │       │   └── odysseus_api.py
     │       ├── skills/
     │       │   └── odysseus/
     │       │       └── SKILL.md
-    │       └── .codex-plugin/
-    │           └── plugin.json
+    │       └── README.md
     ├── licenses/
     │   ├── DeepResearch-Apache-2.0.txt
     │   ├── llmfit-MIT-LICENSE.txt
@@ -167,6 +139,16 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── vault_routes.py
     │   └── webhook_routes.py
     ├── scripts/
+    │   ├── _completion/
+    │   │   ├── odysseus.bash
+    │   │   └── odysseus.zsh
+    │   ├── _lib/
+    │   │   ├── __init__.py
+    │   │   └── cli.py
+    │   ├── demo_email/
+    │   │   ├── demo_account.py
+    │   │   ├── manage.sh
+    │   │   └── seed_demo_emails.py
     │   ├── add_hwfit_models.py
     │   ├── check-docker-amd-gpu.sh
     │   ├── check-docker-gpu.sh
@@ -199,19 +181,8 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── odysseus-theme
     │   ├── odysseus-webhook
     │   ├── pr_blocker_audit.py
-    │   ├── update_database.py
-    │   ├── _completion/
-    │   │   ├── odysseus.bash
-    │   │   └── odysseus.zsh
-    │   ├── _lib/
-    │   │   ├── __init__.py
-    │   │   └── cli.py
-    │   └── demo_email/
-    │       ├── demo_account.py
-    │       ├── manage.sh
-    │       └── seed_demo_emails.py
+    │   └── update_database.py
     ├── services/
-    │   ├── __init__.py
     │   ├── docs/
     │   │   ├── __init__.py
     │   │   └── service.py
@@ -223,9 +194,7 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   │   ├── hardware.py
     │   │   ├── image_models.py
     │   │   ├── models.py
-    │   │   ├── profiles.py
-    │   │   └── data/
-    │   │       └── hf_models.json
+    │   │   └── profiles.py
     │   ├── memory/
     │   │   ├── __init__.py
     │   │   ├── memory.py
@@ -259,19 +228,28 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── tts/
     │   │   ├── __init__.py
     │   │   └── tts_service.py
-    │   └── youtube/
-    │       ├── __init__.py
-    │       └── youtube_handler.py
+    │   ├── youtube/
+    │   │   ├── __init__.py
+    │   │   └── youtube_handler.py
+    │   └── __init__.py
     ├── src/
-    │   ├── action_intents.py
-    │   ├── agent_loop.py
-    │   ├── agent_runs.py
     │   ├── agent_tools/
     │   │   ├── __init__.py
     │   │   ├── filesystem_tools.py
     │   │   ├── subprocess_tools.py
     │   │   └── web_tools.py
-    │   ├── tool_execution.py
+    │   ├── search/
+    │   │   ├── __init__.py
+    │   │   ├── analytics.py
+    │   │   ├── cache.py
+    │   │   ├── content.py
+    │   │   ├── core.py
+    │   │   ├── providers.py
+    │   │   ├── query.py
+    │   │   └── ranking.py
+    │   ├── action_intents.py
+    │   ├── agent_loop.py
+    │   ├── agent_runs.py
     │   ├── ai_interaction.py
     │   ├── api_key_manager.py
     │   ├── app_helpers.py
@@ -359,32 +337,173 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── user_time.py
     │   ├── visual_report.py
     │   ├── webhook_manager.py
-    │   ├── youtube_handler.py
-    │   └── search/
-    │       ├── __init__.py
-    │       ├── analytics.py
-    │       ├── cache.py
-    │       ├── content.py
-    │       ├── core.py
-    │       ├── providers.py
-    │       ├── query.py
-    │       └── ranking.py
+    │   └── youtube_handler.py
     ├── static/
-    │   ├── app.js
-    │   ├── index.html
-    │   ├── login.html
-    │   ├── manifest.json
-    │   ├── style.css
-    │   ├── sw.js
     │   ├── fonts/
-    │   │   ├── FiraCode-Light.woff2
-    │   │   ├── FiraCode-Regular.woff2
-    │   │   ├── FiraCode-SemiBold.woff2
-    │   │   ├── Inter-Medium.woff2
-    │   │   ├── Inter-Regular.woff2
-    │   │   ├── Inter-SemiBold.woff2
     │   │   └── custom/
-    │   │       └── GohuFont.ttf
+    │   ├── js/
+    │   │   ├── calendar/
+    │   │   │   ├── reminders.js
+    │   │   │   └── utils.js
+    │   │   ├── color/
+    │   │   │   └── hex.js
+    │   │   ├── compare/
+    │   │   │   ├── icons.js
+    │   │   │   ├── index.js
+    │   │   │   ├── models.js
+    │   │   │   ├── panes.js
+    │   │   │   ├── probe.js
+    │   │   │   ├── scoreboard.js
+    │   │   │   ├── selector.js
+    │   │   │   ├── state.js
+    │   │   │   ├── stream.js
+    │   │   │   └── vote.js
+    │   │   ├── editor/
+    │   │   │   ├── build/
+    │   │   │   │   ├── controls.js
+    │   │   │   │   ├── popups.js
+    │   │   │   │   ├── right-panel.js
+    │   │   │   │   ├── toolbar.js
+    │   │   │   │   ├── topbar.js
+    │   │   │   │   └── transform-popup.js
+    │   │   │   ├── filters/
+    │   │   │   │   ├── blur.js
+    │   │   │   │   └── edge-feather.js
+    │   │   │   ├── fx/
+    │   │   │   │   ├── adj-popup.js
+    │   │   │   │   ├── filter-string.js
+    │   │   │   │   ├── histogram.js
+    │   │   │   │   └── pixel-pass.js
+    │   │   │   ├── tools/
+    │   │   │   │   ├── clone.js
+    │   │   │   │   ├── crop.js
+    │   │   │   │   ├── flood-fill.js
+    │   │   │   │   ├── lasso-mask.js
+    │   │   │   │   ├── lasso.js
+    │   │   │   │   ├── move.js
+    │   │   │   │   ├── stroke.js
+    │   │   │   │   ├── transform-drag.js
+    │   │   │   │   ├── transform-handles.js
+    │   │   │   │   ├── transform-session.js
+    │   │   │   │   └── wand.js
+    │   │   │   ├── ai-inpaint.js
+    │   │   │   ├── ai-models.js
+    │   │   │   ├── ai-rembg.js
+    │   │   │   ├── ai-tool-runner.js
+    │   │   │   ├── ai-tools-misc.js
+    │   │   │   ├── canvas-coords.js
+    │   │   │   ├── canvas-events.js
+    │   │   │   ├── canvas-transforms.js
+    │   │   │   ├── checkerboard.js
+    │   │   │   ├── clipboard-and-drop.js
+    │   │   │   ├── composite-helpers.js
+    │   │   │   ├── harmonize-masks.js
+    │   │   │   ├── history-panel.js
+    │   │   │   ├── keyboard-shortcuts.js
+    │   │   │   ├── layer-helpers.js
+    │   │   │   ├── layer-panel.js
+    │   │   │   ├── mask-utils.js
+    │   │   │   ├── shortcuts-popover.js
+    │   │   │   ├── slider-ux.js
+    │   │   │   ├── snap.js
+    │   │   │   ├── state.js
+    │   │   │   ├── stroke-pipeline.js
+    │   │   │   ├── stroke-tool-sliders.js
+    │   │   │   ├── wire-import.js
+    │   │   │   ├── wire-inpaint-controls.js
+    │   │   │   ├── wire-merge-buttons.js
+    │   │   │   ├── wire-selection-controls.js
+    │   │   │   ├── wire-topbar-menus.js
+    │   │   │   ├── wire-topbar-overflow.js
+    │   │   │   └── wire-topbar.js
+    │   │   ├── emailLibrary/
+    │   │   │   ├── replyRecipients.js
+    │   │   │   ├── signatureFold.js
+    │   │   │   ├── state.js
+    │   │   │   └── utils.js
+    │   │   ├── markdown/
+    │   │   │   └── tableRow.js
+    │   │   ├── model/
+    │   │   │   └── matchKey.js
+    │   │   ├── research/
+    │   │   │   ├── jobs.js
+    │   │   │   └── panel.js
+    │   │   ├── util/
+    │   │   │   └── ordinal.js
+    │   │   ├── MODULE_SUMMARY.md
+    │   │   ├── a11y.js
+    │   │   ├── admin.js
+    │   │   ├── assistant.js
+    │   │   ├── calendar.js
+    │   │   ├── censor.js
+    │   │   ├── chat.js
+    │   │   ├── chatRenderer.js
+    │   │   ├── chatStream.js
+    │   │   ├── codeRunner.js
+    │   │   ├── colorPicker.js
+    │   │   ├── composerArrowUpRecall.js
+    │   │   ├── cookbook-diagnosis.js
+    │   │   ├── cookbook-hwfit.js
+    │   │   ├── cookbook.js
+    │   │   ├── cookbookDownload.js
+    │   │   ├── cookbookProgressSignal.js
+    │   │   ├── cookbookRunning.js
+    │   │   ├── cookbookSchedule.js
+    │   │   ├── cookbookServe.js
+    │   │   ├── document.js
+    │   │   ├── documentLibrary.js
+    │   │   ├── dragSort.js
+    │   │   ├── emailInbox.js
+    │   │   ├── emailLibrary.js
+    │   │   ├── emojiPicker.js
+    │   │   ├── emojiShortcodes.js
+    │   │   ├── escMenuStack.js
+    │   │   ├── fileHandler.js
+    │   │   ├── gallery.js
+    │   │   ├── galleryEditor.js
+    │   │   ├── group.js
+    │   │   ├── init.js
+    │   │   ├── keyboard-shortcuts.js
+    │   │   ├── langIcons.js
+    │   │   ├── markdown.js
+    │   │   ├── memory.js
+    │   │   ├── modalManager.js
+    │   │   ├── modalSnap.js
+    │   │   ├── modelPicker.js
+    │   │   ├── modelSort.js
+    │   │   ├── models.js
+    │   │   ├── notes.js
+    │   │   ├── package.json
+    │   │   ├── platform.js
+    │   │   ├── presets.js
+    │   │   ├── providerDeviceFlow.js
+    │   │   ├── providers.js
+    │   │   ├── rag.js
+    │   │   ├── researchSynapse.js
+    │   │   ├── search-chat.js
+    │   │   ├── search.js
+    │   │   ├── section-management.js
+    │   │   ├── sessions.js
+    │   │   ├── settings.js
+    │   │   ├── sidebar-layout.js
+    │   │   ├── signature.js
+    │   │   ├── skills.js
+    │   │   ├── slashAutocomplete.js
+    │   │   ├── slashCommands.js
+    │   │   ├── spinner.js
+    │   │   ├── storage.js
+    │   │   ├── streamingRenderer.js
+    │   │   ├── streamingSegmenter.js
+    │   │   ├── tasks.js
+    │   │   ├── theme.js
+    │   │   ├── tileManager.js
+    │   │   ├── tourAutoplay.js
+    │   │   ├── tourHints.js
+    │   │   ├── tts-ai.js
+    │   │   ├── ui.js
+    │   │   ├── voiceRecorder.js
+    │   │   ├── windowDrag.js
+    │   │   └── windowResize.js
     │   ├── lib/
     │   │   ├── docx.umd.min.js
     │   │   ├── highlight.min.js
@@ -392,173 +511,31 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   │   ├── mammoth.browser.min.js
     │   │   ├── qrcode.min.js
     │   │   └── xlsx.full.min.js
-    │   └── js/
-    │       ├── a11y.js
-    │       ├── admin.js
-    │       ├── assistant.js
-    │       ├── calendar.js
-    │       ├── censor.js
-    │       ├── chat.js
-    │       ├── chatRenderer.js
-    │       ├── chatStream.js
-    │       ├── codeRunner.js
-    │       ├── colorPicker.js
-    │       ├── composerArrowUpRecall.js
-    │       ├── cookbook-diagnosis.js
-    │       ├── cookbook-hwfit.js
-    │       ├── cookbook.js
-    │       ├── cookbookDownload.js
-    │       ├── cookbookProgressSignal.js
-    │       ├── cookbookRunning.js
-    │       ├── cookbookSchedule.js
-    │       ├── cookbookServe.js
-    │       ├── document.js
-    │       ├── documentLibrary.js
-    │       ├── dragSort.js
-    │       ├── emailInbox.js
-    │       ├── emailLibrary.js
-    │       ├── emojiPicker.js
-    │       ├── emojiShortcodes.js
-    │       ├── escMenuStack.js
-    │       ├── fileHandler.js
-    │       ├── gallery.js
-    │       ├── galleryEditor.js
-    │       ├── group.js
-    │       ├── init.js
-    │       ├── keyboard-shortcuts.js
-    │       ├── langIcons.js
-    │       ├── markdown.js
-    │       ├── memory.js
-    │       ├── modalManager.js
-    │       ├── modalSnap.js
-    │       ├── modelPicker.js
-    │       ├── models.js
-    │       ├── modelSort.js
-    │       ├── MODULE_SUMMARY.md
-    │       ├── notes.js
-    │       ├── package.json
-    │       ├── platform.js
-    │       ├── presets.js
-    │       ├── providerDeviceFlow.js
-    │       ├── providers.js
-    │       ├── rag.js
-    │       ├── researchSynapse.js
-    │       ├── search-chat.js
-    │       ├── search.js
-    │       ├── section-management.js
-    │       ├── sessions.js
-    │       ├── settings.js
-    │       ├── sidebar-layout.js
-    │       ├── signature.js
-    │       ├── skills.js
-    │       ├── slashAutocomplete.js
-    │       ├── slashCommands.js
-    │       ├── spinner.js
-    │       ├── storage.js
-    │       ├── streamingRenderer.js
-    │       ├── streamingSegmenter.js
-    │       ├── tasks.js
-    │       ├── theme.js
-    │       ├── tileManager.js
-    │       ├── tourAutoplay.js
-    │       ├── tourHints.js
-    │       ├── tts-ai.js
-    │       ├── ui.js
-    │       ├── voiceRecorder.js
-    │       ├── windowDrag.js
-    │       ├── windowResize.js
-    │       ├── calendar/
-    │       │   ├── reminders.js
-    │       │   └── utils.js
-    │       ├── color/
-    │       │   └── hex.js
-    │       ├── compare/
-    │       │   ├── icons.js
-    │       │   ├── index.js
-    │       │   ├── models.js
-    │       │   ├── panes.js
-    │       │   ├── probe.js
-    │       │   ├── scoreboard.js
-    │       │   ├── selector.js
-    │       │   ├── state.js
-    │       │   ├── stream.js
-    │       │   └── vote.js
-    │       ├── editor/
-    │       │   ├── build/
-    │       │   │   ├── popups.js
-    │       │   │   ├── right-panel.js
-    │       │   │   ├── toolbar.js
-    │       │   │   └── transform-popup.js
-    │       │   ├── ai-inpaint.js
-    │       │   ├── ai-models.js
-    │       │   ├── ai-rembg.js
-    │       │   ├── ai-tool-runner.js
-    │       │   ├── ai-tools-misc.js
-    │       │   ├── canvas-coords.js
-    │       │   ├── canvas-events.js
-    │       │   ├── canvas-transforms.js
-    │       │   ├── checkerboard.js
-    │       │   ├── clipboard-and-drop.js
-    │       │   ├── composite-helpers.js
-    │       │   ├── harmonize-masks.js
-    │       │   ├── history-panel.js
-    │       │   ├── keyboard-shortcuts.js
-    │       │   ├── layer-helpers.js
-    │       │   ├── layer-panel.js
-    │       │   ├── mask-utils.js
-    │       │   ├── shortcuts-popover.js
-    │       │   ├── slider-ux.js
-    │       │   ├── snap.js
-    │       │   ├── state.js
-    │       │   ├── stroke-pipeline.js
-    │       │   ├── stroke-tool-sliders.js
-    │       │   ├── wire-import.js
-    │       │   ├── wire-inpaint-controls.js
-    │       │   ├── wire-merge-buttons.js
-    │       │   ├── wire-selection-controls.js
-    │       │   ├── wire-topbar-menus.js
-    │       │   ├── wire-topbar-overflow.js
-    │       │   ├── wire-topbar.js
-    │       │   ├── filters/
-    │       │   │   ├── blur.js
-    │       │   │   └── edge-feather.js
-    │       │   ├── fx/
-    │       │   │   ├── adj-popup.js
-    │       │   │   ├── filter-string.js
-    │       │   │   ├── histogram.js
-    │       │   │   └── pixel-pass.js
-    │       │   └── tools/
-    │       │       ├── clone.js
-    │       │       ├── crop.js
-    │       │       ├── flood-fill.js
-    │       │       ├── lasso-mask.js
-    │       │       ├── lasso.js
-    │       │       ├── move.js
-    │       │       ├── stroke.js
-    │       │       ├── transform-drag.js
-    │       │       ├── transform-handles.js
-    │       │       ├── transform-session.js
-    │       │       └── wand.js
-    │       ├── emailLibrary/
-    │       │   ├── replyRecipients.js
-    │       │   ├── signatureFold.js
-    │       │   ├── state.js
-    │       │   └── utils.js
-    │       ├── markdown/
-    │       │   └── tableRow.js
-    │       ├── model/
-    │       │   └── matchKey.js
-    │       ├── research/
-    │       │   ├── jobs.js
-    │       │   └── panel.js
-    │       └── util/
-    │           └── ordinal.js
+    │   ├── app.js
+    │   ├── index.html
+    │   ├── login.html
+    │   ├── manifest.json
+    │   ├── style.css
+    │   └── sw.js
     ├── tests/
+    │   ├── helpers/
+    │   │   ├── __init__.py
+    │   │   ├── cli_loader.py
+    │   │   ├── db_stubs.py
+    │   │   ├── import_state.py
+    │   │   └── sqlite_db.py
+    │   ├── streaming/
+    │   │   ├── corpus.mjs
+    │   │   ├── invariant.test.mjs
+    │   │   ├── markdownHarness.mjs
+    │   │   └── segmenter.test.mjs
     │   ├── README.md
+    │   ├── TESTING_STANDARD.md
     │   ├── _taxonomy.py
     │   ├── bombadil-spec.ts
     │   ├── conftest.py
     │   ├── markdown_codefence_placeholder_regression.mjs
+    │   ├── run_focus.py
     │   ├── test_action_intents.py
     │   ├── test_action_intents_shell_verbs.py
     │   ├── test_active_document_clear.py
@@ -589,12 +566,14 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_backup_cli_security.py
     │   ├── test_backup_import_cross_user_dedup.py
     │   ├── test_backup_import_skills.py
+    │   ├── test_backup_import_skills_dedup.py
     │   ├── test_bg_jobs_store.py
     │   ├── test_bg_monitor_stream.py
     │   ├── test_blind_compare_redaction.py
     │   ├── test_build_user_content_pdf_marker.py
     │   ├── test_builtin_actions_nonstring.py
     │   ├── test_builtin_actions_owner_scope.py
+    │   ├── test_builtin_mcp_npx_cache.py
     │   ├── test_builtin_memory_consolidation.py
     │   ├── test_caldav_google_principal_url.py
     │   ├── test_caldav_prune_parse_failure.py
@@ -668,6 +647,7 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_copilot_routes.py
     │   ├── test_cors_preflight.py
     │   ├── test_database_utcnow.py
+    │   ├── test_db_stubs_helper.py
     │   ├── test_ddg_redirect_resolution.py
     │   ├── test_deep_research_date_context.py
     │   ├── test_deep_research_extraction_controls.py
@@ -680,6 +660,7 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_deleted_session_sidebar_regression.py
     │   ├── test_derive_title_nonstring.py
     │   ├── test_device_flow_routes.py
+    │   ├── test_diagnostics_service_route.py
     │   ├── test_dialog_aria.py
     │   ├── test_diffusion_server_security.py
     │   ├── test_digest_windows.py
@@ -718,6 +699,7 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_email_thread_parser_nonstring.py
     │   ├── test_embedding_cache_confinement.py
     │   ├── test_embedding_endpoint_config.py
+    │   ├── test_embedding_lane_ndarray_restore.py
     │   ├── test_embedding_lanes.py
     │   ├── test_embeddings.py
     │   ├── test_emoji_shortcodes_js.py
@@ -747,6 +729,7 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_gallery_filename_confinement.py
     │   ├── test_gallery_image_endpoint_owner_scope.py
     │   ├── test_gallery_image_privileges.py
+    │   ├── test_gallery_null_user_routes.py
     │   ├── test_gallery_owner_filter_single_user.py
     │   ├── test_generated_image_confinement.py
     │   ├── test_gmail_quote_attribution_js.py
@@ -776,11 +759,13 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_imap_leak_fixes.py
     │   ├── test_imap_mailbox_quoting.py
     │   ├── test_inside_base_dir_nonstring.py
+    │   ├── test_integrations_api_call_truncation.py
     │   ├── test_integrations_store_shape.py
     │   ├── test_internal_api_base.py
     │   ├── test_is_youtube_url_nonstring.py
     │   ├── test_is_youtube_url_nonstring_svc.py
     │   ├── test_keybind_altgr_js.py
+    │   ├── test_kv_cache_invalidation_2927.py
     │   ├── test_lang_icon_null_opts_js.py
     │   ├── test_llama_server_models_url.py
     │   ├── test_llm_core_anthropic_cache.py
@@ -788,6 +773,7 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_llm_core_concurrency.py
     │   ├── test_llm_core_fallback.py
     │   ├── test_llm_core_ollama.py
+    │   ├── test_llm_core_ollama_thinking.py
     │   ├── test_llm_core_reasoning.py
     │   ├── test_llm_core_reasoning_content_fallback.py
     │   ├── test_llm_core_sanitize_tool_calls.py
@@ -903,6 +889,7 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_readiness.py
     │   ├── test_readme_ascii_fenced.py
     │   ├── test_rename_user_case_insensitive.py
+    │   ├── test_rename_user_owner_sync.py
     │   ├── test_rename_user_token_cache.py
     │   ├── test_replace_messages_multimodal.py
     │   ├── test_reply_all_cc_nonstring_js.py
@@ -930,7 +917,9 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_resolve_upload_path_nondict.py
     │   ├── test_review_regressions.py
     │   ├── test_rewrite_persist_column.py
+    │   ├── test_run_focus.py
     │   ├── test_sanitize_multimodal_merge.py
+    │   ├── test_sanitize_preserves_reasoning.py
     │   ├── test_schedule_email_offset_normalization.py
     │   ├── test_scheduler_restart_doublefire.py
     │   ├── test_scheduler_scheduled_time_validation.py
@@ -959,16 +948,19 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_select_dropdown_theme_css.py
     │   ├── test_sender_signature_skip_roles.py
     │   ├── test_serve_profiles.py
+    │   ├── test_service_health.py
     │   ├── test_service_search_provider_guards.py
     │   ├── test_services_research_low_quality_sources.py
     │   ├── test_services_search_analytics_defaults.py
     │   ├── test_session_actions_cleanup.py
+    │   ├── test_session_concurrent.py
     │   ├── test_session_context_excludes_slash.py
     │   ├── test_session_endpoint_owner_scope.py
     │   ├── test_session_export_filename.py
     │   ├── test_session_export_nonstring_content.py
     │   ├── test_session_ghost_delete.py
     │   ├── test_session_list_owner_scope.py
+    │   ├── test_session_manager.py
     │   ├── test_session_manager_cleanup.py
     │   ├── test_session_manager_persist_guard.py
     │   ├── test_session_mode_helpers.py
@@ -1058,37 +1050,38 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_webhook_ssrf_resilience.py
     │   ├── test_webhook_trigger_auth_exempt.py
     │   ├── test_windows_update_script.py
-    │   ├── test_workspace_confine.py
     │   ├── test_youtube_comments_timeout.py
     │   ├── test_youtube_extract_id_nonstring.py
     │   ├── test_youtube_svc_comments_nondict.py
-    │   ├── test_youtube_transcript_seg_nondict.py
-    │   ├── TESTING_STANDARD.md
-    │   ├── helpers/
-    │   │   ├── __init__.py
-    │   │   ├── cli_loader.py
-    │   │   ├── db_stubs.py
-    │   │   ├── import_state.py
-    │   │   └── sqlite_db.py
-    │   └── streaming/
-    │       ├── corpus.mjs
-    │       ├── invariant.test.mjs
-    │       ├── markdownHarness.mjs
-    │       └── segmenter.test.mjs
-    └── .github/
-        ├── pull_request_template.md
-        ├── ISSUE_TEMPLATE/
-        │   ├── bug_report.yml
-        │   ├── config.yml
-        │   └── feature_request.yml
-        ├── scripts/
-        │   ├── check-issue-description.js
-        │   └── check-pr-description.js
-        └── workflows/
-            ├── ci.yml
-            ├── docker-publish.yml
-            ├── issue-description-check.yml
-            └── pr-description-check.yml
+    │   └── test_youtube_transcript_seg_nondict.py
+    ├── .dockerignore
+    ├── .env.example
+    ├── .gitattributes
+    ├── .gitignore
+    ├── ACKNOWLEDGMENTS.md
+    ├── CONTRIBUTING.md
+    ├── Dockerfile
+    ├── LICENSE
+    ├── README.md
+    ├── ROADMAP.md
+    ├── SECURITY.md
+    ├── THREAT_MODEL.md
+    ├── app.py
+    ├── build-macos-app.sh
+    ├── docker-compose.gpu-amd.yml
+    ├── docker-compose.gpu-nvidia.yml
+    ├── docker-compose.yml
+    ├── install-service.sh
+    ├── launch-windows.ps1
+    ├── odysseus-ui.service
+    ├── package-lock.json
+    ├── package.json
+    ├── pyproject.toml
+    ├── requirements-optional.txt
+    ├── requirements.txt
+    ├── setup.py
+    ├── start-macos.sh
+    └── update_windows.bat
 ```
 
 </details>
@@ -1151,6 +1144,9 @@ graph TD
 - **Documentation Entry (`docs/index.html`)**: [`docs/index.html`](../docs/index.html) is a static HTML page that serves as the entry point for viewing generated project documentation.
 - **[`package.json`](../static/js/package.json)** & **[`static/js/MODULE_SUMMARY.md`](../static/js/MODULE_SUMMARY.md)**: Metadata, scripts, and summary of the frontend JS ecosystem.
 - **[`static/index.html`](../static/index.html)**: The main entry point. It defines the layout and loads all scripts.
+- **Assets & Web App Config**:
+  - **[`manifest.json`](../static/manifest.json)**: Configures Odysseus as a standalone Progressive Web App with custom icons and theme colors.
+  - **[`style.css`](../static/style.css)**: The consolidated stylesheet that dictates the UI layout, using CSS Variables to manage theming.
 - **[`static/app.js`](../static/app.js) & [`static/js/init.js`](../static/js/init.js)**: The main orchestrator. Eagerly binds global event listeners (drag and drop, shortcuts) and bootstraps state.
 - **Core Wiring**: [`storage.js`](../static/js/storage.js) provides wrappers for LocalStorage persistence, while [`platform.js`](../static/js/platform.js) handles OS and browser detection.
 - **Chat Engine ([`chat.js`](../static/js/chat.js), [`chatStream.js`](../static/js/chatStream.js), [`chatRenderer.js`](../static/js/chatRenderer.js))**: The largest monolith. Directs UI transitions, manages chat session logic, submission, and SSE streaming. [`chat.js`](../static/js/chat.js) has a watchdog to detect stalled streams. Rendering output and markdown logic is handled via [`chatRenderer.js`](../static/js/chatRenderer.js), [`streamingRenderer.js`](../static/js/streamingRenderer.js), and [`streamingSegmenter.js`](../static/js/streamingSegmenter.js).
@@ -1748,6 +1744,9 @@ graph TD
 <summary>View External Integrations & Companion Bridge</summary>
 
 Odysseus can pair with companion apps, securely bridge third-party AI agents, and dispatch external webhooks.
+- **Companion Bridge API ([`companion/README.md`](../companion/README.md))**: Detailed API routes and setup instructions for the mobile bridge.
+- **Claude Code Integration ([`integrations/claude/`](../integrations/claude/))**: A skill bundle enabling Anthropic's Claude Code CLI to connect to the scoped Odysseus API. Includes a setup guide ([`README.md`](../integrations/claude/README.md)) and the skill definition ([`SKILL.md`](../integrations/claude/skills/odysseus/SKILL.md)).
+- **Codex Integration ([`integrations/codex/`](../integrations/codex/))**: A plugin enabling the Codex Agent to interact with Odysseus data. Contains its setup guide ([`README.md`](../integrations/codex/README.md)), plugin manifest ([`plugin.json`](../integrations/codex/.codex-plugin/plugin.json)), and skill definition ([`SKILL.md`](../integrations/codex/skills/odysseus/SKILL.md)).
 
 ```mermaid
 graph LR
@@ -2371,11 +2370,27 @@ Odysseus utilizes standard tools for Python/Node environments, augmented by stri
 ### Build & Dependencies
 - **[`pyproject.toml`](../pyproject.toml) & [`setup.py`](../setup.py)**: Manages Python project metadata, entry points, and dependencies. `requirements.txt` contains pinned core packages, while `requirements-optional.txt` isolates heavy dependencies like PyMuPDF.
 - **[`package.json`](../package.json)**: Despite the frontend being vanilla JS, `npm` is used to orchestrate test runners (`node:test`) and manage development linters.
+- **[`package-lock.json`](../package-lock.json)**: Lockfile guaranteeing deterministic installs of Node toolchains required in the CI checks and streaming tests.
+- **[`requirements.txt`](../requirements.txt)**: Core Python dependencies (e.g., FastAPI, SQLAlchemy) tracked for production.
+- **[`requirements-optional.txt`](../requirements-optional.txt)**: Defines packages needed for specific feature enablement (e.g., `faster-whisper` for local STT).
+- **Docker Artifacts**: **[`Dockerfile`](../Dockerfile)** acts as the build recipe, while **[`.dockerignore`](../.dockerignore)** prevents cache artifacts from bloating the image context.
 
+### Repository Metadata & Guidelines
+- **Core Docs**: **[`README.md`](../README.md)** (entry point), **[`CONTRIBUTING.md`](../CONTRIBUTING.md)**, **[`ACKNOWLEDGMENTS.md`](../ACKNOWLEDGMENTS.md)**, **[`ROADMAP.md`](../ROADMAP.md)**, and **[`SECURITY.md`](../SECURITY.md)**.
+- **Configuration & Legal**: **[`LICENSE`](../LICENSE)**, **[`.gitignore`](../.gitignore)**, **[`.gitattributes`](../.gitattributes)**, and **[`.env.example`](../.env.example)**.
+- **[`odysseus-ui.service`](../odysseus-ui.service)**: A systemd service file template for headless Linux deployment.
+
+### GitHub Issue & PR Templates
+- **`.github/ISSUE_TEMPLATE/`**: Standardized templates for bug reports ([`bug_report.yml`](../.github/ISSUE_TEMPLATE/bug_report.yml)) and feature requests ([`feature_request.yml`](../.github/ISSUE_TEMPLATE/feature_request.yml)), plus an issue config ([`config.yml`](../.github/ISSUE_TEMPLATE/config.yml)).
+- **[`pull_request_template.md`](../.github/pull_request_template.md)**: Template enforcing strict rules for Pull Request descriptions.
+
+
+- **Project Documentation ([`docs/`](../docs/))**: Includes this architecture document ([`ARCHITECTURE.md`](../docs/ARCHITECTURE.md)), the pre-commit review audit guide ([`pr-blocker-audit.md`](../docs/pr-blocker-audit.md)), and email setup steps ([`email-outlook.md`](../docs/email-outlook.md)).
 ### GitHub Workflows ([`.github/`](../.github/))
 - **`ci.yml`**: The primary Continuous Integration pipeline. It runs the Pytest suite, Node.js invariant tests, enforces typing with `mypy`, and checks formatting.
 - **`docker-publish.yml`**: Automatically builds and pushes multi-architecture (AMD64, ARM64) Docker images to the registry on new releases.
 - **Issue & PR Validations**: Workflows like `issue-description-check.yml` and `pr-description-check.yml` execute scripts (e.g., [`check-pr-description.js`](../.github/scripts/check-pr-description.js)) to enforce minimum character limits and template adherence, reducing triage overhead.
+- **`.github/scripts/`**: Automation scripts like [`check-issue-description.js`](../.github/scripts/check-issue-description.js) and [`check-pr-description.js`](../.github/scripts/check-pr-description.js) to enforce structural requirements on community submissions.
 
 ---
 
