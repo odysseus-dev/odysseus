@@ -20,8 +20,25 @@ def _write_state(path, state):
     path.write_text(json.dumps(state), encoding="utf-8")
 
 
+def _require_admin_allow(_request):
+    pass
+
+
+def test_cookbook_test_remote_no_admin(monkeypatch, tmp_path):
+    client, _ = _build_client(monkeypatch, tmp_path)
+
+    res = client.get("/api/cookbook/test-remote",
+        params={"port": "2201"}
+    )
+
+    assert res.status_code == 403
+    assert "Admin only" in res.text
+
+
 def test_cookbook_test_remote_bad_request_without_host(monkeypatch, tmp_path):
     client, _ = _build_client(monkeypatch, tmp_path)
+
+    monkeypatch.setattr(cookbook_routes, "require_admin", _require_admin_allow)
 
     res = client.get("/api/cookbook/test-remote",
         params={"port": "2201"}
@@ -50,7 +67,8 @@ def test_cookbook_test_remote_bad_connection(monkeypatch, tmp_path):
 
     calls = {}
     
-    monkeypatch.setattr(cookbook_helpers, "run_ssh_command_async", _fake_ssh_response)
+    monkeypatch.setattr(cookbook_routes, "require_admin", _require_admin_allow)
+    monkeypatch.setattr(cookbook_helpers, "create_ssh_session_async", _fake_ssh_response)
 
     res = client.get("/api/cookbook/test-remote",
         params={"host": "alice@gpu-box", "port": "2201"}
@@ -88,6 +106,7 @@ def test_cookbook_test_remote_good_connection(monkeypatch, tmp_path):
 
     calls = {}
 
+    monkeypatch.setattr(cookbook_routes, "require_admin", _require_admin_allow)
     monkeypatch.setattr(cookbook_routes, "test_server_connection", _fake_probe)
 
     res = client.get(

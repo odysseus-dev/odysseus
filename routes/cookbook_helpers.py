@@ -1102,6 +1102,44 @@ async def run_ssh_command_async(
     return proc.returncode or 0, stdout, stderr
 
 
+async def create_ssh_session_async(
+    remote: str,
+    ssh_port: str | None,
+    remote_cmd: str,
+    *,
+    timeout: float,
+    connect_timeout: int | None = None,
+    strict_host_key_checking: bool | None = None,
+    stdin_data: bytes | None = None,
+) -> tuple[int, bytes, bytes]:
+    """Spawn a shell subprocess for an SSH command. See _create_shell for shell decision tree.
+    """
+    import asyncio
+    from routes.shell_routes import _create_shell
+    cmd = " ".join(_ssh_exec_argv(
+        remote,
+        ssh_port,
+        remote_cmd=remote_cmd,
+        connect_timeout=connect_timeout,
+        strict_host_key_checking=strict_host_key_checking,
+    ))
+    proc = await _create_shell(
+        command=cmd,
+        stdin=asyncio.subprocess.PIPE if stdin_data is not None else None,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(input=stdin_data), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        raise
+    return proc.returncode or 0, stdout, stderr
+
+
 async def test_server_connection(
     remote: str,
     ssh_port: str | None,
@@ -1121,7 +1159,7 @@ async def test_server_connection(
         return int((time.monotonic() - t0) * 1000)
 
     try:
-        rc, stdout, stderr = await run_ssh_command_async(
+        rc, stdout, stderr = await create_ssh_session_async(
             host,
             port,
             "echo ok",
