@@ -1,8 +1,8 @@
 # Odysseus Architecture Report
 
-Odysseus is a self-hosted AI workspace. It is designed to be local-first and privacy-focused, offering features typically seen in platforms like ChatGPT or Claude, but fully controlled by the user.
+Odysseus is a self-hosted AI workspace—meant to be the self-hosted version of the UI experience you get from ChatGPT and Claude, but running on your own hardware, with your own data. It is designed to be local-first and privacy-focused, treating the environment as a privileged admin console for private networks.
 
-This document serves as a comprehensive overview of the system's architecture, including its backend orchestration, frontend structure, deployment models, integrations, and core algorithms. It is intended for new contributors, system administrators, and anyone interested in understanding the inner workings of Odysseus.
+This document serves as a comprehensive overview of the system's architecture, including its backend orchestration, vanilla JS frontend structure, deployment models, integrations (such as MCP, Calendar, Email, and Deep Research), and core algorithms. It is intended for new contributors, system administrators, and anyone interested in understanding the inner workings of Odysseus.
 
 ---
 
@@ -2033,10 +2033,10 @@ An iterative `Think → Search → Extract → Synthesize` loop that generates s
 Odysseus treats the self-hosted environment like an admin console due to powerful local tools (shell, file IO). It uses a combination of route handling and helper logic to manage access control.
 
 ### Purpose
-To authenticate incoming requests, issue and validate tokens, protect routes, and provide device-flow authorization when needed.
+To authenticate incoming requests, issue and validate tokens, protect routes, and provide device-flow authorization when needed. The trust boundary is established for trusted users on a private network, and the goal is to prevent unauthenticated access or privilege escalation.
 
 ### Components
-- **AuthManager & Routing ([`core/auth.py`](../core/auth.py), [`routes/auth_routes.py`](../routes/auth_routes.py), [`src/auth_helpers.py`](../src/auth_helpers.py)):** Handles bcrypt-hashed passwords, session cookies, and user login logic. Enabled by `AUTH_ENABLED=true`. Generates JWT tokens and authenticates against the user database.
+- **AuthManager & Routing ([`core/auth.py`](../core/auth.py), [`routes/auth_routes.py`](../routes/auth_routes.py), [`src/auth_helpers.py`](../src/auth_helpers.py)):** Handles bcrypt-hashed passwords, session cookies, and user login logic. Enabled by `AUTH_ENABLED=true`. Generates JWT tokens and authenticates against the user database. Includes built-in Time-based One-Time Password (TOTP) 2FA logic.
 - **API Tokens ([`src/api_key_manager.py`](../src/api_key_manager.py)):** Supports Bearer token authentication for external integrations (like Webhooks or Zapier). Tokens are cached for performance and invalidated on change.
 - **Security Middleware:** `SecurityHeadersMiddleware` enforces safe browser headers. `AuthMiddleware` protects routes and validates proxy/tunnel forwarding headers to prevent auth bypass.
 - **Device Flow ([`routes/device_flow.py`](../routes/device_flow.py)):** Facilitates the OAuth 2.0 Device Authorization Grant, allowing head-less devices to securely pair.
@@ -2078,8 +2078,8 @@ graph TD
 Managing the interaction between the system, the LLM, and external data is critical for both utility and safety. Odysseus acknowledges its nature as a privileged admin console.
 
 ### Key Tenets
-1. **Admin Isolation**: Admins have full access (shell, files, MCP, etc.). Non-admin users are strictly segregated and cannot execute commands or read arbitrary files.
-2. **Internal Tool Loopback**: The agent loop talks back to the API over a secured loopback using a random, non-persisted `INTERNAL_TOOL_TOKEN`. The backend explicitly verifies the user's privilege before allowing the loopback to execute an admin-only tool.
+1. **Admin Isolation**: Admins have full access to high-risk tools (shell, files, MCP, model serving, email, etc.). Non-admin users are strictly segregated to safe capabilities (chat, web search, memory) and cannot execute commands or read arbitrary files.
+2. **Internal Tool Loopback**: The agent loop talks back to the API over a secured in-process HTTP loopback. At startup, the `core/middleware.py` generates a random, non-persisted `INTERNAL_TOOL_TOKEN`. HTTP requests carrying this token, or flagged with a reserved `internal-tool` user, are implicitly granted access.
 3. **No Network Egress Sandbox**: Tools executed by the LLM run directly as the app process user. A successful prompt-injection attack that escapes the prompt security wrapper could execute shell commands, but only if the user is an admin.
 
 ### Components
@@ -2632,6 +2632,9 @@ Odysseus utilizes standard tools for Python/Node environments, augmented by stri
 
 ### Repository Metadata & Guidelines
 - **Core Docs**: **[`README.md`](../README.md)** (entry point), **[`CONTRIBUTING.md`](../CONTRIBUTING.md)**, **[`ACKNOWLEDGMENTS.md`](../ACKNOWLEDGMENTS.md)**, **[`ROADMAP.md`](../ROADMAP.md)**, and **[`SECURITY.md`](../SECURITY.md)**.
+- **Branch Model**: The project utilizes a dual-branch structure as outlined in [`CONTRIBUTING.md`](../CONTRIBUTING.md).
+  - **`dev`**: The default branch where all active pull requests and feature development land.
+  - **`main`**: The stable, curated branch recommended for end-user deployments.
 - **Configuration & Legal**: **[`LICENSE`](../LICENSE)**, **[`.gitignore`](../.gitignore)**, **[`.gitattributes`](../.gitattributes)**, and **[`.env.example`](../.env.example)**.
 - **[`odysseus-ui.service`](../odysseus-ui.service)**: A systemd service file template for headless Linux deployment.
 
@@ -2695,48 +2698,3 @@ graph TD
 
 </details>
 
-## Future
-<details>
-<summary>View Future</summary>
-
-### Future Upgrade Paths
-
-<details>
-<summary>View Future Upgrade Paths</summary>
-
-
-For developers looking to extend or upgrade Odysseus:
-
-1. **Frontend Refactoring:** Break down massive modules like [`chat.js`](../static/js/chat.js) into smaller, more manageable state machines.
-2. **Database Migration:** Introduce an abstraction layer to support PostgreSQL, enabling scalability for small teams.
-3. **Enhanced Teacher Self-Eval:** Implement a "Tier 2" LLM-based self-evaluation step in [`teacher_escalation.py`](../src/teacher_escalation.py) for more nuanced failure detection.
-4. **OAuth Authentication:** Integrate standard OAuth2 providers (GitHub, Google) for user login, augmenting the current username/password system.
-
----
-*Generated by Jules, Vibecoder.*
-
-</details>
-
-### Known Issues & Future Improvements
-
-<details>
-<summary>View Known Issues & Future Improvements</summary>
-
-
-While Odysseus is robust, its architecture reflects organic growth. Several areas are identified for future refinement.
-
-### Frontend Monoliths
-- **Large Files**: Core modules like [`chat.js`](../static/js/chat.js) and [`document.js`](../static/js/document.js) have grown significantly. Refactoring these into smaller, dedicated state machines or leveraging a lightweight reactive store would improve maintainability.
-- **Censoring ([`censor.js`](../static/js/censor.js))**: The frontend uses regex to detect and blur sensitive information (API keys, passwords) in LLM responses. This is a heuristic approach and could be improved with more robust parsing or moved to a backend middleware for unified enforcement.
-
-### Testing & Stability
-- **Test Coverage**: While critical paths are covered, edge cases in streaming and hardware discovery (`hwfit`) could benefit from deeper integration tests across different OS environments.
-- **Background Jobs**: The [`bg_jobs.py`](../src/bg_jobs.py) system relies on writing exit-code files to track detached processes. A more robust IPC (Inter-Process Communication) or lightweight queue (like Redis or Celery, though contrary to the zero-config ethos) might be necessary if workloads increase.
-
-### Database Abstraction
-- Currently tightly coupled to SQLite. While SQLite is fantastic for single-user self-hosting, abstracting the ORM to easily support PostgreSQL would enable multi-user scaling or team deployments.
-
-
-</details>
-
-</details>
