@@ -858,7 +858,6 @@ def setup_calendar_routes() -> APIRouter:
         db = SessionLocal()
         try:
             cal = _get_or_404_calendar(db, cal_id, owner)
-            db.query(CalendarEvent).filter(CalendarEvent.calendar_id == cal_id).delete()
             db.delete(cal)
             db.commit()
             return {"ok": True}
