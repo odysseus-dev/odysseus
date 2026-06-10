@@ -906,7 +906,7 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
         # so API keys never flow through chat. User sets these in the panel.
         _SECRET_KEYS = {
             "brave_api_key", "google_pse_key", "google_pse_cx",
-            "tavily_api_key", "serper_api_key", "app_public_url",
+            "tavily_api_key", "serper_api_key", "kagi_api_key", "app_public_url",
         }
         def _is_secret(k):
             # `token` must be a suffix, not a substring: otherwise the int

@@ -1,8 +1,9 @@
-"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper."""
+"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper, Kagi."""
 
 import json
 import logging
 import os
+from datetime import date, timedelta
 from typing import List, Optional
 from urllib.parse import urljoin, urlparse, parse_qs
 
@@ -25,6 +26,7 @@ PROVIDER_INFO = {
     "google_pse": ("Google PSE",      True,  False),
     "tavily":   ("Tavily",            True,  False),
     "serper":   ("Serper",            True,  False),
+    "kagi":     ("Kagi",              True,  False),
     "disabled": ("Disabled",          False, False),
 }
 
@@ -57,6 +59,7 @@ def _get_provider_key(provider: str) -> str:
         "google_pse": "google_pse_key",
         "tavily": "tavily_api_key",
         "serper": "serper_api_key",
+        "kagi": "kagi_api_key",
     }
     field = key_map.get(provider, "")
     if field:
@@ -72,6 +75,7 @@ def _get_provider_key(provider: str) -> str:
         "google_pse": "GOOGLE_API_KEY",
         "tavily": "TAVILY_API_KEY",
         "serper": "SERPER_API_KEY",
+        "kagi": "KAGI_API_KEY",
     }
     env_name = env_map.get(provider, "")
     return (os.environ.get(env_name) or "").strip() if env_name else ""
@@ -640,4 +644,71 @@ def serper_search(query: str, count: Optional[int] = None, time_filter: Optional
         })
 
     logger.info(f"Serper returned {len(results)} results")
+    return results
+
+
+# ── Kagi ──
+
+def kagi_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
+    """Search using the Kagi API (v1). Requires kagi_api_key or KAGI_API_KEY env var."""
+    count = count if count is not None else _get_result_count()
+    api_key = _get_provider_key("kagi") or os.environ.get("KAGI_API_KEY", "")
+    if not api_key:
+        logger.warning("Kagi: no API key configured")
+        return []
+
+    payload: dict = {
+        "query": query,
+        "limit": count,
+        # Kagi's SafeSearch knob is a boolean (default true) — no middle tier,
+        # so "strict" and "moderate" both map to enabled.
+        "safe_search": _get_safesearch_level() != "off",
+    }
+    if time_filter:
+        time_map = {"day": 1, "week": 7, "month": 30, "year": 365}
+        if time_filter in time_map:
+            payload["filters"] = {
+                "after": (date.today() - timedelta(days=time_map[time_filter])).isoformat()
+            }
+
+    try:
+        response = httpx.post(
+            "https://kagi.com/api/v1/search",
+            json=payload,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if response.status_code == 429:
+            raise RateLimitError("Kagi rate limit hit")
+        response.raise_for_status()
+    except httpx.RequestError as e:
+        error_logger.error(f"Kagi search failed: {e}")
+        return []
+    except RateLimitError as e:
+        error_logger.error(str(e))
+        return []
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        error_logger.error(f"Kagi returned invalid JSON: {e}")
+        return []
+
+    # v1 response groups results by type under "data"; web pages live in "search".
+    groups = data.get("data")
+    items = groups.get("search", []) if isinstance(groups, dict) else []
+
+    results = []
+    for item in items[:count]:
+        url = item.get("url", "")
+        if not url:
+            continue
+        results.append({
+            "title": item.get("title", ""),
+            "url": url,
+            "snippet": item.get("snippet", ""),
+            "age": item.get("time", ""),
+        })
+
+    logger.info(f"Kagi returned {len(results)} results")
     return results

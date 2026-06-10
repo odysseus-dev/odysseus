@@ -5,6 +5,7 @@ PROVIDER_ENV_KEYS = (
     "GOOGLE_API_KEY",
     "TAVILY_API_KEY",
     "SERPER_API_KEY",
+    "KAGI_API_KEY",
 )
 
 
@@ -32,6 +33,15 @@ def test_search_config_ignores_key_for_different_provider(monkeypatch):
     })
 
     assert config["has_api_key"] is False
+
+
+def test_search_config_detects_kagi_key(monkeypatch):
+    config = _config(monkeypatch, {
+        "search_provider": "kagi",
+        "kagi_api_key": "kagi-key",
+    })
+
+    assert config["has_api_key"] is True
 
 
 def test_search_config_keeps_legacy_shared_key_fallback(monkeypatch):

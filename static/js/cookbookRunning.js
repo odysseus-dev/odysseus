@@ -188,7 +188,7 @@ function _redactCrashReportText(text) {
     .replace(/\b(sk-[A-Za-z0-9_-]{16,})\b/g, '[redacted-api-key]')
     .replace(/\b(xox[baprs]-[A-Za-z0-9-]{16,})\b/g, '[redacted-slack-token]')
     .replace(/\b(AIza[0-9A-Za-z_-]{20,})\b/g, '[redacted-google-key]')
-    .replace(/\b((?:HF_TOKEN|HUGGING_FACE_HUB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|BRAVE_API_KEY|TAVILY_API_KEY|SERPER_API_KEY|GOOGLE_API_KEY|API_KEY|TOKEN|PASSWORD)\s*=\s*)(['"]?)[^\s'"\\]+/gi, '$1$2[redacted]')
+    .replace(/\b((?:HF_TOKEN|HUGGING_FACE_HUB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|BRAVE_API_KEY|TAVILY_API_KEY|SERPER_API_KEY|GOOGLE_API_KEY|KAGI_API_KEY|API_KEY|TOKEN|PASSWORD)\s*=\s*)(['"]?)[^\s'"\\]+/gi, '$1$2[redacted]')
     .replace(/\b(--(?:api-key|token|hf-token|password)\s+)([^\s]+)/gi, '$1[redacted]');
 }
 
