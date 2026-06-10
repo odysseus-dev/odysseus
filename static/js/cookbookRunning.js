@@ -969,6 +969,9 @@ function _updateTask(sessionId, updates) {
       if (uptime) uptime.style.display = 'none';
     }
   }
+  if (task?.type === 'download' && task.payload?._dep && updates.status && !['queued', 'running'].includes(task.status || '')) {
+    _refreshDepsAfterInstall(task);
+  }
 }
 
 function _refreshDepsAfterInstall(task) {
@@ -980,8 +983,10 @@ function _refreshDepsAfterInstall(task) {
 
 export function _removeTask(sessionId) {
   _tombstoneTask(sessionId);  // so sync/poll can't resurrect it
-  const tasks = _loadTasks().filter(t => t.sessionId !== sessionId);
-  _saveTasks(tasks);
+  const tasks = _loadTasks();
+  const task = tasks.find(t => t.sessionId === sessionId);
+  _saveTasks(tasks.filter(t => t.sessionId !== sessionId));
+  _refreshDepsAfterInstall(task);
   _renderRunningTab();
 }
 
