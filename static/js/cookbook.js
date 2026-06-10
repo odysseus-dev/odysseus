@@ -677,6 +677,36 @@ export function _persistEnvState() {
 // ── Dependencies ──
 
 // Category colors removed — using theme CSS classes instead
+const _pendingDepInstalls = new Set();
+const _ACTIVE_DEP_STATUSES = new Set(['queued', 'running']);
+
+function _depHostKey(host) {
+  const h = String(host || '').trim();
+  return (!h || h === 'local' || h === 'localhost' || h === '127.0.0.1') ? 'local' : h;
+}
+
+function _depInstallKey(pipName, host = '', port = '', envPath = '') {
+  return [
+    String(pipName || '').trim(),
+    _depHostKey(host),
+    String(port || '').trim(),
+    String(envPath || '').trim(),
+  ].join('\n');
+}
+
+function _taskDepInstallKey(task) {
+  if (!task?.payload?._dep || !task.payload.repo_id) return '';
+  return _depInstallKey(
+    task.payload.repo_id,
+    task.remoteHost || task.payload.remote_host || '',
+    task.sshPort || task.payload.ssh_port || '',
+    task.payload.env_path || task.payload._envPath || ''
+  );
+}
+
+function _isActiveDepTask(task) {
+  return !!task?.payload?._dep && _ACTIVE_DEP_STATUSES.has(task.status || '');
+}
 
 async function _fetchDependencies() {
   const list = document.getElementById('cookbook-deps-list');
@@ -720,9 +750,31 @@ async function _fetchDependencies() {
     const pkgs = data.packages || [];
     if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No packages found</div>'; return; }
     const _winUnsupported = new Set(['hf_transfer', 'vllm', 'rembg', 'gfpgan']);
+    const _activeDepTasks = new Map();
+    _loadTasks().forEach(task => {
+      if (!_isActiveDepTask(task)) return;
+      const key = _taskDepInstallKey(task);
+      if (key && !_activeDepTasks.has(key)) _activeDepTasks.set(key, task);
+    });
+    _pendingDepInstalls.forEach(key => {
+      if (key && !_activeDepTasks.has(key)) _activeDepTasks.set(key, { _pending: true });
+    });
 
-    const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
+    const _depTarget = (isLocal) => isLocal
+      ? { host: '', port: '', envPath: '' }
+      : { host: _depHost, port: _depPort, envPath: _depVenv };
+    const _activeDepFor = (pkg, isLocal) => {
+      if (!pkg?.pip) return null;
+      const target = _depTarget(isLocal);
+      return _activeDepTasks.get(_depInstallKey(pkg.pip, target.host, target.port, target.envPath)) || null;
+    };
+
+    const _statusTag = (pkg, isLocal, isSystemDep, winBlocked, activeDep) => {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
+      if (activeDep) {
+        const session = activeDep.sessionId ? ` (${activeDep.sessionId})` : '';
+        return `<span class="cookbook-dep-tag cookbook-dep-downloading" title="Dependency install is already running${esc(session)}">downloading</span>`;
+      }
       if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
       if (pkg.installed && pkg.pip_update_available === false) {
         const tip = esc(pkg.update_note || pkg.status_note || 'Found externally; update outside Odysseus.');
@@ -741,6 +793,7 @@ async function _fetchDependencies() {
       const isLocal = pkg.target === 'local';
       const isSystemDep = pkg.kind === 'system';
       const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
+      const activeDep = _activeDepFor(pkg, isLocal);
       const note = pkg.status_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.65;margin-top:3px;">${esc(pkg.status_note)}</div>` : '';
       const updateNote = pkg.installed && pkg.pip_update_available === false && pkg.update_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.55;margin-top:3px;">${esc(pkg.update_note)}</div>` : '';
       // Inline rebuild/reinstall tag. Styled as a .cookbook-dep-tag so it
@@ -750,7 +803,9 @@ async function _fetchDependencies() {
       // diagnosis-style `_launchServeTask` with `pip install --force-reinstall`
       // so the user can watch the pip install in the Running tab.
       let _rebuildBtn = '';
-      if (pkg.name === 'llama_cpp') {
+      if (activeDep) {
+        _rebuildBtn = '';
+      } else if (pkg.name === 'llama_cpp') {
         _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild" id="cookbook-rebuild-engine" title="Clear the cached llama.cpp build so the next serve recompiles from source (use after installing a CUDA/ROCm toolkit to turn a CPU-only build into a GPU build).">Rebuild</button>`;
       } else if (pkg.name === 'vllm' && pkg.installed) {
         _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-reinstall" data-reinstall-pkg="vllm" title="Force-reinstall vLLM (pulls a matching torch). Runs as a tmux task in the Running tab.">Reinstall</button>`;
@@ -766,7 +821,7 @@ async function _fetchDependencies() {
         + `</div>`
         + _rebuildBtn
         + `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`
-        + _statusTag(pkg, isLocal, isSystemDep, winBlocked)
+        + _statusTag(pkg, isLocal, isSystemDep, winBlocked, activeDep)
         + `</div>`;
     };
 
@@ -797,6 +852,28 @@ async function _fetchDependencies() {
         if (depsServerSel) _applyServerSelection(depsServerSel.value);
       }
       const targetHost = isLocalOnly ? 'this server' : (_envState.remoteHost || 'local');
+      const activeKey = _depInstallKey(
+        pipName,
+        _envState.remoteHost || '',
+        _getPort(_envState.remoteHost) || '',
+        _envState.envPath || ''
+      );
+      if (_pendingDepInstalls.has(activeKey) || _loadTasks().some(task => _isActiveDepTask(task) && _taskDepInstallKey(task) === activeKey)) {
+        uiModule.showToast(`${pkgName} is already downloading on ${targetHost}.`);
+        if (statusEl) {
+          statusEl.textContent = 'downloading';
+          statusEl.disabled = true;
+          statusEl.classList.add('cookbook-dep-downloading');
+        }
+        return;
+      }
+      _pendingDepInstalls.add(activeKey);
+      if (statusEl) {
+        statusEl.textContent = 'downloading';
+        statusEl.disabled = true;
+        statusEl.classList.add('cookbook-dep-downloading');
+        statusEl.title = `${pkgName} is already downloading`;
+      }
       // Always go through `python -m pip` so the leading token is `python`
       // — matches the /api/model/serve allow-list (bare `pip` is blocked).
       // Inside a venv/conda env, `--user` is invalid (pip refuses), so we
@@ -852,15 +929,29 @@ async function _fetchDependencies() {
           // path returns {ok:false, error:…}. Surface whichever we get.
           const reason = data.detail || data.error || `HTTP ${res.status}`;
           uiModule.showToast('Install failed: ' + String(reason).slice(0, 200));
+          _pendingDepInstalls.delete(activeKey);
+          if (statusEl) {
+            statusEl.textContent = upgrade ? 'Update' : 'Install';
+            statusEl.disabled = false;
+            statusEl.classList.remove('cookbook-dep-downloading');
+            statusEl.title = '';
+          }
           return;
         }
         // _dep flags this as a pip dependency/driver install (not a servable
         // model) so the running-task card doesn't offer a "Serve →" button.
-        const payload = { repo_id: pipName, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true, env_path: _envState.envPath || '' };
+        const payload = { repo_id: pipName, _cmd: cmd, remote_host: _envState.remoteHost || '', ssh_port: _getPort(_envState.remoteHost) || '', _dep: true, _dep_action: upgrade ? 'update' : 'install', env_path: _envState.envPath || '' };
         _addTask(data.session_id, 'pip ' + pkgName, 'download', payload);
-        if (statusEl) { statusEl.textContent = upgrade ? 'Updating...' : 'Installing...'; statusEl.disabled = true; }
+        _pendingDepInstalls.delete(activeKey);
         uiModule.showToast(`${upgrade ? 'Updating' : 'Installing'} ${pkgName} on ${targetHost}...`);
       } catch (err) {
+        _pendingDepInstalls.delete(activeKey);
+        if (statusEl) {
+          statusEl.textContent = upgrade ? 'Update' : 'Install';
+          statusEl.disabled = false;
+          statusEl.classList.remove('cookbook-dep-downloading');
+          statusEl.title = '';
+        }
         uiModule.showToast('Install failed: ' + err.message);
       }
     }

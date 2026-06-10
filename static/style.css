@@ -19027,6 +19027,14 @@ body.gallery-selecting .gallery-dl-btn,
   padding: 0 10px;
   box-sizing: border-box;
 }
+.cookbook-dep-downloading {
+  background: color-mix(in srgb, var(--orange, #ffb86c) 18%, transparent);
+  color: var(--orange, #ffb86c);
+  border: 1px solid color-mix(in srgb, var(--orange, #ffb86c) 35%, transparent);
+  min-width: 75.85px;
+  padding: 0 10px;
+  box-sizing: border-box;
+}
 .cookbook-dep-na {
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: color-mix(in srgb, var(--fg) 60%, transparent);
@@ -19056,6 +19064,13 @@ body.gallery-selecting .gallery-dl-btn,
   -webkit-appearance: none;
   -moz-appearance: none;
 }
+.cookbook-dep-install.cookbook-dep-downloading {
+  background: color-mix(in srgb, var(--orange, #ffb86c) 18%, transparent);
+  color: var(--orange, #ffb86c);
+  border: 1px solid color-mix(in srgb, var(--orange, #ffb86c) 35%, transparent);
+  cursor: default;
+  opacity: 1;
+}
 /* Conditional line under the Download h2: only when the section is folded
    (collapsed). When expanded, the body content provides separation; the
    underline reads as clutter. */
@@ -19071,6 +19086,7 @@ body.gallery-selecting .gallery-dl-btn,
   padding-left: 0.5px;
 }
 .cookbook-dep-install:hover { opacity: 0.85; }
+.cookbook-dep-install.cookbook-dep-downloading:hover { opacity: 1; }
 /* Installed split button: "Installed" label + separator + ▾ caret; clicking it
    opens the actions menu (Update). Replaces the old ⋮ button. */
 .cookbook-dep-installed-btn {
