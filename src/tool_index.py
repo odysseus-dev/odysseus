@@ -8,6 +8,7 @@ relevant ones per user message.
 
 import logging
 import hashlib
+import os
 import re
 import time
 from typing import Dict, List, Optional, Set
@@ -481,6 +482,19 @@ class ToolIndex:
         frozenset({"write a", "create a doc", "draft", "compose", "poem", "story",
                    "essay", "outline", "letter"}):
             {"create_document", "edit_document", "update_document"},
+        # Code / project intent — source files, building, implementing.
+        frozenset({"code", "source", "implement", "build", "project", "app",
+                   "module", "package", "compile", "test", "debug",
+                   "refactor", "rewrite", "optimize", "fix the",
+                   "add a function", "add the", "missing", "broken"}):
+            {"read_file", "write_file", "edit_file", "glob", "grep", "ls", "bash", "python"},
+        # General file-system navigation — read/show/open/find/list files.
+        frozenset({"open the file", "read the file", "show the file",
+                   "list the files", "list files", "find the file",
+                   "directory", "folder", "path", "on disk",
+                   "source file", "source code", "source tree",
+                   "look at the", "check the file", "inspect the"}):
+            {"read_file", "glob", "grep", "ls"},
     }
 
     def get_tools_for_query(
@@ -511,6 +525,11 @@ class ToolIndex:
         # prompts do not drag web schemas into the agent context.
         if self._WEB_RE.search(query):
             base.update({"web_search", "web_fetch"})
+        # When ODYSSEUS_WORKSPACE is configured, the user is working on a
+        # code project — always include file tools so the agent can actually
+        # read/write source files without waiting for keyword luck.
+        if os.environ.get("ODYSSEUS_WORKSPACE", "").strip() or os.environ.get("ODYSSEUS_DEVELOPER_MODE", "").lower() in ("1", "true", "yes"):
+            base.update({"read_file", "write_file", "edit_file", "glob", "grep", "ls", "bash", "python"})
         return base
 
 
