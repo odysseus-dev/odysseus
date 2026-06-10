@@ -61,6 +61,9 @@ _VISION_MODEL_KEYWORDS = (
     "phi-4", "phi4",
     # zhipu / glm (glm-4.5v, glm-4.6v, glm-5v-turbo, etc.)
     "glm-4.5v", "glm-4.6v", "glm-5v",
+    # Moonshot Kimi K2.5 and K2.6 are officially documented vision-capable
+    # (kimi-k2, kimi-k2-thinking are NOT vision-capable)
+    "kimi-k2p5", "kimi-k2p6", "kimi-k2.5", "kimi-k2.6",
 )
 # Catches the "*-VL-*" / "*VL*" family not covered by a literal keyword above
 # (e.g. Qwen2.5-VL and various tags): a standalone "vl" token, plus "vlm".
