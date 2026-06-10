@@ -441,6 +441,20 @@ def _decode_header(raw):
         return "".join(decoded)
 
 
+def _safe_decode(payload, charset):
+    """Decode payload bytes, tolerating an unknown/bogus charset NAME.
+
+    errors="replace" only covers decode ERRORS, not an unregistered codec
+    name (e.g. a spam message declaring charset="x-unknown-broken"), which
+    raises LookupError. _read_email calls _extract_text with no guard, so an
+    unknown charset crashed the whole read_email tool. Fall back to utf-8.
+    """
+    try:
+        return payload.decode(charset or "utf-8", errors="replace")
+    except LookupError:
+        return payload.decode("utf-8", errors="replace")
+
+
 def _extract_text(msg):
     """Extract plain text body from email message."""
     if msg.is_multipart():
@@ -452,12 +466,12 @@ def _extract_text(msg):
                 payload = part.get_payload(decode=True)
                 if payload:
                     charset = part.get_content_charset() or "utf-8"
-                    text_parts.append(payload.decode(charset, errors="replace"))
+                    text_parts.append(_safe_decode(payload, charset))
             elif ct == "text/html" and not text_parts and "attachment" not in cd:
                 payload = part.get_payload(decode=True)
                 if payload:
                     charset = part.get_content_charset() or "utf-8"
-                    raw_html = payload.decode(charset, errors="replace")
+                    raw_html = _safe_decode(payload, charset)
                     text = re.sub(r"<br\s*/?>", "\n", raw_html, flags=re.I)
                     text = re.sub(r"<[^>]+>", "", text)
                     text = html.unescape(text)
@@ -467,7 +481,7 @@ def _extract_text(msg):
         payload = msg.get_payload(decode=True)
         if payload:
             charset = msg.get_content_charset() or "utf-8"
-            return payload.decode(charset, errors="replace")
+            return _safe_decode(payload, charset)
     return ""
 
 
