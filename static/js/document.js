@@ -100,7 +100,8 @@ import * as Modals from './modalManager.js';
     if (!activeAccountId) return null;
     const accounts = await _getEmailAccountsCached();
     const activeAccount = accounts.find(a => String(a.id) === String(activeAccountId));
-    if (!activeAccount || _accountCanSend(activeAccount)) return activeAccountId;
+    if (!activeAccount) return null;
+    if (_accountCanSend(activeAccount)) return activeAccountId;
     if (uiModule) uiModule.showToast('Selected email account is receive-only; using your SMTP account.');
     return null;
   }
