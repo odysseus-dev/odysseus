@@ -1521,6 +1521,7 @@ var _SEARCH_PROVIDER_LOGOS = {
 async function initResearchSettings() {
   var epSel = el('set-researchEndpoint');
   var modelSel = el('set-researchModel');
+  var modelFilter = el('set-researchModelFilter');
   var tokensInput = el('set-researchMaxTokens');
   var extractTimeoutInput = el('set-researchExtractTimeout');
   var extractConcurrencyInput = el('set-researchExtractConcurrency');
@@ -1614,9 +1615,20 @@ async function initResearchSettings() {
 
   epSel.addEventListener('change', async function() {
     refreshModels('');
+    if (modelFilter) modelFilter.value = '';
     saveResearch();
   });
   modelSel.addEventListener('change', saveResearch);
+  if (modelFilter) {
+    modelFilter.addEventListener('input', function() {
+      var q = this.value.toLowerCase();
+      for (var i = 0; i < modelSel.options.length; i++) {
+        var opt = modelSel.options[i];
+        if (i === 0) { opt.style.display = ''; continue; }
+        opt.style.display = q && opt.textContent.toLowerCase().indexOf(q) === -1 ? 'none' : '';
+      }
+    });
+  }
   tokensInput.addEventListener('change', saveResearch);
   extractTimeoutInput.addEventListener('change', saveResearch);
   extractConcurrencyInput.addEventListener('change', saveResearch);

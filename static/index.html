@@ -1537,9 +1537,12 @@
               </div>
               <div class="settings-row">
                 <label class="settings-label">Model</label>
-                <select id="set-researchModel" class="settings-select">
-                  <option value="">Same as chat</option>
-                </select>
+                <div style="display:flex;flex-direction:column;gap:4px;width:100%">
+                  <input type="text" id="set-researchModelFilter" class="settings-select" placeholder="Type to filter models…" style="padding:4px 8px;font-size:12px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;outline:none;width:100%;box-sizing:border-box" />
+                  <select id="set-researchModel" class="settings-select">
+                    <option value="">Same as chat</option>
+                  </select>
+                </div>
               </div>
               <div class="settings-row">
                 <label class="settings-label">Search</label>
