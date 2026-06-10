@@ -1735,6 +1735,53 @@ def _detect_runaway_call(call_freq, threshold=15):
     return sig.split(":", 1)[0] if sig else None
 
 
+def _workspace_git_context(workspace: str) -> str:
+    """A short system-prompt note about the workspace's git/forge context so the
+    agent knows when to use the `git` and `forge` tools and which forge applies.
+    Best-effort: "" when not a repo or git is unavailable.
+    """
+    import os
+    import shutil
+    import subprocess
+    if not workspace:
+        return ""
+    try:
+        base = os.path.realpath(workspace)
+        git_bin = shutil.which("git")
+        if not os.path.isdir(base) or not git_bin:
+            return ""
+
+        def _g(*a):
+            return subprocess.run([git_bin, "-C", base, *a], capture_output=True, text=True, timeout=5)
+
+        if _g("rev-parse", "--is-inside-work-tree").returncode != 0:
+            return ""  # not a git repo
+        # `--show-current` is empty on an unborn branch (no commits yet) — fine.
+        branch = (_g("branch", "--show-current").stdout or "").strip()
+        url = (_g("remote", "get-url", "origin").stdout or "").strip().lower()
+    except Exception:
+        return ""
+
+    parts = [f"This workspace is a git repo (current branch `{branch}`)." if branch
+             else "This workspace is a git repo."]
+    parts.append("Use the `git` tool (not bash) for version control — status, diff, "
+                 "add, commit, branch, checkout, push.")
+    host = forge_cli = None
+    if "github" in url:
+        host, forge_cli = "GitHub", ("gh" if shutil.which("gh") else None)
+    elif "gitlab" in url:
+        host, forge_cli = "GitLab", ("glab" if shutil.which("glab") else None)
+    if host and forge_cli:
+        parts.append(f"The remote is {host} — use the `forge` tool for pull requests, "
+                     f"issues, and releases (the {forge_cli} CLI is available; say `pr …`).")
+    elif host:
+        parts.append(f"The remote is {host}, but its CLI isn't installed — the `forge` "
+                     f"tool is unavailable, so `git push` and let the user open the PR.")
+    else:
+        parts.append("No GitHub/GitLab remote detected — the `forge` tool won't apply here.")
+    return "## GIT\n" + " ".join(parts)
+
+
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,

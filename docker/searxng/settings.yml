@@ -1,0 +1,9 @@
+use_default_settings: true
+
+server:
+  secret_key: "__SEARXNG_SECRET__"
+
+search:
+  formats:
+    - html
+    - json

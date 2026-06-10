@@ -358,6 +358,64 @@ def _ollama_normalize_tool_messages(messages: List[Dict]) -> List[Dict]:
     return out
 
 
+def _ollama_split_multimodal_content(content: List) -> Tuple[str, List[str]]:
+    """Split an OpenAI-style multimodal content array into native Ollama parts.
+
+    Returns ``(text, images)`` where ``text`` joins the text blocks and
+    ``images`` holds each image_url's raw base64 (the ``data:<type>;base64,``
+    prefix stripped). Native Ollama /api/chat carries images in a sibling
+    ``images`` array, not inline in ``content``. External (non-data) image URLs
+    are skipped — native Ollama only accepts base64/file images, so forwarding a
+    URL string would not render and only risks another unmarshal error.
+    """
+    texts: List[str] = []
+    images: List[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            if isinstance(block, str):
+                texts.append(block)
+            continue
+        if block.get("type") == "text":
+            texts.append(block.get("text") or "")
+        elif block.get("type") == "image_url":
+            url = (block.get("image_url") or {}).get("url", "")
+            if url.startswith("data:") and "," in url:
+                images.append(url.split(",", 1)[1])
+        else:
+            # Native Ollama /api/chat only carries text + base64 images; any other
+            # block type (e.g. audio) has no representation here and is dropped.
+            # Log it so a vanished attachment is debuggable rather than silent.
+            logger.debug(
+                "ollama: dropping unsupported content block type %r",
+                block.get("type"),
+            )
+    return "\n".join(t for t in texts if t), images
+
+
+def _ollama_normalize_message_content(messages: List[Dict]) -> List[Dict]:
+    """Flatten OpenAI multimodal content arrays into native Ollama shape.
+
+    A vision turn arrives with ``content`` as an array of text / image_url
+    blocks. Native Ollama /api/chat wants ``content`` as a plain string plus a
+    sibling ``images`` array of base64; given the array it rejects the whole
+    request with HTTP 400 "cannot unmarshal array into Go struct field
+    ChatRequest.messages.content of type string". Convert on shallow copies,
+    leaving string-content messages untouched.
+    """
+    out: List[Dict] = []
+    for m in messages or []:
+        if not isinstance(m, dict) or not isinstance(m.get("content"), list):
+            out.append(m)
+            continue
+        text, images = _ollama_split_multimodal_content(m["content"])
+        nm = dict(m)
+        nm["content"] = text
+        if images:
+            nm["images"] = images
+        out.append(nm)
+    return out
+
+
 def _build_ollama_payload(
     model: str,
     messages: List[Dict],
@@ -380,7 +438,9 @@ def _build_ollama_payload(
     """
     payload: Dict = {
         "model": model,
-        "messages": _ollama_normalize_tool_messages(messages),
+        "messages": _ollama_normalize_message_content(
+            _ollama_normalize_tool_messages(messages)
+        ),
         "stream": stream,
     }
     options: Dict = {}

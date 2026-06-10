@@ -366,9 +366,11 @@ class ResearchHandler:
                     entry["status"] = "done"
                     self._save_result(session_id, entry)
                     try:
-                        sources = self._extract_sources(researcher.findings) if researcher.findings else []
-                        findings = self._extract_raw_findings(researcher.findings) if researcher.findings else []
-                        _guarded_complete(session_id, entry["result"], sources, findings)
+                        visited = getattr(researcher, "visited_urls", [])
+                        findings = researcher.findings or []
+                        sources = self._extract_sources(findings, visited)
+                        findings_extracted = self._extract_raw_findings(findings)
+                        _guarded_complete(session_id, entry["result"], sources, findings_extracted)
                     except Exception as e:
                         logger.warning(f"on_complete callback failed in timeout branch: {e}")
                 else:
@@ -390,9 +392,11 @@ class ResearchHandler:
                     entry["status"] = "done"
                     self._save_result(session_id, entry)
                     try:
-                        sources = self._extract_sources(researcher.findings) if researcher.findings else []
-                        findings = self._extract_raw_findings(researcher.findings) if researcher.findings else []
-                        _guarded_complete(session_id, entry["result"], sources, findings)
+                        visited = getattr(researcher, "visited_urls", [])
+                        findings = researcher.findings or []
+                        sources = self._extract_sources(findings, visited)
+                        findings_extracted = self._extract_raw_findings(findings)
+                        _guarded_complete(session_id, entry["result"], sources, findings_extracted)
                     except Exception as cb_err:
                         logger.warning(f"on_complete callback failed in error branch: {cb_err}")
                     on_progress({"phase": "warning", "message": f"Research finished with errors — partial results saved ({_elapsed:.0f}s elapsed)"})
@@ -488,8 +492,11 @@ class ResearchHandler:
             if entry.get("sources"):
                 return entry["sources"]
             researcher = entry.get("researcher")
-            if researcher and researcher.findings:
-                return self._extract_sources(researcher.findings)
+            if researcher:
+                visited = getattr(researcher, "visited_urls", [])
+                findings = researcher.findings or []
+                if findings or visited:
+                    return self._extract_sources(findings, visited)
         # Check disk
         path = _research_json_path(session_id)
         if path is None:
@@ -522,23 +529,34 @@ class ResearchHandler:
         return None
 
     @staticmethod
-    def _extract_sources(findings: list) -> list:
-        """Extract deduplicated [{url, title}] from findings, filtering low-quality ones."""
+    def _extract_sources(findings: list, visited_urls: list = None) -> list:
+        """Extract deduplicated [{url, title, image}] from findings and visited_urls."""
         seen = set()
         sources = []
-        for f in findings:
-            if not isinstance(f, dict):
-                continue
-            url = f.get("url", "")
-            title = f.get("title", "") or url
-            summary = f.get("summary", "") or f.get("evidence", "")
-            if url and url not in seen and not is_low_quality(summary):
-                seen.add(url)
-                entry = {"url": url, "title": title}
-                og_img = f.get("og_image", "")
-                if og_img:
-                    entry["image"] = og_img
-                sources.append(entry)
+        if findings:
+            for f in findings:
+                if not isinstance(f, dict):
+                    continue
+                url = f.get("url", "")
+                title = f.get("title", "") or url
+                if url and url not in seen:
+                    seen.add(url)
+                    entry = {"url": url, "title": title}
+                    og_img = f.get("og_image", "")
+                    if og_img:
+                        entry["image"] = og_img
+                    sources.append(entry)
+                
+        if visited_urls:
+            for v in visited_urls:
+                if not isinstance(v, dict):
+                    continue
+                url = v.get("url", "")
+                title = v.get("title", "") or url
+                if url and url not in seen:
+                    seen.add(url)
+                    sources.append({"url": url, "title": title})
+                    
         return sources
 
     @staticmethod
@@ -609,9 +627,13 @@ class ResearchHandler:
             sources = []
             raw_findings = []
             researcher = entry.get("researcher")
-            if researcher and researcher.findings:
-                sources = self._extract_sources(researcher.findings)
-                raw_findings = self._extract_raw_findings(researcher.findings)
+            if researcher:
+                visited = getattr(researcher, "visited_urls", [])
+                findings = researcher.findings or []
+                if findings or visited:
+                    sources = self._extract_sources(findings, visited)
+                if findings:
+                    raw_findings = self._extract_raw_findings(findings)
             entry["sources"] = sources
 
             data = {

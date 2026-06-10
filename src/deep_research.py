@@ -238,6 +238,7 @@ class DeepResearcher:
         # see whether searxng / brave / tavily etc. carried the work.
         self.providers_used: List[str] = []
         self.findings: List[Dict] = []
+        self.visited_urls: List[Dict] = []
         self.evolving_report: str = ""
         self.research_plan: str = ""
 
@@ -525,6 +526,10 @@ class DeepResearcher:
                 if url and url not in self.urls_fetched:
                     urls_to_fetch.append(r)
                     self.urls_fetched.add(url)
+                    self.visited_urls.append({
+                        "url": url,
+                        "title": r.get("title", "") or url
+                    })
                 if len(urls_to_fetch) >= self.max_urls_per_round * len(queries):
                     break
 
