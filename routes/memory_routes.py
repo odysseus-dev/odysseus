@@ -232,6 +232,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                 temperature=0.2,
                 max_tokens=500,
                 headers=sess.headers,
+                timeout=resolve_timeout_by_url(sess.endpoint_url),
             )
             try:
                 suggestions = json.loads(suggestion_text)
@@ -339,6 +340,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         endpoint_url = None
         model = None
         headers = {}
+        _import_timeout = 300
 
         if session:
             try:
@@ -444,6 +446,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                 temperature=0.2,
                 max_tokens=2000,
                 headers=headers,
+                timeout=_import_timeout,
             )
 
             # Parse JSON

@@ -1616,6 +1616,7 @@ def setup_model_routes(model_discovery):
                     "model_refresh_mode": _endpoint_refresh_mode(r, kind),
                     "model_refresh_interval": getattr(r, "model_refresh_interval", None),
                     "model_refresh_timeout": getattr(r, "model_refresh_timeout", None),
+                    "request_timeout": getattr(r, "request_timeout", None),
                 })
             return results
         finally:
@@ -1634,6 +1635,7 @@ def setup_model_routes(model_discovery):
         model_refresh_mode: str = Form(""),
         model_refresh_interval: str = Form(""),
         model_refresh_timeout: str = Form(""),
+        request_timeout: str = Form(""),
         supports_tools: str = Form(""),  # "true"/"false"/"" (unknown)
         pinned_models: str = Form(""),  # admin-pinned IDs: list/JSON/comma/newline
         container_local: str = Form("false"),
@@ -1720,6 +1722,9 @@ def setup_model_routes(model_discovery):
                 if refresh_timeout is not None:
                     existing.model_refresh_timeout = refresh_timeout
                     changed = True
+                if infer_timeout is not None:
+                    existing.request_timeout = infer_timeout
+                    changed = True
                 if api_key.strip() and not existing.api_key:
                     existing.api_key = api_key.strip()
                     changed = True
@@ -1791,6 +1796,7 @@ def setup_model_routes(model_discovery):
                 model_refresh_mode=refresh_mode,
                 model_refresh_interval=refresh_interval,
                 model_refresh_timeout=refresh_timeout,
+                request_timeout=infer_timeout,
                 cached_models=json.dumps(model_ids) if model_ids else None,
                 pinned_models=json.dumps(_pinned) if _pinned else None,
                 supports_tools=_st,
@@ -2148,6 +2154,9 @@ def setup_model_routes(model_discovery):
                 if "model_refresh_timeout" in body:
                     timeout = _parse_positive_int(body.get("model_refresh_timeout"), minimum=1, maximum=60)
                     ep.model_refresh_timeout = timeout
+                if "request_timeout" in body:
+                    raw = body.get("request_timeout")
+                    ep.request_timeout = None if raw is None else _parse_positive_int(raw, minimum=30, maximum=86400)
                 # Rotating an API key used to require DELETE+POST, which wiped
                 # endpoint_url/model from every session referencing the old base
                 # URL. Allow in-place updates so the admin can change the key
@@ -2181,6 +2190,7 @@ def setup_model_routes(model_discovery):
                 "model_refresh_mode": getattr(ep, "model_refresh_mode", None) or "auto",
                 "model_refresh_interval": getattr(ep, "model_refresh_interval", None),
                 "model_refresh_timeout": getattr(ep, "model_refresh_timeout", None),
+                "request_timeout": getattr(ep, "request_timeout", None),
             }
         finally:
             db.close()

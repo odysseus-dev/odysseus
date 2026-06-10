@@ -503,7 +503,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         user = get_current_user(request)
         try:
             data = await request.json()
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to parse export request body, defaulting to empty: %s", e)
             data = {}
         ids = data.get("ids") or []
         if not ids:
@@ -931,7 +932,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 temperature=0.1,
                 max_tokens=200,
                 headers=headers,
-                timeout=30,
+                timeout=_tidy_timeout,
             )
 
             # Parse verdicts
@@ -1239,6 +1240,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     raw = await llm_call_async(
                         url, model_id, messages,
                         temperature=0.1, max_tokens=2000, headers=headers,
+                        timeout=_vl_timeout,
                     )
                 except Exception as e:
                     logger.error(f"VL call failed on page {page_index + 1}: {e}")

@@ -196,7 +196,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
     import asyncio
     import sqlite3 as _sql3
     import requests as _req
-    from src.endpoint_resolver import resolve_endpoint
+    from src.endpoint_resolver import resolve_endpoint, resolve_endpoint_timeout
     from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
 
     settings = _load_settings()
@@ -436,7 +436,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                         # Use to_thread so this sync HTTP call doesn't freeze
                         # the entire event loop while the LLM thinks (240s).
                         resp = await asyncio.to_thread(
-                            _req.post, url, json=payload, headers=req_headers, timeout=240
+                            _req.post, url, json=payload, headers=req_headers, timeout=_ep_timeout
                         )
                         if resp.ok:
                             rdata = resp.json()
@@ -492,7 +492,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                 {"role": "user", "content": f"Original email:\nFrom: {sender}\nSubject: {subject}\n\n{body_for_llm[:12000]}\n\nDraft a reply. Return only the reply body text."},
                             ],
                             temperature=0.7, max_tokens=1024,
-                            headers=req_headers, timeout=90,
+                            headers=req_headers, timeout=_ep_timeout,
                         )
                         reply = _apply_email_style_mechanics(_extract_reply(reply or ""))
                         if reply:
@@ -585,7 +585,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                 )},
                             ],
                             temperature=0.1, max_tokens=16384,
-                            headers=req_headers, timeout=180,
+                            headers=req_headers, timeout=_ep_timeout,
                         )
                         _raw_original = cal_extract or ""
                         cal_extract = _strip_think(_raw_original)
@@ -763,7 +763,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                         }
                         urg_raw = await llm_call_async(
                             url=url, model=model, messages=payload["messages"],
-                            temperature=0, max_tokens=200, headers=req_headers, timeout=60,
+                            temperature=0, max_tokens=200, headers=req_headers, timeout=_ep_timeout,
                         )
                         urg_raw = _strip_think(urg_raw or "")
                         urg_raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", urg_raw, flags=re.MULTILINE).strip()
@@ -898,7 +898,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                             payload.pop("temperature", None)
                         # to_thread keeps the event loop responsive during the LLM call
                         resp = await asyncio.to_thread(
-                            _req.post, url, json=payload, headers=req_headers, timeout=120
+                            _req.post, url, json=payload, headers=req_headers, timeout=_ep_timeout
                         )
                         if not resp.ok:
                             logger.warning(f"Auto-classify {uid.decode() if isinstance(uid, bytes) else str(uid)} HTTP {resp.status_code}: {resp.text[:200]}")

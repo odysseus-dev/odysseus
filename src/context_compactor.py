@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from src.model_context import get_context_length, estimate_tokens
 from src.llm_core import llm_call_async
-from src.endpoint_resolver import resolve_endpoint
+from src.endpoint_resolver import resolve_endpoint, resolve_endpoint_timeout
 from core.models import ChatMessage
 
 logger = logging.getLogger(__name__)
@@ -377,7 +377,7 @@ async def maybe_compact(
             temperature=0.2,
             max_tokens=SUMMARY_MAX_TOKENS,
             headers=compact_headers,
-            timeout=30,
+            timeout=_compact_timeout,
         )
     except Exception as e:
         logger.error(f"Compaction summary failed: {e}")

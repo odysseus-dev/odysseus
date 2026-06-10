@@ -407,3 +407,65 @@ def _resolve_fallback_candidates(setting_key: str, owner: Optional[str] = None) 
         if resolved:
             out.append(resolved)
     return out
+
+
+def resolve_endpoint_timeout(
+    setting_prefix: str,
+    owner: Optional[str] = None,
+    default: int = 60,
+) -> int:
+    """Return request_timeout for the endpoint resolve_endpoint() would select.
+
+    Mirrors the endpoint-lookup logic in resolve_endpoint() but returns only
+    the per-endpoint inference timeout (request_timeout column). Returns
+    `default` when no endpoint is found or request_timeout is NULL.
+    """
+    try:
+        from src.settings import get_user_setting, load_settings
+        settings = load_settings()
+        owner_str = owner or ""
+        def _stg(k): return (get_user_setting(k, owner_str, settings.get(k, "")) or "").strip()
+
+        ep_id = _stg(f"{setting_prefix}_endpoint_id")
+        if setting_prefix == "utility" and not ep_id:
+            ep_id = _stg("default_endpoint_id")
+        if not ep_id and setting_prefix != "utility":
+            ep_id = _stg("utility_endpoint_id")
+            if not ep_id:
+                ep_id = _stg("default_endpoint_id")
+        if not ep_id:
+            return default
+
+        db = SessionLocal()
+        try:
+            ep = db.query(ModelEndpoint).filter(
+                ModelEndpoint.id == ep_id,
+                ModelEndpoint.is_enabled == True,
+            ).first()
+            val = getattr(ep, "request_timeout", None) if ep else None
+            return int(val) if val is not None else default
+        finally:
+            db.close()
+    except Exception:
+        return default
+
+
+def resolve_timeout_by_url(endpoint_url: str, default: int = 60) -> int:
+    """Return request_timeout for an endpoint matched by its chat URL.
+
+    Used by chat_routes where only sess.endpoint_url is available (the stored
+    chat URL, not an endpoint ID).
+    """
+    if not endpoint_url:
+        return default
+    db = SessionLocal()
+    try:
+        for ep in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
+            if build_chat_url(normalize_base(ep.base_url)).rstrip("/") == endpoint_url.rstrip("/"):
+                val = getattr(ep, "request_timeout", None)
+                return int(val) if val is not None else default
+        return default
+    except Exception:
+        return default
+    finally:
+        db.close()

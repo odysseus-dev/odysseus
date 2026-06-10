@@ -354,6 +354,11 @@ class ModelEndpoint(TimestampMixin, Base):
     model_refresh_mode = Column(String, nullable=True, default="auto")
     model_refresh_interval = Column(Integer, nullable=True, default=None)
     model_refresh_timeout = Column(Integer, nullable=True, default=None)
+    # Per-inference request timeout in seconds. NULL = use caller default (300s).
+    # Controls all LLM inference calls to this endpoint (chat, agent, email,
+    # research, etc.). Distinct from model_refresh_timeout which only applies
+    # to the /v1/models probe.
+    request_timeout = Column(Integer, nullable=True, default=None)
     # Whether models on this endpoint accept OpenAI-style function
     # schemas + emit `tool_calls`. Auto-detected at Cookbook auto-
     # register time from `--enable-auto-tool-choice` in the serve cmd;

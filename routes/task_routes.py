@@ -1067,7 +1067,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         AI news and summarize it") into a structured task draft the frontend
         can pre-fill the form with. Returns a draft only — the user reviews and
         saves it, so a misread schedule never goes live unreviewed."""
-        from src.endpoint_resolver import resolve_endpoint
+        from src.endpoint_resolver import resolve_endpoint, resolve_endpoint_timeout
         from src.llm_core import llm_call_async
         from src.text_helpers import strip_think as _strip_think
         import json as _json, re as _re

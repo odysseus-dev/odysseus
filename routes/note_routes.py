@@ -270,7 +270,7 @@ async def dispatch_reminder(
                         {"role": "system", "content": "You are a reminder assistant. Write a single short, warm, motivating sentence (max 25 words) reminding the user about the note below. Do not add greetings, preamble, or hashtags. Output only the sentence."},
                         {"role": "user", "content": f"Title: {title}\n\n{note_body}".strip()},
                     ],
-                    temperature=0.7, max_tokens=200, headers=headers, timeout=30,
+                    temperature=0.7, max_tokens=200, headers=headers, timeout=_note_timeout,
                 )
                 from src.text_helpers import strip_think as _strip_think
                 # prose=True strips untagged "The user wants me to…" chain-of-thought.

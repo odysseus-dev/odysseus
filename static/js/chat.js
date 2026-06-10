@@ -51,6 +51,13 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
   let _autoNudges = 0;             // handshakes fired for the CURRENT user turn
   let _autoContinuePending = false; // marks the next submit as an auto-continue (don't reset the counter)
   const _AUTO_NUDGE_CAP = 3;
+  const composerDrafts = createComposerDraftController({
+    getCurrentSessionId: () => sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId(),
+    hasPendingChat: () => sessionModule.hasPendingChat && sessionModule.hasPendingChat(),
+    isWelcomeActive: () => document.getElementById('chat-container')?.classList.contains('welcome-active'),
+    getInput: () => document.getElementById('message'),
+    resizeInput: (input) => { if (uiModule.autoResize) uiModule.autoResize(input); },
+  });
 
   // shortModel and modelColor are now in chatRenderer.js
   var _shortModel = chatRenderer.shortModel;
@@ -117,6 +124,18 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
   function hasActiveStream(sessionId) {
     return _streamSessionId === sessionId || _backgroundStreams.has(sessionId) ||
            _resumingStreams.has(sessionId);
+  }
+
+  function restoreComposerDraft(sessionId = null) {
+    composerDrafts.restore(sessionId);
+  }
+
+  function clearComposerDraft(sessionId = null) {
+    composerDrafts.clear(sessionId);
+  }
+
+  function suspendComposerDraftPersistence(fn) {
+    return composerDrafts.suspend(fn);
   }
 
   // Sources box builder and toggleSources are now in chatRenderer.js
@@ -203,6 +222,10 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
       // Init can run before #message exists (templated UI); short retries only.
       try { requestAnimationFrame(() => _wireArrowUpRecall(document.getElementById('message'))); } catch (_) {}
       setTimeout(() => _wireArrowUpRecall(document.getElementById('message')), 250);
+    }
+    const ta = document.getElementById('message');
+    if (ta && !ta._draftPersistBound) {
+      composerDrafts.bind();
     }
   }
 
@@ -448,6 +471,7 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
         const mode = currentSetupMode;
         slashCommands.clearSetupMode(mode === 'endpoint-provider' || mode === 'endpoint-key-for-provider');
         el('message').value = '';
+        clearComposerDraft();
         if (window._syncModelPickerAutohide) window._syncModelPickerAutohide();
         if (uiModule.autoResize) uiModule.autoResize(el('message'));
         if (mode === true || mode === 'endpoint') {
@@ -468,12 +492,14 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
     // Allow empty text when a regen carries over the original message's
     // attachment ids — a photo-only message still has something to send.
     if (!msg.trim() && !fileHandlerModule.getPendingCount() && !(_pendingRegenAttachments && _pendingRegenAttachments.length)) { _releaseSendFlag(); return; }
+    const sentDraftId = composerDrafts.currentDraftId();
 
     // --- Slash commands: execute directly without AI (no session needed) ---
     if (isCommand(msg.trim())) {
       const handled = await handleSlashCommand(msg.trim());
       if (handled) {
         el('message').value = '';
+        clearComposerDraft();
         if (window._syncModelPickerAutohide) window._syncModelPickerAutohide();
         if (uiModule.autoResize) uiModule.autoResize(el('message'));
         _releaseSendFlag();
@@ -646,6 +672,7 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
         _userMsgEl = addMessage('user', userDisplay, null, _pendingAttachInfo ? { attachments: _pendingAttachInfo } : null);
       }
       messageInput.value = '';
+      clearComposerDraft(sentDraftId || streamSessionId);
       messageInput.style.height = '';
       messageInput.dispatchEvent(new Event('input'));
       // Mobile: dismiss the on-screen keyboard after sending. iOS in
@@ -5028,6 +5055,9 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
     deleteMessage,
     rewriteWith,
     continueFrom,
+    restoreComposerDraft,
+    clearComposerDraft,
+    suspendComposerDraftPersistence,
     _appendViewReportLink,
     hasActiveStream,
   };

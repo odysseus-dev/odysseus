@@ -993,7 +993,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 temperature=0.2,
                 max_tokens=1024,
                 headers=headers,
-                timeout=60,
+                timeout=_compact_timeout,
             )
         except Exception as e:
             logger.error("Manual compaction failed: %s", e)

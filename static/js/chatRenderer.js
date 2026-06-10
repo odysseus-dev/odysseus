@@ -1253,15 +1253,25 @@ export function showWelcomeScreen() {
   if (ws) ws.classList.remove('hidden');
   if (cc) cc.classList.add('welcome-active');
   // Entering the New Chat / welcome state: discard any stale draft left in the
-  // composer from the previous session so the input starts empty (issue #1343).
+  // composer from the previous session, then restore the scoped draft below.
   // Switching between existing sessions loads them directly and does NOT call
   // this, so genuine drafts are not erased. Reset the autosized height and fire
   // an `input` event so the send button + autosize listeners update.
   const _msg = document.getElementById('message');
   if (_msg) {
-    _msg.value = '';
-    _msg.style.height = '';
-    _msg.dispatchEvent(new Event('input', { bubbles: true }));
+    const _clear = () => {
+      _msg.value = '';
+      _msg.style.height = '';
+      _msg.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    if (window.chatModule && window.chatModule.suspendComposerDraftPersistence) {
+      window.chatModule.suspendComposerDraftPersistence(_clear);
+    } else {
+      _clear();
+    }
+    if (window.chatModule && window.chatModule.restoreComposerDraft) {
+      window.chatModule.restoreComposerDraft();
+    }
   }
   // Re-trigger the L→R clip-wipe reveal on the welcome name each time the
   // welcome screen is shown (new session, deleted last session, etc.) — without

@@ -123,7 +123,8 @@ def _clear_orphaned_session_endpoint(sess, owner: str | None = None) -> bool:
         sess.model = ""
         sess.headers = {}
         return True
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to clear orphaned session endpoint: %s", e)
         db.rollback()
         return False
     finally:
@@ -141,7 +142,8 @@ def _endpoint_cache_contains_model(endpoint, model: str) -> bool:
         return True
     try:
         models = json.loads(raw) if isinstance(raw, str) else raw
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to parse cached models list, treating as containing model: %s", e)
         return True
     if not isinstance(models, list) or not models:
         return True
@@ -457,6 +459,7 @@ def setup_chat_routes(
             except Exception as e:
                 logger.error(f"Research failed: {e}")
 
+        _ns_timeout = resolve_timeout_by_url(sess.endpoint_url)
         reply = await llm_call_async(
             sess.endpoint_url,
             sess.model,
@@ -644,8 +647,8 @@ def setup_chat_routes(
         elif attachments:
             try:
                 att_ids = [str(x) for x in json.loads(attachments)]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to parse attachments JSON, ignoring attachments: %s", e)
 
         no_memory = str(form_data.get("no_memory", "")).lower() == "true"
         pre_context_tool_policy = build_effective_tool_policy(
@@ -1240,6 +1243,7 @@ def setup_chat_routes(
                         _max_rounds = _DEFAULT_ROUNDS
                     _max_rounds = max(1, min(_max_rounds, 200))
 
+                    _agent_timeout = resolve_timeout_by_url(sess.endpoint_url)
                     async for chunk in stream_agent_loop(
                         sess.endpoint_url,
                         sess.model,

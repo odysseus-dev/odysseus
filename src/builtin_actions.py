@@ -79,7 +79,7 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
         import json
         import re
         from src.constants import DATA_DIR
-        from src.endpoint_resolver import resolve_endpoint
+        from src.endpoint_resolver import resolve_endpoint, resolve_endpoint_timeout
         from src.llm_core import llm_call_async
         from src.memory import MemoryManager
 
@@ -120,8 +120,10 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                 return False
 
             url, model, headers = resolve_endpoint("utility", owner=group_owner or None)
+            _tidy_timeout = resolve_endpoint_timeout("utility", owner=group_owner or None)
             if not url or not model:
                 url, model, headers = resolve_endpoint("default", owner=group_owner or None)
+                _tidy_timeout = resolve_endpoint_timeout("default", owner=group_owner or None)
             if not url or not model:
                 return False
 
@@ -157,7 +159,7 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                     temperature=0.0,
                     max_tokens=4096,
                     headers=headers,
-                    timeout=120,
+                    timeout=_tidy_timeout,
                 )
                 from src.text_helpers import strip_think
 
@@ -608,7 +610,7 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
     try:
         from datetime import timedelta
         from core.database import SessionLocal, CalendarEvent
-        from src.endpoint_resolver import resolve_endpoint
+        from src.endpoint_resolver import resolve_endpoint, resolve_endpoint_timeout
         from src.llm_core import llm_call_async
         import re as _re, json as _json
 
@@ -625,8 +627,10 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
                 return "No upcoming events to classify", True
 
             llm_url, llm_model, llm_headers = resolve_endpoint("utility", owner=owner)
+            _classify_timeout = resolve_endpoint_timeout("utility", owner=owner)
             if not llm_url:
                 llm_url, llm_model, llm_headers = resolve_endpoint("default", owner=owner)
+                _classify_timeout = resolve_endpoint_timeout("default", owner=owner)
             llm_available = bool(llm_url and llm_model)
 
             # Pull user memories so the LLM has personal context (relationships,
@@ -707,7 +711,7 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
                         url=llm_url, model=llm_model,
                         messages=[{"role": "user", "content": prompt}],
                         temperature=0.1, max_tokens=16384,
-                        headers=llm_headers, timeout=180,
+                        headers=llm_headers, timeout=_classify_timeout,
                     )
                     from src.text_helpers import strip_think as _st
                     raw = _st(raw or "", prose=False, prompt_echo=False)
@@ -897,8 +901,10 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
             return "All sender sigs already cached (or no eligible senders)", True
 
         url, model, headers = resolve_endpoint("utility", owner=owner)
+        _sig_timeout = resolve_endpoint_timeout("utility", owner=owner)
         if not url or not model:
             url, model, headers = resolve_endpoint("default", owner=owner)
+            _sig_timeout = resolve_endpoint_timeout("default", owner=owner)
         if not url or not model:
             return "No LLM endpoint available", False
 
@@ -958,7 +964,7 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
                     url=url, model=model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.0, max_tokens=600,
-                    headers=headers, timeout=60,
+                    headers=headers, timeout=_sig_timeout,
                 )
                 from src.text_helpers import strip_think as _st
                 sig = _st(raw or "", prose=False, prompt_echo=False).strip()
@@ -1681,7 +1687,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     raw = await llm_call_async_with_fallback(
                         candidates,
                         [{"role": "user", "content": prompt}],
-                        temperature=0.1, max_tokens=220, timeout=30,
+                        temperature=0.1, max_tokens=220, timeout=_urgency_timeout,
                     )
                     # Tolerant JSON-parse: strip code fences if present.
                     txt = (raw or "").strip()

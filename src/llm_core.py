@@ -268,7 +268,8 @@ def _is_ollama_native_url(url: str) -> bool:
     """Return True for native Ollama API URLs, including Ollama Cloud."""
     try:
         parsed = urlparse(url or "")
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to parse URL for Ollama detection %r: %s", url, e)
         return False
     host = parsed.hostname or ""
     path = (parsed.path or "").rstrip("/")
