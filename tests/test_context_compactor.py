@@ -92,6 +92,125 @@ class TestTrimForContext:
         assert "old-0" not in "\n".join(str(m.get("content", "")) for m in trimmed)
 
 
+class TestTrimForContextProtected:
+    """Protected messages (msg["_protected"], e.g. the active editor document)
+    must keep their ORIGINAL interleaved position in the conversation: they are
+    never hoisted into a block, never dropped, and never truncated.
+
+    Regression for the bug where trim_for_context reassembled every return path
+    as ``essential_system + protected_msgs + convo_msgs`` — yanking each
+    protected message to a block right after the system messages and losing its
+    position relative to the surrounding turns (agent_loop deliberately inserts
+    the active document immediately before the user's question about it)."""
+
+    @staticmethod
+    def _index_of(msgs, marker):
+        for i, m in enumerate(msgs):
+            if marker in str(m.get("content", "")):
+                return i
+        return -1
+
+    def test_protected_keeps_position_relative_to_convo(self):
+        # Path A: dropping the extra (memory/RAG) system message is enough. The
+        # protected doc sits between Q1 and the current question Q2 in the
+        # original order and must NOT be hoisted ahead of Q1.
+        messages = [
+            {"role": "system", "content": "ESSENTIAL preset prompt."},
+            {"role": "system", "content": "EXTRA " + ("x" * 12000)},  # droppable
+            {"role": "user", "content": "Q1 first question " * 20},
+            {"role": "user", "content": "DOC active document " * 80, "_protected": True},
+            {"role": "user", "content": "Q2 current question " * 20},
+        ]
+
+        trimmed = trim_for_context(messages, context_length=4096, reserve_tokens=512)
+
+        i_q1 = self._index_of(trimmed, "Q1 first question")
+        i_doc = self._index_of(trimmed, "DOC active document")
+        i_q2 = self._index_of(trimmed, "Q2 current question")
+        assert i_q1 != -1 and i_doc != -1 and i_q2 != -1
+        # Original relative order Q1 -> DOC -> Q2 must be preserved.
+        assert i_q1 < i_doc < i_q2
+        # Protected message preserved byte-for-byte (never truncated).
+        assert any(
+            m.get("_protected") and m.get("content") == messages[3]["content"]
+            for m in trimmed
+        )
+
+    def test_protected_not_hoisted_ahead_of_tool_sequence(self):
+        # An assistant tool_calls -> tool response pair precedes the protected
+        # doc. Hoisting the doc to the front used to move it ahead of that pair;
+        # it must stay after the tool response, and every tool message must
+        # still immediately follow its assistant tool_calls (adjacency intact).
+        messages = [
+            {"role": "system", "content": "ESSENTIAL preset prompt."},
+            {"role": "system", "content": "EXTRA " + ("x" * 12000)},  # droppable
+            {"role": "user", "content": "please search the web"},
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"id": "c1", "type": "function",
+                             "function": {"name": "web_search", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "TOOLRESULT data"},
+            {"role": "user", "content": "DOC active document " * 80, "_protected": True},
+            {"role": "user", "content": "CURRENT question"},
+        ]
+
+        trimmed = trim_for_context(messages, context_length=4096, reserve_tokens=512)
+
+        i_tool = self._index_of(trimmed, "TOOLRESULT data")
+        i_doc = self._index_of(trimmed, "DOC active document")
+        assert i_tool != -1 and i_doc != -1
+        # Doc must remain AFTER the tool response (not hoisted ahead of it).
+        assert i_doc > i_tool
+        # Adjacency: every tool message immediately follows an assistant
+        # message carrying tool_calls.
+        for j, m in enumerate(trimmed):
+            if m.get("role") == "tool":
+                assert j > 0
+                prev = trimmed[j - 1]
+                assert prev.get("role") == "assistant" and prev.get("tool_calls")
+
+    def test_protected_last_message_not_truncated(self):
+        # Defensive: if a protected message is the last message and very large,
+        # it must be returned intact (never truncated) and keep its position.
+        huge_doc = "DOC " + ("d" * 30000)
+        messages = [
+            {"role": "system", "content": "ESSENTIAL preset prompt."},
+            {"role": "user", "content": "normal question"},
+            {"role": "user", "content": huge_doc, "_protected": True},
+        ]
+
+        trimmed = trim_for_context(messages, context_length=2048, reserve_tokens=512)
+
+        # Protected doc is still present, last, and byte-for-byte intact.
+        assert trimmed[-1].get("_protected") is True
+        assert trimmed[-1].get("content") == huge_doc
+
+    def test_protected_in_old_zone_is_never_dropped(self):
+        # >10 prior turns with the protected doc among the OLDEST. The drop pass
+        # must step over it (never remove it) while dropping non-protected old
+        # turns to fit the budget.
+        messages = [{"role": "system", "content": "ESSENTIAL preset prompt."}]
+        messages.append(
+            {"role": "user", "content": "DOC active document " * 60, "_protected": True}
+        )
+        messages.extend(
+            {"role": "user", "content": f"turn-{i} " + ("y" * 600)} for i in range(12)
+        )
+        messages.append({"role": "user", "content": "CURRENT final question"})
+
+        trimmed = trim_for_context(messages, context_length=2048, reserve_tokens=512)
+
+        # Protected doc survived despite aggressive old-turn dropping.
+        assert any(
+            m.get("_protected") and "DOC active document" in str(m.get("content", ""))
+            for m in trimmed
+        )
+        # The oldest non-protected turn was dropped.
+        joined = "\n".join(str(m.get("content", "")) for m in trimmed)
+        assert "turn-0 " not in joined
+        # The current message is kept.
+        assert "CURRENT final question" in joined
+
+
 class TestContentAsText:
     def test_string_passthrough(self):
         assert _content_as_text("hello") == "hello"
