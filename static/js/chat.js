@@ -2982,12 +2982,50 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
             if (node._elapsedTicker) { clearInterval(node._elapsedTicker); node._elapsedTicker = null; }
             node.classList.remove('running');
           });
-          // Stream died unexpectedly — the "silently died" case. Re-engage the
-          // model immediately (no wait) with a completion handshake, up to the
-          // cap. Only auto-recover from connection-class failures; deterministic
-          // errors (unsupported tools, 4xx/5xx, parse failures) surface right away
-          // instead of burning the nudge budget on a guaranteed-to-fail retry.
-          if (!(_isRecoverableStreamErr(err) && _tryAutoRecover(holder, accumulated, streamSessionId))) {
+          // Stream died unexpectedly — the "silently died" case. Before nudging
+          // the model, ask the server whether the stream already finished. A 404
+          // means "no active stream" — the response was already saved to the DB
+          // and the connection drop was a transport artefact. In that case reload
+          // the session to show the saved response instead of sending an unwanted
+          // "please continue" handshake that would overwrite it (fixes #3136).
+          // Only auto-recover from connection-class failures; deterministic errors
+          // (unsupported tools, 4xx/5xx, parse failures) surface right away.
+          if (_isRecoverableStreamErr(err)) {
+            // Probe stream_status to distinguish "server finished cleanly" from
+            // "genuine connection drop that needs a nudge".
+            let _serverFinished = false;
+            try {
+              const _stRes = await fetch(
+                `${API_BASE}/api/chat/stream_status/${encodeURIComponent(streamSessionId)}`
+              );
+              if (_stRes.status === 404) {
+                // Explicit "no active stream" — response already committed to DB.
+                _serverFinished = true;
+              } else if (_stRes.ok) {
+                const _stData = await _stRes.json();
+                _serverFinished = _stData.status !== 'streaming';
+              }
+              // 401/403/5xx: endpoint unreachable or auth issue — treat as unknown,
+              // fall through to the normal auto-recover path.
+            } catch (_) {
+              // Network error probing status — can't tell; fall through to auto-recover
+            }
+            if (_serverFinished) {
+              // Server confirms the stream ended cleanly. Reload to show saved response.
+              if (sessionModule && sessionModule.selectSession && streamSessionId) {
+                sessionModule.selectSession(streamSessionId);
+              }
+            } else if (!_tryAutoRecover(holder, accumulated, streamSessionId)) {
+              const errorHolder = document.querySelector('.msg-ai:last-of-type .body');
+              if (errorHolder) {
+                let errMsg = `Error: ${err.message}`;
+                if (err.message && (err.message.includes('tool') || err.message.includes('auto'))) {
+                  errMsg += '\n\nThis model may not support tools — try switching to Chat mode.';
+                }
+                typewriterInto(errorHolder, errMsg);
+              }
+            }
+          } else {
             const errorHolder = document.querySelector('.msg-ai:last-of-type .body');
             if (errorHolder) {
               let errMsg = `Error: ${err.message}`;

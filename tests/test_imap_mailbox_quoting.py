@@ -73,6 +73,24 @@ def test_mcp_quote_helper_handles_spaced_and_quoted_mailboxes():
     assert es._q('Label "Needs Reply"') == '"Label \\"Needs Reply\\""'
 
 
+def test_mcp_quote_helper_encodes_non_ascii_to_modified_utf7():
+    # A decoded Cyrillic name must go back over the wire as modified UTF-7 (#3514)
+    # so the IMAP server can resolve it; ASCII names are unchanged (asserted above).
+    assert es._q("Отправленные") == '"&BB4EQgQ,BEAEMAQyBDsENQQ9BD0ESwQ1-"'
+
+
+def test_mcp_folder_name_from_list_line_decodes_modified_utf7():
+    line = b'(\\HasNoChildren) "/" &BB4EQgQ,BEAEMAQyBDsENQQ9BD0ESwQ1-'
+    assert es._folder_name_from_list_line(line) == "Отправленные"
+
+
+def test_mcp_folder_name_round_trips_through_quote():
+    # decode (for display) -> _q (re-encode for the wire) returns the wire form.
+    line = b'(\\HasNoChildren) "/" &BB4EQgQ,BEAEMAQyBDsENQQ9BD0ESwQ1-'
+    name = es._folder_name_from_list_line(line)
+    assert es._q(name) == '"&BB4EQgQ,BEAEMAQyBDsENQQ9BD0ESwQ1-"'
+
+
 def test_known_imap_mailbox_call_sites_are_quoted():
     mcp = Path("mcp_servers/email_server.py").read_text()
     assert "conn.select(folder" not in mcp

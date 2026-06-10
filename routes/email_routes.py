@@ -33,6 +33,7 @@ from email.mime.multipart import MIMEMultipart
 from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPException, Depends, Request
 from fastapi.responses import FileResponse
 from src.constants import DATA_DIR
+from src.imap_utf7 import decode_imap_utf7
 
 from src.llm_core import llm_call_async
 from src.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTES
@@ -163,7 +164,7 @@ def _folder_name_from_list_line(line) -> str | None:
     match = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
     if not match:
         return None
-    return match.group(1) or match.group(2)
+    return decode_imap_utf7(match.group(1) or match.group(2))
 
 
 def _list_imap_folders(conn) -> tuple[list, list[str]]:
@@ -1848,10 +1849,8 @@ def setup_email_routes():
                 status, folders = conn.list()
             result = []
             for f in folders:
-                decoded = f.decode() if isinstance(f, bytes) else f
-                match = re.search(r'"([^"]*)"$|(\S+)$', decoded)
-                if match:
-                    name = match.group(1) or match.group(2)
+                name = _folder_name_from_list_line(f)
+                if name:
                     result.append(name)
             return {"folders": result}
         except Exception as e:

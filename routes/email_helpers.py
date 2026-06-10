@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 
 from src.auth_helpers import _auth_disabled, get_current_user
+from src.imap_utf7 import decode_imap_utf7, encode_imap_utf7
 from src.secret_storage import decrypt as _decrypt
 
 logger = logging.getLogger(__name__)
@@ -241,11 +242,16 @@ def _assert_owns_account(account_id: str, owner: str) -> None:
         raise HTTPException(503, "Account check failed")
 
 def _q(name: str) -> str:
-    """Quote an IMAP mailbox name. Defensive: escapes `\\` and `"` and wraps
-    in double quotes so user-supplied folder names with spaces or quotes can't
+    """Quote an IMAP mailbox name. Encodes the (decoded, Unicode) name to
+    modified UTF-7 (RFC 3501) so non-ASCII folders are addressable, then escapes
+    `\\` and `"` and wraps in double quotes so names with spaces or quotes can't
     confuse `SELECT` / `COPY`. imaplib already rejects CRLF, but quoting also
-    handles `[Gmail]/Sent Mail`-style names that need wrapping anyway."""
-    return '"' + (name or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
+    handles `[Gmail]/Sent Mail`-style names that need wrapping anyway.
+
+    Folder names everywhere in the Python layer are kept decoded; this is the
+    single point that re-encodes them for the wire, so callers must never pass an
+    already-encoded name (it would double-encode `&`)."""
+    return '"' + encode_imap_utf7(name or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def _attach_compose_uploads(outer: MIMEMultipart, tokens) -> None:
@@ -949,7 +955,7 @@ def _detect_sent_folder(conn):
             if r"\Sent" in decoded:
                 m = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
                 if m:
-                    return m.group(1) or m.group(2)
+                    return decode_imap_utf7(m.group(1) or m.group(2))
         for c in candidates:
             if c in names:
                 return c
@@ -977,7 +983,7 @@ def _detect_drafts_folder(conn):
             if r"\Drafts" in decoded or r"\Draft" in decoded:
                 m = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
                 if m:
-                    return m.group(1) or m.group(2)
+                    return decode_imap_utf7(m.group(1) or m.group(2))
         for c in candidates:
             if c in names:
                 return c
@@ -999,7 +1005,7 @@ def _detect_spam_folder(conn):
             m = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
             if not m:
                 continue
-            name = m.group(1) or m.group(2)
+            name = decode_imap_utf7(m.group(1) or m.group(2))
             if r"\Junk" in decoded:
                 preferred = name
                 break

@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 server = Server("email")
 EMAIL_SOCKET_TIMEOUT = float(os.environ.get("EMAIL_SOCKET_TIMEOUT", "20"))
 from src.constants import DATA_DIR as _DATA_DIR, APP_DB, EMAIL_CACHE_DB, SETTINGS_FILE as _SETTINGS_FILE, MAIL_ATTACHMENTS_DIR
+from src.imap_utf7 import decode_imap_utf7, encode_imap_utf7
 DATA_DIR = Path(_DATA_DIR)
 
 
@@ -41,8 +42,13 @@ def _b(value) -> bytes:
 
 
 def _q(name: str) -> str:
-    """Quote an IMAP mailbox name for commands that take mailbox args."""
-    return '"' + (name or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
+    """Quote an IMAP mailbox name for commands that take mailbox args.
+
+    Encodes the (decoded, Unicode) name to modified UTF-7 (RFC 3501) so non-ASCII
+    folders are addressable, then escapes/quotes. Folder names are kept decoded
+    everywhere in Python; this is the single re-encode point, so callers must not
+    pass an already-encoded name."""
+    return '"' + encode_imap_utf7(name or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def _uid_fetch_rows(data) -> list:
@@ -341,7 +347,7 @@ def _detect_sent_folder(conn):
             if r"\Sent" in decoded:
                 m = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
                 if m:
-                    return m.group(1) or m.group(2)
+                    return decode_imap_utf7(m.group(1) or m.group(2))
         for c in candidates:
             if c in names:
                 return c
@@ -355,7 +361,7 @@ def _folder_name_from_list_line(line) -> str | None:
     m = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
     if not m:
         return None
-    return m.group(1) or m.group(2)
+    return decode_imap_utf7(m.group(1) or m.group(2))
 
 
 def _list_folder_lines(conn) -> list:
