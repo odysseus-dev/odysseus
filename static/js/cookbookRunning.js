@@ -61,6 +61,16 @@ function _canClearTask(task) {
   return ['done', 'stopped', 'error', 'crashed', 'failed'].includes(task.status);
 }
 
+function _sameCookbookHost(task, host) {
+  return (task.remoteHost || '') === host;
+}
+
+function _isCookbookTaskClearable(task) {
+  // "Clear finished" should remove terminal cards, not downloads still waiting
+  // in the queue. Keep ready/running servers visible too.
+  return !!task?.status && !['running', 'queued', 'ready'].includes(task.status);
+}
+
 function _clearPillLabel(task) {
   if (_downloadOutputLooksActive(task)) return 'reconnect';
   return 'clear';
@@ -1806,8 +1816,8 @@ export function _renderRunningTab() {
       const host = btn.dataset.clearServer;
       if (!await window.styledConfirm(`Clear finished tasks on ${_serverName(host)}?`, { confirmText: 'Clear' })) return;
       const allTasks = _loadTasks();
-      const toRemove = allTasks.filter(t => (t.remoteHost || '') === host && _canClearTask(t));
-      const remaining = allTasks.filter(t => (t.remoteHost || '') !== host || !_canClearTask(t));
+      const toRemove = allTasks.filter(t => _sameCookbookHost(t, host) && _isCookbookTaskClearable(t));
+      const remaining = allTasks.filter(t => !_sameCookbookHost(t, host) || !_isCookbookTaskClearable(t));
       _saveTasks(remaining);
       // Fade/slide each finished card out (same exit as the per-card clear)
       // instead of yanking them instantly.
