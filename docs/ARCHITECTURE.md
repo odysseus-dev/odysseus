@@ -1160,6 +1160,162 @@ graph TD
 - **Login (`static/login.html`)**: [`static/login.html`](../static/login.html) serves as the authentication portal when `AUTH_ENABLED` is set to true.
 - **Component Specifics**: Modular features like UI helpers ([`ui.js`](../static/js/ui.js)), keyboard shortcuts ([`keyboard-shortcuts.js`](../static/js/keyboard-shortcuts.js)), file handlers ([`fileHandler.js`](../static/js/fileHandler.js)), voice recorders, markdown processing ([`markdown.js`](../static/js/markdown.js)), drag sorting ([`dragSort.js`](../static/js/dragSort.js)), assistant logic ([`assistant.js`](../static/js/assistant.js)), loading indicators ([`spinner.js`](../static/js/spinner.js)), and theming/color utilities ([`theme.js`](../static/js/theme.js), [`color/hex.js`](../static/js/color/hex.js), [`util/ordinal.js`](../static/js/util/ordinal.js)). Other UI and feature modules include [`composerArrowUpRecall.js`](../static/js/composerArrowUpRecall.js), [`emojiShortcodes.js`](../static/js/emojiShortcodes.js), [`group.js`](../static/js/group.js), [`langIcons.js`](../static/js/langIcons.js), [`modelPicker.js`](../static/js/modelPicker.js), [`models.js`](../static/js/models.js), [`modelSort.js`](../static/js/modelSort.js), [`model/matchKey.js`](../static/js/model/matchKey.js), [`presets.js`](../static/js/presets.js), [`providerDeviceFlow.js`](../static/js/providerDeviceFlow.js), [`providers.js`](../static/js/providers.js), [`rag.js`](../static/js/rag.js), [`researchSynapse.js`](../static/js/researchSynapse.js), [`section-management.js`](../static/js/section-management.js), [`settings.js`](../static/js/settings.js), [`signature.js`](../static/js/signature.js), [`skills.js`](../static/js/skills.js), [`tourAutoplay.js`](../static/js/tourAutoplay.js), and [`tourHints.js`](../static/js/tourHints.js).
 
+
+<details>
+<summary>Click to view granular descriptions of `static/js/` files</summary>
+
+- **[`static/js/MODULE_SUMMARY.md`](../static/js/MODULE_SUMMARY.md)**: Markdown document outlining the general structure and responsibilities of the frontend modules.
+- **[`static/js/a11y.js`](../static/js/a11y.js)**: Handles global accessibility updates, such as dynamically adding ARIA labels and managing screen reader announcements.
+- **[`static/js/admin.js`](../static/js/admin.js)**: Responsible for rendering and managing UI components that are only visible to authenticated users with administrative privileges.
+- **[`static/js/assistant.js`](../static/js/assistant.js)**: Manages interactions with the virtual assistant logic on the client side, including persona management.
+- **[`static/js/calendar.js`](../static/js/calendar.js)**: Main module for calendar functionalities, handling rendering, event interactions, and synchronizing with the backend.
+- **[`static/js/calendar/reminders.js`](../static/js/calendar/reminders.js)**: Evaluates upcoming calendar events to trigger browser-native reminders.
+- **[`static/js/calendar/utils.js`](../static/js/calendar/utils.js)**: Provides helper functions for date math, formatting, and recurring rule calculations within the calendar application.
+- **[`static/js/censor.js`](../static/js/censor.js)**: Employs heuristic regex rules to visually obscure sensitive information (like passwords or API keys) in the chat UI.
+- **[`static/js/chat.js`](../static/js/chat.js)**: The core controller for the chat interface, capturing user input, managing auto-scroll, and triggering backend completions.
+- **[`static/js/chatRenderer.js`](../static/js/chatRenderer.js)**: Manages the visual rendering of complete chat messages, transforming raw text and markdown into DOM elements.
+- **[`static/js/chatStream.js`](../static/js/chatStream.js)**: Consumes the Server-Sent Events (SSE) from the backend, handling connection lifecycle and dispatching text chunks.
+- **[`static/js/codeRunner.js`](../static/js/codeRunner.js)**: Provides functionality to execute embedded code snippets (e.g., Python, JS) directly within the chat interface.
+- **[`static/js/color/hex.js`](../static/js/color/hex.js)**: Utilities for parsing, validating, and converting hexadecimal color codes to RGB/HSL for dynamic theming.
+- **[`static/js/colorPicker.js`](../static/js/colorPicker.js)**: A lightweight, custom color picker component designed without external dependencies.
+- **[`static/js/compare/icons.js`](../static/js/compare/icons.js)**: Supplies specific SVG icons used within the blind comparison interface.
+- **[`static/js/compare/index.js`](../static/js/compare/index.js)**: The entry point for the Compare Mode application, initializing the layout and core components.
+- **[`static/js/compare/models.js`](../static/js/compare/models.js)**: Manages the fetching and local state of available models specifically for the comparison view.
+- **[`static/js/compare/panes.js`](../static/js/compare/panes.js)**: Controls the synchronized dual-pane layout, ensuring both model outputs are displayed correctly side-by-side.
+- **[`static/js/compare/probe.js`](../static/js/compare/probe.js)**: Diagnostic module that checks network and connection health specifically for the synchronized compare streams.
+- **[`static/js/compare/scoreboard.js`](../static/js/compare/scoreboard.js)**: Calculates and renders the ongoing ELO or win/loss ratio of models involved in blind testing.
+- **[`static/js/compare/selector.js`](../static/js/compare/selector.js)**: UI component enabling the user to choose which specific models to pit against each other before obfuscation.
+- **[`static/js/compare/state.js`](../static/js/compare/state.js)**: Manages the centralized state for a comparison session, including selected models, the prompt, and voting status.
+- **[`static/js/compare/stream.js`](../static/js/compare/stream.js)**: Handles the complexity of opening and tracking two concurrent Server-Sent Event streams for real-time model racing.
+- **[`static/js/compare/vote.js`](../static/js/compare/vote.js)**: Submits the user's vote back to the API and subsequently reveals the obscured identities of the competing models.
+- **[`static/js/composerArrowUpRecall.js`](../static/js/composerArrowUpRecall.js)**: Adds terminal-like history recall to the chat input field when the user presses the Up Arrow key.
+- **[`static/js/cookbook-diagnosis.js`](../static/js/cookbook-diagnosis.js)**: Periodically polls the status of background services (like Ollama) to ensure they are available for the Cookbook.
+- **[`static/js/cookbook-hwfit.js`](../static/js/cookbook-hwfit.js)**: Interacts with the backend's hardware profiling API to display VRAM and model fit metrics visually.
+- **[`static/js/cookbook.js`](../static/js/cookbook.js)**: The main orchestrator module for the Cookbook interface, managing local LLM setup and management.
+- **[`static/js/cookbookDownload.js`](../static/js/cookbookDownload.js)**: Handles the UI and API requests for initiating the download of models from Hugging Face or other registries.
+- **[`static/js/cookbookProgressSignal.js`](../static/js/cookbookProgressSignal.js)**: Parses real-time SSE progress events during model downloads, updating progress bars and ETA readouts.
+- **[`static/js/cookbookRunning.js`](../static/js/cookbookRunning.js)**: Monitors and displays the status of currently active local models being served by vLLM or llama.cpp.
+- **[`static/js/cookbookSchedule.js`](../static/js/cookbookSchedule.js)**: Provides UI for scheduling when specific models should be loaded or unloaded from memory.
+- **[`static/js/cookbookServe.js`](../static/js/cookbookServe.js)**: Sends the API commands to launch a model server process inside a managed background session.
+- **[`static/js/document.js`](../static/js/document.js)**: Main entry point for the Document Editor view, handling state, layout, and document lifecycle events.
+- **[`static/js/documentLibrary.js`](../static/js/documentLibrary.js)**: Renders the file browser for the user's personal document collection and handles batch operations.
+- **[`static/js/dragSort.js`](../static/js/dragSort.js)**: Provides general-purpose drag-and-drop sorting capabilities for list items across the SPA.
+- **[`static/js/editor/ai-inpaint.js`](../static/js/editor/ai-inpaint.js)**: Gathers masked regions from the canvas and orchestrates inpainting requests to the backend image generator.
+- **[`static/js/editor/ai-models.js`](../static/js/editor/ai-models.js)**: Manages the configuration and selection of specific image models available for canvas operations.
+- **[`static/js/editor/ai-rembg.js`](../static/js/editor/ai-rembg.js)**: Extracts the foreground of a layer by calling the backend background removal service and pasting the result.
+- **[`static/js/editor/ai-tool-runner.js`](../static/js/editor/ai-tool-runner.js)**: A generic wrapper that handles loading states, error catching, and layer insertion for all AI-powered canvas tools.
+- **[`static/js/editor/ai-tools-misc.js`](../static/js/editor/ai-tools-misc.js)**: Houses miscellaneous AI operations for the canvas, such as upscaling or style transfer integrations.
+- **[`static/js/editor/build/controls.js`](../static/js/editor/build/controls.js)**: Constructs generic, reusable UI controls (buttons, sliders) for the canvas editor toolbars.
+- **[`static/js/editor/build/popups.js`](../static/js/editor/build/popups.js)**: Manages the instantiation and lifecycle of floating popup dialogues within the canvas context.
+- **[`static/js/editor/build/right-panel.js`](../static/js/editor/build/right-panel.js)**: Builds the UI for the right-hand properties panel, typically housing layer and history controls.
+- **[`static/js/editor/build/toolbar.js`](../static/js/editor/build/toolbar.js)**: Assembles the primary tool palette (brush, lasso, move, etc.) along the edge of the canvas.
+- **[`static/js/editor/build/topbar.js`](../static/js/editor/build/topbar.js)**: Renders the persistent header bar of the editor for global actions like save, export, or undo.
+- **[`static/js/editor/build/transform-popup.js`](../static/js/editor/build/transform-popup.js)**: Creates the specific floating dialogue used during layer transform operations (scale, rotate, skew).
+- **[`static/js/editor/canvas-coords.js`](../static/js/editor/canvas-coords.js)**: Translates raw screen mouse events into accurate logical canvas coordinates, accounting for zoom and pan states.
+- **[`static/js/editor/canvas-events.js`](../static/js/editor/canvas-events.js)**: The central event delegator that captures all mouse and touch interactions on the main HTML5 canvas element.
+- **[`static/js/editor/canvas-transforms.js`](../static/js/editor/canvas-transforms.js)**: Implements the mathematical matrices to pan, zoom, and rotate the canvas viewport itself.
+- **[`static/js/editor/checkerboard.js`](../static/js/editor/checkerboard.js)**: Draws the tiled gray/white background to visually indicate transparent areas of the canvas.
+- **[`static/js/editor/clipboard-and-drop.js`](../static/js/editor/clipboard-and-drop.js)**: Listens for paste events or dragged files, converting them into new image layers on the canvas.
+- **[`static/js/editor/composite-helpers.js`](../static/js/editor/composite-helpers.js)**: Provides lower-level Canvas 2D API utilities for merging multiple distinct layers into a single image buffer.
+- **[`static/js/editor/filters/blur.js`](../static/js/editor/filters/blur.js)**: Applies a Gaussian blur convolution matrix to the currently selected layer or mask.
+- **[`static/js/editor/filters/edge-feather.js`](../static/js/editor/filters/edge-feather.js)**: Softens the harsh boundaries of a mask or selection to enable smooth compositing.
+- **[`static/js/editor/fx/adj-popup.js`](../static/js/editor/fx/adj-popup.js)**: Renders the UI dialogue for tweaking image adjustments (brightness, contrast, saturation).
+- **[`static/js/editor/fx/filter-string.js`](../static/js/editor/fx/filter-string.js)**: Compiles user adjustment settings into standard CSS `filter` strings for non-destructive previewing.
+- **[`static/js/editor/fx/histogram.js`](../static/js/editor/fx/histogram.js)**: Calculates and renders a graphical representation of the tonal distribution in the active layer.
+- **[`static/js/editor/fx/pixel-pass.js`](../static/js/editor/fx/pixel-pass.js)**: Executes raw, per-pixel manipulations on image data arrays for advanced effects.
+- **[`static/js/editor/harmonize-masks.js`](../static/js/editor/harmonize-masks.js)**: Ensures that independently drawn masks properly align and clip against their parent layers.
+- **[`static/js/editor/history-panel.js`](../static/js/editor/history-panel.js)**: Displays the stack of past actions and enables the user to jump back to previous states in the undo tree.
+- **[`static/js/editor/keyboard-shortcuts.js`](../static/js/editor/keyboard-shortcuts.js)**: Maps keybinds specific to the canvas editor context (e.g., `B` for brush, `Ctrl+Z` for undo).
+- **[`static/js/editor/layer-helpers.js`](../static/js/editor/layer-helpers.js)**: Centralizes CRUD operations for the canvas layer stack, including visibility toggles and blend modes.
+- **[`static/js/editor/layer-panel.js`](../static/js/editor/layer-panel.js)**: Renders the visual representation of the layer stack, allowing drag-and-drop reordering.
+- **[`static/js/editor/mask-utils.js`](../static/js/editor/mask-utils.js)**: Contains algorithms for expanding, contracting, or manipulating black-and-white alpha masks.
+- **[`static/js/editor/shortcuts-popover.js`](../static/js/editor/shortcuts-popover.js)**: Displays an overlay summarizing the available hotkeys while the user is inside the editor.
+- **[`static/js/editor/slider-ux.js`](../static/js/editor/slider-ux.js)**: Implements specialized drag behaviors for range inputs, allowing precise adjustments.
+- **[`static/js/editor/snap.js`](../static/js/editor/snap.js)**: Provides logic to magnetically align layers or guides to specific edges and centers during movement.
+- **[`static/js/editor/state.js`](../static/js/editor/state.js)**: The master state container for the canvas application, tracking active tools, layers, and viewport matrices.
+- **[`static/js/editor/stroke-pipeline.js`](../static/js/editor/stroke-pipeline.js)**: Optimizes the rendering of continuous brush strokes by interpolating points to prevent jagged lines.
+- **[`static/js/editor/stroke-tool-sliders.js`](../static/js/editor/stroke-tool-sliders.js)**: Binds the UI sliders to update the size, hardness, and opacity of the currently selected brush tool.
+- **[`static/js/editor/tools/clone.js`](../static/js/editor/tools/clone.js)**: Implements a clone stamp tool that samples pixels from a source point and paints them elsewhere.
+- **[`static/js/editor/tools/crop.js`](../static/js/editor/tools/crop.js)**: Handles the UI overlay and destructive image slicing for the crop tool.
+- **[`static/js/editor/tools/flood-fill.js`](../static/js/editor/tools/flood-fill.js)**: Uses a breadth-first search algorithm to fill contiguous areas of similar color (the paint bucket).
+- **[`static/js/editor/tools/lasso-mask.js`](../static/js/editor/tools/lasso-mask.js)**: Specializes the lasso to purely edit alpha masks rather than pixel data.
+- **[`static/js/editor/tools/lasso.js`](../static/js/editor/tools/lasso.js)**: Allows the user to draw freehand paths to create pixel selections.
+- **[`static/js/editor/tools/move.js`](../static/js/editor/tools/move.js)**: Updates layer coordinates when dragged by the mouse.
+- **[`static/js/editor/tools/stroke.js`](../static/js/editor/tools/stroke.js)**: The core implementation of the freehand brush/pencil tool for applying color.
+- **[`static/js/editor/tools/transform-drag.js`](../static/js/editor/tools/transform-drag.js)**: Manages the complex mathematics of scaling or rotating a layer based on dragging bounding box handles.
+- **[`static/js/editor/tools/transform-handles.js`](../static/js/editor/tools/transform-handles.js)**: Renders the visual control points (corners, edges) around a selected layer.
+- **[`static/js/editor/tools/transform-session.js`](../static/js/editor/tools/transform-session.js)**: Encapsulates the state of an ongoing transformation, only committing the changes to the layer when confirmed.
+- **[`static/js/editor/tools/wand.js`](../static/js/editor/tools/wand.js)**: Implements the magic wand tool, performing tolerance-based region selection.
+- **[`static/js/editor/wire-import.js`](../static/js/editor/wire-import.js)**: Glues the UI buttons for "Import File" to the underlying layer ingestion logic.
+- **[`static/js/editor/wire-inpaint-controls.js`](../static/js/editor/wire-inpaint-controls.js)**: Wires up the prompt text area and generate buttons specifically for AI inpainting workflows.
+- **[`static/js/editor/wire-merge-buttons.js`](../static/js/editor/wire-merge-buttons.js)**: Connects the layer panel actions for merging down or flattening the entire document.
+- **[`static/js/editor/wire-selection-controls.js`](../static/js/editor/wire-selection-controls.js)**: Hooks up actions like "Invert Selection" or "Clear Selection" to the active tool state.
+- **[`static/js/editor/wire-topbar-menus.js`](../static/js/editor/wire-topbar-menus.js)**: Controls the dropdown menus (File, Edit, Layer) located in the main header.
+- **[`static/js/editor/wire-topbar-overflow.js`](../static/js/editor/wire-topbar-overflow.js)**: Manages responsive hiding of topbar items on narrow screens, placing them in an overflow menu.
+- **[`static/js/editor/wire-topbar.js`](../static/js/editor/wire-topbar.js)**: The central module that initializes and coordinates all topbar interactions.
+- **[`static/js/emailInbox.js`](../static/js/emailInbox.js)**: The primary entry point for the Email application UI, bootstrapping the layout and fetching the initial inbox listing.
+- **[`static/js/emailLibrary.js`](../static/js/emailLibrary.js)**: A wrapper handling generic email viewing functionality and routing within the SPA.
+- **[`static/js/emailLibrary/replyRecipients.js`](../static/js/emailLibrary/replyRecipients.js)**: Parses the `To` and `Cc` headers of an incoming email to correctly populate the reply fields.
+- **[`static/js/emailLibrary/signatureFold.js`](../static/js/emailLibrary/signatureFold.js)**: Detects lengthy signature blocks or repeated quotes in email chains and collapses them behind a "Show more" toggle.
+- **[`static/js/emailLibrary/state.js`](../static/js/emailLibrary/state.js)**: Maintains local state for the email client, such as which folder is active and which messages are selected.
+- **[`static/js/emailLibrary/utils.js`](../static/js/emailLibrary/utils.js)**: Provides small helper functions for formatting dates and parsing raw email addresses.
+- **[`static/js/emojiPicker.js`](../static/js/emojiPicker.js)**: Implements an internal UI component for searching and selecting Unicode emojis without external libraries.
+- **[`static/js/emojiShortcodes.js`](../static/js/emojiShortcodes.js)**: Translates text strings like `:smile:` into their actual Unicode emoji equivalents automatically.
+- **[`static/js/escMenuStack.js`](../static/js/escMenuStack.js)**: Manages a stack of open UI elements to ensure that pressing the "Escape" key correctly closes the top-most modal or menu.
+- **[`static/js/fileHandler.js`](../static/js/fileHandler.js)**: Provides robust handling for drag-and-drop file uploads, orchestrating the file picker and interfacing with the upload limits API.
+- **[`static/js/gallery.js`](../static/js/gallery.js)**: The main view controller for the photo/image gallery, managing the dynamic grid layout and multi-select interactions.
+- **[`static/js/galleryEditor.js`](../static/js/galleryEditor.js)**: Acts as a bridge to open selected images from the gallery directly into the full AI canvas editor context.
+- **[`static/js/group.js`](../static/js/group.js)**: Handles UI interactions relating to grouping or organizing elements, primarily for chats and memory nodes.
+- **[`static/js/init.js`](../static/js/init.js)**: A bootstrap script that eagerly attaches global event listeners and ensures base stores are populated before specific apps initialize.
+- **[`static/js/keyboard-shortcuts.js`](../static/js/keyboard-shortcuts.js)**: Binds application-wide keyboard shortcuts, distinct from those bound specifically within the canvas editor.
+- **[`static/js/langIcons.js`](../static/js/langIcons.js)**: Maps programming language names to their corresponding SVG icon filenames for use in rendered code blocks.
+- **[`static/js/markdown.js`](../static/js/markdown.js)**: Configures and extends the markdown rendering engine, integrating custom rules for code blocks and UI elements.
+- **[`static/js/markdown/tableRow.js`](../static/js/markdown/tableRow.js)**: A specialized extension to the markdown parser that enables advanced formatting specifically within table rows.
+- **[`static/js/memory.js`](../static/js/memory.js)**: Main entry point for the Memory interface, allowing users to view, edit, and manually index semantic facts.
+- **[`static/js/modalManager.js`](../static/js/modalManager.js)**: The central controller for creating, tracking, and destroying modular pop-up windows across the SPA.
+- **[`static/js/modalSnap.js`](../static/js/modalSnap.js)**: Adds window-manager-like capabilities, allowing modals to snap to the left or right edges of the screen.
+- **[`static/js/model/matchKey.js`](../static/js/model/matchKey.js)**: A utility to reliably normalize and compare LLM model string IDs against expected formats or known lists.
+- **[`static/js/modelPicker.js`](../static/js/modelPicker.js)**: Renders the dropdown interface for selecting which AI model should handle the current conversation or task.
+- **[`static/js/modelSort.js`](../static/js/modelSort.js)**: Provides logic to sort available models in the UI based on heuristics (like favoring local models or sorting by size).
+- **[`static/js/models.js`](../static/js/models.js)**: Handles fetching the catalog of available models from the backend and organizing them for other UI components.
+- **[`static/js/notes.js`](../static/js/notes.js)**: Provides the frontend interface for creating and managing quick text snippets and to-do lists.
+- **[`static/js/package.json`](../static/js/package.json)**: The Node.js configuration file defining scripts and dependencies specifically needed for running frontend tests and linters.
+- **[`static/js/platform.js`](../static/js/platform.js)**: Utility functions detecting the user's OS and browser capabilities, used to alter keyboard shortcut hints (e.g., Ctrl vs Cmd).
+- **[`static/js/presets.js`](../static/js/presets.js)**: Manages the UI for user-defined AI personas, handling form submissions and updating local state when a preset is altered.
+- **[`static/js/providerDeviceFlow.js`](../static/js/providerDeviceFlow.js)**: Handles the polling logic necessary to authorize new external services via OAuth 2.0 Device Flow.
+- **[`static/js/providers.js`](../static/js/providers.js)**: Interface for managing API keys and settings for external AI providers (OpenAI, Anthropic, etc.).
+- **[`static/js/rag.js`](../static/js/rag.js)**: Controls the UI toggles and visual indicators relating to Retrieval-Augmented Generation context injection.
+- **[`static/js/research/jobs.js`](../static/js/research/jobs.js)**: Tracks the active state of asynchronous deep research jobs, updating the UI when a job finishes.
+- **[`static/js/research/panel.js`](../static/js/research/panel.js)**: Renders the detailed view of a research report, organizing the source citations and synthesized findings.
+- **[`static/js/researchSynapse.js`](../static/js/researchSynapse.js)**: Implements visual animations showing multi-step reasoning processes during complex agent tasks.
+- **[`static/js/search-chat.js`](../static/js/search-chat.js)**: A bridge module specifically injecting external web search results directly into the active chat interface.
+- **[`static/js/search.js`](../static/js/search.js)**: Manages global search logic, distinct from web searching, handling queries across local chats, files, and memories.
+- **[`static/js/section-management.js`](../static/js/section-management.js)**: Coordinates the visibility of major SPA "sections" (e.g., swapping between the Chat view and the Gallery view).
+- **[`static/js/sessions.js`](../static/js/sessions.js)**: Handles the CRUD operations and sidebar rendering for conversational session histories.
+- **[`static/js/settings.js`](../static/js/settings.js)**: Main module for the settings modal, dispatching configuration updates to the backend and persisting local preferences.
+- **[`static/js/sidebar-layout.js`](../static/js/sidebar-layout.js)**: Manages the collapsible state and width resizing of the main application sidebar.
+- **[`static/js/signature.js`](../static/js/signature.js)**: Manages the rendering and parsing of email signatures configured by the user.
+- **[`static/js/skills.js`](../static/js/skills.js)**: Provides the interface to manage `SKILL.md` documents, allowing users to view or edit learned agent procedures.
+- **[`static/js/slashAutocomplete.js`](../static/js/slashAutocomplete.js)**: Renders the type-ahead suggestion box when a user begins a prompt with a slash (`/`).
+- **[`static/js/slashCommands.js`](../static/js/slashCommands.js)**: Defines the available slash commands and their corresponding execution behaviors in the chat input.
+- **[`static/js/spinner.js`](../static/js/spinner.js)**: Provides standard, reusable loading animation components.
+- **[`static/js/storage.js`](../static/js/storage.js)**: Wraps `localStorage` access with parsing safeguards to prevent exceptions on corrupt JSON.
+- **[`static/js/streamingRenderer.js`](../static/js/streamingRenderer.js)**: Receives batched chunks of text and applies them to the DOM, interacting heavily with the segmenter to handle markdown blocks safely.
+- **[`static/js/streamingSegmenter.js`](../static/js/streamingSegmenter.js)**: Parses incoming, incomplete markdown text character-by-character to detect safe boundaries for highlighting.
+- **[`static/js/tasks.js`](../static/js/tasks.js)**: Main entry point for the scheduled tasks UI, allowing viewing and administration of cron-like jobs.
+- **[`static/js/theme.js`](../static/js/theme.js)**: Manages dark/light mode toggling and the injection of custom CSS variable themes.
+- **[`static/js/tileManager.js`](../static/js/tileManager.js)**: Controls the dashboard grid system, allowing different UI components (tiles) to be resized and rearranged.
+- **[`static/js/tourAutoplay.js`](../static/js/tourAutoplay.js)**: Automatically launches the welcome tutorial tour for first-time users based on local storage flags.
+- **[`static/js/tourHints.js`](../static/js/tourHints.js)**: Stores the text and anchor points for the interactive onboarding tutorial popups.
+- **[`static/js/tts-ai.js`](../static/js/tts-ai.js)**: Interfaces with the text-to-speech API, handling the playback of generated audio responses.
+- **[`static/js/ui.js`](../static/js/ui.js)**: A collection of miscellaneous DOM manipulation helpers (like toasts and generic tooltips).
+- **[`static/js/util/ordinal.js`](../static/js/util/ordinal.js)**: Small utility to append the correct English ordinal suffix (st, nd, rd, th) to numbers.
+- **[`static/js/voiceRecorder.js`](../static/js/voiceRecorder.js)**: Manages the `MediaRecorder` API to capture microphone input and send it to the backend for speech-to-text.
+- **[`static/js/windowDrag.js`](../static/js/windowDrag.js)**: Implements the logic required to drag floating modal windows around the viewport by clicking their title bars.
+- **[`static/js/windowResize.js`](../static/js/windowResize.js)**: Allows floating modal windows to be resized by dragging their edges or corners.
+</details>
+
+
 ### Communication Pattern
 The frontend communicates with the backend primarily through standard REST APIs. However, for chat generation and long-running tasks, it heavily relies on **Server-Sent Events (SSE)**.
 - **Streaming:** When a chat is submitted, the frontend opens an SSE connection (`/api/chat_stream`). The backend streams chunks of markdown text, which the frontend renders incrementally.
@@ -1923,6 +2079,20 @@ graph TD
 - **Caching ([`src/search/cache.py`](../src/search/cache.py))**: Reduces outbound requests by locally caching queries with identical parameters.
 - **Provider Implementations ([`src/search/providers.py`](../src/search/providers.py))**: Abstracts provider-specific API oddities (e.g., JSON handling from SearXNG vs raw HTTP scraping from DuckDuckGo) into a standardized `dict` format.
 - **Ranking & Analytics ([`src/search/ranking.py`](../src/search/ranking.py), [`src/search/analytics.py`](../src/search/analytics.py))**: Analyzes results to filter out spam or low-quality hits before they reach the LLM, tracking failure rates and error conditions centrally.
+
+<details>
+<summary>Click to view granular descriptions of `src/search/` files</summary>
+
+- **[`src/search/__init__.py`](../src/search/__init__.py)**: Initialization file for the modular search package.
+- **[`src/search/analytics.py`](../src/search/analytics.py)**: Collects metrics on search successes, failure rates, and provider latencies to optimize automated routing.
+- **[`src/search/cache.py`](../src/search/cache.py)**: Implements caching mechanisms to store and retrieve recent search queries, minimizing repetitive outbound API calls.
+- **[`src/search/content.py`](../src/search/content.py)**: Manages fetching and extracting clean, readable text from webpage bodies, stripping out irrelevant HTML boilerplate.
+- **[`src/search/core.py`](../src/search/core.py)**: The central orchestrator for the search module, directing queries to the active provider and aggregating results.
+- **[`src/search/providers.py`](../src/search/providers.py)**: Contains implementations for various backend search services (like SearXNG or DuckDuckGo) normalizing their distinct outputs.
+- **[`src/search/query.py`](../src/search/query.py)**: Defines data structures and parsing logic for standardizing search requests and intent.
+- **[`src/search/ranking.py`](../src/search/ranking.py)**: Evaluates and scores search results based on relevance and quality heuristics before presenting them to the LLM.
+</details>
+
 - **Frontend Clients ([`static/js/search.js`](../static/js/search.js), [`static/js/search-chat.js`](../static/js/search-chat.js))**: Responsible for coordinating web search UI state and injecting results into the chat flow.
 
 ---
@@ -2342,6 +2512,52 @@ For maintenance, debugging, and offline operations, Odysseus includes a suite of
 ### Components
 - **`odysseus-*` commands**: A collection of scripts starting with `odysseus-` providing low-level access to the database and systems. This includes: [`odysseus`](../scripts/odysseus), [`odysseus-backup`](../scripts/odysseus-backup), [`odysseus-calendar`](../scripts/odysseus-calendar), [`odysseus-contacts`](../scripts/odysseus-contacts), [`odysseus-cookbook`](../scripts/odysseus-cookbook), [`odysseus-docs`](../scripts/odysseus-docs), [`odysseus-gallery`](../scripts/odysseus-gallery), [`odysseus-logs`](../scripts/odysseus-logs), [`odysseus-mail`](../scripts/odysseus-mail), [`odysseus-mcp`](../scripts/odysseus-mcp), [`odysseus-memory`](../scripts/odysseus-memory), [`odysseus-notes`](../scripts/odysseus-notes), [`odysseus-personal`](../scripts/odysseus-personal), [`odysseus-preset`](../scripts/odysseus-preset), [`odysseus-research`](../scripts/odysseus-research), [`odysseus-sessions`](../scripts/odysseus-sessions), [`odysseus-signature`](../scripts/odysseus-signature), [`odysseus-skills`](../scripts/odysseus-skills), [`odysseus-tasks`](../scripts/odysseus-tasks), [`odysseus-theme`](../scripts/odysseus-theme), and [`odysseus-webhook`](../scripts/odysseus-webhook).
 - **[`_lib/__init__.py`](../scripts/_lib/__init__.py) & [`_lib/cli.py`](../scripts/_lib/cli.py)**: A shared library simplifying the process of writing CLI tools, managing initialization, loading the [`app.db`](../data/app.db), and setting up rich console output.
+
+<details>
+<summary>Click to view granular descriptions of `scripts/` files</summary>
+
+- **[`scripts/_completion/odysseus.bash`](../scripts/_completion/odysseus.bash)**: Bash shell completion script to enable tab-autocomplete for CLI commands.
+- **[`scripts/_completion/odysseus.zsh`](../scripts/_completion/odysseus.zsh)**: Zsh shell completion script to enable tab-autocomplete for CLI commands.
+- **[`scripts/_lib/__init__.py`](../scripts/_lib/__init__.py)**: Initialization for the internal CLI library routines.
+- **[`scripts/_lib/cli.py`](../scripts/_lib/cli.py)**: Shared scaffolding and helper functions used by all `odysseus-*` operational scripts, standardizing database access and output formatting.
+- **[`scripts/add_hwfit_models.py`](../scripts/add_hwfit_models.py)**: Tool to manually add or update hardware fit profiles for specific models within the Cookbook registry.
+- **[`scripts/check-docker-amd-gpu.sh`](../scripts/check-docker-amd-gpu.sh)**: Diagnostic shell script to verify if the host system correctly supports AMD ROCm container passthrough.
+- **[`scripts/check-docker-gpu.sh`](../scripts/check-docker-gpu.sh)**: Diagnostic shell script to verify if the host system correctly supports NVIDIA CUDA container passthrough.
+- **[`scripts/claim_ownerless.py`](../scripts/claim_ownerless.py)**: Administrative script that scans the database and assigns orphaned records to an active administrator account.
+- **[`scripts/demo_email/demo_account.py`](../scripts/demo_email/demo_account.py)**: Helper script used exclusively for configuring simulated email accounts during local demonstration setups.
+- **[`scripts/demo_email/manage.sh`](../scripts/demo_email/manage.sh)**: Utility script to start or stop the local mock email server infrastructure for testing.
+- **[`scripts/demo_email/seed_demo_emails.py`](../scripts/demo_email/seed_demo_emails.py)**: Populates the mock email server with test messages to facilitate frontend UI development.
+- **[`scripts/diffusion_server.py`](../scripts/diffusion_server.py)**: A standalone worker script that loads and serves diffusion-based image generation models.
+- **[`scripts/encode_previews.sh`](../scripts/encode_previews.sh)**: Uses `ffmpeg` to transcode and optimize video/image assets for faster web delivery.
+- **[`scripts/fix_paths.py`](../scripts/fix_paths.py)**: Corrects malformed or outdated file paths in the SQLite database resulting from application updates or migrations.
+- **[`scripts/hf_download.py`](../scripts/hf_download.py)**: Dedicated script to reliably download model weights from Hugging Face, handling resumes and authentication.
+- **[`scripts/index_documents.py`](../scripts/index_documents.py)**: Forces a manual parse and vector-embedding update for all files within a user's document directory.
+- **[`scripts/migrate_faiss_to_chroma.py`](../scripts/migrate_faiss_to_chroma.py)**: A historical migration tool that transitions old vector memory banks from FAISS to the modern ChromaDB format.
+- **[`scripts/odysseus`](../scripts/odysseus)**: The primary command-line entry point for system administration.
+- **[`scripts/odysseus-backup`](../scripts/odysseus-backup)**: CLI command to trigger a full or partial export of the local application state and user data.
+- **[`scripts/odysseus-calendar`](../scripts/odysseus-calendar)**: CLI interface for inspecting and debugging calendar events and sync states.
+- **[`scripts/odysseus-contacts`](../scripts/odysseus-contacts)**: CLI tool to manually view or manage stored address book entries.
+- **[`scripts/odysseus-cookbook`](../scripts/odysseus-cookbook)**: Administrative command to interact with the model Cookbook, viewing status or forcing installations.
+- **[`scripts/odysseus-docs`](../scripts/odysseus-docs)**: CLI tool for interacting with the document library and inspecting vector index states.
+- **[`scripts/odysseus-gallery`](../scripts/odysseus-gallery)**: Provides command-line access to query image metadata and album status.
+- **[`scripts/odysseus-logs`](../scripts/odysseus-logs)**: Helper command to dump, tail, or format application log files safely.
+- **[`scripts/odysseus-mail`](../scripts/odysseus-mail)**: CLI utility for debugging the IMAP/SMTP poller queues and inspecting raw email threads.
+- **[`scripts/odysseus-mcp`](../scripts/odysseus-mcp)**: Command to list, reload, or troubleshoot configured Model Context Protocol server endpoints.
+- **[`scripts/odysseus-memory`](../scripts/odysseus-memory)**: CLI interface allowing administrators to directly query or prune the semantic memory database.
+- **[`scripts/odysseus-notes`](../scripts/odysseus-notes)**: Exposes the quick-notes system to the terminal for rapid data entry or inspection.
+- **[`scripts/odysseus-personal`](../scripts/odysseus-personal)**: Command managing individual user configuration states outside of the web UI.
+- **[`scripts/odysseus-preset`](../scripts/odysseus-preset)**: Tool to export, import, or validate AI persona preset templates.
+- **[`scripts/odysseus-research`](../scripts/odysseus-research)**: CLI for initiating or monitoring long-running background deep research jobs.
+- **[`scripts/odysseus-sessions`](../scripts/odysseus-sessions)**: Allows administrators to purge orphaned chat sessions or debug chat history token sizes.
+- **[`scripts/odysseus-signature`](../scripts/odysseus-signature)**: CLI command to inspect or format email signatures stored in user settings.
+- **[`scripts/odysseus-skills`](../scripts/odysseus-skills)**: Command line interface for verifying and organizing structured `SKILL.md` procedures.
+- **[`scripts/odysseus-tasks`](../scripts/odysseus-tasks)**: Tool to list upcoming cron jobs and manually trigger scheduled background tasks.
+- **[`scripts/odysseus-theme`](../scripts/odysseus-theme)**: CLI utility for managing default workspace color variables and theme properties.
+- **[`scripts/odysseus-webhook`](../scripts/odysseus-webhook)**: Command for registering or testing outgoing system event webhooks.
+- **[`scripts/pr_blocker_audit.py`](../scripts/pr_blocker_audit.py)**: Evaluates a pull request branch against a strict set of predefined architectural guidelines and rules.
+- **[`scripts/update_database.py`](../scripts/update_database.py)**: Critical operational script used during updates to execute SQLAlchemy migrations and alter table schemas.
+</details>
+
 - **Shell Completions**: Scripts located in `scripts/_completion/` ([`odysseus.bash`](../scripts/_completion/odysseus.bash), [`odysseus.zsh`](../scripts/_completion/odysseus.zsh)) to facilitate terminal autocomplete.
 - **Maintenance & Migration**:
   - **[`update_database.py`](../scripts/update_database.py)**: An essential operational script to run schema migrations and ensure the database reflects the current SQLAlchemy models without data loss.
