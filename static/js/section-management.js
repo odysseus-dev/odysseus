@@ -2,6 +2,12 @@
 // Section Management — collapse/expand + drag reorder
 // ============================================
 
+export function sectionOrderFromRaw(raw) {
+  if (!raw) return [];
+  const value = JSON.parse(raw);
+  return Array.isArray(value) ? value.filter((id) => typeof id === 'string') : [];
+}
+
 /**
  * Initialize section collapse/expand with chevron buttons.
  * @param {Object} Storage - Storage module
@@ -250,7 +256,7 @@ export function initSectionDrag(Storage, loadUIVis) {
   try {
     const saved = Storage.get(Storage.KEYS.SECTION_ORDER);
     if (saved) {
-      const order = JSON.parse(saved);
+      const order = sectionOrderFromRaw(saved);
       order.forEach(id => {
         const section = document.getElementById(id);
         if (section) sidebarInner.appendChild(section);
