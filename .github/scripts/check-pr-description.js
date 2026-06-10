@@ -3,11 +3,14 @@
 
 /** @param {{ github: import('@octokit/rest').Octokit, context: import('@actions/github').context, core: import('@actions/core') }} */
 module.exports = async ({ github, context, core }) => {
-  const body   = context.payload.pull_request.body || '';
-  const prNum  = context.payload.pull_request.number;
-  const MARKER = '<!-- pr-description-check-bot -->';
-  const owner  = context.repo.owner;
-  const repo   = context.repo.repo;
+  const body          = context.payload.pull_request.body || '';
+  const pullRequest   = context.payload.pull_request;
+  const prNum         = pullRequest.number;
+  const author        = pullRequest.user?.login;
+  const MARKER        = '<!-- pr-description-check-bot -->';
+  const WELCOME_MARKER = '<!-- first-time-contributor-guide-bot -->';
+  const owner         = context.repo.owner;
+  const repo          = context.repo.repo;
 
   // Strip HTML comments so placeholder text does not count as content.
   function strip(text) {
@@ -61,6 +64,41 @@ module.exports = async ({ github, context, core }) => {
     owner, repo, issue_number: prNum, per_page: 100,
   });
   const existing = comments.find(c => (c.body ?? '').includes(MARKER));
+
+  async function isFirstTimeContributor() {
+    if (!author) return false;
+    const authoredItems = await github.paginate(github.rest.issues.listForRepo, {
+      owner,
+      repo,
+      state: 'all',
+      filter: 'all',
+      creator: author,
+      per_page: 100,
+    });
+    return !authoredItems.some(item => item.pull_request && item.number !== prNum);
+  }
+
+  async function maybeWelcomeFirstTimeContributor() {
+    if (!(await isFirstTimeContributor())) return;
+    const existingWelcome = comments.find(c => (c.body ?? '').includes(WELCOME_MARKER));
+    if (existingWelcome) return;
+
+    await github.rest.issues.createComment({
+      owner,
+      repo,
+      issue_number: prNum,
+      body: [
+        WELCOME_MARKER,
+        'Thanks for opening a PR!',
+        '',
+        'Please first check if a similar PR already exists(open or closed). Then, find(or create) an issue for your PR. Read our [contribution guide](https://github.com/pewdiepie-archdaemon/odysseus/blob/main/CONTRIBUTING.md#pull-requests), and please adhere to the [pull request template](https://github.com/pewdiepie-archdaemon/odysseus/blob/main/.github/pull_request_template.md).',
+        '',
+        'Thanks in advance!',
+      ].join('\n'),
+    });
+  }
+
+  await maybeWelcomeFirstTimeContributor();
 
   if (problems.length === 0) {
     if (existing) {
