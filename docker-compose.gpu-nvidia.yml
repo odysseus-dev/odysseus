@@ -102,7 +102,7 @@ services:
     # tag blocks the whole app from starting. 2026.6.2 crashes on boot with
     # `KeyError: 'default_doi_resolver'`, failing the healthcheck (issue #1414).
     # Bump this deliberately after verifying a newer tag boots clean.
-    image: docker.io/searxng/searxng:2024.1.2-f4dfec8e0
+    image: docker.io/searxng/searxng:2026.5.15-afafca93f
     entrypoint:
       - /bin/sh
       - -c
