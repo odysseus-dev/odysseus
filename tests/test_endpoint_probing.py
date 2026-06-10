@@ -45,6 +45,7 @@ with preserve_import_state("core.database", "src.database", "core.session_manage
         sys.modules["core.database"] = _core_db
 
     import routes.model_routes as model_routes
+    import routes.cookbook_routes as cookbook_routes
     import src.endpoint_resolver as endpoint_resolver
     from routes.model_routes import (
         _probe_endpoint,
@@ -255,6 +256,24 @@ class TestDockerLoopbackRewrite:
             _rewrite_loopback_for_docker("http://0.0.0.0:8000/v1")
             == "http://127.0.0.1:8000/v1"
         )
+
+
+# ── Cookbook endpoint host selection ──
+
+class TestCookbookEndpointHost:
+    def test_remote_serve_uses_remote_host(self):
+        assert cookbook_routes._cookbook_llm_endpoint_host("alice@gpu-box") == "gpu-box"
+        assert cookbook_routes._cookbook_llm_endpoint_host("gpu-box") == "gpu-box"
+
+    def test_local_serve_keeps_existing_docker_host_default(self, monkeypatch):
+        monkeypatch.delenv("ODYSSEUS_COOKBOOK_LOCAL_SERVE_HOST", raising=False)
+        monkeypatch.setattr(cookbook_routes, "_docker_host_gateway_reachable", lambda: True)
+        assert cookbook_routes._cookbook_llm_endpoint_host(None) == "host.docker.internal"
+
+    def test_local_serve_honors_container_local_override(self, monkeypatch):
+        monkeypatch.setenv("ODYSSEUS_COOKBOOK_LOCAL_SERVE_HOST", "localhost")
+        monkeypatch.setattr(cookbook_routes, "_docker_host_gateway_reachable", lambda: True)
+        assert cookbook_routes._cookbook_llm_endpoint_host(None) == "localhost"
 
 
 # ── _probe_single_model: completion probe ──

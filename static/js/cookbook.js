@@ -815,7 +815,10 @@ async function _fetchDependencies() {
       } else {
         _py = 'python3';
       }
-      const cmd = `${_py} -m pip install${upgrade ? ' -U' : ''}${_pipFlags} "${pipName}"`;
+      const nativeLlamaCppInstall = pipName === 'llama-cpp-python[server]' && !_isWindows();
+      const cmd = nativeLlamaCppInstall
+        ? 'llama-server --help'
+        : `${_py} -m pip install${upgrade ? ' -U' : ''}${_pipFlags} "${pipName}"`;
       let envPrefix = '';
       if (_isWindows()) {
         if (_envState.env === 'venv' && _envState.envPath) {
@@ -833,7 +836,7 @@ async function _fetchDependencies() {
       }
       try {
         const reqBody = {
-          repo_id: pipName,
+          repo_id: nativeLlamaCppInstall ? 'llama-cpp' : pipName,
           cmd: cmd,
           remote_host: _envState.remoteHost || undefined,
           ssh_port: _getPort(_envState.remoteHost) || undefined,
@@ -855,8 +858,8 @@ async function _fetchDependencies() {
         }
         // _dep flags this as a pip dependency/driver install (not a servable
         // model) so the running-task card doesn't offer a "Serve →" button.
-        const payload = { repo_id: pipName, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true, env_path: _envState.envPath || '' };
-        _addTask(data.session_id, 'pip ' + pkgName, 'download', payload);
+        const payload = { repo_id: nativeLlamaCppInstall ? 'llama-cpp' : pipName, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true, env_path: _envState.envPath || '' };
+        _addTask(data.session_id, (nativeLlamaCppInstall ? 'build ' : 'pip ') + pkgName, 'download', payload);
         if (statusEl) { statusEl.textContent = upgrade ? 'Updating...' : 'Installing...'; statusEl.disabled = true; }
         uiModule.showToast(`${upgrade ? 'Updating' : 'Installing'} ${pkgName} on ${targetHost}...`);
       } catch (err) {

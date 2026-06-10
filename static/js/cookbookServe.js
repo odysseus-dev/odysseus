@@ -407,7 +407,11 @@ function _rerenderCachedModels() {
         div.innerHTML = _di(opt.icon) + '<span>' + opt.label + '</span>';
         div.addEventListener('click', () => {
           closeDropdown();
-          if (opt.action === 'serve') item.click();
+          if (opt.action === 'serve') {
+            const selectBtn = document.getElementById('hwfit-cache-select');
+            if (selectBtn?.classList.contains('active')) selectBtn.click();
+            openServePanelForRepo(repo);
+          }
           else if (opt.action === 'delete') _deleteCachedModel(repo, item, false, m);
           else if (opt.action === 'retry') _retryCachedModel(repo, m);
           else if (opt.action === 'schedule') {
@@ -479,7 +483,8 @@ function _rerenderCachedModels() {
   // Wire click on card to expand serve panel
   list.querySelectorAll('.memory-item[data-repo]').forEach(item => {
     item.addEventListener('click', (e) => {
-      if (e.target.closest('a, .hwfit-cached-menu-btn, .memory-item-btn, .hwfit-serve-panel')) return;
+      const targetEl = e.target?.closest ? e.target : e.target?.parentElement;
+      if (targetEl?.closest('a, .hwfit-cached-menu-btn, .memory-item-btn, .hwfit-serve-panel')) return;
       if (document.getElementById('hwfit-cache-select')?.classList.contains('active')) return;
       const repo = item.dataset.repo;
       if (!repo) return;

@@ -29,6 +29,7 @@ from core.platform_compat import (
     which_tool,
 )
 from routes.shell_routes import TMUX_LOG_DIR
+from routes.model_routes import _docker_host_gateway_reachable
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ from routes.cookbook_helpers import (
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
     _append_realesrgan_py313_basicsr_workaround,
+    _append_pip_install_runner_lines,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
     _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     ModelDownloadRequest, ServeRequest,
@@ -53,6 +55,22 @@ _HF_TOKEN_STATUS_SNIPPET = (
     'Add one in Odysseus Settings -> Cookbook -> HuggingFace Token."; '
     'fi'
 )
+
+
+def _cookbook_llm_endpoint_host(remote: str | None, cmd: str | None = None) -> str:
+    """Return the host Odysseus should save for a Cookbook-served LLM endpoint."""
+    if remote:
+        return remote.split("@")[-1] if "@" in remote else remote
+
+    host_override = os.getenv("ODYSSEUS_COOKBOOK_LOCAL_SERVE_HOST", "").strip()
+    if host_override:
+        return host_override
+
+    if re.search(r"\bdocker\s+exec\s+(?:ollama-rocm|ollama-test)\b", cmd or ""):
+        return "host.docker.internal"
+
+    return "host.docker.internal" if _docker_host_gateway_reachable() else "localhost"
+
 
 def setup_cookbook_routes() -> APIRouter:
     router = APIRouter(tags=["cookbook"])
@@ -1072,20 +1090,12 @@ def setup_cookbook_routes() -> APIRouter:
         else:
             port = 8080  # llama.cpp's llama-server default — the Apple Silicon path
 
-        # Determine host. The cookbook tmux for `local=true` serves runs INSIDE
-        # the odysseus container — so the right URL for the in-container
-        # backend to reach it is `localhost`, NOT `host.docker.internal`
-        # (the latter points at the docker HOST, which doesn't have a server
-        # on that port). The previous host.docker.internal fallback only made
-        # sense for /setup-added external services like systemd Ollama on the
-        # host — and those go through manual setup, not this auto-register
-        # code path. For remote serves we still use the SSH host alias.
-        if remote:
-            host = remote.split("@")[-1] if "@" in remote else remote
-        elif re.search(r"\bdocker\s+exec\s+(?:ollama-rocm|ollama-test)\b", req.cmd or ""):
-            host = "host.docker.internal"
-        else:
-            host = "localhost"
+        # Determine host (mirrors the image path: SSH alias for remote serves).
+        # Default Docker installs keep the previous host.docker.internal
+        # behavior, because local model servers often run on the Docker host.
+        # Images that serve models inside the Odysseus container itself can opt
+        # into a container-local endpoint with ODYSSEUS_COOKBOOK_LOCAL_SERVE_HOST.
+        host = _cookbook_llm_endpoint_host(remote, req.cmd)
 
         base_url = f"http://{host}:{port}/v1"
 
@@ -1228,6 +1238,22 @@ def setup_cookbook_routes() -> APIRouter:
             in_venv=sys.prefix != sys.base_prefix,
         )
         is_pip_install = bool(req.cmd and "pip install" in req.cmd)
+        is_windows = req.platform == "windows"
+        local_windows = IS_WINDOWS and not req.remote_host
+        llama_cpp_dependency_install = bool(
+            is_pip_install
+            and not is_windows
+            and not local_windows
+            and re.search(
+                r"(?<![A-Za-z0-9_.-])(?:llama_cpp|llama-cpp-python)(?![A-Za-z0-9_.-])",
+                req.cmd,
+            )
+        )
+        is_dependency_install = is_pip_install or llama_cpp_dependency_install
+        if llama_cpp_dependency_install:
+            req.repo_id = "llama-cpp"
+            req.cmd = "llama-server --help"
+            is_pip_install = False
         if is_pip_install:
             # Keep big dependency wheel builds (vLLM, …) off the home filesystem's
             # pip cache so they don't fail mid-build with "No space left" (#1219)
@@ -1254,7 +1280,6 @@ def setup_cookbook_routes() -> APIRouter:
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
         session_id = f"serve-{uuid.uuid4().hex[:8]}"
         remote = req.remote_host
-        is_windows = req.platform == "windows"
 
         # Ollama: if the user didn't pin a port, resolve the actual port we'll
         # bind to here (before runner construction) by probing the target host.
@@ -1391,6 +1416,12 @@ def setup_cookbook_routes() -> APIRouter:
                 # ollama is found (otherwise macOS falls back to a slow source build).
                 # /opt/homebrew = Apple Silicon, /usr/local = Intel; harmless on Linux.
                 runner_lines.append('export PATH="$HOME/.local/bin:$HOME/bin:$HOME/llama.cpp/build/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"')
+                if llama_cpp_dependency_install:
+                    runner_lines.append('echo "[odysseus] Installing native llama.cpp server (fresh build)..."')
+                    runner_lines.append('export ODYSSEUS_FORCE_LLAMA_CPP_BUILD=1')
+                    runner_lines.append('mkdir -p "$HOME/bin"')
+                    runner_lines.append('rm -f "$HOME/bin/llama-server"')
+                    runner_lines.append('rm -rf "$HOME/llama.cpp/build"')
                 runner_lines.append('if [ -d /data/data/com.termux ]; then')
                 runner_lines.append('  # Termux: no native build — use the Python bindings (CPU).')
                 runner_lines.append('  if ! python3 -c "import llama_cpp" 2>/dev/null; then')
@@ -1398,7 +1429,7 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('    pip install numpy diskcache jinja2 2>/dev/null')
                 runner_lines.append('    CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_LLAMAFILE=OFF" pip install \'llama-cpp-python[server]\' --no-build-isolation --no-cache-dir 2>&1 || true')
                 runner_lines.append('  fi')
-                runner_lines.append('elif ! command -v llama-server &>/dev/null; then')
+                runner_lines.append('elif [ "${ODYSSEUS_FORCE_LLAMA_CPP_BUILD:-}" = "1" ] || ! command -v llama-server &>/dev/null; then')
                 runner_lines.append('  echo "Native llama-server not found — building from source (one-time, may take a few minutes)..."')
                 runner_lines.append('  mkdir -p ~/bin')
                 runner_lines.append('  cd ~ && [ -d llama.cpp ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp')
@@ -1526,21 +1557,24 @@ def setup_cookbook_routes() -> APIRouter:
                     runner_lines,
                     keep_shell_open=not local_windows,
                 )
-                runner_lines.append(req.cmd)
+                if is_pip_install:
+                    _append_pip_install_runner_lines(runner_lines, req.cmd)
+                else:
+                    runner_lines.append(req.cmd)
                 if local_windows:
                     # Detached background process — no interactive shell to keep open.
                     # Print the exit marker the status poller looks for, then stop.
                     _append_serve_exit_code_lines(
                         runner_lines,
                         keep_shell_open=False,
-                        is_pip_install=is_pip_install,
+                        is_pip_install=is_dependency_install,
                     )
                 else:
                     # Keep shell open after exit so user can see errors
                     _append_serve_exit_code_lines(
                         runner_lines,
                         keep_shell_open=True,
-                        is_pip_install=is_pip_install,
+                        is_pip_install=is_dependency_install,
                     )
 
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
@@ -1599,7 +1633,7 @@ def setup_cookbook_routes() -> APIRouter:
         is_diffusion = "diffusion_server.py" in req.cmd
         if is_diffusion:
             endpoint_id = _auto_register_image_endpoint(req, remote)
-        elif not is_pip_install:
+        elif not is_dependency_install:
             endpoint_id = _auto_register_llm_endpoint(req, remote)
 
         # Crash watchdog: the auto-register above writes the endpoint row
@@ -1613,7 +1647,7 @@ def setup_cookbook_routes() -> APIRouter:
         # if N != 0 within the watch window, delete the endpoint we just
         # created. Skipped for diffusion (different image-endpoint cleanup
         # path) and pip-install tasks (no endpoint to drop).
-        if endpoint_id and not is_diffusion and not is_pip_install:
+        if endpoint_id and not is_diffusion and not is_dependency_install:
             asyncio.create_task(_serve_crash_watchdog(
                 endpoint_id=endpoint_id,
                 session_id=session_id,
@@ -1701,7 +1735,7 @@ def setup_cookbook_routes() -> APIRouter:
             # Linux: auto-install tmux (via whichever package manager is available)
             # and huggingface_hub + hf_transfer (falling back to --user/--break-system-packages
             # on PEP-668 locked distros like Arch / newer Debian).
-            setup_script = (
+            setup_lines = [
                 # Install tmux if missing — try common package managers; skip if no sudo
                 "if ! command -v tmux >/dev/null 2>&1; then "
                 "  if command -v apt-get >/dev/null 2>&1; then sudo -n apt-get install -y tmux 2>/dev/null; "
@@ -1710,14 +1744,14 @@ def setup_cookbook_routes() -> APIRouter:
                 "  elif command -v apk >/dev/null 2>&1; then sudo -n apk add --no-interactive tmux 2>/dev/null; "
                 "  elif command -v zypper >/dev/null 2>&1; then sudo -n zypper --non-interactive install tmux 2>/dev/null; "
                 "  fi; "
-                "fi; "
-                "command -v tmux >/dev/null 2>&1 || echo 'WARNING: tmux missing and auto-install failed (need passwordless sudo). Install manually.'; "
-                # Install Python bits. Try system install first; fall back to --user --break-system-packages on PEP 668 systems.
-                "pip install -q huggingface_hub hf_transfer 2>/dev/null || "
-                "pip install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null || "
-                "pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null; "
-                "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
-            )
+                "fi",
+                "command -v tmux >/dev/null 2>&1 || echo 'WARNING: tmux missing and auto-install failed (need passwordless sudo). Install manually.'",
+            ]
+            _append_pip_install_runner_lines(setup_lines, "pip install -q huggingface_hub hf_transfer 2>/dev/null")
+            _append_pip_install_runner_lines(setup_lines, "pip install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null")
+            _append_pip_install_runner_lines(setup_lines, "pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null")
+            setup_lines.append("python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'")
+            setup_script = "\n".join(setup_lines)
             setup_args = ["ssh"] + ssh_port_args + [host, setup_script]
 
         try:

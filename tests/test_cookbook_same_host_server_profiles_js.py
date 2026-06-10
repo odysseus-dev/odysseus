@@ -40,6 +40,8 @@ def test_cookbook_submodules_resolve_visible_profile_selection():
     assert "_serverByVal?.(val)" in SERVE
     assert "_serverByVal?.(_es.remoteServerKey || _es.remoteHost || '')" in SERVE
     assert "_serverByVal?.(_envState.remoteServerKey || _probeHost)" in SERVE
+    assert "let _serverByVal;" in SERVE
+    assert "_serverByVal = shared._serverByVal;" in SERVE
 
 
 def test_running_tab_resolves_profile_key_not_first_host():
@@ -48,6 +50,19 @@ def test_running_tab_resolves_profile_key_not_first_host():
     assert "_serverByVal(_envState.remoteServerKey || host)" in RUNNING
     assert "_serverByVal = shared._serverByVal;" in RUNNING
     assert "_selectedServer = shared._selectedServer;" in RUNNING
+
+
+def test_cached_model_serve_actions_open_panel_without_synthetic_card_click():
+    assert "if (opt.action === 'serve') item.click();" not in SERVE
+    assert "openServePanelForRepo(repo);" in SERVE
+    assert "const targetEl = e.target?.closest ? e.target : e.target?.parentElement;" in SERVE
+
+
+def test_llama_cpp_dependency_install_uses_native_server_build_path():
+    assert "nativeLlamaCppInstall = pipName === 'llama-cpp-python[server]' && !_isWindows()" in COOKBOOK
+    assert "cmd = nativeLlamaCppInstall" in COOKBOOK
+    assert "? 'llama-server --help'" in COOKBOOK
+    assert "repo_id: nativeLlamaCppInstall ? 'llama-cpp' : pipName" in COOKBOOK
 
 
 def test_no_same_host_selector_paths_resolve_by_first_matching_host():
