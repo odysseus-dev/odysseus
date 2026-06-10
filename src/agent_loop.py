@@ -12,7 +12,7 @@ import json
 import re
 import time
 import logging
-from typing import AsyncGenerator, List, Dict, Optional, Set
+from typing import AsyncGenerator, Callable, List, Dict, Optional, Set
 from urllib.parse import urlparse
 
 from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
@@ -183,6 +183,7 @@ _AGENT_RULES = """\
 - After a tool succeeds, do not second-guess it; reply with one short confirmation unless more work remains.
 - After a tool fails, retry with a concrete fix or state what is blocking you.
 - Finish only when the user's concrete request is actually done, or clearly state that you are blocked.
+- When the user asks for the result AS A FILE / REPORT / DOCUMENT ("write a report", "save to an .md file", "give me a summary document"), the deliverable IS the file — produce it with `write_file` (a concrete path) or `create_document`, then say where it is. Do NOT substitute a short inline summary; a turn asked for a report file but that only typed prose is NOT done.
 - User identity facts/preferences ("my name is X", "call me X", "I live in X") use `manage_memory`, not contacts.
 """
 
@@ -196,6 +197,7 @@ _API_AGENT_RULES = """\
 - After a tool succeeds, do not second-guess it; reply with one short confirmation unless more work remains.
 - After a tool fails, retry with a concrete fix or state what is blocking you.
 - Finish only when the user's concrete request is actually done, or clearly state that you are blocked.
+- When the user asks for the result AS A FILE / REPORT / DOCUMENT ("write a report", "save to an .md file", "give me a summary document"), the deliverable IS the file — produce it with `write_file` (a concrete path) or `create_document`, then say where it is. Do NOT substitute a short inline summary; a turn asked for a report file but that only typed prose is NOT done.
 - User identity facts/preferences ("my name is X", "call me X", "I live in X") use `manage_memory`, not contacts.
 """
 
@@ -1726,6 +1728,7 @@ async def stream_agent_loop(
     plan_mode: bool = False,
     approved_plan: Optional[str] = None,
     tool_policy: Optional[ToolPolicy] = None,
+    on_round_end: Optional[Callable] = None,
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -2874,6 +2877,18 @@ async def stream_agent_loop(
         _append_tool_results(messages, round_response, native_tool_calls,
                              tool_results, tool_result_texts, used_native, round_num,
                              round_reasoning=round_reasoning)
+
+        # Per-round hook (run logger; future supervisors). Best-effort, never
+        # fatal. May be sync or async; returning "stop" ends the loop.
+        if on_round_end is not None:
+            try:
+                _hook_ret = on_round_end(round_num, messages, tool_events, round_response, {})
+                if hasattr(_hook_ret, "__await__"):
+                    _hook_ret = await _hook_ret
+                if _hook_ret == "stop":
+                    break
+            except Exception as _hook_err:
+                logger.debug(f"on_round_end hook failed (non-fatal): {_hook_err}")
 
         # Emit agent_step event
         yield (

@@ -1620,6 +1620,17 @@ class TaskScheduler:
         full_text = ""
         tool_results = []
 
+        # Per-run JSONL log: logs/agent_runs/<task_id>/<run_id>.jsonl. One file
+        # per task run, every round + tool call recorded for after-the-fact
+        # debugging. Never fatal.
+        import uuid as _uuid
+        from src.agent_run_logger import AgentRunLogger
+        _run_log = AgentRunLogger(task.id, str(_uuid.uuid4()))
+        _run_log.run_started(prompt=str(user_content)[:2000], model=model, endpoint_url=endpoint_url)
+
+        def _log_round(round_num, _messages, tool_events, round_response, stats):
+            _run_log.round_end(round_num, round_response, tool_events, stats)
+
         # Honor per-task max_steps (defense against runaway agent loops).
         # Falls back to 20 if not set — the historical default.
         _task_max_rounds = task.max_steps if task.max_steps and task.max_steps > 0 else 20
@@ -1643,6 +1654,7 @@ class TaskScheduler:
             disabled_tools=disabled_tools,
             relevant_tools=relevant_tools,
             fallbacks=_task_fallbacks,
+            on_round_end=_log_round,
         ):
             if event_str.startswith("data: ") and not event_str.startswith("data: [DONE]"):
                 try:
@@ -1687,7 +1699,21 @@ class TaskScheduler:
                 if tool_results:
                     full_text = "\n".join(tool_results[-5:])
 
-        return full_text or "(no output)"
+        _final = full_text or "(no output)"
+        _run_log.run_finished(status="success", result=_final[:2000])
+
+        # Best-effort Telegram notification that the task finished. No-op when
+        # the bridge is unconfigured / unreachable; respects per-task opt-out.
+        if getattr(task, "notifications_enabled", True):
+            try:
+                from services.telegram.bot import get_telegram_bridge
+                _summary = _final.strip()[:1500]
+                await get_telegram_bridge().notify(
+                    f"✅ Задача «{task.name}» завершена.\n\n{_summary or '(нет вывода)'}")
+            except Exception:
+                pass
+
+        return _final
 
     async def _execute_research_task(self, task, db) -> str:
         """Execute a deep research task using DeepResearcher."""
