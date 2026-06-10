@@ -111,6 +111,14 @@ DEFAULT_SETTINGS = {
     # `compute_input_token_budget` in src/context_budget.py.
     "agent_input_token_hard_max": 200_000,
     "agent_stream_timeout_seconds": 300,
+    # Opt-in prompt-injection hard gate (audit finding H2). When on, any turn
+    # whose context contains untrusted-wrapped content (web/email/RAG/research/
+    # skills/active-document, marked metadata.trusted=False) drops the agent to
+    # public-user tool privileges for that turn — high-impact tools (bash,
+    # vault, send_email, manage_tokens, model serving, ...) are blocked at the
+    # dispatch layer even for an admin/single-user owner. Default off = no
+    # behaviour change; see src/tool_security.untrusted_attenuation_block.
+    "agent_block_high_impact_on_untrusted": False,
     # Extra directory roots that read_file / write_file may access, in
     # addition to the built-in project data/ and system temp dirs. Each
     # entry is an absolute path. Sensitive subpaths (.ssh, .gnupg, shell
