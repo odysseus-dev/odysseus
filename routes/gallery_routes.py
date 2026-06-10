@@ -493,13 +493,27 @@ def setup_gallery_routes() -> APIRouter:
             # result set narrows as the user piles tags on. A single tag
             # (no commas) is the original behaviour.
             if tag:
-                from sqlalchemy import or_ as _or
+                from sqlalchemy import or_ as _or, func, literal
+
+                def _tag_clause(col, needle):
+                    # Exact tag match against a comma-separated, space-padded
+                    # list ("cat, dog"). The old `%{tag}%` substring matched
+                    # unrelated tags (pill "cat" hit "category"/"scatter") and
+                    # left %/_ unescaped. Normalize away spaces, wrap both the
+                    # column and the needle in commas, and boundary-match.
+                    norm = literal(",").concat(
+                        func.replace(func.lower(col), " ", "")
+                    ).concat(literal(","))
+                    esc = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    return norm.like(f"%,{esc},%", escape="\\")
+
                 for one in (t.strip() for t in tag.split(",")):
                     if not one:
                         continue
+                    needle = one.lower().replace(" ", "")
                     q = q.filter(_or(
-                        GalleryImage.tags.ilike(f"%{one}%"),
-                        GalleryImage.ai_tags.ilike(f"%{one}%"),
+                        _tag_clause(GalleryImage.tags, needle),
+                        _tag_clause(GalleryImage.ai_tags, needle),
                     ))
 
             # Model filter
