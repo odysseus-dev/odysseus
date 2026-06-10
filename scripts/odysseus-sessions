@@ -27,6 +27,9 @@ except ModuleNotFoundError as e:
 
 
 def _serialize(s: "DbSession") -> dict:
+    def _text(value) -> str:
+        return value if isinstance(value, str) else ""
+
     def _int_or_zero(value) -> int:
         try:
             return int(value or 0)
@@ -34,12 +37,12 @@ def _serialize(s: "DbSession") -> dict:
             return 0
 
     return {
-        "id": s.id,
-        "name": s.name,
-        "model": s.model,
-        "endpoint_url": s.endpoint_url,
-        "owner": s.owner or "",
-        "folder": s.folder or "",
+        "id": _text(s.id),
+        "name": _text(s.name),
+        "model": _text(s.model),
+        "endpoint_url": _text(s.endpoint_url),
+        "owner": _text(s.owner),
+        "folder": _text(s.folder),
         "archived": bool(s.archived),
         "rag": bool(s.rag),
         "is_important": bool(s.is_important),

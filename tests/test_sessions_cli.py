@@ -16,12 +16,12 @@ def _load_sessions_cli(monkeypatch):
 def test_serialize_normalizes_numeric_counters(monkeypatch):
     cli = _load_sessions_cli(monkeypatch)
     session = SimpleNamespace(
-        id="s1",
-        name="chat",
+        id=123,
+        name={"bad": "name"},
         model="m",
-        endpoint_url="",
+        endpoint_url=None,
         owner=None,
-        folder=None,
+        folder=["bad"],
         archived=False,
         rag=False,
         is_important=False,
@@ -37,3 +37,7 @@ def test_serialize_normalizes_numeric_counters(monkeypatch):
     assert out["message_count"] == 12
     assert out["total_input_tokens"] == 0
     assert out["total_output_tokens"] == 0
+    assert out["id"] == ""
+    assert out["name"] == ""
+    assert out["endpoint_url"] == ""
+    assert out["folder"] == ""
