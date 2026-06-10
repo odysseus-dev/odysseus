@@ -59,6 +59,7 @@ Thumbs.db
 *.cache
 cache/
 output.txt.txt
+.wix/
 
 # Media (uploaded/generated)
 *.jpg

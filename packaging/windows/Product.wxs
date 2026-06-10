@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Odysseus"
+    Manufacturer="Odysseus"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="{7C625837-83B0-46B1-9D7B-8E181B7C35B1}"
+    Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Odysseus is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Odysseus" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="Odysseus" />
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="Odysseus" Level="1">
+      <ComponentGroupRef Id="PayloadFiles" />
+      <ComponentGroupRef Id="ShortcutComponents" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="ShortcutComponents">
+      <Component Id="StartMenuShortcuts" Directory="ApplicationProgramsFolder" Guid="{254C8CC4-12D5-454C-A167-C609E2A67E7C}">
+        <Shortcut
+          Id="StartOdysseusShortcut"
+          Name="Start Odysseus"
+          Description="Start the local Odysseus Docker runtime"
+          Target="[SystemFolder]WindowsPowerShell\v1.0\powershell.exe"
+          Arguments="-NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]runtime\start-odysseus.ps1&quot;"
+          WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut
+          Id="StopOdysseusShortcut"
+          Name="Stop Odysseus"
+          Description="Stop the local Odysseus Docker runtime"
+          Target="[SystemFolder]WindowsPowerShell\v1.0\powershell.exe"
+          Arguments="-NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]runtime\stop-odysseus.ps1&quot;"
+          WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut
+          Id="OpenOdysseusShortcut"
+          Name="Open Odysseus"
+          Description="Open Odysseus in the default browser"
+          Target="[SystemFolder]WindowsPowerShell\v1.0\powershell.exe"
+          Arguments="-NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]runtime\open-odysseus.ps1&quot;"
+          WorkingDirectory="INSTALLFOLDER" />
+        <Shortcut
+          Id="ViewOdysseusLogsShortcut"
+          Name="View Odysseus Logs"
+          Description="Tail Docker logs for the local Odysseus runtime"
+          Target="[SystemFolder]WindowsPowerShell\v1.0\powershell.exe"
+          Arguments="-NoProfile -ExecutionPolicy Bypass -NoExit -File &quot;[INSTALLFOLDER]runtime\logs-odysseus.ps1&quot;"
+          WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\Odysseus" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+  <Bundle
+    Name="Odysseus Setup"
+    Manufacturer="Odysseus"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="{43C71A43-089F-461E-BEAF-A27E6A9F169A}">
+
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication
+        Theme="hyperlinkLicense"
+        LicenseUrl="https://github.com/pewdiepie-archdaemon/odysseus/blob/main/LICENSE" />
+    </BootstrapperApplication>
+
+    <Chain>
+      <ExePackage
+        Id="DockerDesktopPrerequisite"
+        SourceFile="$(var.DockerPrereqCmd)"
+        Compressed="yes"
+        Permanent="yes"
+        Vital="yes">
+        <Payload SourceFile="$(var.DockerPrereqScript)" />
+      </ExePackage>
+      <MsiPackage
+        Id="OdysseusMsi"
+        SourceFile="$(var.MsiPath)"
+        Compressed="yes" />
+    </Chain>
+  </Bundle>
+</Wix>
