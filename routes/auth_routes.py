@@ -85,6 +85,16 @@ class SetOpenRegistrationRequest(BaseModel):
 SESSION_COOKIE = "odysseus_session"
 
 
+def _client_host(request: Request) -> str:
+    """Rate-limit key from the client IP. ``request.client`` can be ``None``
+    (some ASGI servers, proxies, and test clients don't populate it), so guard
+    it the same way src/auth_helpers.py and app.py already do — an unguarded
+    ``request.client.host`` here 500s login/setup/signup. A blank key just means
+    client-less requests share one bucket, which is fine for rate limiting."""
+    client = getattr(request, "client", None)
+    return (client.host if client else "") or ""
+
+
 def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -99,7 +109,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.post("/setup")
     async def first_run_setup(body: SetupRequest, request: Request):
         """Create initial admin account. Only works if no accounts exist."""
-        if not _setup_limiter.check(request.client.host):
+        if not _setup_limiter.check(_client_host(request)):
             raise HTTPException(429, "Too many requests — try again later")
         if auth_manager.is_configured:
             raise HTTPException(400, "Already configured")
@@ -113,7 +123,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.post("/signup")
     async def signup(body: SignupRequest, request: Request):
         """Create a new user account. Only works if signup is enabled by admin."""
-        if not _signup_limiter.check(request.client.host):
+        if not _signup_limiter.check(_client_host(request)):
             raise HTTPException(429, "Too many requests — try again later")
         if not auth_manager.is_configured:
             raise HTTPException(400, "Run setup first")
@@ -130,7 +140,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
 
     @router.post("/login")
     async def login(body: LoginRequest, request: Request, response: Response):
-        if not _login_limiter.check(request.client.host):
+        if not _login_limiter.check(_client_host(request)):
             raise HTTPException(429, "Too many requests — try again later")
         # Verify password first
         username = body.username.strip().lower()
