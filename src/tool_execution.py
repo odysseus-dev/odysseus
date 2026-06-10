@@ -401,6 +401,24 @@ async def _direct_fallback(
         "LINES": "40",
         "HOME": _AGENT_WORKDIR,
     }
+    # Make CLIs the agent installs actually runnable. Under systemd the service
+    # PATH is minimal, so `pip install <cli>` drops console scripts in the
+    # venv's bin (bare pip) or $HOME/.local/bin (pip --user; HOME is the agent
+    # workdir above) which then aren't found. Put those first so a bare pip/
+    # python resolves to this venv and installs land on the exposed PATH.
+    _path_prepend = [
+        os.path.dirname(sys.executable or ""),              # venv/bin
+        os.path.join(_AGENT_WORKDIR, ".local", "bin"),      # pip --user (agent HOME)
+        os.path.join(os.path.expanduser("~"), ".local", "bin"),
+        os.path.join(os.path.expanduser("~"), ".cargo", "bin"),
+        os.path.join(os.path.expanduser("~"), "go", "bin"),
+        "/usr/local/bin",
+    ]
+    _seen_path: list[str] = []
+    for _p in _path_prepend + (_subproc_env.get("PATH", "") or "").split(os.pathsep):
+        if _p and _p not in _seen_path:
+            _seen_path.append(_p)
+    _subproc_env["PATH"] = os.pathsep.join(_seen_path)
 
     try:
         ctx = {

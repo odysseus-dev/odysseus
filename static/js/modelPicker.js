@@ -14,10 +14,10 @@ const API_BASE = window.location.origin;
 // favorite toggled here shows up there and vice-versa.
 const RECENT_KEY = 'odysseus-model-recent';
 const FAVORITES_KEY = 'odysseus-model-favorites';
-const RECENT_MAX = 5;
+const RECENT_MAX = 10;
 // Catalogs at or below this size are small enough that hiding everything
 // behind search would be a regression — keep listing them in browse mode.
-const BROWSE_ALL_LIMIT = 12;
+const BROWSE_ALL_LIMIT = 24;
 
 function _loadList(key) {
   try {
@@ -405,13 +405,12 @@ function _initModelPickerDropdown() {
       favModels.forEach(m => { shown.add(m.mid); _addRow(m); });
     }
     // Recent: only render when the catalog is big enough that surfacing
-    // a recency shortlist is actually useful, AND only models that
-    // aren't already in Favorites (dedupe).
+    // a recency shortlist is actually useful. A model that is also a favorite
+    // is shown in BOTH sections on purpose (user preference) — no dedupe.
     if (all.length > BROWSE_ALL_LIMIT) {
       const recentModels = _loadRecent()
         .map(id => byId.get(id))
         .filter(Boolean)
-        .filter(m => !shown.has(m.mid))
         .slice(0, RECENT_MAX);
       if (recentModels.length) {
         _addSection('Recent');

@@ -1785,7 +1785,9 @@ body.bg-pattern-sparkles {
       margin-bottom:8px;
       white-space:normal;
       min-height:0;
-      --chat-max: 800px;
+      /* Adaptive conversation width: ~800px on small windows, grows with the
+         viewport (≈30%+ wider) on big screens instead of a narrow band. */
+      --chat-max: clamp(800px, 75vw, 1280px);
       padding-left: max(0px, calc((100% - var(--chat-max)) / 2));
       padding-right: max(12px, calc((100% - var(--chat-max)) / 2 + 12px));
     }
@@ -2757,8 +2759,8 @@ body.bg-pattern-sparkles {
       bottom: calc(100% + 16px);
       right: 0;
       z-index: 250;
-      min-width: 260px;
-      max-width: 360px;
+      min-width: min(520px, 92vw);
+      max-width: min(720px, 92vw);
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -2849,7 +2851,7 @@ body.bg-pattern-sparkles {
       transform: rotate(90deg);
     }
     .model-picker-list {
-      max-height: min(280px, 50dvh);
+      max-height: min(560px, 80dvh);
       overflow-y: auto;
     }
     .model-picker-list.is-empty {
