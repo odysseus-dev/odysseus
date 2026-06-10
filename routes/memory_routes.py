@@ -348,7 +348,8 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                 model = sess.model
                 headers = sess.headers
             except KeyError:
-                 raise HTTPException(404, "Session not found — needed for LLM config")
+                logger.warning("Session %s not found, falling back to utility endpoint", session)
+                endpoint_url, model, headers = resolve_endpoint("utility", owner=_owner(request))
         else:
             endpoint_url, model, headers = resolve_endpoint("utility", owner=_owner(request))
     
