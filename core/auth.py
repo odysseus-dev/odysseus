@@ -134,7 +134,14 @@ class AuthManager:
                 logger.info("Auth config loaded")
             else:
                 self._config = {}
-                logger.info("No auth config found — first-run setup required")
+                # Tell Docker/headless users HOW to finish setup: it's a web
+                # flow, not a console/temporary password (issue #1476 — users
+                # grepped the logs for a "Temporary password" that never exists).
+                logger.info(
+                    "No auth config found — first-run setup required: open Odysseus "
+                    "in your browser to create the admin account (setup is done in "
+                    "the web UI; no console password is generated)."
+                )
         except Exception as e:
             logger.error(f"Failed to load auth config: {e}")
             self._config = {}
