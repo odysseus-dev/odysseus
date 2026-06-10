@@ -15,18 +15,12 @@ services:
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
     volumes:
-      - ./data:/app/data:z
-      - ./logs:/app/logs:z
-      # Cookbook remote-server SSH identity. Odysseus can generate a key here;
-      # add the shown public key to each remote server's authorized_keys.
-      - ./data/ssh:/app/.ssh:z
-      # Cookbook local model cache. Inside Docker, "Local" means the Odysseus
-      # container, so persist its HuggingFace cache under ./data/huggingface.
-      - ./data/huggingface:/app/.cache/huggingface:z
-      # Cookbook-installed Python CLIs/packages (vLLM, llama-cpp-python, etc.)
-      # land under /app/.local for the odysseus user. Persist them so a
-      # container recreate does not silently remove installed serve engines.
-      - ./data/local:/app/.local:z
+      # Changed to named volumes to survive Coolify redeploys
+      - odysseus_data:/app/data:z
+      - odysseus_logs:/app/logs:z
+      - odysseus_ssh:/app/.ssh:z
+      - odysseus_huggingface:/app/.cache/huggingface:z
+      - odysseus_local:/app/.local:z
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.
@@ -123,7 +117,8 @@ services:
         fi
         exec /usr/local/searxng/entrypoint.sh
     ports:
-      - "127.0.0.1:8080:8080"
+      # Changed host port from 8080 to 8088 to avoid coolify-proxy conflict
+      - "127.0.0.1:8088:8080"
     volumes:
       - searxng-data:/etc/searxng
       - ./config/searxng/settings.yml:/tmp/searxng-settings.yml.template:ro,z
@@ -167,3 +162,9 @@ volumes:
   searxng-data:
   chromadb-data:
   ntfy-cache:
+  # Added named volumes to persist odysseus data
+  odysseus_data:
+  odysseus_logs:
+  odysseus_ssh:
+  odysseus_huggingface:
+  odysseus_local:
