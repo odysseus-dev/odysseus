@@ -414,9 +414,9 @@ async def escalate_and_learn(
     skill["action"] = "add"
 
     import json
-    from src.tool_implementations import do_manage_skills
+    from src.agent_tools.skill_tools import ManageSkillsTool
     try:
-        result = await do_manage_skills(json.dumps(skill), owner=owner)
+        result = await ManageSkillsTool().execute(json.dumps(skill), {"owner": owner})
         if isinstance(result, dict) and not result.get("error"):
             logger.info(f"teacher wrote skill: {skill.get('name')}")
             return skill.get("name")
@@ -643,9 +643,9 @@ async def run_teacher_inline(
     skill.setdefault("teacher_model", teacher_spec)
 
     import json as _json
-    from src.tool_implementations import do_manage_skills
+    from src.agent_tools.skill_tools import ManageSkillsTool
     try:
-        result = await do_manage_skills(_json.dumps(skill), owner=owner)
+        result = await ManageSkillsTool().execute(_json.dumps(skill), {"owner": owner})
         if isinstance(result, dict) and not result.get("error"):
             logger.info(f"teacher succeeded; saved skill: {skill.get('name')}")
             yield (

@@ -271,7 +271,7 @@ def test_chat_messages_fts_migration_backfills_and_tracks_inserts(tmp_path, monk
 
 def test_search_chats_formats_shared_results(monkeypatch):
     from src import session_search
-    from src.tool_implementations import do_search_chats
+    from src.agent_tools.chat_history_tools import SearchChatsTool
 
     def fake_search(query, limit=20, owner=None, include_archived=False, context_messages=1, db=None):
         return [
@@ -290,7 +290,7 @@ def test_search_chats_formats_shared_results(monkeypatch):
 
     monkeypatch.setattr(session_search, "search_session_messages", fake_search)
 
-    out = asyncio.run(do_search_chats("session search", owner="alice"))
+    out = asyncio.run(SearchChatsTool().execute("session search", {"owner": "alice"}))
 
     assert "Design notes" in out["results"]
     assert "Match (assistant): We discussed session search." in out["results"]

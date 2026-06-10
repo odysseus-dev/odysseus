@@ -153,7 +153,8 @@ async def test_do_manage_rag_remove_does_not_rebuild(monkeypatch):
     monkeypatch.setattr(ai, "_personal_docs_manager", _PDocs())
 
     # Untracked path: the old code still fired an unconditional rebuild_index().
-    result = await ai.do_manage_rag("remove_directory\n/abs/untracked/dir")
+    from src.agent_tools.rag_tools import ManageRagTool
+    result = await ManageRagTool().execute("remove_directory\n/abs/untracked/dir", {})
 
     assert calls["rebuild"] == 0, "remove must not rebuild (whole-collection wipe)"
     assert "error" not in result, result

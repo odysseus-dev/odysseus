@@ -30,9 +30,7 @@ def test_model_listing_and_image_fallback_are_owner_scoped():
 
 @pytest.mark.parametrize("tool,content", [
     ("chat_with_model", "gpt-test\nhello"),
-    ("pipeline", "gpt-test | summarize this"),
     ("list_models", ""),
-    ("ui_control", "switch_model gpt-test"),
     ("ask_teacher", "gpt-test\nhelp me"),
 ])
 async def test_dispatch_passes_owner_to_model_tools(monkeypatch, tool, content):
@@ -49,18 +47,8 @@ async def test_dispatch_passes_owner_to_model_tools(monkeypatch, tool, content):
     )
     monkeypatch.setattr(
         ai_interaction,
-        "do_pipeline",
-        lambda content, session_id=None, owner=None: capture("pipeline", content, session_id, owner),
-    )
-    monkeypatch.setattr(
-        ai_interaction,
         "do_list_models",
         lambda content, session_id=None, owner=None: capture("list_models", content, session_id, owner),
-    )
-    monkeypatch.setattr(
-        ai_interaction,
-        "do_ui_control",
-        lambda content, session_id=None, owner=None: capture("ui_control", content, session_id, owner),
     )
     monkeypatch.setattr(
         ai_interaction,
