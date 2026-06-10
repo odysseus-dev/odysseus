@@ -1,4 +1,4 @@
-"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper."""
+"""Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper, Kagi."""
 
 import json
 import logging
@@ -29,6 +29,7 @@ PROVIDER_INFO = {
     "google_pse": ("Google PSE",      True,  False),
     "tavily":   ("Tavily",            True,  False),
     "serper":   ("Serper",            True,  False),
+    "kagi":     ("Kagi",              True,  False),
     "disabled": ("Disabled",          False, False),
 }
 
@@ -174,6 +175,7 @@ def _get_provider_key(provider: str) -> str:
         "google_pse": "google_pse_key",
         "tavily": "tavily_api_key",
         "serper": "serper_api_key",
+        "kagi": "kagi_api_key",
     }
     field = key_map.get(provider, "")
     if field:
@@ -189,6 +191,7 @@ def _get_provider_key(provider: str) -> str:
         "google_pse": "GOOGLE_API_KEY",
         "tavily": "TAVILY_API_KEY",
         "serper": "SERPER_API_KEY",
+        "kagi": "KAGI_API_KEY",
     }
     env_name = env_map.get(provider, "")
     return (os.environ.get(env_name) or "").strip() if env_name else ""
@@ -844,4 +847,74 @@ def serper_search(query: str, count: Optional[int] = None, time_filter: Optional
         })
 
     logger.info(f"Serper returned {len(results)} results")
+    return results
+
+
+# ── Kagi ──
+
+def kagi_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+    """Search using the Kagi Search API v1 (POST /search, Bearer auth).
+
+    Kagi's Search API is billed per query (no free tier). Honors the configured
+    SafeSearch level via the boolean ``safe_search`` flag (Kagi has no middle
+    tier, so anything other than "off" enables it) and ``time_filter`` via
+    ``lens.time_relative`` (day/week/month) or ``filters.after`` for "year".
+    Results live under ``data.search`` with ``time`` as the freshness field.
+    """
+    api_key = _get_provider_key("kagi") or os.environ.get("KAGI_API_KEY", "")
+    if not api_key:
+        logger.warning("Kagi: no API key configured")
+        return []
+
+    payload: dict = {
+        "query": query,
+        "limit": count,
+        "safe_search": _get_safesearch_level() != "off",
+    }
+    if time_filter in ("day", "week", "month"):
+        payload["lens"] = {"time_relative": time_filter}
+    elif time_filter == "year":
+        # Kagi's time_relative enum stops at "month"; map "year" to an absolute
+        # lower bound so year-scoped queries still constrain recency.
+        from datetime import datetime, timedelta
+        after = (datetime.now() - timedelta(days=365)).date().isoformat()
+        payload["filters"] = {"after": after}
+
+    try:
+        response = httpx.post(
+            "https://kagi.com/api/v1/search",
+            json=payload,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if response.status_code == 429:
+            raise RateLimitError("Kagi rate limit hit")
+        response.raise_for_status()
+    except httpx.RequestError as e:
+        error_logger.error(f"Kagi search failed: {e}")
+        return []
+    except RateLimitError as e:
+        error_logger.error(str(e))
+        return []
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        error_logger.error(f"Kagi returned invalid JSON: {e}")
+        return []
+
+    results = []
+    search_items = (data.get("data") or {}).get("search", []) if isinstance(data, dict) else []
+    for item in search_items[:count]:
+        url = item.get("url", "")
+        if not url:
+            continue
+        results.append({
+            "title": item.get("title", ""),
+            "url": url,
+            "snippet": item.get("snippet", ""),
+            "age": item.get("time", ""),
+        })
+
+    logger.info(f"Kagi returned {len(results)} results")
     return results
