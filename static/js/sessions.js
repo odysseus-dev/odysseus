@@ -23,6 +23,7 @@ const FOLDER_MAX_VISIBLE = 5;
 let _showAllSessions = false;
 let _expandedFolders = {};  // folderName -> true if "show more" clicked
 let _sortMode = Storage.get('odysseus-session-sort') || 'active'; // default to last active
+  let _activeLens = Storage.get('session-lens') || 'chats';
 let _autoCreateInProgress = false; // guard against recursive auto-create
 const _INCOGNITO_SESSIONS_KEY = 'ody-incognito-sessions'; // sessionStorage key for incognito session IDs
 const _isMac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -1566,6 +1567,25 @@ function _initBulkSelect() {
       uiModule.showToast(`${deletedIds.length} session(s) deleted`);
     });
   }
+}
+
+function _initLensTabs() {
+  const tabs = document.querySelectorAll('.lens-tab');
+  if (!tabs.length) return;
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      _activeLens = tab.dataset.lens;
+      Storage.set('session-lens', _activeLens);
+      document.querySelectorAll('.lens-tab').forEach(t => t.classList.toggle('active', t.dataset.lens === _activeLens));
+      const label = document.getElementById('chats-section-label');
+      if (label) label.textContent = _activeLens === 'tasks' ? 'Tasks' : 'Chats';
+      renderSessionList();
+    });
+  });
+  // Restore saved lens on load
+  document.querySelectorAll('.lens-tab').forEach(t => t.classList.toggle('active', t.dataset.lens === _activeLens));
+  const _initLabel = document.getElementById('chats-section-label');
+  if (_initLabel && _activeLens === 'tasks') _initLabel.textContent = 'Tasks';
 }
 
 function _animateSessionRowsRemoving(ids, selector) {

@@ -1356,6 +1356,44 @@ body.bg-pattern-sparkles {
       font-size: 11px;
     }
     .session-bulk-bar.hidden { display: none; }
+    /* ── Session lens tabs (Chats / Tasks) ── */
+    .session-lens-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 8px;
+      margin-bottom: 2px;
+      border-bottom: 1px solid var(--border);
+    }
+    .lens-tab {
+      flex: 1;
+      background: none;
+      border: none;
+      color: var(--fg);
+      opacity: 0.4;
+      font-size: 10px;
+      font-family: inherit;
+      padding: 4px 0;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: opacity 0.15s, border-color 0.15s;
+    }
+    .lens-tab:hover {
+      opacity: 0.7;
+    }
+    .lens-tab.active {
+      opacity: 1;
+      border-bottom-color: var(--red);
+    }
+    .lens-badge {
+      font-size: 8px;
+      background: var(--red);
+      color: var(--bg);
+      border-radius: 8px;
+      padding: 0 4px;
+      margin-left: 4px;
+      line-height: 14px;
+      vertical-align: middle;
+    }
     #session-select-all-dot {
       display: inline-block;
       position: relative;
