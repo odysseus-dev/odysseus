@@ -467,6 +467,31 @@ def _bash_written_files(command: str) -> list:
     return out
 
 
+# Literal text-file paths a python block writes to: open('x.md', 'w'|'a'|'x')
+# and Path('x.md').write_text(...). f-string paths with {vars} simply won't
+# exist at the literal value and get filtered by the existence check.
+_PY_FILE_EXTS = r"md|markdown|txt|rst|json|csv|tsv|ya?ml|toml|ini|cfg|conf|log|html?|css|js|ts|py|sh|sql|xml"
+_PY_OPEN_WRITE_RE = re.compile(
+    r"open\(\s*[rbf]*['\"]([^'\"\n]+\.(?:" + _PY_FILE_EXTS + r"))['\"]\s*,\s*[rbf]*['\"][wax]"
+)
+_PY_WRITE_TEXT_RE = re.compile(
+    r"Path\(\s*[rbf]*['\"]([^'\"\n]+\.(?:" + _PY_FILE_EXTS + r"))['\"]\s*\)\s*\.write_(?:text|bytes)"
+)
+
+
+def _python_written_files(code: str) -> list:
+    """Same as _bash_written_files but for ```python blocks — qwen routinely
+    writes reports via open(...,'w') when shell quoting gets hairy."""
+    seen, out = set(), []
+    for rx in (_PY_OPEN_WRITE_RE, _PY_WRITE_TEXT_RE):
+        for m in rx.finditer(code):
+            p = m.group(1)
+            if p not in seen:
+                seen.add(p)
+                out.append(p)
+    return out
+
+
 def _existing_file_line_count(raw_path: str) -> int:
     """Line count of an existing regular file the agent is about to overwrite
     (0 if it doesn't exist / can't be read). Used for the edit_file nudge."""
@@ -926,11 +951,14 @@ async def execute_tool_block(
                           "output": (str(result.get("output") or "").rstrip()
                                      + "\n\n[note] " + "\n[note] ".join(_notes)).strip()}
         # A bash command that redirected output into text files (heredoc with a
-        # trailing command, `echo > x.md`, ...) leaves those files invisible to
-        # the UI panel — register them as documents too. Best-effort.
-        if (tool == "bash" and session_id and isinstance(result, dict)
+        # trailing command, `echo > x.md`, ...) or a python block that wrote
+        # them via open()/write_text leaves those files invisible to the UI
+        # panel — register them as documents too. Best-effort.
+        if (tool in ("bash", "python") and session_id and isinstance(result, dict)
                 and result.get("exit_code") == 0):
-            for _p in _bash_written_files(content)[:_REDIRECT_REGISTER_MAX]:
+            _written = (_bash_written_files(content) if tool == "bash"
+                        else _python_written_files(content))
+            for _p in _written[:_REDIRECT_REGISTER_MAX]:
                 try:
                     _fp = os.path.expanduser(_p)
                     if not os.path.isabs(_fp):
