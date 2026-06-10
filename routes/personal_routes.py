@@ -201,6 +201,7 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
 
         total_indexed = 0
         total_failed = 0
+        total_chunks = 0
         uploaded_files = []
 
         for upload in files:
@@ -227,6 +228,7 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
 
                 # Chunk and index
                 chunks = rag._split_into_chunks(text, chunk_size=500)
+                total_chunks += len(chunks)
                 for i, chunk in enumerate(chunks):
                     metadata = {
                         "source": file_path,
@@ -252,11 +254,25 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
         if uploaded_files and hasattr(personal_docs_manager, "add_directory"):
             personal_docs_manager.add_directory(upload_dir, index=False)
 
+        if total_indexed == 0:
+            if total_chunks:
+                raise HTTPException(
+                    503,
+                    "Files were saved, but no chunks could be indexed. "
+                    "Check that ChromaDB and the embedding service are running, then try again.",
+                )
+            raise HTTPException(400, "No uploaded files could be read or indexed")
+
+        message = f"Uploaded {len(uploaded_files)} file(s), indexed {total_indexed} chunk(s)"
+        if total_failed:
+            message += f", {total_failed} failed"
+
         return {
             "success": True,
             "uploaded": uploaded_files,
             "indexed_count": total_indexed,
             "failed_count": total_failed,
+            "message": message,
         }
 
     @router.delete("/file")

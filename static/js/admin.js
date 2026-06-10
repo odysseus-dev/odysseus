@@ -2229,9 +2229,13 @@ async function ragUpload(files) {
   for (const f of files) fd.append('files', f);
   try {
     const res = await fetch('/api/personal/upload', { method: 'POST', body: fd });
-    const data = await res.json();
-    if (data.success) { ragMsg(`Uploaded ${data.uploaded.length} file(s), ${data.indexed_count} chunks indexed`); loadRag(); }
-    else ragMsg(data.detail || 'Upload failed', true);
+    const data = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+    if (!res.ok || !data.success) {
+      ragMsg(data.detail || data.error || data.message || 'Upload failed', true, true);
+      return;
+    }
+    ragMsg(data.message || `Uploaded ${data.uploaded.length} file(s), ${data.indexed_count} chunks indexed`);
+    loadRag();
   } catch (e) { ragMsg('Upload error: ' + e.message, true); }
 }
 

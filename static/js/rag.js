@@ -123,9 +123,11 @@ export async function uploadRagFiles(fileList) {
       body: fd
     });
 
-    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+    if (!res.ok || !data.success) {
+      throw new Error(data.detail || data.error || data.message || 'Upload failed');
+    }
 
-    const data = await res.json();
     if (zone) zone.textContent = 'Drop files here or click to upload';
     await loadPersonalDocs();
     return data;
