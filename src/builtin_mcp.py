@@ -75,12 +75,15 @@ _BUILTIN_SERVERS = {
     "email":      ("mcp_servers/email_server.py",      "Built-in: Email"),
 }
 
+# Browser engine for the built-in browser MCP (chromium, firefox, webkit)
+BROWSER_ENGINE = os.environ.get("ODYSSEUS_BROWSER_ENGINE", "chromium").lower()
+
 # NPX-based built-in servers (run via npx, not Python)
 _BUILTIN_NPX_SERVERS = {
     "builtin_browser": {
         "name": "Built-in: Browser",
         "command": "npx",
-        "args": ["-y", "@playwright/mcp@latest", "--headless", "--caps", "vision"],
+        "args": ["-y", "@playwright/mcp@latest", "--browser", BROWSER_ENGINE, "--headless", "--caps", "vision"],
     },
 }
 
