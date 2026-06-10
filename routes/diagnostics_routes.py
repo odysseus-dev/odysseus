@@ -6,7 +6,7 @@ from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Form, Request
 
 from services.youtube.youtube_handler import extract_youtube_id, extract_transcript_async
-from core.constants import DEFAULT_HOST
+from core.constants import internal_api_base
 from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ def setup_diagnostics_routes(
     async def test_research(request: Request, query: str = Form("What is machine learning?")) -> Dict[str, Any]:
         require_admin(request)
         try:
-            endpoint = f"http://{DEFAULT_HOST}:8000/v1/chat/completions"
+            endpoint = f"{internal_api_base()}/v1/chat/completions"
             model = "gpt-oss-120b"
             result = await research_handler.call_research_service(query, endpoint, model)
             return {

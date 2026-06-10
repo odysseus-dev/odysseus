@@ -42,6 +42,7 @@ def test_no_hardcoded_loopback_left_in_call_sites():
         "src/cookbook_serve_lifecycle.py",
         "src/builtin_actions.py",
         "routes/task_routes.py",
+        "routes/diagnostics_routes.py",
     ):
         text = (root / rel).read_text(encoding="utf-8")
         # Allow it only inside comments; flag any code occurrence.
@@ -49,4 +50,5 @@ def test_no_hardcoded_loopback_left_in_call_sites():
             stripped = ln.strip()
             if stripped.startswith("#"):
                 continue
-            assert "localhost:7000" not in ln, f"{rel}: hardcoded loopback URL: {ln.strip()}"
+            assert ":7000" not in ln, f"{rel}: hardcoded loopback URL: {ln.strip()}"
+            assert ":8000" not in ln, f"{rel}: hardcoded loopback URL: {ln.strip()}"
