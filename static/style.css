@@ -10237,6 +10237,18 @@ details a:hover {
   position: relative;
   isolation: isolate;
 }
+/* Tab-size stability: pin the Brain window height so switching tabs
+   (Memories / Skills / Add / Settings — all different content heights)
+   does NOT resize the modal. The previous content-driven sizing let
+   the modal grow and shrink between tabs. A fixed `height` (capped at
+   the old max) keeps the chrome stable; the inner `.memory-modal-body`
+   (already `overflow-y:auto`) absorbs the rest. Scoped to desktop only
+   — mobile keeps its 100dvh bottom-sheet height from the 768px query. */
+@media (min-width: 769px) {
+  #memory-modal:not(.modal-right-docked):not(.modal-left-docked) .memory-modal-content {
+    height: min(78vh, 760px);
+  }
+}
 .memory-modal-content::before { content: none; }
 @keyframes memory-synapse-pulse {
   0%, 100% { opacity: 0.35; transform: scale(1); }
@@ -14713,6 +14725,22 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   font-size: 12px;
   background: var(--bg);
 }
+/* Tab-size stability: pin the Doc Library height so switching tabs
+   (Chats / Documents / Research / Archive) does NOT resize the modal.
+   The previous `max-height` only meant "don't exceed 85vh" — the
+   content still drove the actual height, so the window jumped between
+   tabs. A fixed `height` (capped at the old max) keeps it stable; the
+   inner `.doclib-grid` (already `overflow-y:auto`) and the toolbar
+   above it stay put. Scoped to desktop only — mobile keeps its
+   100dvh bottom-sheet height. */
+@media (min-width: 769px) {
+  #doclib-modal:not(.modal-right-docked):not(.modal-left-docked):not(.doclib-fullscreen) .doclib-modal-content {
+    height: min(85vh, 760px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+}
 /* Anchor doclib modal to top so only the bottom edge moves on resize */
 #doclib-modal {
   align-items: flex-start;
@@ -15510,7 +15538,17 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
 }
 @media (min-width: 769px) {
   body:not(.email-doc-split-active) #email-lib-modal:not(.email-lib-fullscreen):not(.modal-left-docked):not(.modal-right-docked) .modal-content {
-    min-height: min(560px, 85vh);
+    /* Tab-size stability: pin the Email Library height so switching
+       folders (Inbox / Sent / Drafts / etc.) does NOT resize the modal.
+       The previous `min-height` only set a floor — content above the
+       floor still drove the actual height, so the window jumped between
+       folders. A fixed `height` (with a sensible floor for very short
+       viewports) keeps it stable; the inner `.doclib-grid` (already
+       `overflow-y:auto`) absorbs the rest. */
+    height: min(85vh, 820px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
 }
 
@@ -17077,6 +17115,22 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   width: min(820px, 94vw);
   max-height: 92vh;
   font-size: 12px;
+}
+/* Tab-size stability: pin the Gallery height so switching tabs
+   (Photos / Albums / Edit / image-detail overlay) does NOT resize the
+   modal. The previous `max-height` only set a ceiling — content drove
+   the actual height, so the window jumped between tabs. A fixed
+   `height` (capped at the old max) keeps the chrome stable; the inner
+   `.gallery-grid` (already `overflow-y:auto`) and the editor's
+   `.ge-right-panel` (also `overflow-y:auto`) absorb the rest. Scoped
+   to desktop only — mobile keeps its 100dvh bottom-sheet height. */
+@media (min-width: 769px) {
+  #gallery-modal:not(.modal-right-docked):not(.modal-left-docked) .gallery-modal-content {
+    height: min(92vh, 880px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
 }
 /* While the Edit tab is active the editor needs a *definite* height so
    the right-side tool panel (`.ge-right-panel { overflow-y:auto }`)
@@ -21722,6 +21776,22 @@ body.gallery-selecting .gallery-dl-btn,
   container-type: inline-size;
   container-name: settings-modal;
 }
+/* Tab-size stability: pin the Settings window height so switching between
+   tabs (Services / AI / Search / Integrations / etc. — all different
+   content heights) does NOT resize the modal. The previous `min/max-height`
+   pair let the layout grow to its tallest tab and shrink to the shortest,
+   so the whole window visibly jumped on every tab change. A fixed
+   `height` (capped at the old `max-height`) keeps the chrome stable; the
+   inner `.settings-panels` (already `overflow-y:auto`) absorbs the rest.
+   Scoped to desktop only — on mobile the bottom-sheet uses a real 100dvh
+   height via the existing 768px media query, so this would force an
+   awkward capped height on phones. */
+@media (min-width: 769px) {
+  #settings-modal:not(.modal-right-docked) .settings-modal-content {
+    height: min(85vh, 820px);
+    overflow: hidden;
+  }
+}
 
 /* Issue #208 — anchor the Settings window to the TOP of the chat area instead
    of vertically centering it. The base .modal uses `align-items:center`, so a
@@ -21746,8 +21816,14 @@ body.gallery-selecting .gallery-dl-btn,
 
 .settings-layout {
   display: flex;
-  min-height: 400px;
-  max-height: calc(85vh - 60px);
+  /* Fixed height (with a generous floor for very short viewports) — the
+     `min-height`/`max-height` pair above was the source of the tab-switch
+     resize jump, so the layout now fills its parent and the inner
+     `.settings-panels` scrolls when content overflows. On desktop the
+     parent is pinned to `min(85vh, 820px)` by the media query above; on
+     mobile the parent is full-height (`100dvh`) and the layout takes it. */
+  min-height: 0;
+  height: 100%;
 }
 
 .settings-modal-content[style*="height"],
@@ -22160,6 +22236,22 @@ body:not(.welcome-ready) #welcome-screen {
 
 /* ── Tasks ── */
 .tasks-modal-content { max-width: 600px; width: min(600px, 92vw); background: var(--bg); font-size: 12px; }
+/* Tab-size stability: pin the Tasks height so switching tabs
+   (Tasks / Activity / Add) does NOT resize the modal. The previous
+   rule had no height at all, so the modal-content sized to the
+   tallest tab and shrank back to the shortest on every switch. A
+   fixed `height` (capped at 75vh) keeps the chrome stable; the inner
+   `.modal-body` (already `overflow:hidden` with `flex:1` children)
+   absorbs the rest. Scoped to desktop only — mobile keeps its
+   100dvh bottom-sheet height. */
+@media (min-width: 769px) {
+  #tasks-modal:not(.modal-right-docked):not(.modal-left-docked) .tasks-modal-content {
+    height: min(75vh, 720px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+}
 
 /* Tasks tabs reuse the .memory-tab look. The Brain window's tab bar is
    full-bleed (its underline spans the whole modal width). The Tasks bar is a
@@ -33785,6 +33877,22 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 
 /* ── Calendar ── */
 .cal-modal-content { width:min(680px, 94vw); max-height:88vh; overflow-x:hidden; }
+/* Tab-size stability: pin the Calendar height so switching views
+   (Month / Week / Day / Agenda — all very different content heights)
+   does NOT resize the modal. The previous `max-height` only set a
+   ceiling — content drove the actual height, so the window jumped
+   between views. A fixed `height` (capped at the old max) keeps it
+   stable; the inner `#cal-body` (already a flex column with
+   `overflow:hidden`) and the `.cal-grid` (already `overflow-y:auto`)
+   absorb the rest. Scoped to desktop only — mobile keeps its 100dvh
+   bottom-sheet height. */
+@media (min-width: 769px) {
+  #calendar-modal:not(.modal-right-docked):not(.modal-left-docked) .cal-modal-content {
+    height: min(88vh, 820px);
+    display: flex;
+    flex-direction: column;
+  }
+}
 /* Was overflow-y:auto with grid + day-detail flowing naturally. Now uses a
    true splitter layout: the body is a flex column that doesn't scroll
    itself; the grid takes the remaining space and scrolls if needed; the
