@@ -63,6 +63,7 @@ export function buildThumbnail(layers, imgW, imgH, offsets, maxDim, quality = 0.
  */
 export function buildMergedMaskCanvas(layers, imgW, imgH) {
   if (!imgW || !imgH) return null;
+  if (!Array.isArray(layers)) return null;
   const out = document.createElement('canvas');
   out.width = imgW;
   out.height = imgH;
