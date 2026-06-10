@@ -1406,26 +1406,76 @@ def _build_base_prompt(
         disabled.add("generate_image")
 
     if relevant_tools is not None:
-        # RAG mode: include always-available + retrieved + admin (if needed)
         tool_names = set(ALWAYS_AVAILABLE) | set(relevant_tools)
         if needs_admin:
             tool_names |= _ADMIN_TOOLS
-        agent_prompt = _assemble_prompt(tool_names, disabled, compact=compact)
+        sections = _assemble_prompt_sections(tool_names, disabled, compact=compact)
     else:
-        # Fallback: full prompt (RAG unavailable)
-        agent_prompt = AGENT_SYSTEM_PROMPT
         if not needs_admin:
-            # At least strip the management section
             mgmt_tools = set(TOOL_SECTIONS.keys()) - set(ALWAYS_AVAILABLE) - {
                 "generate_image", "suggest_document",
                 "chat_with_model", "ask_teacher", "list_models",
             }
-            agent_prompt = _assemble_prompt(
-                set(TOOL_SECTIONS.keys()) - mgmt_tools, disabled, compact=compact
+            sections = _assemble_prompt_sections(
+                set(TOOL_SECTIONS.keys()) - mgmt_tools,
+                disabled,
+                compact=compact,
             )
         elif compact:
-            agent_prompt = _assemble_prompt(set(TOOL_SECTIONS.keys()), disabled, compact=True)
+            sections = _assemble_prompt_sections(set(TOOL_SECTIONS.keys()), disabled, compact=True)
+        else:
+            sections = [
+                PromptBudgetSection(
+                    "agent_system_prompt_legacy_full",
+                    "base",
+                    AGENT_SYSTEM_PROMPT,
+                    item_count=len(TOOL_SECTIONS),
+                )
+            ]
 
+    skill_index_block = _build_skill_index_block(disabled)
+
+    from src.integrations import get_integrations_prompt
+    integ_prompt = get_integrations_prompt()
+    if integ_prompt:
+        sections.append(PromptBudgetSection("integration_descriptions", "integration", integ_prompt))
+
+    if mcp_mgr:
+        mcp_desc = mcp_mgr.get_tool_descriptions_for_prompt(mcp_disabled_map or {})
+        if mcp_desc:
+            sections.append(
+                PromptBudgetSection(
+                    "mcp_tool_descriptions",
+                    "mcp",
+                    mcp_desc,
+                    join_before="",
+                )
+            )
+
+    return sections, skill_index_block
+
+
+def _build_base_prompt(
+    disabled_tools,
+    mcp_mgr,
+    needs_admin,
+    relevant_tools=None,
+    mcp_disabled_map=None,
+    compact: bool = False,
+):
+    """Build the agent prompt with only relevant tools included.
+
+    If relevant_tools is provided (from RAG retrieval), only those tools
+    are shown with full descriptions. Otherwise falls back to full prompt.
+    """
+    sections, skill_index_block = _build_base_prompt_sections(
+        disabled_tools,
+        mcp_mgr,
+        needs_admin,
+        relevant_tools=relevant_tools,
+        mcp_disabled_map=mcp_disabled_map,
+        compact=compact,
+    )
     # Inject the Level-0 skill index — one line per skill so the agent
     # knows what canonical procedures exist. Includes published skills
     # plus teacher-escalation drafts (auto-written when the student
@@ -2449,11 +2499,10 @@ async def stream_agent_loop(
                     s for s in FUNCTION_TOOL_SCHEMAS
                     if s.get("function", {}).get("name") in _relevant_tools
                 ]
-                _mcp_filtered = [
-                    s for s in mcp_schemas
-                    if s.get("function", {}).get("name") in _relevant_tools
-                ]
-                all_tool_schemas = base_schemas + _mcp_filtered
+                # MCP schemas are user-configured and already a small set — don't
+                # RAG-filter them or they get outcompeted by native tools in the
+                # top-k budget and silently disappear from the model's context.
+                all_tool_schemas = base_schemas + mcp_schemas
             else:
                 base_schemas = FUNCTION_TOOL_SCHEMAS if _needs_admin else [
                     s for s in FUNCTION_TOOL_SCHEMAS
