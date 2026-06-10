@@ -457,15 +457,26 @@ def _detect_provider(url: str) -> str:
 
 def _is_self_hosted_openai_compatible(url: str) -> bool:
     """True for custom/local OpenAI-compatible servers (llama.cpp, LM Studio,
-    vLLM, text-generation-webui, etc.) as opposed to api.openai.com itself.
+    vLLM, text-generation-webui, etc.) as opposed to cloud API providers.
 
     Used to gate llama.cpp-server-specific payload extras (``session_id``,
-    ``cache_prompt``) — sending unrecognized top-level fields to OpenAI's
-    actual API returns a 400 ("Unrecognized request argument"), but
+    ``cache_prompt``) — sending unrecognized top-level fields to strict
+    cloud providers (OpenAI, Mistral, etc.) returns HTTP 400/422, but
     self-hosted servers generally ignore unknown fields and many (notably
     llama.cpp's server) use them for KV-cache slot affinity (issue #2927).
     """
-    return _detect_provider(url) == "openai" and not _host_match(url, "openai.com")
+    if _detect_provider(url) != "openai":
+        return False
+    # Exclude known cloud providers that reject extra top-level fields.
+    # _detect_provider returns "openai" for all OpenAI-compatible APIs
+    # (including Mistral, Together, Fireworks, etc.) since they share
+    # the same request format — but only self-hosted servers accept the
+    # llama.cpp extensions.
+    _STRICT_CLOUD_HOSTS = (
+        "openai.com", "mistral.ai", "together.xyz", "together.ai",
+        "fireworks.ai", "deepinfra.com", "anyscale.com", "perplexity.ai",
+    )
+    return not any(_host_match(url, h) for h in _STRICT_CLOUD_HOSTS)
 
 
 def _apply_local_cache_affinity(payload: Dict, url: str, session_id: Optional[str]) -> None:
