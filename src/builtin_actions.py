@@ -579,6 +579,24 @@ def _classify_event_heuristic(summary: str) -> tuple:
     return etype, None
 
 
+def _memory_context_lines(mems, limit: int = 40) -> list:
+    """Render Memory rows into short personal-context bullets for event classify.
+
+    Reads the Memory ORM `text` column. The previous inline code read a
+    non-existent `content` attribute, so it raised AttributeError on the first
+    row, the surrounding except swallowed it, and the classifier ran with no
+    personal context at all. getattr keeps it robust to future schema drift.
+    """
+    lines: list = []
+    for m in mems:
+        c = (getattr(m, "text", "") or "").strip()
+        if c:
+            lines.append(f"- {c[:200]}")
+        if len(lines) >= limit:
+            break
+    return lines
+
+
 async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
     """Hybrid classification of upcoming calendar events: fast heuristic for
     obvious cases, LLM fallback for ambiguous ones. Assigns event_type +
@@ -614,16 +632,11 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
             try:
                 from core.database import Memory as _Mem
                 _mems = db.query(_Mem).filter(_Mem.owner == owner).limit(60).all() if owner else []
-                if _mems:
-                    _lines = []
-                    for m in _mems:
-                        c = (m.content or "").strip()
-                        if c:
-                            _lines.append(f"- {c[:200]}")
-                    if _lines:
-                        _memory_context = "USER CONTEXT (relationships, work, life):\n" + "\n".join(_lines[:40]) + "\n\n"
+                _lines = _memory_context_lines(_mems)
+                if _lines:
+                    _memory_context = "USER CONTEXT (relationships, work, life):\n" + "\n".join(_lines) + "\n\n"
             except Exception as _me:
-                logger.debug(f"Could not load memory for classify: {_me}")
+                logger.warning(f"Could not load memory for classify: {_me}")
 
             classified_h = 0
             classified_llm = 0

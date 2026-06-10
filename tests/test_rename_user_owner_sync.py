@@ -11,10 +11,13 @@ owner column, but three file-backed / in-memory stores are left stale:
    research_routes filters by `d.get("owner") == user`, making every report
    invisible after rename.
 
-3. data/memory.json  — a flat array where every entry has an `owner` field;
+3. research_handler._active_tasks — in-flight research jobs carry the same
+   owner key while status/cancel/active routes filter by it.
+
+4. data/memory.json  — a flat array where every entry has an `owner` field;
    memory_manager.load(owner=user) filters on it, so all memories vanish.
 
-4. data/uploads/uploads.json — each upload row carries an `owner` field and
+5. data/uploads/uploads.json — each upload row carries an `owner` field and
    owner-prefixed index key; stale metadata denies renamed users their uploads.
 
 Regression coverage: these bugs are invisible in unit tests that mock the DB
@@ -66,10 +69,11 @@ def rename_endpoint(monkeypatch, tmp_path):
     return _route(ar.setup_auth_routes(am), "rename_user"), am, tmp_path
 
 
-def _request(tmp_path, session_manager=None, upload_handler=None):
+def _request(tmp_path, session_manager=None, research_handler=None, upload_handler=None):
     state = SimpleNamespace(
         invalidate_token_cache=lambda: None,
         session_manager=session_manager,
+        research_handler=research_handler,
         upload_handler=upload_handler,
     )
     return SimpleNamespace(
