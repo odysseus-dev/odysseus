@@ -138,6 +138,16 @@ def test_atomic_write_text_leaves_no_tmp_file(tmp_path):
     assert _tmp_siblings(tmp_path, "note.txt") == []
 
 
+def test_atomic_write_text_rejects_non_string_before_tmp_file(tmp_path):
+    target = tmp_path / "note.txt"
+
+    with pytest.raises(TypeError):
+        atomic_write_text(str(target), 123)
+
+    assert not target.exists()
+    assert _tmp_siblings(tmp_path, "note.txt") == []
+
+
 # ---------------------------------------------------------------------------
 # atomic_write_text — failure path: target preserved when replace fails.
 # ---------------------------------------------------------------------------
