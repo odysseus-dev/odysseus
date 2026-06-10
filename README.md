@@ -457,7 +457,7 @@ AGPL-3.0-or-later -- see [LICENSE](LICENSE) and [ACKNOWLEDGMENTS.md](ACKNOWLEDGM
                                   |
                                  |||
                                 |||||
-                  |    |    |   |||||||
+                  |    |    |  |||||||
                  )_)  )_)  )_)   ~|~
                 )___))___))___)\  |
                )____)____)_____)\\|
