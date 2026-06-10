@@ -1825,12 +1825,17 @@ function _parseTimeSpec(input) {
 async function _cmdTodo(args, ctx) {
   const sub = (args[0] || '').toLowerCase();
   if (sub === 'list' || sub === 'ls') {
-    const res = await fetch(`${API_BASE}/api/notes?note_type=note`, { credentials: 'same-origin' });
+    const res = await fetch(`${API_BASE}/api/notes`, { credentials: 'same-origin' });
     if (!res.ok) { slashReply('Failed to load todos'); return true; }
     const data = await res.json();
-    const items = (data.notes || data || []).filter(n => !n.archived).slice(0, 30);
+    const items = (data.notes || data || [])
+      .filter(n => !n.archived && ['todo', 'checklist', 'goal'].includes(n.note_type))
+      .slice(0, 30);
     if (!items.length) { slashReply('No todos'); return true; }
-    const lines = items.map(n => `• ${ctx.esc(n.title || n.content || '').slice(0, 80)}`);
+    const lines = items.map(n => {
+      const text = n.title || (n.items && n.items[0] && n.items[0].text) || n.content || '';
+      return `• ${ctx.esc(text).slice(0, 80)}`;
+    });
     slashReply(`<pre>${lines.join('\n')}</pre>`);
     return true;
   }
@@ -1840,7 +1845,7 @@ async function _cmdTodo(args, ctx) {
   const res = await fetch(`${API_BASE}/api/notes`, {
     method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: rest, note_type: 'note', source: 'slash', label: 'todo' }),
+    body: JSON.stringify({ title: '', items: [{ text: rest, done: false }], note_type: 'todo', source: 'slash' }),
   });
   if (res.ok) await typewriterReply(`Todo added: ${ctx.esc(rest)}`);
   else slashReply('Failed to add todo');
