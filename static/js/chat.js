@@ -51,6 +51,26 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   let _autoNudges = 0;             // handshakes fired for the CURRENT user turn
   let _autoContinuePending = false; // marks the next submit as an auto-continue (don't reset the counter)
   const _AUTO_NUDGE_CAP = 3;
+  // ── Auto-continue past the per-turn step limit (rounds_exhausted). The user
+  // toggle near the Agent button decides whether the "Continue" affordance fires
+  // automatically. _lastUserTask is restated in every continue prompt so the
+  // agent never loses the goal after context trimming. Capped so it can't loop.
+  let _lastUserTask = '';          // the real task that started the current turn
+  let _autoContinueCount = 0;      // auto-continues fired for the CURRENT turn
+  const _AUTO_CONTINUE_CAP = 10;
+  const _AUTO_CONTINUE_KEY = 'odysseus-auto-continue';
+  function _autoContinueEnabled() {
+    try { return localStorage.getItem(_AUTO_CONTINUE_KEY) === '1'; } catch (_) { return false; }
+  }
+  function _buildContinuePrompt() {
+    let task = (_lastUserTask || '').trim();
+    if (!task) {
+      const ub = document.querySelector('#chat-history .msg-user .body');
+      if (ub) task = (ub.textContent || '').trim().slice(0, 1200);
+    }
+    const head = task ? ('ORIGINAL TASK (stay on this — do not lose track of it):\n' + task + '\n\n') : '';
+    return head + 'You hit the step limit before finishing — the task is NOT complete. Continue from exactly where you left off and keep going until it is fully done. Do NOT repeat work already done.';
+  }
 
   // shortModel and modelColor are now in chatRenderer.js
   var _shortModel = chatRenderer.shortModel;
@@ -201,6 +221,21 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       // Init can run before #message exists (templated UI); short retries only.
       try { requestAnimationFrame(() => _wireArrowUpRecall(document.getElementById('message'))); } catch (_) {}
       setTimeout(() => _wireArrowUpRecall(document.getElementById('message')), 250);
+    }
+
+    // Auto-continue toggle (near the Agent button): persist + reflect state.
+    const _acBtn = document.getElementById('auto-continue-btn');
+    if (_acBtn) {
+      const _sync = () => {
+        const on = _autoContinueEnabled();
+        _acBtn.classList.toggle('active', on);
+        _acBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      };
+      _sync();
+      _acBtn.addEventListener('click', () => {
+        try { localStorage.setItem(_AUTO_CONTINUE_KEY, _autoContinueEnabled() ? '0' : '1'); } catch (_) {}
+        _sync();
+      });
     }
   }
 
@@ -455,6 +490,14 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
     const el = uiModule.el;
     const msg = el('message').value;
+    // Remember the real task that starts a turn (not the injected continue/
+    // cutoff prompts — those set _pendingContinue first) so every continue can
+    // restate the goal and survive context trimming. Resets the auto-continue
+    // counter for the new turn.
+    if (!_pendingContinue && msg && msg.trim() && !isCommand(msg.trim())) {
+      _lastUserTask = msg.trim();
+      _autoContinueCount = 0;
+    }
     // Allow empty text when a regen carries over the original message's
     // attachment ids — a photo-only message still has something to send.
     if (!msg.trim() && !fileHandlerModule.getPendingCount() && !(_pendingRegenAttachments && _pendingRegenAttachments.length)) { _releaseSendFlag(); return; }
@@ -1858,18 +1901,40 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   contBtn.title = 'Continue the task';
                   contBtn.textContent = 'Continue ▸';
                   const _holder = currentHolder;
-                  contBtn.addEventListener('click', () => {
+                  const _doContinue = () => {
                     note.remove();
                     _hideUserBubble = true;
                     _pendingContinue = _holder;
                     const msgInput = uiModule.el('message');
                     if (msgInput) {
-                      msgInput.value = 'You hit the step limit before finishing — the task is not complete. Continue from exactly where you left off and keep going until it is done. Do NOT repeat work already done.';
+                      // Restate the original task so a trimmed context can't make
+                      // the agent forget what it was doing after a continue.
+                      msgInput.value = _buildContinuePrompt();
                       const sb = document.querySelector('.send-btn');
                       if (sb) sb.click();
                     }
-                  });
+                  };
+                  contBtn.addEventListener('click', _doContinue);
                   note.appendChild(contBtn);
+                  // Auto-continue: when the toggle is on, fire the continue
+                  // automatically (capped per turn so it can't loop forever).
+                  // A Stop button bails out of the auto-loop for this turn.
+                  if (_autoContinueEnabled() && _autoContinueCount < _AUTO_CONTINUE_CAP) {
+                    _autoContinueCount++;
+                    label.textContent = `Auto-continuing (${_autoContinueCount}/${_AUTO_CONTINUE_CAP})…`;
+                    const stopBtn = document.createElement('button');
+                    stopBtn.className = 'continue-btn';
+                    stopBtn.title = 'Stop auto-continue for this turn';
+                    stopBtn.textContent = 'Stop';
+                    let _cancelled = false;
+                    stopBtn.addEventListener('click', () => {
+                      _cancelled = true;
+                      _autoContinueCount = _AUTO_CONTINUE_CAP;  // no more auto this turn
+                      note.remove();
+                    });
+                    note.appendChild(stopBtn);
+                    setTimeout(() => { if (!_cancelled && document.body.contains(note)) _doContinue(); }, 900);
+                  }
                   _chatBox.appendChild(note);
                   try { note.scrollIntoView({ block: 'end', behavior: 'smooth' }); } catch (_) { uiModule.scrollHistory && uiModule.scrollHistory(); }
                 }

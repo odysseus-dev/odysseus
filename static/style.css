@@ -2623,6 +2623,35 @@ body.bg-pattern-sparkles {
       50% { opacity: 0.7; }
     }
     /* Mode toggle — Agent / Chat */
+    /* Auto-continue toggle — sits left of the Agent/Chat toggle. Off = muted
+       outline; on = accent-filled, so a long autonomous session is obvious. */
+    .auto-continue-btn {
+      flex-shrink: 0;
+      height: 28px;
+      padding: 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: none;
+      color: color-mix(in srgb, var(--fg) 45%, transparent);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 500;
+      font-family: inherit;
+      white-space: nowrap;
+      transition: color 0.2s, background 0.2s, border-color 0.2s;
+    }
+    .auto-continue-btn:hover {
+      color: color-mix(in srgb, var(--fg) 70%, transparent);
+      border-color: color-mix(in srgb, var(--fg) 35%, transparent);
+    }
+    .auto-continue-btn.active {
+      color: var(--accent-contrast, #fff);
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    @container chatbar (max-width: 340px) {
+      .auto-continue-btn { display: none; }
+    }
     .mode-toggle {
       display: flex;
       flex-shrink: 0;
