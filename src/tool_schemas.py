@@ -144,6 +144,14 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "get_workspace",
+            "description": "Return the absolute path of the active workspace folder the user is working in. read_file/write_file/edit_file/grep/glob/ls are confined to it; bash/python start there (cwd) but are not sandboxed. Call this first when the user refers to 'the project'/'the code'/'this folder' without a path, instead of asking them. Takes no arguments.",
+            "parameters": {"type": "object", "properties": {}, "required": []}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "write_file",
             "description": "Write/save a file to disk",
             "parameters": {
@@ -1249,6 +1257,8 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             content = args.get("path", "")
     elif tool_type in ("grep", "glob", "ls"):
         content = json.dumps(args) if args else "{}"
+    elif tool_type == "get_workspace":
+        content = ""
     elif tool_type == "write_file":
         content = args.get("path", "") + "\n" + args.get("content", "")
     elif tool_type == "edit_file":

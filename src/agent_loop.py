@@ -283,7 +283,7 @@ _DOMAIN_TOOL_MAP = {
     "notes_calendar_tasks": {"manage_notes", "manage_calendar", "manage_tasks"},
     "ui": {"ui_control"},
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
-    "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls"},
+    "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
     "images": {"generate_image", "edit_image"},
 }
@@ -358,6 +358,11 @@ Write content to a file. First line is the path, rest is the content.""",
 {"path": "<file path>", "old_string": "<exact text to replace>", "new_string": "<replacement>", "replace_all": false}
 ```
 Edit an EXISTING file by exact string replacement. PREFER this over bash (sed/echo/redirects) for changing files — it shows a before/after diff. `old_string` must match the file exactly and be unique unless `replace_all` is true. Use write_file to create a new file.""",
+
+    "get_workspace": """\
+```get_workspace
+```
+Return the absolute path of the active workspace folder. read_file/write_file/edit_file/grep/glob/ls are CONFINED to it (paths can be RELATIVE to it); bash/python start there (cwd) but are NOT sandboxed. Call this first when the user says "the project"/"the code"/"this folder" without a path, instead of asking them. No arguments.""",
 
     "create_document": """\
 ```create_document
@@ -1750,6 +1755,7 @@ async def stream_agent_loop(
     plan_mode: bool = False,
     approved_plan: Optional[str] = None,
     tool_policy: Optional[ToolPolicy] = None,
+    workspace: Optional[str] = None,
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -2709,6 +2715,7 @@ async def stream_agent_loop(
                             tool_policy=tool_policy,
                             owner=owner,
                             progress_cb=_push_progress,
+                            workspace=workspace,
                         )
                     finally:
                         # Sentinel so the drainer knows to stop.
