@@ -455,17 +455,32 @@ def _detect_provider(url: str) -> str:
     return "openai"
 
 
+# Cloud APIs that speak the OpenAI-compatible protocol but fall through
+# _detect_provider to "openai" (no dedicated provider branch). They are not
+# self-hosted servers: none of them honor llama.cpp's slot-affinity extras,
+# and Mistral actively rejects unknown top-level fields with a 422
+# ("extra_forbidden" for session_id/cache_prompt).
+_CLOUD_OPENAI_COMPAT_DOMAINS = (
+    "openai.com", "mistral.ai", "deepseek.com", "x.ai", "googleapis.com",
+    "together.xyz", "together.ai", "fireworks.ai", "ollama.com",
+)
+
+
 def _is_self_hosted_openai_compatible(url: str) -> bool:
     """True for custom/local OpenAI-compatible servers (llama.cpp, LM Studio,
-    vLLM, text-generation-webui, etc.) as opposed to api.openai.com itself.
+    vLLM, text-generation-webui, etc.) as opposed to cloud APIs.
 
     Used to gate llama.cpp-server-specific payload extras (``session_id``,
     ``cache_prompt``) — sending unrecognized top-level fields to OpenAI's
-    actual API returns a 400 ("Unrecognized request argument"), but
-    self-hosted servers generally ignore unknown fields and many (notably
-    llama.cpp's server) use them for KV-cache slot affinity (issue #2927).
+    actual API returns a 400 ("Unrecognized request argument") and to
+    Mistral's a 422 ("extra_forbidden"), but self-hosted servers generally
+    ignore unknown fields and many (notably llama.cpp's server) use them for
+    KV-cache slot affinity (issue #2927).
     """
-    return _detect_provider(url) == "openai" and not _host_match(url, "openai.com")
+    return (
+        _detect_provider(url) == "openai"
+        and not _host_match(url, *_CLOUD_OPENAI_COMPAT_DOMAINS)
+    )
 
 
 def _apply_local_cache_affinity(payload: Dict, url: str, session_id: Optional[str]) -> None:

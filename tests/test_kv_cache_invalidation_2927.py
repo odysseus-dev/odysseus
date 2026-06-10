@@ -442,6 +442,39 @@ def test_payload_omits_session_id_for_official_openai_api(monkeypatch):
     assert "cache_prompt" not in captured[0]
 
 
+@pytest.mark.parametrize("url", [
+    # Mistral rejects the extras outright — 422 {"type":"extra_forbidden",
+    # "loc":["body","session_id"]} / ["body","cache_prompt"] — which broke
+    # every chat turn against api.mistral.ai (primary AND fallback model).
+    "https://api.mistral.ai/v1/chat/completions",
+    "https://api.deepseek.com/v1/chat/completions",
+    "https://api.x.ai/v1/chat/completions",
+    "https://api.together.xyz/v1/chat/completions",
+    "https://api.fireworks.ai/inference/v1/chat/completions",
+    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+])
+def test_payload_omits_session_id_for_cloud_openai_compatible_apis(monkeypatch, url):
+    """Cloud APIs that fall through provider detection to the OpenAI-compatible
+    default are still NOT self-hosted: they must never receive the llama.cpp
+    slot-affinity extras. Before this gate covered them, api.mistral.ai
+    rejected every request carrying session_id/cache_prompt with HTTP 422."""
+    from src import llm_core
+
+    captured = []
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: _FakeStreamClient(captured))
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
+    monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
+    monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)
+
+    messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
+
+    _drain(llm_core.stream_llm(url, "some-model", messages, session_id="session-A"))
+
+    assert len(captured) == 1
+    assert "session_id" not in captured[0]
+    assert "cache_prompt" not in captured[0]
+
+
 def test_payload_omits_session_id_when_not_provided(monkeypatch):
     """No session_id kwarg → no extras added (e.g. title generation, internal
     one-off calls that don't carry a session)."""
