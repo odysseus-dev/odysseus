@@ -107,6 +107,13 @@ def _extract_headings(md_text: str) -> List[Dict[str, str]]:
     headings = []
     seen_slugs: Dict[str, int] = {}
 
+    # Strip fenced code blocks before scanning for "## ..." lines: a heading-
+    # looking comment inside ``` / ~~~ is NOT rendered as an <h2> by the
+    # markdown renderer, so counting it here desynced the TOC anchor ids
+    # (built by zipping these headings against the rendered <h2>/<h3>), making
+    # every later TOC link point at the wrong section.
+    md_text = re.sub(r'(?ms)^[ \t]*(`{3,}|~{3,})[^\n]*\n.*?^[ \t]*\1[ \t]*$', '', md_text)
+
     def _plain_heading_text(text: str) -> str:
         text = text.strip().rstrip("#").strip()
         text = re.sub(r'!\[([^\]]*)\]\([^)]+\)', r'\1', text)
