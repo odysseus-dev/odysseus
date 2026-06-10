@@ -373,10 +373,28 @@ docker compose logs --tail=120 odysseus
 docker compose logs odysseus | grep -E 'ChromaDB|MemoryVectorStore|DEGRADED'
 ```
 
-**macOS details.** `start-macos.sh` installs Homebrew deps, creates the venv,
-runs setup, and starts uvicorn on port `7860` because AirPlay often holds
-`7000`. It uses llama.cpp/Ollama for Metal. vLLM/SGLang are CUDA/ROCm-only and
-do not run on macOS. MLX-only models are not served by Odysseus.
+**macOS details.** `odysseus.sh --launch=native` (or the legacy
+`start-macos.sh` shim) installs Homebrew deps, creates the venv, runs
+setup, and starts uvicorn on port `7860` because AirPlay often holds
+`7000`. It uses llama.cpp/Ollama for Metal. vLLM/SGLang are CUDA/ROCm-only
+and do not run on macOS. MLX-only models are not served by Odysseus.
+
+> **Repo location matters.** `launchd` cannot execute scripts under
+> `~/Desktop`, `~/Documents`, or `~/Downloads` (macOS TCC). Keep the
+> repo at `~/odysseus` (or anywhere outside those folders) and the
+> `--install-service` check will pass. The script fails fast with a
+> one-liner fix if you forget.
+
+To run Odysseus in the background and have it auto-start at login:
+
+```sh
+./odysseus.sh --install-service   # installs ~/Library/LaunchAgents/com.odysseus.ui.plist
+./odysseus.sh --uninstall-service # tears it down
+./odysseus.sh --update            # pulls + restarts the agent cleanly
+```
+
+See `docs/launcher.md` for the full flag reference, and `docs/macos.md`
+for the full macOS story (TCC, port 7860, Apple Silicon, GPU, file layout).
 
 </details>
 
