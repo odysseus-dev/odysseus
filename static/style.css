@@ -5283,6 +5283,29 @@ body.bg-pattern-sparkles {
       outline: 2px solid var(--red);
       outline-offset: 2px;
     }
+    .export-dropdown-item:focus-visible,
+    .model-picker-row:focus-visible,
+    .doc-tab:focus-visible,
+    .doc-library-card:focus-visible,
+    .gallery-editor-draft-card:focus-visible,
+    .cookbook-serve-running-pill:focus-visible,
+    .adm-section-toggle:focus-visible,
+    .adm-quickstart-toggle:focus-visible {
+      background: color-mix(in srgb, var(--accent-primary, var(--red)) 12%, transparent);
+      border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 55%, var(--border));
+      color: var(--fg);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: 0.001ms !important;
+        transition-delay: 0s !important;
+      }
+    }
     /* Hamburger menu button */
     .hamburger {
       display: inline-flex;
@@ -15510,6 +15533,9 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
     flex: 0 0 auto !important;
     height: auto !important;
   }
+}
+#cookbook-modal .hwfit-cached-list {
+  flex-shrink: 0;
 }
 .memory-toolbar {
   transition: opacity 0.12s ease, max-height 0.2s ease;

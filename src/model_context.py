@@ -55,7 +55,16 @@ def _configured_endpoint_kind(url: str) -> Optional[str]:
                     parsed = urlparse(base)
                     host = (parsed.hostname or "").lower()
                     path = (parsed.path or "").rstrip("/")
-                    if parsed.port != 11434 and "ollama" not in host and (path.endswith("/v1") or "/openai" in path):
+                    # A loopback / private / Tailscale (100.x) host is a self-hosted
+                    # server (LM Studio, llama.cpp, vLLM) even when it has an api_key
+                    # set and serves on /v1. Do NOT auto-classify it as a remote
+                    # proxy — that skips the local context-window probe and falls
+                    # back to the known-table guess (e.g. qwen3->131072) instead of
+                    # the server's real loaded window (LM Studio /api/v0/models).
+                    is_private_host = host in _LOCAL_HOSTS or host.startswith(_PRIVATE_PREFIXES)
+                    if (not is_private_host and parsed.port != 11434
+                            and "ollama" not in host
+                            and (path.endswith("/v1") or "/openai" in path)):
                         return "proxy"
                 return "auto"
         finally:
@@ -274,8 +283,8 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
 
     # Try llama.cpp /slots endpoint first — reports actual serving context
     if _is_local_endpoint(endpoint_url):
+        base = endpoint_url.split("/v1")[0] if "/v1" in endpoint_url else endpoint_url.rsplit("/", 1)[0]
         try:
-            base = endpoint_url.split("/v1")[0] if "/v1" in endpoint_url else endpoint_url.rsplit("/", 1)[0]
             r = httpx.get(f"{base}/slots", timeout=REQUEST_TIMEOUT)
             if r.is_success:
                 slots = r.json()
@@ -284,6 +293,24 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
                     if n_ctx and isinstance(n_ctx, int) and n_ctx > 0:
                         logger.info(f"llama.cpp /slots reports n_ctx={n_ctx} for {model}")
                         return n_ctx
+        except Exception:
+            pass
+        # LM Studio's native REST API reports the ACTUAL loaded context window,
+        # which its OpenAI-compatible /v1/models does not. `loaded_context_length`
+        # is the real serving limit (often set below `max_context_length` to save
+        # VRAM); using it prevents us from packing past what the server holds and
+        # having it silently truncate the oldest messages.
+        try:
+            r = httpx.get(f"{base}/api/v0/models", timeout=REQUEST_TIMEOUT)
+            if r.is_success:
+                for m in (r.json().get("data") or []):
+                    mid = m.get("id", "")
+                    if mid == model or mid.split("/")[-1] == model.split("/")[-1]:
+                        loaded = m.get("loaded_context_length")
+                        if loaded and isinstance(loaded, int) and loaded > 0:
+                            logger.info(f"LM Studio reports loaded_context_length={loaded} for {model}")
+                            return loaded
+                        break
         except Exception:
             pass
 

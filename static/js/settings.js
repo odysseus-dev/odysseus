@@ -5,11 +5,13 @@ import uiModule from './ui.js';
 import searchModule from './search.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { clearDockSide } from './modalSnap.js';
+import * as Modals from './modalManager.js';
 import { sortModelIds } from './modelSort.js';
 import { isAltGrEvent } from './platform.js';
 
 let initialized = false;
 let modalEl = null;
+let _closeTimeout = null;
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
@@ -2014,6 +2016,13 @@ function initAccount() {
       if (avatarEl) {
         const initial = (d.username || '?')[0].toUpperCase();
         avatarEl.textContent = initial;
+      }
+      // OIDC users don't have a password — hide password change and 2FA.
+      if (d.is_oidc) {
+        const pwCard = document.getElementById('settings-pw-card');
+        const tfaCard = document.getElementById('settings-2fa-card');
+        if (pwCard) pwCard.style.display = 'none';
+        if (tfaCard) tfaCard.style.display = 'none';
       }
     }).catch(() => {});
 
@@ -5220,13 +5229,26 @@ function syncAdminVisibility() {
    ═══════════════════════════════════════════ */
 export function open(tab) {
   if (!initialized) initAll();
+  clearTimeout(_closeTimeout);
+  _closeTimeout = null;
   syncAppearanceCheckboxes();
-  if (modalEl.classList.contains('hidden')) {
+  // If the modal was minimized to a dock chip, restore it through the modal
+  // manager — CSS uses .modal-minimized { display: none !important } which
+  // would otherwise keep it invisible even after removing .hidden.
+  if (Modals.isMinimized('settings-modal')) {
+    Modals.restore('settings-modal');
+  } else if (modalEl.classList.contains('hidden')) {
     resetWindowPlacement();
   }
   modalEl.classList.remove('hidden');
-  syncAdminVisibility();
   const content = modalEl.querySelector('.settings-modal-content');
+  if (content) {
+    // Clear any lingering close-animation class so a previous close()
+    // animationend doesn't fire and re-hide the modal right after open.
+    content.classList.remove('modal-closing', 'sheet-ready');
+  }
+  syncAdminVisibility();
+  // content already queried above for class cleanup
   if (tab) {
     modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
     modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
@@ -5251,10 +5273,12 @@ export function close() {
   if (content && !content.classList.contains('modal-closing')) {
     content.classList.add('modal-closing');
     content.addEventListener('animationend', () => {
+      if (!content.classList.contains('modal-closing')) return;
       modalEl.classList.add('hidden');
       content.classList.remove('modal-closing');
     }, { once: true });
-    setTimeout(() => { if (!modalEl.classList.contains('hidden')) { modalEl.classList.add('hidden'); content.classList.remove('modal-closing'); } }, 250);
+    clearTimeout(_closeTimeout);
+    _closeTimeout = setTimeout(() => { if (!modalEl.classList.contains('hidden')) { modalEl.classList.add('hidden'); content.classList.remove('modal-closing'); } _closeTimeout = null; }, 250);
   } else {
     modalEl.classList.add('hidden');
   }

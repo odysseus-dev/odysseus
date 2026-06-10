@@ -249,3 +249,122 @@ class TestGetContextLength:
         assert first == model_context.DEFAULT_CONTEXT
         assert second == model_context.DEFAULT_CONTEXT
         assert calls == []
+
+
+class TestConfiguredEndpointKindPrivateHost:
+    """A self-hosted server on a loopback / private / Tailscale host must NOT be
+    auto-classified as a remote proxy just because it has an api_key and serves
+    on /v1 — that would skip the local context-window probe in
+    _query_context_length and fall back to the static known-model guess."""
+
+    def _kind(self, monkeypatch, base_url, *, api_key="fake-key", kind="auto"):
+        _install_endpoint_db(monkeypatch, [
+            types.SimpleNamespace(
+                base_url=base_url,
+                endpoint_kind=kind,
+                api_key=api_key,
+                is_enabled=True,
+            )
+        ])
+        return model_context._configured_endpoint_kind(base_url + "/chat/completions")
+
+    def test_tailscale_host_with_key_is_not_proxy(self, monkeypatch):
+        # Representative of the _PRIVATE_PREFIXES branch (100./192.168./10./172.x);
+        # all share the same host.startswith(_PRIVATE_PREFIXES) check.
+        assert self._kind(monkeypatch, "http://100.117.136.97:34521/v1") == "auto"
+
+    def test_loopback_host_with_key_is_not_proxy(self, monkeypatch):
+        assert self._kind(monkeypatch, "http://127.0.0.1:1234/v1") == "auto"
+
+    def test_public_host_with_key_is_proxy(self, monkeypatch):
+        # Regression guard: a genuine remote proxy (public host + api_key + /v1)
+        # must still be detected as a proxy so we skip the /models catalog.
+        assert self._kind(monkeypatch, "https://llm.example.com/v1") == "proxy"
+
+    def test_explicit_proxy_kind_short_circuits(self, monkeypatch):
+        # An explicitly configured kind wins regardless of host.
+        assert self._kind(
+            monkeypatch, "http://100.117.136.97:34521/v1", kind="proxy") == "proxy"
+
+    def test_public_ollama_carveout_is_not_proxy(self, monkeypatch):
+        # The proxy branch also carves out Ollama, on the same `if` the
+        # private-host fix touches: a public host is NOT a proxy when it serves
+        # on Ollama's default port 11434, nor when "ollama" is in the host.
+        assert self._kind(monkeypatch, "http://203.0.113.10:11434/v1") == "auto"
+        assert self._kind(monkeypatch, "https://ollama.example.com/v1") == "auto"
+
+
+class TestQueryContextLengthLMStudio:
+    """_query_context_length should read LM Studio's loaded_context_length from
+    its native /api/v0/models when the llama.cpp /slots probe is unavailable."""
+
+    def setup_method(self):
+        model_context._context_cache.clear()
+
+    def _patch_httpx(self, monkeypatch, models_payload, *, slots_ok=False):
+        class _Resp:
+            def __init__(self, ok, payload):
+                self.is_success = ok
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        def fake_get(url, **kwargs):
+            if url.endswith("/slots"):
+                if slots_ok:
+                    return _Resp(True, [{"n_ctx": 999}])
+                raise ConnectionError("no llama.cpp here")
+            if url.endswith("/api/v0/models"):
+                return _Resp(True, models_payload)
+            # Generic OpenAI-compatible /v1/models — reports nothing useful here.
+            return _Resp(False, {})
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+
+    def test_reads_loaded_context_length(self, monkeypatch):
+        _install_endpoint_db(monkeypatch, [])  # no configured endpoint -> local
+        self._patch_httpx(monkeypatch, {
+            "data": [
+                {"id": "qwen/qwen3-14b", "loaded_context_length": 32768,
+                 "max_context_length": 131072},
+            ],
+        })
+        ctx = model_context._query_context_length(
+            "http://127.0.0.1:1234/v1/chat/completions", "qwen3-14b")
+        assert ctx == 32768
+
+    def test_namespaced_model_id_matches(self, monkeypatch):
+        _install_endpoint_db(monkeypatch, [])
+        self._patch_httpx(monkeypatch, {
+            "data": [{"id": "lmstudio-community/Qwen3-14B-GGUF",
+                      "loaded_context_length": 24000}],
+        })
+        ctx = model_context._query_context_length(
+            "http://127.0.0.1:1234/v1/chat/completions", "Qwen3-14B-GGUF")
+        assert ctx == 24000
+
+    def test_missing_loaded_context_falls_back_to_known_table(self, monkeypatch):
+        # The bug being fixed: without loaded_context_length we fall back to the
+        # static known-model guess (qwen3 -> 131072), the value that overpacks.
+        # This case alone reaches the generic /models fallback, which imports
+        # build_models_url (-> the real core.database); drop any stub core.database
+        # so _configured_endpoint_kind hits its "not imported" guard and the real
+        # module is used downstream.
+        monkeypatch.delitem(sys.modules, "core.database", raising=False)
+        self._patch_httpx(monkeypatch, {
+            "data": [{"id": "qwen3-14b"}],  # no loaded_context_length reported
+        })
+        ctx = model_context._query_context_length(
+            "http://127.0.0.1:1234/v1/chat/completions", "qwen3")
+        assert ctx == 131072
+
+    def test_slots_takes_precedence_over_lmstudio(self, monkeypatch):
+        # llama.cpp /slots reports the true serving context; prefer it.
+        _install_endpoint_db(monkeypatch, [])
+        self._patch_httpx(monkeypatch, {
+            "data": [{"id": "qwen3-14b", "loaded_context_length": 32768}],
+        }, slots_ok=True)
+        ctx = model_context._query_context_length(
+            "http://127.0.0.1:1234/v1/chat/completions", "qwen3-14b")
+        assert ctx == 999

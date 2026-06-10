@@ -54,5 +54,8 @@ def test_model_context_queries_models_for_v1_base(monkeypatch):
     assert model_context._query_context_length("http://127.0.0.1:8080/v1", "qwen3") == 32768
     assert seen == [
         "http://127.0.0.1:8080/slots",
+        # LM Studio's native endpoint is probed next; here it returns no
+        # loaded_context_length, so resolution falls through to /v1/models.
+        "http://127.0.0.1:8080/api/v0/models",
         "http://127.0.0.1:8080/v1/models",
     ]

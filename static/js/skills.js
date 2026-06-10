@@ -1971,3 +1971,8 @@ export default { loadSkills, openSkill };
 // Populate the Skills badge on first load so the count is right before the
 // user clicks into the tab. Cheap fetch — same as the lazy path.
 document.addEventListener('DOMContentLoaded', () => { loadSkills(); });
+
+// Refresh skills whenever the memory sidebar refreshes — covers both manual
+// manage_memory tool calls and the background auto-extraction that fires a
+// few seconds after each chat turn.
+window.addEventListener('memory-refresh', () => { loadSkills(); });

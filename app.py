@@ -161,6 +161,7 @@ app.add_middleware(_RequestTimeoutMiddleware)
 
 # ========= AUTH =========
 from routes.auth_routes import setup_auth_routes, SESSION_COOKIE
+from core.oidc import init_oidc_manager
 
 auth_manager = AuthManager()
 app.state.auth_manager = auth_manager
@@ -179,6 +180,9 @@ if AUTH_ENABLED:
         "/api/auth/features",
         "/api/auth/settings",
         "/api/auth/integrations/presets",
+        "/api/auth/oidc/login",
+        "/api/auth/oidc/callback",
+        "/api/auth/oidc/config",
         "/api/health",
         "/api/version",
         "/login",
@@ -542,6 +546,24 @@ webhook_manager = WebhookManager(api_key_manager=api_key_manager)
 # Auth
 auth_router = setup_auth_routes(auth_manager)
 app.include_router(auth_router)
+
+# OIDC (single sign-on) — initialised after auth_manager so the OIDC routes
+# can look up / create users.
+# Register routes whenever OIDC_ENABLED=true (even if provider discovery
+# hasn't succeeded yet) so the /config endpoint can report the error to
+# the login page instead of 404-ing silently.
+_OIDC_ENABLED = os.getenv("OIDC_ENABLED", "false").lower() == "true"
+oidc_manager = init_oidc_manager() if _OIDC_ENABLED else None
+if _OIDC_ENABLED:
+    from routes.oidc_routes import setup_oidc_routes
+    oidc_router = setup_oidc_routes(auth_manager, oidc_manager)
+    app.include_router(oidc_router)
+    if oidc_manager is not None:
+        logger.info("OIDC routes registered — provider discovered")
+    else:
+        logger.info("OIDC routes registered — provider not yet reachable")
+else:
+    logger.info("OIDC disabled (set OIDC_ENABLED=true and provider vars to enable)")
 
 # Uploads
 from routes.upload_routes import setup_upload_routes

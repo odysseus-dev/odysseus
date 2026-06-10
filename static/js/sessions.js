@@ -9,6 +9,7 @@ import { providerLogo } from './providers.js';
 import { initModelPicker, updateModelPicker } from './modelPicker.js';
 import themeModule from './theme.js';
 import spinnerModule from './spinner.js';
+import { classifySessionListKey } from './sessionListKeys.js';
 
 const API_BASE = window.location.origin;
 
@@ -1917,18 +1918,23 @@ export function setCurrentSessionId(id) {
   }
 }
 
-// Session list keyboard navigation: arrows to move, Delete to delete
+// Session list keyboard navigation: arrows to move, Delete to delete.
+// The intent classification (including ignoring keys typed into an inline
+// rename input) lives in sessionListKeys.js so it can be unit-tested DOM-free.
 async function _onSessionListKeydown(e) {
+  const action = classifySessionListKey(e);
+  if (action === 'ignore' || action === null) return;
+
   const item = e.target.closest('.list-item[data-session-id]');
   if (!item) return;
 
-  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+  if (action === 'nav-down' || action === 'nav-up') {
     e.preventDefault();
     // Get all visible session items across all containers
     const allItems = Array.from(document.querySelectorAll('#session-list .list-item[data-session-id]'));
     const idx = allItems.indexOf(item);
     if (idx < 0) return;
-    const next = e.key === 'ArrowDown' ? allItems[idx + 1] : allItems[idx - 1];
+    const next = action === 'nav-down' ? allItems[idx + 1] : allItems[idx - 1];
     if (next) {
       next.focus();
       const sid = next.dataset.sessionId;
@@ -1937,7 +1943,7 @@ async function _onSessionListKeydown(e) {
     return;
   }
 
-  if (e.key === 'Delete' || e.key === 'Backspace') {
+  if (action === 'delete') {
     e.preventDefault();
     const sid = item.dataset.sessionId;
     const s = sessions.find(x => x.id === sid);
@@ -1957,7 +1963,7 @@ async function _onSessionListKeydown(e) {
     return;
   }
 
-  if (e.key === 'Enter') {
+  if (action === 'open') {
     e.preventDefault();
     const sid = item.dataset.sessionId;
     if (sid) selectSession(sid);

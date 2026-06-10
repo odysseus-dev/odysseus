@@ -173,6 +173,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             u = result.get("username")
             if u:
                 result["privileges"] = auth_manager.get_privileges(u)
+                result["is_oidc"] = auth_manager.is_oidc_user(u)
         except Exception:
             pass
         return result
