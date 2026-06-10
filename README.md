@@ -402,6 +402,20 @@ Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Window
 [Ollama](https://ollama.com/download) is the easiest path — point Odysseus at
 `http://localhost:11434/v1` in Settings.
 
+**Cookbook model storage on Windows.** Native downloads use Hugging Face's
+default cache, which resolves to
+`C:\Users\<you>\.cache\huggingface\hub` unless you override it. Large GGUF files
+can fill the system drive quickly, so set `HF_HOME` before launching Odysseus if
+you want the cache on another drive:
+
+```powershell
+[System.Environment]::SetEnvironmentVariable("HF_HOME", "D:\huggingface", "User")
+```
+
+Restart the terminal and Odysseus after changing it. With that value, the model
+hub cache lives under `D:\huggingface\hub`. If you need to point directly at the
+hub directory instead, set `HUGGINGFACE_HUB_CACHE` to that folder.
+
 Open `http://localhost:7000`, log in with the generated admin password,
 and configure everything else inside **Settings**.
 
@@ -518,6 +532,8 @@ Key settings:
 | `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |
 | `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |
 | `EMBEDDING_URL` | -- | OpenAI-compatible embeddings endpoint |
+| `HF_HOME` | `~/.cache/huggingface` | Native-run Hugging Face cache root. On Windows this controls where Cookbook downloads large model files by default. |
+| `HUGGINGFACE_HUB_CACHE` | `$HF_HOME/hub` | Optional direct override for the Hugging Face hub cache directory. Takes precedence over `HF_HOME` for model snapshots. |
 | `ODYSSEUS_CHAT_UPLOAD_MAX_BYTES` | `10485760` | Chat/agent attachment cap in bytes. Raise for larger local PDFs or text documents. |
 | `ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES` | `104857600` | Gallery image upload cap in bytes (100 MB). |
 | `ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES` | `26214400` | Gallery transform input cap in bytes (25 MB). |
