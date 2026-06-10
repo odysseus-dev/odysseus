@@ -69,6 +69,10 @@ _TOOL_CODE_RE = re.compile(
 # never show the garbage to the user). The pipe run is tolerant of
 # fullwidth (U+FF5C) and ascii '|' in any count.
 _DSML_PIPES = r"[｜|]+"
+
+# Regex to strip mcp__server__ prefix from MCP-qualified tool names
+# emitted by local models as fenced-block tags (e.g. ```mcp__email__list_emails```).
+_MCP_PREFIX_RE = re.compile(r"^mcp__(\w+)__(\w+)$")
 def _normalize_dsml(text: str) -> str:
     if not isinstance(text, str):
         return ""
@@ -459,7 +463,10 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
         for m in _TOOL_BLOCK_RE.finditer(text):
             tag = m.group(1).lower()
             content = m.group(2).strip()
-            if not content:
+            # Allow empty-content blocks for tools that take no arguments
+            # (e.g. list_email_accounts, list_folders).  Skip only when the
+            # tag is not a known tool — stray empty fences are display text.
+            if not content and tag not in TOOL_TAGS:
                 continue
             # If a code block's content is an <invoke> XML call (some models wrap
             # tool calls in ```python or ```xml fences), parse the invoke instead.
@@ -479,6 +486,26 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
                     blocks.append(block)
                     continue
             blocks.append(ToolBlock(tag, content))
+
+    # Pattern 1b: MCP-qualified fenced blocks (```mcp__server__tool ... ```).
+    # Local models sometimes learn the mcp__-prefixed names from the system prompt
+    # or previous tool-call responses and emit them as fence tags.  These are NOT
+    # in TOOL_TAGS so _TOOL_BLOCK_RE above won't match them.  Catch them separately
+    # and normalise the tag to the bare tool name — execute_tool_block remaps bare
+    # email tool names back to mcp__email__ when routing to the MCP handler.
+    if not skip_fenced:
+        _MCP_FENCED_RE = re.compile(r"```(mcp__(?:\w+)__(?:\w+))\s*\n([\s\S]*?)```", re.IGNORECASE)
+        for m in _MCP_FENCED_RE.finditer(text):
+            raw_tag = m.group(1).lower()
+            # Skip if we already captured this exact span as a known TOOL_TAGS block.
+            if any(b.tool_type == raw_tag for b in blocks):
+                continue
+            content = m.group(2).strip()
+            # Strip the mcp__server__ prefix to get the bare tool name.
+            bare = _MCP_PREFIX_RE.sub(r"\2", raw_tag)
+            if not content and bare not in TOOL_TAGS:
+                continue
+            blocks.append(ToolBlock(bare, content))
 
     # Pattern 2: [TOOL_CALL] blocks (only if no fenced blocks found)
     if not blocks:
