@@ -25,33 +25,36 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-# Match test_model_routes.py: if another test stubbed src.endpoint_resolver
-# during collection, drop the stub so the real URL helpers load here.
-_endpoint_resolver = sys.modules.get("src.endpoint_resolver")
-if _endpoint_resolver is not None and not getattr(_endpoint_resolver, "__file__", None):
-    sys.modules.pop("src.endpoint_resolver", None)
-    sys.modules.pop("routes.model_routes", None)
+from tests.helpers.import_state import clear_fake_endpoint_resolver_modules, preserve_import_state
 
-if "core.database" not in sys.modules:
-    _core_db = types.ModuleType("core.database")
-    for _name in [
-        "SessionLocal", "ModelEndpoint", "Session", "ChatMessage", "Document",
-        "DocumentVersion", "GalleryImage", "GalleryAlbum", "Note",
-        "CalendarCal", "CalendarEvent", "ScheduledTask", "TaskRun", "McpServer",
-    ]:
-        setattr(_core_db, _name, MagicMock())
-    sys.modules["core.database"] = _core_db
+with preserve_import_state("core.database", "src.database", "core.session_manager", "routes.model_routes"):
+    # Match test_model_routes.py: if another test stubbed src.endpoint_resolver
+    # during collection, drop the stub so the real URL helpers load here.
+    clear_fake_endpoint_resolver_modules()
 
-import routes.model_routes as model_routes
-import src.endpoint_resolver as endpoint_resolver
-from routes.model_routes import (
-    _probe_endpoint,
-    _ping_endpoint,
-    _probe_single_model,
-    _classify_endpoint,
-    _rewrite_loopback_for_docker,
-    _PROVIDER_CURATED,
-)
+    if "core.database" not in sys.modules:
+        _core_db = types.ModuleType("core.database")
+        for _name in [
+            "SessionLocal", "ModelEndpoint", "Session", "ChatMessage", "Document",
+            "DocumentVersion", "GalleryImage", "GalleryAlbum", "Note",
+            "CalendarCal", "CalendarEvent", "ScheduledTask", "TaskRun", "McpServer",
+            "ProviderAuthSession", "Base",
+        ]:
+            setattr(_core_db, _name, MagicMock())
+        _core_db.utcnow_naive = MagicMock()
+        sys.modules["core.database"] = _core_db
+
+    import routes.model_routes as model_routes
+    import src.endpoint_resolver as endpoint_resolver
+    from routes.model_routes import (
+        _probe_endpoint,
+        _ping_endpoint,
+        _probe_single_model,
+        _resolve_probe_key,
+        _classify_endpoint,
+        _rewrite_loopback_for_docker,
+        _PROVIDER_CURATED,
+    )
 
 
 def _patch_resolve(monkeypatch):
@@ -117,6 +120,26 @@ class TestProbeEndpointParsing:
             lambda url, headers=None, timeout=None, verify=None, **kwargs: _resp(200, json={"data": []}),
         )
         assert _probe_endpoint("https://api.example.com/v1") == []
+
+    def test_chatgpt_subscription_probe_uses_discovery_only(self, monkeypatch):
+        _patch_resolve(monkeypatch)
+        calls = []
+
+        def fake_fetch(access_token, timeout=5):
+            calls.append((access_token, timeout))
+            return ["gpt-5.5"]
+
+        monkeypatch.setattr("src.chatgpt_subscription.fetch_available_models", fake_fetch)
+
+        assert _probe_endpoint("https://chatgpt.com/backend-api/codex", "ACCESS", timeout=7) == ["gpt-5.5"]
+        assert calls == [("ACCESS", 7)]
+
+    def test_chatgpt_subscription_probe_without_discovery_returns_empty(self, monkeypatch):
+        _patch_resolve(monkeypatch)
+        monkeypatch.setattr("src.chatgpt_subscription.fetch_available_models", lambda access_token, timeout=5: [])
+
+        assert _probe_endpoint("https://chatgpt.com/backend-api/codex", "ACCESS") == []
+        assert _probe_endpoint("https://chatgpt.com/backend-api/codex") == []
 
 
 # ── _ping_endpoint: reachability classification ──
@@ -321,6 +344,51 @@ class TestProbeSingleModel:
         monkeypatch.setattr(model_routes.httpx, "post", fake_post)
         _probe_single_model("https://api.anthropic.com/v1", "sk-ant", "claude-sonnet-4-5", with_tools=True)
         assert "input_schema" in captured["payload"]["tools"][0]
+
+    def test_chatgpt_subscription_skips_completion_probe(self, monkeypatch):
+        # This provider speaks the Responses/Codex API. A chat-completions probe
+        # would 400 and (via the re-probe flow) hide every model, so it must be
+        # short-circuited as discovery-only without any HTTP call.
+        _patch_resolve(monkeypatch)
+
+        def boom(*args, **kwargs):
+            raise AssertionError("must not send a completion probe for chatgpt-subscription")
+
+        monkeypatch.setattr(model_routes.httpx, "post", boom)
+        result = _probe_single_model("https://chatgpt.com/backend-api/codex", None, "gpt-5.1-codex")
+        assert result["status"] == "ok"
+        assert result.get("skipped") is True
+        # Pin the full documented return shape — downstream JSON/UI reads latency_ms.
+        assert result["latency_ms"] == 0
+
+
+# ── _resolve_probe_key: static key vs provider-auth runtime token ──
+
+class TestResolveProbeKey:
+    def test_static_endpoint_uses_api_key(self):
+        ep = types.SimpleNamespace(id="e1", api_key="sk-static", provider_auth_id=None, owner=None)
+        assert _resolve_probe_key(ep) == "sk-static"
+
+    def test_provider_auth_endpoint_resolves_runtime_token(self, monkeypatch):
+        ep = types.SimpleNamespace(id="e2", api_key=None, provider_auth_id="auth123", owner="alice")
+        seen = {}
+
+        def fake_runtime(endpoint, owner=None):
+            seen["owner"] = owner
+            return ("https://chatgpt.com/backend-api/codex", "live-bearer")
+
+        monkeypatch.setattr(endpoint_resolver, "resolve_endpoint_runtime", fake_runtime)
+        assert _resolve_probe_key(ep) == "live-bearer"
+        assert seen["owner"] == "alice"
+
+    def test_provider_auth_resolution_failure_returns_none(self, monkeypatch):
+        ep = types.SimpleNamespace(id="e3", api_key=None, provider_auth_id="auth123", owner=None)
+
+        def boom(endpoint, owner=None):
+            raise RuntimeError("reauth required")
+
+        monkeypatch.setattr(endpoint_resolver, "resolve_endpoint_runtime", boom)
+        assert _resolve_probe_key(ep) is None
 
 
 # ── _classify_endpoint: Tailscale CGNAT range ──

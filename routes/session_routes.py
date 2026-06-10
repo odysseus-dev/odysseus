@@ -10,8 +10,9 @@ import logging
 from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
-from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
-from src.auth_helpers import get_current_user, effective_user
+from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
+from src.auth_helpers import get_current_user, effective_user, _auth_disabled
+from src.session_actions import is_session_recently_active
 
 
 def _sanitize_export_filename(name: str) -> str:
@@ -92,35 +93,30 @@ def _reject_compact_during_active_run(session_id: str) -> None:
 
 
 def _verify_session_owner(request: Request, session_id: str, session_manager=None):
-    """Verify the current user owns the session. Raises 404 if not.
+    """Verify the current user owns the session, honoring single-user modes.
 
-    Ownership is checked against the DB row when one exists (unchanged). If
-    there is no DB row but the caller owns an in-memory "ghost" session — one
-    that lives only in ``session_manager`` because it was never persisted, or
-    its DB row was removed out-of-band — fall back to the in-memory owner so the
-    user can still manage and delete it. Without this fallback such sessions are
-    listed by ``/api/sessions`` (they come from the in-memory manager) yet every
-    per-session operation 404s, making them impossible to delete (issue #1044).
-
-    ``session_manager`` is optional and defaults to ``None`` so existing callers
-    that only care about persisted sessions keep their exact prior behavior.
+    Authenticated requests must match the stored DB or in-memory owner. When
+    auth is disabled and no user is present, treat the app as single-user mode:
+    verify that the session exists, but do not compare its stored owner. This
+    keeps QA/dev instances with AUTH_ENABLED=false from rejecting owner-stamped
+    rows created while auth was previously enabled.
     """
     user = effective_user(request)
-    if not user:
-        raise HTTPException(403, "Authentication required")
+    if not user and not _auth_disabled():
+        raise HTTPException(401, "Authentication required")
     db = SessionLocal()
     try:
         row = db.query(DbSession.owner).filter(DbSession.id == session_id).first()
     finally:
         db.close()
     if row is not None:
-        if row.owner != user:
+        if user and row.owner != user:
             raise HTTPException(404, f"Session {session_id} not found")
         return
     # No DB row — allow the caller to act on an in-memory ghost they own.
     if session_manager is not None:
         ghost = getattr(session_manager, "sessions", {}).get(session_id)
-        if ghost is not None and getattr(ghost, "owner", None) == user:
+        if ghost is not None and (not user or getattr(ghost, "owner", None) == user):
             return
     raise HTTPException(404, f"Session {session_id} not found")
 
@@ -262,7 +258,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             last_msg_map = {}
             mode_map = {}
             msg_count_map = {}
-            rows = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count).filter(DbSession.archived == False).all()
+            rows = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count).filter(DbSession.archived == False, DbSession.owner == user).all()
             for row in rows:
                 folder_map[row.id] = row.folder
                 token_map[row.id] = (row.total_input_tokens or 0) + (row.total_output_tokens or 0)
@@ -284,12 +280,14 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 r[0] for r in db.query(Document.session_id)
                 .filter(Document.is_active == True,
                         Document.current_content != None,
-                        func.trim(Document.current_content) != "")
+                        func.trim(Document.current_content) != "",
+                        Document.owner == user)
                 .distinct().all()
             )
             img_session_ids = set(
                 r[0] for r in db.query(GalleryImage.session_id)
-                .filter(GalleryImage.session_id != None)
+                .filter(GalleryImage.session_id != None,
+                        GalleryImage.owner == user)
                 .distinct().all()
             )
         finally:
@@ -370,8 +368,13 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             pass
         elif not model_to_use:
             from src.llm_core import list_model_ids
-            ids = list_model_ids(endpoint_url, timeout=REQUEST_TIMEOUT,
-                                 headers=validation_headers)
+            ids = list_model_ids(
+                endpoint_url,
+                timeout=REQUEST_TIMEOUT,
+                headers=validation_headers,
+                owner=user,
+                endpoint_id=endpoint_id.strip() if endpoint_id else None,
+            )
             if not ids:
                 raise HTTPException(400, "Cannot reach /v1/models")
             # Default to the first CHAT model — endpoints often list embedding/
@@ -385,8 +388,13 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             from src.llm_core import list_model_ids
             import os as _os
             req_base = _os.path.basename(model_to_use.rstrip("/"))
-            avail = list_model_ids(endpoint_url, timeout=REQUEST_TIMEOUT,
-                                   headers=validation_headers)
+            avail = list_model_ids(
+                endpoint_url,
+                timeout=REQUEST_TIMEOUT,
+                headers=validation_headers,
+                owner=user,
+                endpoint_id=endpoint_id.strip() if endpoint_id else None,
+            )
             if not avail:
                 raise HTTPException(400, "Cannot reach /v1/models")
             if model_to_use not in avail:
@@ -543,22 +551,25 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             ids = body.get("ids", [])
         except Exception:
             ids = []
+        deleted_count = 0
         for sid in ids:
             try:
                 _verify_session_owner(request, sid, session_manager)
-                session_manager.delete_session(sid)
+                
+                # Enforce "starred" protection consistent with single-session delete
                 db = SessionLocal()
                 try:
-                    db.query(_CM).filter(_CM.session_id == sid).delete()
-                    db.query(DbSession).filter(DbSession.id == sid).delete()
-                    db.commit()
-                except Exception:
-                    db.rollback()
+                    db_sess = db.query(DbSession).filter(DbSession.id == sid).first()
+                    if db_sess and db_sess.is_important:
+                        continue
                 finally:
                     db.close()
+
+                if session_manager.delete_session(sid):
+                    deleted_count += 1
             except Exception:
                 pass
-        return {"deleted": len(ids)}
+        return {"deleted": deleted_count}
 
     @router.delete("/session/{sid}")
     def delete_session(request: Request, sid: str):
@@ -924,7 +935,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
 
-        url, model, headers = resolve_endpoint("utility", owner=get_current_user(request))
+        owner = getattr(session, "owner", None) or effective_user(request)
+        url, model, headers = resolve_endpoint("utility", owner=owner)
         if not url or not model:
             url, model, headers = session.endpoint_url, session.model, session.headers
         if not url or not model:
@@ -1006,7 +1018,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         }
         _THROWAWAY_MAX_MESSAGES = 4  # only delete if <= this many messages
         try:
-            rows = db.query(DbSession).filter(DbSession.archived == False, DbSession.owner == user).all()
+            rows = db.query(DbSession).filter(DbSession.archived == False, DbSession.owner == user).limit(2000).all()
             folder_map = {r.id: r.folder for r in rows}
             # Precompute per-session message counts in TWO aggregate queries
             # instead of 1–3 queries PER session — with many chats the per-row
@@ -1017,6 +1029,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db.query(DbMsg.session_id, _sa_func.count(DbMsg.id))
                 .filter(DbMsg.role == "assistant").group_by(DbMsg.session_id).all()
             )
+            cleanup_now = utcnow_naive()
             for row in rows:
                 # Never delete important sessions
                 if getattr(row, 'is_important', False):
@@ -1028,6 +1041,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     db.delete(row)
                     if hasattr(session_manager, 'delete_session'):
                         session_manager.delete_session(row.id)
+                    continue
+                if is_session_recently_active(row, now=cleanup_now):
                     continue
                 msg_count = _counts.get(row.id, 0)
                 should_delete = False

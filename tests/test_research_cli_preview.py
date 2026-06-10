@@ -3,20 +3,11 @@
 `_summarize` did `(data.get("query") or "")[:200]`. A non-string query from a
 legacy/corrupt research JSON is truthy, so `123[:200]` raised TypeError.
 """
-import importlib.machinery
-import importlib.util
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
+from tests.helpers.cli_loader import load_script
 
 
 def _load_cli():
-    path = ROOT / "scripts" / "odysseus-research"
-    loader = importlib.machinery.SourceFileLoader("odysseus_research_cli", str(path))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
+    return load_script("odysseus-research")
 
 
 def test_preview_text_ignores_non_string():

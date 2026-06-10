@@ -7,12 +7,12 @@ import logging
 import asyncio
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Form, Depends
-from core.constants import BASE_DIR
+from core.constants import EMBEDDING_ENDPOINT_FILE, FASTEMBED_CACHE_DIR
 from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
 
-_ENDPOINT_FILE = os.path.join(BASE_DIR, "data", "embedding_endpoint.json")
+_ENDPOINT_FILE = EMBEDDING_ENDPOINT_FILE
 
 # Track in-progress downloads
 _downloading: dict = {}
@@ -35,13 +35,7 @@ def _cache_dir() -> str:
     default lived in /tmp, which many systems wipe on reboot — forcing a
     full re-download of the embedding model after every restart.
     """
-    env = os.environ.get("FASTEMBED_CACHE_PATH")
-    if env:
-        return env
-    return os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "data", "fastembed_cache",
-    )
+    return FASTEMBED_CACHE_DIR
 
 
 def _model_cache_name(hf_source: str) -> str:
@@ -49,19 +43,35 @@ def _model_cache_name(hf_source: str) -> str:
     return "models--" + hf_source.replace("/", "--")
 
 
+def _model_cache_path(hf_source: str) -> Path:
+    """Return a confined cache path for a fastembed HF source."""
+    root = Path(_cache_dir()).expanduser().resolve()
+    raw_path = root / _model_cache_name(hf_source)
+    if raw_path.is_symlink():
+        raise ValueError("Model cache path must not be a symlink")
+    path = raw_path.resolve(strict=False)
+    try:
+        path.relative_to(root)
+    except ValueError:
+        raise ValueError("Model cache path escapes cache root")
+    return path
+
+
 def _is_downloaded(hf_source: str) -> bool:
     """Check if a model is already cached."""
-    cache = _cache_dir()
-    model_dir = os.path.join(cache, _model_cache_name(hf_source))
-    if not os.path.isdir(model_dir):
+    try:
+        model_dir = _model_cache_path(hf_source)
+    except ValueError:
+        return False
+    if not model_dir.is_dir():
         return False
     # Check for actual model files (not just empty dir)
-    snapshots = os.path.join(model_dir, "snapshots")
-    if os.path.isdir(snapshots):
-        return any(os.listdir(snapshots))
+    snapshots = model_dir / "snapshots"
+    if snapshots.is_dir():
+        return any(snapshots.iterdir())
     # Also check for blobs (older cache format)
-    blobs = os.path.join(model_dir, "blobs")
-    return os.path.isdir(blobs) and any(os.listdir(blobs))
+    blobs = model_dir / "blobs"
+    return blobs.is_dir() and any(blobs.iterdir())
 
 
 def _active_model() -> str:
@@ -119,8 +129,10 @@ def setup_embedding_routes():
 
             cached_size = None
             if downloaded and hf_src:
-                model_path = os.path.join(_cache_dir(), _model_cache_name(hf_src))
-                cached_size = _dir_size_mb(model_path)
+                try:
+                    cached_size = _dir_size_mb(str(_model_cache_path(hf_src)))
+                except ValueError:
+                    cached_size = None
 
             result.append({
                 "model": m["model"],
@@ -217,8 +229,11 @@ def setup_embedding_routes():
         if not hf_src:
             raise HTTPException(400, "No cache source for this model")
 
-        model_path = os.path.join(_cache_dir(), _model_cache_name(hf_src))
-        if not os.path.isdir(model_path):
+        try:
+            model_path = _model_cache_path(hf_src)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        if not model_path.is_dir():
             return {"deleted": False, "message": "Model not cached"}
 
         shutil.rmtree(model_path)
@@ -237,7 +252,7 @@ def setup_embedding_routes():
         }
 
     @router.post("/endpoint")
-    def set_endpoint(url: str = Form(...), model: str = Form("")):
+    def set_endpoint(url: str = Form(...), model: str = Form(""), api_key: str = Form("")):
         """Save a custom embedding endpoint URL."""
         url = url.strip()
         if not url:
@@ -261,6 +276,7 @@ def setup_embedding_routes():
             resp = httpx.post(
                 url,
                 json={"input": ["test"], "model": model or "test"},
+                headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
                 timeout=10,
             )
             resp.raise_for_status()
@@ -271,10 +287,16 @@ def setup_embedding_routes():
         data = {"url": url}
         if model:
             data["model"] = model
+        if api_key:
+            from src.secret_storage import encrypt
+            data["api_key"] = encrypt(api_key)
+
         _save_custom_endpoint(data)
         os.environ["EMBEDDING_URL"] = url
         if model:
             os.environ["EMBEDDING_MODEL"] = model
+        if api_key:
+            os.environ["EMBEDDING_API_KEY"] = api_key
 
         # Reset the RAG singleton so it picks up the new endpoint
         import src.rag_singleton as _rs
@@ -286,6 +308,16 @@ def setup_embedding_routes():
         try:
             from src.embeddings import reset_http_embed_state
             reset_http_embed_state()
+        except Exception:
+            pass
+        try:
+            from src.embedding_lanes import reset_embedding_lane_state
+            reset_embedding_lane_state()
+        except Exception:
+            pass
+        try:
+            from src.tool_index import reset_tool_index
+            reset_tool_index()
         except Exception:
             pass
 
@@ -308,6 +340,7 @@ def setup_embedding_routes():
         # Remove from environment
         os.environ.pop("EMBEDDING_URL", None)
         os.environ.pop("EMBEDDING_MODEL", None)
+        os.environ.pop("EMBEDDING_API_KEY", None)
 
         # Reset the RAG singleton so it falls back to fastembed
         import src.rag_singleton as _rs
@@ -316,6 +349,16 @@ def setup_embedding_routes():
         try:
             from src.embeddings import reset_http_embed_state
             reset_http_embed_state()
+        except Exception:
+            pass
+        try:
+            from src.embedding_lanes import reset_embedding_lane_state
+            reset_embedding_lane_state()
+        except Exception:
+            pass
+        try:
+            from src.tool_index import reset_tool_index
+            reset_tool_index()
         except Exception:
             pass
 
