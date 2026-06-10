@@ -337,7 +337,7 @@ def _format_field_bullet(f: dict[str, Any]) -> str:
         body = f'{_checkbox_marker(value)} **{label}**'
     elif ftype == "choice":
         opts = f.get("options") or []
-        opts_str = " / ".join(opts) if opts else ""
+        opts_str = " / ".join(str(o) for o in opts) if isinstance(opts, (list, tuple)) and opts else ""
         shown = value if value else "_(not selected)_"
         body = f'**{label}** [{opts_str}]: {shown}'
     elif ftype == "signature":
