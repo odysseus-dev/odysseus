@@ -36687,3 +36687,144 @@ body.theme-frosted .modal {
    the input beside it (.confirm-btn won't stretch on its own). */
 .ask-user-other-send { flex-shrink: 0; white-space: nowrap; min-height: 39px; }
 .ask-user-other-send:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Frog-coder pet 🐸 ─────────────────────────────────────────────────── */
+#frog-pet {
+  position: fixed;
+  right: 16px;
+  bottom: 10px;
+  width: 120px;
+  height: 132px;
+  z-index: 140; /* above chat, below pickers (250) and modals */
+  pointer-events: none;
+  user-select: none;
+}
+#frog-pet .frog-svg {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 120px;
+  height: 103px;
+  pointer-events: auto;
+  cursor: pointer;
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.25));
+}
+#frog-pet .frog-svg * { transform-box: fill-box; transform-origin: center; }
+
+/* Idle: soft breathing + periodic blink */
+#frog-pet .frog-svg { animation: frog-breathe 3.4s ease-in-out infinite; }
+@keyframes frog-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.015, 0.985); } }
+#frog-pet .frog-lids circle { transform: scaleY(0); animation: frog-blink 4.6s infinite; }
+#frog-pet .frog-lids circle:last-child { animation-delay: 0.05s; }
+@keyframes frog-blink {
+  0%, 93%, 100% { transform: scaleY(0); }
+  95%, 97% { transform: scaleY(1); }
+}
+
+/* Mouth variants — exactly one visible per mood */
+#frog-pet .frog-mouth { opacity: 0; transition: opacity 0.15s; }
+.frog-idle .frog-mouth-idle { opacity: 1; }
+.frog-thinking .frog-mouth-focus,
+.frog-typing .frog-mouth-focus { opacity: 1; }
+.frog-happy .frog-mouth-happy { opacity: 1; }
+
+/* Cheeks only when happy */
+#frog-pet .frog-cheeks { opacity: 0; transition: opacity 0.25s; }
+.frog-happy .frog-cheeks { opacity: 1; }
+
+/* Pupils: down at the laptop while typing, drifting up while thinking,
+   straight at the viewer when idle/happy */
+#frog-pet .frog-pupils { transition: transform 0.3s; }
+.frog-typing .frog-pupils { transform: translateY(3px); }
+.frog-thinking .frog-pupils { transform: translate(-2.5px, -3px); }
+
+/* Typing: hands hammer the keyboard, screen logo glows */
+.frog-typing .frog-hand-l { animation: frog-type 0.22s ease-in-out infinite; }
+.frog-typing .frog-hand-r { animation: frog-type 0.22s ease-in-out 0.11s infinite; }
+@keyframes frog-type { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3.5px); } }
+.frog-typing .frog-lap-logo { animation: frog-logo-glow 0.9s ease-in-out infinite; }
+@keyframes frog-logo-glow { 0%, 100% { fill: #9ccc65; } 50% { fill: #d4ffa0; } }
+
+/* Happy: one springy bounce, then beam at the viewer */
+.frog-happy .frog-svg { animation: frog-bounce 0.6s ease, frog-breathe 3.4s ease-in-out 0.6s infinite; }
+@keyframes frog-bounce {
+  0%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-10px) scale(1.04, 0.96); }
+  60% { transform: translateY(0) scale(0.97, 1.03); }
+}
+
+/* Thought cloud with rotating spiral */
+#frog-pet .frog-cloud {
+  position: absolute;
+  top: -4px;
+  left: -8px;
+  width: 44px;
+  height: 38px;
+  background: var(--bg-secondary, #fff);
+  border: 1.5px solid var(--border, #ccc);
+  border-radius: 50% 50% 45% 55%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.4);
+  transform-origin: bottom right;
+  transition: opacity 0.25s, transform 0.25s;
+}
+.frog-thinking .frog-cloud { opacity: 1; transform: scale(1); }
+#frog-pet .frog-cloud-dot {
+  position: absolute;
+  background: var(--bg-secondary, #fff);
+  border: 1.5px solid var(--border, #ccc);
+  border-radius: 50%;
+}
+#frog-pet .frog-cloud-d1 { width: 9px; height: 9px; right: -8px; bottom: -7px; }
+#frog-pet .frog-cloud-d2 { width: 5px; height: 5px; right: -14px; bottom: -14px; }
+#frog-pet .frog-spiral { width: 26px; height: 26px; }
+.frog-thinking .frog-spiral { animation: frog-spin 2.2s linear infinite; }
+@keyframes frog-spin { to { transform: rotate(360deg); } }
+
+/* Floating emoji reactions */
+#frog-pet .frog-emotes { position: absolute; inset: 0; overflow: visible; }
+#frog-pet .frog-emote {
+  position: absolute;
+  bottom: 96px;
+  font-size: 17px;
+  animation: frog-emote-float 1.6s ease-out forwards;
+}
+@keyframes frog-emote-float {
+  0% { opacity: 0; transform: translateY(6px) scale(0.6); }
+  20% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-30px) scale(1.05); }
+}
+
+/* Minimized: just a tiny round 🐸 button */
+#frog-pet .frog-restore {
+  display: none;
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--border, #ccc);
+  background: var(--bg-secondary, #fff);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  padding: 0;
+}
+#frog-pet .frog-restore:hover { transform: scale(1.12); }
+#frog-pet.frog-min .frog-svg,
+#frog-pet.frog-min .frog-cloud,
+#frog-pet.frog-min .frog-emotes { display: none; }
+#frog-pet.frog-min .frog-restore { display: block; }
+
+/* Out of the way on small screens */
+@media (max-width: 760px) { #frog-pet { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  #frog-pet .frog-svg, #frog-pet .frog-lids circle, #frog-pet .frog-hand-l,
+  #frog-pet .frog-hand-r, #frog-pet .frog-spiral, #frog-pet .frog-lap-logo { animation: none !important; }
+}

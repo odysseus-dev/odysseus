@@ -278,7 +278,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       submitBtn.dataset.phase = 'processing';
       isStreaming = true;
       _startStallWatchdog();
+      if (window.frogPet) window.frogPet.onStart();
     } else if (state === 'idle') {
+      if (window.frogPet) window.frogPet.onDone();
       submitBtn.dataset.mode = '';
       delete submitBtn.dataset.phase;
       submitBtn.classList.remove('recording');
@@ -1426,6 +1428,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 clearResponseTimeout();
                 clearProcessingProbe();
               }
+              if (window.frogPet && !_isBg) window.frogPet.onStream(json, isThinking);
               if (json.delta) {
                 _cancelThinkingTimer();
                 _removeThinkingSpinner();
