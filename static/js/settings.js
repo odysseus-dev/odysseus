@@ -1746,6 +1746,8 @@ const SHORTCUT_DEFAULTS = {
   open_notes:     '',
   open_tasks:     '',
   open_theme:     '',
+  open_email:     '',
+  ...EMAIL_SHORTCUT_DEFAULTS,
 };
 
 const SHORTCUT_ICONS = {
@@ -1769,6 +1771,8 @@ const SHORTCUT_ICONS = {
   open_notes:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5"/><path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/></svg>',
   open_tasks:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M9 16l2 2 4-4"/></svg>',
   open_theme:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg>',
+  open_email:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>',
+  ...EMAIL_SHORTCUT_ICONS,
 };
 
 const SHORTCUT_LABELS = {
@@ -1792,16 +1796,24 @@ const SHORTCUT_LABELS = {
   open_notes:     'Open Notes',
   open_tasks:     'Open Tasks',
   open_theme:     'Open Theme',
+  open_email:     'Open Email',
+  ...EMAIL_SHORTCUT_LABELS,
 };
 
 const SHORTCUT_CATEGORIES = [
   { name: 'Navigation', keys: ['search', 'toggle_sidebar', 'focus_input', 'settings'] },
   { name: 'Sessions', keys: ['new_session', 'fav_session', 'delete_session'] },
   { name: 'Tools', keys: ['incognito', 'tts', 'cancel'] },
-  { name: 'Open Tools', keys: ['open_calendar', 'open_compare', 'open_cookbook', 'open_research', 'open_gallery', 'open_library', 'open_memory', 'open_notes', 'open_tasks', 'open_theme'] },
+  { name: 'Open Tools', keys: ['open_calendar', 'open_compare', 'open_cookbook', 'open_research', 'open_gallery', 'open_library', 'open_memory', 'open_notes', 'open_tasks', 'open_theme', 'open_email'] },
+  { name: 'Email', keys: Object.keys(EMAIL_SHORTCUT_DEFAULTS) },
 ];
 
+function _shortcutKeyContent(combo) {
+  return combo ? _formatKeyCaps(combo) : '<span class="shortcut-unset">Set</span>';
+}
+
 function _formatKeyCaps(combo) {
+  if (!combo) return '';
   return combo.split('+').map(p => {
     let label;
     if (p === 'ctrl') label = 'Ctrl';
@@ -1838,17 +1850,20 @@ async function initShortcuts() {
   const resetBtn = el('shortcuts-reset-btn');
   if (!listEl) return;
 
-  // Load saved keybinds
+  // Load saved keybinds (local overrides beat server defaults).
   let keybinds = { ...SHORTCUT_DEFAULTS };
+  const stored = readStoredKeybinds();
+  if (stored) keybinds = { ...keybinds, ...stored };
   try {
     const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     const settings = await res.json();
-    if (settings.keybinds) keybinds = { ...keybinds, ...settings.keybinds };
+    if (settings.keybinds) keybinds = { ...keybinds, ...settings.keybinds, ...(readStoredKeybinds() || {}) };
   } catch (e) {}
 
   function _findConflicts() {
     const comboMap = {};
     for (const [action, combo] of Object.entries(keybinds)) {
+      if (!combo) continue;
       if (!comboMap[combo]) comboMap[combo] = [];
       comboMap[combo].push(action);
     }
@@ -1876,18 +1891,19 @@ async function initShortcuts() {
         // assign one \u2014 they show a "Set" affordance instead of keycaps.
         const label = SHORTCUT_LABELS[action] || action;
         const icon = SHORTCUT_ICONS[action] || '';
-        const isCustom = combo !== (SHORTCUT_DEFAULTS[action] || '');
+        const isCustom = combo !== (SHORTCUT_DEFAULTS[action] ?? '');
         const hasConflict = combo && conflicts.has(action);
         const row = document.createElement('div');
         row.className = 'shortcut-row' + (hasConflict ? ' shortcut-conflict' : '');
         row.dataset.action = action;
-        const keyContent = combo ? _formatKeyCaps(combo) : '<span class="shortcut-unset">Set</span>';
+        const keyContent = _shortcutKeyContent(combo);
         row.innerHTML = `
           <span class="shortcut-label"><span class="shortcut-icon">${icon}</span>${esc(label)}${hasConflict ? '<span class="shortcut-warn" title="Duplicate shortcut">!</span>' : ''}</span>
           <div class="shortcut-controls">
             <span class="shortcut-hint" hidden></span>
-            <button class="shortcut-key${combo ? '' : ' shortcut-key-unset'}" data-action="${action}" title="Click to rebind">${keyContent}</button>
-            <button class="shortcut-action-btn ${isCustom ? 'is-reset' : ''}" data-action="${action}" title="${isCustom ? 'Reset to default' : 'Confirm'}" style="${isCustom ? '' : 'visibility:hidden'}">
+            <button type="button" class="shortcut-key${combo ? '' : ' shortcut-key-unset'}" data-action="${action}" title="Click to rebind">${keyContent}</button>
+            <button type="button" class="shortcut-clear-btn" data-action="${action}" title="Remove shortcut"${combo ? '' : ' hidden'}>\u00d7</button>
+            <button type="button" class="shortcut-action-btn ${isCustom ? 'is-reset' : ''}" data-action="${action}" title="${isCustom ? 'Reset to default' : 'Confirm'}" style="${isCustom ? '' : 'visibility:hidden'}">
               ${isCustom ? '\u21A9' : '\u2713'}
             </button>
           </div>
@@ -1908,9 +1924,22 @@ async function initShortcuts() {
         render();
       });
     });
+
+    listEl.querySelectorAll('.shortcut-clear-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        keybinds[btn.dataset.action] = '';
+        saveKeybinds();
+        render();
+      });
+    });
   }
 
   function startRebind(btn) {
+    if (btn._rebindCleanup) {
+      btn._rebindCleanup();
+      return;
+    }
+
     const action = btn.dataset.action;
     const row = btn.closest('.shortcut-row');
     const actionBtn = row.querySelector('.shortcut-action-btn');
@@ -1918,11 +1947,7 @@ async function initShortcuts() {
 
     // Remove any other active rebind
     listEl.querySelectorAll('.shortcut-key.listening').forEach(b => {
-      b.classList.remove('listening');
-      b.innerHTML = _formatKeyCaps(keybinds[b.dataset.action]);
-      const otherRow = b.closest('.shortcut-row');
-      const otherAction = otherRow.querySelector('.shortcut-action-btn');
-      if (otherAction && !otherAction.classList.contains('is-reset')) otherAction.style.visibility = 'hidden';
+      b._rebindCleanup?.();
     });
 
     btn.classList.add('listening');
@@ -1935,14 +1960,14 @@ async function initShortcuts() {
     // Hint: tell the user how to commit / cancel the rebind.
     if (hintEl) {
       hintEl.hidden = false;
-      hintEl.textContent = 'press a key';
+      hintEl.textContent = 'Esc binds Esc \u00b7 Backspace clears \u00b7 click again to cancel';
     }
 
     let pendingCombo = null;
 
     // Wire confirm button
     const confirmHandler = () => {
-      if (pendingCombo) {
+      if (pendingCombo !== null) {
         keybinds[action] = pendingCombo;
         saveKeybinds();
       }
@@ -1954,46 +1979,52 @@ async function initShortcuts() {
     function onKey(e) {
       e.preventDefault();
       e.stopPropagation();
-
-      if (e.key === 'Escape') {
-        cleanup();
-        btn.innerHTML = _formatKeyCaps(keybinds[action]);
-        const isCustom = keybinds[action] !== SHORTCUT_DEFAULTS[action];
-        if (isCustom) {
-          actionBtn.textContent = '\u21A9';
-          actionBtn.classList.add('is-reset');
-          actionBtn.title = 'Reset to default';
-        } else {
-          actionBtn.style.visibility = 'hidden';
-        }
-        return;
-      }
+      e.stopImmediatePropagation?.();
 
       // Enter commits the previewed combo (same as clicking \u2713). Only acts
       // as commit once a combo has been captured \u2014 otherwise it would just
       // try to bind Enter itself.
-      if (e.key === 'Enter' && pendingCombo) {
+      if (e.key === 'Enter' && pendingCombo !== null) {
         confirmHandler();
+        return;
+      }
+
+      if ((e.key === 'Backspace' || e.key === 'Delete') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        pendingCombo = '';
+        btn.innerHTML = '<span class="shortcut-unset">None</span>';
+        if (hintEl) hintEl.textContent = '\u21B5 Enter to save';
         return;
       }
 
       const combo = _comboFromEvent(e);
       if (!combo || combo === 'ctrl' || combo === 'alt' || combo === 'shift' || combo === 'ctrl+alt' || combo === 'ctrl+shift' || combo === 'alt+shift' || combo === 'ctrl+alt+shift') return;
 
-      // Preview the combo, wait for confirm
+      // Preview the combo, wait for confirm (including plain Esc → "escape").
       pendingCombo = combo;
       btn.innerHTML = _formatKeyCaps(combo);
-      // Now that a combo is captured, prompt to commit with Enter.
       if (hintEl) hintEl.textContent = '\u21B5 Enter to save';
     }
 
     function cleanup() {
       btn.classList.remove('listening');
+      btn._rebindCleanup = null;
       if (hintEl) { hintEl.hidden = true; hintEl.textContent = ''; }
       document.removeEventListener('keydown', onKey, true);
       actionBtn.removeEventListener('click', confirmHandler);
+      btn.innerHTML = _shortcutKeyContent(keybinds[action]);
+      const isCustom = keybinds[action] !== (SHORTCUT_DEFAULTS[action] ?? '');
+      if (isCustom) {
+        actionBtn.textContent = '\u21A9';
+        actionBtn.classList.add('is-reset');
+        actionBtn.title = 'Reset to default';
+        actionBtn.style.visibility = 'visible';
+      } else {
+        actionBtn.classList.remove('is-reset');
+        actionBtn.style.visibility = 'hidden';
+      }
     }
 
+    btn._rebindCleanup = cleanup;
     document.addEventListener('keydown', onKey, true);
   }
 
@@ -2004,8 +2035,9 @@ async function initShortcuts() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ keybinds }),
       });
+      writeStoredKeybinds(keybinds);
       // Update global keybinds so they take effect immediately
-      window._odysseusKeybinds = keybinds;
+      window._odysseusKeybinds = { ...SHORTCUT_DEFAULTS, ...keybinds };
       if (uiModule && uiModule.showToast) uiModule.showToast('Shortcut saved');
     } catch (e) {
       console.error('Failed to save keybinds:', e);
@@ -2838,6 +2870,13 @@ async function initEmailAccountsSettings() {
       el('eaf-smtp-security').value = p.smtp.security || ((parseInt(p.smtp.port || 465) === 587) ? 'starttls' : 'ssl');
     });
     el('eaf-smtp-security').value = _smtpSecurity(a);
+    // Port 993 is implicit SSL — STARTTLS on causes IMAP to hang.
+    const _eafSyncImapStarttls = () => {
+      if (parseInt(el('eaf-imap-port').value, 10) === 993) el('eaf-imap-starttls').checked = false;
+    };
+    el('eaf-imap-port').addEventListener('input', _eafSyncImapStarttls);
+    el('eaf-imap-port').addEventListener('change', _eafSyncImapStarttls);
+    _eafSyncImapStarttls();
 
     // "Same as IMAP" toggle — hide the SMTP creds rows when on. The save
     // handler copies the IMAP user/password into SMTP at submit time.
@@ -2880,6 +2919,34 @@ async function initEmailAccountsSettings() {
       if (!body.name) { el('eaf-msg').textContent = 'Need at least a Name or Email'; el('eaf-msg').style.color = 'var(--red)'; return; }
 
       try {
+        const testBody = { ...body };
+        if (isEdit && !testBody.imap_password) testBody.account_id = a.id;
+        if (testBody.imap_host && testBody.imap_user && (testBody.imap_password || isEdit)) {
+          el('eaf-msg').textContent = 'Testing connection…';
+          el('eaf-msg').style.color = '';
+          const tr = await fetch('/api/email/accounts/test', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(testBody),
+          });
+          const td = await tr.json();
+          if (!td.ok) {
+            const imapErr = td.imap?.error || 'IMAP failed';
+            const hint = /connection refused/i.test(imapErr)
+              ? 'Cannot reach the IMAP server. Check host, port (993 vs 143), and firewall.'
+              : imapErr;
+            const saveAnyway = await window.styledConfirm(
+              `Connection test failed:\n${hint}\n\nSave this account anyway?`,
+              { confirmText: 'Save anyway', cancelText: 'Fix settings', danger: true },
+            );
+            if (!saveAnyway) {
+              el('eaf-msg').textContent = `IMAP: ${hint}`;
+              el('eaf-msg').style.color = 'var(--red)';
+              return;
+            }
+          }
+        }
+
         const url = isEdit ? `/api/email/accounts/${a.id}` : '/api/email/accounts';
         const method = isEdit ? 'PUT' : 'POST';
         const r = await fetch(url, {
@@ -2915,6 +2982,12 @@ async function initEmailSettings() {
   try {
     const res = await fetch('/api/email/config');
     const cfg = await res.json();
+    if (el('set-email-ai-local-only')) el('set-email-ai-local-only').checked = !!cfg.email_ai_local_only;
+    if (el('set-email-block-remote-images')) {
+      el('set-email-block-remote-images').checked = cfg.email_block_remote_images !== false;
+      try { localStorage.setItem('email_block_remote_images', cfg.email_block_remote_images !== false ? '1' : '0'); } catch (_) {}
+    }
+    if (el('set-email-cache-retention')) el('set-email-cache-retention').value = cfg.email_cache_retention_days || 0;
     if (el('set-email-imap-host')) el('set-email-imap-host').value = cfg.imap_host || '';
     if (el('set-email-imap-port')) el('set-email-imap-port').value = cfg.imap_port || '';
     if (el('set-email-imap-user')) el('set-email-imap-user').value = cfg.imap_user || '';
@@ -2954,6 +3027,9 @@ async function initEmailSettings() {
       smtp_port: parseInt(el('set-email-smtp-port').value) || 0,
       smtp_user: el('set-email-smtp-user').value,
       email_from: el('set-email-from').value,
+      email_ai_local_only: !!el('set-email-ai-local-only')?.checked,
+      email_block_remote_images: !!el('set-email-block-remote-images')?.checked,
+      email_cache_retention_days: parseInt(el('set-email-cache-retention')?.value, 10) || 0,
     };
     const imapPass = el('set-email-imap-pass').value;
     const smtpPass = el('set-email-smtp-pass').value;
@@ -2966,11 +3042,29 @@ async function initEmailSettings() {
         body: JSON.stringify(data),
       });
       const result = await res.json();
+      if (result.success) {
+        try {
+          localStorage.setItem('email_block_remote_images', data.email_block_remote_images ? '1' : '0');
+        } catch (_) {}
+      }
       if (msg) msg.textContent = result.success ? '✓ Saved' : (result.error || 'Failed');
       setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
     } catch (e) {
       if (msg) msg.textContent = 'Failed';
     }
+  });
+
+  el('set-email-clear-ai-cache')?.addEventListener('click', async () => {
+    const msg = el('set-email-clear-ai-cache-msg');
+    if (msg) msg.textContent = 'Clearing…';
+    try {
+      const res = await fetch('/api/email/cache/clear', { method: 'POST', credentials: 'same-origin' });
+      const result = await res.json();
+      if (msg) msg.textContent = result.success ? `Cleared ${result.deleted || 0} rows` : (result.error || 'Failed');
+    } catch (_) {
+      if (msg) msg.textContent = 'Failed';
+    }
+    setTimeout(() => { if (msg) msg.textContent = ''; }, 4000);
   });
 
   // Save CardDAV config
@@ -4337,13 +4431,18 @@ async function initUnifiedIntegrations() {
     };
     el('uf-smtp-same').addEventListener('change', _syncSmtpSame);
     _syncSmtpSame();
+    const _ufSyncImapStarttls = () => {
+      if (parseInt(el('uf-imap-port').value, 10) === 993) el('uf-imap-starttls').checked = false;
+    };
+    el('uf-imap-port').addEventListener('input', _ufSyncImapStarttls);
+    el('uf-imap-port').addEventListener('change', _ufSyncImapStarttls);
     if (existing) {
       el('uf-email-name').value = existing.name || '';
       el('uf-email-from').value = existing.from_address || '';
       el('uf-imap-host').value = existing.imap_host || '';
       el('uf-imap-port').value = existing.imap_port || 993;
       el('uf-imap-user').value = existing.imap_user || '';
-      el('uf-imap-starttls').checked = existing.imap_starttls !== false;
+      el('uf-imap-starttls').checked = !!existing.imap_starttls;
       el('uf-smtp-host').value = existing.smtp_host || '';
       el('uf-smtp-port').value = existing.smtp_port || 465;
       el('uf-smtp-security').value = _smtpSecurity(existing);
@@ -4355,10 +4454,12 @@ async function initUnifiedIntegrations() {
       const sameCreds = !!(existing.imap_user && existing.smtp_user && existing.imap_user === existing.smtp_user);
       el('uf-smtp-same').checked = sameCreds || !existing.smtp_user;
       _syncSmtpSame();
+      _ufSyncImapStarttls();
     } else {
       el('uf-imap-port').value = 993;
       el('uf-smtp-port').value = 465;
       el('uf-smtp-security').value = 'ssl';
+      _ufSyncImapStarttls();
     }
     el('uf-email-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
 

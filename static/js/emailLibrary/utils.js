@@ -150,33 +150,217 @@ export function _initials(s) {
   return (first + last).toUpperCase();
 }
 
+function _sanitizeStyleContent(css) {
+  return String(css || '')
+    .replace(/@import\b[^;]+;?/gi, '')
+    .replace(/expression\s*\(/gi, '')
+    .replace(/javascript\s*:/gi, '')
+    .replace(/-moz-binding\s*:/gi, '')
+    .replace(/behavior\s*:/gi, '');
+}
+
+function _normalizeCidKey(cid) {
+  return decodeURIComponent(String(cid || '')).replace(/^<|>$/g, '').trim().toLowerCase();
+}
+
+/** True when plain text has per-digit spacing (anti-scrape), not normal phone groups. */
+export function _plainHasPerDigitSpacing(plain) {
+  const s = String(plain || '');
+  const runRe = /(?:\d[\s\u00a0]+){3,}\d/g;
+  let m;
+  while ((m = runRe.exec(s)) !== null) {
+    const parts = m[0].trim().split(/[\s\u00a0]+/).filter(Boolean);
+    if (parts.length >= 4 && parts.every((p) => /^\d$/.test(p))) return true;
+  }
+  return false;
+}
+
+/** @deprecated use _plainHasPerDigitSpacing */
+export function _plainLooksObfuscated(plain) {
+  return _plainHasPerDigitSpacing(plain);
+}
+
+export function _htmlLooksObfuscated(html) {
+  if (!html) return false;
+  if (/font-size\s*:\s*0/i.test(html) || /visibility\s*:\s*hidden/i.test(html)) return true;
+  const stripped = String(html).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  return _plainHasPerDigitSpacing(stripped);
+}
+
+/** True when HTML has a real `<table>` tag (not CSS `table {` / `.table` inside `<style>`). */
+export function _htmlHasRealTable(html) {
+  const stripped = String(html || '')
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '');
+  return /<table[\s/>]/i.test(stripped);
+}
+
+/** Fixed-column plain-text reports (monitoring digests, etc.). */
+export function _plainLooksTabular(text) {
+  const lines = String(text || '').split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length < 4) return false;
+  let aligned = 0;
+  for (const line of lines) {
+    if (/ {2,}|\t/.test(line)) aligned++;
+  }
+  return aligned >= Math.min(4, Math.ceil(lines.length * 0.2));
+}
+
+/** Spark-style: use clean text/plain when HTML is obfuscated or plain is enough. */
+export function _shouldPreferPlainBody(plain, html) {
+  if (!plain || !String(plain).trim()) return false;
+  const hasHtml = !!(html && String(html).trim());
+  if (!hasHtml) return !_plainHasPerDigitSpacing(plain);
+  if (_htmlLooksObfuscated(html)) return true;
+  if (_plainHasPerDigitSpacing(plain)) return false;
+  if (_htmlHasRealTable(html) || /<img\b/i.test(html)) return false;
+  if (_plainLooksTabular(plain) && !_htmlHasRealTable(html)) return true;
+  return true;
+}
+
+/** Collapse only single-digit-separated runs (2 0 2 6 → 2026), not +370 5 2222444. */
+export function _collapseObfuscatedDigits(text) {
+  let s = String(text || '').replace(/[\u200B\u200C\u200D\uFEFF\u00AD]/g, '');
+  s = s.replace(/(?:\d[\s\u00a0]+)+/g, (run) => {
+    const parts = run.trim().split(/[\s\u00a0]+/).filter(Boolean);
+    if (parts.length >= 2 && parts.every((p) => /^\d$/.test(p))) {
+      return parts.join('');
+    }
+    return run;
+  });
+  return s;
+}
+
+function _stripObfuscationStyles(doc) {
+  doc.querySelectorAll('[style]').forEach((el) => {
+    const style = el.getAttribute('style') || '';
+    const lower = style.toLowerCase();
+    const obfuscated = /font-size\s*:\s*0(?:\D|$)/.test(lower)
+      || /line-height\s*:\s*0/.test(lower)
+      || /opacity\s*:\s*0/.test(lower)
+      || /visibility\s*:\s*hidden/.test(lower)
+      || /(?:^|;)\s*display\s*:\s*none/.test(lower)
+      || /max-height\s*:\s*0(?:px)?(?:\D|$)/.test(lower);
+    if (!obfuscated) return;
+    const kept = style.split(';').map((d) => d.trim()).filter((decl) => {
+      if (!decl) return false;
+      const d = decl.toLowerCase();
+      if (/^font-size\s*:\s*0/.test(d)) return false;
+      if (/^line-height\s*:\s*0/.test(d)) return false;
+      if (/^opacity\s*:\s*0/.test(d)) return false;
+      if (/^visibility\s*:\s*hidden/.test(d)) return false;
+      if (/^display\s*:\s*none/.test(d)) return false;
+      if (/^max-height\s*:\s*0/.test(d)) return false;
+      if (/^width\s*:\s*0/.test(d)) return false;
+      if (/^height\s*:\s*0/.test(d)) return false;
+      return true;
+    });
+    if (kept.length) el.setAttribute('style', kept.join('; '));
+    else el.removeAttribute('style');
+  });
+}
+
+function _flattenTrackingElements(doc) {
+  const tags = ['SPAN', 'FONT', 'B', 'I', 'EM', 'STRONG', 'U', 'SMALL'];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const el of [...doc.body.querySelectorAll(tags.join(','))]) {
+      if (el.children.length > 0) continue;
+      const text = el.textContent || '';
+      if (text.length > 4) continue;
+      el.replaceWith(doc.createTextNode(text));
+      changed = true;
+    }
+  }
+}
+
+function _normalizeEmailTextNodes(doc) {
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const node of nodes) {
+    const next = _collapseObfuscatedDigits(node.textContent || '');
+    if (next !== node.textContent) node.textContent = next;
+  }
+}
+
+/** Rewrite cid: image refs to the attachment download route before sanitize. */
+export function _rewriteEmailCidUrls(html, { uid, folder, accountId, attachments } = {}) {
+  if (!html || !uid || !attachments?.length) return String(html || '');
+  const byCid = new Map();
+  for (const att of attachments) {
+    const cid = att?.content_id || att?.contentId;
+    if (cid) byCid.set(_normalizeCidKey(cid), att.index);
+  }
+  if (!byCid.size) return String(html || '');
+  const acctQs = accountId ? `&account_id=${encodeURIComponent(accountId)}` : '';
+  const folderQs = encodeURIComponent(folder || 'INBOX');
+  const base = `/api/email/attachment/${encodeURIComponent(uid)}`;
+  return String(html).replace(
+    /\bcid:([^"'\s>)]+)/gi,
+    (match, rawCid) => {
+      const idx = byCid.get(_normalizeCidKey(rawCid));
+      if (idx == null) return match;
+      return `${base}/${idx}?folder=${folderQs}${acctQs}`;
+    },
+  );
+}
+
+/** Sanitize then prepare HTML mail for in-app rendering. */
+export function _prepareEmailHtml(html, ctx) {
+  let out = String(html || '');
+  // Anti-scrape invisible separators and whitespace between per-char tags.
+  out = out.replace(/[\u200B\u200C\u200D\uFEFF\u00AD]/g, '');
+  out = out.replace(/>(\s|&nbsp;|&#160;|&#x0*a0;)+</gi, '><');
+  out = out.replace(/(<br\s*\/?>[\s\u00a0]*){3,}/gi, '<br><br>');
+  out = _rewriteEmailCidUrls(out, ctx);
+  return _sanitizeHtml(out);
+}
+
 // HTML sanitizer for rendering remote email bodies. Strips script/iframe/
-// form/style/etc., kills `on*` handlers, blocks `javascript:`/`vbscript:`/
-// `data:` URLs on every known URL attribute, scrubs inline colour/font/
-// position styles so the theme can take over, and wraps highlight-bearing
-// inline tags in <mark> so they render legibly across themes.
+// form/etc., sanitizes embedded <style> (layout CSS from newsletters),
+// kills `on*` handlers, blocks dangerous URL schemes, scrubs inline colour/
+// font/position/letter-spacing styles so the theme can take over, and wraps
+// highlight-bearing inline tags in <mark> so they render legibly across themes.
 function _sanitizeHtmlOnce(html) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   doc.querySelectorAll(
-    'script, iframe, object, embed, form, style, link, ' +
+    'script, iframe, object, embed, form, link, ' +
     'svg, math, base, meta, noscript, frame, frameset, applet, portal'
   ).forEach(el => el.remove());
+  doc.querySelectorAll('style').forEach((el) => {
+    el.textContent = _sanitizeStyleContent(el.textContent || '');
+  });
 
   const URL_ATTRS = ['href', 'src', 'xlink:href', 'srcset', 'action', 'formaction', 'background', 'poster', 'data'];
 
   const STRIP_CSS_PROPS = ['color', 'background', 'background-color',
                            'font-family', 'font', '-webkit-text-fill-color',
-                           'position', 'z-index'];
+                           'position', 'z-index', 'letter-spacing', 'word-spacing'];
   const HIGHLIGHT_INLINE_TAGS = new Set(['SPAN', 'FONT', 'EM', 'B', 'I',
                                          'STRONG', 'SMALL', 'U']);
   const HAS_BG_COLOR = /background(?:-color)?\s*:\s*(?!\s*(?:transparent|none|inherit|initial)\b)[^;]+/i;
   const _markedForHighlight = [];
+
+  const blockRemote = localStorage.getItem('email_block_remote_images') !== '0';
 
   doc.querySelectorAll('*').forEach(el => {
     for (const attr of [...el.attributes]) {
       const name = attr.name.toLowerCase();
       if (name.startsWith('on')) { el.removeAttribute(attr.name); continue; }
       if (name === 'srcdoc') { el.removeAttribute(attr.name); continue; }
+      if (blockRemote && el.tagName === 'IMG' && name === 'src') {
+        const src = String(attr.value || '').trim();
+        if (src && !src.startsWith('cid:') && !src.startsWith('data:')) {
+          el.setAttribute('data-blocked-src', src);
+          el.setAttribute('src', 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7');
+          el.setAttribute('title', 'Remote image blocked — click to load');
+          el.classList.add('email-remote-img-blocked');
+          continue;
+        }
+      }
       if (URL_ATTRS.includes(name) && (name === 'srcset' ? _isDangerousSrcset(attr.value) : _isDangerousUrl(attr.value))) {
         el.removeAttribute(attr.name);
         continue;
@@ -215,6 +399,10 @@ function _sanitizeHtmlOnce(html) {
     el.appendChild(mark);
   });
 
+  _stripObfuscationStyles(doc);
+  _flattenTrackingElements(doc);
+  _normalizeEmailTextNodes(doc);
+
   return doc.body.innerHTML;
 }
 
@@ -226,4 +414,131 @@ export function _sanitizeHtml(html) {
     out = next;
   }
   return out;
+}
+
+/** plain = textContent; iframe = sandboxed HTML; inline = legacy sanitized innerHTML fallback. */
+export function _emailBodyRenderMode(plain, html) {
+  const p = String(plain || '').trim();
+  const h = String(html || '').trim();
+  if (!h) return 'plain';
+  if (p && _htmlLooksObfuscated(h)) return 'plain';
+  return 'iframe';
+}
+
+function _linkPatternRe() {
+  return /\b((?:https?:\/\/|www\.)[^\s<>"']+[^\s<>"'.,;:!?)\]]|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g;
+}
+
+/** Linkify URLs and mailto addresses inside a plain-text container (DOM only). */
+export function _linkifyPlainContainer(root) {
+  if (!root) return;
+  const re = _linkPatternRe();
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const node of nodes) {
+    const text = node.textContent || '';
+    re.lastIndex = 0;
+    if (!re.test(text)) continue;
+    re.lastIndex = 0;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const token = m[1];
+      const a = document.createElement('a');
+      if (token.includes('@') && !token.startsWith('www.')) {
+        a.href = `mailto:${token}`;
+      } else {
+        a.href = token.startsWith('www.') ? `https://${token}` : token;
+      }
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = token;
+      frag.appendChild(a);
+      last = m.index + token.length;
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode?.replaceChild(frag, node);
+  }
+}
+
+/** Minimal sanitization for sandboxed iframe — keep sender layout/CSS, drop scripts only. */
+export function _buildEmailIframeDoc(html, ctx = {}) {
+  let raw = String(html || '');
+  raw = raw.replace(/[\u200B\u200C\u200D\uFEFF\u00AD]/g, '');
+  raw = raw.replace(/>(\s|&nbsp;|&#160;|&#x0*a0;)+</gi, '><');
+  raw = _rewriteEmailCidUrls(raw, ctx);
+
+  const trimmed = raw.trim();
+  const isFullDoc = /^\s*<!doctype/i.test(trimmed) || /^\s*<html[\s>]/i.test(trimmed);
+  const doc = new DOMParser().parseFromString(
+    isFullDoc
+      ? trimmed
+      : `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${trimmed}</body></html>`,
+    'text/html',
+  );
+  const blockRemote = localStorage.getItem('email_block_remote_images') !== '0';
+  const URL_ATTRS = ['href', 'src', 'xlink:href', 'srcset', 'action', 'formaction', 'background', 'poster', 'data'];
+
+  doc.querySelectorAll(
+    'script, iframe, object, embed, form, link, base, meta, noscript, frame, frameset, applet, portal, svg, math'
+  ).forEach((el) => el.remove());
+
+  doc.querySelectorAll('*').forEach((el) => {
+    for (const attr of [...el.attributes]) {
+      const name = attr.name.toLowerCase();
+      if (name.startsWith('on') || name === 'srcdoc') {
+        el.removeAttribute(attr.name);
+        continue;
+      }
+      if (blockRemote && el.tagName === 'IMG' && name === 'src') {
+        const src = String(attr.value || '').trim();
+        if (src && !src.startsWith('cid:') && !src.startsWith('data:')) {
+          el.setAttribute('data-blocked-src', src);
+          el.setAttribute('src', 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7');
+          el.setAttribute('title', 'Remote image blocked — click to load');
+          continue;
+        }
+      }
+      if (URL_ATTRS.includes(name) && (name === 'srcset' ? _isDangerousSrcset(attr.value) : _isDangerousUrl(attr.value))) {
+        el.removeAttribute(attr.name);
+      }
+    }
+    if (el.tagName === 'A') {
+      el.setAttribute('target', '_blank');
+      el.setAttribute('rel', 'noopener noreferrer');
+    }
+  });
+
+  const head = doc.head || doc.createElement('head');
+  if (!doc.head) doc.documentElement.prepend(head);
+  if (!head.querySelector('meta[charset]')) {
+    const meta = doc.createElement('meta');
+    meta.setAttribute('charset', 'utf-8');
+    head.prepend(meta);
+  }
+  if (!head.querySelector('meta[name="referrer"]')) {
+    const ref = doc.createElement('meta');
+    ref.setAttribute('name', 'referrer');
+    ref.setAttribute('content', 'no-referrer');
+    head.appendChild(ref);
+  }
+  if (!head.querySelector('base')) {
+    const base = doc.createElement('base');
+    base.setAttribute('target', '_blank');
+    base.setAttribute('rel', 'noopener noreferrer');
+    head.prepend(base);
+  }
+  if (!isFullDoc) {
+    const extra = doc.createElement('style');
+    extra.textContent = (
+      'html,body{margin:0;padding:8px 10px;font-family:system-ui,-apple-system,sans-serif;'
+      + 'line-height:1.45;overflow-wrap:break-word;word-break:normal}'
+      + 'img{max-width:100%;height:auto}table{border-collapse:collapse}'
+    );
+    head.appendChild(extra);
+  }
+  return '<!DOCTYPE html>' + doc.documentElement.outerHTML;
 }

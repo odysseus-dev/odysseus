@@ -135,6 +135,227 @@ function saveFolderOrder(order) {
   Storage.setJSON(FOLDER_ORDER_KEY, order);
 }
 
+// ── Projects state ──────────────────────────────────────────────────── #
+let _projectsList = [];
+let _activeProjectId = null;
+
+/** Fetch projects from the API and re-render the projects sidebar section. */
+async function loadProjects() {
+  try {
+    const res = await fetch(`${API_BASE}/api/projects`);
+    if (!res.ok) return;
+    _projectsList = await res.json();
+  } catch (e) {
+    _projectsList = [];
+  }
+  _renderProjectsSection();
+}
+
+/** Render the Projects section above the session list. */
+function _renderProjectsSection() {
+  const container = document.getElementById('projects-sidebar-section');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.className = 'session-folder-header';
+  header.style.cssText = 'display:flex;align-items:center;gap:4px;padding:4px 8px;';
+
+  const title = document.createElement('span');
+  title.className = 'folder-name';
+  title.style.cssText = 'flex:1;cursor:pointer;';
+  title.textContent = 'Projects';
+  title.title = 'Open Projects';
+  title.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (window.projectsViewModule) window.projectsViewModule.openProjectsListView();
+  });
+
+  const newBtn = document.createElement('button');
+  newBtn.className = 'folder-delete-btn';
+  newBtn.style.cssText = 'color:var(--accent-primary);font-size:14px;padding:0 4px;';
+  newBtn.textContent = '+';
+  newBtn.title = 'New Project';
+  newBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (window.projectsViewModule) window.projectsViewModule.openProjectsListView();
+  });
+
+  header.appendChild(title);
+  header.appendChild(newBtn);
+  container.appendChild(header);
+
+  _projectsList.forEach(p => {
+    const item = document.createElement('div');
+    item.className = 'list-item' + (_activeProjectId === p.id ? ' active-session' : '');
+    item.style.cssText = 'padding:5px 10px 5px 20px;cursor:pointer;display:flex;align-items:center;gap:6px;';
+    item.dataset.projectId = p.id;
+
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('width', '12'); icon.setAttribute('height', '12');
+    icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('fill', 'none');
+    icon.setAttribute('stroke', 'currentColor'); icon.setAttribute('stroke-width', '2');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', 'M3 7a2 2 0 0 1 2-2h3l2 2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z');
+    icon.appendChild(path);
+
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = p.name;
+    nameSpan.style.flex = '1';
+    nameSpan.style.overflow = 'hidden';
+    nameSpan.style.textOverflow = 'ellipsis';
+    nameSpan.style.whiteSpace = 'nowrap';
+
+    item.appendChild(icon);
+    item.appendChild(nameSpan);
+
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (window.projectsViewModule) {
+        window.projectsViewModule.openProjectView(p.id);
+      }
+    });
+
+    container.appendChild(item);
+  });
+}
+
+/** Move a session into a project. */
+async function moveToProject(sessionId, projectId) {
+  if (!projectId) {
+    // Find the current project for this session and remove it
+    const s = sessions.find(x => x.id === sessionId);
+    if (s && s.project_id) {
+      await fetch(`${API_BASE}/api/projects/${s.project_id}/sessions/${sessionId}`, { method: 'DELETE' });
+      s.project_id = null;
+    }
+  } else {
+    await fetch(`${API_BASE}/api/projects/${projectId}/sessions/${sessionId}`, { method: 'POST' });
+    const s = sessions.find(x => x.id === sessionId);
+    if (s) s.project_id = projectId;
+  }
+  renderSessionList();
+}
+
+/** Build "Move to project" context-menu submenu. */
+function buildProjectSubmenu(sessionId, currentProjectId, dropdown) {
+  const moveItem = document.createElement('div');
+  moveItem.className = 'dropdown-item-compact';
+  moveItem.style.position = 'relative';
+  const _projIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h3l2 2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+  const _iconEl = document.createElement('span');
+  _iconEl.className = 'dropdown-icon';
+  _iconEl.innerHTML = _projIcon;
+  moveItem.appendChild(_iconEl);
+  const _labelEl = document.createElement('span');
+  _labelEl.textContent = 'Move to project';
+  moveItem.appendChild(_labelEl);
+
+  const sub = document.createElement('div');
+  sub.className = 'dropdown session-folder-submenu';
+
+  const noneOpt = document.createElement('div');
+  noneOpt.className = 'dropdown-item-compact';
+  if (!currentProjectId) noneOpt.style.opacity = '0.5';
+  noneOpt.textContent = '(No project)';
+  noneOpt.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    await moveToProject(sessionId, null);
+    dropdown.style.display = 'none';
+    sub.style.display = 'none';
+  });
+  sub.appendChild(noneOpt);
+
+  _projectsList.forEach(p => {
+    const opt = document.createElement('div');
+    opt.className = 'dropdown-item-compact';
+    if (p.id === currentProjectId) opt.style.opacity = '0.5';
+    opt.textContent = p.name;
+    opt.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await moveToProject(sessionId, p.id);
+      dropdown.style.display = 'none';
+      sub.style.display = 'none';
+    });
+    sub.appendChild(opt);
+  });
+
+  const newOpt = document.createElement('div');
+  newOpt.className = 'dropdown-item-compact';
+  newOpt.style.color = 'var(--accent-primary)';
+  newOpt.textContent = '+ New Project';
+  newOpt.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const name = await styledPrompt('Project name:', {
+      title: 'New project',
+      placeholder: 'e.g. Research, Work, Personal',
+      confirmText: 'Create',
+    });
+    if (!name || !name.trim()) return;
+    const fd = new FormData();
+    fd.append('name', name.trim());
+    const resp = await fetch(`${API_BASE}/api/projects`, { method: 'POST', body: fd });
+    if (resp.ok) {
+      const newProj = await resp.json();
+      await loadProjects();
+      await moveToProject(sessionId, newProj.id);
+    }
+    dropdown.style.display = 'none';
+    sub.style.display = 'none';
+  });
+  sub.appendChild(newOpt);
+
+  moveItem.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (sub.style.display === 'block') {
+      sub.style.display = 'none';
+    } else {
+      const rect = moveItem.getBoundingClientRect();
+      const isMobile = window.innerWidth <= 768;
+      sub.style.top = '-9999px';
+      sub.style.display = 'block';
+      const subRect = sub.getBoundingClientRect();
+      if (isMobile) {
+        const ddRect = dropdown.getBoundingClientRect();
+        sub.style.left = Math.max(8, ddRect.left) + 'px';
+        sub.style.width = Math.min(ddRect.width, window.innerWidth - 16) + 'px';
+        const topBelow = ddRect.bottom + 4;
+        if (topBelow + subRect.height > window.innerHeight) {
+          sub.style.top = Math.max(8, ddRect.top - subRect.height - 4) + 'px';
+        } else {
+          sub.style.top = topBelow + 'px';
+        }
+      } else {
+        sub.style.left = rect.right + 2 + 'px';
+        sub.style.width = '';
+        if (rect.top + subRect.height > window.innerHeight) {
+          sub.style.top = Math.max(2, window.innerHeight - subRect.height - 4) + 'px';
+        } else {
+          sub.style.top = rect.top + 'px';
+        }
+        if (rect.right + 2 + subRect.width > window.innerWidth - 8) {
+          sub.style.left = Math.max(8, rect.left - subRect.width - 2) + 'px';
+        }
+      }
+    }
+  });
+
+  sub.addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', () => { sub.style.display = 'none'; });
+  document.body.appendChild(sub);
+
+  return moveItem;
+}
+
+/** Get the active project filter (null = show all). */
+export function getActiveProjectId() { return _activeProjectId; }
+
+/** Get the projects list. */
+export function getProjectsList() { return _projectsList; }
+
+/** Public re-export of loadProjects for external modules. */
+export { loadProjects };
+
 /** Get all unique folder names from current sessions. */
 function getFolderNames() {
   const names = new Set();
@@ -557,10 +778,12 @@ function createSessionItem(s) {
     }
   }
 
-  // Copy & Move to folder
+  // Copy & Move to folder & Move to project
   const folderItem = buildFolderSubmenu(s.id, s.folder, dropdown);
+  const projectItem = buildProjectSubmenu(s.id, s.project_id || null, dropdown);
   dropdown.appendChild(copyItem);
   dropdown.appendChild(folderItem);
+  dropdown.appendChild(projectItem);
 
   // Separator before destructive actions
   const _sep = document.createElement('div');
@@ -717,6 +940,18 @@ function createSessionItem(s) {
 
   div.appendChild(span);
 
+  // Project chip — shown when session belongs to a project and no project filter is active
+  if (s.project_id && !_activeProjectId) {
+    const proj = _projectsList.find(p => p.id === s.project_id);
+    if (proj) {
+      const chip = document.createElement('span');
+      chip.style.cssText = 'font-size:9px;padding:1px 4px;border-radius:8px;background:color-mix(in srgb,var(--accent-primary) 20%,transparent);color:var(--accent-primary);white-space:nowrap;flex-shrink:0;max-width:60px;overflow:hidden;text-overflow:ellipsis;';
+      chip.title = proj.name;
+      chip.textContent = proj.name;
+      div.appendChild(chip);
+    }
+  }
+
   // Apply processing/completed state to the star dot
   var _isProcessing = _researchingSessions.has(s.id) || _streamingSessions.has(s.id);
   var _isDone = _completedSessions.has(s.id) && !_isProcessing;
@@ -758,6 +993,10 @@ function _renderSessionListImpl() {
   // Get saved order from localStorage
   const savedOrder = Storage.get('session-order');
   let orderedSessions = sessions.filter(s => !s.archived && s.folder !== 'Assistant' && !_isIncognitoSession(s.id) && (s.name || '').trim() !== 'Nobody' && (s.name || '').trim() !== 'Incognito');
+  // Filter to active project if one is selected
+  if (_activeProjectId) {
+    orderedSessions = orderedSessions.filter(s => s.project_id === _activeProjectId);
+  }
 
   if (savedOrder) {
     try {
@@ -1358,6 +1597,10 @@ export async function loadSessions() {
       fetched = await res.json();
     }
     sessions = _normalizeSessionsList(fetched);
+    // Reset project filter on full reload so stale filter doesn't persist across logins
+    _activeProjectId = null;
+    // Load projects in parallel (non-blocking — renders session list immediately)
+    loadProjects().catch(() => {});
     renderSessionList();
 
     const sessionsSection = uiModule.el('sessions-section');
@@ -1871,6 +2114,12 @@ export async function materializePendingSession() {
   currentSessionId = payload.id;
   Storage.set('lastSessionId', payload.id);
   history.replaceState(null, '', '#' + payload.id);
+
+  // If this chat was started from inside a project, assign it now
+  if (pending.projectId) {
+    await fetch(`${API_BASE}/api/projects/${pending.projectId}/sessions/${payload.id}`, { method: 'POST' })
+      .catch(() => {});
+  }
 
   // Reload sidebar to show the new session — await it so the session
   // is fully registered before the caller proceeds (prevents race conditions)
@@ -3131,7 +3380,8 @@ const sessionModule = {
   closeArchive,
   setSessionHasDocs,
   getSortMode,
-  setSortMode
+  setSortMode,
+  setPendingChat: (v) => { _pendingChat = v; },
 };
 
 export { updateModelPicker };

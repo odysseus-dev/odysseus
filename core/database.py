@@ -1,4 +1,5 @@
 import os
+import uuid
 import logging
 import sqlite3
 from datetime import datetime, timezone
@@ -129,6 +130,7 @@ class Session(TimestampMixin, Base):
     total_output_tokens = Column(Integer, default=0)
     mode = Column(String, nullable=True)  # 'agent', 'chat', or 'research'
     crew_member_id = Column(String, nullable=True)  # links to crew_members.id
+    project_id = Column(String, nullable=True)       # links to projects.id
 
     # Relationship to chat messages
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
@@ -157,6 +159,7 @@ class Session(TimestampMixin, Base):
             'total_input_tokens': self.total_input_tokens or 0,
             'total_output_tokens': self.total_output_tokens or 0,
             'crew_member_id': self.crew_member_id,
+            'project_id': self.project_id,
         }
 
 class ChatMessage(Base):
@@ -1559,6 +1562,40 @@ def _migrate_add_assistant_columns():
 
 
 
+class Project(Base):
+    """A named workspace that groups related chat sessions."""
+    __tablename__ = "projects"
+
+    id           = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name         = Column(String, nullable=False)
+    description  = Column(String, nullable=True, default="")
+    instructions = Column(Text, nullable=True)
+    owner        = Column(String, nullable=True)
+    created_at   = Column(DateTime, default=utcnow_naive)
+    updated_at   = Column(DateTime, default=utcnow_naive, onupdate=utcnow_naive)
+    archived     = Column(Boolean, default=False)
+
+
+class ProjectDocument(Base):
+    """Pinned documents attached to a project."""
+    __tablename__ = "project_documents"
+
+    project_id  = Column(String, ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True)
+    document_id = Column(String, ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True)
+    pinned_at   = Column(DateTime, default=utcnow_naive)
+
+
+class ProjectMemory(Base):
+    """Synthesized cross-session insights for a project."""
+    __tablename__ = "project_memories"
+
+    id             = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id     = Column(String, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    content        = Column(Text, nullable=False)
+    synthesized_at = Column(DateTime, default=utcnow_naive)
+    session_count  = Column(Integer, default=0)
+
+
 class Note(TimestampMixin, Base):
     """A Google Keep-style note or checklist."""
     __tablename__ = "notes"
@@ -1719,6 +1756,84 @@ def _migrate_seed_email_account():
         logging.getLogger(__name__).warning(f"seed email account migration: {e}")
 
 
+def _migrate_add_projects_table():
+    """Create projects table if it does not exist. Idempotent."""
+    try:
+        with engine.connect() as conn:
+            tables = [r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))]
+            if "projects" not in tables:
+                conn.execute(text("""
+                    CREATE TABLE projects (
+                        id VARCHAR PRIMARY KEY,
+                        name VARCHAR NOT NULL,
+                        description VARCHAR DEFAULT '',
+                        instructions TEXT,
+                        owner VARCHAR,
+                        created_at DATETIME,
+                        updated_at DATETIME,
+                        archived BOOLEAN DEFAULT 0
+                    )
+                """))
+                conn.commit()
+                logging.getLogger(__name__).info("Created projects table")
+    except Exception as e:
+        logging.getLogger(__name__).warning("projects table migration: %s", e)
+
+
+def _migrate_add_project_documents_table():
+    """Create project_documents table if it does not exist. Idempotent."""
+    try:
+        with engine.connect() as conn:
+            tables = [r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))]
+            if "project_documents" not in tables:
+                conn.execute(text("""
+                    CREATE TABLE project_documents (
+                        project_id VARCHAR NOT NULL,
+                        document_id VARCHAR NOT NULL,
+                        pinned_at DATETIME,
+                        PRIMARY KEY (project_id, document_id)
+                    )
+                """))
+                conn.commit()
+                logging.getLogger(__name__).info("Created project_documents table")
+    except Exception as e:
+        logging.getLogger(__name__).warning("project_documents table migration: %s", e)
+
+
+def _migrate_add_project_memories_table():
+    """Create project_memories table if it does not exist. Idempotent."""
+    try:
+        with engine.connect() as conn:
+            tables = [r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))]
+            if "project_memories" not in tables:
+                conn.execute(text("""
+                    CREATE TABLE project_memories (
+                        id VARCHAR PRIMARY KEY,
+                        project_id VARCHAR NOT NULL,
+                        content TEXT NOT NULL,
+                        synthesized_at DATETIME,
+                        session_count INTEGER DEFAULT 0
+                    )
+                """))
+                conn.commit()
+                logging.getLogger(__name__).info("Created project_memories table")
+    except Exception as e:
+        logging.getLogger(__name__).warning("project_memories table migration: %s", e)
+
+
+def _migrate_add_session_project_id():
+    """Add project_id column to sessions table if it does not exist. Idempotent."""
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(sessions)"))]
+            if "project_id" not in cols:
+                conn.execute(text("ALTER TABLE sessions ADD COLUMN project_id VARCHAR"))
+                conn.commit()
+                logging.getLogger(__name__).info("Added project_id column to sessions")
+    except Exception as e:
+        logging.getLogger(__name__).warning("session project_id migration: %s", e)
+
+
 # WARNING: Foreign-key enforcement is enabled globally for all SQLite connections.
 # Any future migrations or schema changes that temporarily violate foreign-key
 # constraints will fail. To perform such operations, foreign_keys must be
@@ -1772,6 +1887,10 @@ def init_db():
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
     _migrate_backfill_task_folders()
+    _migrate_add_projects_table()
+    _migrate_add_project_documents_table()
+    _migrate_add_project_memories_table()
+    _migrate_add_session_project_id()
 
 
 def _migrate_backfill_task_folders():

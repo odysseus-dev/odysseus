@@ -511,6 +511,21 @@ function initializeEventListeners() {
   // Close popups one by one with Escape key (topmost first)
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (document.querySelector('.shortcut-key.listening')) return;
+      if (document.getElementById('email-cmd-palette') || document.getElementById('email-move-picker')) return;
+
+      const emailShortcuts = document.getElementById('email-shortcuts-overlay');
+      if (emailShortcuts) {
+        emailShortcuts._shortcutsKeyDetach?.();
+        emailShortcuts.remove();
+        return;
+      }
+      const emailSource = document.getElementById('email-source-overlay');
+      if (emailSource) {
+        emailSource.remove();
+        return;
+      }
+
       // If a confirm dialog is open, let it handle the Escape
       const confirmOverlay = document.getElementById('styled-confirm-overlay');
       if (confirmOverlay && !confirmOverlay.classList.contains('hidden')) return;
@@ -578,10 +593,14 @@ function initializeEventListeners() {
         'memory-modal': null,
       };
 
+      const _modalVisible = (m) => m && !m.classList.contains('hidden') && !m.classList.contains('modal-minimized')
+        && getComputedStyle(m).display !== 'none';
+
       // Dynamic modals (removed from DOM on close)
       const dynamicModals = ['library-modal', 'archive-modal', 'doclib-modal', 'gallery-modal', 'tasks-modal', 'email-lib-modal'];
       for (const id of dynamicModals) {
         const m = document.getElementById(id);
+        if (!_modalVisible(m)) continue;
         if (id === 'gallery-modal') {
           const editor = document.getElementById('gallery-editor-container');
           const editing = !!window.__galleryEditLive || !!(
@@ -595,12 +614,33 @@ function initializeEventListeners() {
             return;
           }
         }
-        if (m) { dismissModal(m); return; }
+        if (id === 'email-lib-modal') {
+          const bulk = document.getElementById('email-lib-bulk');
+          if (bulk && !bulk.classList.contains('hidden')) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            document.getElementById('email-lib-bulk-cancel')?.click();
+            return;
+          }
+        }
+        if (!escMayDismissModal(e, id, EMAIL_SHORTCUT_DEFAULTS)) continue;
+        dismissModal(m);
+        return;
+      }
+
+      // Per-email reader tabs (opened via "Open in new tab")
+      const readerTab = document.querySelector('.email-reader-tab-modal:not(.hidden)');
+      if (readerTab) {
+        if (escMayDismissModal(e, readerTab.id, EMAIL_SHORTCUT_DEFAULTS)) {
+          dismissModal(readerTab);
+          return;
+        }
       }
 
       for (const modalId of Object.keys(modalItemMap)) {
         const modal = el(modalId);
         if (modal && !modal.classList.contains('hidden')) {
+          if (!escMayDismissModal(e, modalId, EMAIL_SHORTCUT_DEFAULTS)) continue;
           dismissModal(modal);
           return;
         }
@@ -1059,6 +1099,7 @@ function initializeEventListeners() {
         const modal = document.getElementById('email-lib-modal');
         if (!modal) return false;
         modal.classList.add('email-lib-fullscreen');
+        modal.querySelector('[data-email-fullscreen-toggle]')?.classList.add('active');
         return true;
       };
       _goFullscreen();

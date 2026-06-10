@@ -25,10 +25,15 @@ export const state = {
   _libFilter: 'all',             // all, unread, unanswered
   _libSort: 'recent',            // recent, unread, favorites
   _libHasAttachments: false,
+  _libGroupThreads: false,
   _libLoading: false,
   _docModule: null,
   _onEmailClick: null,
   _libEscHandler: null,
+  _emailKeysWired: false,
   _selectMode: false,
   _selectedUids: new Set(),
+  _libKeyFocusUid: null,
+  /** Shift+click / Shift+arrow range anchor (uid string). */
+  _libShiftAnchorUid: null,
 };

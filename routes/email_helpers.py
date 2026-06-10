@@ -1131,12 +1131,15 @@ def _list_attachments_from_msg(msg):
             filename = f"attachment_{idx}.{ext}"
         payload = part.get_payload(decode=True)
         size = len(payload) if payload else 0
+        raw_cid = part.get("Content-ID", "") or ""
+        content_id = raw_cid.strip().strip("<>").strip() if raw_cid else ""
         attachments.append({
             "index": idx,
             "filename": filename,
             "content_type": ct,
             "size": size,
             "is_inline": "inline" in cd.lower(),
+            "content_id": content_id,
         })
         idx += 1
     return attachments
@@ -1554,3 +1557,6 @@ class SendEmailRequest(BaseModel):
 
 class ExtractStyleRequest(BaseModel):
     sample_count: Optional[int] = 20
+
+
+_init_scheduled_db()
