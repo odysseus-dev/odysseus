@@ -25,6 +25,24 @@ def _verify_args(path: Path):
     return SimpleNamespace(path=str(path), pretty=False)
 
 
+def test_backup_entry_skips_files_that_disappear():
+    backup = _load_backup_cli()
+
+    class Vanished:
+        name = "gone.tar.gz"
+
+        def is_file(self):
+            return True
+
+        def stat(self):
+            raise FileNotFoundError("gone")
+
+        def __str__(self):
+            return "backups/gone.tar.gz"
+
+    assert backup._backup_entry(Vanished()) is None
+
+
 def test_snapshot_rejects_output_inside_data_dir(tmp_path, monkeypatch):
     backup = _load_backup_cli()
     repo = tmp_path / "repo"
