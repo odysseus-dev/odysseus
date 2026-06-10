@@ -10922,6 +10922,42 @@ textarea.memory-add-input {
   border-color: var(--red);
 }
 
+.doclib-attach-btn {
+  position: absolute;
+  top: 6px;
+  right: 36px;
+  z-index: 5;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  transition: all 0.15s;
+  padding: 0;
+  opacity: 0;
+}
+.doclib-card:hover .doclib-attach-btn,
+.memory-item:hover .doclib-attach-btn,
+.doclib-chat-row:hover .doclib-attach-btn {
+  opacity: 1;
+}
+.doclib-attach-btn:hover {
+  color: var(--fg);
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, var(--panel));
+}
+.doclib-attach-btn.attached {
+  color: var(--accent, var(--red));
+  border-color: var(--accent, var(--red));
+  opacity: 1;
+}
+
 .memory-item-btn.pin {
   padding: 1px 4px;
   opacity: 0.4;
@@ -21241,6 +21277,26 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-loading {
   display: flex; align-items: center; justify-content: center;
   color: var(--fg-muted); padding: 16px 0; font-size: 12px;
+}
+.hwfit-hw-visibility-warning {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  margin-top: 8px;
+}
+.hwfit-hw-visibility-warning-title {
+  font-weight: 600;
+}
+.hwfit-hw-visibility-warning-body {
+  opacity: 0.78;
+  line-height: 1.45;
+}
+.hwfit-hw-visibility-warning-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .hwfit-row {
   display: flex; align-items: center; gap: 6px; padding: 5px 8px;
@@ -36606,3 +36662,110 @@ body.theme-frosted .modal {
    the input beside it (.confirm-btn won't stretch on its own). */
 .ask-user-other-send { flex-shrink: 0; white-space: nowrap; min-height: 39px; }
 .ask-user-other-send:disabled { opacity: 0.5; cursor: default; }
+
+/* ═══════════════════════════════════════════
+   USAGE METRICS DASHBOARD
+   ═══════════════════════════════════════════ */
+.dash-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.dash-stat-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  text-align: center;
+}
+.dash-stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.dash-stat-label {
+  font-size: 11px;
+  opacity: 0.5;
+  margin-top: 2px;
+}
+.dash-stat-card.dash-cost .dash-stat-value { color: #f67019; }
+.dash-stat-card.dash-savings .dash-stat-value { color: #00c853; }
+
+.dash-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 10px 0;
+  opacity: 0.7;
+}
+.dash-chart-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 0;
+}
+@media (max-width: 700px) {
+  .dash-chart-row { flex-direction: column; }
+}
+
+/* Local savings breakdown */
+.dash-savings-card { border-left: 3px solid #00c853; }
+.dash-savings-headline {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.dash-savings-amount {
+  font-size: 28px;
+  font-weight: 700;
+  color: #00c853;
+  font-variant-numeric: tabular-nums;
+}
+.dash-savings-label {
+  font-size: 13px;
+  opacity: 0.5;
+}
+.dash-savings-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dash-savings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.dash-savings-model {
+  min-width: 120px;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dash-savings-bar-wrap {
+  flex: 1;
+  height: 6px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.dash-savings-bar {
+  height: 100%;
+  background: #00c853;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.dash-savings-val {
+  min-width: 55px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.6;
+}
+.dash-chart-empty {
+  font-size: 13px;
+  opacity: 0.4;
+  text-align: center;
+  padding: 20px;
+}

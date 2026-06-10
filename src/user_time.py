@@ -80,6 +80,30 @@ def user_timezone() -> timezone:
     return timezone(timedelta(minutes=offset))
 
 
+def parse_stored_due_utc(s: str) -> Optional[datetime]:
+    """Parse a stored note due_date to an aware UTC datetime.
+
+    Absolute instants (Z suffix or explicit offset) are preserved. Naive ISO
+    strings are interpreted in the server's local timezone — legacy notes only;
+    new saves should always store a Z suffix via note route normalization.
+    """
+    if not (s or "").strip():
+        return None
+    raw = s.strip()
+    try:
+        if raw.endswith("Z"):
+            dt = datetime.fromisoformat(raw[:-1] + "+00:00")
+        else:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.astimezone().astimezone(timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
 def now_user_local(now_utc: Optional[datetime] = None) -> datetime:
     """Return the current time in the user's timezone."""
     if now_utc is None:

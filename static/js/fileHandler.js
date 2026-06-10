@@ -272,6 +272,17 @@ export function getLastUploadedMeta() {
   return _lastUploadedMeta;
 }
 
+export function addContentAsFile(filename, content, mimeType) {
+  if (pendingFiles.length >= MAX_FILES) {
+    _showToast(`Max ${MAX_FILES} files allowed`);
+    return false;
+  }
+  const file = new File([content], filename, { type: mimeType || 'text/plain' });
+  pendingFiles.push(file);
+  renderAttachStrip();
+  return true;
+}
+
 var escapeHtml = uiModule.esc;
 
 const fileHandlerModule = {
@@ -281,6 +292,7 @@ const fileHandlerModule = {
   removePending,
   uploadPending,
   addFiles,
+  addContentAsFile,
   getPendingCount,
   getPendingInfo,
   getPendingRaw,

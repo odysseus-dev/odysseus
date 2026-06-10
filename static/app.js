@@ -129,6 +129,26 @@ function initializeEventListeners() {
   // File attachments (inside overflow menu)
   const _overflowAttach = el('overflow-attach-btn');
   if (_overflowAttach) _overflowAttach.addEventListener('click', fileHandlerModule.openPicker);
+
+  const _libraryAttachBtn = el('overflow-library-attach-btn');
+  if (_libraryAttachBtn) {
+    _libraryAttachBtn.addEventListener('click', () => {
+      if (!documentModule) return;
+      documentModule.openLibrary({
+        mode: 'attach-to-chat',
+        onAttach: (items) => {
+          for (const item of items) {
+            const ext = item.language === 'markdown' ? '.md' : '.txt';
+            fileHandlerModule.addContentAsFile(
+              (item.title || 'untitled') + ext,
+              item.content,
+              'text/plain'
+            );
+          }
+        }
+      });
+    });
+  }
   el('file-input').addEventListener('change', (e)=>{
     for (const f of e.target.files) fileHandlerModule.addFiles([f]);
     fileHandlerModule.renderAttachStrip();
@@ -1785,8 +1805,8 @@ function initializeEventListeners() {
     let _refocusOnBlur = false;
     function _flagRefocus(e) {
       if (e.target.closest('textarea, input')) return;
-      // Don't refocus for attach — file picker needs full focus control
-      if (e.target.closest('#overflow-attach-btn')) return;
+      // Don't refocus for attach / library attach — pickers need full focus control
+      if (e.target.closest('#overflow-attach-btn, #overflow-library-attach-btn')) return;
       // Don't refocus for model picker button — focus should go to picker search input
       if (e.target.closest('.model-picker-btn')) return;
       // Don't refocus when tapping the +/chevron tools button — the user
@@ -2424,6 +2444,7 @@ function initializeEventListeners() {
     'mode-toggle':         '.mode-toggle',
     'preset-mini-btn':     '#overflow-preset-btn',
     'attach-btn':          '#overflow-attach-btn',
+    'library-attach-btn':  '#overflow-library-attach-btn',
     'research-btn':        '#overflow-research-btn',
     'rail-new-chat':       '#rail-new-session',
   };
