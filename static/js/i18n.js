@@ -112,10 +112,16 @@ export function applyTranslations(root = document) {
         labelNode = child; // last non-empty text node wins (icons come first)
       }
     }
+    // The shipped English is the fallback, but after the first translation the
+    // DOM no longer holds it — so capture it once. Without this, switching
+    // back to en-US (which loads no JSON) would "fall back" to whatever
+    // language was rendered last.
     if (labelNode) {
-      labelNode.nodeValue = t(key, null, labelNode.nodeValue.trim());
+      if (!('i18nOrig' in el.dataset)) el.dataset.i18nOrig = labelNode.nodeValue.trim();
+      labelNode.nodeValue = t(key, null, el.dataset.i18nOrig);
     } else if (!el.childElementCount) {
-      el.textContent = t(key, null, el.textContent.trim());
+      if (!('i18nOrig' in el.dataset)) el.dataset.i18nOrig = el.textContent.trim();
+      el.textContent = t(key, null, el.dataset.i18nOrig);
     }
   });
   const attrMap = {
@@ -127,7 +133,9 @@ export function applyTranslations(root = document) {
   for (const [dataAttr, realAttr] of Object.entries(attrMap)) {
     root.querySelectorAll(`[${dataAttr}]`).forEach((el) => {
       const key = el.getAttribute(dataAttr);
-      el.setAttribute(realAttr, t(key, null, el.getAttribute(realAttr) || ''));
+      const origAttr = `${dataAttr}-orig`; // same capture-once trick as above
+      if (!el.hasAttribute(origAttr)) el.setAttribute(origAttr, el.getAttribute(realAttr) || '');
+      el.setAttribute(realAttr, t(key, null, el.getAttribute(origAttr)));
     });
   }
 }
