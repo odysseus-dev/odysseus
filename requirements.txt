@@ -16,6 +16,7 @@ numpy
 # chromadb-client is the lightweight HTTP client (talks to a standalone
 # ChromaDB service); fastembed runs local ONNX embeddings.
 chromadb-client
+chromadb
 fastembed
 youtube-transcript-api
 # Markdown rendering for research reports (src/visual_report.py).
