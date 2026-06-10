@@ -66,6 +66,23 @@
   /* Warm accent — used by the Goals/Today UI in Notes. Lives as a token so
      themes can override without touching the goal CSS. */
   --accent-warm: #d19a66;
+
+  /* Cozy layer tokens (see "Cozy refinement layer" at the end of this file).
+     Radii/shadows/easing only — never colors, those stay theme-owned. */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 22px;
+  --shadow-soft: 0 2px 8px rgba(0, 0, 0, 0.10), 0 12px 32px rgba(0, 0, 0, 0.16);
+  --shadow-float: 0 4px 14px rgba(0, 0, 0, 0.20), 0 18px 48px rgba(0, 0, 0, 0.30);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-smooth: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+:root.light {
+  /* Light surfaces need much fainter shadows or they read as dirt. */
+  --shadow-soft: 0 1px 4px rgba(40, 36, 30, 0.07), 0 10px 28px rgba(40, 36, 30, 0.09);
+  --shadow-float: 0 3px 10px rgba(40, 36, 30, 0.10), 0 16px 44px rgba(40, 36, 30, 0.14);
 }
 
 :root.light {
@@ -36606,3 +36623,114 @@ body.theme-frosted .modal {
    the input beside it (.confirm-btn won't stretch on its own). */
 .ask-user-other-send { flex-shrink: 0; white-space: nowrap; min-height: 39px; }
 .ask-user-other-send:disabled { opacity: 0.5; cursor: default; }
+
+/* ═══════════════════════════════════════════════ */
+/* Cozy refinement layer                            */
+/* ─────────────────────────────────────────────── */
+/* Appended after every component rule on purpose:  */
+/* same-specificity overrides win by source order,  */
+/* so themes (theme.js custom properties) keep full */
+/* control of COLOR while this layer rounds, lifts  */
+/* and softens GEOMETRY + MOTION only.              */
+/* Tokens live in :root (--radius-*, --shadow-*,    */
+/* --ease-*).                                       */
+/* ═══════════════════════════════════════════════ */
+
+/* — Chat bubbles: rounder, more air, softer "tail" corner — */
+.msg {
+  border-radius: var(--radius-lg);
+  padding: 12px 16px;
+  line-height: 1.5;
+}
+.msg-user {
+  border-radius: var(--radius-xl) var(--radius-xl) 6px var(--radius-xl);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.msg-ai {
+  border-radius: var(--radius-xl) var(--radius-xl) var(--radius-xl) 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
+}
+.msg .body { line-height: 1.6; }
+
+/* — Chat input: pillowy, glows gently when focused — */
+.chat-input-bar {
+  border-radius: var(--radius-xl);
+  padding: 12px 14px;
+  box-shadow: var(--shadow-soft);
+  transition: box-shadow 0.25s var(--ease-smooth), border-color 0.25s var(--ease-smooth);
+}
+.chat-input-bar:focus-within {
+  border-color: color-mix(in srgb, var(--send-btn-bg, var(--red)) 55%, var(--input-border, var(--border)));
+  box-shadow: var(--shadow-soft),
+              0 0 0 3px color-mix(in srgb, var(--send-btn-bg, var(--red)) 14%, transparent);
+}
+
+/* — Send button: lifts on hover, presses on click — */
+.send-btn {
+  border-radius: 10px;
+  transition: background 0.25s, border-color 0.25s, color 0.25s,
+              width 0.3s cubic-bezier(0.34, 1, 0.64, 1), padding 0.3s,
+              border-radius 0.3s, opacity 0.1s,
+              transform 0.18s var(--ease-spring), box-shadow 0.18s var(--ease-smooth);
+}
+.send-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--send-btn-bg, var(--red)) 35%, transparent);
+}
+.send-btn:active { transform: translateY(0) scale(0.95); }
+
+/* — Sidebar: feathered edge, rounded rows that nudge on hover — */
+.sidebar { box-shadow: var(--shadow-soft); }
+.list-item,
+.models-row {
+  border-radius: var(--radius-sm);
+  transition: background 0.16s var(--ease-smooth), border-color 0.16s var(--ease-smooth),
+              transform 0.16s var(--ease-smooth);
+}
+.list-item:hover,
+.models-row:hover {
+  transform: translateX(2px);
+}
+.sidebar.right-side .list-item:hover,
+.sidebar.right-side .models-row:hover {
+  transform: translateX(-2px);
+}
+
+/* — Modals: float higher, rounder, a touch more padding — */
+.modal-content {
+  border-radius: 16px;
+  box-shadow: var(--shadow-float);
+  padding: 14px;
+}
+.close-btn, .modal-close, .minimize-btn { border-radius: 8px; }
+.close-btn { transition: transform 0.25s var(--ease-spring), opacity 0.15s,
+             background 0.15s, color 0.15s; }
+.close-btn:hover { transform: rotate(90deg); }
+
+/* — Scrollbars: pill thumbs that follow the theme foreground — */
+@supports selector(::-webkit-scrollbar) {
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--fg) 18%, transparent);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--fg) 32%, transparent);
+  }
+}
+
+/* — Keyboard focus: visible ring in the theme accent — */
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--send-btn-bg, var(--red)) 65%, transparent);
+  outline-offset: 2px;
+}
+
+/* — Calm mode: no lifts/nudges for users who opt out of motion — */
+@media (prefers-reduced-motion: reduce) {
+  .send-btn:hover,
+  .send-btn:active,
+  .list-item:hover,
+  .models-row:hover,
+  .sidebar.right-side .list-item:hover,
+  .sidebar.right-side .models-row:hover { transform: none; }
+  .close-btn:hover { transform: none; }
+}
