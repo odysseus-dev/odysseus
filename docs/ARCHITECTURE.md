@@ -30,6 +30,7 @@ This document serves as a comprehensive overview of the system's architecture, i
     ├── launch-windows.ps1
     ├── LICENSE
     ├── odysseus-ui.service
+    ├── package-lock.json
     ├── package.json
     ├── pyproject.toml
     ├── requirements-optional.txt
@@ -42,6 +43,8 @@ This document serves as a comprehensive overview of the system's architecture, i
     ├── update_windows.bat
     ├── .dockerignore
     ├── .env.example
+    ├── .gitattributes
+    ├── .gitignore
     ├── companion/
     │   ├── README.md
     │   ├── __init__.py
@@ -66,15 +69,22 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── gpu.amd.yml
     │   └── gpu.nvidia.yml
     ├── docs/
+    │   ├── ARCHITECTURE.md
     │   ├── bg.webm
+    │   ├── chat.gif
     │   ├── chat.webm
+    │   ├── compare.gif
     │   ├── compare.webm
+    │   ├── document.gif
     │   ├── document.webm
     │   ├── email-outlook.md
     │   ├── gallery.webm
     │   ├── index.html
+    │   ├── notes.gif
     │   ├── notes.webm
+    │   ├── odysseus.jpg
     │   ├── pr-blocker-audit.md
+    │   ├── research.gif
     │   ├── research.webm
     │   └── theme.webm
     ├── integrations/
@@ -256,6 +266,11 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── action_intents.py
     │   ├── agent_loop.py
     │   ├── agent_runs.py
+    │   ├── agent_tools/
+    │   │   ├── __init__.py
+    │   │   ├── filesystem_tools.py
+    │   │   ├── subprocess_tools.py
+    │   │   └── web_tools.py
     │   ├── agent_tools.py
     │   ├── ai_interaction.py
     │   ├── api_key_manager.py
@@ -318,6 +333,7 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── research_handler.py
     │   ├── research_utils.py
     │   ├── secret_storage.py
+    │   ├── service_health.py
     │   ├── session_actions.py
     │   ├── session_search.py
     │   ├── settings.py
@@ -369,6 +385,13 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   │   ├── Inter-SemiBold.woff2
     │   │   └── custom/
     │   │       └── GohuFont.ttf
+    │   ├── lib/
+    │   │   ├── docx.umd.min.js
+    │   │   ├── highlight.min.js
+    │   │   ├── html2pdf.bundle.min.js
+    │   │   ├── mammoth.browser.min.js
+    │   │   ├── qrcode.min.js
+    │   │   └── xlsx.full.min.js
     │   └── js/
     │       ├── a11y.js
     │       ├── admin.js
@@ -461,6 +484,11 @@ This document serves as a comprehensive overview of the system's architecture, i
     │       │   ├── stream.js
     │       │   └── vote.js
     │       ├── editor/
+    │       │   ├── build/
+    │       │   │   ├── popups.js
+    │       │   │   ├── right-panel.js
+    │       │   │   ├── toolbar.js
+    │       │   │   └── transform-popup.js
     │       │   ├── ai-inpaint.js
     │       │   ├── ai-models.js
     │       │   ├── ai-rembg.js
@@ -1250,9 +1278,10 @@ graph TD
 ```
 
 ### Components
-- **Core Canvas Logic ([`static/js/editor/`](../static/js/editor/))**: Managed by [`state.js`](../static/js/editor/state.js), with interactions translated through [`canvas-coords.js`](../static/js/editor/canvas-coords.js) and [`canvas-events.js`](../static/js/editor/canvas-events.js) to account for zooming and panning across the viewport.
-- **Tools & Effects**: Standard editing tools (move, crop, flood-fill) live in the [`tools/`](../static/js/editor/tools/) directory, while non-destructive overlays and visual filters reside in [`fx/`](../static/js/editor/fx/) and [`filters/`](../static/js/editor/filters/).
-- **AI Integrations**: Specific files like [`ai-inpaint.js`](../static/js/editor/ai-inpaint.js) and [`ai-rembg.js`](../static/js/editor/ai-rembg.js) hook into the active canvas state to generate masks ([`mask-utils.js`](../static/js/editor/mask-utils.js)), transmit them to the backend, and apply the returned images onto new, non-destructive canvas layers ([`layer-helpers.js`](../static/js/editor/layer-helpers.js)).
+- **Core Canvas Logic ([`static/js/editor/`](../static/js/editor/))**: Managed by [`state.js`](../static/js/editor/state.js), with interactions translated through [`canvas-coords.js`](../static/js/editor/canvas-coords.js) and [`canvas-events.js`](../static/js/editor/canvas-events.js) to account for zooming and panning across the viewport. Additional state and rendering constraints are mapped via [`canvas-transforms.js`](../static/js/editor/canvas-transforms.js), [`checkerboard.js`](../static/js/editor/checkerboard.js), and [`snap.js`](../static/js/editor/snap.js).
+- **Tools & Effects**: Standard editing tools (move, crop, flood-fill, lasso-mask, stroke) live in the [`tools/`](../static/js/editor/tools/) directory, while non-destructive overlays and visual filters reside in [`fx/`](../static/js/editor/fx/) and [`filters/`](../static/js/editor/filters/). Specialized operations like [`harmonize-masks.js`](../static/js/editor/harmonize-masks.js), [`clipboard-and-drop.js`](../static/js/editor/clipboard-and-drop.js), and [`stroke-pipeline.js`](../static/js/editor/stroke-pipeline.js) support advanced composite workflows.
+- **UI & Layout Controllers**: The editor interface is heavily modularized with floating panels, toolbars, and dynamic controls wrapped in the `wire-*.js` files (e.g., [`wire-topbar.js`](../static/js/editor/wire-topbar.js), [`wire-selection-controls.js`](../static/js/editor/wire-selection-controls.js)), driving components like the [`history-panel.js`](../static/js/editor/history-panel.js) and specialized slider UX [`slider-ux.js`](../static/js/editor/slider-ux.js).
+- **AI Integrations**: Specific files like [`ai-inpaint.js`](../static/js/editor/ai-inpaint.js), [`ai-rembg.js`](../static/js/editor/ai-rembg.js), and [`ai-models.js`](../static/js/editor/ai-models.js) hook into the active canvas state to generate masks ([`mask-utils.js`](../static/js/editor/mask-utils.js)), transmit them to the backend, and apply the returned images onto new, non-destructive canvas layers ([`layer-helpers.js`](../static/js/editor/layer-helpers.js)). The actual tool API orchestration goes through [`ai-tool-runner.js`](../static/js/editor/ai-tool-runner.js).
 
 
 
@@ -1667,7 +1696,7 @@ graph TD
 ```
 
 ### Components
-- **Skill Extraction ([`services/memory/skill_extractor.py`](../services/memory/skill_extractor.py))**: Uses intelligent parsing to derive structured procedure steps and preconditions from freeform conversation text or teacher model outputs.
+- **Skill Extraction ([`services/memory/skill_extractor.py`](../services/memory/skill_extractor.py), [`services/memory/memory_extractor.py`](../services/memory/memory_extractor.py))**: Uses intelligent parsing to derive structured procedure steps and preconditions from freeform conversation text or teacher model outputs. The generic `memory_extractor.py` handles parsing generic life facts and preferences.
 - **Skill Formatting ([`services/memory/skill_format.py`](../services/memory/skill_format.py))**: Ensures that every skill strictly adheres to the markdown specifications required for the Agent loop to parse it effectively (e.g., maintaining `SKILL.md` boundaries).
 - **Skill Importer ([`services/memory/skill_importer.py`](../services/memory/skill_importer.py))**: Handles the ingest of external skill packs (like those from the integrations folder), safely validating content without trusting external metadata completely.
 - **Manager ([`services/memory/skills.py`](../services/memory/skills.py))**: The central service that orchestrates reading and writing skills to the local disk and synchronizing them with the Vector Database for semantic retrieval later.
@@ -1738,7 +1767,7 @@ To leverage existing Copilot subscriptions, register built-in tools like memory 
   - **RAG Server ([`mcp_servers/rag_server.py`](../mcp_servers/rag_server.py))**: Gives the agent control over the semantic store.
   - **Email Server ([`mcp_servers/email_server.py`](../mcp_servers/email_server.py))**: Allows AI to query IMAP, download attachments, and compose replies over SMTP.
   - **Image Generation ([`mcp_servers/image_gen_server.py`](../mcp_servers/image_gen_server.py))**: Proxies image generation commands and inserts URL responses into the chat.
-- **Copilot Provider ([`src/copilot.py`](../src/copilot.py), [`routes/copilot_routes.py`](../routes/copilot_routes.py), [`routes/chatgpt_subscription_routes.py`](../routes/chatgpt_subscription_routes.py))**: Implements GitHub OAuth Device Flow to use Copilot's backing models as an LLM provider. Emulates an OpenAI-compatible endpoint by injecting required headers without needing a separate API key or token exchange.
+- **Copilot Provider ([`src/copilot.py`](../src/copilot.py), [`routes/copilot_routes.py`](../routes/copilot_routes.py), [`routes/chatgpt_subscription_routes.py`](../routes/chatgpt_subscription_routes.py), [`src/chatgpt_subscription.py`](../src/chatgpt_subscription.py))**: Implements GitHub OAuth Device Flow to use Copilot's backing models as an LLM provider. Emulates an OpenAI-compatible endpoint by injecting required headers without needing a separate API key or token exchange. Additionally manages reverse-engineered ChatGPT Plus subscription token lifecycles.
 
 ---
 
@@ -1856,6 +1885,7 @@ graph TD
 
 ### Components
 - **Core Orchestrator ([`src/search/core.py`](../src/search/core.py), [`services/search/`](../services/search/))**: Manages the flow of fetching configurations and routing the search term to the designated active provider.
+- **Query & Content Handlers ([`src/search/query.py`](../src/search/query.py), [`src/search/content.py`](../src/search/content.py))**: Handles parsing of search intent into actionable query objects and extracts raw text or metadata from webpage bodies respectively.
 - **Caching ([`src/search/cache.py`](../src/search/cache.py))**: Reduces outbound requests by locally caching queries with identical parameters.
 - **Provider Implementations ([`src/search/providers.py`](../src/search/providers.py))**: Abstracts provider-specific API oddities (e.g., JSON handling from SearXNG vs raw HTTP scraping from DuckDuckGo) into a standardized `dict` format.
 - **Ranking & Analytics ([`src/search/ranking.py`](../src/search/ranking.py), [`src/search/analytics.py`](../src/search/analytics.py))**: Analyzes results to filter out spam or low-quality hits before they reach the LLM, tracking failure rates and error conditions centrally.
@@ -1927,7 +1957,7 @@ This module handles isolated user contexts such as personal settings, contacts, 
 To ensure multi-tenancy and data isolation where users only interact with their configured environment.
 
 ### Components
-- **Personal Document RAG ([`services/docs/service.py`](../services/docs/service.py))**: A dedicated service wrapper `DocsService` that interfaces with the underlying `RAGManager`. It handles bulk directory indexing, querying the document vector index, and surfacing retrieval stats.
+- **Personal Document RAG ([`services/docs/service.py`](../services/docs/service.py))**: A dedicated service wrapper `DocsService` that interfaces with the underlying `RAGManager`. It handles bulk directory indexing, querying the document vector index, and surfacing retrieval stats. The frontend counterparts like [`documentLibrary.js`](../static/js/documentLibrary.js) interface with these APIs.
 - **[`routes/personal_routes.py`](../routes/personal_routes.py) & [`src/personal_docs.py`](../src/personal_docs.py)**: Handles user-specific document uploads that feed into their personalized RAG store.
 - **[`src/settings.py`](../src/settings.py) & [`src/settings_scrub.py`](../src/settings_scrub.py) & [`routes/prefs_routes.py`](../routes/prefs_routes.py)**: Manages reading and writing application preferences, including redacting (scrubbing) secrets before returning config to the client.
 - **[`routes/contacts_routes.py`](../routes/contacts_routes.py)**: Stores and retrieves contact lists used by agents for communication tasks.
@@ -2090,6 +2120,7 @@ graph LR
 - **Hardware Discovery ([`services/hwfit/hardware.py`](../services/hwfit/hardware.py))**: Reads `/sys/class/drm`, `nvidia-smi`, or Windows WMI to accurately gauge CPU, RAM, GPU architectures, and VRAM availability.
 - **Fitness Scoring & Routing ([`services/hwfit/fit.py`](../services/hwfit/fit.py))**:
   - Computes a dynamic `_fit_score` based on required vs. available VRAM and context window parameters.
+  - `image_models.py` and `profiles.py` provide specific tuning constraints and known parameter bounds for stable diffusion and language model variants.
   - Manages quantization formats (e.g., distinguishing between GGUF for llama.cpp vs AWQ/FP8 for vLLM).
   - Explicitly restricts consumer AMD hardware (RDNA) and Apple Silicon platforms to GGUF formats to ensure compatibility, hiding models that won't run locally.
 - **Serve Lifecycle ([`src/cookbook_serve_lifecycle.py`](../src/cookbook_serve_lifecycle.py))**: Orchestrates the downloading and serving of models via `tmux` sessions, hooking directly into local inference engines like vLLM or Ollama.
@@ -2122,7 +2153,7 @@ graph TD
 ### Components
 - **UI Diagnostics ([`static/js/cookbook-diagnosis.js`](../static/js/cookbook-diagnosis.js))**: Polling mechanisms to verify if background processes like `ollama` or `vllm` are accessible before allowing operations.
 - **Hardware Fitness Client ([`static/js/cookbook-hwfit.js`](../static/js/cookbook-hwfit.js))**: Renders the visual bars for required VRAM and Context Window budgeting based on the data provided by the backend's [`fit.py`](../services/hwfit/fit.py) via [`hwfit_routes.py`](../routes/hwfit_routes.py).
-- **Process Signals ([`static/js/cookbookProgressSignal.js`](../static/js/cookbookProgressSignal.js), [`cookbookRunning.js`](../static/js/cookbookRunning.js))**: Tracks asynchronous SSE streams. If the browser tab is closed during a download, the next time the Cookbook is opened, [`cookbookRunning.js`](../static/js/cookbookRunning.js) attempts to reconnect and parse the active system state to restore the progress bar seamlessly.
+- **Process Signals ([`static/js/cookbookProgressSignal.js`](../static/js/cookbookProgressSignal.js), [`cookbookRunning.js`](../static/js/cookbookRunning.js), [`cookbookSchedule.js`](../static/js/cookbookSchedule.js))**: Tracks asynchronous SSE streams. If the browser tab is closed during a download, the next time the Cookbook is opened, [`cookbookRunning.js`](../static/js/cookbookRunning.js) attempts to reconnect and parse the active system state to restore the progress bar seamlessly.
 
 ---
 
@@ -2216,7 +2247,7 @@ graph TD
 
 ### Components
 - **Event Bus ([`src/event_bus.py`](../src/event_bus.py))**: Provides a decoupled way to fire events (e.g., `session.created`, `message.sent`). It manages in-memory counters and triggers specific tasks via the scheduler when thresholds are crossed.
-- **Readiness Probes ([`src/readiness.py`](../src/readiness.py))**: Implements strict `GET /api/ready` logic. Beyond simple liveness, it executes real SQL (`SELECT 1`) to ensure the DB connection pool is functional, and tests write permissions to the `DATA_DIR`.
+- **Readiness Probes ([`src/readiness.py`](../src/readiness.py), [`src/service_health.py`](../src/service_health.py))**: Implements strict `GET /api/ready` logic. Beyond simple liveness, it executes real SQL (`SELECT 1`) to ensure the DB connection pool is functional, and tests write permissions to the `DATA_DIR`. The `service_health.py` module orchestrates deep diagnostic polling for external email servers, webhook receivers, and model APIs under strict timeouts.
 - **Rate Limiter ([`src/rate_limiter.py`](../src/rate_limiter.py))**: Uses an in-memory sliding window algorithm to throttle abuse of endpoints (e.g., token minting or login attempts) before the requests reach the deeper application logic.
 
 ---
