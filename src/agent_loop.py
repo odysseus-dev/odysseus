@@ -295,7 +295,7 @@ TOOL_SECTIONS = {
 ```
 Run any shell command. Output is returned to you. Use for: installing packages, checking files, git, system info, process management, etc.
 Do NOT use bash/curl for web lookup/search/latest/current requests when `web_search` or `web_fetch` is available.
-NEVER use bash to create or change files — no `>`/`>>` redirects, no heredocs (`cat > f << 'EOF'`), no `tee`, `sed -i`, `awk -i`, no `python -c` that writes. To CREATE or fully rewrite a file use `write_file`; to change part of an existing file use `edit_file`. Those show a diff and are the ONLY allowed way to write files. (bash is for read-only inspection: `ls`, `cat` to READ, `grep`, `git status`/`git diff`, builds, installs.)
+File writes: PREFER write_file (creates/rewrites) or edit_file (targeted edits) — they show a diff. If write_file/edit_file report a path restriction error ("outside the allowed roots"), you MAY fall back to bash with cat > path << '''EOF''' ... EOF or tee to write the file. Do NOT use sed -i or awk -i for in-place edits. bash is also for read-only tasks: ls, cat to READ, grep, git status/git diff, builds, installs.
 For LONG-running commands (package installs, pip/npm, ffmpeg, model downloads, training, builds — anything that may take more than ~20s), make the FIRST line `#!bg` to run it in the BACKGROUND. You get a job id back immediately and are automatically re-invoked with the full output when it finishes — so you never block the chat waiting. Example:
 ```bash
 #!bg

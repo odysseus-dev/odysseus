@@ -173,7 +173,11 @@ def _resolve_tool_path(raw_path: str) -> str:
         if common == root:
             return resolved
     raise ValueError(
-        f"path '{raw_path}' is outside the allowed roots"
+        f"path '{raw_path}' is outside the allowed roots. "
+        f"Allowed roots: {', '.join(_tool_path_roots())}. "
+        "To grant access, either: (1) set ODYSSEUS_DEVELOPER_MODE=1 in .env to allow project source access, "
+        "or (2) use bash with cat/heredoc/tee to write files outside allowed roots, "
+        "or (3) ask the admin to add paths via tool_path_extra_roots in Settings."
     )
 
 
