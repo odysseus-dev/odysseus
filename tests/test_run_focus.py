@@ -7,7 +7,9 @@ injected fake executor so no pytest subprocess is ever spawned.
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -351,3 +353,47 @@ def test_durations_min_with_durations_is_allowed():
         "--durations=25",
         "--durations-min=0.05",
     ]]
+
+
+# --- fast lane deselects evidence-backed slow tests (real collection) -------
+
+# Node names in tests/test_auth_config_lock_concurrency.py: the single unmarked
+# fast test, and the five @pytest.mark.slow tests the fast lane must exclude.
+_FAST_AUTH_CONCURRENCY_TEST = "test_parallel_creates_same_username_only_one_wins"
+_SLOW_AUTH_CONCURRENCY_TESTS = (
+    "test_parallel_creates_no_lost_users",
+    "test_parallel_deletes_no_corruption",
+    "test_parallel_renames_no_lost_users",
+    "test_mixed_operations_no_corruption",
+    "test_file_always_valid_json_during_concurrent_ops",
+)
+
+
+def test_fast_lane_collects_only_unmarked_auth_concurrency_test():
+    """`--fast` collection drops the marked slow tests but keeps the fast one.
+
+    Unlike the other tests here, this runs a real `--collect-only` so it proves
+    the `slow` markers actually deselect during collection, not just that the
+    command is built with `not slow`.
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [
+            sys.executable,
+            "tests/run_focus.py",
+            "--fast",
+            "--",
+            "--collect-only",
+            "-q",
+            "tests/test_auth_config_lock_concurrency.py",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    collected = result.stdout
+
+    assert _FAST_AUTH_CONCURRENCY_TEST in collected
+    for slow_test in _SLOW_AUTH_CONCURRENCY_TESTS:
+        assert slow_test not in collected, f"slow test was not deselected: {slow_test}"
