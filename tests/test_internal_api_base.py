@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-import core.constants as cc
+import src.constants as sc
 
 
 def _base(monkeypatch, **env):
@@ -12,7 +12,7 @@ def _base(monkeypatch, **env):
         monkeypatch.delenv(k, raising=False)
     for k, v in env.items():
         monkeypatch.setenv(k, v)
-    return cc.internal_api_base()
+    return sc.internal_api_base()
 
 
 def test_default_is_legacy_7000(monkeypatch):

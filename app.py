@@ -50,9 +50,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
 # Core imports
-from core.constants import (
+from src.constants import (
     BASE_DIR, STATIC_DIR, SESSIONS_FILE,
     REQUEST_TIMEOUT, OPENAI_API_KEY, AUTH_FILE,
+    APP_VERSION
 )
 from core.database import SessionLocal, ApiToken
 from core.middleware import SecurityHeadersMiddleware, is_cors_preflight
@@ -850,8 +851,7 @@ async def serve_login(request: Request):
     return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
 
 @app.get("/api/version")
-async def get_version():
-    from core.constants import APP_VERSION
+async def get_version(): 
     return {"version": APP_VERSION}
 
 @app.get("/api/health")

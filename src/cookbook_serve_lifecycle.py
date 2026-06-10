@@ -19,8 +19,7 @@ import time
 from pathlib import Path
 
 import httpx
-from core.constants import internal_api_base
-from src.constants import COOKBOOK_STATE_FILE
+from src.constants import COOKBOOK_STATE_FILE, internal_api_base
 
 logger = logging.getLogger(__name__)
 

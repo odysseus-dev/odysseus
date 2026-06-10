@@ -12,9 +12,8 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE
+from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE, internal_api_base
 from src.tool_utils import get_mcp_manager
-from core.constants import internal_api_base
 
 logger = logging.getLogger(__name__)
 
@@ -2534,7 +2533,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
 # (cookbook state, model serve, gallery, email, calendar). We ride the
 # per-process internal token so require_admin lets us through. See
 # core/middleware.py. Resolution (override / APP_PORT / 7000) lives in
-# core.constants.internal_api_base().
+# src.constants.internal_api_base().
 _INTERNAL_BASE = internal_api_base()
 
 

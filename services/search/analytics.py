@@ -6,7 +6,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Dict, Any
 
-from core.constants import DATA_DIR
+from src.constants import DATA_DIR
 
 from .cache import cache_metrics
 

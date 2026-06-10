@@ -6,7 +6,7 @@ from typing import Dict, Any
 from fastapi import APIRouter, HTTPException, Form, Request
 
 from services.youtube.youtube_handler import extract_youtube_id, extract_transcript_async
-from core.constants import DEFAULT_HOST
+from src.constants import DEFAULT_HOST
 from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
