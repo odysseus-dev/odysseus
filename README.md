@@ -454,36 +454,31 @@ All user data lives in `data/` (gitignored): `app.db` (sessions, messages, docum
 AGPL-3.0-or-later -- see [LICENSE](LICENSE) and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).
 
 ```
-                                                        !:^                                       
-                                                       +.l.''''':iii!l,.                                           .;i!^. 
-                                                       + ]                 .;~+<il"'..            c@$$$r     ."i~:     
-                                                      ., <                              "i>!;;,^^\M88#WWx;il       
-                                                      ., <                                      ,Qw[l[>:Wl          
-                                                       i ?                               .'^,,;!-UQ-|x[^YLxx{!;,,^'      
-                                                       ] ?              .":;l>+?-<,.  .....   Jt?La"vr-n~a|vb      ....  ^
-                                                       `I,:I<_+<"`                            Ux_Jk`j{,n;dxjw^    
-                                               .i                                             Y0C0pwdddddpwmB,    
-                                               ;h"                                            v}            W<       
-                                            .inh@#p,                                          ]%hkkb0rjjrQkW$+       
-                                            ;v>"Bz`h_                                         "$$$$$@$$$$$$$@+      
-                                            ,X+`@Y  Y\        i\`                             '@qaWB8BBWakmQ*?         
-                                            -ml $U  .n}       1B[                             ^$I           1X       
-                                            }z` $0^  "ni      ($@                             .@?           {q.       
-                                            ]j  $O"   /x      ($;%]                            Ba>  `-\xnkB$$d^         
-                                   (Wx'     )j  ZJ    'w     }#W; \x'                          a$$$$$$$$$$$$$q.         
-                                  z@U?w    'h_  bU     1k    Wnp;  {J`                         C$$$$$$$$$$$$$p^         
-                                 l8@U {o  ,W-   #U     '$'  ,b>k;   iB?                        ]d~{(\/frt|1<rd,       
-                                }J`8C. }c 1%&%@@$$@@@BBBW^ `Ml>kl     U~                       >d^          .wi         
-                              'ud_:oOl,"v}      aL.       \&_,-h_^^`'._x                        Z^           dr      
-                              .::!)W*0Zmmx"    `*h<       .;!!]kXfcYJCC1                        #hz{-_-?--]xkBX`      
-                                   Mv           h*_           !dx                               o$$$$$$$$$$$$$J"          
-                                  ^Bv           Qh>.fl        ,ZC                               qrYb%$$$@$$@dxb[         
-                          `d%OJJQ#@@8@$$8aW@$&*k*aLXQJfnQnnnnxnnnu0Zhav|p$l                     Z" XWBMp0m*\ :jp}.     
-                           !pW,                       ..     `l`      `Yd"                 "+|]>&qq<       !au.  lrm01.    
-                            ,Y&;  ;#ZQ,   .Xd0_      _O#I    8Mq"    ,wY^              ixUXj<',?&j`         <WXrxr\1}au.    
-                   ^`  .^<<'  zBZ! i(]'    [nxi      >xn     ^l`   lJ%).            '/Zt,.     Oq,          ~hi   '"li-1ra? 
-        l~^!JaYx/[]])fvuxcnvw#k&BB#Y[`                     ^ "-jLd&@@Wa#M#oooao###M*&Q'     ,]J@>           nWoodQYObmoW0-^ 
-          .                       .l?j0dk*o##MW8%%8&W&&&&*QCv/_~.                   .>)\\\|-^  -pdX1~<-[[)zhwf'             
+--    .-""-.
+   ) (     )
+  (   )   (
+     /     )
+    (_    _)                     0_,-.__
+      (_  )_                     |_.-._/
+       (    )                    |_--..\
+        (__)                     |__--_/
+     |''   ``\                   |
+     |        \                  |      /b.
+     |         \  ,,,---===?A`\  |  ,==y'
+   ___,,,,,---==""\        |M] \ | ;|\ |>
+           _   _   \   ___,|H,,---==""""bno,
+    o  O  (_) (_)   \ /          _     AWAW/
+                     /         _(+)_  dMM/
+      \@_,,,,,,---=="   \      \\|//  MW/
+--''''"                         ===  d/
+                                    //
+                                    ,'__________________________
+   \    \    \     \               ,/~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                         _____    ,'  ~~~   .-""-.~~~~~~  .-""-.
+      .-""-.           ///==---   /`-._ ..-'      -.__..-'
+            `-.__..-' =====\\\\\\ V/  .---\.
+                     ~~~~~~~~~~~~, _',--/_.\  .-""-.
+                            .-""-.___` --  \|         -.__..-
 
    ~~^~^~~^~^~~^~^~~^~~^~~^~^~~^~^~~^~~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~~~^~~
                                                   ~  A L L   A B O A R D !  ~
