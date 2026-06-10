@@ -269,6 +269,31 @@ let _buildServeCmd;
 // the new one open. Consumed (cleared) by _renderRunningTab.
 let _soloExpandTaskId = null;
 
+function _parseSizeToBytes(sizeStr) {
+  if (!sizeStr) return null;
+  const match = String(sizeStr).trim().match(/^([\d.]+)\s*([KMGTP]?)B?$/i);
+  if (!match) return null;
+  let val = parseFloat(match[1]);
+  const unit = (match[2] || '').toUpperCase();
+  if (unit === 'K') val *= 1024;
+  else if (unit === 'M') val *= 1024 * 1024;
+  else if (unit === 'G') val *= 1024 * 1024 * 1024;
+  else if (unit === 'T') val *= 1024 * 1024 * 1024 * 1024;
+  else if (unit === 'P') val *= 1024 * 1024 * 1024 * 1024 * 1024;
+  return val;
+}
+
+function _formatEta(seconds) {
+  if (seconds == null || seconds < 0 || !isFinite(seconds)) return 'Calculating...';
+  if (seconds < 1) return 'less than a second remaining';
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  const h = Math.floor(m / 60);
+  if (h > 0) return `${h} hr ${m % 60} min remaining`;
+  if (m > 0) return `${m} min ${s} sec remaining`;
+  return `${s} sec remaining`;
+}
+
 // Storage keys
 const TASKS_KEY = 'cookbook-tasks';
 const STORAGE_KEY = 'cookbook-presets';
@@ -2863,8 +2888,9 @@ async function _reconnectTask(el, task) {
             // stale speed/ETA — so keying off speed masked real stalls (that's why a
             // 97%-stuck download went undetected). Bytes are the honest signal; fall
             // back to %/aggregate only when no byte counter is present.
-            const _byteMatches = [...snapshot.matchAll(/([\d.]+\s?[KMGT])B?\s*\/\s*[\d.]+\s?[KMGT]B?/gi)];
+            const _byteMatches = [...snapshot.matchAll(/([\d.]+\s?[KMGT]?B?)\s*\/\s*([\d.]+\s?[KMGT]?B?)/gi)];
             const _bytes = _byteMatches.length ? _byteMatches[_byteMatches.length - 1][1].replace(/\s/g, '') : null;
+            const _bytesTotal = _byteMatches.length ? _byteMatches[_byteMatches.length - 1][2].replace(/\s/g, '') : null;
             // When there's no byte counter (pip resolve / native build phase of a
             // dependency install), key off the output tail so new build lines count
             // as progress — otherwise a long quiet build is falsely declared stale
@@ -2956,6 +2982,49 @@ async function _reconnectTask(el, task) {
             // so on a resumed download it reflects the true overall progress,
             // whereas completed/totalFiles only see this session's files (→ 0%).
             // Take the higher of the two so resume doesn't read as 0%.
+
+            let currentEtaSec = null;
+            if (_bytes && _bytesTotal) {
+              const curBytes = _parseSizeToBytes(_bytes);
+              const totBytes = _parseSizeToBytes(_bytesTotal);
+              if (curBytes !== null && totBytes !== null && totBytes > 0) {
+                const now = Date.now();
+                if (!el._etaHistory) el._etaHistory = [];
+                // Reset history if byte count decreases (e.g. new file/shard)
+                if (el._lastParsedBytes && curBytes < el._lastParsedBytes - (1024 * 1024)) {
+                  el._etaHistory = [];
+                }
+                el._etaHistory.push({ t: now, b: curBytes });
+                // Keep last 15 seconds of history for a stable average
+                el._etaHistory = el._etaHistory.filter(x => now - x.t <= 15000);
+                el._lastParsedBytes = curBytes;
+                
+                if (el._etaHistory.length > 1) {
+                  const first = el._etaHistory[0];
+                  const last = el._etaHistory[el._etaHistory.length - 1];
+                  const dt = (last.t - first.t) / 1000.0;
+                  const db = last.b - first.b;
+                  if (dt > 0.5 && db > 0) {
+                    const currentSpeedBytes = db / dt;
+                    currentEtaSec = Math.max(0, (totBytes - curBytes) / currentSpeedBytes);
+                    el._lastEta = currentEtaSec;
+                    el._lastEtaTime = now;
+                  } else if (el._lastEta !== undefined && now - (el._lastEtaTime || 0) < 30000) {
+                    currentEtaSec = el._lastEta;
+                  }
+                }
+              }
+            }
+
+            // A helper to append ETA to text
+            const applyEta = (text, pct) => {
+              if (pct < 100) {
+                if (currentEtaSec !== null) text += ` · ${_formatEta(currentEtaSec)}`;
+                else if (el._etaHistory && el._etaHistory.length > 0) text += ` · Calculating...`;
+              }
+              return text;
+            };
+
             if (_useShardAgg) {
               // Multi-shard download: compute TRUE overall as completed shards
               // plus the current shard's fraction. _dlAgg / lastPct represent
@@ -2967,6 +3036,7 @@ async function _reconnectTask(el, task) {
               if (_fetchPct != null) overallPct = Math.max(overallPct, _fetchPct);
               let text = `${overallPct}%`;
               if (lastSpeed) text += ` · ${lastSpeed}`;
+              text = applyEta(text, overallPct);
               badge.textContent = text;
               badge.className = 'cookbook-task-status cookbook-task-running';
             } else if (_dlAgg != null) {
@@ -2975,6 +3045,7 @@ async function _reconnectTask(el, task) {
               if (_fetchPct != null) pct = Math.max(pct, _fetchPct);
               let text = `${pct}%`;
               if (lastSpeed) text += ` · ${lastSpeed}`;
+              text = applyEta(text, pct);
               badge.textContent = text;
               badge.className = 'cookbook-task-status cookbook-task-running';
             } else if (totalFiles > 0 && completed < totalFiles) {
@@ -2983,12 +3054,14 @@ async function _reconnectTask(el, task) {
               if (_fetchPct != null) overallPct = Math.max(overallPct, _fetchPct);
               let text = `${overallPct}%`;
               if (lastSpeed) text += ` · ${lastSpeed}`;
+              text = applyEta(text, overallPct);
               badge.textContent = text;
               badge.className = 'cookbook-task-status cookbook-task-running';
             } else if (_fetchPct != null && _fetchPct < 100) {
               // Resume start: only the aggregate is meaningful yet.
               let text = `${_fetchPct}%`;
               if (lastSpeed) text += ` · ${lastSpeed}`;
+              text = applyEta(text, _fetchPct);
               badge.textContent = text;
               badge.className = 'cookbook-task-status cookbook-task-running';
             } else if (completed > 0 && completed >= totalFiles) {
