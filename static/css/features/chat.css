@@ -1,0 +1,766 @@
+/* #region Slash Command Responses */
+.msg.msg-system {
+	padding: 6px 12px;
+	margin: 4px auto 4px 8px;
+	max-width: 85%;
+	background: none;
+	border-left: 2px solid var(--border);
+}
+.msg.msg-system .body { padding: 0; }
+.msg.msg-system pre { margin: 4px 0; white-space: pre-wrap; font-size: 0.85em; }
+.msg.stream-done-toast {
+	cursor: pointer;
+	border-left-color: var(--accent, var(--border));
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--accent) 6%, transparent);
+	transition: background 0.15s;
+}
+.msg.stream-done-toast:hover {
+	background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.msg.stream-done-toast .body {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.stream-done-indicator {
+	font-family: monospace;
+	font-size: 1.1em;
+	line-height: 1;
+	color: var(--accent);
+	flex-shrink: 0;
+	animation: bar-pulse 1.2s ease-in-out infinite;
+}
+@keyframes bar-pulse {
+	0%, 100% { opacity: 0.4; }
+	50% { opacity: 1; }
+}
+/* #endregion Slash Command Responses */
+
+/* #region Agent Thread Timeline */
+.msg.msg-tool {
+	display: none; /* legacy — hidden, replaced by agent-thread */
+}
+.msg.msg-continuation {
+	margin-top: 2px;
+}
+
+.agent-thread {
+	position: relative;
+	margin: 2px 0 2px 28px;
+	padding: 4px 0 4px 22px;
+	max-width: calc(85% - 20px);
+	box-sizing: border-box;
+}
+.agent-thread::before {
+	content: '';
+	position: absolute;
+	left: 5px;
+	top: 14px;
+	bottom: 14px;
+	width: 2px;
+	background: color-mix(in srgb, var(--red) 18%, transparent);
+	border-radius: 1px;
+}
+/* Extend line to connect to chat bubble above/below */
+.agent-thread.has-top::before {
+	top: -6.5px;
+}
+.agent-thread.has-bottom::before {
+	bottom: -5px;
+}
+/* Terminating dot at bottom when no bubble below and last node is expanded */
+.agent-thread:not(.has-bottom) .agent-thread-node.open:last-child::after {
+	content: '';
+	position: absolute;
+	/* -17px (was -15) nudges the terminating dot 2px further left so it
+		 sits flush with the thread's left rail when the search node is
+		 expanded. This is the "big glow dot at the bottom" the user sees
+		 after a web_search step. */
+	left: -17px;
+	bottom: 5px;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--red);
+	box-shadow: 0 0 4px 1px color-mix(in srgb, var(--red) 55%, transparent),
+							0 0 0 3px color-mix(in srgb, var(--red) 18%, transparent);
+}
+
+/* Synapse pulse — a bright dot traveling down the line */
+.agent-thread::after {
+	content: '';
+	position: absolute;
+	left: 4px;
+	width: 4px;
+	height: 4px;
+	border-radius: 50%;
+	background: var(--red);
+	box-shadow: 0 0 3px 1px color-mix(in srgb, var(--red) 50%, transparent);
+	pointer-events: none;
+	top: 0%;
+	opacity: 0;
+}
+.agent-thread.streaming::after {
+	animation: synapse-capped-short 0.8s ease-in-out infinite;
+}
+.agent-thread.streaming.has-top::after {
+	animation: synapse-capped 0.8s ease-in-out infinite;
+}
+.agent-thread.streaming.has-bottom::after {
+	animation: synapse-travel-short 0.8s ease-in-out infinite;
+}
+.agent-thread.streaming.has-top.has-bottom::after {
+	animation: synapse-travel 0.8s ease-in-out infinite;
+}
+@keyframes synapse-travel {
+	0% { top: 0%; opacity: 0; }
+	5% { opacity: 0.5; }
+	85% { opacity: 0.35; }
+	100% { top: 100%; opacity: 0; }
+}
+@keyframes synapse-capped {
+	0% { top: 0%; opacity: 0; }
+	5% { opacity: 0.5; }
+	70% { opacity: 0.35; top: calc(100% - 20px); }
+	100% { opacity: 0; top: calc(100% - 20px); }
+}
+@keyframes synapse-travel-short {
+	0% { top: 14px; opacity: 0; }
+	5% { opacity: 0.5; }
+	85% { opacity: 0.35; }
+	100% { top: 100%; opacity: 0; }
+}
+@keyframes synapse-capped-short {
+	0% { top: 14px; opacity: 0; }
+	5% { opacity: 0.5; }
+	70% { opacity: 0.35; top: calc(100% - 20px); }
+	100% { opacity: 0; top: calc(100% - 20px); }
+}
+.agent-thread-node {
+	position: relative;
+	padding: 5px 0;
+}
+.agent-thread-node + .agent-thread-node {
+	margin-top: 2px;
+}
+.agent-thread-dot {
+	position: absolute;
+	left: -20px;
+	top: 10px;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--red);
+	border: 2px solid var(--bg);
+	z-index: 1;
+}
+.agent-thread-node.running .agent-thread-dot {
+	background: var(--red);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 25%, transparent);
+	animation: thread-pulse 1.5s ease-in-out infinite;
+	top: 10px;
+}
+@keyframes thread-pulse {
+	0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 20%, transparent); }
+	50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--red) 10%, transparent); }
+}
+.agent-thread-node.error .agent-thread-dot {
+	background: var(--color-error);
+}
+.agent-thread-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	cursor: pointer;
+	font-size: 0.85em;
+	color: color-mix(in srgb, var(--fg) 70%, transparent);
+	user-select: none;
+/* ===== SLASH COMMAND RESPONSES ===== */
+/* #region Slash Command Responses */
+}
+.agent-thread-header:hover {
+	color: var(--fg);
+}
+.agent-thread-icon {
+	font-size: 0.9em;
+	color: var(--red);
+}
+.agent-thread-node.error .agent-thread-icon {
+	color: var(--color-error);
+}
+.agent-thread-tool {
+	font-weight: 600;
+	color: var(--red);
+	text-transform: uppercase;
+	letter-spacing: 0.3px;
+	font-size: 0.9em;
+/* ===== AGENT THREAD TIMELINE ===== */
+/* #region Agent Thread Timeline */
+.agent-thread-status {
+	font-size: 0.85em;
+	opacity: 0.5;
+}
+.agent-thread-chevron {
+	font-size: 0.7em;
+	transition: transform 0.2s ease;
+	opacity: 0.4;
+}
+.agent-thread-node.open .agent-thread-chevron {
+	transform: rotate(90deg);
+}
+.agent-thread-wave {
+	font-family: monospace;
+	font-size: 0.85em;
+	color: var(--red);
+	letter-spacing: -1px;
+}
+/* Live "cooking" timer on a running tool — prominent (accent, tabular) so a
+	 long-running command always reads as alive, not frozen. */
+.agent-thread-elapsed {
+	margin: 0 6px 0 4px;
+	font-size: 11px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	color: var(--accent, var(--red));
+}
+/* ===== AGENT TOOL OUTPUT (inside thread nodes) ===== */
+/* #region Agent Tool Output */
+.stall-banner {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 8px auto;
+	padding: 8px 12px;
+	max-width: 90%;
+	font-size: 12px;
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--color-warning, #f0ad4e) 12%, var(--bg));
+	border: 1px solid color-mix(in srgb, var(--color-warning, #f0ad4e) 40%, transparent);
+}
+.stall-banner-txt { flex: 1; opacity: 0.85; }
+.stall-banner-btn {
+	font-size: 11px;
+	font-weight: 600;
+	padding: 4px 10px;
+	border-radius: 6px;
+	border: none;
+	background: var(--accent, var(--red));
+	color: #fff;
+	cursor: pointer;
+	flex-shrink: 0;
+}
+.stall-banner-stop {
+	background: none;
+	color: var(--fg);
+	border: 1px solid var(--border);
+}
+.agent-thread-content {
+/* ===== PANE STYLES (shared by compare) ===== */
+	display: none;
+	padding: 4px 0 2px 0;
+	overflow-x: auto;
+	overflow-y: hidden;
+}
+.agent-thread-node.open .agent-thread-content {
+	display: block;
+}
+.agent-thread-cmd {
+	background: color-mix(in srgb, var(--fg) 5%, transparent);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	padding: 8px 12px;
+	margin: 4px 0;
+	color: var(--fg);
+	font-size: 0.85em;
+	white-space: pre-wrap;
+	word-break: break-word;
+	line-height: 1.4;
+	overflow-x: auto;
+/* RESEARCH DETAILS EXPANDABLE SECTION - UPDATED */
+}
+
+/* Mobile: constrain thread content */
+@media (max-width: 768px) {
+	.agent-thread {
+		margin-left: 16px;
+		padding-left: 18px;
+		max-width: calc(90% - 16px);
+	}
+/* CUSTOM SYNTAX HIGHLIGHTING - Theme-Reactive  */
+	.agent-thread-cmd {
+		font-size: 0.78em;
+		padding: 6px 8px;
+		max-width: 100%;
+		overflow-x: auto;
+	}
+	.agent-thread-content {
+		max-width: calc(100vw - 90px);
+	}
+	.agent-tool-output pre {
+		font-size: 0.8em;
+		max-width: 100%;
+		overflow-x: auto;
+	}
+	.agent-thread-header {
+		font-size: 0.8em;
+	}
+	.agent-thread-dot {
+		left: -16px;
+		top: 10px;
+	}
+}
+/* #endregion Agent Thread Timeline */
+
+/* #region Agent Tool Output */
+.agent-tool-output {
+	margin-top: 8px;
+	background: color-mix(in srgb, var(--red) 5%, transparent);
+	border: 1px solid color-mix(in srgb, var(--red) 20%, transparent);
+	border-radius: 8px;
+	overflow: hidden;
+}
+.agent-tool-output summary {
+	color: var(--red);
+	background: color-mix(in srgb, var(--red) 10%, transparent);
+	border-bottom: 1px solid color-mix(in srgb, var(--red) 15%, transparent);
+	cursor: pointer;
+	font-size: 0.85em;
+	user-select: none;
+	padding: 6px 10px;
+	font-weight: 500;
+	/* Chevron on the right (like the thinking section) instead of the default
+		 left-side disclosure triangle. */
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	list-style: none;
+}
+.agent-tool-output summary::-webkit-details-marker { display: none; }
+/* File-write diff — neutral chrome (not the red error tint) + colored lines */
+.agent-tool-diff {
+	background: color-mix(in srgb, var(--fg) 4%, transparent);
+	border-color: color-mix(in srgb, var(--fg) 18%, transparent);
+}
+.agent-tool-diff summary {
+	color: var(--fg);
+	background: color-mix(in srgb, var(--fg) 7%, transparent);
+	border-bottom-color: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.agent-tool-diff .diff-stat {
+	font-weight: 600;
+	opacity: 0.7;
+	font-family: var(--mono, monospace);
+}
+/* Collapsed diff summary: filename + +adds/−dels (theme green/red). */
+.agent-tool-diff summary {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.agent-tool-diff .diff-file {
+	font-family: var(--mono, monospace);
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.agent-tool-diff .diff-summary-stats {
+	margin-left: auto;
+	font-family: var(--mono, monospace);
+	font-weight: 600;
+	flex-shrink: 0;
+}
+.agent-tool-diff .diff-summary-stats .diff-stat-add { color: var(--green, #2ecc71); }
+.agent-tool-diff .diff-summary-stats .diff-stat-del { color: var(--red, #e74c3c); }
+.agent-tool-diff .diff-summary-stats .diff-stat-new { color: var(--accent, var(--red)); opacity: 0.85; }
+.diff-pre {
+	margin: 0;
+	padding: 8px 10px;
+	overflow-x: auto;
+	font-family: var(--mono, monospace);
+	font-size: 0.82em;
+	line-height: 1.45;
+}
+.diff-pre span { display: block; white-space: pre; }
+.diff-pre .diff-add { background: color-mix(in srgb, #2ecc71 22%, transparent); }
+.diff-pre .diff-del { background: color-mix(in srgb, #e74c3c 22%, transparent); }
+.diff-pre .diff-hunk { color: var(--accent); opacity: 0.85; }
+.diff-pre .diff-meta { opacity: 0.55; }
+.diff-pre .diff-ctx { opacity: 0.8; }
+/* Suppress the global `summary::before { content: '▶' }` left arrow — this
+	 section uses a right-side chevron instead. */
+.agent-tool-output summary::before { content: none; }
+.agent-tool-output summary::after {
+	content: '\25BC'; /* ▼ */
+	color: var(--red);
+	font-size: 0.9em;
+	transition: transform 0.3s ease;
+}
+.agent-tool-output[open] > summary::after {
+	transform: rotate(180deg);
+}
+.agent-tool-output summary:hover {
+	background: color-mix(in srgb, var(--red) 15%, transparent);
+}
+.agent-thinking-dots .ai-spinner {
+	font-size: 12px;
+	letter-spacing: 0.5px;
+}
+
+.agent-tool-output[open] {
+	background: color-mix(in srgb, var(--red) 6%, transparent);
+}
+.agent-tool-output[open] > :not(summary) {
+	animation: detail-reveal 0.25s ease-out both;
+}
+@keyframes detail-reveal {
+	from { opacity: 0; transform: translateY(-4px); }
+	to   { opacity: 1; transform: translateY(0); }
+}
+.agent-tool-output pre {
+	background: transparent;
+	border: none;
+	border-radius: 0;
+	padding: 10px 14px;
+	margin-top: 0;
+	max-height: 300px;
+	overflow-y: auto;
+	font-size: 0.95em;
+	color: var(--fg);
+	opacity: 0.85;
+	white-space: pre-wrap;
+	word-break: break-all;
+	line-height: 1.5;
+}
+/* #endregion Agent Tool Output */
+
+/* #region Pane Header */
+.pane-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 6px 0 4px;
+	border-bottom: 1px solid var(--border);
+}
+.close-split-btn,
+.pane-close-btn {
+	background: none;
+	border: none;
+	color: var(--color-error);
+	font-size: 18px;
+	cursor: pointer;
+	padding: 0 4px;
+	line-height: 1;
+	opacity: 0;
+	transition: opacity 0.15s;
+}
+.pane-header:hover .close-split-btn,
+.pane-header:hover .pane-close-btn {
+	opacity: 1;
+}
+.close-split-btn:hover,
+.pane-close-btn:hover {
+	color: var(--color-error-light);
+}
+/* #endregion Pane Header */
+
+/* #region Research Details */
+/* Style the details element */
+details {
+	background: color-mix(in srgb, var(--hl-string) 5%, transparent);
+	border: 1px solid color-mix(in srgb, var(--hl-string) 30%, transparent);
+	border-radius: 8px;
+	margin: 12px 0;
+	padding: 0;
+	overflow: hidden;
+	transition: all 0.3s ease;
+}
+
+details[open] {
+	background: color-mix(in srgb, var(--hl-string) 8%, transparent);
+}
+details[open] > :not(summary) {
+	animation: detail-reveal 0.25s ease-out both;
+}
+
+/* Style the summary (clickable header) - NO CURSIVE, NORMAL SIZE */
+summary {
+	cursor: pointer;
+	padding: 10px 14px;
+	background: color-mix(in srgb, var(--hl-string) 10%, transparent);
+	border-bottom: 1px solid color-mix(in srgb, var(--hl-string) 20%, transparent);
+	font-weight: 500;
+	font-size: 0.95em;
+	font-style: normal;
+	font-family: inherit;
+	color: var(--hl-string);
+	user-select: none;
+	list-style: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	transition: background 0.2s ease;
+}
+
+summary:hover {
+	background: color-mix(in srgb, var(--hl-string) 15%, transparent);
+}
+
+/* Add custom arrow */
+summary::before {
+	content: '▶';
+	display: inline-block;
+	transition: transform 0.3s ease;
+	font-size: 0.75em;  /* Smaller arrow */
+}
+
+details[open] summary::before {
+	transform: rotate(90deg);
+}
+
+/* Hide default marker in webkit browsers */
+summary::-webkit-details-marker {
+	display: none;
+}
+
+/* Style the content inside details - SMALLER, MORE COMPACT */
+details > div,
+details > p,
+details > ul,
+details > ol {
+	padding: 12px 14px;  /* Less padding */
+	animation: fadeIn 0.3s ease;
+	font-size: 0.9em;  /* Smaller text */
+	line-height: 1.5;
+}
+
+@keyframes fadeIn {
+	from {
+		opacity: 0;
+		transform: translateY(-10px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+/* Style research findings inside details - SMALLER HEADINGS */
+details h3 {
+	margin-top: 12px;
+	margin-bottom: 6px;
+	color: var(--hl-string);
+	font-size: 0.95em;
+	font-weight: 500;
+}
+
+details h4 {
+	margin-top: 10px;
+	margin-bottom: 5px;
+	color: var(--hl-string);
+	font-size: 0.9em;
+	font-weight: 500;
+}
+
+details ul {
+	margin-left: 18px;
+	margin-bottom: 10px;
+}
+
+details li {
+	margin-bottom: 5px;
+	line-height: 1.4;
+	font-size: 0.85em;  /* Smaller list items */
+}
+
+details strong {
+	color: var(--hl-string);
+	font-weight: 500;
+}
+
+details a {
+	color: var(--accent);
+	text-decoration: none;
+	transition: color 0.2s ease;
+}
+
+details a:hover {
+	color: var(--color-link-hover);
+	text-decoration: underline;
+}
+
+/* Research metadata - SMALLER */
+details .research-meta {
+	font-size: 0.8em;
+	color: var(--fg);
+	opacity: 0.8;
+	margin-top: 4px;
+}
+
+/* Source links - SMALLER */
+details .source-link {
+	display: inline-block;
+	margin-top: 3px;
+	padding: 2px 5px;
+	background: color-mix(in srgb, var(--accent) 10%, transparent);
+	border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+	border-radius: 4px;
+	font-size: 0.75em;
+	color: var(--accent);
+}
+
+details .source-link:hover {
+	background: color-mix(in srgb, var(--accent) 20%, transparent);
+	border-color: var(--accent);
+}
+
+/* Research report links - clean and subtle */
+details a {
+	color: var(--accent);
+	text-decoration: none;
+	font-weight: normal;  /* Remove bold */
+	font-size: 0.85em;
+	opacity: 0.9;
+	transition: all 0.2s ease;
+	word-break: break-all;  /* Break long URLs nicely */
+}
+
+details a:hover {
+	color: var(--color-link-hover);
+	text-decoration: underline;
+	opacity: 1;
+}
+/* #endregion Research Details */
+
+/* #region Syntax Highlighting */
+.hljs {
+	background: var(--code-bg, var(--hl-bg, var(--panel)));
+	color: var(--code-fg, var(--hl-fg, var(--fg)));
+	padding: 8px;
+	border-radius: 4px;
+}
+
+/* Keywords & control flow — purple/magenta */
+.hljs-keyword,
+.hljs-selector-tag { color: var(--hl-keyword); }
+
+/* Strings & regex — warm yellow/orange */
+.hljs-string,
+.hljs-regexp,
+.hljs-addition { color: var(--hl-string); }
+
+/* Comments & docs — muted. font-style intentionally omitted: italics shift
+	 glyph widths in the highlight overlay relative to the transparent textarea
+	 above it, which makes the caret drift away from the visible character. */
+.hljs-comment,
+.hljs-quote,
+.hljs-meta { color: var(--hl-comment); }
+
+/* Functions & method names — blue */
+.hljs-function,
+.hljs-title,
+.hljs-title.function_,
+.hljs-section { color: var(--hl-function); }
+
+/* Numbers & constants — distinct from strings */
+.hljs-number,
+.hljs-literal { color: var(--hl-number, var(--hl-string)); }
+
+/* Built-ins & types — teal/cyan tint */
+.hljs-built_in,
+.hljs-type,
+.hljs-class,
+.hljs-title.class_ { color: var(--hl-builtin, var(--hl-function)); }
+
+/* Variables & identifiers — fg with slight distinction */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-attr { color: var(--hl-variable, var(--hl-fg, var(--fg))); }
+
+/* Operators & punctuation — slightly dimmed fg */
+.hljs-operator,
+.hljs-punctuation { color: var(--hl-fg, var(--fg)); opacity: 0.8; }
+
+/* Parameters */
+.hljs-params { color: var(--hl-params, var(--hl-fg, var(--fg))); }
+
+/* Property access, attributes in HTML/XML */
+.hljs-property,
+.hljs-selector-class,
+.hljs-selector-id { color: var(--hl-variable, var(--hl-function)); }
+
+/* Tags (HTML) */
+.hljs-tag { color: var(--hl-keyword); }
+.hljs-name { color: var(--hl-keyword); }
+
+/* Deletion/diff */
+.hljs-deletion { color: var(--red); }
+
+/* Symbol, special */
+.hljs-symbol { color: var(--hl-string); }
+.hljs-link { color: var(--hl-function); text-decoration: underline; }
+
+/* Emphasis — applied globally (chat messages, rendered markdown in docs
+	 preview, etc.) but explicitly NEUTRALIZED in the doc editor's overlay so
+	 the textarea-and-overlay caret alignment stays bit-perfect. Bold / italic
+	 shift glyph widths and that drifts the click-to-row mapping. */
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: bold; }
+.doc-editor-highlight .hljs-emphasis,
+.doc-editor-highlight .hljs-strong {
+	font-style: normal !important;
+	font-weight: inherit !important;
+}
+
+/* ===== Markdown highlighting — document editor =====
+	 IMPORTANT: this is an overlay layered behind a transparent textarea, so
+	 every styled token must occupy the EXACT same width as the corresponding
+	 characters in the textarea. Anything that changes glyph metrics
+	 (font-weight/style, padding, border, letter-spacing) makes the caret drift
+	 away from the rendered glyph underneath. Color / background / text-
+	 decoration are safe — they don't change layout width. */
+.doc-editor-highlight .language-markdown .hljs-section {
+	color: var(--hl-keyword, #c678dd);
+}
+.doc-editor-highlight .language-markdown .hljs-strong {
+	color: var(--hl-number, #d19a66);
+}
+.doc-editor-highlight .language-markdown .hljs-emphasis {
+	color: var(--hl-string, #e5c07b);
+}
+.doc-editor-highlight .language-markdown .hljs-bullet {
+	color: var(--hl-builtin, #56b6c2);
+}
+.doc-editor-highlight .language-markdown .hljs-code {
+	color: var(--hl-builtin, #56b6c2);
+	background: color-mix(in srgb, var(--hl-builtin, #56b6c2) 10%, transparent);
+	border-radius: 2px;
+}
+.doc-editor-highlight .language-markdown .hljs-link {
+	color: var(--hl-function, #61afef);
+	text-decoration: underline;
+}
+.doc-editor-highlight .language-markdown .hljs-quote {
+	color: var(--hl-comment, #828997);
+}
+.doc-editor-highlight .language-markdown .hljs-symbol {
+	color: var(--red);
+}
+/* Standalone [bracketed text] — scene directions, annotations */
+.doc-editor-highlight .language-markdown .md-bracket {
+	color: var(--hl-builtin, #56b6c2);
+	opacity: 0.85;
+}
+/* Heading # markers — dimmer than the heading text */
+.doc-editor-highlight .language-markdown .md-heading-marker {
+	color: var(--hl-comment, #828997);
+	font-weight: 400;
+}
+/* #endregion Syntax Highlighting */
+
+/* Legacy heading aliases for strict migration audit parity */
+/* ===== AGENT MULTI-BUBBLE ===== */
+/* Mobile responsive styles */
+/* Stall watchdog banner — shown when the stream has been silent for ~1min. */

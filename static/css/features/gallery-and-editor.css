@@ -1,0 +1,6338 @@
+/* #region Document Editor Artifacts Panel */
+/* ===== DOCUMENT EDITOR (ARTIFACTS) PANEL ===== */
+
+/* Doc editor is a body-level sibling of chat-container */
+
+/* Divider between chat and doc editor */
+.doc-divider {
+  width: 1px;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--fg) 11%, transparent);
+  cursor: col-resize;
+  transition: background 0.15s;
+  position: relative;
+  z-index: 10;
+}
+.doc-divider::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  left: -10px;
+  width: 21px;
+  cursor: col-resize;
+}
+.doc-divider:hover {
+  background: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+/* Always-visible "›" handle on the drag divider — clickable to collapse the
+   panel, and signals the divider is interactive. */
+.doc-divider-collapse {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--fg);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0.6;
+  cursor: pointer;
+  transition: opacity 0.15s, border-color 0.15s, left 0.22s ease;
+  z-index: 12;
+}
+/* When in fullscreen mode (cursor outside the doc), the flap itself slides
+   to the OUTSIDE edge of the divider — visually belonging to the chat side
+   the cursor is on, not the doc. The left/right shift pairs with the glyph
+   rotation for a single coordinated transition. */
+.doc-divider-collapse[data-mode="fullscreen"] {
+  left: -22px;
+}
+.doc-divider:hover .doc-divider-collapse { opacity: 0.92; }
+.doc-divider-collapse:hover { opacity: 1 !important; border-color: var(--accent, var(--red)); }
+/* The same `›` glyph is in the markup; CSS rotates 180° for the left-pointing
+   (fullscreen) state. Smooth transition pairs with the chevron's slide. */
+.doc-divider-collapse > span {
+  display: inline-block;
+  transition: transform 0.22s ease, opacity 0.18s ease;
+}
+.doc-divider-collapse[data-mode="fullscreen"] > span {
+  transform: rotate(180deg);
+}
+/* Secondary "hide panel" X button in the divider — invisible until the pane
+   is fullscreen, then floats just below the unfullscreen chevron so the user
+   has a one-tap escape that minimises the pane instead of just exiting
+   fullscreen. */
+.doc-divider-hide {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  margin-top: 22px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--accent, var(--red));
+  cursor: pointer;
+  padding: 0;
+  z-index: 12;
+  opacity: 0.85;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+.doc-divider-hide:hover {
+  opacity: 1;
+  border-color: var(--accent, var(--red));
+}
+/* Smooth entrance — slide in from the left + fade up so it doesn't snap into
+   place when fullscreen activates. The chevron's vertical centering uses
+   translateY(-50%), so the animation has to keep that part. */
+@keyframes doc-fs-chevron-in {
+  from { opacity: 0; transform: translateY(-50%) translateX(-18px); }
+  to   { opacity: 0.85; transform: translateY(-50%) translateX(0); }
+}
+
+/* Copy / Export split button — main click copies, the caret opens the export menu. */
+.doc-split-btn {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  height: 22px;
+  flex-shrink: 0;
+}
+.doc-split-btn .doc-split-main,
+.doc-split-btn .doc-split-caret {
+  border: none !important;
+  border-radius: 0 !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  /* Keep the element fully opaque so the divider line stays crisp; dim the
+     glyph via colour instead (the base .doc-action-icon-btn fades the whole
+     element to 0.3, which also hides the divider). */
+  opacity: 1 !important;
+  color: color-mix(in srgb, var(--fg) 55%, transparent) !important;
+  background: none !important;
+  transition: color 0.12s, background 0.12s;
+}
+.doc-split-btn:hover .doc-split-main,
+.doc-split-btn:hover .doc-split-caret { color: var(--fg) !important; }
+.doc-split-btn .doc-split-caret {
+  border-left: 1px solid var(--border) !important;
+  padding: 0 5px 0 7px !important;
+}
+.doc-split-btn .doc-split-main:hover,
+.doc-split-btn .doc-split-caret:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent) !important;
+  color: var(--fg) !important;
+}
+
+/* Editor pane — body-level flex sibling */
+.doc-editor-pane {
+  flex: 1;
+  min-width: 0;
+  max-width: 70vw;
+  container-type: inline-size;
+  container-name: docpane;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  box-shadow: -10px 0 22px rgba(0, 0, 0, 0.16);
+  overflow: hidden;
+  height: 100%;
+  position: relative;
+  z-index: 1;
+  color-scheme: dark;
+  /* Smooth open: slide in from the right + fade. Same easing/duration as
+     the notes pane so both drawers feel like one mechanism. */
+  animation: doc-pane-enter 200ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  transform-origin: right center;
+  will-change: transform, opacity;
+}
+@keyframes doc-pane-enter {
+  from { transform: translateX(24px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+.doc-editor-pane.doc-pane-leaving {
+  animation: doc-pane-leave 160ms cubic-bezier(0.4, 0, 1, 1) both;
+  pointer-events: none;
+}
+@keyframes doc-pane-leave {
+  from { transform: translateX(0);    opacity: 1; }
+  to   { transform: translateX(24px); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .doc-editor-pane,
+  .doc-editor-pane.doc-pane-leaving { animation: none; }
+}
+.doc-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+/* ---- Tab bar ---- */
+.doc-tab-bar {
+  display: flex;
+  align-items: stretch;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  height: 36px;
+}
+.doc-tab-scroll {
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  justify-content: flex-start;
+  /* Fade tabs into the bar's background at the edges (next to the scroll
+     arrows) so an overflowing tab dissolves instead of being hard-cut. The
+     fade is conditional — when we're at an edge there's nothing to fade to,
+     so the mask gradient becomes flat on that side (no shadow). */
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+          mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+}
+.doc-tab-scroll.is-at-left {
+  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 18px), transparent 100%);
+          mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 18px), transparent 100%);
+}
+.doc-tab-scroll.is-at-right {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 100%);
+          mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 100%);
+}
+.doc-tab-scroll.is-at-left.is-at-right {
+  -webkit-mask-image: none;
+          mask-image: none;
+}
+.doc-tab-scroll::-webkit-scrollbar { display: none; }
+.doc-tab-arrow {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.3;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 0 6px;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  position: relative;
+  top: -2px;
+}
+.doc-tab-arrow:hover {
+  opacity: 1;
+}
+#doc-tab-right,
+#doc-tab-left {
+  position: relative;
+  top: 3px;
+}
+/* Mobile swipe-down grab handle at the top of the doc sheet. */
+.doc-mobile-grabber { display: none; }
+@media (max-width: 768px) {
+  body.doc-view .doc-mobile-grabber {
+    display: block;
+    flex-shrink: 0;
+    height: 18px;
+    position: relative;
+    background: transparent;
+    background-color: transparent;
+    background-image: none;
+    touch-action: none;
+    cursor: grab;
+  }
+  body.doc-view .doc-mobile-grabber::before {
+    content: '';
+    position: absolute;
+    top: 7px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 4px;
+    background: var(--fg);
+    opacity: 0.25;
+    border-radius: 2px;
+  }
+}
+
+/* Ghost tab shown in the empty state (new, not-yet-saved document). Muted +
+   italic so it reads as a placeholder, and non-interactive so clicking it
+   can't hit the tab handlers (it has no data-doc-id). */
+.doc-tab.doc-tab-ghost {
+  /* New, not-yet-saved doc tab. It already carries .active, so it shows the
+     accent underline like any active tab — that's all we want. The old dashed
+     border + italic/dim "pending" styling looked weird, so they're gone. */
+  pointer-events: none;
+}
+.doc-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  opacity: 0.4;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.1s, background 0.1s;
+  flex-shrink: 0;
+  border-right: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  position: relative;
+}
+.doc-tab:hover {
+  opacity: 0.7;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.doc-tab.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border-radius: 7px 7px 0 0;
+}
+.doc-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--red);
+}
+.doc-tab-title {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.doc-tab-title-input {
+  background: transparent;
+  border: 1px solid var(--fg);
+  border-radius: 2px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 0 4px;
+  height: 18px;
+  width: 120px;
+  max-width: 180px;
+  outline: none;
+}
+.doc-tab-lang {
+  font-size: 9px;
+  opacity: 0.5;
+}
+.doc-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.4;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 5px;
+  margin-left: 3px;
+  flex-shrink: 0;
+  align-self: center;
+  transition: opacity 0.12s;
+}
+.doc-tab-close:hover { opacity: 1; }
+/* Mobile-only footer (Close + Copy); hidden on desktop and in email mode. */
+.doc-mobile-footer { display: none; }
+.doc-tab-new {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.25;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 10px;
+  transition: opacity 0.1s;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+.doc-tab-new:hover {
+  opacity: 0.7;
+}
+.doc-tab-play {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.3;
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 10px;
+  line-height: 1;
+  transition: opacity 0.1s, color 0.1s;
+  flex-shrink: 0;
+}
+.doc-tab-play:hover {
+  opacity: 1;
+  color: var(--green, #4ec970);
+}
+.doc-tab-play.active {
+  opacity: 1;
+  color: var(--green, #4ec970);
+}
+.doc-tab.dragging {
+  opacity: 0.3;
+}
+.doc-tab.drag-over {
+  border-left: 2px solid var(--fg);
+}
+
+/* ---- HTML preview iframe ---- */
+.doc-html-preview {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: #fff;
+}
+
+/* ---- Editor header ---- */
+.doc-editor-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  /* Moved to the bottom as a footer: flex order pushes it last in the pane
+     column, and the divider flips to the top edge. */
+  order: 99;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  min-height: 36px;
+  background: var(--bg);
+}
+/* Version now lives in the document tab, not the footer. */
+#doc-version-badge { display: none !important; }
+/* Language icon chip on doc tabs — sits between the version pill and title.
+   Hidden when empty so docs without a language don't get awkward spacing. */
+.doc-tab-lang {
+  display: inline-flex; align-items: center;
+  flex-shrink: 0;
+  align-self: center;
+}
+.doc-tab-lang:empty { display: none; }
+.doc-tab-lang svg { display: block; }
+
+.doc-tab-version {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  align-self: center;
+  line-height: 1.4;
+  /* Sits to the LEFT of the title now — space it off the title text. */
+  margin-right: 6px;
+  /* Accent pill so it's obvious the version is a clickable control. */
+  color: var(--accent-primary, var(--red));
+  border: 1px solid color-mix(in srgb, var(--accent-primary, var(--red)) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 12%, transparent);
+  border-radius: 9px;
+}
+.doc-tab-version:hover {
+  border-color: var(--accent-primary, var(--red));
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 22%, transparent);
+}
+.doc-close-btn {
+  order: -1;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+.doc-close-btn:hover {
+  opacity: 1;
+}
+
+.doc-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  justify-content: flex-end;
+}
+.doc-left .doc-editor-actions {
+  margin-left: 0;
+}
+
+.doc-version-badge {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--red) 55%, transparent);
+  color: var(--red);
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s, border-color 0.1s;
+  opacity: 0.9;
+}
+.doc-version-badge:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--red) 20%, transparent);
+  border-color: var(--red);
+}
+
+.doc-stream-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--accent);
+  opacity: 0.9;
+  white-space: nowrap;
+  animation: doc-stream-pulse 1.5s ease-in-out infinite;
+}
+.doc-stream-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+@keyframes doc-stream-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+.doc-updated-flash {
+  animation: doc-update-flash 0.6s ease-out;
+}
+@keyframes doc-update-flash {
+  0%   { box-shadow: inset 0 0 0 2px var(--accent); }
+  100% { box-shadow: inset 0 0 0 2px transparent; }
+}
+
+/* In the doc footer the type picker sits next to the accent Copy/Export split —
+   match its 28px height and 6px radius so the right-hand controls line up. */
+.doc-actions-footer #doc-language-select {
+  height: 28px;
+  border-radius: 6px;
+  font-size: 11px;
+  top: 0;
+}
+/* Lang-type icon shown to the LEFT of the language select. Browsers won't
+   render SVG inside <option>, so this surface the current selection's icon
+   externally. */
+#doc-language-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px; height: 18px;
+  color: var(--accent-primary, var(--red));
+  flex-shrink: 0;
+}
+#doc-language-icon:empty { display: none; }
+#doc-language-icon svg { display: block; }
+
+/* Visually hidden but available to assistive tech (screen readers, axe).
+   Use for content that should be announced/structural but not painted —
+   e.g. the persistent page <h1>. */
+.a11y-visually-hidden {
+  position: absolute !important;
+  width: 1px !important; height: 1px !important;
+  padding: 0 !important; margin: -1px !important;
+  overflow: hidden !important; clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important; border: 0 !important;
+}
+
+/* ── Custom language type picker (replaces visible chrome of native <select>
+   — <option>s can't render SVG). Hidden select stays as the source of truth. */
+.doc-langpicker-native-hidden {
+  position: absolute !important;
+  width: 1px !important; height: 1px !important;
+  padding: 0 !important; margin: -1px !important;
+  overflow: hidden !important; clip: rect(0,0,0,0) !important;
+  border: 0 !important;
+}
+.doc-langpicker-trigger {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 8px 0 10px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px;
+  font-size: 11px; cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.doc-langpicker-trigger:hover {
+  border-color: color-mix(in srgb, var(--accent-primary, var(--red)) 60%, var(--border));
+}
+.doc-langpicker-trigger svg { display: block; flex-shrink: 0; }
+.doc-langpicker-label {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 90px;
+}
+.doc-langpicker-ico-blank {
+  display: inline-block; width: 14px; height: 14px; flex-shrink: 0;
+}
+.doc-langpicker-menu {
+  background: var(--bg);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.32);
+  max-height: 60vh; overflow-y: auto;
+  z-index: 10000;
+  min-width: 160px;
+}
+.doc-langpicker-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none; color: var(--fg);
+  border: none; border-radius: 5px;
+  font-size: 12px; text-align: left;
+  cursor: pointer;
+}
+.doc-langpicker-item:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.doc-langpicker-item.is-selected {
+  background: color-mix(in srgb, var(--accent-primary, var(--red)) 14%, transparent);
+  color: var(--accent-primary, var(--red));
+}
+.doc-langpicker-item svg { display: block; flex-shrink: 0; }
+.doc-langpicker-item .doc-langpicker-label { max-width: 220px; }
+
+.doc-language-select {
+  background-color: var(--bg);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239cdef2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 15 12 9 18 15'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 4px center;
+  color: var(--fg);
+  color-scheme: dark;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  position: relative;
+  top: 0;
+  font-family: inherit;
+  font-size: 10px;
+  padding: 2px 20px 2px 8px;
+  height: 22px;
+  /* Fixed width so the right-anchored chevron doesn't shift when the selected
+     option's text width changes. */
+  width: 96px;
+  text-overflow: ellipsis;
+  opacity: 0.8;
+  cursor: pointer;
+  -moz-appearance: none;
+  appearance: none;
+}
+/* Light theme: tint the chevron with the light foreground instead of cyan. */
+:root.light .doc-language-select {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%232b2b2b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 15 12 9 18 15'/></svg>");
+}
+/* New-tab "+" spins on hover, like the library sidebar "+". */
+.doc-tab-new svg { transition: transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.doc-tab-new:hover svg { transform: rotate(180deg) scale(1.15); }
+
+.doc-action-btn {
+  background: none;
+  color: var(--fg);
+  border: none;
+  font-family: inherit;
+  font-size: 10px;
+  padding: 2px 8px;
+  height: 22px;
+  cursor: pointer;
+  opacity: 0.45;
+  transition: opacity 0.1s;
+}
+.doc-action-btn:hover {
+  opacity: 1;
+}
+.doc-action-icon-btn {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.3;
+  cursor: pointer;
+  padding: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.1s;
+}
+.doc-action-icon-btn:hover {
+  opacity: 1;
+}
+/* The "T" icon stays centered in the fixed-size button so it grows
+   symmetrically (from the center) instead of jumping around as the size
+   changes. The S/M/L letter is pinned to the bottom-right corner, absolutely
+   positioned so it never shifts the icon either. */
+#doc-fontsize-btn { transform: translateY(-1px); }
+#doc-fontsize-btn svg { flex: 0 0 auto; }
+.doc-fontsize-levels {
+  position: absolute;
+  right: 6px;
+  bottom: 3px;
+  display: inline-flex;
+  line-height: 1;
+  pointer-events: none;
+}
+.doc-fontsize-levels i {
+  font-style: normal;
+  font-weight: 700;
+  font-size: 7px;
+  /* Bare --accent is undefined in this codebase, was falling back to the
+     hardcoded blue #4a9eff — use the real theme accent. */
+  color: var(--accent-primary, var(--red));
+  opacity: 1;
+}
+.doc-fontsize-levels i.active { opacity: 1; }
+/* Collapsed buttons hidden in header, shown in overflow menu */
+.doc-collapsible-btn.doc-collapsed { display: none !important; }
+.doc-overflow-wrapper { order: -1; }
+.doc-overflow-toggle { opacity: 0.5; }
+.doc-overflow-toggle:hover { opacity: 1; }
+.doc-overflow-menu {
+  display: none;
+  position: fixed;
+  z-index: 9999;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 0;
+  min-width: 140px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.doc-overflow-menu.open { display: block; }
+.doc-overflow-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 12px;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s;
+}
+.doc-overflow-item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.doc-overflow-item svg { flex-shrink: 0; opacity: 0.5; }
+
+/* Markdown Edit/Preview two-icon switch — segmented, styled to match the Copy
+   split button. The active half gets a static highlight (no sliding). */
+.md-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  flex-shrink: 0;
+  height: 22px;
+}
+.md-view-toggle .md-view-opt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 100%;
+  padding: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: none !important;
+  color: var(--fg);
+  opacity: 0.45;
+  cursor: pointer;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+.md-view-toggle .md-view-opt:hover { opacity: 0.8; }
+.md-view-toggle .md-view-opt.active {
+  opacity: 1;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 8%, transparent) !important;
+  /* "Punch" pop when a side becomes active (only fires on an actual switch —
+     re-applying .active without a change doesn't restart the animation). */
+  animation: md-view-punch 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes md-view-punch {
+  0%   { transform: scale(0.8); }
+  55%  { transform: scale(1.18); }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .md-view-toggle .md-view-opt.active { animation: none; }
+}
+
+/* Mobile: the doc/email footer controls (format toggle, export button, export
+   menu) were slimmer than the Send button, so the row looked ragged. Bump them
+   to match the Send button height (and give the export/overflow menu bigger,
+   touch-friendly rows). */
+@media (max-width: 768px) {
+  .md-view-toggle { height: 28px; }
+  .md-view-toggle .md-view-opt { width: 38px; }
+  .doc-action-icon-btn { padding: 6px; }
+  .email-send-btn { height: 28px; }
+  /* The type/language picker was the slim one stuck at 22px — match it to the
+     rest of the row. */
+  .doc-language-select { height: 28px; font-size: 13px; padding: 2px 22px 2px 10px; }
+  .doc-overflow-item { font-size: 13px; padding: 9px 14px; }
+  .doc-overflow-item .overflow-icon svg,
+  .doc-overflow-item svg { width: 16px; height: 16px; }
+  .email-more-menu .dropdown-item-compact { padding: 9px 12px; font-size: 13px; }
+
+  /* The doc footer is tight once the run/preview toggle joins it, so on mobile
+     go icon-only for Close, Undo & Copy (their icons are clear).
+     font-size:0 drops the text node next to the SVG (the SVG has fixed w/h, so
+     it's unaffected). Slightly narrower type picker buys a little more room. */
+  #doc-actions-footer #doc-undo-btn span,
+  #doc-actions-footer #doc-footer-close-btn span,
+  #doc-email-actions #doc-email-discard-btn span { display: none; }
+  #doc-actions-footer #doc-undo-btn,
+  #doc-actions-footer #doc-footer-close-btn,
+  #doc-email-actions #doc-email-discard-btn { gap: 0; padding: 0 9px; }
+  #doc-actions-footer #doc-footer-copy-btn { gap: 0; padding: 0 13px; font-size: 0; }
+  /* In reply mode the button carries a "Reply" label that should stay visible
+     (the icon-only treatment above is only for the plain Copy action). */
+  #doc-actions-footer #doc-footer-copy-btn[data-mode="reply"] { gap: 5px; padding: 0 13px; font-size: 12px; }
+  #doc-actions-footer #doc-language-select { width: 80px; }
+}
+
+/* Markdown formatting toolbar */
+/* In code-mode the toolbar only hosts the view toggles + utility buttons
+   (font-size, diff). Hide markdown-only formatting controls — bold,
+   italic, headings, list, link, attach, code-dropdown, emoji, hr, and
+   the PDF-only buttons. The view toggles + fontsize + diff stay. */
+.doc-md-toolbar[data-mode="code"] [data-md],
+.doc-md-toolbar[data-mode="code"] .md-dd-toggle,
+.doc-md-toolbar[data-mode="code"] #md-toolbar-attach-btn,
+.doc-md-toolbar[data-mode="code"] #md-toolbar-emoji-slot,
+.doc-md-toolbar[data-mode="code"] .md-toolbar-pdf-only,
+.doc-md-toolbar[data-mode="code"] .md-toolbar-sep {
+  display: none !important;
+}
+.doc-md-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 1px;
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+  overflow: hidden;
+  height: 36px;
+  position: relative;
+  /* Same edge fade as the tab strip — toolbar buttons dissolve into the bar's
+     background at the edges instead of being hard-cut when they overflow. */
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+          mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+}
+.doc-md-toolbar button {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.35;
+  padding: 4px 7px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.3;
+  transition: opacity 0.1s;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.doc-md-toolbar button:hover {
+  opacity: 1;
+}
+.doc-md-toolbar button:active {
+  opacity: 0.6;
+}
+/* Active formatting state — set by the email WYSIWYG sync. Mirrors the
+   selection's current marks (B/I/S, heading level, list) so the toolbar
+   acts as an indicator, not just a launcher. */
+.doc-md-toolbar button.is-active {
+  opacity: 1;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+}
+.doc-md-toolbar button.is-active:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent);
+}
+/* No black tap-flash / focus background on the doc toolbar + tab controls —
+   they're icon buttons, the opacity change is the only feedback we want. */
+.doc-md-toolbar button,
+.doc-tab-new,
+.doc-tab-arrow,
+.doc-tab-play {
+  -webkit-tap-highlight-color: transparent;
+}
+.doc-md-toolbar button:focus,
+.doc-md-toolbar button:focus-visible,
+.doc-tab-new:focus,
+.doc-tab-new:focus-visible,
+.doc-tab-arrow:focus,
+.doc-tab-arrow:focus-visible {
+  outline: none;
+  background: none;
+}
+/* Grouped formatting dropdown toggles (heading / code / list) */
+.md-dd-toggle { gap: 1px !important; }
+/* Drop the dropdown chevron lower and tint it accent so it reads as a menu cue. */
+.md-dd-toggle svg { opacity: 1; margin-left: 1px; flex-shrink: 0; transform: translateY(4px); color: var(--accent-primary, var(--red, #4a9eff)); }
+.md-dd-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  flex-shrink: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  opacity: 0.7;
+}
+.md-toolbar-sep {
+  width: 1px;
+  height: 12px;
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+.md-toolbar-items {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+}
+.md-toolbar-items::-webkit-scrollbar { display: none; }
+/* On a PDF, the annotation tools (text / checkmark / signature) are the primary
+   actions — pull them to the far left of the toolbar. `order` is visual only
+   (they're display:none on non-PDF docs), so it has no effect elsewhere. */
+.md-toolbar-items #doc-pdf-add-text-btn { order: -3; }
+.md-toolbar-items #doc-pdf-add-check-btn { order: -2; }
+.md-toolbar-items #doc-pdf-add-sign-btn { order: -1; }
+@media (min-width: 769px) {
+  .md-toolbar-items #doc-pdf-add-text-btn {
+    margin-left: 14px;
+  }
+}
+/* Stack the signature icon over a tiny "sign" caption so the tool reads
+   clearly (the icon alone is ambiguous). The JS toggles inline display
+   none/'' for PDF mode, so this flex display only applies when shown. */
+#doc-pdf-add-sign-btn {
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  line-height: 1;
+}
+/* Pull the icon down toward the "sign" label so they read as one unit. */
+#doc-pdf-add-sign-btn svg { transform: translateY(2px); }
+.doc-pdf-sign-label {
+  font-size: 6.5px;
+  letter-spacing: 0.3px;
+  margin-top: 0;
+  opacity: 1;
+  color: var(--accent, var(--red));
+}
+/* Edge scroll arrows — appear when the toolbar has more icons off-screen. */
+.md-scroll-arrow {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  width: 28px;
+  display: flex;
+  align-items: center;
+  border: none;
+  cursor: pointer;
+  color: var(--fg);
+  padding: 0 !important;
+  min-height: 0 !important;
+  opacity: 1 !important;
+  z-index: 6;
+}
+.md-scroll-arrow svg { position: relative; top: 2px; opacity: 0.75; transition: opacity 0.1s; }
+.md-scroll-arrow:hover svg { opacity: 1; }
+@media (min-width: 769px) {
+  /* On desktop the arrow rides 2px lower than the toolbar baseline. */
+  .md-scroll-arrow svg { top: 0; }
+}
+.md-scroll-left {
+  left: 0;
+  justify-content: flex-start;
+  padding-left: 3px;
+  /* Mostly-solid toolbar bg so the icons behind the arrow are hidden, fading
+     to transparent only at the inner edge. */
+  background: linear-gradient(to right, var(--bg) 0%, var(--bg) 80%, transparent 100%);
+}
+.md-scroll-right {
+  right: 0;
+  justify-content: flex-end;
+  padding-right: 3px;
+  background: linear-gradient(to left, var(--bg) 0%, var(--bg) 80%, transparent 100%);
+}
+.md-toolbar-overflow-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.md-toolbar-overflow-toggle {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--fg);
+  opacity: 0.4;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: opacity 0.1s;
+}
+.md-toolbar-overflow-toggle:hover {
+  opacity: 1;
+}
+.md-toolbar-overflow-menu {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  min-width: 0;
+  width: max-content;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  backdrop-filter: blur(12px);
+}
+.md-toolbar-overflow-menu.open {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: 200px;
+}
+.md-toolbar-overflow-item {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--fg);
+  opacity: 0.5;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.3;
+  transition: opacity 0.1s, background 0.1s;
+}
+.md-toolbar-overflow-item:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-color: var(--border);
+}
+
+/* Find bar */
+.doc-find-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--panel, var(--bg));
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.doc-find-input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  outline: none;
+}
+.doc-find-input:focus { border-color: var(--accent); }
+.doc-find-count {
+  font-size: 11px;
+  opacity: 0.6;
+  white-space: nowrap;
+  min-width: 50px;
+  text-align: center;
+}
+.doc-find-nav, .doc-find-close {
+  background: none;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  padding: 2px 5px;
+  font-size: 14px;
+  border-radius: 3px;
+  opacity: 0.7;
+}
+.doc-find-nav:hover, .doc-find-close:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 10%, transparent); }
+
+/* Editor — highlighted overlay + transparent textarea.
+   Lock the editor wrap to a fixed text-column width, centered horizontally
+   in the doc pane. This eliminates wrap-related drift bugs as a class:
+   the textarea + overlay always have the same available width regardless
+   of viewport, sidebar state, dock state, or window resize. Whitespace on
+   either side reads like a writing-app column (Bear / iA Writer pattern).
+   container-type: inline-size lets us hide the line-number gutter via a
+   container query when the editor's own width is narrow (rather than
+   viewport-width, which would miss the case of a narrow side-docked
+   editor inside a wide window). */
+.doc-editor-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  /* Cap the column at ~820px outer (~760px content area after the 60px
+     of horizontal padding the textarea+overlay use for the gutter). */
+  max-width: 820px;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  overflow: hidden;
+  background: var(--bg);
+  container-type: inline-size;
+  container-name: doceditor;
+}
+
+/* When the editor itself is narrow, soft-wrap makes one logical line
+   span multiple visual rows but the gutter still shows ONE number per
+   logical line — so the gutter and the visible rows fall out of sync.
+   Hide the gutter (and reclaim the 48px of left padding it reserved)
+   below a threshold where the mismatch reads as a glitch. */
+@container doceditor (max-width: 360px) {
+  .doc-line-numbers { display: none !important; }
+  .doc-editor-textarea,
+  .doc-editor-highlight {
+    padding-left: 12px !important;
+  }
+}
+.doc-line-numbers {
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 36px;
+  padding: 10px 8px 10px 0;
+  margin: 0;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: right;
+  color: var(--fg);
+  opacity: 0.18;
+  background: var(--bg);
+  overflow: hidden;
+  white-space: pre;
+  tab-size: 4;
+  font-variant-ligatures: none !important;
+  font-feature-settings: "kern" 0, "liga" 0, "calt" 0, "dlig" 0 !important;
+  font-kerning: none !important;
+  text-rendering: geometricPrecision !important;
+  z-index: 2;
+  pointer-events: none;
+  user-select: none;
+}
+.doc-line-number-content {
+  display: block;
+  will-change: transform;
+}
+.doc-line-number-row {
+  position: relative;
+  box-sizing: border-box;
+}
+.doc-line-number-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 36px;
+  text-align: right;
+}
+.doc-line-number-measure {
+  position: absolute !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  left: -9999px !important;
+  top: 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  border: 0 !important;
+  resize: none !important;
+  box-sizing: content-box !important;
+  color: transparent !important;
+  background: transparent !important;
+}
+/* Find marks live in the syntax-highlight overlay, which sits at
+   z-index:0 under a transparent textarea — so they're always visible
+   through the text layer. The previous color-mix variant could
+   compute to near-invisible on themes with dark/desaturated accents;
+   forced solid colors + !important so it ALWAYS pops. */
+mark.doc-find-mark {
+  background: var(--accent) !important;
+  color: var(--bg) !important;
+  border-radius: 2px;
+  padding: 0 1px;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+mark.doc-find-mark.current {
+  background: var(--accent) !important;
+  color: var(--bg) !important;
+  box-shadow: 0 0 0 2px var(--fg);
+  outline: 1px solid var(--fg);
+}
+
+/* Find-match overlay rects — drawn on top of the textarea, work in
+   every doc mode (markdown, email, plain) regardless of whether the
+   syntax-highlight overlay is shown. Translucent band so the underlying
+   text stays readable; current match gets a brighter solid band. */
+.doc-find-rect {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 65%, transparent);
+}
+.doc-find-rect.current {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.doc-editor-highlight {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  margin: 0;
+  padding: 10px 12px 10px 48px;
+  font-family: inherit;
+  font-size: 11px !important;
+  line-height: 1.45 !important;
+  tab-size: 4;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow: hidden;
+  /* `scrollbar-gutter: stable` reserves scrollbar-track width in the
+     layout even when no scrollbar is shown. The textarea below has the
+     same setting — without this, the textarea would consume scrollbar
+     space the moment its content overflows vertically, shrinking its
+     content width and wrapping lines earlier than the overlay. The
+     visible-text-drift bug user reports as "after ~16 rows it wraps
+     even though there's space" was caused by exactly that. */
+  scrollbar-gutter: stable;
+  scrollbar-width: none;
+  pointer-events: none;
+  z-index: 0;
+  background: var(--hl-bg, var(--bg)) !important;
+  color: var(--hl-fg, var(--fg));
+  border: none;
+  /* Disable ligatures + kerning everywhere in the editor. Monospace fonts
+     like Fira Code form ligatures for `=>`, `!=`, `->`, `==` etc., but
+     hljs splits those pairs into separate <span>s in the overlay, which
+     breaks the ligature on this side while the textarea still forms it.
+     Result: visible row drift whenever code contains those pairs. Pin
+     ligatures off in both layers (textarea below) so widths stay equal. */
+  font-variant-ligatures: none !important;
+  font-feature-settings: "kern" 0, "liga" 0, "calt" 0, "dlig" 0 !important;
+  font-kerning: none !important;
+  text-rendering: geometricPrecision !important;
+  box-sizing: border-box;
+}
+.doc-editor-highlight::-webkit-scrollbar { display: none; }
+
+/* Document font size options */
+.doc-font-m .doc-editor-textarea,
+.doc-font-m .doc-editor-highlight,
+.doc-font-m .doc-line-numbers { font-size: 13px !important; }
+.doc-font-l .doc-editor-textarea,
+.doc-font-l .doc-editor-highlight,
+.doc-font-l .doc-line-numbers { font-size: 15px !important; }
+.doc-email-richbody.doc-font-m { font-size: 15px !important; }
+.doc-email-richbody.doc-font-l { font-size: 17px !important; }
+/* Markdown base text should match chat text color, not code color */
+.doc-editor-highlight .language-markdown {
+  color: var(--fg) !important;
+}
+.doc-editor-highlight code,
+.doc-editor-highlight code.hljs,
+.doc-editor-highlight .hljs {
+  font-family: inherit;
+  font-size: inherit !important;
+  line-height: inherit !important;
+  background: transparent !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  overflow: hidden !important;
+  display: block;
+  pointer-events: none;
+}
+.doc-editor-textarea {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  width: 100%;
+  height: 100% !important;
+  max-height: none !important;
+  min-height: 0 !important;
+  z-index: 1;
+  background: transparent !important;
+  color: transparent !important;
+  color-scheme: dark;
+  caret-color: var(--fg);
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: inherit;
+  /* Caret position only matches the underlying highlight if BOTH layers use
+     identical metrics — !important on font-size + line-height defends against
+     anything else in the cascade nudging the textarea but not the overlay. */
+  font-size: 11px !important;
+  line-height: 1.45 !important;
+  padding: 10px 12px 10px 48px;
+  overflow-y: scroll;
+  /* Pair with .doc-editor-highlight's scrollbar-gutter: stable so the
+     textarea's content width DOESN'T shrink the moment its scrollbar
+     appears (overflow-y: scroll keeps scrollbar permanent, gutter
+     reserves the space layout-wise). Without this, line wrap diverges
+     between textarea and overlay whenever content exceeds the visible
+     area — caret stays right, but typed text appears on a different row
+     than the caret. */
+  scrollbar-gutter: stable;
+  /* Show a real scrollbar for long documents. scrollbar-gutter above keeps
+     the text column stable so the gutter, textarea, and find overlay stay
+     metrically aligned while the scrollbar is present. */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--fg) 28%, transparent) transparent;
+  -webkit-overflow-scrolling: touch;
+  tab-size: 4;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  -moz-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  /* Mirror the ligature/kerning lockdown from .doc-editor-highlight above.
+     Without this the textarea forms `=>`/`!=`/`->`/`==` as single-glyph
+     ligatures while the overlay can't (hljs splits the pair into
+     separate spans), so glyph widths diverge and the visible text drifts
+     down relative to the caret as code accumulates. */
+  font-variant-ligatures: none !important;
+  font-feature-settings: "kern" 0, "liga" 0, "calt" 0, "dlig" 0 !important;
+  font-kerning: none !important;
+  text-rendering: geometricPrecision !important;
+}
+.doc-editor-textarea::-webkit-scrollbar { width: 8px; }
+.doc-editor-textarea::-webkit-scrollbar-track { background: transparent; }
+.doc-editor-textarea::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 24%, transparent);
+  border-radius: 999px;
+}
+.doc-editor-textarea::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--fg) 36%, transparent);
+}
+.doc-editor-textarea:hover,
+.doc-editor-textarea:focus,
+.doc-editor-textarea:active {
+  background: transparent !important;
+  /* Used to force `color: transparent` here so the hidden two-layer
+     textarea wouldn't bleed through on hover/focus. Now that the
+     textarea renders its OWN visible text (overlay is hidden), forcing
+     transparent here makes typed text disappear the moment the cursor
+     enters the page. Keep the visible fg color instead. */
+  color: var(--fg) !important;
+  outline: none !important;
+}
+.doc-editor-textarea::placeholder {
+  color: var(--fg);
+  opacity: 0.25;
+}
+/* Show real text when selecting so copy/paste is visible */
+.doc-editor-textarea::selection {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+/* ---- Selection indicator badge ---- */
+.doc-selection-badge {
+  font-size: 10px;
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
+  border-radius: 4px;
+  padding: 1px 4px 1px 6px;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.doc-selection-clear {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.5;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.doc-selection-clear:hover {
+  opacity: 1;
+  color: var(--red, var(--color-error));
+}
+.doc-edit-tag {
+  font-size: 0.75em;
+  opacity: 0.5;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-right: 2px;
+  white-space: nowrap;
+}
+/* Attachment cards in user messages */
+.attach-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.attach-card {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  /* Same border as the chat bubbles. */
+  border: 1px solid var(--bubble-border, var(--border));
+  font-size: 12px;
+  transition: background 0.15s;
+}
+.attach-card[style*="cursor: pointer"]:hover,
+.attach-card[data-file-id]:hover {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.attach-card-icon {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+.attach-card-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+.attach-card-size {
+  opacity: 0.45;
+  font-size: 11px;
+  white-space: nowrap;
+}
+/* Import prompt banner (above chatbar) */
+.import-prompt-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin: 0 auto 6px;
+  max-width: 800px;
+  background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--fg);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  backdrop-filter: blur(12px);
+  animation: modal-enter 0.15s ease-out;
+}
+.import-prompt-banner span { flex: 1; }
+.import-prompt-banner button {
+  padding: 3px 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.import-prompt-banner button:hover {
+  border-color: var(--fg);
+}
+.import-prompt-dismiss {
+  border: none !important;
+  background: none !important;
+  opacity: 0.5;
+  font-size: 16px !important;
+  padding: 0 4px !important;
+}
+.import-prompt-dismiss:hover { opacity: 1; background: none !important; }
+.doc-selection-overlay {
+  position: absolute;
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--red) 50%, transparent);
+  pointer-events: none;
+  z-index: 0;
+  transition: top 0.05s;
+}
+
+/* ── Suggestion comments (Google Docs style) ── */
+.doc-suggestion-highlight {
+  position: absolute;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-left: 3px solid var(--accent);
+  pointer-events: none;
+  z-index: 1;
+  transition: top 0.1s, opacity 0.15s;
+}
+/* Suggestion card — fixed next to editor, anchored to the change */
+.doc-suggestion-card {
+  position: fixed;
+  width: 250px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 12px 12px 10px;
+  font-size: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+  animation: suggestion-enter 0.25s ease-out;
+  z-index: 250;
+  overflow: visible;
+}
+/* Arrow pointing toward the editor */
+.doc-suggestion-card::before {
+  content: '';
+  position: absolute;
+  top: 16px;
+  left: -10px;
+  width: 18px;
+  height: 18px;
+  background: var(--panel);
+  border-left: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+  transform: rotate(45deg);
+  z-index: 1;
+}
+.doc-suggestion-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.doc-suggestion-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.doc-suggestion-nav-btn {
+  background: none;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+  opacity: 0.35;
+  transition: opacity 0.1s;
+}
+.doc-suggestion-nav-btn:hover { opacity: 1; }
+.doc-suggestion-close {
+  background: none;
+  border: none;
+  color: var(--fg);
+  opacity: 0.3;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 6px 8px;
+  margin: -6px -8px;
+  border-radius: 6px;
+  transition: opacity 0.1s, background 0.1s;
+}
+.doc-suggestion-close:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.doc-suggestion-counter {
+  font-size: 10px;
+  opacity: 0.4;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+/* Inline diff markers — injected into the code highlight element */
+.sugg-inline-del {
+  background: color-mix(in srgb, var(--red) 20%, transparent);
+  color: color-mix(in srgb, var(--red) 70%, var(--fg));
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--red) 40%, transparent);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+.sugg-inline-add {
+  background: color-mix(in srgb, var(--green) 25%, transparent);
+  color: var(--green);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+/* ---- Diff mode ---- */
+.diff-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  background: color-mix(in srgb, var(--fg) 4%, var(--bg));
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.diff-toolbar-status {
+  opacity: 0.5;
+  font-size: 10px;
+  margin-right: auto;
+}
+.diff-toolbar-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 10px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s, background 0.15s;
+}
+.diff-toolbar-btn:hover {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+}
+.diff-toolbar-btn-accept { color: var(--green); border-color: color-mix(in srgb, var(--green) 30%, transparent); }
+.diff-toolbar-btn-accept:hover { border-color: var(--green); background: color-mix(in srgb, var(--green) 10%, transparent); }
+.diff-toolbar-btn-reject { color: var(--red); border-color: color-mix(in srgb, var(--red) 30%, transparent); }
+.diff-toolbar-btn-reject:hover { border-color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); }
+.diff-line-del {
+  display: block;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-left: 3px solid var(--accent);
+  padding-left: 4px;
+  margin-left: -7px;
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+.diff-line-add {
+  display: block;
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  border-left: 3px solid var(--accent);
+  padding-left: 4px;
+  margin-left: -7px;
+}
+/* Inline diff summary (version history cards) */
+.diff-del {
+  color: var(--accent);
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+.diff-add {
+  color: var(--accent);
+  font-weight: 600;
+}
+.diff-line-equal {
+  display: block;
+}
+.diff-chunk-resolved {
+  opacity: 0.3;
+  transition: opacity 0.3s;
+}
+.diff-chunk-actions {
+  position: absolute;
+  right: 8px;
+  top: 0;
+  display: flex;
+  gap: 4px;
+  z-index: 5;
+  pointer-events: auto;
+}
+/* Diff mode: textarea sits on top of the highlight where chunk buttons live.
+   Disable its pointer events so clicks reach the buttons in the layer below. */
+.doc-editor-wrap.diff-mode .doc-editor-textarea {
+  pointer-events: none;
+}
+.doc-editor-wrap.diff-mode .doc-editor-highlight {
+  pointer-events: auto;
+  z-index: 2;
+}
+.diff-chunk-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+  transition: border-color 0.15s, background 0.15s;
+  opacity: 0.6;
+}
+.diff-chunk-btn:hover { opacity: 1; }
+.diff-chunk-btn-accept { color: var(--green); }
+.diff-chunk-btn-accept:hover { border-color: var(--green); background: color-mix(in srgb, var(--green) 15%, transparent); }
+.diff-chunk-btn-reject { color: var(--red); }
+.diff-chunk-btn-reject:hover { border-color: var(--red); background: color-mix(in srgb, var(--red) 15%, transparent); }
+
+.doc-suggestion-accept-all {
+  flex: 1;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 10px;
+  font-family: inherit;
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  transition: background 0.1s;
+}
+.doc-suggestion-accept-all:hover {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.doc-suggestion-reason {
+  opacity: 0.6;
+  margin-bottom: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.doc-suggestion-diff {
+  background: var(--bg);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: var(--code-font, monospace);
+  font-size: 11px;
+  margin-bottom: 8px;
+  max-height: 100px;
+  overflow-y: auto;
+  word-break: break-word;
+}
+.doc-suggestion-del {
+  color: var(--red);
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+.doc-suggestion-add {
+  color: var(--green);
+}
+.doc-suggestion-actions {
+  display: flex;
+  gap: 6px;
+}
+.doc-suggestion-accept,
+.doc-suggestion-dismiss {
+  flex: 1;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+  transition: background 0.1s;
+}
+.doc-suggestion-accept {
+  background: var(--accent, var(--red));
+  color: #fff;
+}
+.doc-suggestion-accept:hover {
+  filter: brightness(1.15);
+}
+.doc-suggestion-dismiss {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+}
+.doc-suggestion-dismiss:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+@keyframes suggestion-enter {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+/* Mobile: suggestion card overlays top of editor (no room on side) */
+@media (max-width: 768px) {
+  .doc-suggestion-card {
+    right: 8px;
+    right: 8px;
+    width: auto;
+    top: 8px !important;
+  }
+  .doc-suggestion-card::before { display: none; }
+}
+
+/* ---- Streaming animation ---- */
+.doc-editor-textarea[readonly] {
+  caret-color: var(--red);
+}
+.doc-editor-wrap.animating::after {
+  content: '';
+  position: absolute;
+  top: 6px; right: 8px;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--red);
+  animation: doc-pulse 0.8s ease-in-out infinite;
+  z-index: 3;
+  pointer-events: none;
+}
+@keyframes doc-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+/* Diff overlay */
+.doc-diff-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  z-index: 5;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-family: 'Fira Code', monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  border-radius: 6px;
+}
+.doc-diff-overlay.visible { opacity: 1; }
+.doc-diff-overlay.fading { opacity: 0; transition: opacity 0.4s ease; }
+.doc-diff-stats {
+  display: flex;
+  gap: 10px;
+  padding: 4px 0 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.diff-stat-del { color: var(--warn); }
+.diff-stat-add { color: var(--green); }
+.doc-diff-content { }
+.doc-diff-line {
+  padding: 1px 8px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.doc-diff-line.same {
+  opacity: 0.4;
+}
+.doc-diff-line.del {
+  background: color-mix(in srgb, var(--warn) 15%, transparent);
+  color: var(--warn);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--warn) 40%, transparent);
+}
+.doc-diff-line.add {
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  color: var(--green);
+}
+.doc-diff-sep {
+  text-align: center;
+  padding: 2px 0;
+  font-size: 0.7rem;
+  opacity: 0.3;
+  color: var(--fg);
+}
+
+/* Version history panel (slide-out) */
+.doc-version-panel {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 300px;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  z-index: 200;
+  box-shadow: 4px 0 16px rgba(0,0,0,0.35);
+  animation: version-slide-in 0.2s ease-out;
+  /* Match the app modal aesthetic so nothing inherits the large body font. */
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 12px;
+  letter-spacing: -0.01em;
+}
+@keyframes version-slide-in {
+  from { opacity: 0; transform: translateX(-30px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.doc-version-panel.hidden {
+  display: none;
+}
+@media (max-width: 768px) {
+  .doc-version-panel {
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: 0;
+    width: 100%;
+    height: 50vh;
+    border-right: none;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 -4px 16px rgba(0,0,0,0.3);
+    /* It's a bottom sheet on mobile — slide UP from the bottom, not in from
+       the left (the desktop animation looked like a black box janking in). */
+    animation: version-slide-up 0.2s ease-out;
+  }
+}
+@keyframes version-slide-up {
+  from { opacity: 0; transform: translateY(30px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.doc-version-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.doc-version-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.doc-version-item {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.doc-version-item:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border-color: var(--fg);
+}
+
+.doc-version-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.doc-version-num {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--fg);
+}
+.doc-version-source {
+  font-size: 10px;
+  color: var(--fg);
+  opacity: 0.5;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.doc-version-time {
+  font-size: 10px;
+  color: var(--fg);
+  opacity: 0.4;
+  margin-left: auto;
+}
+.doc-version-summary {
+  font-size: 11px;
+  color: var(--fg);
+  opacity: 0.5;
+  margin-bottom: 4px;
+}
+
+.doc-version-restore {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.doc-version-restore:hover {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border-color: var(--fg);
+}
+/* "latest" badge */
+.doc-version-latest {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+/* Diff preview lines — small and muted so they don't dominate the item. */
+.doc-version-diff {
+  font-size: 10px;
+  line-height: 1.5;
+  opacity: 0.8;
+  margin-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-word;
+}
+.doc-version-diff .diff-del { color: var(--red); opacity: 0.75; }
+.doc-version-diff .diff-add { color: #3fb950; }
+
+/* Mobile: doc editor takes over full screen as toggle */
+@media (max-width: 768px) {
+  body.doc-view .doc-editor-pane {
+    /* Force its own full-screen window on mobile. !important on these so an
+       inline width/position left over from desktop drag-resize, or the base
+       desktop split layout (flex: 1; max-width: 70vw; border-left), can never
+       render it as a narrow side pane ("sidebar") on a phone. */
+    position: fixed !important;
+    inset: 0 !important;
+    top: 0 !important; right: 0 !important; bottom: 0 !important; left: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    flex: none !important;
+    z-index: 170;
+    /* Stroke the top edge so the rounded corners read as a curved sheet edge. */
+    border: 1px solid var(--border);
+    border-bottom: none;
+    /* Rounded top corners like the other mobile sheet windows. */
+    border-radius: 14px 14px 0 0;
+    /* Slide up from the bottom (sheet), not in from the side, on mobile. */
+    animation: sheet-enter 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    transform-origin: bottom center;
+  }
+  body.doc-view .doc-divider {
+    display: none;
+  }
+  /* Hide chat behind doc panel on mobile */
+  body.doc-view .chat-container {
+    display: none;
+  }
+  /* Doc + email windows alternate: whichever was opened last is in front.
+     Default (a doc was opened last) → email windows sit BELOW the full-screen
+     doc pane (170) so the draft is on top. When the user re-opens an email
+     window (body.email-front, set by openEmailLibrary / reader open+restore) →
+     the email windows jump ABOVE the doc. Covers the email library AND any open
+     reader window (email-reader-<uid>); both are .modal at z-250 by default. */
+  body.doc-view #email-lib-modal,
+  body.doc-view .modal[id^="email-reader-"] { z-index: 150 !important; }
+  body.doc-view.email-front #email-lib-modal,
+  body.doc-view.email-front .modal[id^="email-reader-"] { z-index: 300 !important; }
+  /* Hide new-session button and hamburger when doc editor is open on mobile */
+  body.doc-view .mobile-new-chat-btn,
+  /* Hide the global hamburger while Compare Mode is active — the compare
+   header has its own close button in the top-right, and overlapping the
+   two looks like a bug. The .compare-active class lives on the chat
+   container, not body, so use :has(). */
+body:has(.compare-active) .hamburger-btn { display: none !important; }
+/* Mobile: hide the sidebar hamburger when a document panel (or notes pane)
+   is open — those sheets cover the whole screen on mobile, so a floating
+   hamburger sticking out over them is just clutter / mis-tap bait. */
+@media (max-width: 768px) {
+  body.doc-view .hamburger-btn,
+  body:has(#notes-pane) .hamburger-btn { display: none !important; }
+}
+  /* Make room for hamburger button alongside the tab/header bars (fallback if shown) */
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-tab-bar,
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-editor-header,
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-md-toolbar {
+    padding-left: 44px;
+  }
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-tab-bar,
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-editor-header,
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-md-toolbar {
+    padding-right: 44px;
+  }
+  /* ── Tab bar — match header height, bigger touch targets ── */
+  .doc-tab-bar {
+    padding: 0;
+    height: 40px;
+  }
+  .doc-tab {
+    padding: 0 12px;
+    font-size: 13px;
+  }
+  /* Bigger × touch target on mobile. */
+  .doc-tab-close {
+    font-size: 22px;
+    padding: 0 8px;
+    opacity: 0.5;
+  }
+  .doc-tab .doc-tab-menu-btn {
+    opacity: 0.4 !important;
+    padding: 4px 6px !important;
+  }
+  .doc-tab .doc-tab-menu-btn svg {
+    width: 14px !important;
+    height: 14px !important;
+  }
+  /* Footer is identical to desktop now, so the separate mobile Close/Copy
+     footer is dropped and the per-tab × stays (matching desktop). */
+  .doc-mobile-footer { display: none !important; }
+  .doc-tab-new {
+    font-size: 13px !important;
+    padding: 0 14px !important;
+    gap: 4px;
+  }
+  /* No hamburger padding — it's hidden in doc-view */
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-tab-bar,
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-editor-header,
+  body.doc-view.sidebar-collapsed.hamburger-left .doc-md-toolbar {
+    padding-left: 0 !important;
+  }
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-tab-bar,
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-editor-header,
+  body.doc-view.sidebar-collapsed.hamburger-right .doc-md-toolbar {
+    padding-right: 0 !important;
+  }
+  /* ── Header — identical layout to desktop (left-aligned), match tab height ── */
+  .doc-editor-header {
+    padding: 6px 12px 6px 8px;
+    gap: 6px;
+    min-height: 40px;
+  }
+  .doc-import-label,
+  #doc-version-badge {
+    display: none !important;
+  }
+  /* ── Markdown toolbar — same height as tab bar ── */
+  .doc-md-toolbar {
+    height: 40px !important;
+    padding: 4px 8px;
+    gap: 2px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* The toolbar's padding-left is forced to 0 by the hamburger rules, so give
+     the Edit/Preview toggle its own left margin to clear the screen edge +
+     the 18px mask fade. Margin isn't overridden by those !important paddings. */
+  .doc-md-toolbar .md-view-toggle { margin-left: 8px; }
+  .doc-md-toolbar button {
+    font-size: 13px !important;
+    padding: 6px 10px !important;
+    min-width: 34px;
+    min-height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .md-toolbar-sep {
+    height: 18px;
+    margin: 0 4px;
+  }
+}
+
+/* Opacity slider in the theme tabs row — lets the user see the page behind
+   the modal while tweaking colors. JS toggles .hidden based on active tab. */
+.theme-opacity-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  margin-right: 6px;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  opacity: 0.65;
+  transition: opacity 0.15s, border-color 0.15s, background 0.15s, color 0.15s;
+  height: 22px;
+  align-self: center;
+  /* Now a <button> toggle, not a slider wrapper. */
+  cursor: pointer;
+  color: var(--fg);
+  font: inherit;
+  background: transparent;
+}
+.theme-opacity-wrap.hidden { display: none; }
+.theme-opacity-wrap:hover { opacity: 1; }
+/* The title h4 already carries margin-right:auto to group header controls
+   on the right. BOTH the Peek button AND the injected minimize button also
+   have margin-left:auto — and multiple competing auto-margins split the
+   free space, stranding Peek in the middle. Zero their left-autos here so
+   the h4 alone pushes Peek + minimize + close together, flush right. */
+.modal-header .theme-opacity-wrap,
+.modal-header .modal-minimize-btn { margin-left: 0 !important; }
+/* On = peeking through; highlight with the accent so the state is obvious. */
+.theme-opacity-wrap.active {
+  opacity: 1;
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  color: var(--accent, var(--red));
+}
+.theme-opacity-label { font-size: 10px; font-weight: 600; letter-spacing: 0.02em; }
+.theme-opacity-wrap > svg { flex-shrink: 0; opacity: 0.7; }
+.theme-opacity-wrap input[type="range"] {
+  width: 92px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: color-mix(in srgb, var(--fg) 18%, transparent);
+  border-radius: 2px;
+  outline: none;
+  margin: 0;
+}
+.theme-opacity-wrap input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent, var(--red));
+  border: none;
+  cursor: pointer;
+}
+.theme-opacity-wrap input[type="range"]::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent, var(--red));
+  border: none;
+  cursor: pointer;
+}
+
+/* ── Theme editor: hover-to-highlight zone ── */
+.theme-zone-highlight {
+  position: fixed;
+  pointer-events: none;
+  z-index: 9998;
+  border: 2px dashed var(--accent, var(--red));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 40%, transparent),
+              0 0 18px color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
+  animation: theme-zone-pulse 1.4s ease-in-out infinite;
+}
+@keyframes theme-zone-pulse {
+  0%, 100% { opacity: 0.95; }
+  50%      { opacity: 0.55; }
+}
+/* Highlight the color row itself too so the user has a strong visual link
+   between the input they're hovering and the zone overlay on the page. */
+#theme-tab-customize .color-row {
+  transition: background 0.15s, border-color 0.15s;
+  border-radius: 6px;
+}
+#theme-tab-customize .color-row:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);
+}
+
+/* "Auto-saved" pill that flashes after each color/font change. */
+.theme-autosaved-pill {
+  position: sticky;
+  bottom: 8px;
+  margin: 8px auto 0;
+  width: fit-content;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: color-mix(in srgb, var(--color-success, #4caf50) 18%, var(--bg));
+  color: var(--color-success, #4caf50);
+  border: 1px solid color-mix(in srgb, var(--color-success, #4caf50) 40%, transparent);
+  border-radius: 12px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+  pointer-events: none;
+  z-index: 5;
+}
+.theme-autosaved-pill.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ---- Doc fullscreen ---- */
+.doc-editor-pane.doc-fullscreen {
+  flex: 1;
+  max-width: 100%;
+  width: 100% !important;
+  border-left: none;
+}
+/* Keep the hamburger reachable in fullscreen — version history can still
+   hide it (the panel covers that area). */
+body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
+  display: none !important;
+}
+
+/* ---- Document run output ---- */
+.doc-run-output {
+  border-top: 2px solid var(--hl-function, #61afef);
+  background: var(--bg);
+  padding: 6px 12px 8px;
+  max-height: 200px;
+  overflow: auto;
+  font-family: 'Fira Code', 'Courier New', monospace;
+  font-size: 0.85em;
+  line-height: 1.5;
+  position: relative;
+}
+.doc-run-output .code-runner-pre { background: none !important; border: none !important; margin: 0; padding: 0; }
+.doc-run-output .code-runner-error { color: var(--red); }
+.doc-run-output .code-runner-loading { font-style: italic; color: var(--red); }
+.doc-run-output .code-runner-close { position: absolute; top: 4px; right: 4px; background: none; border: none; color: var(--fg); cursor: pointer; opacity: 0.5; font-size: 14px; padding: 2px 6px; }
+.doc-run-output .code-runner-close:hover { opacity: 1; }
+.doc-run-pre { color: var(--fg); white-space: pre-wrap; word-break: break-word; margin: 0; }
+.doc-run-error { color: var(--red); white-space: pre-wrap; word-break: break-word; margin: 0; }
+
+/* ---- Markdown preview ---- */
+.doc-md-preview {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg);
+  background: var(--bg);
+}
+.doc-md-preview pre {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.doc-md-preview code {
+  font-size: 0.95em;
+}
+.doc-md-preview p { margin: 0.6em 0; }
+.doc-md-preview h1, .doc-md-preview h2, .doc-md-preview h3 {
+  margin: 0.8em 0 0.4em;
+  color: var(--hl-string);
+}
+.doc-md-preview ul, .doc-md-preview ol {
+  margin-left: 20px;
+  margin-bottom: 0.6em;
+}
+.doc-md-preview blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 12px;
+  margin: 0.6em 0;
+  opacity: 0.8;
+}
+
+/* ---- Active state for doc action icon buttons ---- */
+.doc-action-icon-btn.active {
+  opacity: 1;
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+#doc-run-btn:hover {
+  color: var(--hl-function, #61afef);
+}
+
+/* #endregion Document Editor Artifacts Panel */
+
+/* #region Gallery Editor */
+   Gallery Editor
+   ═══════════════════════════════════════════════════════════ */
+
+/* Tab bar */
+.gallery-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+  background: var(--panel);
+}
+.gallery-tab {
+  padding: 8px 18px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--fg);
+  opacity: 0.6;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+.gallery-tab:hover { opacity: 0.85; }
+.gallery-tab.active {
+  opacity: 1;
+  border-bottom-color: var(--red);
+}
+/* Icon + label layout inside each tab. */
+.gallery-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.gallery-tab-icon {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.85;
+}
+.gallery-tab.active .gallery-tab-icon { opacity: 1; }
+/* Close × on the Edit tab — appears on hover. */
+.gallery-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s;
+  /* Use a slightly larger glyph at a larger line-height so the × sits
+     visually centered — the U+00D7 character has uneven em-box metrics. */
+  font-size: 16px;
+  line-height: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  padding-bottom: 2px;
+  box-sizing: border-box;
+}
+.gallery-tab:hover .gallery-tab-close,
+.gallery-tab.active .gallery-tab-close { opacity: 0.65; }
+/* Hide the close × entirely on the Edit tab when there's no edit open. */
+.gallery-tab[data-tab="editor"]:not(.has-edit) .gallery-tab-close { display: none !important; }
+.gallery-tab-close:hover { opacity: 1 !important; background: color-mix(in srgb, var(--red) 25%, transparent); color: var(--red); }
+/* Inline rename input shown when the Edit tab is double-clicked. */
+.gallery-tab-rename-input {
+  background: var(--bg);
+  border: 1px solid var(--red);
+  border-radius: 3px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  padding: 1px 4px;
+  width: 140px;
+  outline: none;
+}
+
+/* Albums tab — grid of album cards with cover thumbnails. */
+.gallery-albums-container {
+  padding: 12px 4px;
+  max-height: 70vh;
+  overflow-y: auto;
+  border: 2px dashed transparent;
+  border-radius: 8px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.gallery-settings-container {
+  padding: 8px 4px;
+  max-height: 72vh;
+  overflow-y: auto;
+}
+.gallery-albums-container.gallery-dragover {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 5%, transparent);
+}
+.gallery-albums-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 48px 16px;
+  opacity: 0.7;
+  font-size: 13px;
+}
+.gallery-albums-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+.gallery-album-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+.gallery-album-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--red);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.gallery-album-menu-btn {
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s;
+  z-index: 2;
+  backdrop-filter: blur(4px);
+  /* Plain "…" text — the previous SVG was rendering as a flat black
+     block on some themes when its currentColor didn't contrast. */
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 600;
+  padding: 0 0 4px;
+}
+.gallery-album-card:hover .gallery-album-menu-btn,
+.gallery-album-menu-btn:focus-visible { opacity: 1; }
+.gallery-album-menu-btn:hover { background: var(--bg); }
+.gallery-album-menu-pop {
+  position: absolute;
+  top: 34px; right: 6px;
+  min-width: 140px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 18%, transparent);
+  display: flex; flex-direction: column;
+  padding: 4px;
+  z-index: 3;
+}
+.gallery-album-menu-pop[hidden] { display: none; }
+.gallery-album-cover {
+  aspect-ratio: 4 / 3;
+  background: color-mix(in srgb, var(--fg) 5%, var(--bg));
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.gallery-album-cover img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.gallery-album-placeholder {
+  opacity: 0.4;
+  font-size: 40px;
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%;
+}
+.gallery-album-info {
+  padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.gallery-album-name {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gallery-album-count {
+  font-size: 11px;
+  opacity: 0.55;
+}
+.gallery-album-card-add {
+  border-style: dashed;
+  opacity: 0.7;
+}
+.gallery-album-card-add:hover { opacity: 1; }
+
+/* Edit-tab empty state — shown before any image is loaded. */
+.gallery-editor-landing {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px;
+  padding: 64px 16px;
+  flex: 1;
+  text-align: center;
+  color: var(--fg);
+}
+.gallery-editor-landing h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+/* "vision model" link in the AI-tagging description → opens Settings. */
+.ge-vision-link {
+  color: var(--accent, var(--red));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.ge-vision-link:hover { opacity: 0.8; }
+.ge-alpha-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 15%, transparent);
+  position: relative;
+  top: -1px;
+}
+.gallery-editor-landing p {
+  margin: 0;
+  opacity: 0.6;
+  font-size: 13px;
+  max-width: 320px;
+}
+.gallery-editor-landing-actions {
+  display: flex; gap: 10px;
+  margin-top: 8px;
+}
+/* Bigger primary action buttons specifically inside the editor landing —
+   the gallery-wide .gallery-select-btn is a compact toolbar style which is
+   too small for the empty-state hero. */
+.gallery-editor-landing-actions .gallery-select-btn {
+  padding: 7px 22px 17px;
+  font-size: 13px;
+  opacity: 0.85;
+}
+.gallery-editor-landing-actions .gallery-select-btn:hover { opacity: 1; }
+/* Template picker — native <select> so it renders reliably across browsers
+   without fighting our custom flex layouts. */
+.gallery-editor-template-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-top: 18px;
+  font-size: 11px;
+  opacity: 0.55;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.gallery-editor-template-select {
+  min-width: 240px;
+  padding: 8px 12px;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+  opacity: 1;
+}
+.gallery-editor-template-select:hover { border-color: var(--red); }
+.gallery-editor-template-select:focus { outline: none; border-color: var(--red); }
+/* Saved-drafts grid on the editor landing. Surfaces every persisted
+   in-progress project so the user can resume without re-opening the
+   original photo. Each card: thumbnail + name + last-saved hint + ×. */
+.gallery-editor-drafts {
+  width: min(720px, 92%);
+  margin: 28px auto 0;   /* centered */
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.gallery-editor-drafts {
+  position: relative;
+}
+.gallery-editor-drafts-loading {
+  position: absolute;
+  inset: 30px 0 0 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel);
+  border-radius: 6px;
+  min-height: 80px;
+}
+.gallery-editor-drafts-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;   /* center the title / search / select */
+  gap: 8px;
+  margin-bottom: 8px;
+}
+/* In select mode the bulk bar drops in below the header — pull it up. */
+#gallery-editor-drafts-bulk { margin-top: -12px; }
+.gallery-editor-drafts-title {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.55;
+  font-weight: 600;
+  text-align: left;
+  flex-shrink: 0;
+}
+.gallery-editor-drafts-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 280px;
+  height: 26px;          /* same thickness as the Select button */
+  box-sizing: border-box;
+  padding: 0 8px;
+  font-size: 12px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.gallery-editor-drafts-search:focus { outline: none; border-color: var(--red); }
+/* The shared .gallery-select-btn has a -4px top margin + tall asymmetric padding
+   meant for the main gallery toolbar; in this header it makes the button a
+   different height / offset from the search box. Normalize so it lines up. */
+.gallery-editor-drafts-header .gallery-select-btn {
+  margin-top: 0 !important;
+  height: 26px;          /* match the search bar */
+  box-sizing: border-box;
+  padding: 0 10px;
+  font-size: 12px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+#gallery-editor-drafts-select { margin-left: auto; flex-shrink: 0; }
+#gallery-editor-drafts-select.active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+}
+.gallery-editor-draft-card.selected {
+  outline: 2px solid var(--accent, var(--red));
+  outline-offset: -2px;
+}
+.gallery-editor-draft-card.select-mode { cursor: pointer; }
+/* Graceful exit when a project card is deleted — fade + shrink before re-render. */
+.gallery-editor-draft-card.gallery-draft-removing {
+  opacity: 0;
+  transform: scale(0.92);
+  transition: opacity 0.24s ease, transform 0.24s ease;
+  pointer-events: none;
+}
+/* Draft select dot uses the standard small .gallery-select-dot look (same as the
+   photo grid) — no oversized white-ring checkbox. */
+.gallery-editor-drafts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+}
+.gallery-editor-draft-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+  text-align: left;
+}
+.gallery-editor-draft-card:hover {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+}
+.gallery-editor-draft-card:focus-visible {
+  outline: 2px solid var(--accent, var(--red));
+  outline-offset: 2px;
+}
+.gallery-editor-draft-thumb {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--bg);
+  display: block;
+}
+.gallery-editor-draft-thumb-empty {
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--fg) 4%, transparent),
+    color-mix(in srgb, var(--fg) 4%, transparent) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+}
+.gallery-editor-draft-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.gallery-editor-draft-name {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gallery-editor-draft-meta {
+  font-size: 10px;
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gallery-editor-draft-delete {
+  position: absolute;
+  top: -2px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s;
+}
+.gallery-editor-draft-card:hover .gallery-editor-draft-delete { opacity: 1; }
+.gallery-editor-draft-delete:hover { background: var(--red); }
+/* Editor layout */
+.gallery-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  /* Prevent the editor's own scroll/touch from chaining out to the
+     gallery modal or the page body — critical on mobile so touching
+     the canvas doesn't slide the whole page. */
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+/* Pin the topbar to the top of the editor so its action buttons remain
+   visible if the gallery modal body itself ends up scrolling. */
+.ge-topbar { position: sticky; top: 0; z-index: 5; }
+.ge-topbar.ge-topbar-menu-open { z-index: 10006; }
+
+/* Top bar */
+.ge-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  gap: 8px;
+}
+.ge-topbar-left, .ge-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+/* "ALPHA" badge — flags the editor as in-development. */
+.ge-alpha-badge {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  padding: 3px 6px;
+  margin-right: 4px;
+  border-radius: 4px;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 40%, transparent);
+  text-transform: uppercase;
+  user-select: none;
+  cursor: default;
+}
+@media (max-width: 768px) {
+  /* Keep the toolbar tight on mobile — badge stays but shrinks. */
+  .ge-alpha-badge { font-size: 8px; padding: 2px 5px; margin-right: 2px; }
+}
+.ge-diffusion-status {
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.ge-diffusion-status.online {
+  color: var(--color-success, #4ade80);
+}
+.ge-diffusion-status.offline {
+  color: var(--color-error, #ef4444);
+  opacity: 0.7;
+}
+.ge-diffusion-status.offline:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+}
+.ge-topbar-fill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent, var(--red));
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 50%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
+.ge-topbar-fill:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 22%, transparent);
+  border-color: var(--accent, var(--red));
+}
+/* Mask-color swatch in the topbar — small label + circular swatch so
+   the user can pick a contrasting overlay colour from anywhere. */
+.ge-topbar-mask-color-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.ge-topbar-mask-color-label {
+  font-size: 10px;
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.ge-topbar-mask-color {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+}
+.ge-topbar-mask-color.cp-swatch-input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border-radius: 50%;
+  padding: 0;
+}
+.ge-topbar-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+/* Editor body (toolbar + canvas + panel) */
+.ge-editor-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+.gallery-editor-container {
+  flex: 1;
+  min-height: 0;
+  display: none;
+}
+
+/* Toolbar (left) */
+.ge-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Asymmetric horizontal padding shifts the whole column 4 px left —
+     buttons, hover backgrounds, active highlight pills, and section
+     separators all move together. */
+  padding: 8px 8px 8px 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  width: 56px;
+  flex-shrink: 0;
+}
+.ge-tool-sep {
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-muted);
+  text-align: center;
+  padding: 8px 0 4px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+/* All tool buttons share a fixed height so the column reads as a clean
+   grid. Long labels (e.g. "Remove BG") truncate with ellipsis instead of
+   wrapping to two lines and making one button taller than the others. */
+.ge-tool-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 2px;
+  height: 42px;
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: var(--fg);
+  opacity: 0.6;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.15s, opacity 0.15s;
+}
+.ge-tool-btn .ge-tool-label {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ge-tool-btn { position: relative; }
+/* Hover background is now a pseudo so we can shift it 2 px left
+   independently from the button's own bounds (which contain the icon
+   and label at their already-shifted positions). */
+.ge-tool-btn:hover { opacity: 0.85; }
+.ge-tool-btn:hover::after {
+  content: '';
+  position: absolute;
+  inset: 0 2px 0 -2px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-radius: 6px;
+  z-index: -1;
+  pointer-events: none;
+}
+.ge-tool-btn.active {
+  opacity: 1;
+  color: var(--red);
+  background: none;
+  /* Padding stays the same as inactive buttons so the icon stays
+     horizontally aligned with its neighbors. The taller highlight is
+     drawn by ::before so it can extend up/down without pushing the
+     button or shifting the icon. */
+}
+.ge-tool-btn.active::before {
+  content: '';
+  position: absolute;
+  /* Highlight pill shifted 2 px left of the button bounds so it sits
+     under the icon + label (which are also nudged left). Same total
+     width as before — just slid. */
+  inset: 0 2px 0 -2px;
+  background: color-mix(in srgb, var(--red) 18%, transparent);
+  border-radius: 6px;
+  z-index: 0;
+  pointer-events: none;
+}
+/* Tool button contents stay above the active highlight pseudo. Also
+   shifted an additional 2 px left so the icon + label sit further inside
+   the highlight pill (which still anchors to the button bounds). */
+.ge-tool-btn > * { position: relative; z-index: 1; left: -2px; }
+.ge-tool-icon { font-size: 18px; line-height: 1; }
+.ge-tool-label { font-size: 9px; line-height: 1.25; }
+/* AI badge — same ✦ glyph the Enhance tool uses, pinned to the top-
+   left of any tool button marked `ai: true`. Same color as the icon
+   itself (inherits foreground) so it reads as part of the tool, not
+   a flag. */
+.ge-tool-ai {
+  position: absolute !important;
+  top: 1px;
+  z-index: 2;
+  color: inherit;
+  opacity: 0.7;
+  pointer-events: none;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 700;
+  left: 3px !important;
+}
+.ge-tool-btn.is-ai:hover .ge-tool-ai { opacity: 0.95; }
+.ge-tool-btn.is-ai.active .ge-tool-ai { opacity: 1; }
+/* Inline ✦ marker used on AI action buttons (Generate, Remove, etc.)
+   so they read as AI-backed at a glance — same glyph as .ge-tool-ai
+   in the toolbar, just sitting inline next to the label. */
+.ge-btn-ai-mark {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 700;
+  opacity: 0.75;
+  margin-right: 1px;
+}
+.ge-btn-ai:hover .ge-btn-ai-mark { opacity: 1; }
+
+/* Per-tool clear-selection badge — shows a tiny X in the top-right of
+   the Lasso / Wand button when each holds a selection. Click clears
+   the selection without switching tools (handler stops propagation). */
+.ge-tool-clear {
+  position: absolute !important;
+  top: 3px;
+  right: 3px;
+  width: 14px;
+  height: 14px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--red);
+  cursor: pointer;
+  opacity: 0.95;
+  z-index: 2;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--red) 70%, transparent),
+              0 1px 4px color-mix(in srgb, var(--red) 50%, transparent);
+  transition: opacity 0.12s, transform 0.12s, box-shadow 0.12s;
+  left: auto !important;
+}
+.ge-tool-btn.has-selection .ge-tool-clear { display: inline-flex; }
+.ge-tool-clear:hover {
+  opacity: 1;
+  transform: scale(1.15);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 80%, transparent),
+              0 2px 6px color-mix(in srgb, var(--red) 60%, transparent);
+}
+
+/* Aspect-ratio placeholder shown while a draft is loading. */
+.ge-canvas-placeholder {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--fg) 20%, transparent);
+  border-radius: 4px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+}
+/* Canvas area (center) */
+.ge-canvas-area {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  background: var(--bg);
+  position: relative;
+  min-width: 0;
+  /* Stop touch interactions inside the editor from dragging the whole
+     page (or the gallery modal). Touches on the canvas are owned by the
+     editor's drawing logic — no native pan/zoom. */
+  overscroll-behavior: contain;
+}
+.ge-main-canvas {
+  touch-action: none;
+}
+.ge-wand-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 30%, transparent);
+  pointer-events: none;
+}
+/* Loading overlay shown while a large image is decoding — centered
+   whirlpool + "Loading" caption over a translucent dim. */
+.ge-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  pointer-events: none;
+}
+/* Full-editor cover (project load): above the toolbar/panel and near-opaque so
+   the top toolbar/old content doesn't peek through while loading. */
+.ge-loading-overlay-full {
+  z-index: 200;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  pointer-events: auto;
+}
+.ge-loading-overlay .ge-loading-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 18%, transparent);
+}
+.ge-loading-overlay .ge-loading-text {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* Shortcuts cheatsheet (toggled by `?` or the keyboard icon in the top bar). */
+#ge-shortcuts-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+#ge-shortcuts-overlay[hidden] { display: none; }
+.ge-shortcuts-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 18px 12px;
+  box-shadow: 0 8px 30px color-mix(in srgb, var(--fg) 25%, transparent);
+  width: min(720px, 92vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  color: var(--fg);
+}
+.ge-shortcuts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-weight: 600;
+  font-size: 13px;
+}
+.ge-shortcuts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px 24px;
+}
+@media (min-width: 720px) {
+  .ge-shortcuts-grid { grid-template-columns: repeat(4, 1fr); }
+}
+.ge-shortcuts-col h5 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  opacity: 0.6;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+/* Each shortcut row: key chips + description. The key chips are usually
+   chained with "+" so we use a small horizontal gap between siblings,
+   plus a larger left margin on the trailing text via the kbd:last-of-type
+   sibling rule — keeps "Ctrl+Shift+D Deselect" readable instead of glued. */
+.ge-shortcuts-col > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 0;
+  opacity: 0.85;
+  line-height: 1.5;
+}
+/* Push the description text away from the last kbd by adding margin
+   to any text node that follows a kbd. Flex+wrap handles wrap on narrow. */
+.ge-shortcuts-col > div kbd + kbd { margin-left: 0; }
+.ge-shortcuts-col > div kbd:last-of-type { margin-right: 6px; }
+.ge-shortcuts-card kbd,
+#ge-shortcuts-popover kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent, #cc6a3a) 55%, transparent);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent, #cc6a3a) 14%, transparent);
+  color: var(--accent, #cc6a3a);
+  min-width: 18px;
+  line-height: 1.4;
+}
+.ge-shortcuts-foot {
+  margin-top: 12px;
+  font-size: 11px;
+  opacity: 0.55;
+  text-align: center;
+}
+.ge-main-canvas {
+  /* Cursor is managed entirely by JS so each tool can show its own
+     icon (move arrow, circle overlay, etc.) without CSS fighting it. */
+  image-rendering: pixelated;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+  background: repeating-conic-gradient(#808080 0% 25%, #a0a0a0 0% 50%) 50% / 16px 16px;
+}
+
+/* Transform-overlay canvas — sits over the main canvas with extra
+   margin so resize / rotation handles can render OUTSIDE the image
+   bounds. Pointer events disabled so it doesn't intercept clicks. */
+.ge-transform-overlay {
+  position: absolute;
+  image-rendering: pixelated;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Right panel */
+.ge-right-panel {
+  width: 200px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  /* The whole panel scrolls so every tool control is reachable; the
+     layers-actions row uses position:sticky to stay pinned at the
+     bottom of the viewport while scrolling. */
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Controls */
+.ge-controls {
+  flex: 0 0 auto;
+  padding: 10px 10px 6px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* Brush controls (Color + Size) — give the two rows breathing room
+   between them, since neither sits inside a separator-bordered section. */
+#ge-brush-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Floating Transform popup — horizontal layout, draggable from
+   anywhere on the popup (matches the FX / adjust popups). Defaults
+   to the right side of the editor (over the layers panel). */
+/* Match the .ge-adj-popup layout convention: icon + title + [_][×]
+   header bar, then the body. Drag from the header (same as FX popups). */
+.ge-transform-popup {
+  position: absolute;
+  z-index: 11;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 0 8px;
+  background: color-mix(in srgb, var(--panel) 96%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(6px);
+  user-select: none;
+}
+.ge-transform-popup.ge-transform-popup-dragging .ge-transform-popup-head { cursor: grabbing; }
+.ge-transform-popup-head {
+  /* Inherits .ge-adj-head styling — flex row, icon + title + buttons,
+     bottom border, grab cursor — with the title nudged down 2px for
+     visual balance and explicit horizontal padding so the icon doesn't
+     hug the left edge. */
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  padding-top: 10px;
+  touch-action: none;
+  cursor: grab;
+}
+.ge-transform-popup-head:active { cursor: grabbing; }
+/* Force the title to take all middle space so the [_][×] cluster
+   stays pinned to the right edge. */
+.ge-transform-popup-head .ge-adj-title { flex: 1 1 auto !important; }
+.ge-transform-popup-head .ge-head-btns { margin-left: auto !important; }
+.ge-transform-popup-head .ge-adj-title { position: relative; top: 2px; }
+/* Icon nudged 4px lower than the title baseline so it reads as the
+   row's anchor rather than floating above it. */
+.ge-transform-popup-head .ge-adj-icon { position: relative; top: 4px; }
+/* Mobile-only: shift the head content UP to match the rest of the
+   editor's mobile popup styling. */
+@media (max-width: 820px) {
+  .ge-transform-popup-head .ge-adj-title { top: -2px; }
+  .ge-transform-popup-head .ge-adj-icon { top: 0; }
+}
+/* Make sure the head-buttons cluster sits hard-right with a small
+   gap, matching the FX-popup convention. */
+.ge-transform-popup-head .ge-head-btns { margin-left: auto; }
+.ge-transform-min-hint {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.45;
+  margin-right: -2px;
+  line-height: 1;
+  color: var(--fg-muted);
+}
+/* Small "Merge" text label next to each merge / flatten button so the
+   icons read at a glance instead of needing the title-tooltip. */
+.ge-merge-label {
+  font-size: 10px;
+  margin-left: 4px;
+  opacity: 0.75;
+}
+.ge-transform-popup-body {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+}
+.ge-transform-popup-minimised .ge-transform-popup-body,
+.ge-transform-popup-minimised .ge-transform-popup-hint {
+  display: none;
+}
+.ge-transform-popup-hint { padding: 0 12px; }
+.ge-transform-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+}
+.ge-transform-field label {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.65;
+  min-width: 12px;
+  text-align: right;
+}
+/* Hide the native browser spin-buttons entirely — we render our own
+   themed ▲/▼ via .ge-transform-spin (see below). */
+.ge-transform-popup-input {
+  width: 76px;
+  height: 24px;
+  padding: 0 18px 0 6px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  cursor: text;
+  -moz-appearance: textfield;
+  box-sizing: border-box;
+}
+.ge-transform-popup-input::-webkit-outer-spin-button,
+.ge-transform-popup-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+  display: none;
+}
+/* Rotation field reserves extra room on the right for both the °
+   suffix AND the custom spinner so they don't sit on top of each other.
+   The suffix renders inside that reserved zone. */
+.ge-transform-popup-input-rot { width: 76px; padding-right: 30px; }
+.ge-transform-popup-input:focus { outline: none; border-color: var(--red); }
+.ge-transform-input-locked {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* Custom themed spinner — two slim chevron buttons stacked to the right
+   of the input. Tight stack so the pair reads as one control instead of
+   two floating arrows. */
+.ge-transform-spin {
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  /* Nudged up 4px relative to the input's vertical center. */
+  transform: translateY(calc(-50% - 4px));
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  height: 18px;
+}
+.ge-transform-spin button {
+  flex: 1 1 0;
+  width: 12px;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  font-size: 7px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.ge-transform-spin button:first-child { border-radius: 3px 3px 0 0; border-bottom: 0; }
+.ge-transform-spin button:last-child  { border-radius: 0 0 3px 3px; }
+.ge-transform-spin button:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 25%, transparent);
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
+}
+.ge-transform-spin button:active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+}
+.ge-transform-input-locked + .ge-transform-spin { display: none; }
+/* Position the ° suffix to the LEFT of the spinner so they don't
+   overlap. The rotation input's larger padding leaves room. */
+.ge-transform-popup-suffix {
+  position: absolute;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.ge-transform-aspect-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  /* 2px smaller than the W/H input height so it reads as a chip-style
+     toggle rather than another form field. Pulled up 2px so it tucks
+     between W and H rather than sitting on their baseline. */
+  height: 22px;
+  width: 22px;
+  padding: 0;
+  position: relative;
+  top: -3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.5;
+  transition: opacity 0.12s, color 0.12s, border-color 0.12s;
+}
+.ge-transform-aspect-btn:hover { opacity: 1; }
+.ge-transform-aspect-btn.active {
+  opacity: 1;
+  color: var(--accent, var(--red));
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 50%, var(--border));
+}
+/* Quick-action cluster (flip H, flip V, rotate 90°) — sits between the
+   rotation input and the Apply button. Each button matches the input
+   height and uses the editor's accent palette on hover. */
+.ge-transform-quick {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  /* Pulled up 2px so the flip/rotate icons sit slightly higher than the
+     W/H/rotation inputs, matching the visual weight of the head row. */
+  position: relative;
+  top: -2px;
+  border-left: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.ge-transform-quick-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: none;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  transition: opacity 0.12s, color 0.12s, border-color 0.12s, background 0.12s;
+}
+.ge-transform-quick-btn:hover {
+  opacity: 1;
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+}
+.ge-transform-quick-btn:active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 25%, transparent);
+}
+.ge-transform-popup-hint {
+  font-size: 10px;
+  opacity: 0.5;
+  margin: 0;
+  line-height: 1.3;
+}
+
+/* Floating Inpaint prompt — pops next to the user's last brush stroke
+   so they can type a description and Generate without diverting to
+   the side panel. */
+.ge-inpaint-popup {
+  position: fixed;
+  z-index: 280;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 25%, transparent);
+}
+.ge-inpaint-popup-input {
+  width: 240px;
+  padding: 6px 8px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+  position: relative;
+  top: 0;
+}
+.ge-inpaint-popup-input:focus { outline: none; border-color: var(--red); }
+.ge-inpaint-popup-run {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  position: relative;
+  top: 1px;
+}
+.ge-inpaint-popup-close {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+  margin-left: 2px;
+  cursor: pointer;
+  position: relative;
+  top: 0;
+  opacity: 0.7;
+  transition: opacity 0.15s, color 0.15s;
+}
+.ge-inpaint-popup-close:hover { opacity: 1; color: var(--fg); }
+/* Loading state: the popup's panel chrome (bg/border/shadow) gets out
+   of the way so only the whirlpool floats over the canvas. */
+.ge-inpaint-popup.ge-inpaint-popup-loading {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  padding: 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Hide the controls wrapper entirely when every tool section inside is
+   hidden — otherwise the padding + border draws an empty band above the
+   layers panel even when no tool needs sliders/buttons. */
+.ge-controls:not(:has(> *:not([style*="display: none"]):not([style*="display:none"]))) {
+  display: none;
+}
+.ge-controls input[type="range"] {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  display: block;
+}
+.ge-control-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--fg);
+}
+.ge-control-row label {
+  flex-shrink: 0;
+  opacity: 0.7;
+  min-width: 36px;
+}
+.ge-color-picker {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  background: none;
+  overflow: hidden;
+}
+/* Strip the native <input type="color"> chrome (border + padding around
+   the swatch in each engine) so the visible color fills the circle. */
+.ge-color-picker::-webkit-color-swatch-wrapper { padding: 0; }
+.ge-color-picker::-webkit-color-swatch {
+  border: none;
+  border-radius: 50%;
+}
+.ge-color-picker::-moz-color-swatch {
+  border: none;
+  border-radius: 50%;
+}
+/* attachColorPicker swaps the native <input type="color"> for a styled
+   text input with the same `.ge-color-picker` class plus
+   `.cp-swatch-input`. Force the 24×24 circular swatch back on it so
+   it doesn't render as a wide text box stretched across the row. */
+.ge-color-picker.cp-swatch-input {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  /* Hide the (read-only) text caret + selection so the element reads
+     as a swatch, not a text field. */
+  color: transparent;
+  text-shadow: none;
+  caret-color: transparent;
+  font-size: 0;
+  user-select: none;
+}
+.ge-color-picker.cp-swatch-input::selection { background: transparent; }
+.ge-color-picker.cp-swatch-input:focus {
+  outline: 1px solid var(--red);
+  outline-offset: 1px;
+}
+.ge-size-slider {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 8px;
+  accent-color: var(--red);
+  -webkit-appearance: none;
+  appearance: none;
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 999px;
+  margin: 0;
+}
+.ge-size-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none; cursor: pointer;
+}
+.ge-size-slider:hover::-webkit-slider-thumb,
+.ge-size-slider.is-using::-webkit-slider-thumb,
+.ge-size-slider:active::-webkit-slider-thumb {
+  width: 16px; height: 16px;
+}
+.ge-size-slider::-moz-range-thumb {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none; cursor: pointer;
+}
+.ge-size-slider:hover::-moz-range-thumb,
+.ge-size-slider.is-using::-moz-range-thumb,
+.ge-size-slider:active::-moz-range-thumb {
+  width: 16px; height: 16px;
+}
+.ge-size-label { font-size: 10px; opacity: 0.5; min-width: 28px; text-align: right; }
+
+/* Eraser controls: tighter rows + a small brush preview on the left of
+   each label so the user can see what each slider affects. The three
+   previews share the same dot but each leans on a different rendering
+   trick (alpha / scatter / blur) to mirror its slider's effect. */
+.ge-eraser-row {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px;
+  padding: 2px 0;
+  /* Lets the trailing value span pin to the row's right edge so it
+     stays visible when the slider expands left over the label. */
+  position: relative;
+}
+/* Inline value chip next to the label text. (Previously absolutely-
+   positioned over the slider track to ride the expand animation, which
+   caused overlap now that the dynamic-slider behavior is off for these.) */
+.ge-eraser-row label > span[id$="-label"] {
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  cursor: text;
+  font-size: 10px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+.ge-eraser-row label > span[id$="-label"]:hover {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+/* When the value chip is pulled out of its label and placed AFTER the
+   slider (see DOM transform in galleryEditor.js init), it sits on the
+   row's right edge and naturally shortens the slider's flex space. */
+.ge-eraser-row > span[id$="-label"].ge-slider-value {
+  flex: 0 0 auto;
+  margin: 0 0 0 6px;
+  padding: 0 4px;
+  font-size: 10px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: right;
+  cursor: text;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.ge-eraser-row > span[id$="-label"].ge-slider-value:hover {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  opacity: 1;
+}
+
+/* Per-tool model selector row (lives at the top of each AI tool's
+   section in the side panel). Mirrors the inpaint Model row layout. */
+.ge-tool-model-row {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  min-width: 0;
+}
+.ge-tool-model-row > label {
+  font-size: 11px;
+  opacity: 0.6;
+  flex: 0 0 auto;
+}
+.ge-tool-model {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 10px;
+  padding: 2px 4px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+/* Section label inside a dropdown — small uppercase header. */
+.dropdown-section-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.5;
+  font-weight: 600;
+  padding: 6px 8px 2px;
+}
+.dropdown-section-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+  opacity: 0.6;
+}
+
+/* Inline numeric editor that replaces the value chip on click. */
+.ge-slider-edit {
+  position: absolute;
+  z-index: 11;
+  font: inherit;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 4px;
+  border: 1px solid var(--red);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--fg);
+  outline: none;
+  text-align: center;
+}
+
+/* Merge dropdown — position is set by JS each time it opens (relative to
+   the button's bounding rect) because the parent .ge-layers has
+   overflow:hidden which would otherwise clip the popup. */
+.ge-merge-menu {
+  position: fixed;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 25%, transparent);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+}
+.ge-merge-menu[hidden] { display: none; }
+.ge-merge-menu .dropdown-item-compact {
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  font-size: 11px;
+  gap: 8px;
+  font: inherit;
+  font-size: 11px;
+}
+
+/* Thin separator inside a tool section. */
+.ge-section-divider {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 10px -2px;
+  opacity: 0.6;
+}
+
+/* Small explanatory paragraph under AI tool section labels. */
+.ge-section-hint {
+  font-size: 10.5px;
+  line-height: 1.45;
+  opacity: 0.55;
+  margin: 0 0 8px;
+}
+/* Clone-tool hint swaps between "Alt-click" (desktop) and "Double-tap"
+   (mobile) so the on-screen instruction matches the actual gesture. */
+.ge-clone-hint-mobile { display: none; }
+@media (max-width: 820px) {
+  .ge-clone-hint-desktop { display: none; }
+  .ge-clone-hint-mobile { display: inline; }
+}
+/* Section title + adjacent "?" affordance — collapses the long
+   explanatory paragraph into a hoverable tooltip so the side panel
+   stays compact. */
+.ge-section-title-with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+/* Drop the source-whitespace text node between the title text and the
+   ? span so the chip hugs the title with no extra gap. */
+.ge-section-title-with-help .ge-section-help { margin-left: 0; }
+.ge-section-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  color: var(--fg-muted);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: help;
+  user-select: none;
+  transition: background 0.12s, color 0.12s;
+}
+.ge-section-help:hover,
+.ge-section-help:focus-visible {
+  background: color-mix(in srgb, var(--fg) 24%, transparent);
+  color: var(--fg);
+  outline: none;
+}
+
+/* Lightweight section title — used inside the inpaint panel to group
+   the mask actions (Eye / Invert / Clear) under a "Selection" header. */
+.ge-section-title {
+  margin: 10px 0 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.5;
+  font-weight: 600;
+}
+/* Selection-row buttons stay compact so eye + invert + clear fit on
+   one line beside each other. */
+.ge-inpaint-mask-row {
+  display: flex !important;
+  gap: 4px;
+  align-items: center;
+}
+.ge-inpaint-mask-row .ge-btn {
+  flex: 0 0 auto;
+}
+.ge-inpaint-mask-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.5;
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+/* Fixed label column so the three sliders start at the same x and have
+   the same length when unused. Without this, "Flow" (4 chars) leaves
+   more room than "Opacity" (7 chars). */
+.ge-eraser-row label {
+  font-size: 10px;
+  opacity: 0.55;
+  flex: 0 0 78px;
+  white-space: nowrap;
+  display: inline-flex;
+  justify-content: space-between;
+  gap: 4px;
+}
+/* Fixed-size slider track for all side-panel sliders — no dynamic
+   width/height expansion on drag. Only the thumb grows on interaction
+   (see ::-webkit-slider-thumb / ::-moz-range-thumb below). */
+.ge-eraser-row input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 8px;
+  accent-color: var(--red);
+  -webkit-appearance: none;
+  appearance: none;
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 999px;
+  margin: 0;
+  position: relative;
+  z-index: 2;
+}
+.ge-eraser-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  transition: width 0.12s ease 0.5s, height 0.12s ease 0.5s;
+}
+.ge-eraser-row input[type="range"]:hover::-webkit-slider-thumb,
+.ge-eraser-row input[type="range"].is-using::-webkit-slider-thumb,
+.ge-eraser-row input[type="range"]:active::-webkit-slider-thumb {
+  width: 16px; height: 16px;
+  transition: width 0.12s ease 0s, height 0.12s ease 0s;
+}
+.ge-eraser-row input[type="range"]::-moz-range-thumb {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  transition: width 0.12s ease 0.5s, height 0.12s ease 0.5s;
+}
+.ge-eraser-row input[type="range"]:hover::-moz-range-thumb,
+.ge-eraser-row input[type="range"].is-using::-moz-range-thumb,
+.ge-eraser-row input[type="range"]:active::-moz-range-thumb {
+  width: 16px; height: 16px;
+  transition: width 0.12s ease 0s, height 0.12s ease 0s;
+}
+/* Inpaint Brush size slider — slightly larger thumb than the rest of
+   the panel since it's the primary interactive control. */
+#ge-inpaint-brush-slider::-webkit-slider-thumb { width: 12px; height: 12px; }
+#ge-inpaint-brush-slider:hover::-webkit-slider-thumb,
+#ge-inpaint-brush-slider.is-using::-webkit-slider-thumb,
+#ge-inpaint-brush-slider:active::-webkit-slider-thumb { width: 18px; height: 18px; }
+#ge-inpaint-brush-slider::-moz-range-thumb { width: 12px; height: 12px; }
+#ge-inpaint-brush-slider:hover::-moz-range-thumb,
+#ge-inpaint-brush-slider.is-using::-moz-range-thumb,
+#ge-inpaint-brush-slider:active::-moz-range-thumb { width: 18px; height: 18px; }
+
+/* Help "?" icon next to a section title. Subtle by default, hover
+   brightens. Tooltip via native `title` attribute. */
+.ge-section-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--fg-muted);
+  background: none;
+  cursor: help;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+  opacity: 0.7;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+.ge-section-help:hover { opacity: 1; color: var(--fg); border-color: var(--fg-muted); }
+
+/* Layer-FX popup — floating window bound to one layer. */
+.ge-fx-popup {
+  position: fixed;
+  z-index: 300;
+  width: 320px;
+  max-height: 80vh;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  color: var(--fg);
+}
+.ge-fx-popup-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+.ge-fx-popup-title { font-size: 12px; }
+.ge-fx-popup-close {
+  background: none; border: none; color: var(--fg-muted);
+  font-size: 18px; line-height: 1; cursor: pointer; padding: 0 4px;
+}
+.ge-fx-popup-close:hover { color: var(--fg); }
+.ge-fx-popup-body { padding: 8px 10px; overflow-y: auto; }
+.ge-fx-popup-foot {
+  display: flex; gap: 6px; padding: 6px 10px;
+  border-top: 1px solid var(--border);
+}
+.ge-fx-group-title {
+  font-size: 10px; font-weight: 600; opacity: 0.6;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  margin: 8px 0 4px;
+}
+.ge-fx-group-title:first-child { margin-top: 0; }
+.ge-fx-cb-tone {
+  font-size: 10px; opacity: 0.55; font-style: italic;
+  margin: 4px 0 2px;
+}
+.ge-fx-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 0;
+}
+.ge-fx-row-label {
+  font-size: 10px; opacity: 0.7;
+  flex: 0 0 110px; white-space: nowrap;
+}
+.ge-fx-row input[type="range"] {
+  flex: 1 1 auto; min-width: 0;
+  height: 6px; accent-color: var(--red);
+  -webkit-appearance: none; appearance: none;
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 999px;
+}
+.ge-fx-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 11px; height: 11px; border-radius: 50%;
+  background: var(--red); border: none; cursor: pointer;
+}
+.ge-fx-row input[type="range"]::-moz-range-thumb {
+  width: 11px; height: 11px; border-radius: 50%;
+  background: var(--red); border: none; cursor: pointer;
+}
+.ge-fx-row-value {
+  font-size: 10px; opacity: 0.7; font-variant-numeric: tabular-nums;
+  flex: 0 0 40px; text-align: right;
+}
+
+/* Layer-row FX button — tinted when the layer has any non-identity FX. */
+.ge-layer-fx-btn {
+  opacity: 0.55;
+}
+.ge-layer-fx-btn:hover { opacity: 0.9; }
+.ge-layer-fx-btn.active {
+  opacity: 1;
+  color: var(--accent, var(--red));
+}
+/* Add-mask button on each layer row. Subtle by default; lights up red
+   when a lasso/wand selection is live so the user instantly sees that
+   clicking it will bake that selection into a mask on this layer. */
+.ge-layer-mask-btn {
+  opacity: 0.45;
+}
+.ge-layer-mask-btn:hover { opacity: 0.9; }
+.ge-layer-mask-btn.from-selection {
+  opacity: 1;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+}
+
+/* Shared frosted-glass style for FX menu + adjustment popups. */
+.ge-frosted {
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.55);
+}
+
+/* FX dropdown menu from the layer-row fx icon. */
+.ge-fx-menu {
+  position: fixed;
+  z-index: 305;
+  min-width: 200px;
+  padding: 4px;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ge-fx-menu-item {
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--fg);
+  border-radius: 5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ge-fx-menu-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+.ge-fx-menu-item:hover {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.ge-fx-menu-item:hover .ge-fx-menu-icon { color: var(--fg); }
+
+/* Per-type adjustment popup. */
+.ge-adj-popup {
+  position: fixed;
+  z-index: 305;
+  width: 320px;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  color: var(--fg);
+}
+.ge-adj-popup .ge-adj-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+  cursor: grab;
+  user-select: none;
+}
+.ge-adj-popup .ge-adj-title { flex: 1 1 auto; }
+.ge-adj-popup .ge-head-btns { margin-left: auto; }
+.ge-adj-popup .ge-adj-head:active { cursor: grabbing; }
+.ge-adj-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+.ge-adj-title { font-weight: 600; font-size: 12px; flex: 1 1 auto; }
+.ge-adj-min, .ge-adj-close, .ge-history-close {
+  background: none; border: none; color: var(--fg-muted);
+  font-size: 16px; line-height: 1; cursor: pointer; padding: 0 4px;
+  flex-shrink: 0;
+}
+.ge-history-close:hover { color: var(--fg); }
+/* Mobile-only: shift head icons/buttons up and enlarge the minimise
+   glyph so it reads as a window-minimise affordance, not a centered
+   minus. Desktop keeps the original tight head styling. */
+@media (max-width: 820px) {
+  .ge-adj-icon {
+    position: relative;
+    top: -4px;
+  }
+  .ge-adj-title {
+    position: relative;
+    top: -2px;
+  }
+  .ge-adj-min, .ge-adj-close, .ge-history-close {
+    position: relative;
+    top: -4px;
+  }
+  .ge-adj-min,
+  .ge-adj-popup .ge-adj-min,
+  .ge-history-head .ge-adj-min,
+  .ge-transform-popup-head .ge-adj-min {
+    font-size: 22px !important;
+    font-weight: 600 !important;
+    padding: 0 8px !important;
+    line-height: 0.6 !important;
+    position: relative;
+    top: 4px;
+  }
+  .ge-adj-head .ge-transform-aspect-btn {
+    position: relative;
+    top: -4px;
+  }
+}
+.ge-adj-min:hover, .ge-adj-close:hover { color: var(--fg); }
+
+/* Floating dock at bottom-right for minimised FX popups. */
+#ge-fx-dock {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 12px;
+  z-index: 304;
+  display: flex;
+  flex-direction: row;
+  gap: 6px;
+  align-items: center;
+  pointer-events: none;
+  max-width: calc(100vw - 24px);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.ge-fx-dock-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--fg);
+  cursor: pointer;
+  pointer-events: auto;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ge-fx-dock-chip:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.ge-fx-dock-icon { display: inline-flex; align-items: center; }
+.ge-fx-dock-label { overflow: hidden; text-overflow: ellipsis; }
+.ge-fx-dock-close {
+  margin-left: 2px; opacity: 0.55; padding: 0 2px;
+  font-size: 14px; line-height: 1;
+}
+.ge-fx-dock-close:hover { opacity: 1; color: var(--red); }
+
+/* Sub-layer row icon in the layer panel. */
+.ge-adj-sub-name {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 4px;
+}
+.ge-adj-sub-icon {
+  display: inline-flex; align-items: center;
+  color: var(--accent, var(--red));
+  flex-shrink: 0;
+}
+.ge-adj-sub-icon svg { width: 11px; height: 11px; }
+
+/* History panel — labeled timeline of edits. */
+#ge-history-panel {
+  position: fixed;
+  z-index: 10004;
+  width: 240px;
+  max-height: 60vh;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  color: var(--fg);
+  font-size: 11px;
+}
+.ge-history-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+  cursor: grab;
+  user-select: none;
+}
+.ge-history-head:active { cursor: grabbing; }
+.ge-history-title { font-weight: 600; font-size: 12px; flex: 1 1 auto; }
+.ge-history-close {
+  background: none; border: none; color: var(--fg-muted);
+  font-size: 16px; line-height: 1; cursor: pointer; padding: 0 4px;
+  flex-shrink: 0;
+}
+.ge-history-close:hover { color: var(--fg); }
+.ge-history-list { overflow-y: auto; padding: 4px 0; }
+.ge-history-row {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  padding: 5px 10px;
+  background: none; border: none;
+  text-align: left; cursor: pointer;
+  color: var(--fg); font-size: 11px;
+}
+.ge-history-row:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.ge-history-row.current { background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent); }
+.ge-history-row.current .ge-history-row-dot { background: var(--accent, var(--red)); }
+.ge-history-row.future { opacity: 0.45; }
+.ge-history-row-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--fg-muted);
+  flex-shrink: 0;
+}
+.ge-history-row-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ge-history-row-time { font-size: 9px; opacity: 0.55; flex-shrink: 0; }
+
+/* Tight button group in popup heads — min + close sit immediately next
+   to each other with no inherited flex gap, pushed to the right edge. */
+.ge-head-btns {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.ge-head-btns > button {
+  width: 26px;
+  height: 26px;
+  padding: 0 !important;
+  margin: 0;
+  font-size: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+}
+.ge-head-btns > button:hover {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+
+/* Detail-header heart toggle — sits next to the icon Edit button. */
+.gallery-detail-fav-header { opacity: 0.7; transition: opacity 0.15s, color 0.15s; }
+.gallery-detail-fav-header:hover { opacity: 1; }
+.gallery-detail-fav-header.active { color: var(--red); opacity: 1; }
+
+/* Canvas loading overlay — covers the canvas area while a blocking op
+   (rotation, big resize, etc.) runs. */
+.ge-canvas-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: 8px;
+  pointer-events: auto;
+}
+.ge-canvas-loading-spinner {
+  width: 32px; height: 32px;
+  border: 3px solid color-mix(in srgb, var(--fg) 25%, transparent);
+  border-top-color: var(--accent, var(--red));
+  border-radius: 50%;
+  animation: ge-canvas-spin 0.8s linear infinite;
+}
+.ge-canvas-loading-msg { font-size: 12px; opacity: 0.85; }
+@keyframes ge-canvas-spin { to { transform: rotate(360deg); } }
+
+/* Missing-dependency notice in tool sections (Bg Remove etc.). */
+.ge-dep-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 30%, transparent);
+  border-radius: 6px;
+  margin: 4px 0 8px;
+  font-size: 11px;
+}
+.ge-dep-notice-text { flex: 1 1 auto; line-height: 1.4; }
+.ge-dep-notice-text strong { display: block; margin-bottom: 2px; }
+.ge-dep-notice-text code {
+  font-family: 'Fira Code', monospace;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.ge-dep-notice .ge-btn { flex-shrink: 0; }
+
+/* Brief highlight on a Cookbook deps row arrived-at via deep-link. */
+.cookbook-pkg-flash { animation: cookbook-pkg-flash 1.4s ease-out; }
+@keyframes cookbook-pkg-flash {
+  0%   { background: color-mix(in srgb, var(--accent, var(--red)) 30%, transparent); }
+  100% { background: transparent; }
+}
+
+/* Flash highlight when an anchor-link ([Name](#task-/#skill-/#research-))
+   opens a panel and focuses a specific item. */
+@keyframes anchor-item-flash {
+  0%   { background: color-mix(in srgb, var(--accent, var(--red)) 28%, transparent); }
+  60%  { background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent); }
+  100% { background: transparent; }
+}
+.task-card-flash,
+.skill-row-flash,
+.research-card-flash {
+  animation: anchor-item-flash 2s ease-out;
+  border-radius: 6px;
+}
+
+/* Preview dot icons for the Blur sub-menu — visual cue for each blur
+   type (Gaussian = soft round, Zoom = radial streaks). */
+.ge-blur-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  background: var(--fg);
+}
+.ge-blur-icon.ge-blur-gaussian {
+  background: radial-gradient(circle, var(--fg) 0%, var(--fg) 25%, transparent 75%);
+  filter: blur(1.5px);
+}
+.ge-blur-icon.ge-blur-zoom {
+  background: radial-gradient(circle, var(--fg) 0%, var(--fg) 20%, transparent 60%);
+  box-shadow:
+    0 -5px 0 -3px var(--fg),
+    0 5px 0 -3px var(--fg),
+    -5px 0 0 -3px var(--fg),
+    5px 0 0 -3px var(--fg),
+    -4px -4px 0 -3px var(--fg),
+    4px -4px 0 -3px var(--fg),
+    -4px 4px 0 -3px var(--fg),
+    4px 4px 0 -3px var(--fg);
+}
+
+/* Inline-swatch color picker — small square that fits next to a title. */
+.ge-inline-swatch {
+  width: 16px !important;
+  height: 16px !important;
+  padding: 0 !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 3px !important;
+  cursor: pointer;
+  flex-shrink: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: none;
+}
+.ge-inline-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+.ge-inline-swatch::-webkit-color-swatch { border: none; border-radius: 2px; }
+.ge-inline-swatch::-moz-color-swatch { border: none; border-radius: 2px; }
+
+/* Drop overlay over the gallery editor while a file drag is in flight. */
+.ge-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  border: 3px dashed color-mix(in srgb, var(--accent, var(--red)) 80%, transparent);
+  border-radius: 8px;
+}
+.ge-drop-overlay-msg {
+  padding: 12px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+  backdrop-filter: blur(10px);
+  border-radius: 8px;
+}
+
+/* Small buttons that show an SVG icon + text label side-by-side. */
+.ge-btn-iconlabel {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.ge-btn-iconlabel svg {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+.ge-btn-iconlabel:hover svg { opacity: 1; }
+
+.ge-adj-body {
+  padding: 8px 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.ge-adj-popup { box-sizing: border-box; overflow: hidden; }
+.ge-adj-foot {
+  display: flex; gap: 6px; justify-content: flex-end;
+  padding: 8px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+}
+/* Mobile-only: oversize the foot Cancel/Apply buttons to match the
+   Transform popup. Desktop keeps the original ge-btn-sm sizing. */
+@media (max-width: 820px) {
+  .ge-adj-foot .ge-adj-cancel-btn,
+  .ge-adj-foot .ge-adj-apply-btn {
+    padding: 8px 16px !important;
+    font-size: 13px !important;
+    min-width: 80px;
+    text-align: center;
+  }
+}
+.ge-adj-row {
+  display: flex; align-items: center; gap: 3px;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  line-height: 1;
+}
+.ge-adj-row > label {
+  flex: 0 0 96px;
+  font-size: 10px;
+  opacity: 0.7;
+}
+.ge-adj-row input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 6px;
+  accent-color: var(--red);
+  -webkit-appearance: none; appearance: none;
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 999px;
+}
+/* Mobile-only: fixed-size sliders + taller rows so the thumb growing
+   on active doesn't push the row height around. */
+@media (max-width: 820px) {
+  .ge-adj-row {
+    min-height: 28px;
+  }
+  .ge-adj-row input[type="range"] {
+    flex: 0 0 160px;
+    width: 160px;
+    min-width: 160px;
+    max-width: 160px;
+  }
+}
+.ge-adj-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--red);
+  cursor: pointer; border: none;
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.ge-adj-row input[type="range"]:hover::-webkit-slider-thumb,
+.ge-adj-row input[type="range"]:active::-webkit-slider-thumb {
+  width: 18px; height: 18px;
+}
+.ge-adj-row input[type="range"]::-moz-range-thumb {
+  width: 12px; height: 12px;
+  border-radius: 50%; background: var(--red); border: none; cursor: pointer;
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.ge-adj-row input[type="range"]:hover::-moz-range-thumb,
+.ge-adj-row input[type="range"]:active::-moz-range-thumb {
+  width: 18px; height: 18px;
+}
+/* Value chip — fixed-width column, text aligned LEFT so the chip's
+   left edge always sits immediately after the slider regardless of
+   value length. Without a fixed width Hue's "180 °" made its slider
+   shorter than Saturation's "100" since slider was flex-1. */
+.ge-adj-value {
+  flex: 0 0 34px;
+  margin-left: 0;
+  padding: 0 2px;
+  font-size: 10px; opacity: 0.7; text-align: left;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: text;
+}
+.ge-adj-value:hover { opacity: 1; }
+.ge-adj-cb-tone {
+  font-size: 10px; opacity: 0.55; font-style: italic;
+  margin: 2px 0 0;
+  line-height: 1;
+}
+.ge-adj-cb-row {
+  padding: 0;
+  gap: 3px;
+}
+.ge-adj-cb-row .ge-adj-cb-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  display: inline-block; flex-shrink: 0;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg) 20%, transparent);
+}
+.ge-adj-cb-tone-picker {
+  margin: 0 0 8px;
+}
+.ge-adj-cb-tone-select {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  color: var(--fg);
+}
+.ge-adj-cb-tone-select:focus { outline: none; border-color: var(--red); }
+.ge-adj-hist-details {
+  margin-bottom: 8px;
+}
+.ge-adj-hist-details > summary {
+  font-size: 11px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 4px 0;
+  list-style: none;
+  user-select: none;
+}
+.ge-adj-hist-details > summary::-webkit-details-marker { display: none; }
+.ge-adj-hist-details > summary::before {
+  content: '▸ ';
+  display: inline-block;
+  transition: transform 0.12s;
+}
+.ge-adj-hist-details[open] > summary::before {
+  content: '▾ ';
+}
+.ge-adj-hist-details .ge-adj-hist-wrap {
+  margin-top: 4px;
+}
+.ge-adj-histogram {
+  display: block;
+  width: 100%;
+  height: 80px;
+  border-radius: 4px;
+  background: rgba(0,0,0,0.25);
+}
+.ge-adj-hist-wrap {
+  position: relative;
+  margin-bottom: 14px;
+}
+.ge-adj-hist-handles {
+  position: absolute;
+  left: 0; right: 0;
+  bottom: -10px;
+  height: 12px;
+  pointer-events: none;
+}
+.ge-adj-hist-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  cursor: ew-resize;
+  pointer-events: auto;
+  border-style: solid;
+  border-width: 0 6px 10px 6px;
+  border-color: transparent transparent var(--fg-muted) transparent;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.4));
+}
+.ge-adj-hist-handle:hover { border-bottom-color: var(--fg); }
+.ge-adj-hist-handle.hist-h-black { border-bottom-color: #111; }
+.ge-adj-hist-handle.hist-h-white { border-bottom-color: #fff; }
+.ge-adj-hist-handle.hist-h-gamma { border-bottom-color: var(--accent, var(--red)); }
+/* Per-slider revert button. */
+.ge-adj-revert {
+  background: none; border: none;
+  color: var(--fg-muted); cursor: pointer;
+  padding: 2px 4px; margin-left: 2px;
+  opacity: 0.55;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: opacity 0.15s, color 0.15s;
+}
+.ge-adj-revert:hover { opacity: 1; color: var(--fg); }
+
+/* Adjustment sub-layer row in the layer panel — indented under parent. */
+.ge-adj-sub-item {
+  padding-left: 18px;
+  opacity: 0.85;
+  border-left: 2px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
+  margin-left: 6px;
+  font-size: 10.5px;
+}
+.ge-adj-sub-item .ge-layer-name {
+  opacity: 0.85;
+  font-style: italic;
+}
+/* Mask sub-layer rows. Same indent as adj sub-layers but the
+   highlight bar uses fg-muted instead of accent — these aren't FX
+   effects, just selection-state. When activated (the click target
+   for paint / inpaint / generate), border + name go full strength. */
+.ge-mask-sub-item {
+  border-left-color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+.ge-mask-sub-item.active {
+  border-left-color: var(--red);
+  opacity: 1;
+}
+.ge-mask-sub-item.active .ge-layer-name { opacity: 1; font-style: normal; font-weight: 600; }
+.ge-eraser-preview {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--fg);
+  flex-shrink: 0;
+  display: inline-block;
+  position: relative;
+}
+/* Opacity preview — translucent disk */
+#ge-eraser-preview-opacity { opacity: 0.5; }
+/* Flow preview — dotted ring to suggest discrete stamping */
+#ge-eraser-preview-flow {
+  background: none;
+  border: 2px dotted var(--fg);
+  opacity: 0.7;
+  width: 12px;
+  height: 12px;
+}
+/* Softness preview — blurred edge */
+#ge-eraser-preview-softness {
+  background: radial-gradient(circle, var(--fg) 0%, var(--fg) 30%, transparent 75%);
+  opacity: 0.7;
+}
+/* Wand feather preview — solid disk that visibly softens at its edge
+   as the user drags the Feather slider. JS sets --feather-blur. */
+#ge-wand-feather-preview {
+  filter: blur(var(--feather-blur, 0px));
+  opacity: 0.8;
+}
+.ge-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.ge-btn {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.ge-btn:hover { background: color-mix(in srgb, var(--fg) 10%, var(--bg)); }
+.ge-btn.active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, var(--bg));
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+}
+.ge-btn-sm { padding: 3px 6px; font-size: 10px; }
+/* Busy state on AI tool buttons — whirlpool + verb text side by side. */
+.ge-btn-processing {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.ge-btn-busy-label { font-size: inherit; line-height: 1; }
+/* Mask-vis eye button is icon-only — strip the inherited .ge-btn
+   background / border so it reads as a plain affordance, matching
+   the layer-row eye toggles. */
+.ge-mask-vis-btn {
+  background: none !important;
+  border: none !important;
+  padding: 2px 4px !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.5;
+  transition: opacity 0.12s;
+}
+.ge-mask-vis-btn:hover { opacity: 0.85; background: none !important; }
+.ge-mask-vis-btn.visible { opacity: 0.9; }
+.ge-mask-vis-btn.visible:hover { opacity: 1; }
+/* Paint/Erase segmented toggle in the Inpaint Brush section. */
+.ge-inpaint-mode-btn {
+  font-size: 11px;
+  padding: 4px 8px;
+  opacity: 0.6;
+  border: 1px solid var(--border);
+}
+.ge-inpaint-mode-btn:hover { opacity: 0.85; }
+.ge-inpaint-mode-btn.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+  font-weight: 600;
+}
+/* Wand New / + Add / − Subtract segmented toggle. */
+.ge-wand-mode-btn {
+  flex: 1 1 0;
+  font-size: 11px;
+  padding: 4px 6px;
+  opacity: 0.6;
+  border: 1px solid var(--border);
+}
+.ge-wand-mode-btn:hover { opacity: 0.85; }
+.ge-wand-mode-btn.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+  font-weight: 600;
+}
+.ge-wand-live-btn {
+  flex: 0 0 auto;
+  opacity: 0.6;
+  min-width: 46px;
+  height: 22px;
+  padding: 0 10px !important;
+  border-radius: 999px !important;
+  font-size: 10px;
+  line-height: 1;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s, background 0.15s;
+}
+.ge-wand-live-btn:hover { opacity: 0.85; }
+.ge-wand-live-btn.active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  border-color: var(--accent, var(--red));
+  color: var(--accent, var(--red));
+  font-weight: 600;
+}
+/* Top-bar buttons (undo/redo, zoom +/-, Fit, 1:1, Resize, Edge, Import,
+   Download, Save) — visually their glyphs sit too low compared to the
+   surrounding labels, so shift contents up 2 px via asymmetric padding. */
+/* Visually the buttons sit lower than the surrounding text labels on the
+   topbar. Keep the box padding symmetric but lift the whole box 2 px so it
+   centers against the adjacent label baselines. */
+.ge-topbar .ge-btn,
+.ge-topbar .ge-btn-sm,
+.ge-topbar select,
+.ge-topbar input { position: relative; top: -2px; }
+/* The tiny "Gen" / "Inpaint" inline labels now look too high relative to
+   the shifted-up controls — nudge them down 2 px to re-align. */
+.ge-topbar span[style*="font-size:9px"] { position: relative; top: 2px; }
+/* The Gen and Inpaint model selects — must visually sit on the same line as
+   the small "Gen" / "Inpaint" labels (which are at top:2px). Use !important
+   so this beats the generic `.ge-topbar select` rule above no matter what
+   element-vs-class specificity quirks. */
+.ge-topbar .ge-ai-model { position: relative !important; top: 1px !important; }
+/* The ◢ glyph baseline reads lower than the surrounding text — shift it
+   up 1 px so it visually centers with the "Edge" label. */
+.ge-edge-glyph { position: relative; top: -1px; }
+/* Flex-line-break helper used in the mobile transform popup. Hidden by
+   default so desktop keeps its single-row layout. */
+.ge-row-break { display: none; }
+/* Stacked button — glyph on top, small uppercase label below. Currently
+   used for Undo/Redo so users get an obvious "UNDO" / "REDO" affordance
+   label without losing the compact icon. */
+.ge-stacked-btn {
+  display: inline-flex !important;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 2px 8px !important;
+  line-height: 1;
+}
+.ge-stacked-btn .ge-stacked-glyph {
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 14px;
+}
+.ge-stacked-btn .ge-stacked-glyph svg { display: block; }
+.ge-stacked-btn .ge-stacked-label {
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  opacity: 0.65;
+  font-weight: 600;
+  position: relative;
+  top: 2px;
+}
+/* Zoom % indicator — magnifier glyph on top, percentage label below.
+   Matches the Undo/Redo stacked-button layout so the topbar reads as
+   one consistent row of stacked icons. */
+.ge-zoom-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  line-height: 1;
+  padding: 0 4px;
+}
+.ge-zoom-stack .ge-zoom-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  /* Glyph nudged 1 px right (was 2 px left). */
+  position: relative;
+  left: -1px;
+}
+.ge-zoom-stack .ge-zoom-glyph svg {
+  width: 16px;
+  height: 16px;
+}
+.ge-zoom-stack .ge-zoom-label {
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  opacity: 0.65;
+  font-weight: 600;
+  position: relative;
+  top: 4px;
+  left: 1px;
+}
+/* + Add sits 1 px below the title baseline to match the surrounding
+   header buttons after the recent header restructure. */
+.ge-layers-header #ge-add-layer { position: relative; top: 1px; }
+/* Layer-row buttons in the right panel — the unicode glyphs (◉, ⤢) have
+   irregular baseline metrics so the box reads as too low; shift up 2 px. */
+.ge-layer-vis,
+.ge-layer-btn { position: relative; top: -2px; }
+/* Delete (×) button glyph baseline reads even lower than the visibility
+   icon — push it up an extra 2 px so it visually centers. */
+.ge-layer-btn.danger { top: -4px; }
+/* Save / Save as new / Download dropdown anchored to the primary Save
+   button in the topbar. */
+.ge-save-wrap { position: relative; display: inline-block; }
+.ge-save-menu {
+  position: fixed;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 18%, transparent);
+  z-index: 10005;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ge-save-menu[hidden] { display: none; }
+.ge-save-menu .dropdown-item-compact {
+  width: 100%;
+  background: none;
+  border: none;
+  text-align: left;
+  font: inherit;
+}
+
+/* Resize and Edge popups in the topbar — same anchored-dropdown pattern as
+   the Save menu. Resize lists preset canvas sizes; Edge is a tiny form.
+   Image + Filter menus reuse the same chrome. */
+.ge-resize-wrap,
+.ge-edge-wrap,
+.ge-image-wrap,
+.ge-filter-wrap { position: relative; display: inline-block; }
+.ge-resize-menu,
+.ge-edge-menu,
+.ge-image-menu,
+.ge-filter-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 18%, transparent);
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* Mobile: escape the topbar's stacking context (z 5) so the dropdown
+   lands above the bottom-sheet panels (z 50 / 60). Switch to fixed and
+   pin under the topbar. */
+@media (max-width: 820px) {
+  .ge-resize-menu,
+  .ge-edge-menu,
+  .ge-image-menu,
+  .ge-filter-menu {
+    position: fixed;
+    top: 44px;
+    right: 8px;
+    z-index: 500;
+    max-width: calc(100vw - 16px);
+  }
+}
+.ge-resize-menu { min-width: 200px; }
+.ge-edge-menu { min-width: 220px; padding: 10px; gap: 6px; }
+.ge-image-menu { min-width: 180px; }
+.ge-filter-menu { min-width: 180px; }
+.ge-resize-menu[hidden],
+.ge-edge-menu[hidden],
+.ge-image-menu[hidden],
+.ge-filter-menu[hidden] { display: none; }
+.ge-resize-menu .dropdown-item-compact,
+.ge-image-menu .dropdown-item-compact,
+.ge-filter-menu .dropdown-item-compact {
+  width: 100%;
+  background: none;
+  border: none;
+  text-align: left;
+  font: inherit;
+}
+/* Sub-menu label inside the Filter / Image dropdown — small uppercase
+   header so "Blur" / "Selection" reads as a category, not an action. */
+.ge-filter-submenu-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.45;
+  font-weight: 600;
+  padding: 4px 8px 2px;
+  pointer-events: none;
+}
+/* Disabled dropdown items (e.g. Fill when there's no selection) read
+   as muted + non-interactive. */
+.ge-image-menu .dropdown-item-compact:disabled,
+.ge-filter-menu .dropdown-item-compact:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* Filter live-preview modal — translucent backdrop over the editor
+   with a frosted parameter panel anchored top-right. The active layer
+   re-renders live as the user drags the sliders. */
+.ge-filter-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 14;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 60px 20px 20px;
+  background: rgba(0, 0, 0, 0.18);
+  pointer-events: auto;
+}
+.ge-filter-modal {
+  width: 240px;
+  background: color-mix(in srgb, var(--panel) 95%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ge-filter-modal-head {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.7;
+}
+.ge-filter-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ge-filter-row label {
+  font-size: 10px;
+  opacity: 0.7;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.ge-filter-row-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  opacity: 0.85;
+}
+.ge-filter-row input[type="range"] {
+  width: 100%;
+}
+.ge-filter-modal-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.ge-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+.ge-edge-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ge-edge-label {
+  font-size: 11px;
+  opacity: 0.65;
+}
+.ge-edge-input {
+  padding: 6px 8px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+}
+.ge-edge-input:focus { outline: none; border-color: var(--red); }
+.ge-edge-actions {
+  display: flex;
+  gap: 6px;
+}
+.ge-edge-actions .ge-btn { flex: 1; }
+.ge-edge-hint {
+  margin: 0;
+  font-size: 10px;
+  opacity: 0.5;
+  line-height: 1.4;
+}
+
+/* Styled "New canvas" prompt — replaces the native browser prompt(). */
+.ge-canvas-prompt {
+  max-width: 360px;
+  width: 90vw;
+}
+.ge-canvas-prompt .modal-header h4 { margin: 0; font-size: 14px; }
+.ge-canvas-prompt-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  justify-content: center;
+  margin: 6px 0 2px;
+}
+.ge-canvas-prompt-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.ge-canvas-prompt-field > span {
+  font-size: 11px;
+  opacity: 0.65;
+}
+.ge-canvas-prompt-field input {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 14px;
+}
+.ge-canvas-prompt-field input:focus { outline: none; border-color: var(--red); }
+.ge-canvas-prompt-x {
+  font-size: 18px;
+  opacity: 0.4;
+  align-self: center;
+  padding-bottom: 8px;
+}
+.ge-canvas-prompt-hint {
+  margin: 12px 0 0;
+  font-size: 11px;
+  opacity: 0.5;
+  text-align: center;
+}
+
+.ge-btn-primary {
+  background: var(--red);
+  color: #fff;
+  border-color: var(--red);
+  font-weight: 600;
+}
+.ge-btn-primary:hover { background: color-mix(in srgb, var(--red) 85%, #000); }
+.ge-zoom-label { font-size: 10px; opacity: 0.5; }
+
+/* Nudge whirlpool spinners 1px down so they sit on the text baseline
+   when placed inside action buttons (Generate, Harmonize, etc). */
+.ge-btn .ai-spinner-whirlpool,
+.ge-btn .spinner-whirlpool,
+button .ai-spinner-whirlpool,
+button .spinner-whirlpool {
+  position: relative;
+  top: 1px;
+}
+
+/* Layers panel */
+.ge-layers {
+  /* Natural height now that the whole right panel scrolls — flex:1
+     would collapse the list inside a scrolling parent. */
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+/* Vertical drag handle that sits on the LEFT edge of the right panel.
+   Drag horizontally to widen / narrow the entire side panel. Slim
+   by default; brighter on hover so the user notices it's interactive. */
+.ge-panel-resize {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  background: transparent;
+  z-index: 5;
+  transition: background 0.12s;
+}
+.ge-panel-resize:hover,
+.ge-panel-resize:active {
+  background: color-mix(in srgb, var(--red) 30%, transparent);
+}
+/* Center grip dots so the handle reads as draggable. */
+.ge-panel-resize::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 24px;
+  background: color-mix(in srgb, var(--fg) 35%, transparent);
+  border-radius: 2px;
+}
+/* The right panel needs `position: relative` so the handle (absolute)
+   anchors to it instead of the viewport. */
+.ge-right-panel { position: relative; }
+
+/* Floating value bubble that pops above the slider thumb while
+   dragging. Solves the "I can't see the number" problem when the
+   slider's opaque plate covers the row's right-edge value chip. */
+.ge-slider-bubble {
+  /* Fixed positioning so the bubble escapes any overflow:hidden/auto
+     on the slider's ancestor chain (the layers list clips, and used
+     to swallow the bubble entirely). JS sets viewport-relative
+     left/top; the translate centers and lifts the bubble above the
+     slider thumb. */
+  position: fixed;
+  transform: translate(-50%, -100%);
+  z-index: 10000;
+  padding: 5px 10px;
+  background: var(--red);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  border-radius: 6px;
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--red) 40%, transparent);
+  pointer-events: none;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.ge-slider-bubble[hidden] { display: none; }
+.ge-slider-bubble.visible { opacity: 1; }
+/* Tail pointing DOWN at the slider (bubble sits above). */
+.ge-slider-bubble::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  transform: translateX(-50%);
+  width: 8px;
+  height: 8px;
+  background: var(--red);
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+/* Floating thumbnail shown when hovering a layer row. */
+.ge-layer-thumb {
+  position: fixed;
+  z-index: 60;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--fg) 30%, transparent);
+  pointer-events: none;
+  display: none;
+}
+.ge-layer-thumb canvas {
+  display: block;
+  border-radius: 4px;
+}
+.ge-layers-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg);
+  opacity: 0.8;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+.ge-layers-title { flex: 1; }
+.ge-layers-grab { display: none; } /* mobile only */
+.ge-layers-merge-wrap { position: relative; display: inline-flex; }
+.ge-layers-merge-wrap #ge-layers-merge-btn { position: relative; top: 0; }
+.ge-layers-merge-menu {
+  /* Fixed positioning so the menu escapes the layers panel's overflow
+     clipping (which made it look transparent). JS sets exact coords
+     via getBoundingClientRect on the trigger button at open time. */
+  position: fixed;
+  z-index: 200;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 18%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  pointer-events: auto;
+}
+.ge-layers-merge-menu[hidden] { display: none; }
+.ge-layers-merge-menu .dropdown-item-compact {
+  width: 100%;
+  background: none;
+  border: none;
+  text-align: left;
+  font: inherit;
+}
+.ge-layers-actions {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+  /* Pin the action row to the bottom of the right panel's scroll
+     viewport. Without this, when the tool-controls section is tall
+     enough to overflow the panel, the merge buttons get pushed below
+     the fold and require scrolling to reach. */
+  position: sticky;
+  bottom: 0;
+  background: var(--panel);
+  z-index: 4;
+  /* Centered cluster instead of stretching the buttons to fill the
+     panel width. */
+  justify-content: center;
+}
+/* Merge / flatten buttons sit content-sized so the cluster reads as a
+   centered group of three, not three stretched bars across the panel. */
+.ge-layers-actions .ge-btn {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.ge-layers-actions .ge-icon-btn {
+  /* Icon-only buttons stay narrow — no risk of label overflow. */
+  flex: 0 0 auto;
+  padding: 4px 8px;
+}
+.ge-layers-actions .ge-btn svg {
+  flex-shrink: 0;
+  margin-right: 0 !important;
+}
+.ge-layers-list {
+  /* Cap the list so a huge layer stack scrolls within its own box
+     rather than pushing the whole panel arbitrarily tall. */
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 0;
+}
+.ge-layer-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: background 0.1s;
+  font-size: 11px;
+  color: var(--fg);
+}
+/* Row-hover tint removed — kept the layer row's background stable so
+   it doesn't shift visually as the user reaches for the opacity slider. */
+.ge-layer-item.active {
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+  border-left-color: var(--red);
+}
+/* "Active parent" — the layer is selected, but a mask sub-layer below
+   it is the actual paint target. Soft hint so the user can see which
+   parent owns the active mask without competing with the mask's
+   strong red highlight. */
+.ge-layer-item.active-parent {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border-left-color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+.ge-layer-vis {
+  border: none;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  padding: 2px 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.4;
+  transition: opacity 0.12s;
+}
+.ge-layer-vis:hover { opacity: 0.8; }
+.ge-layer-vis.visible { opacity: 0.9; }
+.ge-layer-vis.visible:hover { opacity: 1; }
+.ge-layer-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.ge-layer-name-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  min-width: 0;
+}
+/* All sliders inside the image editor share the same visual language as
+   the layer opacity slider — rounded pill, dim track, red thumb. Track
+   AND thumb grow when interacting for finer tweaking. */
+.gallery-editor-container input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 999px;
+  accent-color: var(--red);
+  cursor: pointer;
+  transition: height 0.15s ease;
+}
+.gallery-editor-container input[type="range"]:hover,
+.gallery-editor-container input[type="range"]:focus,
+.gallery-editor-container input[type="range"]:active {
+  height: 10px;
+}
+.gallery-editor-container input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.gallery-editor-container input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  transition: width 0.12s ease, height 0.12s ease;
+}
+.gallery-editor-container input[type="range"]:hover::-webkit-slider-thumb,
+.gallery-editor-container input[type="range"]:focus::-webkit-slider-thumb,
+.gallery-editor-container input[type="range"]:active::-webkit-slider-thumb {
+  width: 18px;
+  height: 18px;
+}
+.gallery-editor-container input[type="range"]:hover::-moz-range-thumb,
+.gallery-editor-container input[type="range"]:focus::-moz-range-thumb,
+.gallery-editor-container input[type="range"]:active::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+}
+
+/* Layer-row opacity slider — fixed track, only thumb grows on
+   interaction. Takes a bit of row space at rest, but no jumpy expand
+   animation. */
+.ge-layer-opacity {
+  width: 70px;
+  height: 6px;
+  accent-color: var(--red);
+  flex-shrink: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 999px;
+  position: relative;
+  top: 0;
+}
+.ge-layer-opacity:hover::-webkit-slider-thumb,
+.ge-layer-opacity:active::-webkit-slider-thumb,
+.ge-layer-opacity.dragging::-webkit-slider-thumb {
+  width: 18px;
+  height: 18px;
+}
+.ge-layer-opacity:hover::-moz-range-thumb,
+.ge-layer-opacity:active::-moz-range-thumb,
+.ge-layer-opacity.dragging::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+}
+/* Shrink the slider thumb — the native default is ~16-20 px which looks
+   massive next to a 3 px track in the compact layer row. */
+.ge-layer-opacity::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  /* Match the track: shrink only after a 0.5s grace period. */
+  transition: width 0.12s ease 0.5s, height 0.12s ease 0.5s;
+}
+.ge-layer-opacity::-moz-range-thumb {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--red);
+  border: none;
+  cursor: pointer;
+  transition: width 0.12s ease 0.5s, height 0.12s ease 0.5s;
+}
+.ge-layer-opacity:hover::-webkit-slider-thumb,
+.ge-layer-opacity:active::-webkit-slider-thumb,
+.ge-layer-opacity.dragging::-webkit-slider-thumb,
+.ge-layer-opacity:hover::-moz-range-thumb,
+.ge-layer-opacity:active::-moz-range-thumb,
+.ge-layer-opacity.dragging::-moz-range-thumb {
+  transition: width 0.12s ease 0s, height 0.12s ease 0s;
+}
+.ge-layer-controls {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+/* Left-edge drag handle on each layer row. */
+.ge-layer-drag {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  margin-right: 2px;
+  opacity: 0.4;
+  cursor: grab;
+  flex-shrink: 0;
+}
+.ge-layer-drag:hover { opacity: 0.85; }
+/* While dragSort lifts the item via absolute positioning, the placeholder
+   slot shows where it'll land — give it a subtle red outline so users see
+   the target clearly. */
+.ge-layers-list .drag-placeholder {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--red) 50%, transparent);
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+.ge-layer-item.dragging {
+  background: var(--panel);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 4px;
+}
+.ge-layer-btn {
+  border: none;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  opacity: 0.4;
+  transition: opacity 0.1s;
+}
+.ge-layer-btn:hover { opacity: 0.8; }
+.ge-layer-btn.danger:hover { color: var(--red); opacity: 1; }
+
+/* Crop apply button */
+.ge-crop-apply {
+  position: absolute;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.ge-crop-apply input[type="number"] {
+  width: 56px;
+  padding: 3px 4px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 11px;
+  -moz-appearance: textfield;
+}
+.ge-crop-apply input[type="number"]::-webkit-outer-spin-button,
+.ge-crop-apply input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.ge-crop-x { font-size: 11px; opacity: 0.5; }
+.ge-crop-apply-btn {
+  padding: 4px 10px;
+  background: var(--red);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+  top: -2px;
+}
+.ge-crop-apply-btn:hover { background: color-mix(in srgb, var(--red) 85%, #000); }
+
+/* Text input floating */
+.ge-text-input {
+  background: var(--bg);
+  border: 1px solid var(--red);
+  color: var(--fg);
+  padding: 4px 8px;
+  font-size: 14px;
+  border-radius: 4px;
+  min-width: 120px;
+}
+.ge-brush-cursor {
+  position: fixed; pointer-events: none; z-index: 10000;
+  border: 1.5px solid #fff; border-radius: 50%;
+  display: none;
+  box-sizing: border-box;
+}
+.ge-brush-cursor::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 3px; height: 3px;
+  margin: -1.5px 0 0 -1.5px;
+  background: rgba(255,255,255,0.8);
+  border-radius: 50%;
+}
+.ge-inpaint-section {
+  padding: 8px 0; border-top: 1px solid var(--border); margin-top: 4px;
+}
+.ge-inpaint-popover-head {
+  display: none;
+}
+@media (min-width: 821px) {
+  .ge-controls.ge-inpaint-popover-host {
+    padding: 0;
+    border-bottom: 0;
+    gap: 0;
+  }
+  .ge-inpaint-section.ge-inpaint-popover {
+    position: fixed;
+    z-index: 10004;
+    width: 330px;
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
+    padding: 10px;
+    margin: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.42);
+  }
+  .ge-inpaint-section.ge-inpaint-popover .ge-inpaint-popover-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: -10px -10px 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    cursor: grab;
+    user-select: none;
+  }
+  .ge-inpaint-section.ge-inpaint-popover > .ge-section-title-with-help:not(.ge-inpaint-popover-title) {
+    display: none;
+  }
+  .ge-inpaint-section.ge-inpaint-popover .ge-inpaint-popover-title {
+    margin: 0;
+    flex: 1 1 auto;
+  }
+  .ge-inpaint-section.ge-inpaint-popover .ge-inpaint-popover-close {
+    flex: 0 0 auto;
+    position: relative;
+    top: -8px;
+    border: none;
+    background: none;
+    color: var(--fg-muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+    border-radius: 4px;
+    transition: color 0.14s ease, background-color 0.14s ease;
+  }
+  .ge-inpaint-section.ge-inpaint-popover .ge-inpaint-popover-close:hover {
+    color: var(--fg);
+    background: color-mix(in srgb, var(--fg) 10%, transparent);
+  }
+}
+.ge-inpaint-model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ge-inpaint-model-row label {
+  flex: 0 0 auto;
+  font-size: 10px;
+  opacity: 0.65;
+}
+.ge-inpaint-model-row #ge-ai-inpaint {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 10px;
+  padding: 4px 6px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.ge-inpaint-prompt {
+  width: 100%; padding: 6px 8px; background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 4px; font-size: 12px;
+  font-family: inherit; margin-top: 4px; box-sizing: border-box;
+}
+.ge-inpaint-prompt:focus { border-color: var(--red); outline: none; }
+
+/* Responsive: stack on narrow screens */
+@media (max-width: 700px) {
+  /* The editor body holds the sidebar | canvas | layers panel; on
+     mobile we stack them as toolbar (top) → canvas (middle) → layers
+     (bottom). Without this the body stays a flex row and the canvas
+     ends up zero-width because the sidebar takes the full width. */
+  .ge-editor-body {
+    flex-direction: column;
+  }
+  /* Brush/Size-style rows: stack the label above its slider so the
+     slider gets a full row instead of getting smashed against the
+     panel's right edge. Doesn't touch .ge-eraser-row which has its own
+     value-chip-on-the-right layout. */
+  .ge-control-row:not(.ge-eraser-row):has(input[type="range"]) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+  }
+  .ge-control-row:not(.ge-eraser-row):has(input[type="range"]) > input[type="range"] {
+    width: 100%;
+  }
+  /* More breathing room around lasso/wand sliders on mobile so they
+     don't hug the right edge of the controls panel. */
+  #ge-lasso-section .ge-eraser-row,
+  #ge-wand-section .ge-eraser-row {
+    padding-right: 12px;
+    margin-top: 6px;
+  }
+  /* Lasso action buttons (Clear / Copy / To Mask / Bg Remove): pin to
+     the right edge of the row instead of left-aligned. */
+  #ge-lasso-section .ge-actions,
+  #ge-wand-section .ge-actions {
+    justify-content: flex-end;
+  }
+  /* Universal thumb-grow on active for every slider on mobile. */
+  .ge-controls input[type="range"]:active::-webkit-slider-thumb,
+  .ge-controls input[type="range"].is-using::-webkit-slider-thumb {
+    width: 22px;
+    height: 22px;
+  }
+  .ge-controls input[type="range"]:active::-moz-range-thumb,
+  .ge-controls input[type="range"].is-using::-moz-range-thumb {
+    width: 22px;
+    height: 22px;
+  }
+  .ge-controls input[type="range"]::-webkit-slider-thumb,
+  .ge-controls input[type="range"]::-moz-range-thumb {
+    transition: width 0.12s ease, height 0.12s ease;
+  }
+  .ge-toolbar {
+    flex-direction: row;
+    width: 100%;
+    height: auto;
+    padding: 4px 0;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-shrink: 0;
+    gap: 0;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .ge-toolbar::-webkit-scrollbar { display: none; }
+  /* Section labels in the toolbar were vertical breaks — turn them
+     into thin vertical dividers when the column flows horizontally. */
+  .ge-tool-sep {
+    border-top: none;
+    border-left: 1px solid var(--border);
+    margin: 0 4px;
+    padding: 0;
+    width: 1px;
+    height: 24px;
+    text-indent: -9999px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .ge-tool-btn {
+    flex-shrink: 0;
+    width: 48px;
+  }
+  /* Canvas is the main thing — give it as much vertical space as
+     the editor body can spare. min-height keeps it visible even when
+     the right panel is at its max. */
+  .ge-canvas-area {
+    flex: 1 1 auto;
+    min-height: 40vh;
+  }
+  /* Right panel = layers list. Docked as a bottom sheet with a peek
+     state: collapsed shows the header strip (and the active layer
+     row peeks through), expanded reveals all layers + actions. The
+     user swipes up to expand, down to collapse — the active layer is
+     never fully hidden. */
+  .ge-right-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-height: 70vh;
+    height: 70vh;
+    background: var(--panel);
+    border-left: none;
+    border-top: 1px solid var(--border);
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+    z-index: 50;
+    flex-shrink: 0;
+    /* Peek height grows with the layer count up to a cap. JS sets the
+       `--peek-height` custom property from _renderLayerPanel(); default
+       fallback is enough for the header + one row. */
+    transform: translateY(calc(100% - var(--peek-height, 110px)));
+    transition: transform 0.22s ease-out;
+  }
+  .ge-right-panel.expanded {
+    transform: translateY(0);
+  }
+  /* Minimized: panel slides almost fully off-screen — only a thin
+     handle strip remains visible so the user can swipe back up. */
+  .ge-right-panel.minimized {
+    transform: translateY(calc(100% - 24px));
+  }
+  .ge-layers-grab {
+    display: block !important;
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 4px;
+    background: color-mix(in srgb, var(--fg) 30%, transparent);
+    border-radius: 2px;
+  }
+  .ge-layers-header {
+    padding-top: 16px;
+    position: relative;
+  }
+  /* In peek state, the layers list takes the full panel height (~70vh)
+     and never overflows so its own scrollbar doesn't activate. Constrain
+     the list to the visible peek area so it scrolls properly when there
+     are more layers than the peek can show. */
+  .ge-right-panel:not(.expanded) .ge-layers-list {
+    max-height: calc(var(--peek-height, 110px) - 52px);
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Mobile layer-row buttons — bump hit targets up so fingers can
+     reliably tap visibility / fx / delete. */
+  .ge-layer-vis,
+  .ge-layer-btn,
+  .ge-layer-fx-btn {
+    width: 40px !important;
+    height: 40px !important;
+    font-size: 18px !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .ge-layer-btn svg,
+  .ge-layer-fx-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+  /* Layer opacity slider stays at its expanded size at all times on
+     mobile — there's room for it and the resize-on-hover felt jittery
+     when scrolling. */
+  .ge-layer-opacity,
+  .ge-layer-opacity:hover,
+  .ge-layer-opacity:active,
+  .ge-layer-opacity.dragging {
+    width: 160px !important;
+    height: 10px !important;
+  }
+  /* Transform / adjust popups dock at the TOP of the viewport on
+     mobile so they overlay the topbar instead of eating canvas space.
+     Fixed positioning escapes any transformed ancestor stacking. */
+  .ge-transform-popup,
+  .ge-adj-popup,
+  .ge-fx-popup {
+    position: fixed !important;
+    left: 8px !important;
+    right: 8px !important;
+    top: 32px !important;
+    bottom: auto !important;
+    max-width: calc(100vw - 16px) !important;
+    width: auto !important;
+    min-width: 0 !important;
+    min-height: 240px !important;
+    max-height: calc(100vh - 40px);
+    overflow-y: auto;
+    z-index: 10003 !important;
+  }
+  .ge-fx-menu {
+    position: fixed !important;
+    left: 8px !important;
+    right: 8px !important;
+    top: auto !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 8px) !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: calc(100vw - 16px) !important;
+    z-index: 10002 !important;
+  }
+  /* Hide both the minimise and × close buttons in the header on
+     mobile — a clearly labelled Cancel button next to Apply in the
+     body is more discoverable than tiny header icons. */
+  .ge-transform-popup #ge-transform-min,
+  .ge-transform-popup #ge-transform-cancel {
+    display: none !important;
+  }
+  /* Wrap the transform body across three rows on mobile:
+       Row 1: W + H
+       Row 2: ↻ rotate input + rotate-90 quick
+       Row 3: flip-h flip-v ............ Apply  */
+  .ge-transform-popup-body {
+    flex-wrap: wrap !important;
+    align-items: center;
+    row-gap: 8px;
+    column-gap: 6px;
+  }
+  .ge-transform-popup-body #ge-transform-rot {
+    width: 3.5ch !important;
+    min-width: 0 !important;
+  }
+  /* 3-row layout, enforced by explicit `.ge-row-break` elements in the
+     DOM (the only reliable way to force a flex-wrap line break).
+       Row 1: W input + H input
+       Row 2: aspect lock + ↻ rotate input
+       Row 3: flip-h, flip-v, rot-90 + Cancel + Apply */
+  .ge-transform-popup-body .ge-row-break {
+    display: block;
+    flex-basis: 100%;
+    height: 0;
+    width: 100%;
+  }
+  /* Flip buttons slightly bigger so they're easier to tap. */
+  .ge-transform-quick-btn {
+    padding: 8px 10px !important;
+    min-width: 40px;
+    min-height: 40px;
+  }
+  .ge-transform-quick-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+  /* Cancel + Apply share the right side of row 2, same size, paired. */
+  .ge-transform-popup-body #ge-transform-cancel-btn {
+    margin-left: auto;
+  }
+  .ge-transform-popup-body #ge-transform-cancel-btn,
+  .ge-transform-popup-body #ge-transform-apply {
+    padding: 8px 16px !important;
+    font-size: 13px !important;
+    min-width: 80px;
+    text-align: center;
+  }
+  /* Stepper-style number control on mobile:
+       [ − ]  [ input ]  [ + ]
+     Stack reverses so the − sits visually on the LEFT of the input, +
+     on the RIGHT. Big finger-sized squares, big +/- glyphs, both
+     buttons support tap-and-hold auto-repeat (JS) for fast scrubbing. */
+  .ge-transform-field {
+    display: inline-flex !important;
+    align-items: stretch;
+    gap: 0;
+  }
+  .ge-transform-field > label {
+    display: inline-flex;
+    align-items: center;
+    padding-right: 6px;
+    font-weight: 600;
+  }
+  .ge-transform-field:not(:has(#ge-transform-rot)) > label {
+    position: relative;
+    top: -1px;
+  }
+  .ge-transform-spin {
+    display: inline-flex !important;
+    flex-direction: row !important;
+    /* Use grid-order to swap positions of [−][+]: the − should sit
+       BEFORE the input, the + AFTER it. Achieve this by absolute
+       order — first child styled differently, second styled
+       differently, then we move the whole .ge-transform-spin's first
+       button visually before the input via reverse-flex. */
+    order: 0;
+    width: auto !important;
+  }
+  .ge-transform-field {
+    flex-direction: row;
+  }
+  /* Re-flow:  label  +  [-]  +  input  +  [+]
+     We split the .ge-transform-spin's two buttons across the field's
+     flex line using order: order:0 for −, order:2 for input, order:3
+     for +. The spin <span> itself gets `display: contents` so its
+     children can be reordered independently against the input. */
+  .ge-transform-spin {
+    display: contents !important;
+  }
+  .ge-transform-field > input.ge-transform-popup-input {
+    order: 2;
+    text-align: center;
+  }
+  .ge-transform-spin button[data-spin="down"] {
+    order: 1;
+  }
+  .ge-transform-spin button[data-spin="up"] {
+    order: 3;
+  }
+  /* The buttons themselves — chunky, square, identical in size. Reset
+     the base `:first-child` rule (which strips the bottom border for
+     the old stacked layout) so both buttons render with the same
+     visual box in the new row layout. */
+  .ge-transform-spin button {
+    box-sizing: border-box !important;
+    width: 36px !important;
+    height: 36px !important;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 0 0 0 0 !important;
+    font-size: 18px !important;
+    font-weight: 700;
+    line-height: 1 !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 6px !important;
+    flex-shrink: 0;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    top: -4px;
+  }
+  .ge-transform-spin button:first-child,
+  .ge-transform-spin button:last-child {
+    border-radius: 6px !important;
+    border-bottom: 1px solid var(--border) !important;
+  }
+  /* The × glyph in close buttons also sits visually low — lift it 4 px
+     to match the +/- button alignment. Same asymmetric-padding trick. */
+  .modal-close,
+  .close-btn,
+  .ge-adj-close,
+  .ge-adj-min {
+    padding-top: 0 !important;
+    padding-bottom: 8px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+  .ge-transform-spin button[data-spin="down"] { margin-right: 4px; }
+  .ge-transform-spin button[data-spin="up"]   { margin-left: 4px; }
+  /* The input between them — generous tap area and clear typography. */
+  .ge-transform-field > input.ge-transform-popup-input {
+    height: 36px !important;
+    padding: 0 6px !important;
+    font-size: 14px !important;
+    min-width: 56px;
+    position: relative;
+    top: 2px;
+  }
+  /* Rotate input — compact so it fits on row 2 alongside the flip
+     quick buttons and the Cancel + Apply pair. */
+  .ge-transform-field > #ge-transform-rot.ge-transform-popup-input {
+    min-width: 0;
+    width: 64px !important;
+  }
+  /* Suffix (°) sits right after the rotate input but before the + button. */
+  .ge-transform-popup-suffix { order: 3; align-self: center; padding: 0 2px; }
+  /* Slider thumb grows only while actively dragged — keeps the resting
+     row compact, thumb pops larger when the user grabs it. */
+  .gallery-editor-container input[type="range"]:active::-webkit-slider-thumb,
+  .ge-layer-opacity:active::-webkit-slider-thumb,
+  .ge-layer-opacity.dragging::-webkit-slider-thumb {
+    width: 22px !important;
+    height: 22px !important;
+  }
+  .gallery-editor-container input[type="range"]:active::-moz-range-thumb,
+  .ge-layer-opacity:active::-moz-range-thumb,
+  .ge-layer-opacity.dragging::-moz-range-thumb {
+    width: 22px !important;
+    height: 22px !important;
+  }
+  /* Slider value bubble on mobile — bigger text/padding for
+     readability. Position is JS-driven via `position: fixed` from the
+     base rule, so don't override top/bottom here — `bottom: 100%`
+     with fixed positioning was pushing the bubble off-screen. */
+  .ge-slider-bubble {
+    font-size: 14px !important;
+    padding: 5px 10px !important;
+  }
+  /* Editor topbar — scrolls horizontally on narrow viewports. Buttons
+     fill more vertical+horizontal space so each is a comfortable
+     finger-tap target instead of feeling cramped. */
+  .ge-topbar {
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    gap: 6px;
+    padding: 6px 8px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .ge-topbar::-webkit-scrollbar { display: none; }
+  .ge-topbar-left,
+  .ge-topbar-right {
+    flex-shrink: 0;
+    gap: 6px;
+  }
+  .ge-alpha-badge {
+    display: none;
+  }
+  #ge-undo {
+    position: sticky !important;
+    left: 8px;
+    background: var(--panel);
+    z-index: 8;
+    box-shadow: 8px 0 10px -10px color-mix(in srgb, var(--fg) 55%, transparent);
+  }
+  .ge-topbar .ge-btn,
+  .ge-topbar .ge-btn-sm {
+    padding: 7px 11px !important;
+    font-size: 13px !important;
+    min-height: 34px;
+    line-height: 1;
+    top: 0 !important;
+  }
+  .ge-topbar .ge-btn svg,
+  .ge-topbar .ge-btn-sm svg {
+    width: 16px;
+    height: 16px;
+  }
+  .ge-topbar select,
+  .ge-topbar input,
+  .ge-topbar .ge-ai-model {
+    padding: 6px 8px !important;
+    font-size: 12px !important;
+    min-height: 32px;
+    top: 0 !important;
+  }
+  .ge-topbar .ge-canvas-size {
+    font-size: 12px !important;
+    padding: 0 6px;
+    line-height: 34px;
+  }
+  #ge-history-panel {
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    bottom: 0 !important;
+    width: auto !important;
+    max-height: min(60dvh, 420px);
+    border-radius: 12px 12px 0 0 !important;
+    z-index: 10001 !important;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+  }
+  #ge-history-panel .ge-history-head { cursor: default; }
+  #ge-shortcuts-btn {
+    display: none !important;
+  }
+  /* Topbar popups that need real interaction (Resize sliders, Edge
+     form, Save with sub-items) become bottom-sheet slide-ups on
+     mobile so there's room to interact. Image and Filter are tight
+     single-column dropdowns — they stay anchored to their button. */
+  .ge-resize-menu,
+  .ge-edge-menu,
+  .ge-save-menu {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    bottom: 0 !important;
+    min-width: 0 !important;
+    max-width: 100vw !important;
+    width: auto;
+    padding: 18px 16px 24px !important;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px 12px 0 0 !important;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+    z-index: 10005;
+    animation: ge-controls-slide-up 0.2s ease-out;
+  }
+  /* Image / Filter stay as anchored dropdowns; just cap width
+     so they don't run off-screen on narrow viewports. */
+  .ge-image-menu,
+  .ge-filter-menu {
+    max-width: calc(100vw - 16px);
+  }
+  .ge-resize-menu::before,
+  .ge-edge-menu::before,
+  .ge-save-menu::before {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 4px;
+    background: color-mix(in srgb, var(--fg) 30%, transparent);
+    border-radius: 2px;
+  }
+  /* The Edge form needs a bit of breathing room when it spans the
+     viewport; the W/H inputs in the crop apply pop should stay compact. */
+  .ge-edge-menu { padding: 12px; }
+  .ge-canvas-prompt {
+    width: calc(100vw - 16px) !important;
+    max-width: none !important;
+  }
+  /* Inpaint floating prompt — keep it inside the canvas area on
+     mobile so it doesn't run off the right edge. */
+  .ge-inpaint-popup {
+    max-width: calc(100vw - 16px);
+  }
+  .ge-inpaint-popup-input { width: 160px; }
+
+  /* Tool-specific controls (brush size/color, eraser opacity/flow,
+     lasso feather, inpaint prompt panel, etc.) lift out of the right
+     panel and dock as a slide-up bottom sheet so they have actual room
+     to breathe on a phone. A short grab-handle visually separates it
+     from the canvas. */
+  .ge-controls {
+    position: fixed !important;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    border-bottom: none;
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 18px 16px 24px;
+    gap: 12px;
+    /* Slide-up entrance animation when the controls become visible. */
+    animation: ge-controls-slide-up 0.18s ease-out;
+  }
+  .ge-controls::before {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 4px;
+    background: color-mix(in srgb, var(--fg) 30%, transparent);
+    border-radius: 2px;
+  }
+  @keyframes ge-controls-slide-up {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
+  }
+  /* User swiped the sheet down — keep tool active but hide its
+     controls. Re-tapping the same tool button toggles back. */
+  .ge-controls.dismissed {
+    transform: translateY(100%);
+    pointer-events: none;
+    /* Smooth slide-out matching the slide-in duration. */
+    animation: none;
+    transition: transform 0.18s ease-in;
+  }
+}
+
+/* #endregion Gallery Editor */

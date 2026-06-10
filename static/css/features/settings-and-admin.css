@@ -1,0 +1,2510 @@
+/* #region Admin And Settings Panel */
+/* ===== ADMIN PANEL (inside settings modal) ===== */
+
+/* Cards */
+.admin-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+/* When the integrations editor opens, the inner admin-card should match the
+   listed integration cards (subtle tint, same border) instead of reverting
+   to the solid-panel admin-card surface used elsewhere. */
+#unified-intg-form .admin-card,
+#integrations-form .admin-card {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.admin-card h2 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+}
+.admin-danger-card {
+  border-color: color-mix(in srgb, var(--color-error) 27%, transparent);
+}
+
+/* Toggle switch */
+.admin-toggle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.admin-toggle-label {
+  font-size: 13px;
+  font-weight: 500;
+}
+.admin-toggle-sub {
+  /* 65% mix keeps this helper text above WCAG AA 4.5:1 on the dark panel
+     (50% only reached ~3.9:1). */
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+  font-size: 11px;
+  margin-top: 2px;
+}
+/* Hide the native up/down spinners on the Max auto-skills number input. */
+#skill-max-input {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+#skill-max-input::-webkit-inner-spin-button,
+#skill-max-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.admin-switch {
+  position: relative;
+  width: 30px;
+  height: 16px;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.admin-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.admin-slider {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--fg) 50%, transparent);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.08s;
+}
+.admin-slider::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 12px;
+  height: 12px;
+  background: var(--panel);
+  border-radius: 50%;
+  transition: transform 0.08s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+}
+.admin-switch input:checked + .admin-slider {
+  background: var(--red);
+}
+.admin-switch input:checked + .admin-slider::before {
+  transform: translateX(14px);
+}
+
+/* User rows */
+.admin-user-row {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  transition: border-color 0.15s;
+}
+.admin-user-row:hover {
+  border-color: color-mix(in srgb, var(--fg) 20%, var(--border));
+}
+.admin-user-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.admin-user-name { font-size: 13px; font-weight: 500; }
+/* Privilege panel */
+.admin-priv-panel {
+  max-height: 600px;
+  transition: max-height 0.3s ease, opacity 0.2s ease, padding 0.2s ease;
+  overflow: hidden;
+}
+.admin-priv-panel.hidden {
+  max-height: 0 !important;
+  opacity: 0;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  margin-top: 0 !important;
+  border-top: none !important;
+}
+/* Privilege toggle rows */
+.admin-priv-panel [data-priv] {
+  accent-color: var(--accent, var(--red));
+}
+/* Section headers */
+.admin-priv-section {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.35;
+  font-weight: 600;
+  margin: 10px 0 4px;
+}
+.admin-priv-section:first-child {
+  margin-top: 0;
+}
+/* Model checkbox list */
+.priv-models-list {
+  max-height: 150px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  background: var(--bg);
+  scrollbar-width: thin;
+}
+.priv-models-list::-webkit-scrollbar {
+  width: 4px;
+}
+.priv-models-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+  border-radius: 2px;
+}
+.priv-models-list label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 2px;
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.1s;
+}
+.priv-models-list label:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.priv-models-list input[type="checkbox"] {
+  accent-color: var(--accent, var(--red));
+  margin: 0;
+  flex-shrink: 0;
+}
+/* All/None links */
+.priv-models-all,
+.priv-models-none {
+  font-size: 10px;
+  opacity: 0.5;
+  color: var(--fg);
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 0.1s;
+}
+.priv-models-all:hover,
+.priv-models-none:hover {
+  opacity: 1;
+}
+
+/* MCP tool toggles panel */
+.mcp-tools-panel {
+  width: 100%;
+  padding: 8px 0 4px;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+  max-height: 600px;
+  transition: max-height 0.3s ease, opacity 0.2s ease, padding 0.2s ease;
+  overflow: hidden;
+}
+.mcp-tools-panel.hidden {
+  max-height: 0 !important;
+  opacity: 0;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  margin-top: 0 !important;
+}
+.mcp-tools-panel .mcp-tools-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.mcp-tools-panel .mcp-tools-header span:first-child {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.35;
+  font-weight: 600;
+}
+.mcp-tools-panel .mcp-tools-header a {
+  font-size: 10px;
+  opacity: 0.5;
+  color: var(--fg);
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 0.1s;
+}
+.mcp-tools-panel .mcp-tools-header a:hover {
+  opacity: 1;
+}
+.mcp-tools-list {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.mcp-tools-list::-webkit-scrollbar {
+  width: 4px;
+}
+.mcp-tools-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+  border-radius: 2px;
+}
+.mcp-tools-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 3px;
+  min-width: 0;
+}
+.mcp-tools-list label > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.mcp-tools-list label:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.mcp-tools-list input[type="checkbox"] {
+  accent-color: var(--accent, var(--red));
+  margin: 0;
+  flex-shrink: 0;
+}
+/* Dot-style toggle (mirrors .note-check-dot) for the Add Models row,
+   replacing the native checkbox while keeping it for click handling. */
+.adm-cb-hidden {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.adm-check-dot {
+  /* Lock the dot to a fixed 12×12 box. The parent rule
+     `.mcp-tools-list label > span { flex: 1 }` was stretching this span
+     to fill the row when it didn't have its own flex override. */
+  flex: 0 0 12px !important;
+  width: 12px !important;
+  height: 12px;
+  min-width: 12px;
+  max-width: 12px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--fg) 35%, transparent);
+  position: relative;
+  transition: background 0.2s, border-color 0.2s, transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.adm-check-dot::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  width: 5px;
+  height: 2.5px;
+  border-left: 1.5px solid #fff;
+  border-bottom: 1.5px solid #fff;
+  transform: translate(-50%, -50%) rotate(-45deg) scale(0);
+  transform-origin: center;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.adm-model-row:hover .adm-check-dot {
+  border-color: var(--accent, var(--red));
+  transform: scale(1.15);
+}
+.adm-model-row:active .adm-check-dot {
+  transform: scale(0.9);
+}
+.adm-cb-hidden:checked + .adm-check-dot {
+  background: var(--accent, var(--red));
+  border-color: var(--accent, var(--red));
+}
+.adm-cb-hidden:checked + .adm-check-dot::after {
+  transform: translate(-50%, -50%) rotate(-45deg) scale(1);
+}
+/* Disabled endpoints — dim the row but keep the toggle/delete buttons
+   at full opacity so the user can re-enable or remove without squinting. */
+.admin-user-row.admin-ep-disabled { opacity: 0.55; }
+
+
+/* Most recently added endpoint — brief accent glow so the user can
+   spot the new row immediately after Adding / Find. Fades out cleanly. */
+@keyframes adm-ep-just-added-glow {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 55%, transparent); background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent); }
+  60%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 0%, transparent); background: color-mix(in srgb, var(--accent, var(--red)) 8%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; background: transparent; }
+}
+.admin-user-row.adm-ep-just-added {
+  border-radius: 8px;
+  animation: adm-ep-just-added-glow 2.2s ease-out;
+}
+.admin-user-row.admin-ep-disabled .admin-btn-sm,
+.admin-user-row.admin-ep-disabled .admin-btn-delete,
+.admin-user-row.admin-ep-disabled .admin-badge-off { opacity: 1; }
+/* Local / API subsection labels inside the Endpoints card */
+.adm-ep-section-head {
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg);
+  opacity: 0.5;
+  margin-bottom: 4px;
+}
+
+/* Collapsible Add-Models subsections (API / Local) — the whole header row
+   acts as a toggle so a long cloud-API form can be tucked away when you
+   only want to paste a local URL. */
+.adm-section-toggle {
+  cursor: pointer;
+  user-select: none;
+  opacity: 0.8;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 9px;
+  margin-bottom: 6px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  transition: border-color 0.12s, background 0.12s, opacity 0.12s;
+}
+.adm-section-toggle:hover {
+  opacity: 1;
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+.adm-section-toggle .adm-section-caret { opacity: 0.6; }
+.adm-section-toggle:focus-visible { outline: 1px solid var(--red); outline-offset: 1px; }
+/* When expanded, square off the bottom so the header reads as attached to
+   the form it controls. */
+.adm-add-section:not(.collapsed) .adm-section-toggle {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  margin-bottom: 0;
+}
+.adm-section-caret {
+  margin-left: auto;
+  flex-shrink: 0;
+  transition: transform 0.18s ease;
+}
+/* Collapsed: hide the form body and point the caret right. */
+.adm-add-section.collapsed .admin-model-form { display: none; }
+.adm-add-section.collapsed .adm-section-caret { transform: rotate(-90deg); }
+.adm-quickstart-section {
+  margin-top: 7px;
+}
+.adm-quickstart-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  opacity: 0.72;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.adm-quickstart-toggle:hover {
+  opacity: 1;
+  border-color: var(--red);
+}
+.adm-quickstart-section:not(.collapsed) .adm-quickstart-toggle {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.adm-quickstart-body {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 6px 6px;
+  padding: 6px 8px;
+}
+.adm-quickstart-section.collapsed .adm-quickstart-body { display: none; }
+.adm-quickstart-section.collapsed .adm-section-caret { transform: rotate(-90deg); }
+
+/* Custom provider picker (logo + name) replacing the native <select> */
+.adm-provider-picker { position: relative; margin-bottom: 6px; }
+.adm-provider-combo {
+  display: flex;
+  align-items: stretch;
+}
+.adm-provider-combo input {
+  flex: 1;
+  min-width: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.adm-provider-btn {
+  width: 100%;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 8px; font-family: inherit; font-size: 12px;
+  cursor: pointer; text-align: left;
+}
+.adm-provider-combo .adm-provider-btn {
+  width: 128px;
+  flex-shrink: 0;
+  border-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  justify-content: space-between;
+}
+.adm-provider-btn:hover { border-color: color-mix(in srgb, var(--fg) 30%, var(--border)); }
+.adm-provider-current { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.adm-provider-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.adm-provider-logo {
+  width: 14px; height: 14px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; color: var(--fg); opacity: 0.85;
+}
+.adm-provider-logo svg { width: 14px; height: 14px; }
+.adm-provider-logo:empty {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  border-radius: 50%;
+}
+.adm-provider-caret { flex-shrink: 0; opacity: 0.5; transition: transform 0.15s; }
+.adm-provider-picker:has(.adm-provider-menu:not(.hidden)) .adm-provider-caret {
+  transform: rotate(180deg);
+}
+.adm-provider-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 100;
+  max-height: 280px; overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  padding: 4px;
+}
+.adm-provider-menu.hidden { display: none; }
+.adm-provider-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: 4px;
+  font-size: 12px; cursor: pointer;
+}
+.adm-provider-item:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.adm-provider-item.active { background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent); }
+
+/* When the Appearance tab is open, the #settings-modal-opacity slider (in
+   the header) fades the modal so the user can see the rest of the UI react
+   as toggles flip. The fade is applied as a background color-mix in JS
+   (settings.js) rather than element opacity, so the controls/text stay
+   crisp — mirroring the Theme customizer's opacity slider. */
+
+/* Search provider fallback chain — chips + drag-reorder */
+.search-fallback-chain {
+  flex: 1; display: flex; align-items: center;
+  flex-wrap: wrap; gap: 6px; min-height: 28px;
+}
+.search-fb-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 4px 3px 6px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border: 1px solid var(--border); border-radius: 10px;
+  font-size: 11px; cursor: grab; user-select: none;
+}
+.search-fb-chip.dragging { opacity: 0.4; }
+.search-fb-grip { opacity: 0.35; font-size: 10px; line-height: 1; cursor: grab; }
+.search-fb-logo {
+  width: 12px; height: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0; opacity: 0.85;
+}
+.search-fb-logo svg { width: 12px; height: 12px; }
+.search-fb-remove {
+  background: none; border: none; color: var(--fg);
+  opacity: 0.45; cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 0 2px;
+  transition: opacity 0.15s, color 0.15s;
+}
+.search-fb-remove:hover { opacity: 1; color: var(--red); }
+.search-fb-add {
+  background: var(--bg); color: var(--fg);
+  border: 1px dashed var(--border); border-radius: 10px;
+  padding: 2px 6px; font-family: inherit; font-size: 11px;
+  outline: none; cursor: pointer;
+}
+.search-fb-add:focus,
+.search-fb-add:hover {
+  border-color: var(--accent, var(--red));
+  border-style: solid;
+}
+
+.mcp-tools-search {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  outline: none;
+}
+.mcp-tools-search:focus {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+}
+.mcp-tools-count {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+/* Badges */
+.admin-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--red) 20%, transparent);
+  color: var(--red);
+  font-weight: 600;
+}
+.admin-badge-off {
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  color: var(--color-error);
+}
+
+/* Buttons */
+.admin-btn-delete {
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--color-error) 27%, transparent);
+  color: var(--color-error);
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.admin-btn-delete:hover {
+  background: var(--color-error);
+  border-color: var(--color-error);
+  color: #fff;
+}
+.admin-btn-add {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: var(--red);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 11px;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.admin-btn-add:hover {
+  background: color-mix(in srgb, var(--red) 80%, white);
+}
+.admin-btn-add:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.admin-btn-sm {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 11px;
+}
+.admin-btn-sm:hover {
+  background: var(--border);
+  border-color: var(--red);
+}
+.admin-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--red);
+  border-radius: 50%;
+  animation: admin-spin 0.6s linear infinite;
+  vertical-align: -2px;
+  margin-right: 2px;
+}
+@keyframes admin-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Forms */
+.admin-add-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.admin-add-form input {
+  flex: 1;
+  min-width: 120px;
+  padding: 5px 8px;
+  height: 32px;
+  box-sizing: border-box;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+}
+.admin-add-form input:focus { outline: none; border-color: var(--red); }
+.admin-switch-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  cursor: default;
+}
+
+.admin-model-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.admin-model-form input,
+.admin-model-form select {
+  padding: 5px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+}
+.admin-model-form input:focus { outline: none; border-color: var(--red); }
+.admin-model-form-row {
+  display: flex;
+  gap: 6px;
+}
+.admin-model-form-row input { flex: 1; }
+.adm-ep-inline-msg {
+  min-height: 16px;
+  margin-top: 5px;
+  font-size: 11px;
+}
+
+/* Endpoint items */
+.admin-ep-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border-radius: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.admin-ep-info { flex: 1; overflow: hidden; }
+.admin-ep-name { color: var(--fg); font-weight: 500; }
+.admin-ep-detail {
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-ep-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Status messages */
+.admin-error { color: var(--color-error); font-size: 11px; margin-top: 4px; }
+.admin-success { color: var(--color-success); font-size: 11px; margin-top: 4px; }
+.admin-empty {
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  font-size: 12px;
+  padding: 10px 0;
+  text-align: center;
+}
+/* Endpoint-list empty states ("No endpoints configured" / "None") get a
+   left-aligned, accent-colored treatment so they read as "this row is your
+   placeholder, click Add" rather than a centered "nothing here" grey blob. */
+#adm-epList-local .admin-empty,
+#adm-epList-api .admin-empty {
+  text-align: left;
+  padding: 8px 4px;
+  color: var(--accent-primary, var(--accent, var(--red)));
+}
+
+/* RAG upload zone */
+.admin-rag-upload-zone {
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  margin-bottom: 8px;
+}
+.admin-rag-upload-zone:hover,
+.admin-rag-upload-zone.dragover {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 7%, transparent);
+}
+.admin-rag-upload-zone p {
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  font-size: 11px;
+  margin-top: 4px;
+}
+.admin-rag-icon { font-size: 18px; }
+.admin-rag-dir-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.admin-rag-dir-row input {
+  flex: 1;
+  padding: 5px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+}
+.admin-rag-dir-row input:focus { outline: none; border-color: var(--red); }
+.admin-rag-dir-row button {
+  padding: 5px 8px;
+  border: none;
+  border-radius: 6px;
+  background: var(--red);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.admin-rag-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+.admin-rag-section-label {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 8px 0 4px;
+}
+.admin-rag-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  background: var(--bg);
+  border-radius: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.admin-rag-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+.admin-rag-item-meta {
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  font-size: 10px;
+  margin: 0 6px;
+  flex-shrink: 0;
+}
+.admin-rag-item .admin-btn-delete { font-size: 10px; padding: 2px 6px; }
+.admin-rag-status {
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  margin-top: 6px;
+}
+
+/* Token reveal */
+.admin-token-reveal {
+  margin-top: 8px;
+  padding: 8px;
+  background: color-mix(in srgb, var(--red) 8%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--red) 25%, var(--border));
+  border-radius: 8px;
+}
+
+/* Selects in admin cards */
+.admin-card select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 12px;
+}
+.admin-card input {
+  font-family: inherit;
+  font-size: 12px;
+}
+.admin-card label {
+  font-size: 12px;
+}
+
+/* #region Settings Modal Layout And Task Surfaces */
+/* ===== Settings Modal Layout ===== */
+.settings-modal-content {
+  width: min(720px, 92vw);
+  max-height: 85vh;
+  padding: 0;
+  container-type: inline-size;
+  container-name: settings-modal;
+}
+
+/* Issue #208 — anchor the Settings window to the TOP of the chat area instead
+   of vertically centering it. The base .modal uses `align-items:center`, so a
+   centered window grows and shrinks around its own midpoint when you switch
+   between tabs whose content differs in height (Add Models vs. Shortcuts,
+   etc.). That makes the in-modal nav rail — and the whole window — appear to
+   jump up and down between pages. Pinning the top edge keeps the nav rail and
+   surrounding layout visually stable; the panel only ever grows downward.
+   Desktop only: on mobile the panel is a full-height bottom sheet that is
+   already top-stable, and a margin there would push it past the viewport. The
+   drag/dock code clears this margin (sets inline margin:0) the moment a window
+   is dragged, so moving the window still works exactly as before. */
+@media (min-width: 769px) {
+  #settings-modal { align-items: flex-start; }
+  #settings-modal .settings-modal-content { margin-top: 7vh; }
+}
+
+.settings-modal-content .modal-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-layout {
+  display: flex;
+  min-height: 400px;
+  max-height: calc(85vh - 60px);
+}
+
+.settings-modal-content[style*="height"],
+#settings-modal.modal-right-docked .settings-modal-content {
+  overflow: hidden;
+}
+
+.settings-modal-content[style*="height"] .settings-layout,
+#settings-modal.modal-right-docked .settings-layout {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: none;
+}
+
+.settings-modal-content[style*="height"] .settings-panels,
+#settings-modal.modal-right-docked .settings-panels,
+.settings-modal-content[style*="height"] .settings-sidebar,
+#settings-modal.modal-right-docked .settings-sidebar {
+  min-height: 0;
+}
+
+.settings-sidebar {
+  width: 160px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+
+.settings-sidebar-divider { height: 1px; background: var(--border); margin: 8px 12px; }
+.settings-sidebar-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  opacity: 0.35;
+  padding: 4px 12px 2px;
+}
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  color: var(--color-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.1s;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.settings-nav-item:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+}
+
+.settings-nav-item.active {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  color: var(--red);
+}
+
+.settings-nav-item svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.settings-nav-item.active svg {
+  opacity: 1;
+}
+
+.settings-sidebar-divider { height: 1px; background: var(--border); margin: 8px 12px; }
+
+/* Keyboard shortcuts */
+.shortcut-category {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+  opacity: 0.4; padding: 8px 0 4px; margin-top: 4px;
+}
+.shortcut-category:first-child { margin-top: 0; padding-top: 0; }
+.shortcut-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 30%, transparent);
+}
+.shortcut-row:last-child { border-bottom: none; }
+.shortcut-row.shortcut-conflict { background: color-mix(in srgb, var(--warn) 6%, transparent); border-radius: 4px; padding: 5px 6px; }
+.shortcut-label { font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.shortcut-icon { display: inline-flex; opacity: 0.5; flex-shrink: 0; }
+.shortcut-warn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; border-radius: 50%; background: var(--warn); color: #fff;
+  font-size: 9px; font-weight: 700; margin-left: 4px;
+}
+.shortcut-controls { display: flex; align-items: center; gap: 4px; }
+/* Inline hint shown while rebinding a shortcut ("press a key" → "↵ Enter
+   to save"). Subtle so it doesn't compete with the key caps. */
+.shortcut-hint {
+  font-size: 10px;
+  opacity: 0.6;
+  color: var(--accent, var(--red));
+  white-space: nowrap;
+  margin-right: 2px;
+}
+.shortcut-hint[hidden] { display: none; }
+.shortcut-key {
+  font-family: inherit; font-size: 0; padding: 2px 4px;
+  background: transparent; border: none; border-radius: 4px;
+  color: var(--fg); cursor: pointer; display: flex; align-items: center; gap: 2px;
+  transition: all 0.15s;
+}
+.shortcut-key:hover { background: color-mix(in srgb, var(--accent, #cc6a3a) 8%, transparent); }
+/* Unbound shortcut — show a dashed "Set" placeholder instead of keycaps. */
+.shortcut-key-unset { font-size: 10px; }
+.shortcut-unset {
+  font-size: 10px;
+  padding: 2px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.shortcut-key-unset:hover .shortcut-unset { border-color: var(--accent, var(--red)); color: var(--fg); }
+.shortcut-key kbd {
+  display: inline-block; font-family: inherit; font-size: 10px;
+  padding: 2px 6px; min-width: 20px; text-align: center;
+  /* Highlight kbd chips in the theme accent so they stand out from
+     normal text and clearly mark "this is a key you press". */
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 40%, var(--border));
+  color: var(--accent, var(--red));
+  border-radius: 3px;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--accent, var(--red)) 25%, transparent);
+  line-height: 1.4;
+  font-weight: 600;
+}
+.shortcut-key.listening {
+  background: color-mix(in srgb, var(--accent, #cc6a3a) 10%, transparent);
+  animation: shortcut-pulse 1s infinite;
+}
+.shortcut-key.listening kbd { border-color: var(--accent, #cc6a3a); }
+.shortcut-action-btn {
+  width: 24px; height: 24px; border-radius: 4px; border: 1px solid var(--border);
+  background: transparent; color: var(--fg); cursor: pointer; font-size: 13px;
+  display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+}
+.shortcut-action-btn:hover { border-color: var(--accent, #cc6a3a); background: color-mix(in srgb, var(--accent, #cc6a3a) 10%, var(--bg)); }
+.shortcut-action-btn.is-reset { opacity: 0.5; }
+.shortcut-action-btn.is-reset:hover { opacity: 1; }
+@keyframes shortcut-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.settings-panels {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  min-width: 0;
+}
+.settings-appearance-panel {
+  flex-direction: column;
+}
+.settings-appearance-panel:not(.hidden) {
+  display: flex;
+}
+.settings-appearance-panel > .admin-card:nth-of-type(1) { order: 3; }
+.settings-appearance-panel > .admin-card:nth-of-type(2) { order: 1; }
+.settings-appearance-panel > .admin-card:nth-of-type(3) { order: 2; }
+.settings-appearance-panel > .admin-card:nth-of-type(n+4) { order: 4; }
+
+/* Mobile: stack tabs on top */
+@media (max-width: 600px) {
+  .settings-layout {
+    flex-direction: column;
+  }
+  .settings-sidebar {
+    width: auto;
+    flex-direction: row;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    padding: 6px;
+  }
+  .settings-nav-item {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+}
+
+/* Snapped/narrow Settings window: move the tab rail to the top. Viewport media
+   alone misses desktop right-half snapping, where the modal is narrow but the
+   browser window is not. */
+@container settings-modal (max-width: 620px) {
+  .settings-layout {
+    flex-direction: column;
+  }
+  .settings-sidebar {
+    width: auto;
+    max-height: none;
+    flex-direction: row;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 6px;
+    scrollbar-width: none;
+  }
+  .settings-sidebar::-webkit-scrollbar {
+    display: none;
+  }
+  .settings-sidebar-divider,
+  .settings-sidebar-label {
+    display: none;
+  }
+  .settings-nav-item {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+  .settings-panels {
+    padding: 12px 14px;
+  }
+}
+
+/* ── Entrance Animations ── */
+
+/* Welcome name — left-to-right wipe with a touch of horizontal stretch.
+   Fires on initial render via the .welcome-name rule; restarts on Nobody⇄
+   Odysseus toggle via JS reflow trick. */
+.welcome-name {
+  transform-origin: left center;
+  animation: welcome-name-reveal 0.55s cubic-bezier(0.34, 1.32, 0.55, 1) both;
+}
+/* Hold the welcome-screen entrance animations until the app has finished its
+   initial load (fonts loaded + layout settled). Running them mid-load made the
+   splash jump/flicker as the page reflowed ("haywire"). Until body.welcome-ready
+   is set by JS, the splash sits in its final, static state (no flash, since the
+   non-animated state IS the resting state); adding the class then plays the
+   entrance once, cleanly. */
+body:not(.welcome-ready) #welcome-screen,
+body:not(.welcome-ready) .welcome-name {
+  animation: none !important;
+}
+/* Hold the splash invisible (the entrance's start state) until ready, so when
+   the animation is released it fades/wipes in smoothly instead of flashing
+   from fully-visible to the animation's hidden first frame. */
+body:not(.welcome-ready) #welcome-screen {
+  opacity: 0;
+}
+@keyframes welcome-name-reveal {
+  from {
+    clip-path: inset(0 100% 0 0);
+    transform: scaleX(0.96);
+    opacity: 0.5;
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+@keyframes welcome-enter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -45%);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+}
+
+@keyframes msg-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes picker-roll-up {
+  from {
+    opacity: 0;
+    transform: scaleY(0.4) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scaleY(1) translateY(0);
+  }
+}
+@keyframes picker-roll-down {
+  from {
+    opacity: 1;
+    transform: scaleY(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scaleY(0.4) translateY(8px);
+  }
+}
+
+@keyframes modal-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+@keyframes modal-exit {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.97) translateY(6px);
+  }
+}
+.modal-content.modal-closing {
+  animation: modal-exit 0.18s ease-in both;
+}
+
+@keyframes cookbook-modal-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.94);
+    filter: saturate(0.85);
+  }
+  65% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.012);
+    filter: saturate(1.05);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: none;
+  }
+}
+#cookbook-modal .modal-content.cookbook-modal-entering {
+  animation: cookbook-modal-enter 0.28s cubic-bezier(0.22, 1.35, 0.36, 1) both;
+}
+/* Mobile: real bottom-sheet slide-up — the existing 12px translate is
+   too subtle on a phone, the modal effectively just appeared. */
+@media (max-width: 768px) {
+  #cookbook-modal .modal-content.cookbook-modal-entering {
+    animation: cookbook-modal-enter-mobile 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+@keyframes cookbook-modal-enter-mobile {
+  0%   { opacity: 0; transform: translateY(100%); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+#cookbook-modal .modal-content:not(.cookbook-modal-entering):not(.modal-closing) {
+  animation: none;
+}
+#cookbook-modal .modal-content.modal-closing {
+  animation: modal-exit 0.18s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+/* Per-token streaming fade — new words materialize */
+.token-new {
+  animation: token-fade 0.4s ease-out both;
+}
+
+@keyframes token-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Disable entrance animations when loading chat history (bulk render) */
+.chat-history.no-animate .msg {
+  animation: none;
+}
+
+/* Prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .msg,
+  .modal-content,
+  #welcome-screen,
+  .toast,
+  .token-new {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ── Tasks ── */
+.tasks-modal-content { max-width: 600px; width: min(600px, 92vw); background: var(--bg); font-size: 12px; }
+
+/* Tasks tabs reuse the .memory-tab look. The Brain window's tab bar is
+   full-bleed (its underline spans the whole modal width). The Tasks bar is a
+   direct child of .modal-content (padding:10px), so cancel that padding with
+   negative side margins to span edge-to-edge, then re-inset the tabs by 10px
+   so they line up with the rest of the modal content — matching the Brain bar. */
+.tasks-modal-content .tasks-tabs {
+  margin: -2px -10px 8px;
+  padding: 0 10px;
+}
+
+/* Activity log — compact by default. Click the row to expand body+actions. */
+.task-log-row {
+  --cat-hue: 220;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 10px;
+  margin-bottom: 3px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+  position: relative;
+  cursor: pointer;
+  transition: padding .12s ease;
+}
+.task-log-row:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.task-log-row.expanded { padding: 8px 10px 6px; }
+.task-log-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  margin-bottom: 0;
+}
+.task-log-row.expanded .task-log-row-head { margin-bottom: 4px; }
+/* Collapsed: body + footer hidden. Expanded: visible. */
+.task-log-row:not(.expanded):not(.is-skipped) .task-log-row-body,
+.task-log-row:not(.expanded):not(.is-skipped) .task-log-row-actions,
+.task-log-row:not(.expanded):not(.is-skipped) .task-log-prompt {
+  display: none;
+}
+.task-log-name {
+  font-weight: 600;
+  /* Pull saturation from the per-row hue but mix with the foreground so the
+     title still reads in dark mode. Lightness stays adaptive. */
+  color: hsl(var(--cat-hue) 60% 60%);
+}
+.task-log-task-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-right: -3px;
+}
+.task-log-task-icon svg {
+  top: 0 !important;
+  opacity: 0.46 !important;
+}
+.task-log-row-head .task-ai-mark {
+  top: 0;
+  margin-left: -4px;
+}
+.task-log-repeat {
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  border-radius: 999px;
+  padding: 1px 0;
+  white-space: nowrap;
+}
+@media (prefers-color-scheme: light) {
+  .task-log-name { color: hsl(var(--cat-hue) 65% 38%); }
+}
+/* Per-account prefix in fan-out results — e.g. "[Default] No recent emails"
+   becomes a compact accent chip + plain message. Makes multi-account activity
+   rows readable instead of a bracket soup. */
+/* Running / queued status line in the Activity tab — whirlpool + label. */
+.task-log-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.task-log-running-label { font-style: normal; }
+
+/* New right-side placement: "Running <whirlpool>" sits where the timestamp
+   normally would, on the head row's right edge. */
+.task-log-running-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.task-log-running-inline .task-log-running-label { font-weight: 500; }
+.task-log-running-elapsed {
+  margin-left: 6px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+.task-log-force-run {
+  border: 0;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  box-shadow: none;
+  color: inherit;
+  opacity: .82;
+  margin-left: 7px;
+  padding: 1px 6px 1px 4px;
+  min-height: 16px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  position: relative;
+  top: -1px;
+}
+.task-log-force-run svg,
+.task-log-stop svg {
+  display: block;
+  flex-shrink: 0;
+  transform: translateY(1px);
+}
+.task-log-force-run:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--green, #50fa7b) 16%, transparent);
+  color: var(--green, #50fa7b);
+}
+.task-log-stop {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: .72;
+  padding: 0;
+  margin-left: 6px;
+  width: 12px;
+  height: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  top: -3px;
+}
+.task-log-stop:hover {
+  opacity: 1;
+  color: var(--red, #f87171);
+}
+
+/* Slim single-line row for skipped (noop) runs — body/actions stripped, font
+   shrunk, opacity dropped. Distinguishes "task ran but had nothing to do"
+   from a "real" entry without flooding the feed visually. */
+.task-log-row.is-skipped {
+  padding: 4px 8px;
+  opacity: 0.45;
+  font-size: 11px;
+  background: transparent;
+}
+.task-log-row.is-skipped .task-log-row-head { padding: 0; }
+.task-log-row.is-skipped .task-log-name { font-weight: 500; }
+.task-log-row.is-skipped .task-log-skipped-reason {
+  flex: 1 1 auto;
+  margin-left: 6px;
+  font-style: italic;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.task-log-row.is-skipped:hover { opacity: 0.7; }
+
+.task-log-account-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 7px;
+  margin-right: 4px;
+  border-radius: 10px;
+  color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
+  vertical-align: 1px;
+}
+.task-log-time {
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+}
+.task-log-status {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+.task-log-status-ok    { background: #4ade80; box-shadow: 0 0 6px #4ade80, 0 0 3px #4ade80; }
+.task-log-status-error { background: var(--red, #f87171); box-shadow: 0 0 6px var(--red, #f87171), 0 0 3px var(--red, #f87171); }
+.task-log-status-info  { background: color-mix(in srgb, var(--fg) 25%, transparent); }
+.task-log-status-queued  { background: #fbbf24; box-shadow: 0 0 0 2px color-mix(in srgb, #fbbf24 30%, transparent); }
+.task-log-status-running { background: #60a5fa; animation: task-log-pulse 1.4s ease-in-out infinite; }
+.task-log-status-skipped { background: color-mix(in srgb, var(--fg) 20%, transparent); }
+.task-log-status-aborted { background: color-mix(in srgb, var(--fg) 30%, transparent); border: 1px dashed color-mix(in srgb, var(--fg) 50%, transparent); }
+@keyframes task-log-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, #60a5fa 60%, transparent); }
+  50%      { box-shadow: 0 0 0 4px color-mix(in srgb, #60a5fa 0%, transparent); }
+}
+.task-log-row-body {
+  font-size: 12px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--fg) 85%, transparent);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.task-log-row-body p { margin: 0 0 6px 0; }
+.task-log-row-body p:last-child { margin-bottom: 0; }
+.task-log-row-body pre {
+  margin: 4px 0;
+  padding: 6px 8px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  max-height: 180px;
+  overflow: auto;
+}
+.task-log-row-body code {
+  font-size: 11px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.task-log-row-body ul, .task-log-row-body ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+.task-log-row-body li { margin: 2px 0; }
+/* Markdown headings inside a task result — without these, ## headings
+   render at browser-default huge sizes and blow out the cramped row. */
+.task-log-row-body h1,
+.task-log-row-body h2,
+.task-log-row-body h3,
+.task-log-row-body h4 {
+  margin: 10px 0 4px;
+  line-height: 1.3;
+  font-weight: 650;
+  color: var(--fg);
+}
+.task-log-row-body h1 { font-size: 14px; }
+.task-log-row-body h2 { font-size: 13px; }
+.task-log-row-body h3,
+.task-log-row-body h4 { font-size: 12px; opacity: 0.9; }
+.task-log-row-body h1:first-child,
+.task-log-row-body h2:first-child,
+.task-log-row-body h3:first-child { margin-top: 0; }
+.task-log-row-body hr {
+  border: none;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  margin: 8px 0;
+}
+.task-log-row-body blockquote {
+  margin: 4px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid color-mix(in srgb, var(--fg) 20%, transparent);
+  opacity: 0.85;
+}
+.task-log-row-body a { color: var(--accent, #60a5fa); text-decoration: none; }
+.task-log-row-body a:hover { text-decoration: underline; }
+.task-log-row-body strong { font-weight: 650; color: var(--fg); }
+/* Email-summary tables — render compactly instead of default browser ugliness. */
+.task-log-row-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 6px 0;
+  font-size: 11px;
+}
+.task-log-row-body th,
+.task-log-row-body td {
+  border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+  padding: 3px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+.task-log-row-body th {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  font-weight: 600;
+}
+.task-log-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+.task-log-open-chat,
+.task-log-open-report,
+.task-log-copy,
+.task-log-clear-cache,
+.task-log-run-again {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+  border-radius: 5px;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  font-family: inherit;
+  font-size: 10px;
+  padding: 1px 6px;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+  line-height: 1.4;
+}
+.task-log-open-chat:hover,
+.task-log-open-report:hover,
+.task-log-copy:hover,
+.task-log-clear-cache:hover,
+.task-log-run-again:hover {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 30%, transparent);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.task-log-row-actions > .task-log-open-chat,
+.task-log-row-actions > .task-log-copy {
+  margin-left: auto;
+}
+.task-log-clear-cache svg {
+  position: relative;
+  top: 0;
+}
+/* Activity filter chips — toggle-out model: ON by default (solid),
+   click to toggle OFF (dimmed + strikethrough) to hide that group. */
+.tasks-af-chip {
+  font-size: 11px;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  color: var(--fg);
+  cursor: pointer;
+  font-family: inherit;
+  transition: opacity .12s, background .12s, border-color .12s;
+}
+.tasks-af-chip:hover { border-color: color-mix(in srgb, var(--fg) 32%, transparent); }
+.tasks-af-chip.off {
+  opacity: 0.4;
+  text-decoration: line-through;
+  background: transparent;
+}
+.tasks-af-chip.active {
+  border-color: var(--accent, var(--red));
+  background: color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+  opacity: 1;
+}
+.tasks-af-chip-error { border-color: color-mix(in srgb, var(--red, #f87171) 45%, transparent); }
+.tasks-af-chip-error:not(.off) { color: var(--red, #f87171); }
+
+/* "Open in Deep Research" is now a regular clickable chat link (a
+   `#research-<id>` markdown anchor in the assistant's message), rendered as
+   an a.chat-link. Nudge it 4px right so it sits slightly inset. */
+a.chat-link[href^="#research-"] {
+  margin-left: 4px;
+}
+.task-log-row.is-long .task-log-row-body {
+  max-height: 8.5em;
+  overflow: hidden;
+  position: relative;
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
+}
+.task-log-row.is-long.expanded .task-log-row-body {
+  max-height: none;
+  overflow: visible;
+  mask-image: none;
+  -webkit-mask-image: none;
+}
+.task-log-row-toggle {
+  margin-top: 6px;
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 0;
+  color: transparent;          /* hide raw "Show more" text */
+}
+.task-log-row-toggle::before {
+  color: color-mix(in srgb, var(--accent, var(--fg)) 80%, transparent);
+  opacity: 0.8;
+}
+.task-log-row:not(.expanded) .task-log-row-toggle::before { content: 'Show more'; }
+.task-log-row.expanded .task-log-row-toggle::before { content: 'Show less'; }
+.task-log-row-toggle:hover::before { opacity: 1; }
+.task-log-prompt {
+  margin-top: 6px;
+  font-size: 11px;
+}
+.task-log-prompt summary {
+  cursor: pointer;
+  opacity: 0.5;
+  user-select: none;
+}
+.task-log-prompt summary:hover { opacity: 0.8; }
+.task-log-prompt pre {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  opacity: 0.75;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.task-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 0;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+  min-height: 47px;
+  box-sizing: border-box;
+  align-items: center;
+}
+/* When expanded, height grows to fit the detail panel. */
+.task-card.expanded { align-items: flex-start; }
+/* Nudge the card text up (dot/menu keep their own offsets); the leading icon
+   and built-in tag ride a bit higher to sit on the title's cap line. */
+.task-card .memory-item-title,
+.task-card .memory-item-meta { position: relative; top: -4px; }
+/* Always show the per-card ⋮ kebab on task cards (the default opacity:0 +
+   hover-reveal is unreliable on touch and easy to miss on desktop).
+   pointer-events / z-index belt-and-braces against any sibling overlay,
+   margin reset undoes the global `.modal-body button { margin-top:6px }`
+   that was punting the hit-target down. */
+.task-card .memory-item-actions {
+  opacity: 0.55;
+  pointer-events: auto;
+  position: relative;
+  z-index: 5;
+}
+.task-card:hover .memory-item-actions,
+.task-card .memory-item-actions:hover { opacity: 1; }
+.task-card .memory-item-actions .memory-item-btn {
+  margin: 0 !important;
+  pointer-events: auto;
+  position: relative;
+  z-index: 5;
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* Make the SVG inside the kebab transparent to pointer events so the click
+   always lands on the BUTTON itself (some browsers / nested SVG events lose
+   the click when hitting the inner glyph). */
+.task-card .memory-item-actions .memory-item-btn svg { pointer-events: none; }
+.task-card .task-builtin-badge { position: relative; top: -4px; }
+.task-ai-mark {
+  flex: 0 0 auto;
+  color: var(--accent, var(--red));
+  opacity: 0.78;
+  position: relative;
+  top: -4px;
+}
+/* Per-card select checkbox rides up to the title line. The "All" checkbox is
+   #tasks-select-all (not .memory-select-cb), so it stays put. */
+.task-card .memory-select-cb { position: relative; top: -4px; }
+/* Bigger ⋮ dropdown on mobile (its buttons carry inline styles → !important). */
+@media (max-width: 768px) {
+  .task-dropdown { min-width: 160px !important; padding: 6px !important; }
+  .task-dropdown button { font-size: 13px !important; padding: 10px 12px !important; gap: 10px !important; }
+  .task-dropdown button svg { width: 15px !important; height: 15px !important; }
+  .task-card .task-status-badge {
+    padding-left: 5px;
+    padding-right: 5px;
+    gap: 2px;
+    letter-spacing: 0.15px;
+  }
+  .task-card .task-state-badge {
+    width: 20px;
+    min-width: 20px;
+    height: 20px;
+    min-height: 20px;
+    padding-left: 0;
+    padding-right: 0;
+    box-sizing: border-box;
+    justify-content: center;
+    top: 2px !important;
+  }
+  .task-card .task-state-badge .task-state-label {
+    display: none;
+  }
+  .task-card .task-card-run-btn {
+    margin-right: 1px !important;
+    top: 2px;
+  }
+}
+
+.task-card-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.task-card-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.task-card-schedule {
+  font-size: 10.5px;
+  opacity: 0.5;
+  margin-left: auto;
+}
+
+.task-card-output {
+  font-size: 10px;
+  opacity: 0.45;
+}
+
+.task-card-prompt {
+  font-size: 11px;
+  opacity: 0.55;
+  margin: 4px 0;
+  line-height: 1.4;
+}
+
+.task-card-meta {
+  font-size: 10.5px;
+  opacity: 0.45;
+  margin-bottom: 6px;
+}
+
+.task-card-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.task-btn {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s, background 0.15s;
+}
+.task-btn:hover { opacity: 1; }
+.task-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.task-btn-primary {
+  background: var(--red);
+  color: #fff;
+  border-color: transparent;
+  opacity: 1;
+}
+.task-btn-primary:hover { opacity: 0.85; }
+
+.task-btn-danger { color: var(--red); border-color: color-mix(in srgb, var(--red) 30%, transparent); }
+.task-btn-danger:hover { opacity: 1; border-color: var(--red); }
+
+.tasks-clock {
+  font-size: 10px;
+  opacity: 0.35;
+  text-align: center;
+  padding: 6px 0 8px;
+}
+
+.task-preset-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;
+}
+.task-preset-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 12px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); cursor: pointer; transition: all 0.15s; text-align: left;
+  color: var(--fg);
+}
+.task-preset-card:hover {
+  border-color: var(--accent, #cc6a3a); background: color-mix(in srgb, var(--accent, #cc6a3a) 8%, var(--bg));
+}
+.task-preset-icon { font-size: 20px; margin-bottom: 2px; }
+.task-preset-label { font-size: 12px; font-weight: 600; }
+.task-preset-desc { font-size: 10px; opacity: 0.5; line-height: 1.3; }
+
+.task-form { display: flex; flex-direction: column; gap: 4px; }
+.task-form-label {
+  font-size: 11px;
+  opacity: 0.55;
+  font-weight: 500;
+  display: block;
+  /* Consistent rhythm: 8px above each label (section gap), 4px below to the
+     field — same spacing for Name/Prompt/Trigger/Output/Model/Chain. */
+  margin: 8px 0 4px;
+}
+.task-form-input {
+  font-family: inherit;
+  font-size: 11px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+/* A <select>'s closed width otherwise grows to its widest option (the long
+   action descriptions), overflowing the modal — clip it to the field width. */
+select.task-form-input { text-overflow: ellipsis; }
+.task-form-input:focus {
+  outline: none;
+  border-color: var(--red);
+}
+.task-form-textarea { resize: vertical; min-height: 60px; }
+.task-form-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
+
+.task-form-toggle {
+  display: flex; gap: 4px;
+}
+.task-toggle-btn {
+  flex: 1; padding: 4px 8px; font-size: 10px; font-family: inherit;
+  border: 1px solid var(--border); border-radius: 6px; background: transparent;
+  color: var(--fg); opacity: 0.4; cursor: pointer; transition: all 0.15s;
+}
+.task-toggle-btn:hover { opacity: 0.7; border-color: var(--fg); }
+.task-toggle-btn.active {
+  opacity: 1; border-color: var(--red); color: var(--red);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+
+.task-time-picker, .task-date-picker {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.task-time-select, .task-date-select {
+  width: auto;
+  min-width: 48px;
+  font-size: 11px;
+}
+.task-time-sep { opacity: 0.4; font-size: 11px; }
+
+.task-history-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.task-runs-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
+.task-run-item {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.task-run-item-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+.task-run-time { margin-left: auto; font-size: 10px; opacity: 0.45; }
+.task-run-result {
+  font-size: 11px;
+  opacity: 0.6;
+  margin-top: 4px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Settings Form Utilities ── */
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-label {
+  font-size: 12px;
+  min-width: 70px;
+}
+.settings-select {
+  flex: 1;
+  /* Allow the select to shrink below its longest option's width inside a flex
+     row — without this a long model name (e.g. the Vision picker) overflowed
+     the card off-screen on mobile. */
+  min-width: 0;
+  max-width: 100%;
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  transition: border-color 0.15s;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: textfield;
+  outline: none;
+}
+input.settings-select::-webkit-outer-spin-button,
+input.settings-select::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input.settings-select::placeholder { color: color-mix(in srgb, var(--fg) 35%, transparent); }
+.settings-select:focus {
+  outline: none;
+  border-color: var(--red);
+}
+
+/* Default-chat fallback chain editor. Each row mirrors the primary
+   endpoint/model selectors, indented under them to read as a chain. */
+.settings-fallbacks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-fallbacks:not(:empty) { margin-top: 2px; }
+.settings-fallback-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 12px;
+  border-left: 2px solid color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.settings-fallback-num {
+  font-size: 11px;
+  opacity: 0.4;
+  min-width: 14px;
+  text-align: right;
+}
+.settings-fallback-row .settings-select { flex: 1; min-width: 0; }
+.settings-fallback-remove {
+  flex-shrink: 0;
+  margin-right: 4px;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  font-size: 15px;
+  /* Nudge the × glyph 5px left within the button (button size unchanged). */
+  text-indent: -5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+  position: relative;
+  top: -6px;
+}
+.settings-fallback-remove:hover {
+  border-color: var(--red);
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+.settings-fallback-add {
+  align-self: flex-start;
+  margin-top: 2px;
+  font-size: 11px;
+  padding: 3px 9px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+.settings-fallback-add:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+.settings-input {
+  flex: 1;
+  padding: 5px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  transition: border-color 0.15s;
+}
+/* Hide the native number-input spinner arrows (e.g. SMTP/IMAP Port) — they
+   render unstyled and ugly. Field still accepts only numbers. */
+.settings-input[type="number"]::-webkit-outer-spin-button,
+.settings-input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.settings-input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.settings-input:focus {
+  outline: none;
+  border-color: var(--red);
+}
+/* ── Contacts manager (Settings → Integrations → CardDAV) ── */
+.contacts-add-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+.contacts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.contact-row {
+  padding: 6px 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 35%, transparent);
+}
+.contact-row:last-child { border-bottom: none; }
+.contact-row-edit { margin-top: 4px; }
+
+/* ── Sort Dropdown ── */
+
+.sort-dropdown {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 1000;
+  min-width: 120px !important;
+  width: max-content;
+  padding: 4px !important;
+  margin-top: 4px;
+  background: var(--panel) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4) !important;
+  backdrop-filter: none !important;
+}
+.sort-dropdown-item {
+  cursor: pointer;
+  padding: 6px 8px !important;
+  font-size: 11px !important;
+  border-radius: 6px !important;
+  border-bottom: none !important;
+  white-space: nowrap;
+  transition: background 0.1s;
+}
+.sort-dropdown-item:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent) !important;
+}
+.sort-dropdown-sep {
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+  padding-top: 6px;
+}
+
+/* Mobile: bigger taps for the chats sort/funnel menu and the select-mode
+   bulk-action bar. Also drop the "Rearrange" item — it's a touch-finicky
+   feature better left to desktop. */
+@media (max-width: 768px) {
+  /* Nudge the funnel/sort button right on mobile so it doesn't hug the
+     chevron next to it. */
+  #session-sort-btn { transform: translateX(11px); }
+  #session-sort-dropdown.sort-dropdown {
+    min-width: 200px !important;
+    padding: 6px !important;
+  }
+  #session-sort-dropdown .sort-dropdown-item {
+    padding: 12px 14px !important;
+    font-size: 14px !important;
+  }
+  #session-rearrange-toggle { display: none !important; }
+
+  /* Select-mode bar — make Archive / Delete / Cancel buttons + the
+     Select-all toggle finger-sized. */
+  .session-bulk-bar {
+    padding: 8px 10px;
+    font-size: 14px;
+    gap: 10px;
+  }
+  .session-bulk-btn {
+    padding: 10px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .session-bulk-btn svg { width: 20px; height: 20px; }
+  #session-select-all-dot { font-size: 22px !important; padding: 6px; }
+  #session-select-all-label { font-size: 14px !important; padding: 4px; }
+}
+
+
+/* ── Admin: Built-in tools ── */
+.admin-tool-category {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.admin-tool-category:hover {
+  border-color: color-mix(in srgb, var(--fg) 20%, var(--border));
+}
+.admin-tool-cat-header {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 8px 10px;
+  transition: background 0.15s;
+}
+.admin-tool-cat-header:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.admin-tool-cat-body {
+  border-top: 1px solid var(--border);
+  padding: 4px 0;
+}
+.admin-tool-cat-body.hidden {
+  display: none;
+}
+.admin-tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  padding-right: 28px; /* align toggles with header toggle (chevron 12px + gap 6px + padding) */
+  transition: background 0.08s;
+}
+.admin-tool-row:hover {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.admin-tool-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.admin-tool-name {
+  font-size: 11px;
+  font-weight: 500;
+}
+.admin-tool-desc {
+  font-size: 10px;
+  opacity: 0.4;
+}
+.admin-tool-ctx {
+  font-size: 9px;
+  opacity: 0.3;
+  flex-shrink: 0;
+  min-width: 35px;
+  text-align: right;
+  font-family: 'Berkeley Mono', 'SF Mono', 'Fira Code', monospace;
+}
+
+/* ── Generate Visual Report button (deep research) ── */
+.view-report-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 8px 16px;
+  border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 0.88em;
+  font-weight: 500;
+  transition: background 0.15s ease;
+  cursor: pointer;
+}
+.view-report-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--red) 18%, transparent);
+}
+.view-report-btn svg {
+  flex-shrink: 0;
+}
+.report-btn-wrap {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.view-report-btn.chat-about-btn {
+  border-color: color-mix(in srgb, var(--fg) 22%, transparent);
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.view-report-btn.chat-about-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.view-report-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.report-spinner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.88em;
+  color: var(--fg);
+  opacity: 0.7;
+}
+.report-spinner-text {
+  font-weight: 500;
+}
+.report-spinner-dots::after {
+  content: '';
+  animation: report-dots 1.4s steps(4, end) infinite;
+}
+@keyframes report-dots {
+  0%   { content: ''; }
+  25%  { content: '.'; }
+  50%  { content: '..'; }
+  75%  { content: '...'; }
+  100% { content: ''; }
+}
+
+/* ── Continue research hint ────────────────────────── */
+.continue-research-wrap {
+  margin-top: 8px;
+}
+.continue-research-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78em;
+  color: var(--fg-dim, var(--fg));
+  opacity: 0.5;
+  padding: 4px 0;
+}
+.continue-research-hint svg {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+/* ── Research reconnect & timer ────────────────────── */
+.msg.research-reconnect {
+  border-left: 3px solid var(--red);
+  background: color-mix(in srgb, var(--red) 5%, transparent);
+}
+.research-timer {
+  font-size: 0.8em;
+  opacity: 0.6;
+  margin-top: 4px;
+  font-family: monospace;
+  color: var(--fg-dim, var(--fg));
+}
+
+/* ── Research synapse visualization ───────────────────────────────
+   Live SVG graph of an in-flight deep-research run. The query is the
+   central node; sub-questions branch off per round; sources are leaf
+   nodes that pop in as they're captured. Pulses indicate activity. */
+.research-synapse {
+  margin: 6px 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background:
+    radial-gradient(ellipse at center, color-mix(in srgb, var(--accent, var(--red)) 10%, transparent) 0%, transparent 70%),
+    color-mix(in srgb, var(--panel) 50%, var(--bg));
+  overflow: hidden;
+}
+.research-synapse .rs-stage {
+  height: 200px;
+  position: relative;
+}
+.research-synapse-compact .rs-stage { height: 130px; }
+.research-synapse-compact .rs-meta { padding: 4px 8px 5px; font-size: 10px; }
+.research-synapse-compact .rs-label-sub { font-size: 8px; }
+.research-synapse svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.research-synapse .rs-edge {
+  stroke: var(--border);
+  stroke-width: 1.2;
+  fill: none;
+  opacity: 0.55;
+}
+.research-synapse .rs-edge.rs-edge-firing {
+  stroke: var(--accent, var(--red));
+  stroke-width: 2;
+  opacity: 1;
+  filter: drop-shadow(0 0 4px var(--accent, var(--red)));
+  animation: rs-fire 1.1s ease-out;
+}
+@keyframes rs-fire {
+  0%   { stroke-dasharray: 4 200; stroke-dashoffset: 200; opacity: 0; }
+  20%  { opacity: 1; }
+  100% { stroke-dasharray: 200 4; stroke-dashoffset: -200; opacity: 0.55; }
+}
+.research-synapse .rs-node {
+  fill: var(--bg);
+  stroke: var(--accent, var(--red));
+  stroke-width: 1.5;
+  transition: all 0.3s ease;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.research-synapse .rs-node-root {
+  fill: var(--accent, var(--red));
+  stroke: var(--accent, var(--red));
+}
+/* Sub & leaf nodes stay inside the accent palette so the whole graph
+   reads as one organism. Leaves are softer/lower-contrast dots that
+   float around their sub — not green-on-stem (which read as palm fronds). */
+.research-synapse .rs-node-sub {
+  stroke: color-mix(in srgb, var(--accent, var(--red)) 70%, var(--fg));
+}
+.research-synapse .rs-node-leaf {
+  stroke: color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
+  fill: color-mix(in srgb, var(--accent, var(--red)) 22%, var(--bg));
+}
+.research-synapse .rs-node-new {
+  animation: rs-pop 0.6s ease-out;
+}
+@keyframes rs-pop {
+  0%   { transform: scale(0); opacity: 0; }
+  60%  { transform: scale(1.25); opacity: 1; }
+  100% { opacity: 1; }
+}
+.research-synapse .rs-pulse {
+  fill: var(--accent, var(--red));
+  opacity: 0;
+  animation: rs-pulse 2.6s ease-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@keyframes rs-pulse {
+  0%   { transform: scale(1); opacity: 0.65; }
+  100% { transform: scale(5); opacity: 0; }
+}
+.research-synapse .rs-label {
+  fill: var(--fg);
+  font-size: 10px;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.research-synapse .rs-label-sub {
+  font-size: 9px;
+  opacity: 0.7;
+}
+.research-synapse .rs-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 10px 8px;
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  font-size: 11px;
+  color: var(--fg-dim, var(--fg));
+  opacity: 0.85;
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.research-synapse .rs-meta .rs-status {
+  color: var(--accent, var(--red));
+  font-weight: 600;
+}
+.research-synapse .rs-meta b {
+  color: var(--fg);
+  font-weight: 600;
+}
+.research-synapse .rs-meta .rs-sep { opacity: 0.4; }
+.research-synapse.rs-complete .rs-pulse { animation: none; opacity: 0; }
+.research-synapse.rs-complete .rs-node-root {
+  fill: var(--color-success, #4caf50);
+  stroke: var(--color-success, #4caf50);
+}
+.research-synapse.rs-complete .rs-meta .rs-status { color: var(--color-success, #4caf50); }
+.research-synapse.rs-error .rs-meta .rs-status { color: var(--red); }
+
+/* ── Raw findings items (inside sources-style box) ── */
+.finding-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.finding-item .source-link {
+  border-radius: 6px 6px 0 0;
+}
+.finding-summary {
+  padding: 6px 8px 8px;
+  font-size: 0.82em;
+  line-height: 1.5;
+  color: var(--fg-dim, var(--fg));
+  opacity: 0.85;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 6%, transparent);
+  margin-bottom: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.finding-item:last-child .finding-summary {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════
+/* #endregion Settings Modal Layout And Task Surfaces */

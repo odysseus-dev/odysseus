@@ -1,0 +1,91 @@
+/* #region Theme Tokens */
+/* ── Variables ──
+ *
+ * Theme-public variables (override via theme.js or custom themes):
+ *   Core:     --bg, --fg, --panel, --border, --red
+ *   Syntax:   --hl-keyword, --hl-string, --hl-comment, --hl-function,
+ *             --hl-number, --hl-builtin, --hl-variable, --hl-params,
+ *             --hl-bg, --hl-fg
+ *   Accents:  --accent-primary, --accent-error (set by theme.js)
+ *   Semantic: --color-error, --color-success, --color-warning, --color-danger,
+ *             --color-accent, --color-muted, --color-muted-alt
+ */
+
+:root {
+	/* Core palette */
+	--bg: #282c34;
+	--fg: #9cdef2;
+	--panel: #111;
+	--border: #355a66;
+	--red: #e06c75;
+	/* Were `var(--green)` / `var(--warn)` — self-referential, so they
+		 resolved to invalid and every site fell back to its own literal
+		 (or, for sites with no fallback, painted as transparent/inherit).
+		 Anchor them to real hex so the token layer actually works. */
+	--green: #50fa7b;
+	--warn: #f0ad4e;
+
+	/* Syntax highlighting */
+	--hl-bg: #1e2228;
+	--hl-fg: #9cdef2;
+	--hl-keyword: #c678dd;
+	--hl-string: #e5c07b;
+	--hl-comment: #828997;
+	--hl-function: #61afef;
+	--hl-number: #d19a66;
+	--hl-builtin: #56b6c2;
+	--hl-variable: #abb2bf;
+	--hl-params: #a8c0d4;
+
+	/* Semantic colors */
+	--color-error: #ff4444;
+	--color-error-light: #ff6666;
+	--color-success: #4caf50;
+	--color-warning: #f0ad4e;
+	--color-danger: #c0392b;
+	--color-recording: #ff3b30;
+	--color-recording-hover: #d63031;
+	--color-muted: #888;
+	--color-muted-alt: #6b7280;
+	--color-accent: #00aaff;
+	--color-agent-active: #00ff00;
+	--color-brand-blue: #3b82f6;
+	--color-blind-orange: #ff9800;
+	--color-save-green: var(--color-success);
+	--color-link-hover: #66c7ff;
+	--color-subheader: #6b8a94;
+	--select-bg: var(--bg);
+	--select-fg: var(--fg);
+	--select-option-bg: color-mix(in srgb, var(--panel) 74%, var(--bg));
+	--select-option-fg: var(--fg);
+	--select-option-active-bg: color-mix(in srgb, var(--accent, var(--red)) 24%, var(--panel));
+	/* Warm accent — used by the Goals/Today UI in Notes. Lives as a token so
+		 themes can override without touching the goal CSS. */
+	--accent-warm: #d19a66;
+
+	/* Background effect intensity token */
+	--bg-effect-intensity: 1;
+}
+
+:root.light {
+	--bg: #f5f5f5;
+	--fg: #2b2b2b;
+	--panel: #fff;
+	--border: #bbb;
+	--hl-bg: #f9f9f9;
+	--hl-fg: #2b2b2b;
+	--hl-keyword: #7928a1;
+	--hl-string: #986801;
+	--hl-comment: #6a737d;
+	--hl-function: #005cc5;
+	--hl-number: #986801;
+	--hl-builtin: #0070a0;
+	--hl-variable: #383a42;
+	--hl-params: #4a4f5c;
+	--select-bg: #eaeaea;
+	--select-fg: var(--fg);
+	--select-option-bg: var(--panel);
+	--select-option-fg: var(--fg);
+	--select-option-active-bg: color-mix(in srgb, var(--red) 16%, var(--panel));
+}
+/* #endregion Theme Tokens */
