@@ -2856,6 +2856,32 @@ def setup_cookbook_routes() -> APIRouter:
                         except Exception:
                             pass
 
+            # Local macOS/Linux: the serve-runner tees into TMUX_LOG_DIR/<session>.log,
+            # which outlives the tmux session (same model as the Windows detached
+            # log). A fast pip dependency install can exit before any status poll
+            # captures the pane, so the live capture and the persisted output are
+            # both empty — and the dead-session HF-cache check below can never
+            # validate a pip package (its repo_id has no "/"). Without this
+            # fallback the task reports "stopped" and the UI downgrades a clean
+            # exit-0 install to "crashed".
+            local_log_task = False
+            if (
+                not is_alive
+                and not remote
+                and not IS_WINDOWS
+                and not full_snapshot
+                and task_type == "download"
+            ):
+                _log_path = TMUX_LOG_DIR / f"{session_id}.log"
+                try:
+                    if _log_path.exists():
+                        full_snapshot = _log_path.read_text(
+                            encoding="utf-8", errors="replace"
+                        ).strip()[-12000:]
+                        local_log_task = bool(full_snapshot)
+                except Exception:
+                    pass
+
             # Determine status. For the local-Windows detached model the log file
             # persists after the process exits, so a finished download still has a
             # snapshot to classify (DOWNLOAD_OK / exit marker) — evaluate it even
@@ -2872,7 +2898,7 @@ def setup_cookbook_routes() -> APIRouter:
                     or _download_cache_incomplete(_payload.get("repo_id") or model, remote, str(_tport or ""))
                 )
             )
-            if is_alive or (local_win_task and full_snapshot):
+            if is_alive or ((local_win_task or local_log_task) and full_snapshot):
                 lower = full_snapshot.lower()
                 exit_match = re.search(r"=== process exited with code\s+(-?\d+)", full_snapshot, re.I)
                 has_exit = exit_match is not None

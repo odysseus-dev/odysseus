@@ -74,7 +74,32 @@ def test_background_poll_recovers_done_for_stopped_dependency_install():
     source = _read("static/js/cookbookRunning.js")
 
     assert "const depDone = !!task.payload?._dep && _depInstallSucceeded(task.output);" in source
-    assert "depDone ? 'done' : (task.type === 'download' ? 'crashed' : 'stopped')" in source
+    assert "depDone ? 'done' : (task.type === 'download' && !depNoEvidence ? 'crashed' : 'stopped')" in source
+
+
+def test_background_poll_keeps_stopped_for_evidence_free_dependency_install():
+    """A dep install with no retained output is unknown, not crashed: a fast
+    install (everything already satisfied) can exit before the first status
+    poll captures the pane, and on remote hosts the backend can't read the
+    runner log either. "stopped" must not be downgraded to "crashed" then."""
+    source = _read("static/js/cookbookRunning.js")
+
+    assert "const depNoEvidence = !!task.payload?._dep && !String(task.output || '').trim();" in source
+
+
+def test_backend_dead_local_session_falls_back_to_runner_log():
+    """The local (non-Windows) serve-runner tees into TMUX_LOG_DIR/<session>.log,
+    which outlives the tmux session. When a download task's session is already
+    gone and no output was ever captured, the status endpoint must classify
+    from that log (DOWNLOAD_OK / exit-0 marker) instead of reporting "stopped"
+    — the HF-cache check can never validate a pip package (no "/" in repo_id),
+    so a clean dependency install ended up branded as crashed."""
+    source = _read("routes/cookbook_routes.py")
+
+    assert 'local_log_task = False' in source
+    assert '_log_path = TMUX_LOG_DIR / f"{session_id}.log"' in source
+    assert 'local_log_task = bool(full_snapshot)' in source
+    assert 'if is_alive or ((local_win_task or local_log_task) and full_snapshot):' in source
 
 
 def test_dependency_install_payload_keeps_env_path_for_refresh():

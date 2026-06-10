@@ -3532,12 +3532,18 @@ async function _pollBackgroundStatus() {
         // dead-session check inspects). Recover "done" from the retained output's
         // exit-0 sentinel so a clean install isn't downgraded to crashed.
         const depDone = !!task.payload?._dep && _depInstallSucceeded(task.output);
+        // A dep install with NO retained output is genuinely unknown — a fast
+        // install (everything already satisfied) can exit before the first
+        // status poll ever captures the pane, and on remote hosts the backend
+        // can't read the runner log either. Keep "stopped" instead of
+        // inventing "crashed".
+        const depNoEvidence = !!task.payload?._dep && !String(task.output || '').trim();
         const nextStatus = live.status === 'completed'
           ? 'done'
           : (live.status === 'error'
             ? 'error'
             : (live.status === 'stopped'
-                ? (depDone ? 'done' : (task.type === 'download' ? 'crashed' : 'stopped'))
+                ? (depDone ? 'done' : (task.type === 'download' && !depNoEvidence ? 'crashed' : 'stopped'))
                 : null));
         if (nextStatus && task.status !== nextStatus) {
           updates.status = nextStatus;
