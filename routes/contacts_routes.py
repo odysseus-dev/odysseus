@@ -44,11 +44,12 @@ def _save_settings(settings):
 
 def _get_carddav_config():
     import os
+    from src.secret_storage import decrypt
     settings = _load_settings()
     return {
         "url": settings.get("carddav_url", os.environ.get("CARDDAV_URL", "")),
         "username": settings.get("carddav_username", os.environ.get("CARDDAV_USERNAME", "")),
-        "password": settings.get("carddav_password", os.environ.get("CARDDAV_PASSWORD", "")),
+        "password": decrypt(settings.get("carddav_password", "")) or os.environ.get("CARDDAV_PASSWORD", ""),
     }
 
 
@@ -785,6 +786,7 @@ def setup_contacts_routes():
     @router.put("/config")
     async def update_config(data: dict, _admin: str = Depends(require_admin)):
         settings = _load_settings()
+        from src.secret_storage import encrypt
         for key in ("carddav_url", "carddav_username", "carddav_password"):
             if key in data:
                 if key == "carddav_url" and str(data[key] or "").strip():
@@ -792,6 +794,8 @@ def setup_contacts_routes():
                         settings[key] = _validate_carddav_url(data[key])
                     except ValueError as e:
                         raise HTTPException(400, str(e))
+                elif key == "carddav_password" and data[key]:
+                    settings[key] = encrypt(data[key])
                 else:
                     settings[key] = data[key]
         _save_settings(settings)
