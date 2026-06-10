@@ -6,8 +6,6 @@ import logging
 import os
 import re
 import tempfile
-from typing import Any, Dict, Optional, Tuple
-=======
 from typing import Any, Dict, List, Optional, Tuple
 
 from services.memory.skill_importer import (
@@ -26,7 +24,6 @@ SINGLE_PASS_CHARS = 48_000
 CHUNK_CHARS = 12_000
 MAX_CHUNKS = 16
 MAX_INPUT_CHARS = 48_000
-=======
 ALLOWED_EXTENSIONS = frozenset({".pdf", ".md", ".txt", ".markdown", ".epub", ".docx"})
 
 _DISTILL_PROMPT = (
@@ -66,7 +63,6 @@ _MERGE_PROMPT = (
     "}\n"
     "Optional references: at most 2 extra files under 3000 chars each."
     "- If the source is long, put the router/index in skill_md and details in references.\n"
-=======
 )
 
 
@@ -74,8 +70,6 @@ def extract_document_text(path: str, ext: str) -> str:
     """Extract plain/markdown text from a document on disk."""
     ext = (ext or "").lower()
     if ext == ".pdf":
-        from src.document_processor import _process_pdf, strip_pdf_content_marker
-=======
         from src.personal_docs import extract_pdf_text
 
         text = extract_pdf_text(path)
@@ -109,8 +103,6 @@ def extract_document_text(path: str, ext: str) -> str:
         return raw.decode(encoding, errors="replace").strip()
 
 
-def _clip_input(text: str) -> str:
-=======
 def _cap_extracted(text: str) -> str:
     text = (text or "").strip()
     if not text:
@@ -131,7 +123,6 @@ def split_document_chunks(text: str, *, chunk_size: int = CHUNK_CHARS) -> List[s
     while start < length and len(chunks) < MAX_CHUNKS:
         end = min(start + chunk_size, length)
         if end < length:
-            # Prefer breaking at paragraph, then sentence, then hard cut.
             para = text.rfind("\n\n", start, end)
             if para > start + chunk_size // 3:
                 end = para
@@ -173,8 +164,6 @@ def bundle_from_distill(data: Dict[str, Any]) -> Dict[str, str]:
     skill_md = str(data.get("skill_md") or "").strip()
     if not skill_md:
         raise SkillImportError("model output missing skill_md")
-    if "skill.md" not in skill_md.lower()[:200] and not skill_md.startswith("---"):
-=======
     if not skill_md.startswith("---"):
         raise SkillImportError("skill_md must be valid SKILL.md with frontmatter")
 
@@ -191,8 +180,6 @@ def bundle_from_distill(data: Dict[str, Any]) -> Dict[str, str]:
             continue
         safe = _safe_relpath(rel)
         if not safe.lower().endswith(".md"):
-            safe += ".md" if not safe.endswith("/") else "notes.md"
-=======
             safe = f"{safe}.md" if safe else "notes.md"
         body = content.strip()
         if not body:
@@ -236,22 +223,12 @@ def merge_bundle_parts(
 
 
 async def _llm_json(
-async def distill_document_to_bundle(
-    text: str,
-    *,
-    url: str,
-    model: str,
-    headers: Optional[dict],
-    *,
-    url: str,
-    model: str,
-    headers: Optional[dict],
-    source_name: str = "document",
-) -> Tuple[Dict[str, str], str]:
-    """LLM-distill document text into a skill file bundle. Returns (files, slug hint)."""
-=======
     system: str,
     user: str,
+    *,
+    url: str,
+    model: str,
+    headers: Optional[dict],
     max_tokens: int = 8192,
 ) -> Dict[str, Any]:
     from src.llm_core import llm_call_async

@@ -1269,7 +1269,6 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         _fire_skill_added(user)
         return {"ok": True, "skill": entry, "files": len(files)}
 
-<<<<<<< ours
     @router.post("/upload")
     async def upload_skill(request: Request):
         require_admin(request)
@@ -1342,7 +1341,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
 
         else:
             raise HTTPException(400, "Unsupported file format. Please upload a .md or .zip file.")
-=======
+
     @router.post("/import-bundle")
     async def import_skill_bundle(request: Request, file: UploadFile = File(...)):
         """Install a SKILL.md bundle from an uploaded ZIP (e.g. book-to-skill output)."""
@@ -1376,7 +1375,6 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
 
         _fire_skill_added(user)
         return {"ok": True, "skill": entry, "files": len(files)}
->>>>>>> theirs
 
     @router.post("/import-from-document")
     async def import_skill_from_document(request: Request, file: UploadFile = File(...)):
