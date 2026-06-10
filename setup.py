@@ -7,6 +7,7 @@ initial admin user. Safe to re-run (skips what already exists).
 
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -155,6 +156,255 @@ def create_env():
         print("  [warn] .env.example not found — create .env manually")
 
 
+def _prompt_choice(title, choices, default):
+    """Prompt for one choice from a small menu."""
+    print()
+    print(f"  {title}")
+    for idx, (key, label) in enumerate(choices, start=1):
+        suffix = " [default]" if key == default else ""
+        print(f"    {idx}. {label}{suffix}")
+
+    valid_numbers = {str(i): key for i, (key, _label) in enumerate(choices, start=1)}
+    valid_keys = {}
+    for key, label in choices:
+        valid_keys[key.lower()] = key
+        valid_keys[re.sub(r"[^a-z0-9]+", "", key.lower())] = key
+        valid_keys[re.sub(r"[^a-z0-9]+", "", label.lower())] = key
+    while True:
+        raw = input("  Choose: ").strip().lower()
+        raw = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", raw).strip()
+        raw = raw.rstrip(".):")
+        if not raw:
+            return default
+        if raw in valid_numbers:
+            return valid_numbers[raw]
+        if raw and raw[0] in valid_numbers and raw[1:].strip() in {"", ".", ")", ":"}:
+            return valid_numbers[raw[0]]
+        if raw in valid_keys:
+            return valid_keys[raw]
+        compact = re.sub(r"[^a-z0-9]+", "", raw)
+        if compact in valid_keys:
+            return valid_keys[compact]
+        print("  Please enter one of the listed numbers or names.")
+
+
+def _detect_render_gid():
+    """Return the host render group id used by the AMD Docker overlay."""
+    try:
+        result = subprocess.run(
+            ["getent", "group", "render"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    parts = result.stdout.strip().split(":")
+    if len(parts) >= 3 and parts[2].isdigit():
+        return parts[2]
+    return None
+
+
+def _set_env_value(text, key, value):
+    """Set an env assignment, replacing commented template values too."""
+    pattern = re.compile(rf"^(?P<prefix>\s*#?\s*){re.escape(key)}=.*$", re.MULTILINE)
+    replacement = f"{key}={value}"
+    new_text, count = pattern.subn(replacement, text, count=1)
+    if count:
+        return new_text
+    if new_text and not new_text.endswith("\n"):
+        new_text += "\n"
+    return f"{new_text}{replacement}\n"
+
+
+def _optional_requirements(path=None):
+    """Return installable requirement lines from requirements-optional.txt."""
+    path = path or os.path.join(BASE_DIR, "requirements-optional.txt")
+    if not os.path.exists(path):
+        return []
+    packages = []
+    with open(path, "r", encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            packages.append(line)
+    return packages
+
+
+def configure_optional_requirements(enabled, install_target, env_path=None):
+    """Persist or install optional dependencies for the chosen install target."""
+    env_path = env_path or os.path.join(BASE_DIR, ".env")
+    if install_target == "docker":
+        if not os.path.exists(env_path):
+            print("  [warn] .env not found — skipping optional Docker build setting")
+            return "missing-env"
+        text = open(env_path, "r", encoding="utf-8").read()
+        text = _set_env_value(text, "INSTALL_OPTIONAL", "true" if enabled else "false")
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write(text)
+        state = "enabled" if enabled else "disabled"
+        print(f"  [ok] Optional Docker dependencies {state} in .env")
+        return "updated"
+
+    if not enabled:
+        print("  [skip] Optional Python dependencies not selected")
+        return "skipped"
+
+    optional_path = os.path.join(BASE_DIR, "requirements-optional.txt")
+    if not os.path.exists(optional_path):
+        print("  [warn] requirements-optional.txt not found — skipping optional install")
+        return "missing-file"
+
+    print("  Installing optional Python dependencies...")
+    result = subprocess.run([sys.executable, "-m", "pip", "install", "-r", optional_path], check=False)
+    if result.returncode != 0:
+        print("  [warn] Optional dependency install failed; see pip output above.")
+        return "failed"
+    print("  [ok] Optional Python dependencies installed")
+    return "installed"
+
+
+def configure_docker_target(gpu_target, os_target, env_path=None, render_gid=None):
+    """Update .env for the selected Docker Compose GPU target.
+
+    CPU is intentionally a no-op: leaving GPU settings commented keeps the
+    default CPU-only Compose behavior, and avoids deleting a user's manual edits.
+    """
+    if gpu_target == "cpu":
+        print("  [skip] CPU-only selected; .env GPU settings unchanged")
+        return "skipped"
+
+    env_path = env_path or os.path.join(BASE_DIR, ".env")
+    if not os.path.exists(env_path):
+        print("  [warn] .env not found — skipping Docker GPU target configuration")
+        return "missing-env"
+
+    if gpu_target == "nvidia":
+        compose_file = (
+            "docker-compose.yml;docker/gpu.nvidia.yml"
+            if os_target == "windows"
+            else "docker-compose.yml:docker/gpu.nvidia.yml"
+        )
+        text = open(env_path, "r", encoding="utf-8").read()
+        text = _set_env_value(text, "COMPOSE_FILE", compose_file)
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write(text)
+        print(f"  [ok] NVIDIA Docker overlay enabled ({os_target})")
+        return "updated"
+
+    if gpu_target == "amd":
+        if os_target == "windows":
+            print("  [warn] AMD Docker GPU overlay is Linux/WSL2-oriented; using Linux Compose syntax.")
+        render_gid = render_gid or _detect_render_gid()
+        if not render_gid:
+            print("  [warn] Could not detect render group GID with `getent group render`.")
+            print("         Leaving RENDER_GID at the template value; update it manually if needed.")
+            render_gid = "989"
+
+        text = open(env_path, "r", encoding="utf-8").read()
+        text = _set_env_value(text, "COMPOSE_FILE", "docker-compose.yml:docker/gpu.amd.yml")
+        text = _set_env_value(text, "RENDER_GID", render_gid)
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write(text)
+        print("  [ok] AMD Docker overlay enabled")
+        print(f"       RENDER_GID={render_gid}")
+        return "updated"
+
+    print(f"  [warn] Unknown GPU target: {gpu_target}")
+    return "skipped"
+
+
+def _default_os_target():
+    return "windows" if os.name == "nt" else "linux"
+
+
+def choose_setup_profile():
+    """Prompt for OS, install mode, and hardware target."""
+    default_os = _default_os_target()
+    profile = {
+        "os": default_os,
+        "install": "docker",
+        "gpu": "cpu",
+        "optional": False,
+    }
+
+    if not sys.stdin.isatty() or os.getenv("ODYSSEUS_SKIP_SETUP_PROFILE_PROMPT"):
+        print("  [skip] Setup profile prompt skipped; defaulting to Docker CPU")
+        configure_docker_target(profile["gpu"], profile["os"])
+        configure_optional_requirements(profile["optional"], profile["install"])
+        return profile
+
+    os_target = _prompt_choice(
+        "Operating system:",
+        [
+            ("linux", "Linux / WSL2"),
+            ("windows", "Windows PowerShell / cmd"),
+        ],
+        default_os,
+    )
+    install_choices = (
+        [
+            ("docker", "Docker Compose"),
+            ("venv", "Python venv"),
+        ]
+        if os_target == "linux"
+        else [
+            ("docker", "Docker Desktop / Compose"),
+            ("local", "Local Windows launcher"),
+        ]
+    )
+    install_target = _prompt_choice("Install method:", install_choices, "docker")
+    gpu_target = _prompt_choice(
+        "Hardware target:",
+        [
+            ("cpu", "CPU only"),
+            ("nvidia", "CPU + NVIDIA GPU"),
+            ("amd", "CPU + AMD GPU"),
+        ],
+        "cpu",
+    )
+    optional_packages = _optional_requirements()
+    if optional_packages:
+        print()
+        print("  Optional dependencies available:")
+        for package in optional_packages:
+            print(f"    - {package}")
+        optional_target = _prompt_choice(
+            "Install optional dependencies too?",
+            [
+                ("no", "No"),
+                ("yes", "Yes"),
+            ],
+            "no",
+        )
+        install_optional = optional_target == "yes"
+    else:
+        print("  [warn] No optional requirements were found to list")
+        install_optional = False
+
+    profile = {
+        "os": os_target,
+        "install": install_target,
+        "gpu": gpu_target,
+        "optional": install_optional,
+    }
+    if install_target == "docker":
+        configure_docker_target(gpu_target, os_target)
+        configure_optional_requirements(install_optional, install_target)
+    elif gpu_target != "cpu":
+        print("  [info] GPU selection only changes Docker Compose .env targets.")
+        print("         Native/local installs configure GPU runtimes outside setup.py.")
+        configure_optional_requirements(install_optional, install_target)
+    else:
+        print("  [skip] Native/local CPU setup selected; .env GPU settings unchanged")
+        configure_optional_requirements(install_optional, install_target)
+    return profile
+
+
 def check_deps():
     """Check for common missing dependencies."""
     missing = []
@@ -222,6 +472,124 @@ def check_arch():
     sys.exit(1)
 
 
+def _print_command_block(title, commands):
+    print(f"\n{title}")
+    for command in commands:
+        print(f"  {command}")
+
+
+def _print_docker_install_notes(os_target):
+    print("\nDocker installation notes:")
+    print("  Recommended: install the latest Docker stable release from Docker's official docs.")
+    if os_target == "windows":
+        print("  Windows: Docker Desktop per-user install is recommended for most users.")
+        print("  Download/install: https://docs.docker.com/desktop/setup/install/windows-install/")
+        print("  Docker Desktop uses WSL 2 for the recommended per-user mode.")
+    else:
+        print("  Linux: install Docker Engine from Docker's official repository for your distro.")
+        print("  Install guide: https://docs.docker.com/engine/install/")
+        print("  Use Docker Engine's stable channel unless you intentionally need pre-release builds.")
+
+
+def _print_docker_cleanup_notes():
+    print("\nDocker cleanup commands:")
+    print("  docker compose down")
+    print("    Stops and removes this project's containers/network; keeps named volumes and images.")
+    print("  docker compose down -v")
+    print("    Also removes this project's named volumes, including Chroma/SearXNG/ntfy volumes.")
+    print("    It does not delete bind-mounted ./data or ./logs.")
+    print("  docker builder prune")
+    print("    Removes unused Docker build cache. Useful when rebuilds have eaten disk space.")
+    print("  docker image prune -a")
+    print("    Removes unused images, including old Odysseus image layers not used by containers.")
+    print("  docker system prune -a --volumes")
+    print("    Most aggressive cleanup: removes unused containers, networks, images, build cache,")
+    print("    and unused Docker volumes across Docker, not just Odysseus.")
+
+
+def print_next_steps(profile=None):
+    """Show common run/update commands after setup finishes."""
+    profile = profile or {
+        "os": _default_os_target(),
+        "install": "docker",
+        "gpu": "cpu",
+        "optional": False,
+    }
+    os_target = profile.get("os", _default_os_target())
+    install_target = profile.get("install", "docker")
+    install_optional = bool(profile.get("optional"))
+
+    print("\nNext steps:")
+    print("  Check .env before starting if you want custom install-time choices:")
+    print("    ODYSSEUS_DATA_DIR moves app data/settings/uploads to another folder.")
+    print("    INSTALL_OPTIONAL controls requirements-optional.txt for Docker builds.")
+    if install_target == "docker":
+        print("  First run is always: build/start Docker, then open localhost.")
+        if install_optional:
+            print("  Optional dependencies are enabled by INSTALL_OPTIONAL=true in .env.")
+        _print_docker_install_notes(os_target)
+        _print_command_block(
+            "Docker first run / rebuild:",
+            [
+                "docker compose build",
+                "docker compose up -d",
+                "docker compose logs -f odysseus",
+            ],
+        )
+        print("  Then open http://localhost:7000 in your browser.")
+        _print_command_block(
+            "Docker update an existing checkout:",
+            [
+                "git pull",
+                "docker compose build",
+                "docker compose up -d",
+            ],
+        )
+        print("  Then open http://localhost:7000 in your browser.")
+        _print_command_block("Docker stop active containers:", ["docker compose down"])
+        _print_docker_cleanup_notes()
+        return
+
+    if os_target == "windows":
+        _print_command_block(
+            "Native Windows local setup:",
+            [
+                r"powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1",
+            ],
+        )
+        if install_optional:
+            print("  Optional dependencies are installed by setup.py when selected.")
+        print("  Then open http://localhost:7000 in your browser.")
+        _print_command_block(
+            "Native Windows server start if venv already exists:",
+            [
+                r"venv\Scripts\Activate.ps1",
+                "python -m uvicorn app:app --host 127.0.0.1 --port 7000",
+            ],
+        )
+    else:
+        linux_commands = [
+            "python3 -m venv venv",
+            "source venv/bin/activate",
+            "pip install -r requirements.txt",
+        ]
+        if install_optional:
+            linux_commands.append("pip install -r requirements-optional.txt")
+        linux_commands.extend(
+            [
+                "python setup.py",
+                "python -m uvicorn app:app --host 127.0.0.1 --port 7000",
+            ]
+        )
+        _print_command_block(
+            "Native Linux venv setup:",
+            linux_commands,
+        )
+        print("  Then open http://localhost:7000 in your browser.")
+    print("\nSystem Python install is possible, but a venv/local launcher is recommended so")
+    print("dependencies stay isolated from your OS Python packages.")
+
+
 def main():
     print("\n=== Odysseus Setup ===\n")
 
@@ -235,17 +603,20 @@ def main():
     print("\n2. Environment file...")
     create_env()
 
-    print("\n3. Checking dependencies...")
+    print("\n3. Setup profile...")
+    setup_profile = choose_setup_profile()
+
+    print("\n4. Checking dependencies...")
     check_deps()
 
-    print("\n4. Initializing database...")
+    print("\n5. Initializing database...")
     try:
         init_database()
     except Exception as e:
         print(f"  [warn] Database init failed: {e}")
         print("         This is OK if dependencies aren't installed yet.")
 
-    print("\n5. Creating initial admin...")
+    print("\n6. Creating initial admin...")
 
     admin_status = "failed"
 
@@ -259,9 +630,7 @@ def main():
     # start-macos.sh launches the server itself (on its own port) right after
     # this, so suppress the manual hint there to avoid a contradictory URL.
     if not os.getenv("ODYSSEUS_SKIP_RUN_HINT"):
-        print(f"\nStart the server with:")
-        print(f"  python -m uvicorn app:app --host 127.0.0.1 --port 7000")
-        print(f"\nThen open http://localhost:7000")
+        print_next_steps(setup_profile)
 
     # Cleaned, action-focused final instruction strings
     if admin_status == "created":
