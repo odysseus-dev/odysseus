@@ -139,10 +139,18 @@ def cmd_export(args):
 def cmd_search(args):
     db = SessionLocal()
     try:
-        like = f"%{args.query}%"
-        rows = db.query(Document).filter(
-            (Document.title.ilike(like)) | (Document.current_content.ilike(like))
-        ).order_by(Document.updated_at.desc()).limit(args.limit).all()
+        q = db.query(Document)
+        # Split on whitespace and require EACH term to match (title OR
+        # content). A single `%foo bar%` LIKE only matched the exact
+        # adjacent phrase, so any multi-word query silently returned
+        # nothing — mirror the web route's per-term AND behaviour.
+        terms = args.query.split() or [args.query]
+        for tok in terms:
+            like = f"%{tok}%"
+            q = q.filter(
+                (Document.title.ilike(like)) | (Document.current_content.ilike(like))
+            )
+        rows = q.order_by(Document.updated_at.desc()).limit(args.limit).all()
         emit([_serialize(d) for d in rows], args)
     finally:
         db.close()
