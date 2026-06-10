@@ -262,6 +262,11 @@ _DOMAIN_RULES = {
 - Use `manage_settings` for preferences and tool enable/disable.
 - Use named tools over `app_api` when a named wrapper exists.
 - `app_api` is only for safe UI/API actions without a named tool; do not use it for shell, package installs, engine rebuilds, or sensitive auth/admin paths.""",
+    "images": """\
+## Image rules
+- Use `generate_image` to create an image from a text prompt; make ONE call per image (call it twice to produce two images).
+- Use `edit_image` for an existing gallery image (upscale, remove background, inpaint, harmonize).
+- Do NOT use memory/notes tools to fulfil an image-generation request.""",
 }
 
 _DOMAIN_TOOL_MAP = {
@@ -274,6 +279,7 @@ _DOMAIN_TOOL_MAP = {
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
     "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
+    "images": {"generate_image", "edit_image"},
 }
 
 def _domain_rules_for_tools(tool_names: set) -> list[str]:
@@ -791,6 +797,9 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("files")
     if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
         domains.add("settings")
+    if has(r"\b(images?|pictures?|photos?|drawings?|draw|sketch|illustrations?|illustrate|render|artwork|portrait|wallpaper|logo|icon|avatar)\b",
+           r"\b(generate|make|create|draw|design)\b.*\bimage", r"\b(upscale|inpaint|remove background|rembg)\b"):
+        domains.add("images")
 
     low_signal = not continuation and not domains
     return {
