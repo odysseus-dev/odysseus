@@ -15,6 +15,14 @@ venv/
 .env.bak.*
 !.env.example
 
+# SOPS-encrypted secrets are committable (secrets.env, encrypted in
+# place). Only the transient artifacts left over from manual edit/
+# decrypt sessions should be ignored — never let a fully-plaintext
+# secrets file slip through. See SECURITY.md.
+secrets.env.dec
+secrets.env.bak
+secrets.env.plain
+
 # Data — all user data stays local
 data/
 !services/hwfit/data/
