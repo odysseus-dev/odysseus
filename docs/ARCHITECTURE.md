@@ -1444,6 +1444,7 @@ graph TD
 
 
 </details>
+</details>
 
 ## Backend & Core Services
 <details>
