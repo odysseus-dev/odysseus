@@ -989,6 +989,7 @@
     <!-- Hidden elements for form logic -->
     <input type="checkbox" id="research-toggle" style="display:none;">
     <input type="checkbox" id="rag-toggle" style="display:none;">
+    <input type="checkbox" id="experts-toggle" style="display:none;">
     <input type="checkbox" id="incognito-toggle" style="display:none;">
     <input type="file" id="file-input" class="hidden" multiple />
 
@@ -1038,6 +1039,13 @@
                   <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
                 </svg>
                 <span>RAG</span>
+                <span class="overflow-active-dot"></span>
+              </button>
+              <button type="button" class="overflow-menu-item" id="overflow-experts-btn" title="Route each question to a specialist expert (Programmer, AI/ML, Defensive Security, General)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                </svg>
+                <span>Experts</span>
                 <span class="overflow-active-dot"></span>
               </button>
               <!-- Inline "deep research mode" toggle removed (superseded by the

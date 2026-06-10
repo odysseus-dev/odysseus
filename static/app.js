@@ -1766,6 +1766,33 @@ function initializeEventListeners() {
     _syncRagIndicator(ragState);
   }
 
+  // ── Experts (Auto) router toggle ──
+  // Enabling this selects the server-side "experts" preset so each message is
+  // routed to the best specialist (see src/expert_router.py). Mirrors the RAG
+  // indicator: an active dot on the overflow item + the hidden checkbox.
+  function _syncExpertsIndicator(active) {
+    const overflow = el('overflow-experts-btn');
+    const chk = el('experts-toggle');
+    if (chk) chk.checked = active;
+    if (overflow) overflow.classList.toggle('active', active);
+    if (presetsModule && presetsModule.setActivePreset) {
+      if (active) {
+        presetsModule.setActivePreset('experts');
+      } else if (presetsModule.getSelectedPreset
+                 && presetsModule.getSelectedPreset() === 'experts') {
+        presetsModule.setActivePreset(null);
+      }
+    }
+    const s = loadToggleState(); s.experts = active; saveToggleState(s);
+    updatePlusDot();
+  }
+  window._syncExpertsIndicator = _syncExpertsIndicator;
+  // Init Experts state on load
+  {
+    const st = loadToggleState();
+    _syncExpertsIndicator(st.experts || false);
+  }
+
   // ── Overflow "..." menu (Research) ──
   function updatePlusDot() {
     const plusBtn = el('overflow-plus-btn');
@@ -2185,6 +2212,16 @@ function initializeEventListeners() {
   if (ragIndicatorBtn) {
     ragIndicatorBtn.addEventListener('click', () => {
       _syncRagIndicator(false);
+    });
+  }
+
+  // ── Overflow Experts (Auto) toggle ──
+  const overflowExpertsBtn = el('overflow-experts-btn');
+  if (overflowExpertsBtn) {
+    overflowExpertsBtn.addEventListener('click', () => {
+      const chk = el('experts-toggle');
+      const isActive = chk ? !chk.checked : true;
+      _syncExpertsIndicator(isActive);
     });
   }
 
