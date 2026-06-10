@@ -84,7 +84,8 @@ def cmd_search(args) -> None:
     contacts = _contact_rows(_fetch_contacts())
     matches = [
         c for c in contacts
-        if q in (c.get("name") or "").lower() or q in (c.get("email") or "").lower()
+        if q in (c.get("name") or "").lower()
+        or any(q in (e or "").lower() for e in (c.get("emails") or []))
     ]
     emit(matches, args)
 
