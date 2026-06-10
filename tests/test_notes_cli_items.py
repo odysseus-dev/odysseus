@@ -46,3 +46,24 @@ def test_serialize_keeps_list_note_items(monkeypatch):
     )
 
     assert cli._serialize(note)["items"] == [{"text": "done"}]
+
+
+def test_serialize_skips_invalid_note_item_rows(monkeypatch):
+    cli = _load_cli(monkeypatch)
+    note = SimpleNamespace(
+        id="n1",
+        title="Checklist",
+        content="",
+        items='[{"text": "done"}, "bad", null, 3]',
+        note_type="checklist",
+        color=None,
+        label=None,
+        pinned=False,
+        archived=False,
+        due_date=None,
+        source=None,
+        created_at=None,
+        updated_at=None,
+    )
+
+    assert cli._serialize(note)["items"] == [{"text": "done"}]
