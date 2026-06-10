@@ -1008,6 +1008,11 @@ async def _startup_event():
             logger.warning(f"Tool index warmup failed (non-critical): {type(e).__name__}: {e}")
 
     _startup_tasks.append(asyncio.create_task(_warmup_tool_index()))
+    try:
+        from src.ollama_endpoint_bootstrap import ensure_ollama_endpoint_from_env
+        ensure_ollama_endpoint_from_env()
+    except Exception as e:
+        logger.warning("Ollama endpoint bootstrap skipped: %s", e)
     # Warmup: ping all known LLM endpoints to prime connections
     async def _warmup_endpoints():
         try:
