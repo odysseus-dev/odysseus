@@ -162,10 +162,21 @@ def cmd_list(args) -> None:
                 from email.utils import parseaddr, parsedate_to_datetime
                 sender_name, sender_addr = parseaddr(sender)
                 date_raw = msg.get("Date", "")
-                try:
-                    iso = parsedate_to_datetime(date_raw).isoformat() if date_raw else ""
-                except Exception:
-                    iso = ""
+                iso = ""
+                epoch = 0.0
+                if date_raw:
+                    try:
+                        _dt = parsedate_to_datetime(date_raw)
+                        # Normalise tz-naive parses to UTC so the epoch (and
+                        # thus the sort) is deterministic across hosts.
+                        if _dt.tzinfo is None:
+                            from datetime import timezone as _tz
+                            _dt = _dt.replace(tzinfo=_tz.utc)
+                        iso = _dt.isoformat()
+                        epoch = _dt.timestamp()
+                    except Exception:
+                        iso = ""
+                        epoch = 0.0
                 out.append({
                     "uid": uid.decode(),
                     "date": iso,
@@ -174,9 +185,19 @@ def cmd_list(args) -> None:
                     "subject": subject,
                     "is_read": "\\Seen" in flags,
                     "is_answered": "\\Answered" in flags,
+                    "_epoch": epoch,
                 })
             except Exception as e:
                 sys.stderr.write(f"warn: skipping uid {uid!r}: {e}\n")
+        # "Newest first": IMAP UID/arrival order is NOT date order (delayed
+        # delivery, APPEND/migration of older mail, moved messages), so the
+        # reversed-UID slice above does not guarantee newest-first. Sort by the
+        # parsed UTC epoch — mirroring the web route — so the documented order
+        # holds. (ISO-string sort would let `+02:00` beat `+00:00` at the same
+        # instant; epoch compares chronologically.)
+        out.sort(key=lambda m: m.get("_epoch") or 0.0, reverse=True)
+        for m in out:
+            m.pop("_epoch", None)
         emit(out, args)
 
 
