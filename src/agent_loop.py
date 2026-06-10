@@ -2077,13 +2077,54 @@ async def stream_agent_loop(
     # no tool_calls. The intent is sincere but the function call gets dropped.
     # Match the common phrasings + an action verb that maps to an available
     # tool, so we don't nudge on harmless transitional text like "let me
-    # know what you think".
+    # know what you think". The model mirrors the user's language (#3668),
+    # so the same announce-then-stall shape is matched for Swedish /
+    # Norwegian / Danish, German (verb-final: a bounded object gap before
+    # the infinitive), Spanish, and French as well — otherwise non-English
+    # conversations stall silently instead of getting the nudge.
     _INTENT_RE = re.compile(
-        r"(?:^|\n)\s*(?:let me|i'?ll|i will|going to|let's)\s+"
-        r"(?:tail|check|investigate|look at|see|tail|read|fetch|inspect|"
+        r"(?:^|\n)\s*"
+        r"(?:"
+        # English: intent prefix + action verb
+        r"(?:let me|i'?ll|i will|going to|let's)\s+"
+        r"(?:tail|check|investigate|look at|see|read|fetch|inspect|"
         r"verify|diagnose|examine|debug|capture|grab|pull|view|run|call|"
         r"trigger|launch|start|kick off|stop|kill|restart|adopt|serve|"
-        r"register|adopt|list|search|find|query|hit|ping|test)"
+        r"register|list|search|find|query|hit|ping|test)"
+        r"|"
+        # Swedish / Norwegian / Danish: prefix + optional adverb + verb
+        r"(?:låt (?:mig|oss)|jag ska|jag kommer att|jag tänker|nu ska (?:jag|vi)|"
+        r"la (?:meg|oss)|jeg skal|jeg kommer til å|nå skal (?:jeg|vi)|"
+        r"lad (?:mig|os)|jeg vil|nu vil (?:jeg|vi))\s+"
+        r"(?:nu\s+|nå\s+|først\s+|snabbt\s+|raskt\s+|lige\s+|bare\s+)?"
+        r"(?:kolla|kontrollera|undersöka?|titta|läsa|hämta|inspektera|"
+        r"verifiera|diagnostisera|granska|felsöka?|köra?|anropa|starta(?: om)?|"
+        r"stoppa|lista|söka?|hitta|testa|pinga?|"
+        r"sjekke|tjekke|kontrollere|undersøke|undersøge|se på|lese|læse|hente|"
+        r"inspisere|verifisere|diagnostisere|granske|feilsøke|fejlsøge|"
+        r"kjøre|køre|kalle|kalde|starte(?: om)?|genstarte|stoppe|liste|"
+        r"søke|søge|finne|finde|teste|pinge)"
+        r"|"
+        # German: prefix + bounded object gap + infinitive (verb-final)
+        r"(?:lass(?:t)? (?:mich|uns)|ich werde|jetzt werde ich)\s+"
+        r"(?:[^.\n]{0,80}?\s+)?"
+        r"(?:prüfen|überprüfen|untersuchen|ansehen|anschauen|lesen|holen|"
+        r"abrufen|inspizieren|verifizieren|diagnostizieren|debuggen|checken|"
+        r"ausführen|aufrufen|starten|neu starten|neustarten|stoppen|"
+        r"auflisten|suchen|finden|testen|pingen)"
+        r"|"
+        # Spanish: prefix + action verb
+        r"(?:déjame|dejame|déjenme|dejenme|voy a|vamos a)\s+"
+        r"(?:revisar|comprobar|verificar|investigar|mirar|leer|buscar|obtener|"
+        r"inspeccionar|diagnosticar|depurar|examinar|ejecutar|correr|lanzar|"
+        r"iniciar|reiniciar|detener|parar|listar|encontrar|consultar|probar)"
+        r"|"
+        # French: prefix + action verb
+        r"(?:laisse[- ]moi|laissez[- ]moi|je vais|on va)\s+"
+        r"(?:vérifier|examiner|enquêter|regarder|lire|récupérer|chercher|"
+        r"inspecter|valider|diagnostiquer|déboguer|exécuter|lancer|démarrer|"
+        r"redémarrer|arrêter|lister|trouver|tester|interroger|consulter)"
+        r")"
         r"\b[^.\n]{0,140}",
         re.IGNORECASE,
     )
