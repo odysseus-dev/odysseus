@@ -21,7 +21,7 @@ from core.middleware import require_admin
 logger = logging.getLogger(__name__)
 
 _PRICING_FILE = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)), "static", "data", "model_pricing.json"
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static", "data", "model_pricing.json"
 )
 
 def _load_pricing() -> Dict[str, Dict[str, float]]:
