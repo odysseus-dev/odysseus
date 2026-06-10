@@ -1598,25 +1598,23 @@ export function _hwfitInit() {
     dot.className = 'cookbook-srv-status testing';
     dot.title = 'Testing SSH…';
     setMsg('Testing SSH...');
-    const pf = port && port !== '22' ? `-p ${port} ` : '';
-    const cmd = `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new ${pf}${host} "echo ok"`;
     const t0 = Date.now();
     try {
-      const res = await fetch('/api/shell/exec', {
-        method: 'POST', credentials: 'same-origin',
+      let _remoteParams = new URLSearchParams({ host, port });
+      const res = await fetch(`/api/cookbook/test-remote?${_remoteParams}`, {
+        method: 'GET', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: cmd, timeout: 8 }),
       });
-      const data = await res.json();
+      let data = {};
+      try { data = await res.json(); } catch {}
       const ms = Date.now() - t0;
-      const out = (data.stdout || '').trim();
-      if (data.exit_code === 0 && out.startsWith('ok')) {
+      if (res.ok && data.ok) {
         dot.className = 'cookbook-srv-status ok';
         dot.title = `Reachable · ${ms} ms · use Dependencies to check tmux/HF setup`;
         setMsg(`Connected · ${ms} ms`, 'var(--green,#50fa7b)');
       } else {
         dot.className = 'cookbook-srv-status fail';
-        const err = (data.stderr || data.stdout || `exit ${data.exit_code}`).toString().trim().slice(0, 240);
+        const err = (data.error || data.detail || `HTTP ${res.status}`).toString().trim().slice(0, 240);
         dot.title = `SSH failed: ${err}`;
         setMsg(`Failed · ${err}`, 'var(--red,#e06c75)');
       }

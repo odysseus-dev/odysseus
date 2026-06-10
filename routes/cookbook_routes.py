@@ -40,7 +40,7 @@ from routes.cookbook_helpers import (
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
-    _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
+    _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd, test_server_connection,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -1631,6 +1631,27 @@ def setup_cookbook_routes() -> APIRouter:
 
         return {"ok": True, "session_id": session_id, "remote": remote or "local",
                 "endpoint_id": endpoint_id}
+
+    # ── Server connection test ──
+
+    @router.get("/api/cookbook/test-remote")
+    async def server_test(request: Request, host: str | None = None, port: str | None = None):
+        """Test remote server connectivity by specifying a host and port.
+        """
+        host = _validate_remote_host(host)
+        if not host:
+            raise HTTPException(400, "host is required")
+        port = _validate_ssh_port(port)
+
+        probe = await test_server_connection(host, port)
+        out = {
+            "ok": bool(probe.get("ok")),
+            "latency_ms": int(probe.get("latency_ms") or 0),
+        }
+        if probe.get("error"):
+            out["error"] = str(probe.get("error"))[:240]
+
+        return out
 
     # ── Server setup (install deps on remote) ──
 
