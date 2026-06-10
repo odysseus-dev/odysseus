@@ -58,9 +58,10 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              "manage_endpoints", "manage_mcp", "manage_webhooks",
              "manage_tokens", "manage_documents", "manage_settings",
              "manage_notes", "manage_calendar",
-             "resolve_contact", "manage_contact", "list_email_accounts", "send_email", "list_emails",
-             "read_email", "reply_to_email", "bulk_email", "archive_email",
-             "delete_email", "mark_email_read",
+              "resolve_contact", "manage_contact", "list_email_accounts", "send_email", "list_emails",
+              "read_email", "reply_to_email", "bulk_email", "archive_email",
+              "delete_email", "mark_email_read", "list_email_folders", "move_email", "count_emails", "download_attachment",
+              "draft_email", "draft_email_reply", "ai_draft_email_reply", "search_emails",
              # Cookbook tools (LLM serving + downloads). Without these
              # entries, native function calls to e.g. list_served_models
              # are rejected as "Unknown function call" before reaching

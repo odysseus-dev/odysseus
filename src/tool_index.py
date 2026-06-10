@@ -109,10 +109,14 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "read_email": "Read the full content of a specific email by UID or Message-ID. View email body, check details. Supports account from list_email_accounts when the UID belongs to a non-default mailbox.",
     "send_email": "Send a new email via SMTP. Provide recipient, subject, body, and optional account from list_email_accounts. For replying to a thread use reply_to_email instead.",
     "reply_to_email": "SEND a reply email immediately by UID. Do not use for open/start reply draft requests; use ui_control open_email_reply for those. For follow-up 'reply ...' send requests, use the exact UID and account from latest read_email/list_emails output; never invent UID 1. Threads automatically with In-Reply-To/References, prefixes Re:, marks original as Answered.",
-    "archive_email": "Move an email out of the inbox into the Archive folder. Use after handling messages you want to keep but get out of the way.",
+    "archive_email": "Move an email out of the inbox into the Archive folder. Use after handling messages you want to keep but get out of the way. Pass target_folder to specify the exact archive folder (e.g. INBOX.Archives.2026).",
     "delete_email": "Delete an email — moves to Trash by default, or expunges permanently with permanent=true.",
     "mark_email_read": "Mark an email as read or unread by toggling the \\Seen flag.",
-    "bulk_email": "Perform one action on many emails at once. Use for delete all those, archive these, mark all read, move spam to junk. Takes explicit UIDs from list_emails or all_unread=true. Always pass account for Gmail/work/custom mailbox results.",
+    "bulk_email": "Perform one action on many emails at once. Actions: mark_read, mark_unread, archive, move, delete, junk. For move, include target_folder. Takes explicit UIDs from list_emails or all_unread=true. Always pass account for Gmail/work/custom mailbox results.",
+    "move_email": "Move an email from any folder to any other folder. Use to restore archived emails to INBOX, or move between folders. Run list_email_folders first to discover folder names.",
+    "count_emails": "Count total or unread emails in a folder. Use for 'how many emails' — faster than list_emails when you only need a number.",
+    "list_email_folders": "List IMAP folders for an email account. Use before moving or archiving to discover the exact folder names (e.g. INBOX.Archives.2026, Sent, Trash).",
+    "search_emails": "Search emails by free-text query (sender, subject, body) across folders. Use when you need to find specific emails by keyword.",
     "resolve_contact": "Look up a contact's email address by name. Searches CardDAV address book and sent email history. Use when the user says 'message [name]', 'email [name]', or 'send to [name]' without an email address.",
     "manage_contact": "Create, update, delete, or list CardDAV contacts. Use to save a new contact, change an existing one's email/phone, or remove one. Action=list returns uids needed for update/delete. Use when the user says 'save this contact', 'add [name] to contacts', 'update [name]'s email', 'delete [name] from contacts'. Do not use for user identity facts like 'my name is <name>'; those are memory.",
     "manage_notes": "Create and manage notes and checklists (Google Keep-style). ALWAYS use this for note/todo/checklist/reminder creation — NEVER hit /api/notes via app_api. Accepts natural-language `due_date` like 'tomorrow at 9am' or '11pm today' (parsed in the USER'S timezone). The due_date IS the reminder — it fires a notification at that time, so do NOT also create a calendar event for the same reminder. Set colors, labels, pin, archive. Do NOT use manage_memory for note content.",
@@ -344,7 +348,7 @@ class ToolIndex:
         # whole email toolset and crowding out the relevant tools — the model then
         # believed it had only email tools and refused web/other tasks (#1707).
         frozenset({"email", "emails", "mail", "mails", "gmail", "googlemail", "message", "messages", "send", "reply", "replies", "inbox", "unread"}):
-            {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control"},
+            {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control", "list_email_folders", "move_email", "count_emails", "search_emails", "download_attachment", "draft_email", "draft_email_reply", "ai_draft_email_reply"},
         frozenset({"calendar", "event", "meeting", "schedule", "appointment"}):
             {"manage_calendar"},
         frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to"}):

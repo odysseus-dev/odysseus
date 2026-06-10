@@ -78,9 +78,10 @@ _AGENT_RULES = """\
 - AFTER A TOOL FAILS (timeout, error, "Unknown action", "not found"), DO NOT GO SILENT. The user expects a follow-up: either retry with a fix (e.g. correct args, longer-running form, run `tail -f /tmp/foo.log` to see progress, split into smaller steps), OR explicitly tell them "this didn't work, want me to try X instead?". A failed tool is not a stopping condition — only a successful one is.
 - YOU DECLARE WHEN THE JOB IS DONE — not a timer. Keep taking concrete steps while the task still needs them; you have plenty of rounds, so don't rush to quit just because you've made a few calls. There are exactly three ways to end a turn: (1) DONE — before you declare it, sanity-check that every concrete thing the user asked for actually exists or succeeded (file written, edit applied, command exited clean); then stop calling tools and write the final answer (that IS your "done" signal); (2) BLOCKED — you genuinely can't proceed (a capability is missing, permission denied, or data you can't obtain), so say plainly what's blocking you, in a sentence or two, and stop; (3) keep going with the single most useful next step. The only wrong moves are trailing off mid-task without one of these, and repeating a call you already ran.
 - Calendar: call `manage_calendar` with `action=list_calendars` FIRST before create/update/delete operations.
-- BULK email actions ("delete all those", "mark all as read", "archive these", "delete all spam", "mark these 19 read") → use the `bulk_email` tool ONCE with either the exact `uids` list from the latest `list_emails` result or `all_unread: true`. NEVER just say you deleted/archived/marked messages unless a delete/archive/mark/bulk email tool call succeeded. NEVER loop mark_email_read / archive_email / delete_email one message at a time — that floods the context and can blow the token budget. One bulk_email call handles the whole set.
+- BULK email actions ("delete all those", "mark all as read", "archive these", "move these 100 to archive", "delete all spam", "mark these 19 read") → use `bulk_email` ONCE with the `uids` list from `list_emails`. Actions: mark_read, mark_unread, archive, move, delete, junk. For move, include `target_folder` (discover with `list_email_folders`). NEVER loop move_email / archive_email / delete_email one message at a time — one `bulk_email` call handles the whole set.
 - Email UIDs are the values after `UID:` in tool output, not list row numbers. For example, row `1.` with `UID: 90186` must use `"90186"`, never `"1"`.
 - "Last/latest/newest email" means call `list_emails` with `max_results: 1`, `unread_only: false`, and the right `account`, then read the UID returned by that tool if full content is needed. NEVER use a table row number like "#18" as an email UID.
+- Email listing: `list_emails` has NO pagination — no page/offset/cursor/sort_by params. To list ALL emails, use `count_emails` first to get the total, then set `max_results` to that number. Do NOT try page=2 or offset=100.
 - Plain "list/show/check my inbox/emails" means latest inbox mail, including read messages. Do not set `unread_only: true` unless the user explicitly asks for unread/needs attention.
 - Multiple email accounts: if tool output says "Other accounts" or the user asks "my Gmail?", "other inbox?", "work mail?", "custom domain mail?", or names any mailbox/account, DO NOT answer from memory. Call `list_email_accounts` if needed, then call `list_emails`/`read_email`/`bulk_email` with the exact `account` value for that mailbox. Account names are user-defined labels; if the user typo-matches a known account, use the closest listed account instead of claiming it does not exist. NEVER use `app_api` or `/api/email/accounts` to discover email accounts; that route is owner-filtered in tool context and can falsely return empty.
 - User identity facts/preferences ("my name is <name>", "I live in <place>", "I prefer concise replies", "call me <name>") → use `manage_memory` with action=add. NEVER use `manage_contact` for facts about the user unless the user explicitly says to create/update a contact and provides contact details such as an email or phone.
@@ -134,6 +135,7 @@ _API_AGENT_RULES = """\
 - Bulk email actions ("delete all those", "archive these", "mark all read") require a real email tool call. Use `bulk_email` once with UIDs from the latest `list_emails` result and the same `account`; never claim success without the tool result.
 - Email UIDs are the values after `UID:` in tool output, not list row numbers. For example, row `1.` with `UID: 90186` must use `"90186"`, never `"1"`.
 - "Last/latest/newest email" means call `list_emails` with `max_results: 1`, `unread_only: false`, and the right `account`, then read the UID returned by that tool if full content is needed. NEVER use a table row number like "#18" as an email UID.
+- Email listing: `list_emails` has NO pagination — no page/offset/cursor/sort_by params. To list ALL emails, use `count_emails` first to get the total, then set `max_results` to that number. Do NOT try page=2 or offset=100.
 - Plain "list/show/check my inbox/emails" means latest inbox mail, including read messages. Do not set `unread_only: true` unless the user explicitly asks for unread/needs attention.
 - Multiple email accounts: if tool output says "Other accounts" or the user asks "my Gmail?", "other inbox?", "work mail?", "custom domain mail?", or names any mailbox/account, DO NOT answer from memory or infer it is the same inbox. Call `list_email_accounts` if needed, then call `list_emails`/`read_email`/`bulk_email` with the exact `account` value for that mailbox. Account names are user-defined labels; if the user typo-matches a known account, use the closest listed account instead of claiming it does not exist. NEVER use `app_api` or `/api/email/accounts` to discover email accounts; that route is owner-filtered in tool context and can falsely return empty.
 - User identity facts/preferences ("my name is <name>", "I live in <place>", "I prefer concise replies", "call me <name>") → use `manage_memory` with action=add. NEVER use `manage_contact` for facts about the user unless the user explicitly says to create/update a contact and provides contact details such as an email or phone.
@@ -267,7 +269,7 @@ _DOMAIN_RULES = {
 _DOMAIN_TOOL_MAP = {
     "web": {"web_search", "web_fetch", "trigger_research", "manage_research"},
     "documents": {"create_document", "edit_document", "update_document", "suggest_document", "manage_documents"},
-    "email": {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "archive_email", "delete_email", "mark_email_read", "resolve_contact", "manage_contact"},
+    "email": {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "archive_email", "delete_email", "mark_email_read", "resolve_contact", "manage_contact", "list_email_folders", "move_email", "count_emails", "search_emails", "download_attachment", "draft_email", "draft_email_reply", "ai_draft_email_reply"},
     "cookbook": {"download_model", "serve_model", "serve_preset", "list_serve_presets", "list_served_models", "stop_served_model", "tail_serve_output", "list_downloads", "cancel_download", "search_hf_models", "list_cached_models", "list_cookbook_servers", "adopt_served_model"},
     "notes_calendar_tasks": {"manage_notes", "manage_calendar", "manage_tasks"},
     "ui": {"ui_control"},
@@ -419,23 +421,67 @@ Notes, checklists, AND user reminders. Use this for "create/add/write a note", t
 Send a new email via SMTP. Use `resolve_contact` first if you only have a name. If multiple email accounts exist, call `list_email_accounts` first and pass the chosen `account`.""",
     "list_emails": """\
 ```list_emails
-{"folder": "INBOX", "max_results": 20, "unread_only": false, "account": "gmail"}
+{"folder": "INBOX", "max_results": 500, "unread_only": false}
 ```
-List recent emails from a folder, newest first, including read messages by default. Use `list_email_accounts` first when the user names a mailbox/account, then pass `account`. For "last/latest/newest email", call with `max_results: 1` and `unread_only: false`.""",
-    "read_email": "- ```read_email``` — Read a specific email by UID. Args (JSON): {\"uid\": \"...\", \"folder\": \"INBOX\", \"account\": \"gmail\"}. Include `account` when the UID came from a named/non-default mailbox.",
+List emails from a folder, newest first. There is NO pagination — no page/offset/cursor params. To list ALL emails, set max_results to the total count (use `count_emails` first to get the total). Default max_results is 20 which only shows the latest batch. The `account` field is OPTIONAL — omit it to use the default account. Only pass it when the user names a specific mailbox. For folder discovery, use `list_email_folders`.""",
+    "count_emails": """\
+```count_emails
+{"folder": "INBOX", "unread_only": false}
+```
+Count emails in a folder (total or unread). The `account` field is OPTIONAL — omit it to use the default account. Use for "how many emails do I have?" / "how many unread?" / "how many left in inbox?" — much faster than list_emails when only a count is needed.""",
+    "list_email_folders": """\
+```list_email_folders
+{}
+```
+List IMAP folders for the default account (pass `account` only when the user explicitly named a non-default mailbox). Use FIRST when you need to move, archive, or browse a specific folder (e.g. "INBOX.Archives.2026"). Returns the exact folder names the IMAP server exposes.""",
+    "move_email": """\
+```move_email
+{"uid": "288", "source_folder": "INBOX.Archives.2026", "target_folder": "INBOX"}
+```
+Move an email from any folder to any other folder. `account` is OPTIONAL — omit to use the default account. Use to restore archived emails back to INBOX, or to relocate between folders. Run `list_email_folders` first to discover valid folder names.""",
+    "search_emails": """\
+```search_emails
+{"query": "neuchastores", "folder": "INBOX.Archives.2026", "max_results": 20}
+```
+Search emails by text query in a folder. Walks INBOX + Sent + Archive by default. `account` is OPTIONAL. Use to find specific messages (by sender, subject, body).""",
+    "download_attachment": """\
+```download_attachment
+{"uid": "1234", "index": 0, "folder": "INBOX"}
+```
+Download an email attachment to disk. `index` is from `read_email`'s attachments list. `account` is OPTIONAL. Returns the local file path — read it with `read_file`.""",
+    "draft_email": """\
+```draft_email
+{"to": "user@example.com", "subject": "Re: x", "body": "Hi, ..."}
+```
+Create an Odysseus draft document (does NOT send). The user opens it in the editor and clicks Send. `account` is OPTIONAL.""",
+    "draft_email_reply": """\
+```draft_email_reply
+{"uid": "1234", "body": "Hi, ..."}
+```
+Create a draft reply to an email (does NOT send). The user opens it in the editor and clicks Send. `account` is OPTIONAL.""",
+    "ai_draft_email_reply": """\
+```ai_draft_email_reply
+{"uid": "1234"}
+```
+Generate an AI-drafted reply (uses the saved writing style) and open it as an Odysseus compose draft (does NOT send). The user reviews it in the editor. `account` is OPTIONAL.""",
+    "read_email": "- ```read_email``` — Read a specific email by UID. Args (JSON): {\"uid\": \"...\", \"folder\": \"INBOX\"}. `account` is OPTIONAL — only pass it if the UID came from a named/non-default mailbox.",
     "reply_to_email": """\
 ```reply_to_email
-{"uid": "1234", "body": "Sounds good — talk Friday.", "account": "gmail"}
+{"uid": "1234", "body": "Sounds good — talk Friday."}
 ```
-SEND a reply email immediately by UID. Do not use this for "open a reply" or "start a reply" — those should use `ui_control` with `open_email_reply <uid> <folder> reply` to open the email draft document. For follow-up requests like "reply ..." after reading/listing email where the user clearly wants to send now, use the exact UID and account from the latest `read_email`/`list_emails` result. Never invent UID `1`. Threads automatically (In-Reply-To/References handled).""",
+SEND a reply email immediately by UID. `account` is OPTIONAL — only pass it when the UID came from a non-default mailbox. Do not use this for "open a reply" or "start a reply" — those should use `ui_control` with `open_email_reply <uid> <folder> reply` to open the email draft document. For follow-up requests like "reply ..." after reading/listing email where the user clearly wants to send now, use the exact UID from the latest `read_email`/`list_emails` result. Never invent UID `1`. Threads automatically (In-Reply-To/References handled).""",
     "bulk_email": """\
 ```bulk_email
-{"action": "delete", "uids": ["10997", "10998"], "folder": "INBOX", "account": "Gmail"}
+{"action": "move", "uids": ["10997", "10998"], "folder": "INBOX", "target_folder": "INBOX.Archives.2026"}
 ```
-Bulk delete/archive/mark emails. Use this for "delete all those" after listing emails. Pass the exact UIDs and the same account from the list result, then report only the tool result.""",
-    "delete_email": "- ```delete_email``` — Delete one email by UID. Args (JSON): {\"uid\":\"...\", \"folder\":\"INBOX\", \"account\":\"Gmail\"}. For multiple messages use bulk_email.",
-    "archive_email": "- ```archive_email``` — Archive one email by UID. Args (JSON): {\"uid\":\"...\", \"folder\":\"INBOX\", \"account\":\"Gmail\"}. For multiple messages use bulk_email.",
-    "mark_email_read": "- ```mark_email_read``` — Mark one email read/unread. Args (JSON): {\"uid\":\"...\", \"read\":true, \"folder\":\"INBOX\", \"account\":\"Gmail\"}. For multiple messages use bulk_email.",
+Bulk action on many emails at once. Actions: mark_read, mark_unread, archive, move, delete, junk. For move, you MUST pass target_folder. For archive, the configured archive folder is used. `account` is OPTIONAL. Pass the exact UIDs from `list_emails` — UIDs are strings like "10997", NOT row numbers. For bulk move/archive of 10+ emails, ALWAYS prefer bulk_email over calling move_email/archive_email repeatedly.""",
+    "delete_email": "- ```delete_email``` — Delete one email by UID. Args (JSON): {\"uid\":\"...\", \"folder\":\"INBOX\"}. `account` is OPTIONAL. For multiple messages use bulk_email.",
+    "archive_email": """\
+```archive_email
+{"uid": "1234", "folder": "INBOX", "target_folder": "INBOX.Archives.2026"}
+```
+Archive one email by UID. `target_folder` is optional — if omitted, the configured default archive folder is used. Run `list_email_folders` first to discover the exact archive folder name (e.g. "INBOX.Archives.2026"). `account` is OPTIONAL. For multiple messages use bulk_email.""",
+    "mark_email_read": "- ```mark_email_read``` — Mark one email read/unread. Args (JSON): {\"uid\":\"...\", \"read\":true, \"folder\":\"INBOX\"}. `account` is OPTIONAL. For multiple messages use bulk_email.",
     "resolve_contact": "- ```resolve_contact``` — Look up a contact's email by name. Searches CardDAV address book + sent email history. Args (JSON): {\"name\": \"...\"}. Use BEFORE send_email when the user gives only a name.",
     "manage_contact": "- ```manage_contact``` — Create/update/delete/list CardDAV contacts. Args (JSON): {\"action\": \"list|add|update|delete\", \"name\": \"...\", \"email\": \"...\", \"uid\": \"...\"}. Use only for explicit address-book/contact requests with contact details. Do NOT use for user identity facts like 'my name is <name>'; save those with manage_memory. For update/delete, call action=list first to get the uid.",
     "manage_calendar": """\
@@ -767,7 +813,9 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
 
     if has(r"\b(cookbook|serve|serving|served|launch|start|preset|vllm|sglang|llama\.?cpp|ollama|download|downloading|pull|cached models?|running models?|model servers?|models? (?:are )?running|what models?|model picker|gpu box|kierkegaard|odysseus|ajax|qwen|gemma|llama|mistral|minimax)\b"):
         domains.add("cookbook")
-    if has(r"\b(emails?|mails?|gmail|inbox|reply|forward|cc|bcc|send email|compose email|draft email|message chris|message him|message her)\b"):
+    if has(r"\b(emails?|mails?|gmail|inbox|reply|forward|cc|bcc|send email|compose email|draft email|message chris|message him|message her|mail account|email account|list folders)\b"):
+        domains.add("email")
+    if has(r"\b(folder|folders)\b") and has(r"\b(mail|email|inbox|archive|account|work|personal)\b"):
         domains.add("email")
     if has(r"\b(note|todo|to-do|checklist|task list|remind me|reminder|buy|pickup|pick up)\b"):
         domains.add("notes_calendar_tasks")
@@ -1027,12 +1075,16 @@ def _build_system_prompt(
     _EMAIL_TOOL_HINTS = {
         "list_email_accounts", "send_email", "reply_to_email", "list_emails", "read_email",
         "bulk_email", "archive_email", "delete_email", "mark_email_read",
+        "list_email_folders", "move_email", "count_emails", "search_emails",
+        "download_attachment", "draft_email", "draft_email_reply", "ai_draft_email_reply",
         "resolve_contact", "ui_control",
         "mcp__email__list_email_accounts",
         "mcp__email__send_email", "mcp__email__reply_to_email",
         "mcp__email__list_emails", "mcp__email__read_email",
         "mcp__email__bulk_email", "mcp__email__archive_email",
         "mcp__email__delete_email", "mcp__email__mark_email_read",
+        "mcp__email__list_email_folders", "mcp__email__move_email",
+        "mcp__email__count_emails", "mcp__email__search_emails",
     }
     if active_document and active_document.language == "email":
         _inject_style = True
@@ -1190,6 +1242,34 @@ def _build_system_prompt(
                     _skills_message = None
         except Exception as _sk_err:
             logger.debug(f"skill injection failed (non-fatal): {_sk_err}")
+
+    # When skills reference tools not yet in the prompt, append their
+    # TOOL_SECTIONS descriptions so the model sees usable examples in
+    # the trusted system prompt — even if the skill content itself is
+    # untrusted.  This prevents models from hallucinating tool names
+    # (e.g. manage_email) that they read in the untrusted skill block.
+    if relevant_skills:
+        _included = set(TOOL_SECTIONS.keys()) & (relevant_tools or set())
+        _skill_tool_names = set()
+        _tool_name_re = __import__("re").compile(r"[a-z_]+(?:_[a-z_]+)+|[a-z]+_[a-z]+")
+        for _sk in relevant_skills:
+            for _field in ("procedure", "pitfalls", "when_to_use", "description"):
+                _text = _sk.get(_field) or ""
+                if isinstance(_text, list):
+                    _text = " ".join(str(s) for s in _text)
+                for _m in _tool_name_re.finditer(str(_text)):
+                    _candidate = _m.group(0)
+                    if _candidate in TOOL_SECTIONS and _candidate not in _included:
+                        _skill_tool_names.add(_candidate)
+        if _skill_tool_names:
+            _extra_sections = []
+            for _tn in sorted(_skill_tool_names):
+                _sec = _section_text(_tn, TOOL_SECTIONS[_tn])
+                if _sec:
+                    _extra_sections.append(_sec)
+            if _extra_sections:
+                agent_prompt += "\n\n## Tools referenced by matched skills\n" + "\n\n".join(_extra_sections)
+                _included |= _skill_tool_names
 
     agent_msg = {"role": "system", "content": agent_prompt}
     insert_idx = 0

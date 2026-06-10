@@ -1212,7 +1212,9 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         return ToolBlock(tool_type, content)
     # Email tools are implemented as MCP — route them to email
     _BUILTIN_EMAIL_TOOLS = {"list_email_accounts", "send_email", "list_emails", "read_email", "reply_to_email",
-                            "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment"}
+                            "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment",
+                            "draft_email", "draft_email_reply", "ai_draft_email_reply", "search_emails",
+                            "list_email_folders", "move_email", "count_emails"}
     if name in _BUILTIN_EMAIL_TOOLS:
         return ToolBlock(f"mcp__email__{name}", json.dumps(args) if args else "{}")
     if tool_type not in TOOL_TAGS:

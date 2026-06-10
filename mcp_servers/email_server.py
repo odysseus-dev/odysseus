@@ -23,6 +23,9 @@ import os.path
 from pathlib import Path
 from datetime import datetime, timedelta
 import uuid
+import logging
+
+logger = logging.getLogger(__name__)
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -150,7 +153,10 @@ def _list_accounts_raw() -> list:
 def _resolve_account(selector: str | None) -> dict | None:
     """Given a selector (None = default, or a name/user/id string), return the
     matching row or None. Matching is case-insensitive substring on name +
-    imap_user + from_address, plus exact id match."""
+    imap_user + from_address, plus exact id match.
+
+    Also accepts display forms like "Name <user@host>" by splitting on '<' /
+    whitespace and matching the bare name (most common in tool output)."""
     rows = _list_accounts_raw()
     if not rows:
         return None
@@ -159,14 +165,35 @@ def _resolve_account(selector: str | None) -> dict | None:
             if r.get("is_default"):
                 return r
         return rows[0]
-    sel = selector.strip().lower()
+    sel = selector.strip()
+    sel_l = sel.lower()
     # Exact id match first
     for r in rows:
         if r["id"] == selector:
             return r
+    # Direct substring match on any field
     for r in rows:
         fields = [r.get("name") or "", r.get("imap_user") or "", r.get("from_address") or ""]
-        if any(sel in (f or "").lower() for f in fields):
+        if any(sel_l in (f or "").lower() for f in fields):
+            return r
+    # Strip "<...>" and trailing email-style suffix from selector, then retry.
+    # "Personnal <mat@bgn.ch>" → "Personnal"; "Personnal mat@bgn.ch" → "Personnal".
+    import re as _re
+    bare = _re.sub(r"\s*<[^>]*>\s*", " ", sel).strip()
+    bare = _re.sub(r"\s+[\w.+-]+@[\w.-]+\s*$", "", bare).strip()
+    if bare and bare.lower() != sel_l:
+        for r in rows:
+            fields = [r.get("name") or "", r.get("imap_user") or "", r.get("from_address") or ""]
+            for f in fields:
+                fl = (f or "").lower()
+                # Match bare against the leading word of name too
+                if bare.lower() in fl or fl.startswith(bare.lower() + " ") or fl == bare.lower():
+                    return r
+    # First-token of selector vs first-token of name (handles "gmail" / "Personnal")
+    first_tok = sel_l.split()[0] if sel_l.split() else sel_l
+    for r in rows:
+        name_l = (r.get("name") or "").lower()
+        if name_l and (name_l == first_tok or name_l.startswith(first_tok + " ")):
             return r
     try:
         from difflib import get_close_matches
@@ -178,7 +205,7 @@ def _resolve_account(selector: str | None) -> dict | None:
                     val = str(field).lower()
                     candidates.append(val)
                     by_candidate[val] = r
-        close = get_close_matches(sel, candidates, n=1, cutoff=0.72)
+        close = get_close_matches(sel_l, candidates, n=1, cutoff=0.72)
         if close:
             return by_candidate.get(close[0])
     except Exception:
@@ -388,14 +415,33 @@ def _resolve_folder(conn, preferred: str, role: str) -> str:
                 return name
 
     candidates = {
-        "trash": ("Trash", "[Gmail]/Trash", "[Google Mail]/Trash", "Bin", "Deleted Messages", "Deleted Items"),
-        "archive": ("Archive", "Archives", "[Gmail]/All Mail", "[Google Mail]/All Mail"),
-        "junk": ("Junk", "Spam", "[Gmail]/Spam", "[Google Mail]/Spam"),
+        "trash": ("Trash", "[Gmail]/Trash", "[Google Mail]/Trash", "Bin", "Deleted Messages", "Deleted Items",
+                  "INBOX.Trash"),
+        "archive": ("Archive", "Archives", "[Gmail]/All Mail", "[Google Mail]/All Mail",
+                     "INBOX.Archive", "INBOX.Archives"),
+        "junk": ("Junk", "Spam", "[Gmail]/Spam", "[Google Mail]/Spam", "INBOX.Junk", "INBOX.Spam"),
     }.get(role, ())
     lower_map = {n.lower(): n for n in names}
     for candidate in candidates:
         if candidate.lower() in lower_map:
             return lower_map[candidate.lower()]
+    # Substring match: providers like OVH use INBOX.Archives.2026 etc.
+    # If no exact candidate match, look for a folder whose name contains
+    # the candidate (case-insensitive).  Prefer the current year's folder.
+    import datetime as _dt
+    _year = str(_dt.datetime.now().year)
+    for candidate in candidates:
+        cl = candidate.lower()
+        # First try to match current-year archive (e.g. "Archives" in "INBOX.Archives.2026")
+        for real_name in names:
+            rl = real_name.lower()
+            if cl in rl and _year in rl:
+                return real_name
+        # Fall back to first substring match
+        for real_name in names:
+            rl = real_name.lower()
+            if cl in rl:
+                return real_name
     return preferred
 
 
@@ -1425,34 +1471,69 @@ def _search_uids(folder="INBOX", criteria="UNSEEN", account=None):
 
 
 def _move_message(uid, source_folder, dest_folder, account=None, role: str = ""):
-    """Move a message between folders. Tries IMAP MOVE, falls back to copy+delete."""
+    """Move a message between folders. Tries IMAP MOVE, falls back to copy+delete.
+    Auto-creates the destination folder if it doesn't exist."""
+    logger.info(f"_move_message uid={uid} src={source_folder} dst={dest_folder} role={role}")
     conn = _imap_connect(account)
-    conn.select(_q(source_folder))
     try:
+        sel_status, _ = conn.select(_q(source_folder))
+        if sel_status != "OK":
+            logger.warning(f"_move_message: cannot select source folder {source_folder!r}: {sel_status}")
+            return False
         dest_folder = _resolve_folder(conn, dest_folder, role or _folder_role_from_name(dest_folder))
+        # Same-folder: nothing to do, report success
+        if dest_folder == source_folder:
+            logger.info(f"_move_message: dest == source ({source_folder}), no-op")
+            return True
+        # Auto-create destination folder if missing
+        try:
+            status, folders = conn.list(f'"{dest_folder}"')
+            if status != "OK" or not folders or not any(
+                _folder_name_from_list_line(f) == dest_folder for f in folders
+            ):
+                logger.info(f"_move_message: creating missing folder {dest_folder!r}")
+                create_status, _ = conn.create(_q(dest_folder))
+                if create_status == "OK":
+                    logger.info(f"_move_message: created folder {dest_folder!r}")
+                else:
+                    logger.warning(f"_move_message: failed to create folder {dest_folder!r}: {create_status}")
+        except Exception as e:
+            logger.warning(f"_move_message: folder existence check failed for {dest_folder!r}: {e}")
         try:
             status, data = conn.uid("FETCH", _b(uid), "(UID)")
-        except Exception:
+        except Exception as e:
+            logger.warning(f"_move_message: FETCH failed for uid={uid}: {e}")
             return False
         existing = _uid_fetch_rows(data)
         if status != "OK" or not existing:
+            logger.warning(f"_move_message: UID {uid} not found in {source_folder!r}")
             return False
         dest_arg = _q(dest_folder)
-        status, _ = conn.uid("MOVE", _b(uid), dest_arg)
+        status, move_data = conn.uid("MOVE", _b(uid), dest_arg)
         if status == "OK":
+            logger.info(f"_move_message: MOVE uid={uid} to {dest_folder!r} OK")
             return True
+        logger.warning(f"_move_message: MOVE uid={uid} to {dest_folder!r} failed ({status}), trying COPY+DELETE")
         # Fallback: UID copy + delete
         status, _ = conn.uid("COPY", _b(uid), dest_arg)
         if status != "OK":
+            logger.warning(f"_move_message: COPY uid={uid} to {dest_folder!r} also failed ({status})")
             return False
         status, _ = conn.uid("STORE", _b(uid), "+FLAGS", "\\Deleted")
         if status != "OK":
+            logger.warning(f"_move_message: STORE \\Deleted for uid={uid} failed ({status})")
             return False
         conn.expunge()
-        ok = True
+        logger.info(f"_move_message: COPY+DELETE uid={uid} to {dest_folder!r} OK")
+        return True
+    except Exception as e:
+        logger.error(f"_move_message: unexpected error uid={uid} src={source_folder} dst={dest_folder}: {e}")
+        return False
     finally:
-        conn.logout()
-    return ok
+        try:
+            conn.logout()
+        except Exception:
+            pass
 
 
 def _delete_email(uid, folder="INBOX", permanent=False, account=None):
@@ -1463,10 +1544,11 @@ def _delete_email(uid, folder="INBOX", permanent=False, account=None):
     return _move_message(uid, folder, cfg["trash_folder"], account=account, role="trash")
 
 
-def _archive_email(uid, folder="INBOX", account=None):
-    """Move an email to the archive folder."""
+def _archive_email(uid, folder="INBOX", account=None, target_folder=None):
+    """Move an email to the archive folder, or to `target_folder` if given."""
     cfg = _load_config(account)
-    return _move_message(uid, folder, cfg["archive_folder"], account=account, role="archive")
+    dest = target_folder or cfg["archive_folder"]
+    return _move_message(uid, folder, dest, account=account, role="archive")
 
 
 def _download_attachment(uid, index, folder="INBOX", account=None):
@@ -1504,8 +1586,8 @@ async def list_tools() -> list[Tool]:
     ACCOUNT_PROP = {
         "account": {
             "type": "string",
-            "description": "Which email account to use (name, email, or id). "
-                           "Omit to use the default account. Use list_email_accounts to discover available accounts.",
+            "description": "Which email account to use. Pass the account id from list_email_accounts, "
+                           "or the account name/email. Omit to use the default account.",
         },
     }
     return [
@@ -1519,12 +1601,30 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
+            name="list_email_folders",
+            description=(
+                "List IMAP folders for an email account. Returns folder names and "
+                "flags so you can see which folders exist (Archive, Sent, Trash, etc.). "
+                "Use this to discover available folders before moving or archiving emails."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    **ACCOUNT_PROP,
+                },
+                "required": [],
+            },
+        ),
+        Tool(
             name="list_emails",
             description=(
-                "List unread or unresponded emails from the inbox. "
-                "Returns subject, sender, date, and cached AI summary for each. "
-                "Use this to check what emails need attention. "
-                "Pass `account` to scan a non-default mailbox."
+                "List emails in any folder (defaults to INBOX). Returns subject, sender, date, "
+                "and cached AI summary for each. Use to check unread mail in the inbox, browse "
+                "archive folders, or review any folder discovered via list_email_folders. "
+                "Pass `folder` to scan a specific folder (e.g. 'INBOX.Archives.2026'). "
+                "Pass `account` to scan a non-default mailbox. "
+                "IMPORTANT: there is no pagination. To list all emails, set max_results to the "
+                "total count (e.g. max_results=500). Do NOT use page, offset, or cursor params."
             ),
             inputSchema={
                 "type": "object",
@@ -1536,7 +1636,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": "Maximum number of emails to return (default: 20)",
+                        "description": "Maximum number of emails to return (default: 20). Set high (e.g. 500) to list all emails. There is NO pagination — use count_emails first to get the total, then set max_results accordingly.",
                         "default": 20,
                     },
                     "unresponded_only": {
@@ -1549,6 +1649,24 @@ async def list_tools() -> list[Tool]:
                         "description": "Only show unread emails. Default false so latest/all inbox requests match normal mail clients.",
                         "default": False,
                     },
+                    **ACCOUNT_PROP,
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="count_emails",
+            description=(
+                "Count emails in a folder matching optional filters (e.g. unread, all). "
+                "Use this to check how many emails remain in INBOX or an archive folder "
+                "before/after bulk operations. Faster than list_emails when you only need "
+                "a count."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "folder": {"type": "string", "description": "IMAP folder (default: INBOX)", "default": "INBOX"},
+                    "unread_only": {"type": "boolean", "description": "Count only unread emails (default: false)", "default": False},
                     **ACCOUNT_PROP,
                 },
                 "required": [],
@@ -1686,15 +1804,30 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="archive_email",
-            description="Move an email out of the inbox into the Archive folder. Use after handling an email you want to keep but no longer need in the inbox.",
+            description="Move an email out of the inbox into the Archive folder. Use after handling an email you want to keep but no longer need in the inbox. Use list_email_folders first to discover the archive folder name (e.g. 'INBOX.Archives.2026').",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "uid": {"type": "string", "description": "Email UID from list_emails"},
                     "folder": {"type": "string", "description": "Source folder (default: INBOX)", "default": "INBOX"},
+                    "target_folder": {"type": "string", "description": "Destination folder. If omitted, uses the configured archive_folder. Use the exact name from list_email_folders (e.g. 'INBOX.Archives.2026')."},
                     **ACCOUNT_PROP,
                 },
                 "required": ["uid"],
+            },
+        ),
+        Tool(
+            name="move_email",
+            description="Move an email from one folder to another. Use to restore an archived email back to INBOX, or relocate to any folder. Run list_email_folders first to discover valid folder names.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "uid": {"type": "string", "description": "Email UID"},
+                    "source_folder": {"type": "string", "description": "Source folder (default: INBOX)", "default": "INBOX"},
+                    "target_folder": {"type": "string", "description": "Destination folder (e.g. 'INBOX', 'INBOX.Archives.2026')"},
+                    **ACCOUNT_PROP,
+                },
+                "required": ["uid", "target_folder"],
             },
         ),
         Tool(
@@ -1729,18 +1862,18 @@ async def list_tools() -> list[Tool]:
             name="bulk_email",
             description=(
                 "Perform one action on MANY emails at once — the efficient way to "
-                "'mark all as read', 'archive these', 'delete all spam', etc. Select "
+                "'mark all as read', 'archive these', 'move these to Archived', 'delete all spam', etc. Select "
                 "messages either by an explicit `uids` list OR by `all_unread: true` "
                 "(operates on every unread message in the folder). Far better than "
-                "calling mark_email_read / archive_email once per message."
+                "calling archive_email / move_email / delete_email once per message."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["mark_read", "mark_unread", "archive", "delete", "junk"],
-                        "description": "What to do to every selected message.",
+                        "enum": ["mark_read", "mark_unread", "archive", "move", "delete", "junk"],
+                        "description": "What to do to every selected message. 'move' requires target_folder.",
                     },
                     "uids": {
                         "type": "array",
@@ -1753,6 +1886,7 @@ async def list_tools() -> list[Tool]:
                         "default": False,
                     },
                     "folder": {"type": "string", "description": "IMAP folder", "default": "INBOX"},
+                    "target_folder": {"type": "string", "description": "Destination folder for 'move' action (required when action=move). Use list_email_folders to discover names."},
                     "permanent": {"type": "boolean", "description": "For delete: expunge instead of moving to Trash.", "default": False},
                     **ACCOUNT_PROP,
                 },
@@ -1835,11 +1969,51 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 lines.append(
                     f"- **{r['name']}**{star}\n"
                     f"  email: {r.get('imap_user') or r.get('from_address') or '(unknown)'}\n"
-                    f"  id: {r['id']}"
+                    f"  account: {r['id']}"
                 )
             return [TextContent(type="text", text="\n".join(lines))]
 
-        acct = arguments.get("account")  # consumed by all email ops
+        if name == "list_email_folders":
+            acct_fld = arguments.get("account") or arguments.get("account_id")
+            try:
+                conn = _imap_connect(acct_fld)
+                try:
+                    status, folders = conn.list()
+                    if status != "OK" or not folders:
+                        return [TextContent(type="text", text="No folders found.")]
+                    lines = [f"Found {len(folders)} folder(s):\n"]
+                    for f in folders:
+                        decoded = f.decode() if isinstance(f, bytes) else str(f)
+                        folder_name = _folder_name_from_list_line(f) or "(unknown)"
+                        flags = ""
+                        if "\\" in decoded.split(folder_name)[0] if folder_name in decoded else False:
+                            flag_part = decoded.split('"')[1] if '"' in decoded else ""
+                            if flag_part:
+                                flags = f" [{flag_part}]"
+                        lines.append(f"- {folder_name}{flags}")
+                    return [TextContent(type="text", text="\n".join(lines))]
+                finally:
+                    conn.logout()
+            except Exception as e:
+                return [TextContent(type="text", text=f"Error listing folders: {e}")]
+
+        acct = arguments.get("account") or arguments.get("account_id")  # consumed by all email ops
+
+        # Coerce numeric UID/index values to strings — local models using YAML
+        # often pass uid: 34546 (int) but the schema expects a string.
+        for _coerce_key in ("uid", "index"):
+            if _coerce_key in arguments and isinstance(arguments[_coerce_key], int):
+                arguments[_coerce_key] = str(arguments[_coerce_key])
+        # Also coerce uid lists in bulk_email
+        if "uids" in arguments and isinstance(arguments["uids"], list):
+            arguments["uids"] = [str(u) if isinstance(u, int) else u for u in arguments["uids"]]
+
+        if name == "count_emails":
+            folder = arguments.get("folder", "INBOX")
+            unread_only = arguments.get("unread_only", False)
+            criteria = "UNSEEN" if unread_only else "ALL"
+            uids = _search_uids(folder=folder, criteria=criteria, account=acct)
+            return [TextContent(type="text", text=f"Folder {folder!r} contains {len(uids)} {'unread' if unread_only else 'total'} email(s).")]
 
         if name == "list_emails":
             max_results = arguments.get("max_results", arguments.get("limit", 20))
@@ -2108,8 +2282,22 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             uid = arguments.get("uid")
             if not uid:
                 return [TextContent(type="text", text="Error: uid is required")]
-            ok = _archive_email(uid, arguments.get("folder", "INBOX"), account=acct)
-            return [TextContent(type="text", text=f"{'Archived' if ok else 'Failed to archive'} UID {uid}")]
+            target = arguments.get("target_folder")
+            ok = _archive_email(uid, arguments.get("folder", "INBOX"), account=acct, target_folder=target)
+            dest_note = f" to {target}" if target else ""
+            return [TextContent(type="text", text=f"{'Archived' if ok else 'Failed to archive'} UID {uid}{dest_note}")]
+
+        elif name == "move_email":
+            uid = arguments.get("uid")
+            target = arguments.get("target_folder")
+            if not uid:
+                return [TextContent(type="text", text="Error: uid is required")]
+            if not target:
+                return [TextContent(type="text", text="Error: target_folder is required")]
+            source = arguments.get("source_folder", "INBOX")
+            role = "archive" if "archive" in target.lower() else ("trash" if "trash" in target.lower() else "junk" if "junk" in target.lower() or "spam" in target.lower() else "")
+            ok = _move_message(uid, source, target, account=acct, role=role)
+            return [TextContent(type="text", text=f"{'Moved' if ok else 'Failed to move'} UID {uid} from {source} to {target}")]
 
         elif name == "delete_email":
             uid = arguments.get("uid")
@@ -2154,6 +2342,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     cfg = _load_config(acct)
                     changed_n = _bulk_move(uids, folder, cfg["archive_folder"], account=acct, role="archive")
                     verb = "archived"
+                elif action == "move":
+                    target = arguments.get("target_folder")
+                    if not target:
+                        return [TextContent(type="text", text="Error: target_folder is required for action=move")]
+                    role = "archive" if "archive" in target.lower() else ("trash" if "trash" in target.lower() else "junk" if "junk" in target.lower() or "spam" in target.lower() else "")
+                    changed_n = _bulk_move(uids, folder, target, account=acct, role=role)
+                    verb = f"moved to {target}"
                 elif action == "junk":
                     cfg = _load_config(acct)
                     junk_folder = cfg.get("junk_folder") or "Junk"

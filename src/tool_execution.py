@@ -20,6 +20,20 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 
 
+try:
+    import yaml as _yaml_mod
+except ImportError:
+    _yaml_mod = None
+
+def _yaml_safe_load(text: str) -> dict:
+    if _yaml_mod is None:
+        return {}
+    try:
+        result = _yaml_mod.safe_load(text)
+        return result if isinstance(result, dict) else {}
+    except Exception:
+        return {}
+
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
 from src.tool_policy import ToolPolicy
 from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
@@ -459,6 +473,32 @@ async def execute_tool_block(
     tool = block.tool_type
     content = block.content
 
+    # Remap bare email tool names to their MCP-qualified form.
+    # Local models using fenced blocks write ```list_emails\n{...}\n```
+    # which parses as ToolBlock(tool_type="list_emails", ...), but the
+    # dispatch chain expects "mcp__email__list_emails" to reach the MCP
+    # handler.  Native function calls get this remap in
+    # tool_schemas.function_call_to_tool_block(); fenced blocks did not.
+    _BUILTIN_EMAIL_TOOLS = {
+        "list_email_accounts", "send_email", "list_emails", "read_email",
+        "reply_to_email", "archive_email", "delete_email", "mark_email_read",
+        "bulk_email", "download_attachment", "draft_email", "draft_email_reply",
+        "ai_draft_email_reply", "search_emails", "list_email_folders", "move_email",
+        "count_emails",
+    }
+    if tool in _BUILTIN_EMAIL_TOOLS:
+        tool = f"mcp__email__{tool}"
+
+    # Unambiguous hallucinations that need a clear redirect message rather
+    # than silent remap (manage_email could mean archive, move, delete, etc.)
+    _REDIRECT_TOOLS = {
+        "manage_email": "No such tool. Email tools: list_emails, read_email, send_email, reply_to_email, archive_email, delete_email, mark_email_read, bulk_email, move_email, count_emails, list_email_folders, search_emails.",
+        "manage_emails": "No such tool. Email tools: list_emails, read_email, send_email, reply_to_email, archive_email, delete_email, mark_email_read, bulk_email, move_email, count_emails, list_email_folders, search_emails.",
+    }
+    if tool in _REDIRECT_TOOLS:
+        desc = f"unknown: {tool}"
+        result = {"error": _REDIRECT_TOOLS[tool], "exit_code": 1}
+
     # Misformatted tool call detection: model put JSON inside ```python``` (or
     # similar) without naming the tool. Common with MiniMax-style outputs.
     # Return a helpful error so the model retries with the correct format.
@@ -768,9 +808,13 @@ async def execute_tool_block(
         mcp = get_mcp_manager()
         if mcp:
             try:
-                args = json.loads(content) if content.strip().startswith("{") else {}
+                raw = content.strip()
+                if raw.startswith("{"):
+                    args = json.loads(raw)
+                else:
+                    args = _yaml_safe_load(raw)
             except (json.JSONDecodeError, TypeError):
-                args = {}
+                args = _yaml_safe_load(content)
             desc = f"mcp: {tool}"
             result = await mcp.call_tool(tool, args)
         else:
