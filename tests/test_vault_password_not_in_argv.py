@@ -103,10 +103,12 @@ def test_unlock_handler_feeds_password_on_stdin_not_argv():
 
 def test_tool_vault_unlock_feeds_password_on_stdin_not_argv():
     text = open("src/tool_implementations.py", encoding="utf-8").read()
-
     assert '["unlock", master_password, "--raw"]' not in text
     assert '_run_bw(["unlock", master_password' not in text
-    assert re.search(r'input_text\s*=\s*master_password\s*\+\s*"\\n"', text)
+
+    vault_text = open("src/agent_tools/vault_tools.py", encoding="utf-8").read()
+    assert '["unlock", master_password, "--raw"]' not in vault_text
+    assert re.search(r'input_text\s*=\s*master_password\s*\+\s*"\\\\n"', vault_text)
 
 
 def test_load_config_ignores_non_object_json(tmp_path, monkeypatch):
