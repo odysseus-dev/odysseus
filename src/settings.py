@@ -140,6 +140,10 @@ DEFAULT_SETTINGS = {
     "utility_model_fallbacks": [],
     "teacher_model": "",
     "teacher_enabled": False,
+    # Local-LLM-Router — Auto (Local LLMs) routing (see local_llm_router_routing.py)
+    "local_llm_router_vram_gb": 0,  # 0 = detect via hwfit
+    "local_llm_router_quant": "qat",
+    "local_llm_router_models": [],
     # Skills: minimum self-reported confidence for an auto-written (LLM-authored)
     # DRAFT skill to be injected into the agent prompt. Published skills always
     # qualify. Keeps low-confidence auto-skills out of context until they're
@@ -221,9 +225,22 @@ def save_settings(settings: dict):
     _invalidate_caches()
 
 
+_LLR_SETTING_LEGACY = {
+    "local_llm_router_vram_gb": "auto_stack_vram_gb",
+    "local_llm_router_quant": "auto_stack_quant",
+    "local_llm_router_models": "auto_stack_models",
+}
+
+
 def get_setting(key: str, default: Any = None) -> Any:
     """Read a single setting value."""
-    return load_settings().get(key, default)
+    settings = load_settings()
+    if key in settings:
+        return settings.get(key, default)
+    legacy = _LLR_SETTING_LEGACY.get(key)
+    if legacy is not None:
+        return settings.get(legacy, default)
+    return settings.get(key, default)
 
 
 def is_setting_overridden(key: str) -> bool:

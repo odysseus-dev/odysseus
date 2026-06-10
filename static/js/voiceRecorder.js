@@ -21,7 +21,7 @@ let _recognition = null;
 let _browserTranscript = '';
 
 // Cached STT provider — refreshed on settings change
-let _sttProvider = 'disabled';
+let _sttProvider = 'local';
 
 /**
  * Fetch current STT provider from server settings
@@ -31,7 +31,9 @@ async function refreshSttProvider() {
     const res = await fetch('/api/stt/stats', { credentials: 'same-origin' });
     if (res.ok) {
       const stats = await res.json();
-      _sttProvider = stats.provider || 'disabled';
+      // Use the configured provider; if disabled fall back to 'local' so the
+      // button still works and sends to server (server will 503 if unconfigured)
+      _sttProvider = stats.provider || 'local';
       // Notify the send button to update its icon
       if (window._updateSendBtnIcon) window._updateSendBtnIcon();
     }
@@ -58,11 +60,10 @@ function _resetRecordingUI() {
     clearInterval(recordingInterval);
     recordingInterval = null;
   }
-  // Reset send button via global callback
-  const sendBtn = document.querySelector('.send-btn');
-  if (sendBtn) {
-    sendBtn.classList.remove('recording');
-    sendBtn.dataset.mode = '';
+  // Reset the dedicated transcribe button
+  const transcribeBtn = document.getElementById('audio-transcribe-btn');
+  if (transcribeBtn) {
+    transcribeBtn.dataset.mode = '';
   }
   if (window._updateSendBtnIcon) {
     setTimeout(window._updateSendBtnIcon, 50);
@@ -181,6 +182,7 @@ export function startRecording(onFileCreated, showToast, showError) {
         const provider = _sttProvider;
 
         if (provider === 'browser') {
+          // Use browser Web Speech API transcript captured during recording
           const transcript = stopBrowserSTT();
           if (transcript) {
             insertTranscription(transcript, showToast);
@@ -189,27 +191,24 @@ export function startRecording(onFileCreated, showToast, showError) {
             const audioFile = new File([audioBlob], `voice-message-${Date.now()}.webm`, { type: 'audio/webm' });
             if (onFileCreated) onFileCreated(audioFile);
           }
-        } else if (provider === 'local' || provider.startsWith('endpoint:')) {
-          // Show "Transcribing..." feedback
+        } else {
+          // 'local' (faster-whisper) or 'endpoint:<id>' (OpenAI-compatible)
+          // — send to server and paste the result into the chat input.
           if (showToast) showToast('Transcribing...', 5000);
           try {
             const transcript = await transcribeOnServer(audioBlob);
-            if (transcript) {
-              insertTranscription(transcript, showToast);
+            if (transcript && transcript.trim()) {
+              insertTranscription(transcript.trim(), showToast);
             } else {
               if (showToast) showToast('No speech detected');
             }
           } catch (e) {
             console.error('STT transcription error:', e);
             if (showError) showError('Transcription failed: ' + e.message);
-            // Fallback: attach as file
+            // Fallback: attach as audio file
             const audioFile = new File([audioBlob], `voice-message-${Date.now()}.webm`, { type: 'audio/webm' });
             if (onFileCreated) onFileCreated(audioFile);
           }
-        } else {
-          // STT disabled — attach audio file
-          const audioFile = new File([audioBlob], `voice-message-${Date.now()}.webm`, { type: 'audio/webm' });
-          if (onFileCreated) onFileCreated(audioFile);
         }
 
         _resetRecordingUI();

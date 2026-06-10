@@ -2231,6 +2231,7 @@ async def stream_agent_loop(
     # using tools — i.e. it was cut off, not finished. Drives a "Continue" event
     # so the user can resume instead of the turn silently stalling.
     _exhausted_rounds = False
+    _anchor_url = local_llm_router_anchor_url or endpoint_url
 
     for round_num in range(1, max_rounds + 1):
         round_response = ""
@@ -2245,6 +2246,50 @@ async def stream_agent_loop(
         # fenced block closes we advance this so the next iteration can
         # detect a SUBSEQUENT block in the same round.
         _doc_scan_from = 0
+
+        _round_stack_fb = list(fallbacks or [])
+        if local_llm_router_active:
+            from src.local_llm_router_routing import (
+                resolve_local_llm_router,
+                local_llm_router_fallback_candidates,
+            )
+            try:
+                _route_prompt = _extract_last_user_message(messages) or ""
+                _llr_res = resolve_local_llm_router(
+                    prompt=_route_prompt,
+                    endpoint_url=_anchor_url,
+                    headers=headers,
+                    owner=owner,
+                    mode="agent",
+                )
+                endpoint_url = _llr_res.endpoint_url
+                model = _llr_res.model
+                headers = _llr_res.headers
+                _model_lc = (model or "").lower()
+                _is_ollama_native = _is_ollama_native_url(endpoint_url or "")
+                _ollama_openai_compat = _is_ollama_openai_compat_url(endpoint_url or "")
+                _model_no_tools = any(kw in _model_lc for kw in ("deepseek-r1",))
+                _model_supports_tools = any(kw in _model_lc for kw in (
+                    "gpt-4", "gpt-5", "gpt-o", "claude", "gemini", "gemma",
+                    "qwen3", "qwen2.5", "mixtral", "mistral", "llama-3.1", "llama-3.2",
+                    "llama-3.3", "llama-4", "minimax", "kimi", "yi-", "phi-3", "phi-4",
+                    "command-r", "glm-4", "internlm", "hermes", "deepseek-v", "deepseek-chat",
+                ))
+                if _is_ollama_native or _ollama_openai_compat or _model_no_tools:
+                    _is_api_model = False
+                else:
+                    _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
+                _round_stack_fb = local_llm_router_fallback_candidates(
+                    _llr_res,
+                    endpoint_url=_anchor_url,
+                    headers=headers,
+                    owner=owner,
+                )
+                from src.constants import AUTO_SELECT_LABEL, LOCAL_LLM_ROUTER_AUTO_MODEL_ID
+                yield f'data: {json.dumps({"type": "model_resolved", "model": model, "requested_model": LOCAL_LLM_ROUTER_AUTO_MODEL_ID, "tier": _llr_res.tier, "round": round_num, "local_llm_router": True, "mode_label": AUTO_SELECT_LABEL, "route_reasons": list(_llr_res.route_reasons)})}\n\n'
+            except Exception as _llr_err:
+                yield f'event: error\ndata: {json.dumps({"error": f"Auto (Local LLMs): {_llr_err}"})}\n\n'
+                break
 
         # Merge native tool schemas with MCP tool schemas, filtering out
         # Only send function schemas for API models (OpenAI, Anthropic, etc.).
@@ -2291,7 +2336,7 @@ async def stream_agent_loop(
         # Primary target + any configured fallback models. stream_llm_with_fallback
         # only switches on a pre-content failure, so streamed output is never
         # duplicated; the dead-host cooldown keeps repeat primary attempts cheap.
-        _candidates = [(endpoint_url, model, headers)] + list(fallbacks or [])
+        _candidates = [(endpoint_url, model, headers)] + list(_round_stack_fb)
         # stream_llm enforces a per-read INACTIVITY timeout (httpx read=timeout),
         # which kills a wedged/silent endpoint. This wall-clock deadline is the
         # complementary cap for the rare stream that trickles bytes forever and

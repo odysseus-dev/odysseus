@@ -10,7 +10,7 @@ def test_stt_local_transcribe_leak_on_error():
         def transcribe(self, *args, **kwargs):
             raise ValueError("Simulated transcribe error")
 
-    service._get_whisper = lambda: MockWhisper()
+    service._get_whisper = lambda *args, **kwargs: MockWhisper()
 
     # Track WebM files in the temp directory before running transcription
     temp_dir = tempfile.gettempdir()

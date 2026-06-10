@@ -3647,14 +3647,9 @@ function startOdysseusApp() {
     const hasText = messageInput && messageInput.value.trim().length > 0;
     const hasFiles = _hasAttachments();
     let newMode;
-    if (!hasText && !hasFiles && _isSttEnabled()) {
-      clearTimeout(sendBtn._collapseTimer);
-      sendBtn.innerHTML = _micIcon;
-      sendBtn.title = 'Record voice';
-      newMode = 'mic';
-      sendBtn.classList.add('mic-mode');
-      sendBtn.classList.remove('newchat-mode', 'newchat-expanded');
-    } else if (!hasText && !hasFiles && !_isSttEnabled()) {
+
+
+    if (!hasText && !hasFiles) {
       clearTimeout(sendBtn._collapseTimer);
       // Group chat: always show send button, never newchat mode
       if (groupModule && groupModule.isActive()) {
@@ -3729,16 +3724,10 @@ function startOdysseusApp() {
     sendBtn.addEventListener('click', (e) => {
       e.preventDefault();
 
-      // If recording, stop recording
-      if (sendBtn.dataset.mode === 'recording' || voiceRecorderModule.getIsRecording()) {
-        voiceRecorderModule.stopRecording();
-        return;
-      }
-
       const hasText = messageInput && messageInput.value.trim().length > 0;
       const hasFiles = _hasAttachments();
 
-      // New chat mode — empty input, no attachments, no STT
+      // New chat mode — empty input, no attachments
       if (!hasText && !hasFiles && sendBtn.dataset.mode === 'newchat') {
         if (sessionModule) {
           const sessions = sessionModule.getSessions();
@@ -3755,24 +3744,181 @@ function startOdysseusApp() {
         return;
       }
 
-      // If input is empty and STT is enabled, start recording
-      if (!hasText && !hasFiles && _isSttEnabled()) {
-        sendBtn.innerHTML = _stopIcon;
-        sendBtn.title = 'Stop recording';
-        sendBtn.dataset.mode = 'recording';
-        sendBtn.classList.add('recording');
-        voiceRecorderModule.startRecording(
-          (audioFile) => fileHandlerModule.addFiles([audioFile]),
-          uiModule.showToast,
-          uiModule.showError
-        );
-        return;
-      }
-
       // Otherwise, send message
       handleSubmit(e);
     });
   }
+
+  // ── Dictate button — routes to browser STT or server STT ──────────────────
+  const transcribeBtn = document.getElementById('audio-transcribe-btn');
+
+  if (transcribeBtn) {
+    // ── Shared helpers ──
+    let _activeProvider = 'browser';   // refreshed from /api/stt/stats on load
+
+    // Fetch the configured STT provider once, and again whenever settings change
+    async function _refreshProvider() {
+      try {
+        const r = await fetch('/api/stt/stats', { credentials: 'same-origin' });
+        if (r.ok) { const d = await r.json(); _activeProvider = d.provider || 'browser'; }
+      } catch (_) {}
+    }
+    _refreshProvider();
+
+    function _useServer() {
+      return _activeProvider === 'local' ||
+             _activeProvider.startsWith('endpoint:');
+    }
+
+    function _setListening(on) {
+      transcribeBtn.classList.toggle('listening', on);
+    }
+
+    function _insertText(text) {
+      if (!messageInput || !text) return;
+      const existing = messageInput.value.trimEnd();
+      messageInput.value = existing ? existing + ' ' + text.trim() : text.trim();
+      messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+      messageInput.focus();
+      messageInput.setSelectionRange(messageInput.value.length, messageInput.value.length);
+    }
+
+    // ── Browser Web Speech API path ─────────────────────────────────────────
+    let _sttRecognition = null;
+    let _sttListening   = false;
+    let _committedText  = '';
+    let _sessionBase    = '';
+
+    function _browserStart() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        uiModule.showError('Live dictation requires Chrome or Edge. Configure a local or endpoint provider in Settings → AI Defaults → Speech-to-Text for any browser.');
+        return;
+      }
+
+      _sttListening  = true;
+      _committedText = '';
+      _sessionBase   = messageInput ? messageInput.value : '';
+      if (_sessionBase && !_sessionBase.endsWith(' ')) _sessionBase += ' ';
+      _setListening(true);
+
+      _sttRecognition = new SpeechRecognition();
+      _sttRecognition.continuous     = true;
+      _sttRecognition.interimResults = true;
+      _sttRecognition.lang           = '';   // auto-detect
+
+      _sttRecognition.onresult = (event) => {
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const t = event.results[i][0].transcript;
+          if (event.results[i].isFinal) { _committedText += t + ' '; }
+          else { interim += t; }
+        }
+        if (messageInput) {
+          messageInput.value = _sessionBase + _committedText + interim;
+          messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      };
+
+      _sttRecognition.onerror = (e) => {
+        if (e.error === 'not-allowed') uiModule.showError('Microphone access denied. Check browser permissions.');
+        else if (e.error !== 'aborted') console.warn('STT error:', e.error);
+        _browserStop();
+      };
+
+      // Auto-restart — browser STT cuts off after ~60 s
+      _sttRecognition.onend = () => {
+        if (_sttListening) { try { _sttRecognition.start(); } catch (_) { _browserStop(); } }
+      };
+
+      _sttRecognition.start();
+    }
+
+    function _browserStop() {
+      _sttListening = false;
+      if (_sttRecognition) { try { _sttRecognition.stop(); } catch (_) {} _sttRecognition = null; }
+      _setListening(false);
+      if (messageInput) {
+        messageInput.value = messageInput.value.trimEnd();
+        messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+        messageInput.focus();
+        messageInput.setSelectionRange(messageInput.value.length, messageInput.value.length);
+      }
+    }
+
+    // ── Server STT path (local Whisper / endpoint) ──────────────────────────
+    let _mediaRecorder = null;
+    let _audioChunks   = [];
+    let _serverRecording = false;
+
+    async function _serverStart() {
+      if (_serverRecording) return;
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (err) {
+        uiModule.showError('Microphone access denied. Check browser permissions.');
+        return;
+      }
+
+      _audioChunks    = [];
+      _serverRecording = true;
+      _setListening(true);
+
+      _mediaRecorder = new MediaRecorder(stream);
+      _mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) _audioChunks.push(e.data); };
+
+      _mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        _setListening(false);
+        _serverRecording = false;
+
+        const blob = new Blob(_audioChunks, { type: 'audio/webm' });
+        _audioChunks = [];
+
+        uiModule.showToast('Transcribing…', 4000);
+        try {
+          const fd = new FormData();
+          fd.append('file', blob, 'audio.webm');
+          const r = await fetch('/api/stt/transcribe', {
+            method: 'POST', credentials: 'same-origin', body: fd,
+          });
+          const data = await r.json();
+          if (!r.ok) {
+            uiModule.showError(data?.detail?.message || 'Transcription failed.');
+            return;
+          }
+          if (data.text) _insertText(data.text);
+          else uiModule.showToast('No speech detected');
+        } catch (err) {
+          uiModule.showError('Transcription request failed: ' + err.message);
+        }
+      };
+
+      _mediaRecorder.start();
+    }
+
+    function _serverStop() {
+      if (_mediaRecorder && _serverRecording) _mediaRecorder.stop();
+    }
+
+    // ── Unified click handler ───────────────────────────────────────────────
+    transcribeBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      await _refreshProvider();
+
+      if (_useServer()) {
+        // Server path: toggle record/stop
+        if (_serverRecording) { _serverStop(); }
+        else { await _serverStart(); }
+      } else {
+        // Browser Web Speech API path
+        if (_sttListening) { _browserStop(); }
+        else { _browserStart(); }
+      }
+    });
+  }
+
 
   // Enter to send (shift+enter for newline), or new chat when empty
   if (messageInput) {

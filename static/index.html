@@ -1132,6 +1132,23 @@
           </button>
         </div>
         <div class="chat-input-right">
+          <!-- ChatGPT-style dictate button: orange circle, mic icon only -->
+          <div class="stt-btn-wrap" id="stt-btn-wrap">
+            <button type="button" class="input-icon-btn stt-dictate-btn" id="audio-transcribe-btn"
+              title="Dictate" aria-label="Dictate to chat">
+              <svg class="stt-mic-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="22"/>
+              </svg>
+              <div class="stt-waveform" aria-hidden="true">
+                <span class="stt-wave-bar"></span>
+                <span class="stt-wave-bar"></span>
+                <span class="stt-wave-bar"></span>
+                <span class="stt-wave-bar"></span>
+              </div>
+            </button>
+          </div>
           <!-- Agent / Chat mode toggle -->
           <div class="mode-toggle">
             <button type="button" class="mode-toggle-btn active" id="mode-agent-btn" aria-pressed="true">Agent</button>

@@ -49,7 +49,7 @@ def test_stt_disabled_toggle_blocks_transcription(monkeypatch):
         calls["whisper"] += 1
         return None
 
-    monkeypatch.setattr(service, "_transcribe_api", fake_endpoint)
+    monkeypatch.setattr(service, "_transcribe_endpoint", fake_endpoint)
     monkeypatch.setattr(service, "_get_whisper", fake_whisper)
 
     assert service.available is False
