@@ -18,6 +18,8 @@ def export_json(file_name: str, data: list[dict]):
 
 
 # current_user will be passed from the router
+# In services/trace_export.py:
+
 def build_trace_records(
     db,
     current_user: str,
@@ -27,8 +29,7 @@ def build_trace_records(
     note: str="",
 ):
     """Export selected chat messages for `session_id` using the provided
-    SQLAlchemy `db` session. This follows the project's DB/session patterns
-    instead of opening a new sqlite connection directly.
+    SQLAlchemy `db` session.
     """
     if not current_user:
         print("Error: No authenticated user found")
@@ -36,8 +37,9 @@ def build_trace_records(
 
     print(f"Exporting data for user: {current_user}\n")
 
-    # Verify session ownership (do NOT export unrelated sessions)
+    # Verify session ownership
     session_row = db.query(DbSession).filter(DbSession.id == session_id, DbSession.owner == current_user).first()
+    
     if not session_row:
         print("Error: Session not found or unauthorized")
         return
@@ -47,7 +49,6 @@ def build_trace_records(
 
     print(f"Processing session '{session_id}'\n")
 
-    # Fetch only selected messages
     if not message_ids:
         print("Error: No message_ids provided")
         return
@@ -62,8 +63,6 @@ def build_trace_records(
 
     messages_list = []
     for msg in messages:
-        # metadata column in DB is stored as text named "metadata" — depending on
-        # backend it may already be dict/JSON; handle both cases safely.
         meta_val = None
         if hasattr(msg, "metadata"):
             meta_val = getattr(msg, "metadata")
@@ -105,6 +104,9 @@ def build_trace_records(
 
     export_json("chats_export", [session_properties])
     print(f"✓ Exported trace for session '{session_id}' user '{current_user}'")
+    
+    # FIXED: Return the data so the router has something to send to the frontend!
+    return session_properties
 
 # Tests:
 def inspect_messages(session_id: str):

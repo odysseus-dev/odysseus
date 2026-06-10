@@ -746,6 +746,10 @@ app.include_router(setup_contacts_routes())
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 
+from routes.trace_export_routes import router as trace_export_router
+app.include_router(trace_export_router, prefix="/api")
+
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
