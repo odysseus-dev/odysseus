@@ -38,24 +38,43 @@ def analyze_topics(session_manager, owner: str = None) -> Dict[str, Any]:
     topic_counts: Dict[str, int] = {t: 0 for t in TOPIC_KEYWORDS}
     topic_matches: Dict[str, list] = {t: [] for t in TOPIC_KEYWORDS}
 
-    for session_id, session_data in session_manager.sessions.items():
-        if session_data.get("archived", False):
+    sessions = getattr(session_manager, "sessions", {})
+    if not isinstance(sessions, dict):
+        return {"topics": [], "total_topics": 0}
+
+    for session_id, session_data in sessions.items():
+        if not isinstance(session_data, dict) and not hasattr(session_data, "history"):
+            continue
+        archived = (
+            session_data.get("archived", False)
+            if isinstance(session_data, dict)
+            else getattr(session_data, "archived", False)
+        )
+        if archived:
             continue
         # Strict ownership: any session whose owner does not match the
         # caller is excluded. Ownerless sessions are never included
         # unless the caller is itself ownerless (which the early return
         # above already prevents).
-        sess_owner = session_data.get("owner") or getattr(session_data, "owner", None)
+        sess_owner = (
+            session_data.get("owner")
+            if isinstance(session_data, dict)
+            else getattr(session_data, "owner", None)
+        )
         if sess_owner != owner:
             continue
 
         # Hydrate session to load history from DB if needed
         if hasattr(session_manager, "get_session"):
             hydrated_session = session_manager.get_session(session_id)
-            history = hydrated_session.history
+            history = getattr(hydrated_session, "history", [])
         else:
             hydrated_session = session_data
-            history = session_data.get("history", [])
+            history = (
+                session_data.get("history", [])
+                if isinstance(session_data, dict)
+                else getattr(session_data, "history", [])
+            )
 
         for msg in history:
             content_raw = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
@@ -64,7 +83,11 @@ def analyze_topics(session_manager, owner: str = None) -> Dict[str, Any]:
 
             content = str(content_raw).lower()
             role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", "")
-            session_name = session_data.get("name", f"Session {session_id[:6]}")
+            session_name = (
+                session_data.get("name", f"Session {session_id[:6]}")
+                if isinstance(session_data, dict)
+                else getattr(session_data, "name", f"Session {session_id[:6]}")
+            )
 
             for topic, keywords in TOPIC_KEYWORDS.items():
                 for kw in keywords:
