@@ -200,6 +200,33 @@ function _restoreNotesSidebarDock(pane) {
   applyEdgeDock(pane, 'right');
 }
 
+// Notes is not a `.modal`; its backdrop is the top-level stacking surface.
+function _topToolWindowZ(exclude = null) {
+  let top = 250;
+  document.querySelectorAll('body > .modal, body > .research-overlay, body > .notes-pane-backdrop')
+    .forEach(el => {
+      if (!el || el === exclude) return;
+      if (el.classList.contains('hidden') || el.classList.contains('modal-minimized')) return;
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden') return;
+      const z = parseInt(cs.zIndex, 10);
+      if (Number.isFinite(z)) top = Math.max(top, z);
+    });
+  return top;
+}
+
+function _bringNotesToFront(pane = document.getElementById('notes-pane')) {
+  if (!pane) return;
+  const backdrop = document.getElementById('notes-pane-backdrop') || pane.parentElement;
+  const z = _topToolWindowZ(backdrop) + 1;
+  if (backdrop) backdrop.style.setProperty('z-index', String(z), 'important');
+  try {
+    window.dispatchEvent(new CustomEvent('odysseus:modal-opened', {
+      detail: { id: 'notes-panel', modal: pane },
+    }));
+  } catch (_) {}
+}
+
 function _loadPendingHighlights() {
   try { return new Set(JSON.parse(localStorage.getItem(REMINDER_PENDING_HIGHLIGHT_KEY) || '[]')); }
   catch { return new Set(); }
@@ -1096,7 +1123,10 @@ export async function refreshDueBadge(opts = {}) {
 // ---- Panel ----
 
 export function openPanel() {
-  if (_open) return;
+  if (_open) {
+    _bringNotesToFront();
+    return;
+  }
   _open = true;
   _editingId = null;
   // Reset the search filter — the rebuilt pane's search input renders empty, so a
@@ -1190,8 +1220,10 @@ export function openPanel() {
   });
   backdrop.appendChild(pane);
   document.body.appendChild(backdrop);
+  _bringNotesToFront(pane);
   _wireNotesWindow(pane);
   _restoreNotesSidebarDock(pane);
+  _bringNotesToFront(pane);
 
   // Events
   // (Close chevron removed — swipe down on mobile, tool-rail toggle on desktop.)
@@ -1201,6 +1233,9 @@ export function openPanel() {
   // dismiss, rubber-band on up-drag, spring snap-back.
   _wireNotesSwipeDismiss(pane.querySelector('.notes-mobile-grabber'), pane);
   _wireNotesSwipeDismiss(pane.querySelector('.notes-pane-header'), pane);
+
+  pane.addEventListener('pointerdown', () => _bringNotesToFront(pane), true);
+  pane.addEventListener('focusin', () => _bringNotesToFront(pane), true);
 
   const minBtn = document.getElementById('notes-minimize-btn');
   if (minBtn) minBtn.addEventListener('click', (e) => {
