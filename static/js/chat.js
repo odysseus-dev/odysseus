@@ -628,6 +628,7 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
       if (!skipBubble) { _autoNudges = 0; _autoContinuePending = false; }
       else if (_autoContinuePending) { _autoContinuePending = false; }
       const _pendingAttachInfo = fileHandlerModule.getPendingCount() ? fileHandlerModule.getPendingInfo() : null;
+      const skillName = window._attachedSkillName || null;
       // Pre-read importable file contents before upload clears pending files
       const IMPORTABLE_EXT = /\.(txt|py|js|ts|html|htm|css|md|json|csv|yml|yaml|sh|sql|rs|go|java|c|cpp|h|rb|php|xml|jsx|tsx|log|toml|ini|conf|env|vue|svelte|scss|sass|less)$/i;
       const _importableFiles = [];
@@ -635,7 +636,7 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
         const rawFiles = fileHandlerModule.getPendingRaw ? fileHandlerModule.getPendingRaw() : [];
         for (let i = 0; i < _pendingAttachInfo.length; i++) {
           const att = _pendingAttachInfo[i];
-          if (IMPORTABLE_EXT.test(att.name) && rawFiles[i]) {
+          if (IMPORTABLE_EXT.test(att.name) && rawFiles[i] && !att.isSkill) {
             _importableFiles.push({ info: att, file: rawFiles[i] });
           }
         }
@@ -839,6 +840,7 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
       }
+      fd.append('attached_skill_name', skillName || '');
 
 
       const abortCtrl = new AbortController();
@@ -3863,7 +3865,8 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
     if (msgIndex < 0) return;
 
     const bodyEl = userMsgElement.querySelector('.body');
-    const currentText = bodyEl ? bodyEl.textContent.trim().replace(/\s*\[\d+ attachment\(s\)\]$/, '') : '';
+    const rawText = userMsgElement.dataset.raw || (bodyEl ? bodyEl.textContent : '') || '';
+    const currentText = rawText.trim().replace(/\s*\[\d+ attachment\(s\)\]$/, '');
 
     // Replace body with an editable textarea
     const editor = document.createElement('textarea');

@@ -1,0 +1,27 @@
+name: ci / PR size label
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+# pull-requests: write — add/remove size labels
+# issues: write        — required by the REST issues API used for labels
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  label-size:
+    name: Label PR by size
+    runs-on: ubuntu-latest
+    # Skip bots — they open PRs programmatically and have their own process.
+    if: github.event.pull_request.user.type != 'Bot'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.base_ref }}
+          sparse-checkout: .github/scripts
+
+      - uses: actions/github-script@v7
+        with:
+          script: return require('./.github/scripts/label-size.js')({github, context, core})

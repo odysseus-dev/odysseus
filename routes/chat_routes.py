@@ -385,6 +385,8 @@ def setup_chat_routes(
         use_research = chat_request.use_research
         time_filter = chat_request.time_filter
         preset_id = chat_request.preset_id
+        from src.app_helpers import normalize_attached_skill_name
+        attached_skill_name = normalize_attached_skill_name(chat_request.attached_skill_name)
 
         # Verify the caller owns this session before loading it.
         # Without this, any authenticated user can post into another user's chat.
@@ -433,6 +435,8 @@ def setup_chat_routes(
             time_filter=time_filter,
             webhook_manager=webhook_manager,
             allow_tool_preprocessing=allow_tool_preprocessing,
+            attached_skill_name=attached_skill_name,
+            skills_manager=skills_manager,
         )
 
         # Research injection
@@ -562,6 +566,14 @@ def setup_chat_routes(
         active_doc_id = form_data.get("active_doc_id", "").strip()
         logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
 
+        attached_skill_name = None
+        if body and isinstance(body, dict):
+            attached_skill_name = body.get("attached_skill_name")
+        else:
+            attached_skill_name = form_data.get("attached_skill_name")
+        from src.app_helpers import normalize_attached_skill_name
+        attached_skill_name = normalize_attached_skill_name(attached_skill_name)
+
         try:
             # Attachment-only sends: skip the message-required check when the
             # user has attached one or more files (the attachment IS the action).
@@ -662,6 +674,8 @@ def setup_chat_routes(
             # index would be useless / unwanted noise.
             agent_mode=(chat_mode == "agent"),
             allow_tool_preprocessing=allow_tool_preprocessing,
+            attached_skill_name=attached_skill_name,
+            skills_manager=skills_manager,
         )
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope

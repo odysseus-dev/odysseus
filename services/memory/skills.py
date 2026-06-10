@@ -163,6 +163,45 @@ class SkillsManager:
             if "SKILL.md" in files:
                 yield os.path.join(root, "SKILL.md")
 
+    def _iter_all_skill_files(self, owner: Optional[str] = None) -> Iterable[tuple[str, bool]]:
+        """Yield (path, read_only) for all skill files."""
+        # 1. Yield from default skills_root (read_only = False)
+        if os.path.isdir(self.skills_root):
+            for root, _dirs, files in os.walk(self.skills_root, followlinks=False):
+                if "SKILL.md" in files:
+                    yield os.path.join(root, "SKILL.md"), False
+
+        # 2. Yield from global skills (read_only = True)
+        try:
+            from src.settings import get_user_setting, get_setting
+            global_enabled = get_user_setting("agent_context_global_skills_enabled", owner=owner)
+            if global_enabled is None:
+                global_enabled = get_setting("agent_context_global_skills_enabled", True)
+            if global_enabled:
+                global_path = get_user_setting("agent_context_global_skills_path", owner=owner) or get_setting("agent_context_global_skills_path") or "~/.agents/skills"
+                resolved_global = os.path.abspath(os.path.expanduser(global_path.strip()))
+                if os.path.isdir(resolved_global):
+                    for root, _dirs, files in os.walk(resolved_global, followlinks=False):
+                        if "SKILL.md" in files:
+                            yield os.path.join(root, "SKILL.md"), True
+        except Exception as e:
+            logger.warning(f"Failed to scan global skills: {e}")
+
+        # 3. Yield from repo-local skills (read_only = True)
+        try:
+            from src.settings import get_user_setting, get_setting
+            repo_enabled = get_user_setting("agent_context_repo_skills_enabled", owner=owner)
+            if repo_enabled is None:
+                repo_enabled = get_setting("agent_context_repo_skills_enabled", True)
+            if repo_enabled:
+                resolved_repo_skills = os.path.abspath(os.path.expanduser(os.path.join(os.getcwd(), ".agents/skills")))
+                if os.path.isdir(resolved_repo_skills):
+                    for root, _dirs, files in os.walk(resolved_repo_skills, followlinks=False):
+                        if "SKILL.md" in files:
+                            yield os.path.join(root, "SKILL.md"), True
+        except Exception as e:
+            logger.warning(f"Failed to scan repo skills: {e}")
+
     def _read_skill(self, path: str) -> Optional[Skill]:
         try:
             with open(path, encoding="utf-8") as f:
@@ -214,16 +253,28 @@ class SkillsManager:
     # Public API — keeps the old method names so callers don't break
     # ----------------------------------------------------------------------
 
-    def load_all(self) -> List[Dict]:
+    def load_all(self, owner: Optional[str] = None) -> List[Dict]:
         """Return every skill as a plain dict, plus any legacy JSON entries."""
         usage = self._load_usage()
         out: List[Dict] = []
         seen_names: set[str] = set()
-        for path in self._iter_skill_files():
+        for path, read_only in self._iter_all_skill_files(owner=owner):
             sk = self._read_skill(path)
             if not sk:
                 continue
+
+            # Skip foreign-owned skills early if owner scope is provided and not read-only
+            if owner is not None and not read_only and sk.owner != owner:
+                continue
+
+            # De-duplicate skills by slug name
+            if sk.name in seen_names:
+                continue
+
             d = sk.to_dict()
+            d["read_only"] = read_only
+
+
             u = self._usage_entry(usage, sk.name, sk.owner)
             d["uses"] = int(u.get("uses", 0))
             d["last_used"] = u.get("last_used")
@@ -276,7 +327,7 @@ class SkillsManager:
         return out
 
     def load(self, owner: Optional[str] = None) -> List[Dict]:
-        entries = self.load_all()
+        entries = self.load_all(owner=owner)
         if owner is None:
             return entries
         # SECURITY: strict ownership filter. The previous predicate also
@@ -284,7 +335,8 @@ class SkillsManager:
         # leaked legacy / un-stamped skills to every authenticated user.
         # Hide them now; the owner needs to be backfilled on disk if those
         # skills should be visible to a specific user.
-        return [s for s in entries if s.get("owner") == owner]
+        # Allow read_only skills to bypass ownership checks.
+        return [s for s in entries if s.get("owner") == owner or s.get("read_only") is True]
 
     # ----------------------------------------------------------------------
     # CRUD — disk-backed

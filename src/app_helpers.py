@@ -30,3 +30,13 @@ def inside_base_dir(base_dir: str, path: str) -> bool:
         return os.path.commonpath([base, p]) == base
     except Exception:
         return False
+
+def normalize_attached_skill_name(val) -> str | None:
+    """Normalize attached skill name by mapping falsy, null, or undefined values to None."""
+    if not val:
+        return None
+    val_str = str(val).strip()
+    if val_str.lower() in ("null", "undefined", ""):
+        return None
+    return val_str
+

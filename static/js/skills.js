@@ -184,11 +184,15 @@ function _matches(sk, query) {
 }
 
 function _statusPill(sk) {
+  if (sk.read_only) {
+    return '<span class="memory-cat-badge skill-status-pill" data-status="readonly" style="background:color-mix(in srgb, var(--color-warning, #e0a800) 25%, transparent)">read-only</span>';
+  }
   const s = sk.status || (sk._legacy ? 'legacy' : 'draft');
   if (s === 'published') return '<span class="memory-cat-badge skill-status-pill" data-status="published" style="background:color-mix(in srgb, var(--accent, #4ade80) 30%, transparent)">published</span>';
   if (s === 'draft')     return '<span class="memory-cat-badge skill-status-pill" data-status="draft" style="background:color-mix(in srgb, var(--fg) 14%, transparent)">draft</span>';
   return `<span class="memory-cat-badge skill-status-pill" data-status="${esc(s)}" style="opacity:0.6">${esc(s)}</span>`;
 }
+
 
 // Show a "teacher" badge for skills written by the auto-escalation
 // teacher loop. Lets the user tell at-a-glance which procedures were
@@ -368,6 +372,7 @@ function _confColor(conf) {
 const _ICON = {
   del:   '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
   edit:  '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
+  rename: '<path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
   approve: '<polyline points="20 6 9 17 4 12"/>',
   unpublish: '<path d="M5 12l5 5L20 7"/>',
   test:  '<polygon points="5 3 19 12 5 21 5 3"/>',
@@ -1076,6 +1081,35 @@ async function _saveSkillEdit(card, name) {
   }
 }
 
+async function _renameSkill(name, card = null) {
+  const newName = await uiModule.styledPrompt('Enter a new slug name for the skill:', {
+    title: 'Rename Skill',
+    defaultValue: name,
+    placeholder: 'e.g. build-vllm-wheel',
+  });
+  if (!newName || newName === name) return;
+
+  try {
+    const res = await fetch(`${API}/api/skills/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newName }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const cached = _mdCache.get(name);
+    if (cached) {
+      _mdCache.delete(name);
+      _mdCache.set(newName, cached);
+    }
+
+    uiModule.showToast('Renamed successfully');
+    await loadSkills();
+  } catch (e) {
+    uiModule.showError('Rename failed: ' + e.message);
+  }
+}
+
 async function _deleteSkill(name, card = null) {
   if (!(await uiModule.styledConfirm(`Delete skill "${name}"? This removes the SKILL.md.`, { confirmText: 'Delete', danger: true }))) return;
   // Locate the card if the caller didn't hand one over, so we can collapse it
@@ -1323,6 +1357,7 @@ function _renderTestVerdict(el, v, card, name) {
         '<button class="doclib-card-text-btn doclib-card-action-btn" data-act="retry" title="Run the test again">Retry</button>' +
         '<button class="doclib-card-text-btn doclib-card-action-btn" data-act="copy" title="Copy the run output + verdict">Copy</button>' +
         '<button class="doclib-card-text-btn doclib-card-action-btn" data-act="edit">Edit</button>' +
+        '<button class="doclib-card-text-btn doclib-card-action-btn" data-act="rename">Rename</button>' +
         '<button class="doclib-card-text-btn doclib-card-action-btn doclib-card-text-btn-danger" data-act="del"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>' +
       '</div></div>' +
     '</div>';
@@ -1344,6 +1379,7 @@ function _renderTestVerdict(el, v, card, name) {
   });
   el.querySelector('[data-act="del"]')?.addEventListener('click', (e) => { e.stopPropagation(); _deleteSkill(name, card); });
   el.querySelector('[data-act="edit"]')?.addEventListener('click', (e) => { e.stopPropagation(); _toggleSkillEdit(card, name); });
+  el.querySelector('[data-act="rename"]')?.addEventListener('click', (e) => { e.stopPropagation(); _renameSkill(name, card); });
   el.querySelector('[data-act="retry"]')?.addEventListener('click', (e) => { e.stopPropagation(); _testSkill(card, name, true); });
   el.querySelector('[data-act="copy"]')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1873,6 +1909,59 @@ async function importSkillFromUrl() {
   }
 }
 
+async function uploadSkillFromFile() {
+  const fileInput = document.getElementById('skill-upload-file');
+  if (fileInput) fileInput.click();
+}
+
+async function handleSkillUploadFile(file) {
+  if (!file) return;
+
+  const btn = document.getElementById('skill-upload-btn');
+  const _origHtml = btn ? btn.innerHTML : '';
+  let spin = null;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '';
+    spin = spinnerModule.createWhirlpool(12);
+    spin.element.style.cssText = 'width:12px;height:12px;margin:0 5px 0 0;display:inline-flex;vertical-align:-2px;transform:translateY(-1px);';
+    btn.appendChild(spin.element);
+    btn.appendChild(document.createTextNode('Uploading'));
+  }
+
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const res = await fetch(`${API}/api/skills/upload`, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || err.error || 'Upload failed');
+    }
+
+    const data = await res.json();
+    await loadSkills();
+    const name = data.skill?.name || 'skill';
+    uiModule.showToast(`Uploaded ${name} successfully`);
+    if (name) openSkill(name);
+  } catch (err) {
+    uiModule.showError('Upload failed: ' + err.message);
+  } finally {
+    if (spin) spin.destroy();
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = _origHtml;
+    }
+    const fileInput = document.getElementById('skill-upload-file');
+    if (fileInput) fileInput.value = '';
+  }
+}
+
+
 async function addSkill() {
   const name = document.getElementById('new-skill-name')?.value.trim()
     || document.getElementById('new-skill-title')?.value.trim();
@@ -1924,6 +2013,10 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('skill-import-url-btn')?.addEventListener('click', importSkillFromUrl);
   document.getElementById('skill-import-url')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') importSkillFromUrl();
+  });
+  document.getElementById('skill-upload-btn')?.addEventListener('click', uploadSkillFromFile);
+  document.getElementById('skill-upload-file')?.addEventListener('change', (e) => {
+    if (e.target.files[0]) handleSkillUploadFile(e.target.files[0]);
   });
   document.getElementById('add-skill-btn')?.addEventListener('click', addSkill);
   document.getElementById('skills-search')?.addEventListener('input', renderSkillsList);

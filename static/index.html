@@ -321,6 +321,8 @@
                 <span class="skill-rich-ph"><span class="k">Import URL</span> — e.g. GitHub tree link to a skill folder</span>
               </div>
               <button type="button" id="skill-import-url-btn" class="theme-io-btn" title="Import skill from URL" style="flex:none;height:28px;font-size:12px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Import</button>
+              <button type="button" id="skill-upload-btn" class="theme-io-btn" title="Upload local skill file (.md or .zip)" style="flex:none;height:28px;font-size:12px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Upload</button>
+              <input type="file" id="skill-upload-file" accept=".md,.zip" hidden />
             </div>
             <p class="memory-desc doclib-desc" style="margin-top:0;">Or create a skill by hand — title, what it solves, and an approach.</p>
             <div class="skill-ph-wrap" style="margin-top:4px;margin-bottom:6px;">
@@ -1046,6 +1048,13 @@
                 </svg>
                 <span>Documents</span>
               </button>
+              <button type="button" class="overflow-menu-item" id="overflow-skill-btn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                </svg>
+                <span>Skill</span>
+                <span class="overflow-active-dot"></span>
+              </button>
               <button type="button" class="overflow-menu-item" id="overflow-rag-btn">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
@@ -1347,7 +1356,27 @@
       </div>
       <div class="modal-body cookbook-body"></div>
     </div>
+  </div>  <!-- Skill Attach Modal -->
+  <div id="skill-attach-modal" class="modal hidden">
+    <div class="modal-content" role="dialog" aria-label="Attach Skill" style="width: min(400px, 92vw); max-height: 70vh; background: var(--bg); display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <h4 style="margin:0;margin-right:auto;display:flex;align-items:center;gap:6px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--brand-color)">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+          </svg>
+          Attach Skill
+        </h4>
+        <button class="close-btn" id="close-skill-attach-btn" aria-label="Close modal">✖</button>
+      </div>
+      <div class="modal-body" style="padding:16px; overflow-y:auto; display:flex; flex-direction:column; gap:12px; flex:1;">
+        <input type="text" id="skill-attach-search" placeholder="Search skills..." style="width:100%; padding:8px 12px; background:var(--input-bg); border:1px solid var(--input-border); border-radius:6px; color:var(--fg); font-size:13px;" />
+        <div id="skill-attach-list" style="display:flex; flex-direction:column; gap:8px; overflow-y:auto; flex:1; max-height: 40vh;">
+          <!-- Loaded skills list will render here -->
+        </div>
+      </div>
+    </div>
   </div>
+
 
   <!-- Settings Modal (all users) -->
   <div id="settings-modal" class="modal hidden">
@@ -1397,6 +1426,10 @@
           <button class="settings-nav-item" data-settings-tab="appearance">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 0 0 0 20 4 4 0 0 1 0-8 4 4 0 0 0 0-8"/></svg>
             <span>Appearance</span>
+          </button>
+          <button class="settings-nav-item" data-settings-tab="agent-context">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            <span>Agent Context</span>
           </button>
           <button class="settings-nav-item" data-settings-tab="shortcuts">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></svg>
@@ -1876,6 +1909,51 @@
 
         <!-- ═══ MEMORY TAB ═══ -->
         <!-- ═══ SHORTCUTS TAB ═══ -->
+        <!-- ═══ AGENT CONTEXT TAB ═══ -->
+        <div data-settings-panel="agent-context" class="hidden">
+          <div class="admin-card">
+            <h2>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6">
+                <line x1="4" y1="6" x2="20" y2="6"/>
+                <line x1="4" y1="12" x2="20" y2="12"/>
+                <line x1="4" y1="18" x2="20" y2="18"/>
+              </svg>
+              Layered Context & Priority
+            </h2>
+            <div class="admin-toggle-sub" style="margin-bottom:12px">Drag rows to change search priority, or use the toggles to enable/disable specific context sources.</div>
+            
+            <div id="agent-context-priority-container" style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;">
+              <!-- Populated dynamically -->
+            </div>
+            <div id="set-agentContextPriorityMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+          </div>
+
+          <div class="admin-card">
+            <h2>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+              </svg>
+              External Path Configurations
+            </h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Set locations for external instructions and skills directories.</div>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label">Global Instructions</label>
+                <input type="text" id="set-agentContextGlobalInstructionsPath" class="settings-select" placeholder="~/.agents/instructions.md" style="flex:1;">
+              </div>
+              <div class="settings-row" style="margin-top:8px;">
+                <label class="settings-label">Global Skills Dir</label>
+                <input type="text" id="set-agentContextGlobalSkillsPath" class="settings-select" placeholder="~/.agents/skills" style="flex:1;">
+              </div>
+              <div class="settings-row" style="margin-top:8px;">
+                <label class="settings-label">Custom Paths</label>
+                <input type="text" id="set-agentContextCustomSourcesPaths" class="settings-select" placeholder="Comma-separated files or directories" style="flex:1;">
+              </div>
+              <div id="set-agentContextPathsMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent); margin-top:4px;"></div>
+            </div>
+          </div>
+        </div>
+
         <div data-settings-panel="shortcuts" class="hidden">
           <div class="admin-card" style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;">
             <div>

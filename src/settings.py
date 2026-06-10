@@ -184,6 +184,22 @@ DEFAULT_SETTINGS = {
         "admin_panel": "ctrl+shift+u",
         "cancel": "escape",
     },
+    # Agent Context settings
+    "agent_context_global_instructions_enabled": True,
+    "agent_context_global_instructions_path": "~/.agents/instructions.md",
+    "agent_context_global_skills_enabled": True,
+    "agent_context_global_skills_path": "~/.agents/skills",
+    "agent_context_repo_instructions_enabled": True,
+    "agent_context_repo_skills_enabled": True,
+    "agent_context_custom_sources_enabled": True,
+    "agent_context_custom_sources_paths": "",
+    "agent_context_priority": [
+        "repo_instructions",
+        "repo_skills",
+        "global_instructions",
+        "global_skills",
+        "custom_sources"
+    ],
 }
 
 DEFAULT_FEATURES = {
@@ -272,6 +288,15 @@ _PER_USER_KEYS = {
     "default_endpoint_id", "default_model", "default_model_fallbacks",
     "utility_endpoint_id", "utility_model", "utility_model_fallbacks",
     "research_endpoint_id", "research_model",
+    "agent_context_global_instructions_enabled",
+    "agent_context_global_instructions_path",
+    "agent_context_global_skills_enabled",
+    "agent_context_global_skills_path",
+    "agent_context_repo_instructions_enabled",
+    "agent_context_repo_skills_enabled",
+    "agent_context_custom_sources_enabled",
+    "agent_context_custom_sources_paths",
+    "agent_context_priority",
 }
 
 

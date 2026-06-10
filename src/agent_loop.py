@@ -6,6 +6,7 @@ Wraps stream_llm() with multi-round tool execution.
 The LLM decides when to use tools by writing fenced code blocks.
 """
 
+import os
 import asyncio
 import collections
 import json
@@ -621,12 +622,6 @@ _API_HOSTS = frozenset([
 ])
 _MCP_KEYWORDS = frozenset(["mcp", "browse", "browser", "website", "calendar", "event", "email",
                            "gmail", "screenshot", "navigate", "click", "miniflux", "rss", "feed"])
-_ADMIN_SCHEMA_NAMES = frozenset([
-    "manage_session", "manage_skills", "manage_tasks",
-    "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens",
-    "create_session", "list_sessions", "send_to_session", "pipeline",
-    "ask_teacher", "list_models", "search_chats",
-])
 _TOOL_SELECTION_TIMEOUT_SECONDS = 1.5
 
 
@@ -859,6 +854,7 @@ def _build_system_prompt(
     compact: bool = False,
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
+    attached_skill_name: Optional[str] = None,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
@@ -875,7 +871,10 @@ def _build_system_prompt(
         _ov_sig = _hl.sha256(_json.dumps(get_builtin_overrides() or {}, sort_keys=True).encode()).hexdigest()
     except Exception:
         _ov_sig = ""
-    cache_key = (frozenset(disabled_tools or []), bool(mcp_mgr), needs_admin, _rt_key, compact, _ov_sig, owner, suppress_local_context)
+    from src.app_helpers import normalize_attached_skill_name
+    attached_skill_name = normalize_attached_skill_name(attached_skill_name)
+    suppress_skills = bool(attached_skill_name)
+    cache_key = (frozenset(disabled_tools or []), bool(mcp_mgr), needs_admin, _rt_key, compact, _ov_sig, owner, suppress_local_context, suppress_skills, attached_skill_name)
     if _cached_base_prompt and _cached_base_prompt_key == cache_key and not active_document:
         agent_prompt = _cached_base_prompt
         # Skill index is user-editable (name + description), so it must never
@@ -885,6 +884,8 @@ def _build_system_prompt(
             disabled_tools, mcp_mgr, needs_admin, relevant_tools,
             mcp_disabled_map=mcp_disabled_map, compact=compact, owner=owner,
             suppress_local_context=suppress_local_context,
+            suppress_skills=suppress_skills,
+            attached_skill_name=attached_skill_name,
         )
     else:
         agent_prompt, _skill_index_block = _build_base_prompt(
@@ -896,6 +897,8 @@ def _build_system_prompt(
             compact=compact,
             owner=owner,
             suppress_local_context=suppress_local_context,
+            suppress_skills=suppress_skills,
+            attached_skill_name=attached_skill_name,
         )
         if not active_document:
             _cached_base_prompt = agent_prompt
@@ -1119,7 +1122,7 @@ def _build_system_prompt(
     # few. If the teacher wrote a procedure for "open my X chat" last
     # time the student failed, this is where the student finds it
     # before deciding which tool to call.
-    if not suppress_local_context:
+    if not suppress_local_context and not suppress_skills:
         try:
             last_user = _extract_last_user_message(messages)
             # Respect the user's skills-enabled toggle (mirrors memory_enabled).
@@ -1132,6 +1135,8 @@ def _build_system_prompt(
                 _skills_on = _prefs.get("skills_enabled", True)
             except Exception:
                 pass
+            if attached_skill_name:
+                _skills_on = True
             if last_user and _skills_on:
                 from services.memory.skills import SkillsManager
                 from src.constants import DATA_DIR
@@ -1156,9 +1161,12 @@ def _build_system_prompt(
                 except (TypeError, ValueError):
                     _skill_max_injected = 3
                 _skill_max_injected = max(0, min(12, _skill_max_injected))
+                skills_candidates = sm.load(owner=owner)
+                if attached_skill_name:
+                    skills_candidates = [s for s in skills_candidates if s.get("name") == attached_skill_name]
                 relevant_skills = sm.get_relevant_skills(
                     last_user,
-                    skills=sm.load(owner=owner),
+                    skills=skills_candidates,
                     threshold=0.25,
                     max_items=_skill_max_injected,
                     min_confidence=_skill_min_conf,
@@ -1274,6 +1282,106 @@ _ADMIN_TOOLS = {
     "send_to_session", "pipeline", "ask_teacher", "list_models",
 }
 
+def _load_instructions(path: str) -> str:
+    if not path:
+        return ""
+    expanded = os.path.abspath(os.path.expanduser(path.strip()))
+    if not os.path.exists(expanded):
+        return ""
+    
+    if os.path.isfile(expanded):
+        try:
+            with open(expanded, "r", encoding="utf-8", errors="replace") as f:
+                return f.read().strip()
+        except Exception as e:
+            logger.warning(f"Failed to read instructions file {expanded}: {e}")
+            return ""
+            
+    elif os.path.isdir(expanded):
+        contents = []
+        try:
+            for root, dirs, files in os.walk(expanded):
+                dirs.sort()
+                for file in sorted(files):
+                    if file.endswith((".md", ".txt")):
+                        file_path = os.path.join(root, file)
+                        try:
+                            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                                file_content = f.read().strip()
+                                if file_content:
+                                    rel_name = os.path.relpath(file_path, expanded)
+                                    contents.append(f"### File: {rel_name}\n{file_content}")
+                        except Exception as e:
+                            logger.warning(f"Failed to read instructions file {file_path}: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to walk instructions directory {expanded}: {e}")
+        return "\n\n".join(contents).strip()
+    return ""
+
+def _load_repo_instructions() -> str:
+    wpath = os.getcwd()
+    contents = []
+    for filename in ["AGENTS.md", "CLAUDE.md"]:
+        filepath = os.path.join(wpath, filename)
+        if os.path.isfile(filepath):
+            try:
+                with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+                    file_content = f.read().strip()
+                    if file_content:
+                        contents.append(f"### {filename}\n{file_content}")
+            except Exception as e:
+                logger.warning(f"Failed to read repo instructions {filepath}: {e}")
+    return "\n\n".join(contents).strip()
+
+def _build_layered_instructions(owner: Optional[str] = None) -> str:
+    from src.settings import get_user_setting, get_setting
+    
+    priority = get_user_setting("agent_context_priority", owner=owner) or get_setting("agent_context_priority") or [
+        "repo_instructions", "repo_skills", "global_instructions", "global_skills", "custom_sources"
+    ]
+    
+    instructions_blocks = []
+    
+    for source in priority:
+        if source == "global_instructions":
+            enabled = get_user_setting("agent_context_global_instructions_enabled", owner=owner)
+            if enabled is None:
+                enabled = get_setting("agent_context_global_instructions_enabled", True)
+            if enabled:
+                path = get_user_setting("agent_context_global_instructions_path", owner=owner) or get_setting("agent_context_global_instructions_path") or "~/.agents/instructions.md"
+                content = _load_instructions(path)
+                if content:
+                    instructions_blocks.append(f"## Global Instructions\n{content}")
+                    
+        elif source == "repo_instructions":
+            enabled = get_user_setting("agent_context_repo_instructions_enabled", owner=owner)
+            if enabled is None:
+                enabled = get_setting("agent_context_repo_instructions_enabled", True)
+            if enabled:
+                content = _load_repo_instructions()
+                if content:
+                    instructions_blocks.append(f"## Repository Instructions\n{content}")
+                    
+        elif source == "custom_sources":
+            enabled = get_user_setting("agent_context_custom_sources_enabled", owner=owner)
+            if enabled is None:
+                enabled = get_setting("agent_context_custom_sources_enabled", True)
+            if enabled:
+                paths_str = get_user_setting("agent_context_custom_sources_paths", owner=owner) or get_setting("agent_context_custom_sources_paths") or ""
+                if paths_str:
+                    paths = [p.strip() for p in paths_str.replace(";", ",").split(",") if p.strip()]
+                    custom_contents = []
+                    for path in paths:
+                        content = _load_instructions(path)
+                        if content:
+                            custom_contents.append(f"### Custom Path: {path}\n{content}")
+                    if custom_contents:
+                        instructions_blocks.append("## Custom Instructions\n" + "\n\n".join(custom_contents))
+                        
+    if instructions_blocks:
+        return "\n\n# ADDITIONAL AGENT INSTRUCTIONS\n" + "\n\n".join(instructions_blocks)
+    return ""
+
 def _build_base_prompt(
     disabled_tools,
     mcp_mgr,
@@ -1283,6 +1391,8 @@ def _build_base_prompt(
     compact: bool = False,
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
+    suppress_skills: bool = False,
+    attached_skill_name: Optional[str] = None,
 ):
     """Build the agent prompt with only relevant tools included.
 
@@ -1329,13 +1439,15 @@ def _build_base_prompt(
     # The caller wraps it in untrusted_context_message and ships it as a
     # user-role message — same treatment as the matched-skills block.
     skill_index_block = ""
-    if not suppress_local_context:
+    if not suppress_local_context and not suppress_skills:
         try:
             from services.memory.skills import SkillsManager
             from src.constants import DATA_DIR
             _sm = SkillsManager(DATA_DIR)
             active_tools = list(set(TOOL_SECTIONS.keys()) - set(disabled or []))
             skill_idx = _sm.index_for(owner=owner, active_toolsets=active_tools)
+            if attached_skill_name:
+                skill_idx = [s for s in skill_idx if s.get("name") == attached_skill_name]
             if skill_idx:
                 lines = ["## Available skills",
                          "Procedures the assistant should consult before doing domain work. "
@@ -1356,6 +1468,12 @@ def _build_base_prompt(
         except Exception as _e:
             # Skill index is a soft enhancement — never fail prompt assembly on it.
             logger.debug(f"Skill-index injection skipped: {_e}")
+
+    # Inject layered instructions
+    if not suppress_local_context:
+        layered_inst = _build_layered_instructions(owner)
+        if layered_inst:
+            agent_prompt += "\n\n" + layered_inst
 
     # Inject integration descriptions
     if not suppress_local_context:
@@ -2553,36 +2671,15 @@ async def stream_agent_loop(
                     yield f'data: {json.dumps({"delta": _fb})}\n\n'
                     full_response += _fb
 
-        # ── Fallback: auto-create document if model dumped large code in chat ──
-        # If no create_document tool was used, check for big code blocks in text
-        has_doc_tool = any(
-            b.tool_type in ("create_document", "update_document")
-            for b in tool_blocks
-        ) or any(
-            tc.get("name") in ("create_document", "update_document")
-            for tc in native_tool_calls
+        tool_blocks, _auto_doc_events = add_auto_document_tool(
+            tool_blocks,
+            native_tool_calls,
+            round_response,
+            session_id=session_id,
+            disabled_tools=disabled_tools,
         )
-        if not has_doc_tool and session_id and "create_document" not in (disabled_tools or set()):
-            _code_block_re = re.compile(r'```(\w*)\n([\s\S]*?)```')
-            for m in _code_block_re.finditer(round_response):
-                lang_tag = m.group(1).lower()
-                code_body = m.group(2).strip()
-                # Skip small blocks and known tool tags
-                if code_body.count('\n') < 30:
-                    continue
-                if lang_tag in TOOL_TAGS:
-                    continue  # already handled as a tool execution
-                # Auto-create a document from this code block
-                lang_map = {"py": "python", "js": "javascript", "ts": "typescript", "": "text"}
-                doc_lang = lang_map.get(lang_tag, lang_tag or "text")
-                doc_title = f"Code ({doc_lang})"
-                tb = ToolBlock("create_document", f"{doc_title}\n{doc_lang}\n{code_body}")
-                tool_blocks.append(tb)
-                # Stream the document open event
-                yield f'data: {json.dumps({"type": "doc_stream_open", "title": doc_title, "language": doc_lang})}\n\n'
-                yield f'data: {json.dumps({"type": "doc_stream_delta", "content": code_body})}\n\n'
-                logger.info(f"Auto-created document from {lang_tag} code block ({code_body.count(chr(10))+1} lines)")
-                break  # only auto-create one document per round
+        for _event in _auto_doc_events:
+            yield _sse(_event)
 
         # Save cleaned round text for history persistence
         # Keep <think> blocks so they render in the thinking section on reload

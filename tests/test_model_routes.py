@@ -341,6 +341,17 @@ class TestCurateModels:
         assert "deepseek-reasoner" in curated
         assert "deepseek-coder" in extra
 
+    def test_fireworks_firepass_router_is_curated_first(self):
+        router = "accounts/fireworks/routers/kimi-k2p6-turbo"
+        models = [
+            "accounts/fireworks/models/deepseek-r1",
+            router,
+            "accounts/example/models/custom",
+        ]
+        curated, extra = _curate_models(models, "fireworks")
+        assert curated == [router, "accounts/fireworks/models/deepseek-r1"]
+        assert extra == ["accounts/example/models/custom"]
+
     def test_xai_curated(self):
         models = ["grok-4", "grok-3-fast", "grok-2"]
         curated, extra = _curate_models(models, "xai")
@@ -1053,6 +1064,56 @@ def test_post_creates_endpoint_with_pinned_models(monkeypatch):
     # Persisted onto the created row.
     assert len(db.added) == 1
     assert json.loads(db.added[0].pinned_models) == ["deploy-1", "deploy-2"]
+
+
+def test_post_firepass_pins_router_without_model_list_probe(monkeypatch):
+    router = "accounts/fireworks/routers/kimi-k2p6-turbo"
+    saved_settings = []
+    db = _PinnedFakeDb([])
+    _patch_create_deps(monkeypatch, db)
+    monkeypatch.setattr(model_routes, "_probe_endpoint", lambda *a, **k: (_ for _ in ()).throw(AssertionError("Fire Pass setup must not call /models")))
+    monkeypatch.setattr(model_routes, "_ping_endpoint", lambda *a, **k: (_ for _ in ()).throw(AssertionError("Fire Pass setup must not ping the API root")))
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: {})
+    monkeypatch.setattr(model_routes, "_save_settings", saved_settings.append)
+    create = _get_route("/api/model-endpoints", "POST")
+
+    result = create(
+        _PinnedFakeRequest(),
+        base_url="https://api.fireworks.ai/inference/v1",
+        **_create_form_kwargs(
+            name="Fireworks Fire Pass",
+            api_key="test-key",
+            require_models="true",
+            pinned_models="",
+        ),
+    )
+
+    assert result["models"] == [router]
+    assert result["pinned_models"] == [router]
+    assert result["online"] is True
+    assert result["status"] == "online"
+    assert json.loads(db.added[0].pinned_models) == [router]
+    assert saved_settings[0]["default_model"] == router
+
+
+def test_post_firepass_key_prefix_pins_router(monkeypatch):
+    router = "accounts/fireworks/routers/kimi-k2p6-turbo"
+    db = _PinnedFakeDb([])
+    _patch_create_deps(monkeypatch, db)
+    monkeypatch.setattr(model_routes, "_probe_endpoint", lambda *a, **k: (_ for _ in ()).throw(AssertionError("Fire Pass key setup must not call /models")))
+    create = _get_route("/api/model-endpoints", "POST")
+
+    result = create(
+        _PinnedFakeRequest(),
+        base_url="https://api.fireworks.ai/inference/v1",
+        **_create_form_kwargs(
+            name="Fireworks",
+            api_key="fpk_test",
+            require_models="true",
+        ),
+    )
+
+    assert result["models"] == [router]
 
 
 def test_post_dedupe_existing_merges_and_returns_pinned(monkeypatch):

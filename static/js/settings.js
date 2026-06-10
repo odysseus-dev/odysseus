@@ -2280,7 +2280,206 @@ function initAll() {
   initEmailSettings();
   initEmailAccountsSettings();
   initReminderSettings();
+  initAgentContextSettings();
   initUnifiedIntegrations();
+}
+
+async function initAgentContextSettings() {
+  const root = el('settings-modal');
+  if (!root || !root.querySelector('[data-settings-panel="agent-context"]')) return;
+
+  const priorityContainer = el('agent-context-priority-container');
+  const priorityMsg = el('set-agentContextPriorityMsg');
+  const globalInstPathInput = el('set-agentContextGlobalInstructionsPath');
+  const globalSkillsPathInput = el('set-agentContextGlobalSkillsPath');
+  const customSourcesPathsInput = el('set-agentContextCustomSourcesPaths');
+  const pathsMsg = el('set-agentContextPathsMsg');
+
+  // Load settings
+  let settings = {};
+  try {
+    const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+    settings = await res.json();
+  } catch (e) {
+    console.warn('Failed to load agent context settings', e);
+    return;
+  }
+
+  // Populate paths
+  if (globalInstPathInput) globalInstPathInput.value = settings.agent_context_global_instructions_path || '';
+  if (globalSkillsPathInput) globalSkillsPathInput.value = settings.agent_context_global_skills_path || '';
+  if (customSourcesPathsInput) customSourcesPathsInput.value = settings.agent_context_custom_sources_paths || '';
+
+  // Local save helper
+  async function save(patch) {
+    try {
+      await fetch('/api/auth/settings', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+    } catch (e) {
+      console.warn('Failed to save settings', e);
+    }
+  }
+
+  // Render priority list
+  const sourceMetadata = {
+    repo_instructions: {
+      title: 'Repository Instructions',
+      desc: 'Load AGENTS.md and CLAUDE.md from the active workspace directory.',
+      key: 'agent_context_repo_instructions_enabled'
+    },
+    repo_skills: {
+      title: 'Repository Skills',
+      desc: 'Load reusable skills from the active workspace under .agents/skills.',
+      key: 'agent_context_repo_skills_enabled'
+    },
+    global_instructions: {
+      title: 'Global Instructions',
+      desc: 'Load system instructions from ~/.agents/instructions.md.',
+      key: 'agent_context_global_instructions_enabled'
+    },
+    global_skills: {
+      title: 'Global Skills',
+      desc: 'Load global reusable skills from ~/.agents/skills.',
+      key: 'agent_context_global_skills_enabled'
+    },
+    custom_sources: {
+      title: 'Custom Sources',
+      desc: 'Load custom instruction files or skills directories configured below.',
+      key: 'agent_context_custom_sources_enabled'
+    }
+  };
+
+  function renderPriorityList() {
+    if (!priorityContainer) return;
+    priorityContainer.innerHTML = '';
+    const priority = settings.agent_context_priority || [
+      'repo_instructions',
+      'repo_skills',
+      'global_instructions',
+      'global_skills',
+      'custom_sources'
+    ];
+
+    priority.forEach(id => {
+      const meta = sourceMetadata[id];
+      if (!meta) return;
+
+      const item = document.createElement('div');
+      item.className = 'priority-item';
+      item.dataset.sourceId = id;
+
+      const handle = document.createElement('span');
+      handle.className = 'priority-item-handle';
+      handle.innerHTML = `
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="9" cy="5" r="1"/>
+          <circle cx="9" cy="12" r="1"/>
+          <circle cx="9" cy="19" r="1"/>
+          <circle cx="15" cy="5" r="1"/>
+          <circle cx="15" cy="12" r="1"/>
+          <circle cx="15" cy="19" r="1"/>
+        </svg>
+      `;
+      handle.title = 'Drag to reorder';
+      item.appendChild(handle);
+
+      const info = document.createElement('div');
+      info.className = 'priority-item-info';
+
+      const title = document.createElement('div');
+      title.className = 'priority-item-title';
+      title.textContent = meta.title;
+      info.appendChild(title);
+
+      const desc = document.createElement('div');
+      desc.className = 'priority-item-desc';
+      desc.textContent = meta.desc;
+      info.appendChild(desc);
+
+      item.appendChild(info);
+
+      const toggleWrap = document.createElement('div');
+      toggleWrap.className = 'priority-item-toggle';
+
+      const label = document.createElement('label');
+      label.className = 'admin-switch';
+
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.checked = settings[meta.key] !== false; // default to true if undefined
+      chk.addEventListener('change', async () => {
+        const patch = {};
+        patch[meta.key] = chk.checked;
+        settings[meta.key] = chk.checked; // sync local state
+        await save(patch);
+      });
+
+      const slider = document.createElement('span');
+      slider.className = 'admin-slider';
+
+      label.appendChild(chk);
+      label.appendChild(slider);
+      toggleWrap.appendChild(label);
+      item.appendChild(toggleWrap);
+
+      priorityContainer.appendChild(item);
+    });
+
+    // Enable drag-and-drop sort using imported dragSortModule
+    if (dragSortModule) {
+      dragSortModule.enable('agent-context-priority-container', '.priority-item', {
+        handleSelector: '.priority-item-handle',
+        onReorder: async (sortedElements) => {
+          const newPriority = sortedElements.map(el => el.dataset.sourceId).filter(Boolean);
+          settings.agent_context_priority = newPriority; // sync local state
+          await save({ agent_context_priority: newPriority });
+          if (priorityMsg) {
+            priorityMsg.textContent = 'Priority order saved';
+            priorityMsg.style.color = 'var(--green,#50fa7b)';
+            setTimeout(() => { priorityMsg.textContent = ''; }, 2000);
+          }
+        }
+      });
+    }
+  }
+
+  renderPriorityList();
+
+  // Setup path input event listeners (debounced)
+  function setupPathDebounce(inputEl, settingsKey) {
+    if (!inputEl) return;
+    let debounceTimer;
+    inputEl.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(async () => {
+        const value = inputEl.value.trim();
+        const patch = {};
+        patch[settingsKey] = value;
+        settings[settingsKey] = value; // sync local state
+        try {
+          await save(patch);
+          if (pathsMsg) {
+            pathsMsg.textContent = 'Paths saved';
+            pathsMsg.style.color = 'var(--green,#50fa7b)';
+            setTimeout(() => { pathsMsg.textContent = ''; }, 2000);
+          }
+        } catch (_) {
+          if (pathsMsg) {
+            pathsMsg.textContent = 'Save failed';
+            pathsMsg.style.color = 'var(--red)';
+          }
+        }
+      }, 600);
+    });
+  }
+
+  setupPathDebounce(globalInstPathInput, 'agent_context_global_instructions_path');
+  setupPathDebounce(globalSkillsPathInput, 'agent_context_global_skills_path');
+  setupPathDebounce(customSourcesPathsInput, 'agent_context_custom_sources_paths');
 }
 
 function notifyIntegrationsChanged() {

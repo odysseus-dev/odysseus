@@ -2006,6 +2006,10 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     console.error('Error in selectSession:', error);
     uiModule.showError('Failed to load session: ' + error.message);
   } finally {
+    if (window._syncSkillIndicator) {
+      const attachedSkill = localStorage.getItem('attached-skill-' + id) || null;
+      window._syncSkillIndicator(attachedSkill);
+    }
     // Ensure memories are loaded after session selection
     if (window.memoryModule && window.memoryModule.loadMemories) {
       await window.memoryModule.loadMemories();
@@ -2079,6 +2083,12 @@ export function createDirectChat(url, modelId, endpointId) {
   // Enable input
   const msgInput = document.getElementById('message');
   if (msgInput) { msgInput.disabled = false; msgInput.value = ''; msgInput.focus(); }
+
+  // Clear any pending skill
+  if (window._syncSkillIndicator) {
+    localStorage.removeItem('attached-skill-pending');
+    window._syncSkillIndicator(null);
+  }
 }
 
 /** Actually create the session in the DB. Called on first message send. */

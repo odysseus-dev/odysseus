@@ -48,6 +48,13 @@ const PROVIDER_PATTERNS = [
 ];
 const SETUP_PROVIDER_URLS = {
   deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/v1' },
+  fireworks: { name: 'Fireworks', url: 'https://api.fireworks.ai/inference/v1' },
+  firepass: {
+    name: 'Fireworks Fire Pass',
+    url: 'https://api.fireworks.ai/inference/v1',
+    pinned_models: ['accounts/fireworks/routers/kimi-k2p6-turbo'],
+    default_model: 'accounts/fireworks/routers/kimi-k2p6-turbo',
+  },
   openai: { name: 'OpenAI', url: 'https://api.openai.com/v1' },
   openrouter: { name: 'OpenRouter', url: 'https://openrouter.ai/api/v1' },
   ollama: { name: 'Ollama Cloud', url: 'https://ollama.com/api' },
@@ -88,6 +95,10 @@ function _setupProviderFromInput(input) {
   const aliases = {
     deepseekai: 'deepseek',
     deepseek: 'deepseek',
+    fireworksai: 'fireworks',
+    fireworks: 'fireworks',
+    firepass: 'firepass',
+    fireworksfirepass: 'firepass',
     openai: 'openai',
     chatgpt: 'openai',
     openrouter: 'openrouter',
@@ -121,6 +132,9 @@ function _extractSetupProviderCredential(input) {
   if (!raw) return null;
   const providerAliases = [
     ['deepseek ai', 'deepseek'], ['deepseek', 'deepseek'],
+    ['fireworks fire pass', 'firepass'], ['fireworks firepass', 'firepass'],
+    ['fire pass', 'firepass'], ['firepass', 'firepass'],
+    ['fireworks ai', 'fireworks'], ['fireworks', 'fireworks'],
     ['open router', 'openrouter'], ['openrouter', 'openrouter'],
     ['ollama cloud', 'ollama'], ['ollama', 'ollama'],
     ['open ai', 'openai'], ['openai', 'openai'], ['chatgpt', 'openai'],
@@ -658,7 +672,11 @@ async function connectDetectedSetupEndpoint(detected) {
     fd.append('base_url', detected.base_url);
     if (detected.api_key) fd.append('api_key', detected.api_key);
     if (detected.name) fd.append('name', detected.name);
-    fd.append('require_models', 'true');
+    if (detected.pinned_models?.length) {
+      fd.append('pinned_models', JSON.stringify(detected.pinned_models));
+    } else {
+      fd.append('require_models', 'true');
+    }
     if (!isLocal) fd.append('skip_probe', 'true');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30000);
@@ -680,7 +698,7 @@ async function connectDetectedSetupEndpoint(detected) {
       spinnerDiv.remove();
       await typewriterReply(`Found ${count} model${count > 1 ? 's' : ''} on ${providerLabel}. Starting a chat...`);
       if (modelsModule) await modelsModule.refreshModels(true);
-      const firstModel = data.models[0];
+      const firstModel = data.models.includes(detected.default_model) ? detected.default_model : data.models[0];
       const chatUrl = setupChatUrlForEndpoint(detected);
       if (sessionModule) {
         await sessionModule.createDirectChat(chatUrl, firstModel, data.id);
@@ -1687,6 +1705,16 @@ async function _cmdSkills(args, ctx) {
     if (!name) { slashReply('Usage: /skills use name request'); return true; }
     return _invokeSkillByName(name, rest.slice(1).join(' ').trim(), ctx);
   }
+
+  // Fallback: if 'sub' is a valid skill name from the catalog, run it directly.
+  try {
+    const catalog = await _loadSkillSlashCatalog(false);
+    const matchedSkill = catalog.find(s => s.name.toLowerCase() === sub);
+    if (matchedSkill) {
+      const requestText = rest.join(' ').trim();
+      return _invokeSkillByName(matchedSkill.name, requestText, ctx);
+    }
+  } catch (_) {}
 
   slashReply('Usage: /skills list | search query | view name | use name request');
   return true;
@@ -5856,6 +5884,8 @@ const COMMANDS = {
     // "subDef.handler is not a function".
     subs: {
       deepseek:   { help: 'DeepSeek',      usage: '/setup deepseek sk-...',     handler: (a, c) => _cmdSetup(['deepseek',   ...a], c) },
+      fireworks:  { help: 'Fireworks',     usage: '/setup fireworks KEY',       handler: (a, c) => _cmdSetup(['fireworks',  ...a], c) },
+      firepass:   { help: 'Fireworks Fire Pass', alias: ['fire-pass'], usage: '/setup firepass KEY', handler: (a, c) => _cmdSetup(['firepass', ...a], c) },
       openai:     { help: 'OpenAI',        usage: '/setup openai sk-proj-...',  handler: (a, c) => _cmdSetup(['openai',     ...a], c) },
       anthropic:  { help: 'Anthropic',     usage: '/setup anthropic sk-ant-...',handler: (a, c) => _cmdSetup(['anthropic',  ...a], c) },
       openrouter: { help: 'OpenRouter',    usage: '/setup openrouter sk-or-...',handler: (a, c) => _cmdSetup(['openrouter', ...a], c) },
