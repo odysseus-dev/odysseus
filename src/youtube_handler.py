@@ -79,6 +79,18 @@ def extract_youtube_id(url: str) -> Optional[str]:
     return None
 
 
+def _format_timestamp(seconds) -> str:
+    """Format a transcript offset as MM:SS, or H:MM:SS once it passes an hour.
+
+    The previous ``MM:SS`` formatting overflowed the minutes field past 60
+    (e.g. 75:30 for 1h15m30s) on videos longer than an hour.
+    """
+    total = int(seconds)
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
 async def extract_transcript_async(
     url: str, video_id: str, max_retries: int = 3
 ) -> Dict[str, Any]:
@@ -112,7 +124,7 @@ async def extract_transcript_async(
                     "text": text,
                     "start": start,
                     "duration": snippet.duration,
-                    "timestamp": f"{int(start // 60):02d}:{int(start % 60):02d}",
+                    "timestamp": _format_timestamp(start),
                 })
 
             full_text = " ".join(e["text"] for e in formatted)
