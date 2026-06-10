@@ -39,6 +39,7 @@ export function layerNeedsPixelPass(layer) {
  * nothing changed.
  */
 export function adjustmentsKey(adj) {
+  adj = adj && typeof adj === 'object' ? adj : {};
   const l = adj.levels || {};
   const cb = adj.colorBalance || {};
   const s = cb.shadows || {}, m = cb.midtones || {}, h = cb.highlights || {};
