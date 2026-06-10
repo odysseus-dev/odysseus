@@ -130,7 +130,17 @@ if (-not (Find-GitBash)) {
 }
 
 # 6. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
-Write-Step ("Starting Odysseus at http://{0}:{1}" -f $BindHost, $Port)
+$AppUrl = ("http://{0}:{1}" -f $BindHost, $Port)
+Write-Step ("Starting Odysseus at {0}" -f $AppUrl)
+Write-Host "Open Odysseus in your browser:" -ForegroundColor Green
+Write-Host ("  {0}" -f $AppUrl)
+Write-Host ""
+Write-Host "Login:"
+Write-Host "  Username: admin, unless you changed ODYSSEUS_ADMIN_USER."
+Write-Host "  Password: use the password you chose during setup,"
+Write-Host "            or the temporary password printed above if one was generated."
+Write-Host ""
+Write-Host "If this is not your first run, use your existing admin credentials."
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
 & $venvPy -m uvicorn app:app --host $BindHost --port $Port

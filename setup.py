@@ -91,6 +91,7 @@ def create_default_admin():
         # Priority: env vars > interactive prompt > random password
         username = os.getenv("ODYSSEUS_ADMIN_USER", "").strip().lower()
         password = os.getenv("ODYSSEUS_ADMIN_PASSWORD", "").strip()
+        generated_password = False
 
         if username and password:
             # Both provided via env — use them directly
@@ -101,7 +102,9 @@ def create_default_admin():
         else:
             # Non-interactive (Docker, CI) — fall back to generated password
             username = username or "admin"
-            password = password or __import__("secrets").token_urlsafe(18)
+            if not password:
+                password = __import__("secrets").token_urlsafe(18)
+                generated_password = True
 
         username = username or "admin"
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
@@ -116,13 +119,14 @@ def create_default_admin():
         with open(auth_path, "w", encoding="utf-8") as f:
             json.dump(auth_data, f, indent=2)
 
-        if sys.stdin.isatty() and not os.getenv("ODYSSEUS_ADMIN_PASSWORD"):
+        if generated_password:
+            print(f"  [ok] Initial admin user created ({username})")
+            print(f"        Temporary password: {password}")
+            print(f"        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **")
+        elif sys.stdin.isatty():
             print(f"  [ok] Admin account created ({username})")
         else:
             print(f"  [ok] Initial admin user created ({username})")
-            if not os.getenv("ODYSSEUS_ADMIN_PASSWORD"):
-                print(f"        Temporary password: {password}")
-                print(f"        ** Change it after first login. Set ODYSSEUS_ADMIN_PASSWORD to choose your own. **")
         return "created"
     except ImportError as e:
         if "incompatible architecture" in str(e).lower():
