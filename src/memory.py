@@ -294,65 +294,84 @@ class MemoryManager:
             return []
             
         # Define keyword categories for semantic matching
-        identity_words = ["name", "who", "i", "am", "called", "identity", "myself", "me", "my"]
+        # Identity wins only on strong identity words or explicit identity
+        # phrases. Bare first-person tokens (i / me / my / am / who) must NOT
+        # trigger identity on their own, or "I like jazz" and "what is my email"
+        # wrongly classify as identity before the preference / contact branches
+        # ever run.
+        identity_words = ["name", "called", "identity", "myself"]
+        identity_phrases = ["who am i", "who i am", "what am i", "am i called",
+                            "about me", "my name", "call me"]
         contact_words = ["phone", "email", "address", "contact", "number", "where", "located", "reach"]
         preference_words = ["like", "prefer", "favorite", "want", "love", "hate", "dislike", "enjoy", "interested"]
         task_words = ["todo", "task", "remind", "meeting", "appointment", "schedule", "deadline"]
         fact_words = ["what", "when", "where", "how", "why", "explain", "describe", "information", "know"]
         
         query_lower = query.lower()
-        
+        # Classify on WHOLE words, not substrings. With `word in query_lower`
+        # the 1-char "i" (and "me"/"am") is a substring of almost every query,
+        # so nearly all queries were typed "identity" and the contact/
+        # preference/task/fact branches were unreachable, force-injecting the
+        # user's identity memories regardless of relevance.
+        query_tokens = set(re.findall(r"[a-z0-9']+", query_lower))
+
         # Determine query type based on keywords
         query_type = None
-        if any(word in query_lower for word in identity_words):
+        if (query_tokens & set(identity_words)) or any(p in query_lower for p in identity_phrases):
             query_type = "identity"
-        elif any(word in query_lower for word in contact_words):
+        elif query_tokens & set(contact_words):
             query_type = "contact"
-        elif any(word in query_lower for word in preference_words):
+        elif query_tokens & set(preference_words):
             query_type = "preference"
-        elif any(word in query_lower for word in task_words):
+        elif query_tokens & set(task_words):
             query_type = "task"
-        elif any(word in query_lower for word in fact_words):
+        elif query_tokens & set(fact_words):
             query_type = "fact"
         
         relevant = []
-        identity_memories = []
-        other_memories = []
-        
-        # Separate identity memories from others
+
+        # Score every memory uniformly. query_type informs SCORING (a boost),
+        # it no longer force-injects a whole category at a fixed top score. The
+        # old code appended every identity memory at 0.9 whenever the query was
+        # classified "identity", so a single misclassification slammed unrelated
+        # identity memories to the top regardless of relevance. Now a guessed
+        # type only nudges the ranking, so a genuinely more relevant memory can
+        # still outrank it.
         for memory in memories:
             memory_text = memory["text"].lower()
-            # Check if this is an identity memory (contains name patterns or identity indicators)
+            # Identity memory = carries a name pattern or identity phrasing.
             is_identity = any([
                 re.search(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', memory["text"]),
                 any(word in memory_text for word in ["name is", "i'm", "i am", "called", "my name", "named", "call me"])
             ])
-            if is_identity:
-                identity_memories.append(memory)
-            else:
-                other_memories.append(memory)
-        
-        # For identity queries, include all identity memories regardless of similarity
-        if query_type == "identity" and identity_memories:
-            # Give them high scores to ensure they're included first
-            for memory in identity_memories:
-                relevant.append((0.9, memory))  # High score for identity memories in identity queries
-        
-        # Process other memories with similarity scoring
-        for memory in other_memories:
-            memory_text = memory["text"].lower()
+            # Identity memories only surface on identity queries. Scoring them
+            # on other query types lets a stopword overlap ("is", "the") drag a
+            # name memory into an unrelated result, which is exactly the
+            # over-injection we are trying to avoid.
+            if is_identity and query_type != "identity":
+                continue
+
             memory_tokens = set(tokenize(memory_text))
             query_tokens = set(tokenize(query_lower))
-            
-            # Calculate base Jaccard similarity
+
+            # Base Jaccard similarity. An identity query should still surface
+            # the user's identity memory even with no token overlap (e.g.
+            # "who am I" vs "User's name is Sam Carter"), so fall through to the
+            # identity floor below instead of skipping outright.
             if not query_tokens or not memory_tokens:
-                continue
-                
-            base_similarity = len(query_tokens & memory_tokens) / len(query_tokens | memory_tokens)
+                base_similarity = 0.0
+            else:
+                base_similarity = len(query_tokens & memory_tokens) / len(query_tokens | memory_tokens)
             final_score = base_similarity
-            
+
             # Apply boosts based on semantic matching
-            if query_type == "contact":
+            if query_type == "identity" and is_identity:
+                # Boost identity memories for identity queries, with a moderate
+                # floor so they surface, but well below the old 0.9 force-inject
+                # so a memory with stronger genuine relevance still ranks above.
+                final_score = max(final_score * 1.5, 0.6)
+
+            elif query_type == "contact":
                 # Boost memories with contact information
                 has_contact_info = any(word in memory_text for word in ["@gmail.com", "@", ".com", 
                                                                      "phone", "number", "address", 
