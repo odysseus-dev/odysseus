@@ -1804,8 +1804,9 @@ async def stream_agent_loop(
     if _relevant_tools:
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
     if not guide_only and not _relevant_tools and bool(_intent.get("low_signal")):
-        from src.tool_index import ALWAYS_AVAILABLE
+        from src.tool_index import ALWAYS_AVAILABLE, workspace_file_tools
         _relevant_tools = set(ALWAYS_AVAILABLE)
+        _relevant_tools.update(workspace_file_tools())
         logger.info("[tool-rag] Low-signal agent message; skipping retrieval and using always-available tools only")
     if not guide_only and not _relevant_tools:
         try:
@@ -1843,8 +1844,9 @@ async def stream_agent_loop(
     # Fallback: if RAG unavailable, use keyword-based tool selection
     # instead of sending ALL tools (which overwhelms the model).
     if not guide_only and not _relevant_tools and _retrieval_query:
-        from src.tool_index import ALWAYS_AVAILABLE, ToolIndex
+        from src.tool_index import ALWAYS_AVAILABLE, ToolIndex, workspace_file_tools
         _relevant_tools = set(ALWAYS_AVAILABLE)
+        _relevant_tools.update(workspace_file_tools())
         ql = _retrieval_query.lower()
         for keywords, tools in ToolIndex._KEYWORD_HINTS.items():
             if any(kw in ql for kw in keywords):
