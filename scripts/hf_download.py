@@ -141,6 +141,15 @@ def _patch_tqdm():
         pass
 
 
+def _download_max_workers(value=None) -> int:
+    raw = os.environ.get("HF_HUB_DOWNLOAD_MAX_WORKERS", "8") if value is None else value
+    try:
+        workers = int(raw)
+    except (TypeError, ValueError):
+        return 8
+    return workers if workers > 0 else 8
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("repo_id", help="HuggingFace repo (e.g. meta-llama/Llama-3-8B)")
@@ -164,7 +173,7 @@ def main():
 
     kwargs = {
         "repo_id": args.repo_id,
-        "max_workers": int(os.environ.get("HF_HUB_DOWNLOAD_MAX_WORKERS", "8")),
+        "max_workers": _download_max_workers(),
     }
     if args.include:
         kwargs["allow_patterns"] = [args.include]
