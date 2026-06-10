@@ -28,11 +28,14 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Tools that are ALWAYS included regardless of retrieval results.
-# Keep this deliberately tiny. Domain tools (web, documents, email,
+# Keep this deliberately tiny. Most domain tools (documents, email,
 # cookbook/model serving, files, settings, etc.) are injected by retrieval or
 # keyword intent so a trivial agent prompt like "test" does not carry every
-# domain's schemas and rules.
+# domain's schemas and rules. Web lookup tools are the exception: local models
+# routinely need them for freshness beyond their training cutoff, and low-signal
+# turns intentionally skip retrieval.
 ALWAYS_AVAILABLE = frozenset({
+    "web_search", "web_fetch",
     # Memory is ambient — "remember this" can follow any message regardless
     # of topic. Without this, RAG drops it and the agent falls back to
     # app_api /api/memory/add which fails with 422 on first attempt.

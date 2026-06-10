@@ -55,3 +55,11 @@ def test_plain_tell_request_stays_minimal():
     assert not (_EMAIL_TOOLS & tools)
     # Always-available baseline is still there.
     assert set(ALWAYS_AVAILABLE) <= tools
+
+
+def test_web_tools_are_available_for_low_signal_agent_turns():
+    """Open-ended freshness/fact questions may not contain explicit search
+    keywords. Low-signal agent turns skip retrieval, so the baseline must still
+    expose the read-only web tools instead of forcing stale model-only answers.
+    """
+    assert {"web_search", "web_fetch"} <= set(ALWAYS_AVAILABLE)
