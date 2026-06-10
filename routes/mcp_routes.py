@@ -90,6 +90,31 @@ def _apply_mcp_oauth_env(env: dict, oauth_cfg) -> None:
         env["GMAIL_CREDENTIALS_PATH"] = token_file
 
 
+def _stringify_payload_value(value, default=None):
+    """Return form-compatible text for JSON values accepted by MCP routes."""
+    if value is None:
+        return default
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    return value
+
+
+def _coerce_server_payload(payload, *, name, transport, command, args, env, url, oauth_file, oauth_config):
+    """Merge a JSON MCP server payload with the form defaults used by the route."""
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "JSON body must be an object")
+    return {
+        "name": payload.get("name", name),
+        "transport": payload.get("transport", transport),
+        "command": payload.get("command", command),
+        "args": _stringify_payload_value(payload.get("args", args), "[]"),
+        "env": _stringify_payload_value(payload.get("env", env), "{}"),
+        "url": payload.get("url", url),
+        "oauth_file": _stringify_payload_value(payload.get("oauth_file", oauth_file)),
+        "oauth_config": _stringify_payload_value(payload.get("oauth_config", oauth_config)),
+    }
+
+
 def _load_disabled_map():
     """Load per-server disabled tool sets from DB."""
     db = SessionLocal()
@@ -193,7 +218,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
     @router.post("/servers")
     async def add_server(
         request: Request,
-        name: str = Form(...),
+        name: str = Form(None),
         transport: str = Form("stdio"),
         command: str = Form(None),
         args: str = Form("[]"),
@@ -206,9 +231,36 @@ def setup_mcp_routes(mcp_manager: McpManager):
         registering a stdio server is equivalent to executing arbitrary
         binaries on the host."""
         require_admin(request)
+        if "application/json" in request.headers.get("content-type", "").lower():
+            try:
+                payload = await request.json()
+            except json.JSONDecodeError:
+                raise HTTPException(400, "invalid JSON body")
+            values = _coerce_server_payload(
+                payload,
+                name=name,
+                transport=transport,
+                command=command,
+                args=args,
+                env=env,
+                url=url,
+                oauth_file=oauth_file,
+                oauth_config=oauth_config,
+            )
+            name = values["name"]
+            transport = values["transport"]
+            command = values["command"]
+            args = values["args"]
+            env = values["env"]
+            url = values["url"]
+            oauth_file = values["oauth_file"]
+            oauth_config = values["oauth_config"]
+
         server_id = str(uuid.uuid4())[:8]
 
         # Validate
+        if not name:
+            raise HTTPException(400, "name is required")
         if transport == "stdio" and not command:
             raise HTTPException(400, "command is required for stdio transport")
         if transport == "sse" and not url:
