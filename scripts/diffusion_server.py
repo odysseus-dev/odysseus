@@ -26,6 +26,7 @@ import io
 import json
 import logging
 import time
+import uuid
 from pathlib import Path
 
 from contextlib import asynccontextmanager
@@ -34,6 +35,8 @@ import torch
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel
 
@@ -44,10 +47,15 @@ _pipe = None
 _model_id = ""
 DTYPE_MAP = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
 _args = None
+_outputs_dir: Path = Path("outputs")
 
 
 @asynccontextmanager
 async def lifespan(application):
+    global _outputs_dir
+    _outputs_dir = Path(_args.outputs_dir) if _args and _args.outputs_dir else Path("outputs")
+    _outputs_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/outputs", StaticFiles(directory=str(_outputs_dir)), name="outputs")
     load_model()
     yield
 
@@ -110,6 +118,277 @@ def _configure_security_middleware(application, allowed_hosts, allowed_origins):
 # Install defaults at module load so importing the app for tests / direct
 # uvicorn invocation still benefits from the Host-header allowlist.
 _configure_security_middleware(app, _DEFAULT_ALLOWED_HOSTS, _DEFAULT_CORS_ORIGINS)
+
+_UI_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Image Generator</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #111; color: #e0e0e0; min-height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 1.2rem 2rem; background: #1a1a2e; border-bottom: 1px solid #2a2a4a; display: flex; align-items: center; gap: 1rem; }
+  header h1 { font-size: 1.4rem; font-weight: 600; color: #a78bfa; }
+  #status-badge { font-size: 0.75rem; padding: 0.25rem 0.7rem; border-radius: 99px; background: #1e3a1e; color: #4ade80; border: 1px solid #166534; }
+  #status-badge.loading { background: #3b2a00; color: #fbbf24; border-color: #92400e; }
+  #status-badge.error { background: #3b0000; color: #f87171; border-color: #7f1d1d; }
+  main { display: flex; flex: 1; overflow: hidden; }
+  aside { width: 320px; min-width: 280px; background: #161625; border-right: 1px solid #252540; padding: 1.5rem 1.2rem; display: flex; flex-direction: column; gap: 1.2rem; overflow-y: auto; }
+  label { font-size: 0.8rem; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.06em; display: block; margin-bottom: 0.4rem; }
+  textarea { width: 100%; resize: vertical; min-height: 120px; background: #1e1e35; border: 1px solid #374151; border-radius: 8px; color: #e0e0e0; padding: 0.75rem; font-size: 0.95rem; font-family: inherit; line-height: 1.5; outline: none; transition: border-color 0.2s; }
+  textarea:focus { border-color: #7c3aed; }
+  .field { display: flex; flex-direction: column; }
+  .row { display: flex; align-items: center; gap: 0.6rem; }
+  input[type=range] { flex: 1; accent-color: #7c3aed; cursor: pointer; }
+  .val { min-width: 2.2rem; text-align: right; font-size: 0.9rem; color: #c4b5fd; font-weight: 600; }
+  select { width: 100%; background: #1e1e35; border: 1px solid #374151; border-radius: 8px; color: #e0e0e0; padding: 0.55rem 0.75rem; font-size: 0.9rem; outline: none; cursor: pointer; }
+  select:focus { border-color: #7c3aed; }
+  .quality-labels { display: flex; justify-content: space-between; font-size: 0.7rem; color: #6b7280; margin-top: 0.15rem; }
+  button#generate-btn { width: 100%; padding: 0.85rem; background: linear-gradient(135deg, #6d28d9, #4f46e5); border: none; border-radius: 10px; color: #fff; font-size: 1rem; font-weight: 600; cursor: pointer; transition: opacity 0.2s, transform 0.1s; margin-top: auto; }
+  button#generate-btn:hover:not(:disabled) { opacity: 0.9; }
+  button#generate-btn:active:not(:disabled) { transform: scale(0.98); }
+  button#generate-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  #gallery-wrap { flex: 1; overflow-y: auto; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; }
+  #gallery-header { display: flex; align-items: center; justify-content: space-between; }
+  #gallery-header h2 { font-size: 1rem; font-weight: 600; color: #9ca3af; }
+  #clear-btn { font-size: 0.78rem; background: none; border: 1px solid #374151; border-radius: 6px; color: #9ca3af; padding: 0.3rem 0.7rem; cursor: pointer; }
+  #clear-btn:hover { border-color: #7c3aed; color: #a78bfa; }
+  #gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; }
+  .img-card { background: #161625; border: 1px solid #252540; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .img-card img { width: 100%; display: block; object-fit: cover; cursor: zoom-in; }
+  .img-card .card-meta { padding: 0.6rem 0.8rem; font-size: 0.75rem; color: #6b7280; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+  .img-card .prompt-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .img-card a.dl { color: #7c3aed; text-decoration: none; font-weight: 600; flex-shrink: 0; }
+  .img-card a.dl:hover { color: #a78bfa; }
+  #progress-bar-wrap { width: 100%; background: #252540; border-radius: 99px; height: 6px; overflow: hidden; display: none; }
+  #progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #6d28d9, #4f46e5); border-radius: 99px; transition: width 0.3s ease; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #4f46e5; border-top-color: transparent; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #lightbox { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.88); z-index: 1000; align-items: center; justify-content: center; cursor: zoom-out; }
+  #lightbox.open { display: flex; }
+  #lightbox img { max-width: 92vw; max-height: 92vh; border-radius: 8px; box-shadow: 0 0 40px #0008; }
+  .pending-card { background: #161625; border: 1px dashed #374151; border-radius: 12px; display: flex; align-items: center; justify-content: center; min-height: 200px; color: #6b7280; font-size: 0.85rem; gap: 0.5rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Image Generator</h1>
+  <span id="status-badge" class="loading">Connecting…</span>
+</header>
+<main>
+  <aside>
+    <div class="field">
+      <label>Prompt</label>
+      <textarea id="prompt" placeholder="Describe the image you want to generate…"></textarea>
+    </div>
+    <div class="field">
+      <label>Number of images</label>
+      <div class="row">
+        <input type="range" id="count" min="1" max="20" value="1">
+        <span class="val" id="count-val">1</span>
+      </div>
+    </div>
+    <div class="field">
+      <label>Quality / Speed</label>
+      <div class="row">
+        <input type="range" id="quality" min="1" max="5" value="2" step="1">
+        <span class="val" id="quality-val">Fast</span>
+      </div>
+      <div class="quality-labels"><span>Fastest</span><span>Balanced</span><span>Best</span></div>
+    </div>
+    <div class="field">
+      <label>Output size</label>
+      <select id="size">
+        <option value="512x512">512 × 512</option>
+        <option value="768x768">768 × 768</option>
+        <option value="1024x1024" selected>1024 × 1024</option>
+        <option value="1024x768">1024 × 768 (landscape)</option>
+        <option value="768x1024">768 × 1024 (portrait)</option>
+      </select>
+    </div>
+    <div id="progress-bar-wrap"><div id="progress-bar"></div></div>
+    <button id="generate-btn">Generate</button>
+  </aside>
+  <section id="gallery-wrap">
+    <div id="gallery-header">
+      <h2 id="gallery-title">Gallery</h2>
+      <button id="clear-btn">Clear gallery</button>
+    </div>
+    <div id="gallery"></div>
+  </section>
+</main>
+<div id="lightbox"><img id="lightbox-img" src="" alt=""></div>
+<script>
+const QUALITY_LABELS = {1:'Fastest',2:'Fast',3:'Balanced',4:'High',5:'Best'};
+const QUALITY_VALUES = {1:'fastest',2:'fast',3:'balanced',4:'high',5:'best'};
+
+const $ = id => document.getElementById(id);
+const countSlider = $('count'), countVal = $('count-val');
+const qualitySlider = $('quality'), qualityVal = $('quality-val');
+const generateBtn = $('generate-btn');
+const progressWrap = $('progress-bar-wrap'), progressBar = $('progress-bar');
+const gallery = $('gallery');
+const statusBadge = $('status-badge');
+const lightbox = $('lightbox'), lightboxImg = $('lightbox-img');
+
+countSlider.oninput = () => countVal.textContent = countSlider.value;
+qualitySlider.oninput = () => qualityVal.textContent = QUALITY_LABELS[qualitySlider.value];
+
+async function checkStatus() {
+  try {
+    const r = await fetch('/health');
+    const d = await r.json();
+    statusBadge.textContent = d.model ? `Model: ${d.model}` : 'Ready';
+    statusBadge.className = '';
+  } catch {
+    statusBadge.textContent = 'Server offline';
+    statusBadge.className = 'error';
+  }
+}
+checkStatus();
+setInterval(checkStatus, 10000);
+
+function makePendingCard(i, total) {
+  const div = document.createElement('div');
+  div.className = 'pending-card';
+  div.id = `pending-${i}`;
+  div.innerHTML = `<span class="spinner"></span> Generating image ${i+1} of ${total}…`;
+  return div;
+}
+
+function makeImageCard(filename, prompt, elapsed, steps) {
+  const url = `/outputs/${filename}`;
+  const card = document.createElement('div');
+  card.className = 'img-card';
+  card.innerHTML = `
+    <img src="${url}" alt="generated" loading="lazy">
+    <div class="card-meta">
+      <span class="prompt-text" title="${prompt.replace(/"/g,'&quot;')}">${prompt}</span>
+      <span>${steps} steps · ${elapsed}s</span>
+      <a class="dl" href="${url}" download="${filename}">↓</a>
+    </div>`;
+  card.querySelector('img').onclick = () => { lightboxImg.src = url; lightbox.classList.add('open'); };
+  return card;
+}
+
+lightbox.onclick = () => lightbox.classList.remove('open');
+
+$('clear-btn').onclick = () => { gallery.innerHTML = ''; $('gallery-title').textContent = 'Gallery'; };
+
+generateBtn.onclick = async () => {
+  const prompt = $('prompt').value.trim();
+  if (!prompt) { $('prompt').focus(); return; }
+  const n = parseInt(countSlider.value);
+  const quality = QUALITY_VALUES[qualitySlider.value];
+  const size = $('size').value;
+
+  generateBtn.disabled = true;
+  generateBtn.innerHTML = '<span class="spinner"></span>Generating…';
+  progressWrap.style.display = 'block';
+  progressBar.style.width = '0%';
+
+  // Add placeholder cards
+  const placeholders = [];
+  for (let i = 0; i < n; i++) {
+    const p = makePendingCard(i, n);
+    gallery.prepend(p);
+    placeholders.push(p);
+  }
+  // Move placeholders to top as a group
+  for (let i = n-1; i >= 0; i--) gallery.prepend(placeholders[i]);
+
+  try {
+    const res = await fetch('/ui/generate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({prompt, n, quality, size}),
+    });
+    const data = await res.json();
+    if (data.error) { alert('Error: ' + data.error); return; }
+
+    data.images.forEach((img, i) => {
+      const card = makeImageCard(img.filename, prompt, img.elapsed.toFixed(1), img.steps);
+      placeholders[i].replaceWith(card);
+      progressBar.style.width = `${((i+1)/n)*100}%`;
+    });
+    $('gallery-title').textContent = `Gallery (${gallery.children.length} image${gallery.children.length !== 1 ? 's' : ''})`;
+  } catch(e) {
+    alert('Request failed: ' + e.message);
+    placeholders.forEach(p => p.remove());
+  } finally {
+    generateBtn.disabled = false;
+    generateBtn.textContent = 'Generate';
+    setTimeout(() => { progressWrap.style.display = 'none'; progressBar.style.width = '0%'; }, 1500);
+  }
+};
+
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') generateBtn.click();
+  if (e.key === 'Escape') lightbox.classList.remove('open');
+});
+</script>
+</body>
+</html>"""
+
+
+@app.get("/", response_class=HTMLResponse)
+def serve_ui():
+    return HTMLResponse(content=_UI_HTML)
+
+
+class UIGenerateRequest(BaseModel):
+    prompt: str
+    n: int = 1
+    quality: str = "balanced"  # fastest/fast/balanced/high/best
+    size: str = "1024x1024"
+
+
+@app.post("/ui/generate")
+def ui_generate(req: UIGenerateRequest):
+    if _pipe is None:
+        return {"error": "Model not loaded"}
+
+    try:
+        w, h = req.size.split("x")
+        width, height = int(w), int(h)
+    except Exception:
+        width, height = 1024, 1024
+
+    steps_map = {"fastest": 4, "fast": 8, "balanced": 20, "high": 40, "best": 80}
+    steps = steps_map.get(req.quality, 20)
+
+    n = max(1, min(req.n, 50))
+    logger.info(f"UI generate: {n}x '{req.prompt[:60]}…' quality={req.quality} ({steps} steps) {width}x{height}")
+
+    _is_inpaint_pipe = 'inpaint' in type(_pipe).__name__.lower()
+
+    results = []
+    for i in range(n):
+        logger.info(f"  Image {i+1}/{n}…")
+        t0 = time.time()
+        if _is_inpaint_pipe:
+            from PIL import Image as _PILGen
+            _blank = _PILGen.new('RGB', (width, height), (128, 128, 128))
+            _mask = _PILGen.new('L', (width, height), 255)
+            result = _pipe(
+                prompt=req.prompt, image=_blank, mask_image=_mask,
+                width=width, height=height, num_inference_steps=steps, guidance_scale=3.5,
+            )
+        else:
+            result = _pipe(
+                prompt=req.prompt, width=width, height=height,
+                num_inference_steps=steps, guidance_scale=3.5,
+            )
+        elapsed = round(time.time() - t0, 2)
+
+        img = result.images[0]
+        filename = f"{int(time.time())}_{uuid.uuid4().hex[:8]}.png"
+        img.save(_outputs_dir / filename, format="PNG")
+        results.append({"filename": filename, "elapsed": elapsed, "steps": steps})
+        logger.info(f"  Saved {filename} in {elapsed}s")
+
+    return {"images": results}
 
 
 class ImageRequest(BaseModel):
@@ -1153,6 +1432,7 @@ if __name__ == "__main__":
         help="Additional CORS origin to allow. Can be repeated. Defaults to "
              "no cross-origin access — only pass this if you need a browser "
              "on a specific origin to call the server.")
+    parser.add_argument("--outputs-dir", type=str, default="outputs", help="Directory to save generated images (default: outputs/)")
     _args = parser.parse_args()
 
     # Replace the module-load middleware stack with the CLI-configured one so
