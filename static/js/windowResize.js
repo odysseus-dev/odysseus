@@ -29,6 +29,15 @@ const MIN_H = 200;
 // within EDGE px of the window border (close buttons, sliders, inputs, links).
 const INTERACTIVE = 'button, input, select, textarea, a, [contenteditable=""], [contenteditable="true"]';
 
+export function savedWindowSize(value, viewportWidth, viewportHeight, minW = MIN_W, minH = MIN_H) {
+  if (!value || typeof value !== 'object') return null;
+  if (!Number.isFinite(value.w) || !Number.isFinite(value.h)) return null;
+  return {
+    w: Math.max(minW, Math.min(value.w, viewportWidth)),
+    h: Math.max(minH, Math.min(value.h, viewportHeight)),
+  };
+}
+
 export function makeWindowResizable(content, options = {}) {
   if (!content) return;
   const modal = options.modal || null;
@@ -219,11 +228,10 @@ export function makeWindowResizable(content, options = {}) {
       if (_skip() || !content.isConnected) return;
       try {
         const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
-        if (saved && saved.w && saved.h) {
-          const w = Math.max(minW, Math.min(saved.w, window.innerWidth));
-          const h = Math.max(minH, Math.min(saved.h, window.innerHeight));
-          content.style.width = w + 'px';
-          content.style.height = h + 'px';
+        const size = savedWindowSize(saved, window.innerWidth, window.innerHeight, minW, minH);
+        if (size) {
+          content.style.width = size.w + 'px';
+          content.style.height = size.h + 'px';
           content.style.maxWidth = 'none';
           content.style.maxHeight = 'none';
         }
