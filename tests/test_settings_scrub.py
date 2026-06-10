@@ -74,3 +74,44 @@ def test_exact_name_matches():
 def test_non_object_settings_return_empty_mapping():
     assert scrub_settings(["not", "settings"]) == {}
     assert scrub_settings("not settings") == {}
+
+
+def test_camelcase_secrets_blanked():
+    """JS-style camelCase keys should be scrubbed (issue #3714)."""
+    out = scrub_settings({
+        "apiKey": "K",
+        "clientSecret": "S",
+        "accessToken": "T",
+        "privateKey": "P",
+        "Password": "PW"
+    })
+    assert out["apiKey"] == ""
+    assert out["clientSecret"] == ""
+    assert out["accessToken"] == ""
+    assert out["privateKey"] == ""
+    assert out["Password"] == ""
+
+
+def test_nested_camelcase_blanked():
+    """Nested camelCase secrets should be scrubbed (issue #3714)."""
+    out = scrub_settings({
+        "emailAccount": {
+            "host": "imap.example.com",
+            "clientSecret": "NESTED_SECRET"
+        }
+    })
+    assert out["emailAccount"]["host"] == "imap.example.com"
+    assert out["emailAccount"]["clientSecret"] == ""
+
+
+def test_camelcase_in_list_of_dicts():
+    """camelCase secrets in lists should be scrubbed (issue #3714)."""
+    out = scrub_settings({
+        "providers": [
+            {"name": "a", "apiKey": "P1"},
+            {"name": "b", "accessToken": "T2"}
+        ]
+    })
+    assert out["providers"][0]["name"] == "a"
+    assert out["providers"][0]["apiKey"] == ""
+    assert out["providers"][1]["accessToken"] == ""

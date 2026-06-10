@@ -12,6 +12,8 @@ tunnel / reverse proxy. Scrubbing is deep (recurses nested dicts/lists) and keye
 on secret-shaped names.
 """
 
+import re
+
 _SECRET_KEY_PATTERNS = (
     "_api_key", "_apikey", "_password", "_passwd", "_pass", "_pwd",
     "_secret", "_client_secret", "_token", "_access_token", "_refresh_token",
@@ -25,6 +27,23 @@ _SENSITIVE_KEY_EXACT = (
     "reminder_webhook_integration_id",
 )
 
+# CamelCase equivalents of sensitive suffixes (JS-style)
+_CAMELCASE_SECRET_SUFFIXES = (
+    "ApiKey", "Apikey",
+    "Password", "Passwd", "Pass", "Pwd",
+    "Secret", "ClientSecret",
+    "Token", "AccessToken", "RefreshToken",
+    "Credential", "Credentials",
+    "Key",
+)
+
+
+def _camel_to_snake(name: str) -> str:
+    """Convert camelCase or PascalCase to snake_case."""
+    # Insert underscore before uppercase letters, then lowercase
+    s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+
 
 def is_secret_key(name: str) -> bool:
     n = (name or "").lower()
@@ -32,7 +51,21 @@ def is_secret_key(name: str) -> bool:
         return False
     if n in _SENSITIVE_KEY_EXACT:
         return True
-    return any(n.endswith(p) or n == p.lstrip("_") for p in _SECRET_KEY_PATTERNS)
+    
+    # Check snake_case patterns
+    if any(n.endswith(p) or n == p.lstrip("_") for p in _SECRET_KEY_PATTERNS):
+        return True
+    
+    # Check camelCase patterns (convert to snake_case and re-check)
+    snake_name = _camel_to_snake(name)
+    if any(snake_name.endswith(p) or snake_name == p.lstrip("_") for p in _SECRET_KEY_PATTERNS):
+        return True
+    
+    # Direct camelCase suffix match as fallback
+    if any(name.endswith(p) for p in _CAMELCASE_SECRET_SUFFIXES):
+        return True
+    
+    return False
 
 
 def _scrub_value(key, value):
