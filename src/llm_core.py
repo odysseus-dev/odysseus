@@ -435,6 +435,17 @@ def _detect_provider(url: str) -> str:
     return "openai"
 
 
+def _endpoint_requires_reasoning_content(url: str) -> bool:
+    """Whether this endpoint needs ``reasoning_content`` echoed back on assistant
+    messages. DeepSeek's thinking-mode API (``deepseek-reasoner``) rejects a
+    follow-up request that omits the prior round's ``reasoning_content`` — which
+    ``_append_tool_results`` re-attaches for exactly this reason — so the field
+    must survive sanitization for DeepSeek. Other OpenAI-compatible providers
+    either ignore the field or, like OpenAI itself, reject unknown message keys,
+    so it is stripped for them by default (see ``_sanitize_llm_messages``)."""
+    return _host_match(url, "deepseek.com")
+
+
 def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str, str]:
     h = {"Content-Type": "application/json"}
     if isinstance(headers, dict):
@@ -799,7 +810,7 @@ def _as_content_blocks(content) -> List[Dict]:
     return []
 
 
-def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
+def _sanitize_llm_messages(messages: List[Dict], *, keep_reasoning: bool = False) -> List[Dict]:
     """Strip Odysseus-only metadata before sending messages to providers.
 
     Per the OpenAI chat format: user/system messages must have content; a tool
@@ -810,12 +821,15 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
     (content=None, since Gemini/Ollama reject tool_calls alongside ""). Dropping
     it leaves the tool result dangling and breaks the next round.
     """
-    # reasoning_content is preserved on purpose: _append_tool_results echoes the
-    # prior round's reasoning back on the assistant message because DeepSeek's
-    # API rejects follow-up thinking-mode requests that omit it. Other vendors
-    # ignore the extra field.
     allowed = {"role", "content", "name", "tool_call_id", "tool_calls",
-               "function_call", "reasoning_content"}
+               "function_call"}
+    # reasoning_content is provider-specific. _append_tool_results echoes the
+    # prior round's reasoning back on the assistant message because DeepSeek's
+    # thinking-mode API rejects follow-up requests that omit it — but stricter
+    # OpenAI-compatible APIs reject unknown message keys. So keep it only when
+    # the caller says the target endpoint requires it; strip it otherwise.
+    if keep_reasoning:
+        allowed = allowed | {"reasoning_content"}
     cleaned = []
     for msg in messages or []:
         if not isinstance(msg, dict):
@@ -1107,7 +1121,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     if isinstance(headers, dict):
         h.update(headers)
 
-    messages_copy = _sanitize_llm_messages(messages)
+    messages_copy = _sanitize_llm_messages(messages, keep_reasoning=_endpoint_requires_reasoning_content(url))
 
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
@@ -1254,7 +1268,7 @@ async def llm_call_async(
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
-    messages_copy = _sanitize_llm_messages(messages)
+    messages_copy = _sanitize_llm_messages(messages, keep_reasoning=_endpoint_requires_reasoning_content(url))
 
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
@@ -1414,7 +1428,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
       - data: [DONE]                       — end of stream
     """
     provider = _detect_provider(url)
-    messages_copy = _sanitize_llm_messages(messages)
+    messages_copy = _sanitize_llm_messages(messages, keep_reasoning=_endpoint_requires_reasoning_content(url))
 
     # Consolidate multiple system messages into one at the start.
     # Some models (e.g. Qwen3.5) reject system messages that aren't first.
