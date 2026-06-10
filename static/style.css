@@ -6345,7 +6345,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       align-items: flex-start;
       justify-content: center;
       padding-top: 15vh;
-      z-index: 300;
+      z-index: 10050;
       backdrop-filter: blur(6px);
     }
     .search-overlay.hidden { display: none; }
