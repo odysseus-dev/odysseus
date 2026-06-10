@@ -536,7 +536,7 @@ def _section_text(name: str, default: str) -> str:
     return val if isinstance(val, str) and val.strip() else default
 
 
-def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool = False) -> str:
+def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool = False, all_tools_mode: bool = False, admin_always_mode: bool = False) -> str:
     """Build the system prompt with only the specified tools included."""
     disabled = disabled_tools or set()
     included = tool_names - disabled
@@ -574,18 +574,26 @@ def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool 
     if one_liners:
         parts.append("## Additional tools\n" + "\n".join(one_liners))
 
-    # Mention tools that exist but weren't included
-    all_known = set(TOOL_SECTIONS.keys())
-    not_shown = all_known - included - disabled
-    if not_shown:
-        sample = sorted(not_shown)[:5]
-        hint = ", ".join(sample)
-        if len(not_shown) > 5:
-            hint += f", ... ({len(not_shown) - 5} more)"
-        parts.append(f"(Other tools available when needed: {hint})")
+    # Mention tools that exist but weren't included (skip in all-tools mode)
+    if not all_tools_mode:
+        all_known = set(TOOL_SECTIONS.keys())
+        not_shown = all_known - included - disabled
+        if not_shown:
+            sample = sorted(not_shown)[:5]
+            hint = ", ".join(sample)
+            if len(not_shown) > 5:
+                hint += f", ... ({len(not_shown) - 5} more)"
+            parts.append(f"(Other tools available when needed: {hint})")
 
     parts.append(_AGENT_RULES)
     parts.extend(_domain_rules_for_tools(included))
+
+    # User-requested mode disclaimers
+    if all_tools_mode:
+        parts.append("## Tool Access Notice\nAll tools mode is active — every available tool is included in this turn. This increases context usage and response time. Use tools responsibly.")
+    if admin_always_mode:
+        parts.append("## Admin Tools Notice\nAdmin tools are active. These can modify system state, manage users, endpoints, and access sensitive data. Use responsibly.")
+
     return "\n\n".join(parts)
 
 
@@ -626,6 +634,7 @@ _ADMIN_SCHEMA_NAMES = frozenset([
     "create_session", "list_sessions", "send_to_session", "pipeline",
     "ask_teacher", "list_models", "search_chats",
 ])
+
 _TOOL_SELECTION_TIMEOUT_SECONDS = 1.5
 
 
@@ -825,7 +834,7 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
     }
 
 
-def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_chars: int = 600) -> str:
+def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 7, max_chars: int = 600) -> str:
     """Build the tool-retrieval query from the last few USER turns, not just
     the latest one.
 
@@ -851,6 +860,59 @@ def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_c
             break
     return "\n".join(collected)[:max_chars]
 
+
+def _recently_used_tools(messages: List[Dict], max_rounds: int = 10) -> Set[str]:
+    """Extract tool names that were actually called in recent conversation turns.
+
+    Scans the message history for tool execution results and native tool calls
+    to find which tools were actively used. This keeps tools available for
+    follow-up turns even when RAG doesn't re-select them.
+
+    Returns a set of tool names."""
+    used_tools: Set[str] = set()
+    rounds_seen = 0
+
+    for msg in reversed(messages):
+        if rounds_seen >= max_rounds:
+            break
+
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+
+        # Handle tool execution result messages (role=user, prefixed with marker)
+        if role == "user" and isinstance(content, str) and content.startswith("[Tool execution results]"):
+            rounds_seen += 1
+            # Parse tool names from the result block
+            # Format: "Tool: <name>\nResult: ..." or fenced blocks
+            for line in content.split("\n"):
+                line = line.strip()
+                if line.startswith("Tool:"):
+                    tool_name = line[5:].strip().split()[0]
+                    if tool_name:
+                        used_tools.add(tool_name)
+            # Also check fenced blocks in the content
+            for block_type in TOOL_TAGS:
+                if f"<{block_type}>" in content or f"[{block_type}]" in content:
+                    used_tools.add(block_type)
+            continue
+
+        # Handle assistant messages with native tool_calls
+        if role == "assistant":
+            tool_calls = msg.get("tool_calls")
+            if tool_calls and isinstance(tool_calls, list):
+                rounds_seen += 1
+                for tc in tool_calls:
+                    if isinstance(tc, dict):
+                        func = tc.get("function", {})
+                        if isinstance(func, dict):
+                            name = func.get("name", "")
+                            if name:
+                                used_tools.add(name)
+                        elif isinstance(tc.get("name"), str):
+                            used_tools.add(tc["name"])
+
+    return used_tools
+
 def _build_system_prompt(
     messages: List[Dict],
     model: str,
@@ -864,6 +926,8 @@ def _build_system_prompt(
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
     active_email: Optional[Dict[str, str]] = None,
+    all_tools_mode: bool = False,
+    admin_always_mode: bool = False,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
@@ -880,7 +944,7 @@ def _build_system_prompt(
         _ov_sig = _hl.sha256(_json.dumps(get_builtin_overrides() or {}, sort_keys=True).encode()).hexdigest()
     except Exception:
         _ov_sig = ""
-    cache_key = (frozenset(disabled_tools or []), bool(mcp_mgr), needs_admin, _rt_key, compact, _ov_sig, owner, suppress_local_context)
+    cache_key = (frozenset(disabled_tools or []), bool(mcp_mgr), needs_admin, _rt_key, compact, _ov_sig, owner, suppress_local_context, all_tools_mode, admin_always_mode)
     if _cached_base_prompt and _cached_base_prompt_key == cache_key and not active_document:
         agent_prompt = _cached_base_prompt
         # Skill index is user-editable (name + description), so it must never
@@ -890,6 +954,7 @@ def _build_system_prompt(
             disabled_tools, mcp_mgr, needs_admin, relevant_tools,
             mcp_disabled_map=mcp_disabled_map, compact=compact, owner=owner,
             suppress_local_context=suppress_local_context,
+            all_tools_mode=all_tools_mode, admin_always_mode=admin_always_mode,
         )
     else:
         agent_prompt, _skill_index_block = _build_base_prompt(
@@ -901,6 +966,7 @@ def _build_system_prompt(
             compact=compact,
             owner=owner,
             suppress_local_context=suppress_local_context,
+            all_tools_mode=all_tools_mode, admin_always_mode=admin_always_mode,
         )
         if not active_document:
             _cached_base_prompt = agent_prompt
@@ -1351,6 +1417,8 @@ def _build_base_prompt(
     compact: bool = False,
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
+    all_tools_mode: bool = False,
+    admin_always_mode: bool = False,
 ):
     """Build the agent prompt with only relevant tools included.
 
@@ -1374,7 +1442,7 @@ def _build_base_prompt(
         tool_names = set(relevant_tools) | {"ask_user", "update_plan"}
         if needs_admin:
             tool_names |= _ADMIN_TOOLS
-        agent_prompt = _assemble_prompt(tool_names, disabled, compact=compact)
+        agent_prompt = _assemble_prompt(tool_names, disabled, compact=compact, all_tools_mode=all_tools_mode, admin_always_mode=admin_always_mode)
     else:
         # Fallback: full prompt (RAG unavailable)
         agent_prompt = AGENT_SYSTEM_PROMPT
@@ -1385,10 +1453,12 @@ def _build_base_prompt(
                 "chat_with_model", "ask_teacher", "list_models",
             }
             agent_prompt = _assemble_prompt(
-                set(TOOL_SECTIONS.keys()) - mgmt_tools, disabled, compact=compact
+                set(TOOL_SECTIONS.keys()) - mgmt_tools, disabled, compact=compact,
+                all_tools_mode=all_tools_mode, admin_always_mode=admin_always_mode
             )
         elif compact:
-            agent_prompt = _assemble_prompt(set(TOOL_SECTIONS.keys()), disabled, compact=True)
+            agent_prompt = _assemble_prompt(set(TOOL_SECTIONS.keys()), disabled, compact=True,
+                all_tools_mode=all_tools_mode, admin_always_mode=admin_always_mode)
 
     # Inject the Level-0 skill index — one line per skill so the agent
     # knows what canonical procedures exist. Includes published skills
@@ -1882,12 +1952,32 @@ async def stream_agent_loop(
         disabled_tools.update(_mcp_block_q)
     prep_timings["request_setup"] = time.time() - _t0
 
+    # ── Per-user agent tool access preferences ──
+    _all_tools_enabled = False
+    _admin_always_enabled = False
+    if owner:
+        try:
+            from routes.prefs_routes import _load_for_user as _load_prefs
+            _user_prefs = _load_prefs(owner) or {}
+            _all_tools_enabled = bool(_user_prefs.get("agent_all_tools_enabled", False))
+            _admin_always_enabled = bool(_user_prefs.get("agent_admin_tools_always", False))
+        except Exception:
+            pass
+    if _admin_always_enabled:
+        _needs_admin = True
+
     # RAG-based tool selection: retrieve relevant tools for this query.
     # If caller provided a pre-computed set (e.g. task_scheduler), use that.
     _relevant_tools = set() if guide_only else relevant_tools
     _t1 = time.time()
     if _relevant_tools:
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
+
+    # All-tools mode: bypass RAG, include every available tool
+    if not guide_only and not _relevant_tools and _all_tools_enabled:
+        _relevant_tools = set(TOOL_SECTIONS.keys()) - disabled_tools
+        logger.info(f"[tool-rag] All-tools mode enabled: {len(_relevant_tools)} tools included")
+
     if not guide_only and not _relevant_tools and bool(_intent.get("low_signal")):
         from src.tool_index import ALWAYS_AVAILABLE
         if workspace:
@@ -1972,6 +2062,20 @@ async def stream_agent_loop(
             _relevant_tools.update({"web_search", "web_fetch"})
         if "ui" in (_intent.get("domains") or set()):
             _relevant_tools.add("ui_control")
+
+    # Tool lookback: keep tools that were actually used in recent conversation
+    # turns available, even if RAG doesn't re-select them. Prevents tools from
+    # being "lost" mid-conversation during multi-step tasks.
+    if not guide_only and _relevant_tools is not None:
+        _used = _recently_used_tools(messages)
+        if _used:
+            _relevant_tools.update(_used)
+            logger.info(f"[tool-rag] Lookback added {len(_used)} recently-used tools: {sorted(_used)}")
+
+    # Admin tools always available
+    if not guide_only and _relevant_tools is not None and _admin_always_enabled:
+        _relevant_tools.update(_ADMIN_SCHEMA_NAMES)
+        logger.info("[tool-rag] Admin-always mode: included admin tools")
 
     # If a document is open the model needs the editing tools available
     # regardless of which selection path (RAG, keyword, caller-provided) ran
@@ -2101,6 +2205,8 @@ async def stream_agent_loop(
         owner=owner,
         suppress_local_context=guide_only,
         active_email=active_email,
+        all_tools_mode=_all_tools_enabled,
+        admin_always_mode=_admin_always_enabled,
     )
     if plan_mode and not guide_only:
         # Steer the model to investigate-then-propose. Hard tool gating handles

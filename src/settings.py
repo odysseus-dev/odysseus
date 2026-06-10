@@ -266,6 +266,8 @@ _PER_USER_KEYS = {
     "default_endpoint_id", "default_model", "default_model_fallbacks",
     "utility_endpoint_id", "utility_model", "utility_model_fallbacks",
     "research_endpoint_id", "research_model",
+    # Agent mode tool access controls
+    "agent_all_tools_enabled", "agent_admin_tools_always",
 }
 
 
