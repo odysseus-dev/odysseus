@@ -110,7 +110,7 @@ def cmd_export(args):
         if not d:
             fail(f"no document with id {args.id!r}")
         if args.version is None:
-            content = d.current_content or ""
+            content = d.current_content if isinstance(d.current_content, str) else ""
             version = d.version_count or 1
         else:
             v = db.query(DocumentVersion).filter(
@@ -119,7 +119,7 @@ def cmd_export(args):
             ).first()
             if not v:
                 fail(f"no version {args.version} on doc {args.id!r}")
-            content = v.content or ""
+            content = v.content if isinstance(v.content, str) else ""
             version = v.version_number
         if args.raw:
             sys.stdout.write(content)
