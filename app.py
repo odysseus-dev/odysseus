@@ -1,6 +1,10 @@
 # app.py — slim orchestrator
 import mimetypes
 import os
+import sys
+import asyncio
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 def register_static_mime_types() -> None:
