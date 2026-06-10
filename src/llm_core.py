@@ -1643,7 +1643,7 @@ def list_model_ids(
         return model_ids
     except Exception:
         try:
-            if ":11434" in base_chat_url or "ollama" in base_chat_url.lower():
+            if urlparse(base_chat_url).port == 11434 or _host_match(base_chat_url, "ollama.com"):
                 root = base_chat_url.replace("/v1/chat/completions", "").replace("/chat/completions", "").rstrip("/")
                 r = httpx.get(root + "/api/tags", timeout=timeout)
                 r.raise_for_status()
