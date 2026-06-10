@@ -24,7 +24,9 @@ MAX_PIPELINE_STEPS = 10
 
 # ---------------------------------------------------------------------------
 # Global managers (set from app.py, same pattern as _mcp_manager)
-# ---------------------------------------------------------------------------
+# _session_manager is kept as a local cache for performance (avoiding
+# repeated get_session_manager_instance() calls). It's synced with
+# the authoritative singleton in core.models.
 _session_manager = None
 _memory_manager = None
 _memory_vector = None
@@ -33,11 +35,15 @@ _personal_docs_manager = None
 
 
 def set_session_manager(mgr):
+    """Set the global session manager. Syncs local cache + core singleton."""
     global _session_manager
     _session_manager = mgr
+    from core.models import set_session_manager_instance
+    set_session_manager_instance(mgr)
 
 
 def get_session_manager():
+    """Get the global session manager."""
     return _session_manager
 
 

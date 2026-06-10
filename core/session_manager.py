@@ -17,6 +17,9 @@ from typing import Dict, Optional
 from .database import Session as DbSession, ChatMessage as DbChatMessage, Document as DbDocument, SessionLocal, utcnow_naive
 from .models import Session, ChatMessage
 
+# Re-export singleton accessors from models for convenience
+from .models import set_session_manager_instance, get_session_manager_instance
+
 logger = logging.getLogger(__name__)
 
 
@@ -188,12 +191,17 @@ class SessionManager:
         """
         Add a message to a session and persist to database.
 
+        Updates the authoritative history list and persists through this
+        manager directly so tests and temporary managers do not depend on the
+        process-wide session-manager singleton.
+
         Args:
             session_id: Session ID
             message: ChatMessage to add
         """
         session = self.get_session(session_id)
         session.history.append(message)
+        session._history = session.history
         session.message_count = len(session.history)
 
         self._persist_message(session_id, message)
@@ -232,7 +240,10 @@ class SessionManager:
             )
             db.add(db_message)
 
-            db_session.message_count = len(self.sessions.get(session_id, {}).history) if session_id in self.sessions else 0
+            if session_id in self.sessions:
+                db_session.message_count = len(self.sessions[session_id].history)
+            else:
+                db_session.message_count = 0
             _now = datetime.now(timezone.utc)
             db_session.last_accessed = _now
             # Clean "last conversation" timestamp — only bumped here on a
@@ -283,6 +294,7 @@ class SessionManager:
 
             # Update in-memory
             session.history = session.history[:keep_count]
+            session._history = session.history
 
             logger.info(f"Truncated session {session_id} to {keep_count} messages")
             return True
@@ -333,6 +345,7 @@ class SessionManager:
 
             db.commit()
             session.history = list(messages)
+            session._history = session.history
             session.message_count = len(messages)
             logger.info("Replaced session %s history with %d messages", session_id, len(messages))
             return True
@@ -608,24 +621,52 @@ class SessionManager:
     def save_sessions(self):
         """No-op for DB compatibility."""
 
+    def ensure_task_session(self, session_id: str, name: str, endpoint_url: str, model: str, owner: str = None, task: object = None) -> Session:
+        """Create a task session if it doesn't exist, or return the existing one.
+
+        Unlike create_session, this checks the cache first and does NOT
+        overwrite an existing in-memory session. The task scheduler must
+        use this instead of direct dict assignment.
+        """
+        if session_id in self.sessions:
+            return self.sessions[session_id]
+
+        session = self.create_session(session_id, name, endpoint_url, model, owner=owner)
+        if task is not None:
+            task.session_id = session_id
+        return session
+
     # ------------------------------------------------------------------
     # Cleanup
     # ------------------------------------------------------------------
 
-    def cleanup_empty_sessions(self, auto_archive_days: int = 30) -> dict:
-        """Clean up empty and old sessions."""
+    def cleanup_empty_sessions(self, auto_archive_days: int = 30, min_age_hours: int = 1) -> dict:
+        """Clean up empty and old sessions.
+
+        Args:
+            auto_archive_days: Age in days before non-important sessions are archived.
+            min_age_hours: Minimum age in hours before an empty session can be deleted.
+                          Prevents deleting sessions that were just created.
+        """
         db = SessionLocal()
         stats = {'deleted_empty': 0, 'archived_old': 0, 'total_checked': 0}
 
         try:
             all_sessions = db.query(DbSession).all()
             cutoff_date = utcnow_naive() - timedelta(days=auto_archive_days)
+            min_age = utcnow_naive() - timedelta(hours=min_age_hours)
 
             for db_session in all_sessions:
                 stats['total_checked'] += 1
 
-                # Delete empty sessions
+                # Delete empty sessions only if older than min_age_hours
                 if db_session.message_count == 0:
+                    if db_session.created_at is not None:
+                        created = db_session.created_at
+                        if created.tzinfo is None:
+                            created = created.replace(tzinfo=timezone.utc)
+                        if created > min_age:
+                            continue  # Too young to delete
                     if db_session.id in self.sessions:
                         del self.sessions[db_session.id]
                     db.delete(db_session)
