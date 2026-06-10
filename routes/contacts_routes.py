@@ -729,8 +729,11 @@ def setup_contacts_routes():
     @router.post("/import")
     async def import_vcf(data: dict, _admin: str = Depends(require_admin)):
         """Import contacts from .vcf or CSV. Body: {"vcf": "..."} or {"csv": "..."}."""
-        text = data.get("vcf") or data.get("text") or ""
-        csv_text = data.get("csv") or ""
+        # Coerce defensively: a non-string vcf/text/csv (e.g. a number or list
+        # in the JSON body) would otherwise reach .strip() and 500 with an
+        # AttributeError instead of degrading to a clean "no data" response.
+        text = str(data.get("vcf") or data.get("text") or "")
+        csv_text = str(data.get("csv") or "")
         if text.strip():
             if "BEGIN:VCARD" not in text.upper():
                 return {"success": False, "error": "No vCard data found"}
