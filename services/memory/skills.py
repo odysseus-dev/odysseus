@@ -367,6 +367,10 @@ class SkillsManager:
         fallback_for_toolsets: Optional[List[str]] = None,
         status: str = "draft",
         version: str = "1.0.0",
+        created: str = "",
+        uses: int = 0,
+        last_used: Optional[int] = None,
+        body_extra: str = "",
     ) -> Dict:
         # Normalize name
         nm = slugify(name or title or description or "skill")
@@ -427,9 +431,22 @@ class SkillsManager:
             procedure=list(procedure if procedure is not None else (steps or [])),
             pitfalls=list(pitfalls or []),
             verification=list(verification or []),
-            body_extra=(solution if solution and not procedure else ""),
+            body_extra=body_extra or (solution if solution and not procedure else ""),
+            created=created,
+            uses=uses,
+            last_used=last_used,
         )
         self._write_skill(sk)
+
+        if uses or last_used:
+            usage = self._load_usage()
+            key = self._usage_key(nm, owner)
+            entry = usage.setdefault(key, {"uses": 0, "last_used": None})
+            if uses:
+                entry["uses"] = uses
+            if last_used:
+                entry["last_used"] = last_used
+            self._save_usage(usage)
 
         return sk.to_dict()
 

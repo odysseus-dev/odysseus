@@ -283,7 +283,7 @@ class TestProbeSingleModel:
         _patch_resolve(monkeypatch)
         captured = {}
 
-        def fake_post(url, headers=None, json=None, timeout=None):
+        def fake_post(url, headers=None, json=None, timeout=None, **kwargs):
             captured["url"] = url
             return _resp(200, json={"choices": [{"message": {"content": "OK"}}]})
 
@@ -297,7 +297,7 @@ class TestProbeSingleModel:
         _patch_resolve(monkeypatch)
         monkeypatch.setattr(
             model_routes.httpx, "post",
-            lambda url, headers=None, json=None, timeout=None: _resp(
+            lambda url, headers=None, json=None, timeout=None, **kwargs: _resp(
                 400, json={"error": {"message": "model not found"}}),
         )
         result = _probe_single_model("https://api.example.com/v1", "key", "ghost")
@@ -308,7 +308,7 @@ class TestProbeSingleModel:
         _patch_resolve(monkeypatch)
         monkeypatch.setattr(
             model_routes.httpx, "post",
-            lambda url, headers=None, json=None, timeout=None: _resp(
+            lambda url, headers=None, json=None, timeout=None, **kwargs: _resp(
                 403, json={"error": "forbidden"}),
         )
         result = _probe_single_model("https://api.example.com/v1", "key", "m")
@@ -318,7 +318,7 @@ class TestProbeSingleModel:
     def test_timeout(self, monkeypatch):
         _patch_resolve(monkeypatch)
 
-        def fake_post(url, headers=None, json=None, timeout=None):
+        def fake_post(url, headers=None, json=None, timeout=None, **kwargs):
             raise httpx.TimeoutException("timed out")
 
         monkeypatch.setattr(model_routes.httpx, "post", fake_post)
@@ -329,7 +329,7 @@ class TestProbeSingleModel:
     def test_transport_error_is_fail(self, monkeypatch):
         _patch_resolve(monkeypatch)
 
-        def fake_post(url, headers=None, json=None, timeout=None):
+        def fake_post(url, headers=None, json=None, timeout=None, **kwargs):
             raise httpx.ConnectError("refused")
 
         monkeypatch.setattr(model_routes.httpx, "post", fake_post)
@@ -341,7 +341,7 @@ class TestProbeSingleModel:
         _patch_resolve(monkeypatch)
         captured = {}
 
-        def fake_post(url, headers=None, json=None, timeout=None):
+        def fake_post(url, headers=None, json=None, timeout=None, **kwargs):
             captured.update(url=url, headers=headers, payload=json)
             return _resp(200, json={"content": [{"type": "text", "text": "OK"}]})
 
@@ -356,7 +356,7 @@ class TestProbeSingleModel:
         _patch_resolve(monkeypatch)
         captured = {}
 
-        def fake_post(url, headers=None, json=None, timeout=None):
+        def fake_post(url, headers=None, json=None, timeout=None, **kwargs):
             captured["payload"] = json
             return _resp(200, json={"content": []})
 

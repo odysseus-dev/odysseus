@@ -837,7 +837,7 @@ export async function saveCustomPreset(showToast, showError) {
         const _entry = {
           id: _existing
             ? _existing.id
-            : `user-${Math.random().toString(16).slice(2, 10)}`,
+            : 'user-' + Math.random().toString(16).slice(2, 10),
           name: saveName,
           // use ?? since it's more semantic for null-coalescing
           system_prompt: system_prompt ?? '',
@@ -846,7 +846,7 @@ export async function saveCustomPreset(showToast, showError) {
         }
         const ENDPOINT = `${API_BASE}/api/presets/templates`;
 
-        // optimistic update by @michaelxer
+        // Optimistically update the in-memory templates list
         if (_existing) {
           Object.assign(_existing, _entry);
           // slow but works for now

@@ -192,6 +192,7 @@ class WriteFileTool:
 class LsTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
+        workspace = ctx.get("workspace")
         raw_path = ""
         _s = (content or "").strip()
         if _s.startswith("{"):
@@ -241,6 +242,7 @@ class LsTool:
 class GlobTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
+        workspace = ctx.get("workspace")
         args = {}
         _s = (content or "").strip()
         if _s.startswith("{"):
@@ -293,6 +295,7 @@ class GlobTool:
 class GrepTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
+        workspace = ctx.get("workspace")
         args: Dict[str, Any] = {}
         _s = (content or "").strip()
         if _s.startswith("{"):

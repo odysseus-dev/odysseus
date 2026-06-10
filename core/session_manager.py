@@ -8,6 +8,7 @@ This is the single place that handles:
 - Session lifecycle (create, archive, delete)
 """
 
+import asyncio
 import json
 import uuid
 import logging
@@ -72,7 +73,14 @@ class SessionManager:
     def __init__(self, sessions_file: str = None):
         # sessions_file kept for backward compat, not used
         self.sessions: Dict[str, Session] = {}
+        self._locks: Dict[str, asyncio.Lock] = {}
         self.load_sessions()
+
+    def session_lock(self, session_id: str) -> asyncio.Lock:
+        """Return a per-session asyncio.Lock for serializing history mutations."""
+        if session_id not in self._locks:
+            self._locks[session_id] = asyncio.Lock()
+        return self._locks[session_id]
 
     # ------------------------------------------------------------------
     # Loading

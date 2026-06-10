@@ -23,7 +23,8 @@ on:
     branches: [main]
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
 concurrency:
   group: container-scan-${{ github.workflow }}-${{ github.ref }}

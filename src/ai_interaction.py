@@ -30,6 +30,7 @@ MAX_PIPELINE_STEPS = 10
 _session_manager = None
 _memory_manager = None
 _memory_vector = None
+_memory_provider = None
 _rag_manager = None
 _personal_docs_manager = None
 
@@ -51,6 +52,15 @@ def set_memory_manager(mgr, vector=None):
     global _memory_manager, _memory_vector
     _memory_manager = mgr
     _memory_vector = vector
+
+
+def set_memory_provider(provider):
+    global _memory_provider
+    _memory_provider = provider
+
+
+def get_memory_provider():
+    return _memory_provider
 
 
 def set_rag_manager(rag_mgr, personal_docs_mgr=None):

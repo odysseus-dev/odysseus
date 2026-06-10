@@ -48,7 +48,7 @@ def test_personal_upload_reports_when_every_chunk_fails(monkeypatch, tmp_path, r
 
     docs = _DocsManager()
     monkeypatch.setattr(personal_routes, "UPLOADS_DIR", str(tmp_path))
-    monkeypatch.setattr(personal_routes, "get_current_user", lambda request: "alice")
+    monkeypatch.setattr(personal_routes, "require_privilege", lambda request, key: "alice")
     monkeypatch.setattr(personal_routes, "get_rag_manager", lambda: _FailingRag())
 
     app = FastAPI()

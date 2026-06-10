@@ -76,7 +76,7 @@ class TestProbeEndpointAnthropic:
         _patch_resolve(monkeypatch)
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(
+            lambda url, headers=None, timeout=None, **kwargs: _resp(
                 200, json={"data": [{"id": "claude-opus-4-7"}, {"id": "claude-sonnet-4-6"}]}
             ),
         )
@@ -89,7 +89,7 @@ class TestProbeEndpointAnthropic:
         _patch_resolve(monkeypatch)
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(401),
+            lambda url, headers=None, timeout=None, **kwargs: _resp(401),
         )
         result = _probe_endpoint("https://api.anthropic.com/v1", "bad-key")
         assert result == []
@@ -99,7 +99,7 @@ class TestProbeEndpointAnthropic:
         _patch_resolve(monkeypatch)
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(404),
+            lambda url, headers=None, timeout=None, **kwargs: _resp(404),
         )
         result = _probe_endpoint("https://api.anthropic.com/v1")
         # The hardcoded list is non-empty and should contain at least one claude model.
@@ -111,7 +111,7 @@ class TestProbeEndpointAnthropic:
         _patch_resolve(monkeypatch)
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(
+            lambda url, headers=None, timeout=None, **kwargs: _resp(
                 200, json={"data": [{"id": "claude-future-model"}]}
             ),
         )
@@ -127,7 +127,7 @@ class TestProbeEndpointAuthFailure:
         _patch_resolve(monkeypatch)
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(401),
+            lambda url, headers=None, timeout=None, **kwargs: _resp(401),
         )
         result = _probe_endpoint("https://api.openai.com/v1", "bad-key")
         assert result == []
@@ -137,7 +137,7 @@ class TestProbeEndpointAuthFailure:
         _patch_resolve(monkeypatch)
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(403),
+            lambda url, headers=None, timeout=None, **kwargs: _resp(403),
         )
         result = _probe_endpoint("https://api.openai.com/v1", "key")
         assert result == []
@@ -151,7 +151,7 @@ class TestProbeEndpointCuratedFallback:
         _patch_resolve(monkeypatch)
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(404),
+            lambda url, headers=None, timeout=None, **kwargs: _resp(404),
         )
         result = _probe_endpoint("https://unknown-provider.example.com/v1")
         assert result == []
@@ -165,7 +165,7 @@ class TestPingEndpointOllamaTags:
         _patch_resolve(monkeypatch)
         seen = []
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, **kwargs):
             seen.append(url)
             if url.endswith("/api/tags"):
                 return _resp(200)
@@ -180,7 +180,7 @@ class TestPingEndpointOllamaTags:
         """Host containing 'ollama' in name: 5xx on /models → fallback to /api/version."""
         _patch_resolve(monkeypatch)
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, **kwargs):
             if url.endswith("/api/version"):
                 return _resp(200)
             return _resp(500)
@@ -194,7 +194,7 @@ class TestPingEndpointOllamaTags:
         """All Ollama paths fail → unreachable with last error preserved."""
         _patch_resolve(monkeypatch)
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, **kwargs):
             raise httpx.ConnectError("refused")
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
@@ -212,7 +212,7 @@ class TestPingEndpoint5xx:
         _patch_resolve(monkeypatch)
         monkeypatch.setattr(
             model_routes.httpx, "get",
-            lambda url, headers=None, timeout=None: _resp(503),
+            lambda url, headers=None, timeout=None, **kwargs: _resp(503),
         )
         result = _ping_endpoint("https://api.example.com/v1")
         assert result["reachable"] is False
@@ -222,7 +222,7 @@ class TestPingEndpoint5xx:
         """ReadTimeout → unreachable, status_code None, error message present."""
         _patch_resolve(monkeypatch)
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url, headers=None, timeout=None, **kwargs):
             raise httpx.ReadTimeout("timed out")
 
         monkeypatch.setattr(model_routes.httpx, "get", fake_get)
@@ -245,7 +245,7 @@ class TestProbeSingleModelOllama:
         _patch_resolve(monkeypatch)
         captured = {}
 
-        def fake_post(url, headers=None, json=None, timeout=None):
+        def fake_post(url, headers=None, json=None, timeout=None, **kwargs):
             captured["url"] = url
             captured["payload"] = json
             req = httpx.Request("POST", url)
@@ -261,7 +261,7 @@ class TestProbeSingleModelOllama:
         _patch_resolve(monkeypatch)
         captured = {}
 
-        def fake_post(url, headers=None, json=None, timeout=None):
+        def fake_post(url, headers=None, json=None, timeout=None, **kwargs):
             captured["payload"] = json
             req = httpx.Request("POST", url)
             return httpx.Response(200, json={"message": {"content": "OK"}}, request=req)
@@ -281,7 +281,7 @@ class TestProbeSingleModelReasoningModels:
         _patch_resolve(monkeypatch)
         captured = {}
 
-        def fake_post(url, headers=None, json=None, timeout=None):
+        def fake_post(url, headers=None, json=None, timeout=None, **kwargs):
             captured["payload"] = json
             req = httpx.Request("POST", url)
             return httpx.Response(
@@ -302,7 +302,7 @@ class TestProbeSingleModelReasoningModels:
         _patch_resolve(monkeypatch)
         captured = {}
 
-        def fake_post(url, headers=None, json=None, timeout=None):
+        def fake_post(url, headers=None, json=None, timeout=None, **kwargs):
             captured["payload"] = json
             req = httpx.Request("POST", url)
             return httpx.Response(
@@ -321,7 +321,7 @@ class TestProbeSingleModelReasoningModels:
         _patch_resolve(monkeypatch)
         captured = {}
 
-        def fake_post(url, headers=None, json=None, timeout=None):
+        def fake_post(url, headers=None, json=None, timeout=None, **kwargs):
             captured["payload"] = json
             req = httpx.Request("POST", url)
             return httpx.Response(

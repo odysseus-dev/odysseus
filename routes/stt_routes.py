@@ -1,9 +1,10 @@
 # routes/stt_routes.py
 """STT API routes — local Whisper, Groq, or any OpenAI-compatible endpoint."""
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Request
 import logging
 
+from src.auth_helpers import require_user
 from src.upload_limits import read_upload_limited, STT_MAX_AUDIO_BYTES
 
 logger = logging.getLogger(__name__)

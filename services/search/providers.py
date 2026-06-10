@@ -30,6 +30,7 @@ PROVIDER_INFO = {
     "tavily":   ("Tavily",            True,  False),
     "serper":   ("Serper",            True,  False),
     "kagi":     ("Kagi",              True,  False),
+    "serpapi":  ("SerpApi",           True,  False),
     "disabled": ("Disabled",          False, False),
 }
 
@@ -98,6 +99,14 @@ _PROVIDER_POLICIES = {
         query_concurrency="parallel",
         fallback_concurrency=4,
         status_when_empty="serper returned no results",
+    ),
+    "serpapi": ProviderPolicy(
+        name="serpapi",
+        label="SerpApi",
+        required_settings=("serpapi_api_key",),
+        query_concurrency="parallel",
+        fallback_concurrency=4,
+        status_when_empty="serpapi returned no results",
     ),
 }
 
@@ -176,6 +185,7 @@ def _get_provider_key(provider: str) -> str:
         "tavily": "tavily_api_key",
         "serper": "serper_api_key",
         "kagi": "kagi_api_key",
+        "serpapi": "serpapi_api_key",
     }
     field = key_map.get(provider, "")
     if field:
@@ -192,6 +202,7 @@ def _get_provider_key(provider: str) -> str:
         "tavily": "TAVILY_API_KEY",
         "serper": "SERPER_API_KEY",
         "kagi": "KAGI_API_KEY",
+        "serpapi": "SERPAPI_API_KEY",
     }
     env_name = env_map.get(provider, "")
     return (os.environ.get(env_name) or "").strip() if env_name else ""
@@ -917,4 +928,61 @@ def kagi_search(query: str, count: int = 10, time_filter: Optional[str] = None) 
         })
 
     logger.info(f"Kagi returned {len(results)} results")
+    return results
+
+
+def serpapi_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
+    """Search using SerpApi JSON API."""
+    count = count if count is not None else _get_result_count()
+    api_key = _get_provider_key("serpapi") or os.environ.get("SERPAPI_API_KEY", "")
+    if not api_key:
+        logger.warning("SerpApi: no API key configured")
+        return []
+
+    params = {
+        "engine": "google_light",
+        "q": query,
+        "api_key": api_key,
+    }
+    if time_filter:
+        time_map = {"day": "qdr:d", "week": "qdr:w", "month": "qdr:m", "year": "qdr:y"}
+        if time_filter in time_map:
+            params["tbs"] = time_map[time_filter]
+
+    try:
+        response = httpx.get(
+            "https://serpapi.com/search.json",
+            params=params,
+            timeout=REQUEST_TIMEOUT,
+        )
+        if response.status_code == 429:
+            raise RateLimitError("SerpApi rate limit hit")
+        response.raise_for_status()
+    except httpx.RequestError as e:
+        error_logger.error(f"SerpApi search failed: {e}")
+        return []
+    except RateLimitError as e:
+        error_logger.error(str(e))
+        return []
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        error_logger.error(f"SerpApi returned invalid JSON: {e}")
+        return []
+
+    results = []
+    organic = data.get("organic_results", []) if isinstance(data, dict) else []
+    for item in organic[:count]:
+        url = item.get("link", "")
+        if not url:
+            continue
+        results.append({
+            "title": item.get("title", ""),
+            "url": url,
+            "snippet": item.get("snippet", "") or "",
+            "age": item.get("date", "") or "",
+        })
+
+    logger.info(f"SerpApi returned {len(results)} results")
     return results

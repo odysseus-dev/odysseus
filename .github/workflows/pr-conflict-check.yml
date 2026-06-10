@@ -17,6 +17,7 @@ concurrency:
 # pull-requests: write  — add/remove labels and post comments on PRs
 # issues: write         — required by the REST issues API used for labels/comments
 permissions:
+  contents: read
   issues: write
   pull-requests: write
 

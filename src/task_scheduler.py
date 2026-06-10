@@ -13,6 +13,12 @@ from typing import Any, Awaitable, Callable, Dict, Tuple
 logger = logging.getLogger(__name__)
 
 
+def _naive_utc_bound(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def _utcnow() -> datetime:
     """Return naive UTC for task DB fields without using deprecated APIs."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -26,6 +32,16 @@ def _utcnow() -> datetime:
 _shared_cache: Dict[Tuple, Tuple[float, Any]] = {}
 _shared_cache_pending: Dict[Tuple, asyncio.Future] = {}
 _shared_cache_lock = asyncio.Lock()
+
+
+def _digest_window_events(db, model, start, end):
+    _s = start.replace(tzinfo=None) if start.tzinfo else start
+    _e = end.replace(tzinfo=None) if end.tzinfo else end
+    return db.query(model).filter(
+        model.dtstart >= _s,
+        model.dtstart < _e,
+        model.status != "cancelled",
+    ).order_by(model.dtstart).all()
 
 
 async def _cached(key: Tuple, ttl: float, fetch: Callable[[], Awaitable[Any]]) -> Any:

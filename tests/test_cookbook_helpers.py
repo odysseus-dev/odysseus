@@ -141,7 +141,7 @@ def test_validate_local_dir_accepts_windows_drive_paths_with_spaces():
     assert _validate_local_dir(backslash_path) == backslash_path
     assert _validate_local_dir(f"'{backslash_path}'") == backslash_path
     assert _validate_local_dir(slash_path) == slash_path
-    assert _shell_path(backslash_path + r"\Qwen3-8B") == '"D:\\AI Models\\llamacpp\\Qwen3-8B"'
+    assert _shell_path(backslash_path + r"\Qwen3-8B") == '"D:\\\\AI Models\\\\llamacpp\\\\Qwen3-8B"'
 
 
 def test_validate_local_dir_still_rejects_shell_metacharacters():

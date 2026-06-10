@@ -30,6 +30,7 @@ from .providers import (
     tavily_search,
     serper_search,
     kagi_search,
+    serpapi_search,
     _get_search_settings,
     _get_provider_key,
     _get_result_count,
@@ -111,6 +112,8 @@ def _call_provider(provider_name: str, query: str, count: int, time_filter: str 
         return serper_search(query, count, time_filter)
     elif provider_name == "kagi":
         return kagi_search(query, count, time_filter)
+    elif provider_name == "serpapi":
+        return serpapi_search(query, count, time_filter)
     return []
 
 

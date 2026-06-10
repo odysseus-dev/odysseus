@@ -22,7 +22,8 @@ on:
   workflow_dispatch:
 
 # Default-deny token; each job grants only read access to the code.
-permissions: {}
+permissions:
+  contents: read
 
 concurrency:
   group: workflow-security-${{ github.workflow }}-${{ github.ref }}

@@ -24,6 +24,8 @@ import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handle
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArrowUpRecall.js';
+import { clearComposer } from './composerClear.js';
+import { noteAutoResolvedModel } from './modelPicker.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
@@ -132,6 +134,10 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
 
   function clearComposerDraft(sessionId = null) {
     composerDrafts.clear(sessionId);
+  }
+
+  function _clearComposer() {
+    clearComposer(uiModule.el);
   }
 
   function suspendComposerDraftPersistence(fn) {
@@ -532,8 +538,7 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
           const ok = await sessionModule.materializePendingSession();
           if (!ok || !sessionModule.getCurrentSessionId()) { _releaseSendFlag(); return; }
         } else {
-          el('message').value = '';
-          if (uiModule.autoResize) uiModule.autoResize(el('message'));
+          _clearComposer();
           addMessage('assistant',
             'No chat session active. You can:\n\n' +
             '- Open the model picker in the chat box and pick a model\n' +
@@ -543,8 +548,7 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
           return;
         }
       } catch (e) {
-        el('message').value = '';
-        if (uiModule.autoResize) uiModule.autoResize(el('message'));
+        _clearComposer();
         addMessage('assistant',
           'No chat session active. You can:\n\n' +
           '- Open the model picker in the chat box and pick a model\n' +

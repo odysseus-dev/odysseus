@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+import pathlib
 import re
 from typing import Any, Dict, List, Optional
 
@@ -16,6 +17,84 @@ from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE, interna
 from src.tool_utils import get_mcp_manager
 
 logger = logging.getLogger(__name__)
+
+_MCP_ALLOWED_COMMANDS = frozenset({
+    "python3", "python", "node", "deno", "bun", "uv", "uvx", "npx",
+})
+
+
+def _validate_mcp_command(command: str, cmd_args, env) -> Optional[str]:
+    if not isinstance(command, str) or not command.strip():
+        return "command must be a non-empty string"
+    cmd = command.strip()
+
+    # Environment check
+    if env is not None:
+        if not isinstance(env, dict):
+            return "env must be a dict"
+        forbidden_env = {"ld_preload", "path", "pythonpath"}
+        for k, v in env.items():
+            if not isinstance(k, str) or not isinstance(v, str):
+                return "env keys and values must be strings"
+            if k.lower() in forbidden_env:
+                return f"forbidden environment variable: {k}"
+
+    project_root = pathlib.Path(__file__).resolve().parent.parent
+
+    _altsep = getattr(os, "altsep", None)
+    is_path = (os.sep in cmd) or ("/" in cmd) or (_altsep and _altsep in cmd)
+    if is_path:
+        try:
+            resolved = pathlib.Path(cmd).expanduser().resolve(strict=False)
+        except (OSError, RuntimeError) as e:
+            return f"command path could not be resolved: {e}"
+        try:
+            resolved.relative_to(project_root)
+        except ValueError:
+            return (f"command path '{cmd}' is outside the project root; "
+                    f"only allowlisted executables or paths inside {project_root} are permitted")
+        if not resolved.is_file():
+            return f"command path '{cmd}' is not a regular file"
+    else:
+        basename = os.path.basename(cmd)
+        if basename not in _MCP_ALLOWED_COMMANDS:
+            return f"command '{basename}' is not in the MCP allowlist"
+
+    if cmd_args is not None:
+        if not isinstance(cmd_args, list):
+            return "cmd_args must be a list"
+        for i, arg in enumerate(cmd_args):
+            if arg is None or not isinstance(arg, str):
+                return f"cmd_args[{i}] must be a string"
+            if arg.startswith("http://") or arg.startswith("https://"):
+                return f"remote URLs are not allowed in command arguments: {arg}"
+
+        # Specific interpreter flag validations
+        basename = os.path.basename(cmd)
+        if basename in ("python", "python3"):
+            if "-c" in cmd_args:
+                return "command line execution flag '-c' is not permitted"
+        elif basename == "node":
+            if any(x in cmd_args for x in ("-e", "--eval", "-p", "--print")):
+                return "eval flags are not permitted for node"
+        elif basename in ("npx", "uvx"):
+            # Check if any non-flag arg points to a local file in the project
+            has_local_file = False
+            for arg in cmd_args:
+                if arg.startswith("-"):
+                    continue
+                try:
+                    p = pathlib.Path(arg).expanduser().resolve(strict=False)
+                    if p.is_file():
+                        p.relative_to(project_root)
+                        has_local_file = True
+                        break
+                except Exception:
+                    pass
+            if not has_local_file:
+                return f"{basename} package runner is only permitted to run local scripts inside the project root"
+
+    return None
 
 # ---------------------------------------------------------------------------
 # Argument parsing

@@ -8,8 +8,8 @@ class _FakeEmbeddingHttpClient:
     def __init__(self, handler):
         self.handler = handler
 
-    def post(self, url, json):
-        request = httpx.Request("POST", url)
+    def post(self, url, json, headers=None):
+        request = httpx.Request("POST", url, headers=headers)
         status, body = self.handler(json)
         return httpx.Response(status, request=request, json=body)
 

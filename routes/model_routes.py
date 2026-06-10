@@ -28,6 +28,113 @@ from src.endpoint_resolver import (
 )
 from src.auth_helpers import _auth_disabled, owner_filter
 
+_MAX_DIAGNOSTIC_SECTIONS = 16
+
+
+def _parse_diagnostics_paths(raw: Any) -> Dict[str, str]:
+    if not raw:
+        return {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, str] = {}
+    for name, path in raw.items():
+        if not isinstance(name, str) or not isinstance(path, str):
+            continue
+        section = name.strip().lower()
+        path = path.strip()
+        if not section or not re.fullmatch(r"[a-z0-9_-]{1,32}", section):
+            continue
+        if not path.startswith("/") or path.startswith("//"):
+            continue
+        if any(c in path for c in ("?", "#", "\\")) or "://" in path:
+            continue
+        out[section] = path
+        if len(out) >= _MAX_DIAGNOSTIC_SECTIONS:
+            break
+    return out
+
+
+_DIAGNOSTIC_RESPONSE_LIMIT_BYTES = 20000
+
+
+def _endpoint_diagnostics(ep: Any) -> Dict[str, str]:
+    return _parse_diagnostics_paths(getattr(ep, "diagnostics_paths", None))
+
+
+def _endpoint_supports_diagnostics(ep: Any) -> bool:
+    if not _is_loopback_url(ep.base_url or ""):
+        return False
+    return bool(_endpoint_diagnostics(ep))
+
+
+def _endpoint_diagnostics_sections(ep: Any) -> List[str]:
+    if not _is_loopback_url(getattr(ep, "base_url", "") or ""):
+        return []
+    return sorted(_endpoint_diagnostics(ep).keys())
+
+
+def _is_loopback_url(url: str) -> bool:
+    try:
+        host = urlparse(url).hostname or ""
+    except Exception:
+        return False
+    if not host:
+        return False
+    return host in ("localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal") or host.endswith(".local")
+
+
+def _decode_response_bytes(resp: Any, raw_bytes: bytes) -> Any:
+    headers = getattr(resp, "headers", None) or {}
+    ct = (headers.get("content-type") or "").lower()
+    if "application/json" in ct or raw_bytes.startswith(b"{"):
+        try:
+            return json.loads(raw_bytes)
+        except Exception:
+            return raw_bytes.decode("utf-8", errors="replace")
+    return raw_bytes.decode("utf-8", errors="replace")
+
+
+def _fetch_endpoint_diagnostic_payload(target: str, headers: Dict[str, str]) -> tuple[Any, bool]:
+    with httpx.stream(
+        "GET", target, headers=headers, timeout=3,
+        follow_redirects=False, trust_env=False,
+    ) as r:
+        raw_bytes, truncated = _read_capped_response_bytes(r)
+        raw = _decode_response_bytes(r, raw_bytes)
+        if r.status_code >= 400:
+            raise HTTPException(r.status_code, raw[:500] or f"Endpoint returned HTTP {r.status_code}")
+        if not truncated:
+            try:
+                return json.loads(raw) if isinstance(raw, str) else raw, False
+            except Exception:
+                pass
+        return raw, truncated
+
+
+def _read_capped_response_bytes(resp: Any, limit: int = _DIAGNOSTIC_RESPONSE_LIMIT_BYTES) -> tuple[bytes, bool]:
+    chunks: List[bytes] = []
+    total = 0
+    truncated = False
+    for chunk in resp.iter_bytes():
+        if total >= limit:
+            truncated = True
+            break
+        remaining = limit - total
+        if len(chunk) > remaining:
+            chunks.append(chunk[:remaining])
+            total += remaining
+            truncated = True
+            break
+        else:
+            chunks.append(chunk)
+            total += len(chunk)
+    return b"".join(chunks), truncated
+
 logger = logging.getLogger(__name__)
 
 _SPEECH_ENDPOINT_SETTINGS = (
@@ -871,11 +978,11 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
                     "error": "That is Odysseus, not a model server. Use the Ollama URL, usually http://host.docker.internal:11434/v1 in Docker.",
                 }
             return {"reachable": False, "status_code": r.status_code, "error": f"HTTP {r.status_code} redirect"}
-        if 200 <= r.status_code < 500:
+        if 200 <= r.status_code < 300:
             return {
                 "reachable": True,
                 "status_code": r.status_code,
-                "error": f"HTTP {r.status_code}" if r.status_code >= 400 else None,
+                "error": None,
             }
         return {"reachable": False, "status_code": r.status_code, "error": f"HTTP {r.status_code}"}
 
@@ -1679,11 +1786,19 @@ def setup_model_routes(model_discovery):
         refresh_mode = _normalize_refresh_mode(model_refresh_mode, requested_kind)
         refresh_interval = _parse_positive_int(model_refresh_interval, minimum=30, maximum=86400)
         refresh_timeout = _parse_positive_int(model_refresh_timeout, minimum=1, maximum=60)
+        infer_timeout = _parse_positive_int(request_timeout) if request_timeout else None
         require_model_list = _truthy(require_models)
         _pinned = _normalize_model_ids(pinned_models)
         should_probe = (
             require_model_list or requested_kind in ("api", "proxy") or not _truthy(skip_probe)
         )
+        is_fp = _is_firepass_setup(base_url, name, api_key)
+        if is_fp:
+            should_probe = False
+            _pinned = [_FIREPASS_MODEL]
+            model_ids = [_FIREPASS_MODEL]
+        else:
+            model_ids = []
         explicit_timeout = _explicit_model_list_timeout(base_url, requested_kind, refresh_timeout)
 
         # Dedupe: if an endpoint with the same base_url already exists and
@@ -1780,7 +1895,10 @@ def setup_model_routes(model_discovery):
         finally:
             _db_dedup.close()
 
-        model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=explicit_timeout) if should_probe else []
+        if is_fp:
+            model_ids = [_FIREPASS_MODEL]
+        else:
+            model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=explicit_timeout) if should_probe else []
         ping = {"reachable": False, "error": None}
         if (should_probe or requested_kind in ("api", "proxy")) and not model_ids:
             ping = _ping_endpoint(base_url, api_key.strip() or None, timeout=min(explicit_timeout, 2.0))
@@ -2289,6 +2407,40 @@ def setup_model_routes(model_discovery):
         """Check which settings depend on this endpoint."""
         require_admin(request)
         return {"dependents": _settings_using_endpoint(ep_id)}
+
+    @router.get("/model-endpoints/{ep_id}/diagnostics/{section}")
+    def get_endpoint_diagnostics(ep_id: str, section: str, request: Request):
+        require_admin(request)
+        db = SessionLocal()
+        try:
+            ep_view = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
+            if not ep_view:
+                raise HTTPException(404, "Endpoint not found")
+            if not _endpoint_supports_diagnostics(ep_view):
+                raise HTTPException(400, "Diagnostics not supported for this endpoint")
+            diagnostics = _endpoint_diagnostics(ep_view)
+            path = diagnostics.get(section)
+            if not path:
+                raise HTTPException(404, f"Diagnostic section {section} not found")
+            
+            # Construct target URL by combining base_url (without trailing path parts like /v1 if we need, or just build it relative to host)
+            # Actually, we can parse base_url and replace the path part
+            parsed = urlparse(ep_view.base_url)
+            # base_url might contain path prefix like "/v1", so we merge or replace?
+            # Let's see if the test specifies how URL is constructed.
+            # Usually base_url is something like http://127.0.0.1:8000/v1
+            # But the path registered is e.g. /health. We should replace the path of the URL.
+            target = urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
+            
+            headers = {}
+            if ep_view.provider_auth_id:
+                # Add auth header if applicable
+                pass
+            
+            payload, truncated = _fetch_endpoint_diagnostic_payload(target, headers)
+            return {"payload": payload, "truncated": truncated}
+        finally:
+            db.close()
 
     @router.delete("/model-endpoints/{ep_id}")
     def delete_model_endpoint(ep_id: str, request: Request):

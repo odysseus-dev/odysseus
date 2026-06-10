@@ -22,11 +22,14 @@ import json
 import re
 import html
 import logging
+import base64
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 import mimetypes
 from pathlib import Path
+from datetime import datetime
 
 from fastapi import Query, HTTPException, Request
 from pydantic import BaseModel
@@ -619,11 +622,227 @@ def _init_scheduled_db():
     # Message sender addresses are global, so signatures must be scoped to the
     # mailbox owner before `/read` returns them to the renderer.
     _ensure_sender_signatures_table(conn)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS email_snoozes (
+            message_id TEXT,
+            owner TEXT DEFAULT '',
+            account_id TEXT,
+            uid TEXT,
+            folder TEXT,
+            wake_at TEXT,
+            created_at TEXT,
+            PRIMARY KEY (message_id, owner)
+        )
+    """)
     conn.commit()
     conn.close()
 
 
 _init_scheduled_db()
+
+SOURCE_PART_PREVIEW_MAX = 4096
+
+
+def _thread_root_id(message_id: str, in_reply_to: str, references: str) -> str | None:
+    for ref in [references, in_reply_to, message_id]:
+        if ref:
+            tid = ref.strip().split()[-1].strip("<>")
+            if tid:
+                return tid
+    return None
+
+
+def group_emails_by_thread(emails: list[dict]) -> list[dict]:
+    buckets: dict[str, dict] = {}
+    counts: dict[str, int] = {}
+    for e in emails:
+        root = _thread_root_id(
+            e.get("message_id", ""),
+            e.get("in_reply_to", ""),
+            e.get("references", ""),
+        ) or str(e.get("message_id") or f"uid:{e.get('uid')}")
+        counts[root] = counts.get(root, 0) + 1
+        prev = buckets.get(root)
+        if not prev or (e.get("date_epoch") or 0) > (prev.get("date_epoch") or 0):
+            buckets[root] = dict(e)
+    out = []
+    for root, row in buckets.items():
+        row["thread_root"] = root
+        row["thread_count"] = counts.get(root, 1)
+        out.append(row)
+    out.sort(key=lambda x: x.get("date_epoch") or 0.0, reverse=True)
+    return out
+
+
+def _active_snoozed_uids(owner: str, account_id: str | None, folder: str) -> set[str]:
+    import sqlite3
+    from datetime import datetime as _dt
+    now = _dt.utcnow().isoformat()
+    owner_clause, owner_params = _email_cache_owner_clause(owner)
+    try:
+        conn = sqlite3.connect(SCHEDULED_DB)
+        q = f"SELECT uid FROM email_snoozes WHERE folder=? AND wake_at > ? AND {owner_clause}"
+        params = [folder, now, *owner_params]
+        if account_id:
+            q += " AND (account_id IS NULL OR account_id = '' OR account_id = ?)"
+            params.append(account_id)
+        rows = conn.execute(q, params).fetchall()
+        conn.close()
+        return {str(r[0]) for r in rows if r and r[0]}
+    except Exception:
+        return set()
+
+
+def upsert_email_snooze(
+    *,
+    message_id: str,
+    owner: str,
+    account_id: str | None,
+    uid: str,
+    folder: str,
+    wake_at: str,
+) -> None:
+    import sqlite3
+    from datetime import datetime as _dt
+    conn = sqlite3.connect(SCHEDULED_DB)
+    conn.execute(
+        """
+        INSERT INTO email_snoozes (message_id, owner, account_id, uid, folder, wake_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(message_id, owner) DO UPDATE SET
+          account_id=excluded.account_id, uid=excluded.uid, folder=excluded.folder,
+          wake_at=excluded.wake_at, created_at=excluded.created_at
+        """,
+        (
+            message_id or f"uid:{uid}",
+            owner or "",
+            account_id or "",
+            str(uid),
+            folder,
+            wake_at,
+            _dt.utcnow().isoformat(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def sweep_expired_snoozes() -> int:
+    import sqlite3
+    from datetime import datetime as _dt
+    now = _dt.utcnow().isoformat()
+    try:
+        conn = sqlite3.connect(SCHEDULED_DB)
+        cur = conn.execute("DELETE FROM email_snoozes WHERE wake_at <= ?", (now,))
+        conn.commit()
+        n = cur.rowcount or 0
+        conn.close()
+        return n
+    except Exception:
+        return 0
+
+
+def email_ai_local_only_enabled() -> bool:
+    try:
+        return bool(_load_settings().get("email_ai_local_only", False))
+    except Exception:
+        return False
+
+
+def email_ai_local_only_error(url: str | None) -> str | None:
+    if not email_ai_local_only_enabled():
+        return None
+    if not url:
+        return "Email AI: no endpoint configured"
+    from src.model_context import _is_local_endpoint
+    if not _is_local_endpoint(url):
+        return (
+            "Email AI is set to local models only. "
+            "Configure a local model in Cookbook or disable the setting in Settings \u2192 Email."
+        )
+    return None
+
+
+def encrypt_cache_field(value: str) -> str:
+    if not value:
+        return value or ""
+    from src.secret_storage import encrypt as _enc
+    return _enc(value)
+
+
+def decrypt_cache_field(value: str) -> str:
+    if not value:
+        return value or ""
+    from src.secret_storage import decrypt as _dec
+    return _dec(value)
+
+
+def _safe_decode_payload(payload: bytes, charset: str | None) -> str:
+    if payload is None:
+        return ""
+    try:
+        return payload.decode(charset or "utf-8", errors="replace")
+    except (LookupError, ValueError):
+        return payload.decode("utf-8", errors="replace")
+
+
+def build_message_source(msg, raw: bytes) -> dict:
+    import base64
+    headers = [{"name": k, "value": v} for k, v in msg.items()]
+    attachments_by_name = {
+        (a.get("filename") or "", a.get("content_type") or ""): a.get("index")
+        for a in _list_attachments_from_msg(msg)
+    }
+    parts = []
+    part_num = 0
+    for part in msg.walk():
+        if part.is_multipart():
+            continue
+        ct = part.get_content_type()
+        cd = str(part.get("Content-Disposition", ""))
+        cd_lower = cd.lower()
+        filename = part.get_filename()
+        if filename:
+            filename = _decode_header(filename)
+        disposition = (
+            "attachment" if "attachment" in cd_lower
+            else ("inline" if "inline" in cd_lower else "body")
+        )
+        payload = part.get_payload(decode=True) or b""
+        size = len(payload)
+        entry = {
+            "part": part_num,
+            "content_type": ct,
+            "charset": part.get_content_charset() or "",
+            "filename": filename or "",
+            "size": size,
+            "disposition": disposition,
+        }
+        dl_key = (filename or "", ct)
+        if dl_key in attachments_by_name:
+            entry["download_index"] = attachments_by_name[dl_key]
+        is_body_text = (
+            ct in ("text/plain", "text/html")
+            and "attachment" not in cd_lower
+        )
+        if is_body_text and payload:
+            charset = part.get_content_charset() or "utf-8"
+            text = _safe_decode_payload(payload, charset)
+            truncated = len(text) > SOURCE_PART_PREVIEW_MAX
+            if truncated:
+                text = text[:SOURCE_PART_PREVIEW_MAX]
+            entry["body"] = text
+            if truncated:
+                entry["truncated"] = True
+        parts.append(entry)
+        part_num += 1
+    return {
+        "size": len(raw),
+        "headers": headers,
+        "parts": parts,
+        "raw_rfc822": raw.decode("utf-8", errors="replace"),
+        "raw_base64": base64.b64encode(raw).decode("ascii"),
+    }
 
 
 def _load_settings():
@@ -707,10 +926,16 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
                     "imap_password": _decrypt(row.imap_password or ""),
                     "imap_starttls": bool(row.imap_starttls),
                     "from_address": row.from_address or row.imap_user or "",
+                    "oauth_provider": row.oauth_provider or "",
+                    "oauth_access_token": row.oauth_access_token or "",
+                    "oauth_refresh_token": row.oauth_refresh_token or "",
+                    "oauth_token_expiry": row.oauth_token_expiry or "",
                 }
-                if not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):
+                has_smtp = cfg["smtp_host"] and cfg["smtp_user"] and (cfg["smtp_password"] or cfg["oauth_provider"])
+                has_imap = cfg["imap_host"] and cfg["imap_user"] and (cfg["imap_password"] or cfg["oauth_provider"])
+                if not has_smtp:
                     logger.warning(f"SMTP not configured for account {row.name!r}")
-                if not (cfg["imap_host"] and cfg["imap_user"] and cfg["imap_password"]):
+                if not has_imap:
                     logger.warning(f"IMAP not configured for account {row.name!r}")
                 return cfg
         finally:
@@ -782,6 +1007,8 @@ _IMAP_TIMEOUT_SECONDS = _coerce_imap_timeout_seconds(os.environ.get("ODYSSEUS_IM
 def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int = _IMAP_TIMEOUT_SECONDS):
     """Open an IMAP connection using the configured security mode."""
     port = int(port or 993)
+    if port == 993:
+        starttls = False
     if starttls:
         conn = imaplib.IMAP4(host, port, timeout=timeout)
         try:
@@ -831,7 +1058,13 @@ def _imap_connect(account_id: str | None = None, owner: str = "",
         timeout=timeout,
     )
     try:
-        conn.login(cfg["imap_user"], cfg["imap_password"])
+        if cfg.get("oauth_provider") == "google":
+            token = _get_valid_google_token(account_id, cfg)
+            if not token:
+                raise ValueError("Could not retrieve valid Google OAuth token")
+            conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(cfg["imap_user"], token))
+        else:
+            conn.login(cfg["imap_user"], cfg["imap_password"])
     except Exception:
         # A failed AUTHENTICATE (e.g. an Office 365 app password on an
         # MFA-enabled tenant, #3174) otherwise orphans the already-connected
@@ -1193,12 +1426,12 @@ def _extract_html(msg):
                 payload = part.get_payload(decode=True)
                 if payload:
                     charset = part.get_content_charset() or "utf-8"
-                    return payload.decode(charset, errors="replace")
+                    return _safe_decode_payload(payload, charset)
     elif msg.get_content_type() == "text/html":
         payload = msg.get_payload(decode=True)
         if payload:
             charset = msg.get_content_charset() or "utf-8"
-            return payload.decode(charset, errors="replace")
+            return _safe_decode_payload(payload, charset)
     return None
 
 
@@ -1213,12 +1446,12 @@ def _extract_text(msg):
                 payload = part.get_payload(decode=True)
                 if payload:
                     charset = part.get_content_charset() or "utf-8"
-                    plain_parts.append(payload.decode(charset, errors="replace"))
+                    plain_parts.append(_safe_decode_payload(payload, charset))
             elif ct == "text/html" and html_text is None and "attachment" not in cd:
                 payload = part.get_payload(decode=True)
                 if payload:
                     charset = part.get_content_charset() or "utf-8"
-                    raw_html = payload.decode(charset, errors="replace")
+                    raw_html = _safe_decode_payload(payload, charset)
                     text = re.sub(r"<br\s*/?>", "\n", raw_html, flags=re.I)
                     text = re.sub(r"<[^>]+>", "", text)
                     text = html.unescape(text)
@@ -1234,7 +1467,7 @@ def _extract_text(msg):
         payload = msg.get_payload(decode=True)
         if payload:
             charset = msg.get_content_charset() or "utf-8"
-            return payload.decode(charset, errors="replace")
+            return _safe_decode_payload(payload, charset)
     return ""
 
 
@@ -1569,6 +1802,144 @@ class SendEmailRequest(BaseModel):
 
 class ExtractStyleRequest(BaseModel):
     sample_count: Optional[int] = 20
+
+
+# ---------------------------------------------------------------------------
+# OAuth helpers (Google / Microsoft)
+# ---------------------------------------------------------------------------
+
+def _email_oauth_app(provider: str) -> dict:
+    """Resolve OAuth *app* credentials (client id/secret/tenant) for a provider."""
+    from src.secret_storage import decrypt as _dec
+    settings = _load_settings()
+
+    def _resolve(skey, env):
+        return (settings.get(skey) or "").strip() or os.environ.get(env, "").strip()
+
+    def _resolve_secret(skey, env):
+        enc = settings.get(skey) or ""
+        if enc:
+            try:
+                return _dec(enc)
+            except Exception:
+                return ""
+        return os.environ.get(env, "")
+
+    if provider == "microsoft":
+        tenant = _resolve("microsoft_oauth_tenant", "MICROSOFT_OAUTH_TENANT") or "common"
+        return {
+            "client_id": _resolve("microsoft_oauth_client_id", "MICROSOFT_OAUTH_CLIENT_ID"),
+            "client_secret": _resolve_secret("microsoft_oauth_client_secret", "MICROSOFT_OAUTH_CLIENT_SECRET"),
+            "tenant": tenant,
+        }
+    if provider == "google":
+        return {
+            "client_id": _resolve("google_oauth_client_id", "GOOGLE_OAUTH_CLIENT_ID"),
+            "client_secret": _resolve_secret("google_oauth_client_secret", "GOOGLE_OAUTH_CLIENT_SECRET"),
+            "tenant": "",
+        }
+    return {"client_id": "", "client_secret": "", "tenant": ""}
+
+
+def make_oauth_state(account_id: str, owner: str) -> str:
+    """Return an HMAC-signed, base64-encoded OAuth state token."""
+    import hmac as _hmac, hashlib as _hl, secrets as _sec
+    from src.secret_storage import _load_or_create_key
+    nonce = _sec.token_hex(16)
+    payload = json.dumps({"a": account_id, "o": owner, "n": nonce}, separators=(",", ":"))
+    sig = _hmac.new(_load_or_create_key(), payload.encode(), _hl.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{payload}|{sig}".encode()).decode()
+
+
+def verify_oauth_state(state: str) -> dict | None:
+    """Verify an OAuth state token's HMAC signature."""
+    import hmac as _hmac, hashlib as _hl
+    from src.secret_storage import _load_or_create_key
+    try:
+        decoded = base64.urlsafe_b64decode(state.encode()).decode()
+        payload, sig = decoded.rsplit("|", 1)
+        expected = _hmac.new(_load_or_create_key(), payload.encode(), _hl.sha256).hexdigest()
+        if not _hmac.compare_digest(sig, expected):
+            return None
+        return json.loads(payload)
+    except Exception:
+        return None
+
+
+def _xoauth2_raw(user: str, access_token: str) -> str:
+    """The SASL XOAUTH2 initial-response string (unencoded)."""
+    return f"user={user}\x01auth=Bearer {access_token}\x01\x01"
+
+
+def _xoauth2_bytes(user: str, access_token: str) -> bytes:
+    """Raw XOAUTH2 bytes for imaplib's authenticate() callback."""
+    return _xoauth2_raw(user, access_token).encode()
+
+
+def _refresh_google_token(account_id: str) -> str | None:
+    """Exchange the stored refresh token for a new access token and persist it."""
+    import httpx
+    from core.database import SessionLocal as _SL, EmailAccount as _EA
+    from src.secret_storage import encrypt as _enc, decrypt as _dec
+    _app = _email_oauth_app("google")
+    client_id = _app["client_id"]
+    client_secret = _app["client_secret"]
+    if not client_id or not client_secret:
+        return None
+    db = _SL()
+    try:
+        row = db.get(_EA, account_id)
+        if not row or not row.oauth_refresh_token:
+            return None
+        refresh_token = _dec(row.oauth_refresh_token or "")
+        if not refresh_token:
+            return None
+        resp = httpx.post("https://oauth2.googleapis.com/token", data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        }, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        access_token = data["access_token"]
+        row.oauth_access_token = _enc(access_token)
+        row.oauth_token_expiry = str(int(time.time()) + data.get("expires_in", 3600))
+        db.commit()
+        return access_token
+    except Exception as e:
+        logger.warning(f"Google token refresh failed: {e}")
+        return None
+    finally:
+        db.close()
+
+
+def _get_valid_google_token(account_id: str, cfg: dict) -> str | None:
+    """Return a valid Google access token, refreshing if expired or missing."""
+    from src.secret_storage import decrypt as _dec
+    access_token = _dec(cfg.get("oauth_access_token") or "")
+    expiry_str = cfg.get("oauth_token_expiry") or ""
+    if access_token and expiry_str:
+        try:
+            if int(expiry_str) - 60 > time.time():
+                return access_token
+        except (ValueError, TypeError):
+            pass
+    return _refresh_google_token(account_id)
+
+
+_EMAIL_AUDIT_LOG = Path(__file__).resolve().parent.parent / "logs" / "email_audit.log"
+
+def log_email_audit(event: str, *, owner: str = "", **fields) -> None:
+    """Append-only audit trail — metadata only, never mail bodies."""
+    try:
+        _EMAIL_AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+        detail = " ".join(f"{k}={v!r}" for k, v in fields.items() if v not in (None, ""))
+        line = f"{datetime.utcnow().isoformat(timespec='seconds')} {event} owner={owner!r} {detail}".strip()
+        with _EMAIL_AUDIT_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except Exception:
+        logger.debug("email audit log write failed", exc_info=True)
 
 
 _init_scheduled_db()

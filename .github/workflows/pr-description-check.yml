@@ -10,7 +10,8 @@ on:
 # Default-deny at the workflow level; each job opts into only the scopes it needs.
 # Note: modifying a PR's labels/comments needs pull-requests:write even though the
 # REST path is under /issues/{n}/...; issues:write alone returns 403 on PRs.
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   check-description:

@@ -15,6 +15,7 @@ import logging
 import os
 import pathlib
 import re
+import subprocess
 import sys
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
@@ -269,8 +270,9 @@ def _resolve_search_root(raw_path: str, workspace: Optional[str] = None) -> str:
     that workspace instead, matching read_file/write_file/edit_file behavior.
     """
     raw = (raw_path or "").strip()
-    if workspace:
-        return _resolve_tool_path_in_workspace(workspace, raw or ".")
+    ws = workspace or get_active_workspace()
+    if ws:
+        return _resolve_tool_path_in_workspace(ws, raw or ".")
     if not raw:
         roots = _tool_path_roots()
         return roots[0] if roots else os.path.realpath(".")
@@ -577,6 +579,32 @@ async def _tool_ls(content: str, ctx: Dict) -> Dict:
     return {"output": _truncate(out), "exit_code": 0}
 
 
+# ── git tool ──────────────────────────────────────────────────────────────
+_GIT_ALLOWED = frozenset({
+    "status", "diff", "log", "show", "branch", "blame", "ls-files",
+    "rev-parse", "shortlog", "describe", "tag", "remote", "stash",
+    "add", "commit", "restore", "checkout", "switch", "reset", "rm", "mv",
+    "merge", "rebase", "cherry-pick", "revert", "init",
+    "push", "fetch", "pull",
+})
+_GIT_BLOCKED = frozenset({
+    "config", "clone", "daemon", "gc", "submodule", "credential",
+    "remote-add", "filter-branch", "update-ref", "fast-import",
+})
+_GIT_BANNED_ARGS = frozenset({"-C", "--git-dir", "--work-tree", "--exec-path"})
+_GIT_TIMEOUT = 60
+_GIT_MAX_OUTPUT = 12_000
+
+# ── forge tool (gh / glab) ────────────────────────────────────────────────
+_FORGE_ALLOWED = frozenset({
+    "pr", "mr", "issue", "repo", "release", "label", "milestone",
+})
+_FORGE_BLOCKED_SUBVERBS = frozenset({
+    "delete", "merge", "transfer", "archive", "rename", "fork", "sync",
+})
+_FORGE_TIMEOUT = 90
+_FORGE_MAX_OUTPUT = 12_000
+
 # Registry: maps tool name -> handler coroutine function.
 _TOOL_REGISTRY: Dict[str, Any] = {
     "grep": _tool_grep,
@@ -588,6 +616,7 @@ async def _direct_fallback(
     tool: str,
     content: str,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    workspace: Optional[str] = None,
 ) -> Optional[Dict]:
     _subproc_env = {
         **os.environ,
@@ -610,6 +639,123 @@ async def _direct_fallback(
 
     except Exception as e:
         return {"error": f"{tool}: {e}", "exit_code": 1}
+
+    import shlex, shutil, asyncio
+    from src.agent_tools.subprocess_tools import _run_subprocess_streaming
+
+    if tool == "git":
+        git_bin = shutil.which("git")
+        if not git_bin:
+            return {"error": "git: not installed on the server.", "exit_code": 1}
+        if not workspace:
+            return {"error": "git: set a workspace (the repo folder) first.", "exit_code": 1}
+        raw = (content or "").strip()
+        if raw.lower().startswith("git "):
+            raw = raw[4:].strip()
+        if not raw:
+            return {"error": "git: provide a subcommand, e.g. status / diff / commit -m \"msg\".", "exit_code": 1}
+        try:
+            argv = shlex.split(raw)
+        except ValueError as e:
+            return {"error": f"git: could not parse arguments: {e}", "exit_code": 1}
+        sub = argv[0].lower()
+        if sub in _GIT_BLOCKED or sub not in _GIT_ALLOWED:
+            return {"error": f"git: subcommand '{sub}' is not allowed.", "exit_code": 1}
+        rest = argv[1:]
+        for _a in rest:
+            if _a in _GIT_BANNED_ARGS or _a.split("=", 1)[0] in _GIT_BANNED_ARGS:
+                return {"error": f"git: argument `{_a}` is not allowed.", "exit_code": 1}
+        if sub == "init" and rest:
+            return {"error": "git: init <path> is not allowed (would escape workspace).", "exit_code": 1}
+        if sub == "remote" and rest and rest[0] not in ("-v", "show", "get-url"):
+            return {"error": "git: remote mutation is not allowed (read-only: -v, show, get-url).", "exit_code": 1}
+        base = os.path.realpath(workspace)
+        cmd = [git_bin, "-C", base]
+        if sub == "commit":
+            cmd += ["-c", "user.name=Odysseus Agent", "-c", "user.email=agent@odysseus.local"]
+        cmd += argv
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                env=_subproc_env, cwd=base,
+            )
+            stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
+                proc, timeout=_GIT_TIMEOUT, progress_cb=progress_cb,
+            )
+        except FileNotFoundError:
+            return {"error": "git: not installed on the server.", "exit_code": 1}
+        if timed_out:
+            return {"error": f"git {sub}: timed out after {_GIT_TIMEOUT}s", "exit_code": 124}
+        output = (stdout.rstrip() + ("\n" + stderr.rstrip() if stderr.strip() else "")).strip()
+        return {"output": _truncate(output, _GIT_MAX_OUTPUT) or "(no output)", "exit_code": rc or 0}
+
+    if tool == "forge":
+        if not workspace:
+            return {"error": "forge: set a workspace (the repo folder) first.", "exit_code": 1}
+        base = os.path.realpath(workspace)
+        raw = (content or "").strip()
+        for _p in ("gh ", "glab ", "forge "):
+            if raw.lower().startswith(_p):
+                raw = raw[len(_p):].strip()
+        if not raw:
+            return {"error": "forge: provide a command, e.g. pr create / pr list / issue view 5.", "exit_code": 1}
+        
+        try:
+            argv = shlex.split(raw)
+        except ValueError as e:
+            return {"error": f"forge: could not parse arguments: {e}", "exit_code": 1}
+        if not argv:
+            return {"error": "forge: provide a command, e.g. pr create / pr list / issue view 5.", "exit_code": 1}
+        
+        top = argv[0].lower()
+        if top not in _FORGE_ALLOWED:
+            return {"error": f"forge: '{top}' is not allowed (use pr/mr, issue, repo, release, label).", "exit_code": 1}
+        if len(argv) > 1 and argv[1].lower() in _FORGE_BLOCKED_SUBVERBS:
+            return {"error": f"forge: '{argv[1]}' subverb is not allowed.", "exit_code": 1}
+
+        gh_path, glab_path = shutil.which("gh"), shutil.which("glab")
+        def _origin_host():
+            gb = shutil.which("git")
+            if not gb:
+                return ""
+            try:
+                r = subprocess.run([gb, "-C", base, "remote", "get-url", "origin"],
+                                   capture_output=True, text=True, timeout=5)
+                return (r.stdout or "").lower()
+            except Exception:
+                return ""
+        host = _origin_host()
+        if "gitlab" in host:
+            cli, cli_path = ("glab", glab_path) if glab_path else (None, None)
+        elif "github" in host:
+            cli, cli_path = ("gh", gh_path) if gh_path else (None, None)
+        elif gh_path:
+            cli, cli_path = "gh", gh_path
+        elif glab_path:
+            cli, cli_path = "glab", glab_path
+        else:
+            cli, cli_path = None, None
+        if not cli:
+            return {"error": "forge: no forge CLI available — install `gh` (GitHub) or `glab` (GitLab) and authenticate it.", "exit_code": 1}
+        if cli == "glab" and argv[0].lower() == "pr":
+            argv[0] = "mr"
+        elif cli == "gh" and argv[0].lower() == "mr":
+            argv[0] = "pr"
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                cli_path, *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                env=_subproc_env, cwd=base,
+            )
+            stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
+                proc, timeout=_FORGE_TIMEOUT, progress_cb=progress_cb,
+            )
+        except FileNotFoundError:
+            return {"error": f"forge: `{cli}` is not installed on the server.", "exit_code": 1}
+        if timed_out:
+            return {"error": f"forge: timed out after {_FORGE_TIMEOUT}s", "exit_code": 124}
+        output = (stdout.rstrip() + ("\n" + stderr.rstrip() if stderr.strip() else "")).strip()
+        prefix = f"[{cli}] "
+        return {"output": prefix + (_truncate(output, _FORGE_MAX_OUTPUT) or "(no output)"), "exit_code": rc or 0}
 
     return None
 
@@ -894,12 +1040,12 @@ async def _execute_tool_block_impl(
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
         result = await _call_mcp_tool(tool, content, progress_cb=progress_cb)
-    elif tool in ("grep", "glob", "ls", "get_workspace"):
+    elif tool in ("grep", "glob", "ls", "get_workspace", "git", "forge"):
         # Code-navigation tools — no MCP server; run the direct implementation.
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
         result = await _direct_fallback(
-            tool, content, progress_cb=progress_cb, workspace=workspace
+            tool, content, progress_cb=progress_cb, workspace=get_active_workspace()
         ) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
     elif tool in ("create_document", "update_document", "edit_document", "suggest_document", "manage_documents"):

@@ -1,12 +1,13 @@
 # src/document_processor.py
 """Document processing: PDF/OCR extraction, text file handling, image VL analysis, user content building."""
 
+import json
 import os
 import logging
 import mimetypes
 import base64
 import tempfile
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from src.llm_core import llm_call
 
@@ -255,6 +256,117 @@ def strip_pdf_content_marker(text: str) -> str:
     return (text or "").removeprefix(_PDF_CONTENT_MARKER).strip()
 
 
+_VL_PREFERRED_HINTS = (
+    "qwen3-vl", "qwen2.5-vl", "qwen-2.5-vl", "qwen2-vl", "qwen-vl",
+    "nemotron-nano-12b-v2-vl", "gemini", "llama-4-scout",
+    "llama-4-maverick", "gemma-3", "mistral-small-3.2",
+    "mistral-small-3.1", "gpt-4o", "gpt-4.1", "claude-sonnet",
+    "claude-opus", "claude-haiku", "llava", "pixtral", "moondream",
+    "internvl", "cogvlm", "glm-",
+)
+
+
+def _is_free_model_id(model_id: str) -> bool:
+    return ":free" in (model_id or "").lower()
+
+
+def _is_openrouter_url(url: str) -> bool:
+    try:
+        from src.llm_core import _detect_provider
+        return _detect_provider(url or "") == "openrouter"
+    except Exception:
+        return "openrouter.ai" in (url or "").lower()
+
+
+def _vision_candidate_score(model_id: str) -> tuple:
+    lowered = (model_id or "").lower()
+    score = -100 if _is_free_model_id(lowered) else 0
+    for idx, hint in enumerate(_VL_PREFERRED_HINTS):
+        if hint in lowered:
+            score += idx
+            break
+    else:
+        score += 100
+    return score, lowered
+
+
+def _model_name_matches_configured(configured_l: str, model_l: str) -> bool:
+    if configured_l == model_l or configured_l in model_l or model_l in configured_l:
+        return True
+    compact_configured = configured_l.replace("-", "").replace("_", "")
+    compact_model = model_l.replace("-", "").replace("_", "")
+    return (
+        compact_configured == compact_model
+        or compact_configured in compact_model
+        or compact_model in compact_configured
+    )
+
+
+def _choose_cached_vision_model(
+    model_ids: list,
+    configured: str = "",
+    require_free: bool = False,
+) -> str | None:
+    configured_l = (configured or "").strip().lower()
+    candidates = []
+    try:
+        from src.chat_helpers import is_vision_model
+    except Exception:
+        is_vision_model = lambda name: False
+
+    for mid in model_ids or []:
+        if not mid:
+            continue
+        mid = str(mid)
+        mid_l = mid.lower()
+        if require_free and not _is_free_model_id(mid_l):
+            continue
+        if configured_l:
+            if _model_name_matches_configured(configured_l, mid_l):
+                candidates.append((_vision_candidate_score(mid), mid))
+            continue
+        if is_vision_model(mid):
+            candidates.append((_vision_candidate_score(mid), mid))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
+
+
+def _endpoint_model_ids(ep) -> list[str]:
+    raw = getattr(ep, "cached_models", None) or getattr(ep, "models", None)
+    if not raw:
+        return []
+    try:
+        models = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return []
+    if not isinstance(models, list):
+        return []
+    out = []
+    for item in models:
+        if isinstance(item, str):
+            out.append(item)
+        elif isinstance(item, dict):
+            mid = item.get("id") or item.get("name") or item.get("model")
+            if mid:
+                out.append(str(mid))
+    return out
+
+
+def _openrouter_free_or_non_openrouter(candidate: tuple) -> bool:
+    try:
+        url, model_id, _headers = candidate
+    except Exception:
+        return False
+    return not _is_openrouter_url(url) or _is_free_model_id(model_id)
+
+
+def _filter_openrouter_paid_fallbacks(candidates: list) -> list:
+    return [c for c in candidates or [] if _openrouter_free_or_non_openrouter(c)]
+
+
 def _load_vl_settings() -> dict:
     """Load admin settings from disk."""
     try:
@@ -262,6 +374,53 @@ def _load_vl_settings() -> dict:
         return load_settings()
     except Exception:
         return {}
+
+
+def _resolve_cached_vision_model(configured: str = "", owner: Optional[str] = None) -> tuple | None:
+    configured_l = (configured or "").strip().lower()
+    candidates = []
+    try:
+        from src.database import SessionLocal, ModelEndpoint
+        from src.endpoint_resolver import normalize_base, build_chat_url, build_headers
+    except Exception:
+        return None
+
+    db = SessionLocal()
+    try:
+        q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+        if owner:
+            try:
+                from src.auth_helpers import owner_filter
+                q = owner_filter(q, ModelEndpoint, owner)
+            except Exception:
+                pass
+        endpoints = q.all()
+        for ep in endpoints:
+            base = normalize_base(getattr(ep, "base_url", "") or "")
+            selected = _choose_cached_vision_model(
+                _endpoint_model_ids(ep),
+                configured,
+                require_free=_is_openrouter_url(base),
+            )
+            if not selected:
+                continue
+            headers = build_headers(getattr(ep, "api_key", None), base)
+            candidates.append((
+                _vision_candidate_score(selected),
+                build_chat_url(base),
+                selected,
+                headers,
+            ))
+    except Exception:
+        return None
+    finally:
+        db.close()
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0])
+    _score, chat_url, model_id, headers = candidates[0]
+    return chat_url, model_id, headers
 
 
 def _resolve_vl_model(configured: str, owner: str | None = None) -> tuple:

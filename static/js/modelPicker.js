@@ -98,6 +98,14 @@ function _handlePickerKeydown(e, listEl, itemSelector, closeFn) {
 // Dependencies injected via initModelPicker()
 let _deps = null;
 let _autoSelectingDefault = false;
+let _lastAutoResolvedModel = null;
+let _lastAutoRouteReasons = null;
+
+export function noteAutoResolvedModel(model, reasons) {
+  _lastAutoResolvedModel = model;
+  _lastAutoRouteReasons = reasons;
+  updateModelPicker();
+}
 
 function _canonicalModelEndpointUrl(url) {
   let out = (url || '').replace(/\/+$/, '');
@@ -802,7 +810,11 @@ export function updateModelPicker() {
     }
   }
 
-  const displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  let displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  if (modelId === LOCAL_LLM_ROUTER_AUTO_MODEL_ID) {
+    const resolvedDisplay = _lastAutoResolvedModel ? _lastAutoResolvedModel.split('/').pop() : '';
+    displayName = resolvedDisplay ? `${AUTO_SELECT_LABEL} → ${resolvedDisplay}` : AUTO_SELECT_LABEL;
+  }
   // The header indicator clips long names with ellipsis; show the full model
   // identifier on hover (#1982). No tooltip on the "Select model" placeholder.
   label.title = modelId || '';

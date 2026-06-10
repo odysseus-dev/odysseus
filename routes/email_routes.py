@@ -13,6 +13,7 @@ handlers need. The split is mechanical — no behavior change.
 """
 
 import asyncio
+from typing import Optional, List
 import sqlite3 as _sql3
 import email as email_mod
 import email.header
@@ -53,6 +54,10 @@ from routes.email_helpers import (
     SendEmailRequest, ExtractStyleRequest,
     ATTACHMENTS_DIR, COMPOSE_UPLOADS_DIR, SCHEDULED_DB,
     attachment_extract_dir, _email_cache_owner_clause,
+    build_message_source,
+    log_email_audit,
+    decrypt_cache_field,
+    encrypt_cache_field,
 )
 from routes.email_pollers import _start_poller
 
@@ -277,7 +282,8 @@ def _eml_download_disposition(subject: str, uid: str) -> str:
 
 
 def _smtp_ready(cfg: dict) -> bool:
-    return bool(cfg.get("smtp_host") and cfg.get("smtp_user") and cfg.get("smtp_password"))
+    has_pass_or_oauth = bool(cfg.get("smtp_password")) or bool(cfg.get("oauth_provider"))
+    return bool(cfg.get("smtp_host") and cfg.get("smtp_user") and has_pass_or_oauth)
 
 
 def _resolve_send_config(account_id: str | None = None, owner: str = "") -> dict:
@@ -3280,6 +3286,7 @@ def setup_email_routes():
                     "from_address": r.from_address or "",
                     "has_imap_password": bool(r.imap_password),
                     "has_smtp_password": bool(r.smtp_password),
+                    "oauth_provider": r.oauth_provider or "",
                 })
             return {"accounts": out}
         finally:
@@ -3567,6 +3574,89 @@ def setup_email_routes():
             row.is_default = True
             db.commit()
             return {"ok": True}
+        finally:
+            db.close()
+
+    @router.get("/oauth/google/callback")
+    async def google_oauth_callback(
+        code: Optional[str] = None,
+        state: Optional[str] = None,
+        error: Optional[str] = None,
+        request: Request = None,
+    ):
+        from typing import Optional
+        from fastapi.responses import RedirectResponse
+        import httpx
+        import time
+        from routes.email_helpers import verify_oauth_state, _email_oauth_app
+        from core.database import SessionLocal, EmailAccount
+        from src.secret_storage import encrypt as _enc
+
+        host = request.headers.get("host", "localhost:8000") if request else "localhost:8000"
+
+        if error:
+            return RedirectResponse(f"http://{host}/settings?email_oauth_error=google_error")
+
+        if not state:
+            return RedirectResponse(f"http://{host}/settings?email_oauth_error=invalid_state")
+
+        payload = verify_oauth_state(state)
+        if not payload:
+            return RedirectResponse(f"http://{host}/settings?email_oauth_error=invalid_state")
+
+        if not code:
+            return RedirectResponse(f"http://{host}/settings?email_oauth_error=missing_code")
+
+        account_id = payload.get("a")
+        state_owner = payload.get("o")
+
+        db = SessionLocal()
+        try:
+            row = db.get(EmailAccount, account_id)
+            if not row or row.owner != state_owner:
+                return RedirectResponse(f"http://{host}/settings?email_oauth_error=ownership_error")
+
+            _app = _email_oauth_app("google")
+            client_id = _app.get("client_id") or ""
+            client_secret = _app.get("client_secret") or ""
+
+            scheme = "https" if request and request.headers.get("x-forwarded-proto") == "https" else "http"
+            redirect_uri = f"{scheme}://{host}/api/email/oauth/google/callback"
+
+            resp = httpx.post("https://oauth2.googleapis.com/token", data={
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            }, timeout=10)
+            resp.raise_for_status()
+            token_data = resp.json()
+
+            access_token = token_data.get("access_token")
+            refresh_token = token_data.get("refresh_token")
+            expires_in = token_data.get("expires_in", 3600)
+
+            if not access_token:
+                return RedirectResponse(f"http://{host}/settings?email_oauth_error=google_error")
+
+            headers = {"Authorization": f"Bearer {access_token}"}
+            userinfo_resp = httpx.get("https://www.googleapis.com/oauth2/v3/userinfo", headers=headers, timeout=10)
+            if not userinfo_resp.is_success:
+                return RedirectResponse(f"http://{host}/settings?email_oauth_error=google_error")
+
+            row.oauth_provider = "google"
+            row.oauth_access_token = _enc(access_token)
+            if refresh_token:
+                row.oauth_refresh_token = _enc(refresh_token)
+            row.oauth_token_expiry = str(int(time.time()) + int(expires_in))
+            db.commit()
+
+            return RedirectResponse(f"http://{host}/settings?email_oauth_success=1")
+
+        except Exception as e:
+            logger.exception("Google OAuth callback failed: %s", e)
+            return RedirectResponse(f"http://{host}/settings?email_oauth_error=google_error")
         finally:
             db.close()
 

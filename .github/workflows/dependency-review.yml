@@ -20,7 +20,8 @@ on:
   workflow_dispatch:
 
 # Default-deny token; jobs grant only read access.
-permissions: {}
+permissions:
+  contents: read
 
 concurrency:
   group: dependency-review-${{ github.workflow }}-${{ github.ref }}

@@ -339,10 +339,9 @@ class MemoryManager:
         # still outrank it.
         for memory in memories:
             memory_text = memory["text"].lower()
-            # Identity memory = carries a name pattern or identity phrasing.
             is_identity = any([
                 re.search(r'\b[A-Z][a-z]+ [A-Z][a-z]+\b', memory["text"]),
-                any(word in memory_text for word in ["name is", "i'm", "i am", "called", "my name", "named", "call me"])
+                re.search(r'\b(?:name is|i\'m|i am|called|my name|named|call me)\b', memory_text)
             ])
             # Identity memories only surface on identity queries. Scoring them
             # on other query types lets a stopword overlap ("is", "the") drag a

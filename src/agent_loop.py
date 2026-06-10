@@ -25,7 +25,7 @@ from src.llm_core import (
 from src.model_context import estimate_tokens
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
-from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
+from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools, untrusted_attenuation_block
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, ToolPolicy
 from src.tool_utils import _truncate, get_mcp_manager
 from src.agent_tools import (
@@ -1177,6 +1177,7 @@ def _build_system_prompt(
     # few. If the teacher wrote a procedure for "open my X chat" last
     # time the student failed, this is where the student finds it
     # before deciding which tool to call.
+    relevant_skills = []
     if not suppress_local_context and not suppress_skills:
         try:
             last_user = _extract_last_user_message(messages)
@@ -1284,6 +1285,7 @@ def _build_system_prompt(
                     _skills_message = None
         except Exception as _sk_err:
             logger.debug(f"skill injection failed (non-fatal): {_sk_err}")
+            relevant_skills = []
 
     # When skills reference tools not yet in the prompt, append their
     # TOOL_SECTIONS descriptions so the model sees usable examples in
@@ -1312,6 +1314,21 @@ def _build_system_prompt(
             if _extra_sections:
                 agent_prompt += "\n\n## Tools referenced by matched skills\n" + "\n\n".join(_extra_sections)
                 _included |= _skill_tool_names
+
+    if attached_skill_name:
+        agent_prompt += (
+            f"\n\n🛠️ ATTACHED SKILL DIRECTIVE:\n"
+            f"You have the skill \"{attached_skill_name}\" attached. "
+            f"Focus on using this skill to complete the task."
+        )
+
+    last_user_for_detach = _extract_last_user_message(messages)
+    last_user_for_detach_lower = last_user_for_detach.lower() if last_user_for_detach else ""
+    if last_user_for_detach_lower and "detached the skill" in last_user_for_detach_lower:
+        agent_prompt += (
+            "\n\n🛠️ DETACHED SKILL DIRECTIVE:\n"
+            "The skill has been detached. Please confirm you are no longer using the detached skill."
+        )
 
     agent_msg = {"role": "system", "content": agent_prompt}
     insert_idx = 0
@@ -1538,6 +1555,97 @@ def _build_base_prompt(
     return sections, skill_index_block
 
 
+def _build_base_prompt_sections(
+    disabled_tools, mcp_mgr, needs_admin, *,
+    relevant_tools=None, mcp_disabled_map=None, compact=False,
+):
+    """Sub-function that builds the tool sections. Extracted so _build_base_prompt
+    can focus on the skill index, layered instructions, and MCP overrides."""
+    from src.tool_index import ALWAYS_AVAILABLE
+    from src.prompt_budget import PromptBudgetSection
+    from src.integrations import get_integrations_prompt
+
+    disabled = set(disabled_tools or [])
+    if not get_setting("image_gen_enabled", True):
+        disabled.add("generate_image")
+
+    if relevant_tools is not None:
+        tool_names = set(ALWAYS_AVAILABLE) | set(relevant_tools)
+        if needs_admin:
+            tool_names |= _ADMIN_TOOLS
+        sections = _assemble_prompt_sections(tool_names, disabled, compact=compact)
+    else:
+        if not needs_admin:
+            mgmt_tools = set(TOOL_SECTIONS.keys()) - set(ALWAYS_AVAILABLE) - {
+                "generate_image", "suggest_document",
+                "chat_with_model", "ask_teacher", "list_models",
+            }
+            sections = _assemble_prompt_sections(
+                set(TOOL_SECTIONS.keys()) - mgmt_tools,
+                disabled,
+                compact=compact,
+            )
+        elif compact:
+            sections = _assemble_prompt_sections(set(TOOL_SECTIONS.keys()), disabled, compact=True)
+        else:
+            sections = [
+                PromptBudgetSection(
+                    "agent_system_prompt_legacy_full",
+                    "base",
+                    AGENT_SYSTEM_PROMPT,
+                    item_count=len(TOOL_SECTIONS),
+                )
+            ]
+
+    integ_prompt = get_integrations_prompt()
+    if integ_prompt:
+        sections.append(PromptBudgetSection("integration_descriptions", "integration", integ_prompt))
+
+    if mcp_mgr:
+        mcp_desc = mcp_mgr.get_tool_descriptions_for_prompt(mcp_disabled_map or {})
+        if mcp_desc:
+            sections.append(
+                PromptBudgetSection(
+                    "mcp_tool_descriptions",
+                    "mcp",
+                    mcp_desc,
+                    join_before="",
+                )
+            )
+
+    return sections
+
+
+def _assemble_prompt_sections(tool_names, disabled, *, compact=False):
+    """Build PromptBudgetSection list from tool names, excluding disabled tools."""
+    from src.prompt_budget import PromptBudgetSection
+
+    sections = []
+    for name in tool_names:
+        if name in disabled:
+            continue
+        desc = TOOL_SECTIONS.get(name)
+        if desc is None:
+            continue
+        sections.append(
+            PromptBudgetSection(
+                f"tool_{name}",
+                "tools",
+                desc,
+                join_before="",
+            )
+        )
+    if not sections:
+        sections.append(
+            PromptBudgetSection(
+                "agent_system_prompt_legacy_full",
+                "base",
+                AGENT_SYSTEM_PROMPT,
+            )
+        )
+    return sections
+
+
 def _build_base_prompt(
     disabled_tools,
     mcp_mgr,
@@ -1545,13 +1653,17 @@ def _build_base_prompt(
     relevant_tools=None,
     mcp_disabled_map=None,
     compact: bool = False,
+    owner: Optional[str] = None,
+    suppress_local_context: bool = False,
+    suppress_skills: bool = False,
+    attached_skill_name: Optional[str] = None,
 ):
     """Build the agent prompt with only relevant tools included.
 
     If relevant_tools is provided (from RAG retrieval), only those tools
     are shown with full descriptions. Otherwise falls back to full prompt.
     """
-    sections, skill_index_block = _build_base_prompt_sections(
+    sections = _build_base_prompt_sections(
         disabled_tools,
         mcp_mgr,
         needs_admin,
@@ -1559,25 +1671,17 @@ def _build_base_prompt(
         mcp_disabled_map=mcp_disabled_map,
         compact=compact,
     )
-    # Inject the Level-0 skill index — one line per skill so the agent
-    # knows what canonical procedures exist. Includes published skills
-    # plus teacher-escalation drafts (auto-written when the student
-    # fails a task; appear here on the very next turn so the student
-    # can apply them immediately). Full SKILL.md fetched on demand via
-    # `manage_skills view name=...`. Gating mirrors index_for: platform
-    # + requires_toolsets + fallback_for_toolsets.
-    #
-    # SECURITY: skill `name` and `description` are user-editable, so the
-    # index block is returned SEPARATELY (not appended to agent_prompt).
-    # The caller wraps it in untrusted_context_message and ships it as a
-    # user-role message — same treatment as the matched-skills block.
+
+    agent_prompt = "\n\n".join(s.text for s in sections if hasattr(s, "text"))
+
+    # Inject the Level-0 skill index
     skill_index_block = ""
     if not suppress_local_context and not suppress_skills:
         try:
             from services.memory.skills import SkillsManager
             from src.constants import DATA_DIR
             _sm = SkillsManager(DATA_DIR)
-            active_tools = list(set(TOOL_SECTIONS.keys()) - set(disabled or []))
+            active_tools = list(set(TOOL_SECTIONS.keys()) - set(disabled_tools or []))
             skill_idx = _sm.index_for(owner=owner, active_toolsets=active_tools)
             if attached_skill_name:
                 skill_idx = [s for s in skill_idx if s.get("name") == attached_skill_name]
@@ -1599,23 +1703,19 @@ def _build_base_prompt(
                         lines.append(f"- `{s['name']}` — {s['description']}{badge}")
                 skill_index_block = "\n\n" + "\n".join(lines)
         except Exception as _e:
-            # Skill index is a soft enhancement — never fail prompt assembly on it.
             logger.debug(f"Skill-index injection skipped: {_e}")
 
-    # Inject layered instructions
     if not suppress_local_context:
         layered_inst = _build_layered_instructions(owner)
         if layered_inst:
             agent_prompt += "\n\n" + layered_inst
 
-    # Inject integration descriptions
     if not suppress_local_context:
         from src.integrations import get_integrations_prompt
         integ_prompt = get_integrations_prompt()
         if integ_prompt:
             agent_prompt += "\n\n" + integ_prompt
 
-    # Inject MCP tool descriptions
     if mcp_mgr:
         mcp_desc = mcp_mgr.get_tool_descriptions_for_prompt(mcp_disabled_map or {})
         if mcp_desc:
@@ -2086,6 +2186,8 @@ async def stream_agent_loop(
     tool_policy: Optional[ToolPolicy] = None,
     workspace: Optional[str] = None,
     _is_teacher_run: bool = False,
+    local_llm_router_active: bool = False,
+    local_llm_router_anchor_url: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
 
@@ -2595,7 +2697,7 @@ async def stream_agent_loop(
             else:
                 base_schemas = FUNCTION_TOOL_SCHEMAS if _needs_admin else [
                     s for s in FUNCTION_TOOL_SCHEMAS
-                    if s.get("function", {}).get("name") not in _ADMIN_SCHEMA_NAMES
+                    if s.get("function", {}).get("name") not in _ADMIN_TOOLS
                 ]
                 all_tool_schemas = base_schemas + mcp_schemas
             if disabled_tools:
@@ -2611,7 +2713,7 @@ async def stream_agent_loop(
             all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
         agent_first_token_timeout = int(get_setting("agent_first_token_timeout_seconds", 60) or 60)
-        _dispatch_timeout = max(endpoint_timeout, agent_stream_timeout)
+        _dispatch_timeout = agent_stream_timeout
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]
         logger.info(f"[agent-debug] round={round_num} model={model} _is_api_model={_is_api_model} tools_sent={len(_tool_names_sent)} tool_names={_tool_names_sent[:15]} relevant_tools={sorted(_relevant_tools)[:15] if _relevant_tools else 'ALL'}")
@@ -2836,6 +2938,7 @@ async def stream_agent_loop(
                     yield f'data: {json.dumps({"delta": _fb})}\n\n'
                     full_response += _fb
 
+        from src.agent_turn import add_auto_document_tool
         tool_blocks, _auto_doc_events = add_auto_document_tool(
             tool_blocks,
             native_tool_calls,

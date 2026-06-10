@@ -32,7 +32,7 @@ def test_generic_mcp_connection_error_preserves_original_error():
 def test_http_transport_routes_to_start_http_connect():
     mgr = McpManager()
 
-    async def fake_start(server_id, name, url):
+    async def fake_start(server_id, name, url, *args, **kwargs):
         return "ROUTED"
 
     with patch.object(McpManager, "_start_http_connect", side_effect=fake_start) as m:

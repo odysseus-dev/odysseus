@@ -16,6 +16,17 @@ from src.constants import MAIL_ATTACHMENTS_DIR
 logger = logging.getLogger(__name__)
 
 
+def _aggregate_tag_facets(docs) -> dict:
+    """Count occurrences of each tag across the given document list."""
+    counts = {}
+    for doc in docs:
+        for t in (getattr(doc, "tags", "") or "").split(","):
+            t = t.strip().lower()
+            if t:
+                counts[t] = counts.get(t, 0) + 1
+    return counts
+
+
 def _get_session_or_404(db, session_id: str, user: Optional[str]):
     session = db.query(DbSession).filter(DbSession.id == session_id).first()
     if not session:

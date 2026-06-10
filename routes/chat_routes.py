@@ -22,6 +22,18 @@ from src.chat_helpers import coerce_message_and_session
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
 from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
+from src.local_llm_router_routing import (
+    is_local_llm_router_auto_model,
+    is_local_llm_router_active,
+    check_local_llm_router_ready,
+    LocalLlmRouterNotReady,
+    local_llm_router_fallback_candidates,
+    resolve_local_llm_router,
+)
+from src.local_llm_router_runtime import (
+    local_llm_router_available,
+    LOCAL_LLM_ROUTER_MISSING,
+)
 from core.exceptions import SessionNotFoundError
 from src.auth_helpers import get_current_user
 from routes.session_routes import _verify_session_owner
@@ -375,6 +387,7 @@ def setup_chat_routes(
     memory_vector=None,
     webhook_manager=None,
     skills_manager=None,
+    memory_provider=None,
 ) -> APIRouter:
     router = APIRouter(tags=["chat"])
 
@@ -1024,6 +1037,17 @@ def setup_chat_routes(
                 and chat_mode in ("chat", "agent")
             )
             _llr_res = None
+            if _local_llm_router:
+                try:
+                    _llr_res = resolve_local_llm_router(
+                        prompt=message or "New chat",
+                        endpoint_url=sess.endpoint_url,
+                        headers=sess.headers,
+                        owner=_user,
+                        mode=chat_mode,
+                    )
+                except Exception as exc:
+                    logger.warning("Local LLM Router resolution failed: %s", exc)
 
             # Configured fallback chain for the default chat model. Tried in
             # order if the session's primary model fails before producing
@@ -1136,6 +1160,8 @@ def setup_chat_routes(
                                 elif data.get("type") == "model_actual":
                                     _actual_model = data.get("model") or _actual_model
                                     data["requested_model"] = _requested_model
+                                    if _llr_res:
+                                        data["route_reasons"] = _llr_res.route_reasons
                                     yield f'data: {json.dumps(data)}\n\n'
                                 elif _is_chat_mode_forward_only_event(data):
                                     yield chunk
@@ -1311,6 +1337,8 @@ def setup_chat_routes(
                                 elif data.get("type") == "model_actual":
                                     _actual_model = data.get("model") or _actual_model
                                     data["requested_model"] = _requested_model
+                                    if _llr_res:
+                                        data["route_reasons"] = _llr_res.route_reasons
                                     yield f'data: {json.dumps(data)}\n\n'
                                 elif data.get("type") == "tool_checkpoint":
                                     # Internal event: update the saved tool events snapshot so

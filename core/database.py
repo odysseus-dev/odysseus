@@ -328,6 +328,12 @@ class EmailAccount(TimestampMixin, Base):
 
     from_address   = Column(String, default="")
 
+    # OAuth
+    oauth_provider      = Column(String, nullable=True)
+    oauth_access_token  = Column(String, nullable=True)
+    oauth_refresh_token = Column(String, nullable=True)
+    oauth_token_expiry  = Column(String, nullable=True)
+
     __table_args__ = (
         Index('ix_email_accounts_owner_default', 'owner', 'is_default'),
     )
@@ -345,6 +351,7 @@ class ModelEndpoint(TimestampMixin, Base):
     hidden_models = Column(Text, nullable=True)    # JSON list of model IDs that failed probing
     cached_models = Column(Text, nullable=True)    # JSON list of last-known model IDs (avoids probe on list)
     pinned_models = Column(Text, nullable=True)    # JSON list of admin-pinned model IDs (manual, may not appear in /v1/models)
+    reasoning_modes = Column(Text, nullable=True)   # JSON map {model_id: "on" | "off"} for per-model reasoning settings
     model_type = Column(String, nullable=True, default="llm")  # "llm" or "image"
     # auto = classify by URL; local = self-hosted server; api/proxy = external
     # OpenAI-compatible API even when reachable through a private/tailnet IP.
@@ -1896,6 +1903,38 @@ def init_db():
     _migrate_add_project_documents_table()
     _migrate_add_project_memories_table()
     _migrate_add_session_project_id()
+    _migrate_add_email_oauth_columns()
+
+
+def _migrate_add_email_oauth_columns():
+    """Add OAuth columns to email_accounts table if they do not exist. Idempotent."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(email_accounts)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns:
+            if "oauth_provider" not in columns:
+                conn.execute("ALTER TABLE email_accounts ADD COLUMN oauth_provider TEXT")
+            if "oauth_access_token" not in columns:
+                conn.execute("ALTER TABLE email_accounts ADD COLUMN oauth_access_token TEXT")
+            if "oauth_refresh_token" not in columns:
+                conn.execute("ALTER TABLE email_accounts ADD COLUMN oauth_refresh_token TEXT")
+            if "oauth_token_expiry" not in columns:
+                conn.execute("ALTER TABLE email_accounts ADD COLUMN oauth_token_expiry TEXT")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added OAuth columns to email_accounts")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Email OAuth columns migration skipped: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def _migrate_backfill_task_folders():

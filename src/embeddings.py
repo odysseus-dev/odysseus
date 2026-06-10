@@ -64,17 +64,8 @@ class EmbeddingClient:
         logger.info(f"Embedding dimension: {self._dim} (model={self.model})")
         return self._dim
 
-    def encode(
-        self, texts: List[str], normalize_embeddings: bool = True
-    ) -> np.ndarray:
-        """Encode texts via the API. Returns (N, dim) float32 array."""
-        if not texts:
-            return np.array([], dtype="float32")
-
-        # Batch in chunks of 64 to avoid oversized requests
-        all_vecs = []
-        for i in range(0, len(texts), 64):
-            batch = texts[i : i + 64]
+    def _encode_batch(self, batch: List[str], max_chars: int) -> List[List[float]]:
+        try:
             resp = self._client.post(
                 self.url,
                 headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
@@ -82,12 +73,38 @@ class EmbeddingClient:
             )
             resp.raise_for_status()
             data = resp.json()
-
-            # OpenAI format: {"data": [{"embedding": [...], "index": 0}, ...]}
             embeddings = data.get("data", [])
             embeddings.sort(key=lambda e: e.get("index", 0))
-            for emb in embeddings:
-                all_vecs.append(emb["embedding"])
+            return [emb["embedding"] for emb in embeddings]
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 400:
+                if len(batch) > 1:
+                    logger.warning("Embedding batch failed with 400, falling back to single inputs")
+                    all_vecs = []
+                    for text in batch:
+                        all_vecs.extend(self._encode_batch([text], max_chars))
+                    return all_vecs
+                else:
+                    text = batch[0]
+                    if max_chars > 0 and len(text) > max_chars:
+                        logger.warning("Embedding single input failed with 400, retrying with truncated text")
+                        return self._encode_batch([text[:max_chars]], max_chars)
+            raise e
+
+    def encode(
+        self, texts: List[str], normalize_embeddings: bool = True
+    ) -> np.ndarray:
+        """Encode texts via the API. Returns (N, dim) float32 array."""
+        if not texts:
+            return np.array([], dtype="float32")
+
+        batch_size = int(os.getenv("EMBEDDING_BATCH_SIZE", "64"))
+        max_chars = int(os.getenv("EMBEDDING_MAX_CHARS", "0"))
+
+        all_vecs = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            all_vecs.extend(self._encode_batch(batch, max_chars))
 
         vecs = np.array(all_vecs, dtype="float32")
 

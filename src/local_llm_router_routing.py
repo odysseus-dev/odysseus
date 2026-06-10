@@ -268,7 +268,17 @@ def _rebind_tier_map(
     profile: str,
 ) -> Any:
     """Map LLR preset tier_slots onto the installed pool (exact tag or closest weight)."""
-    from local_llm_router.models import TierMap
+    try:
+        from local_llm_router.models import TierMap
+    except ImportError:
+        @dataclass(frozen=True)
+        class TierMap:
+            simple: str
+            medium: str
+            complex: str
+            reasoning: str
+            code: str | None = None
+            complex_alt: str | None = None
 
     if not pool:
         return tiers

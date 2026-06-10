@@ -13,6 +13,7 @@ from src.local_llm_router_routing import (
     resolve_model_on_endpoint,
 )
 from src.constants import LOCAL_LLM_ROUTER_AUTO_MODEL_ID as CONST_ID
+from src.local_llm_router_runtime import local_llm_router_available
 
 
 def test_is_local_llm_router_auto_model():
@@ -245,6 +246,7 @@ def test_resolve_task_endpoint_passthrough_non_auto():
     assert headers == {"X": "1"}
 
 
+@pytest.mark.skipif(not local_llm_router_available(), reason="local-llm-router package not installed")
 def test_build_llr_session_16gb_preset_tiers_and_pool_order():
     from src.local_llm_router_routing import _build_llr_session
 
@@ -274,6 +276,7 @@ def test_build_llr_session_16gb_preset_tiers_and_pool_order():
 
 @patch("src.local_llm_router_routing.get_setting")
 @patch("src.local_llm_router_routing.installed_tags_for_endpoint")
+@pytest.mark.skipif(not local_llm_router_available(), reason="local-llm-router package not installed")
 def test_configure_uses_llr_preset_complex_and_complex_alt(mock_installed, mock_setting):
     from src.local_llm_router_routing import _configure_llr_from_installed
     from src.local_llm_router_runtime import load_local_llm_router

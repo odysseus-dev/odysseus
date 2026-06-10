@@ -533,15 +533,17 @@ def setup_history_routes(session_manager) -> APIRouter:
 
     @router.post("/api/session/{session_id}/compact")
     async def compact_session(request: Request, session_id: str):
-        """Manually trigger context compaction for a session."""
         _verify_session_owner(request, session_id)
-        from src.auth_helpers import effective_user
-        owner = effective_user(request)
         try:
             session = session_manager.get_session(session_id)
         except KeyError:
             raise HTTPException(404, "Session not found")
         _reject_compact_during_active_run(session_id)
+
+        from src.auth_helpers import effective_user
+        owner = effective_user(request)
+        if getattr(session, "owner", None):
+            owner = session.owner
 
         try:
             from src.model_context import estimate_tokens, get_context_length

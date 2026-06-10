@@ -21,6 +21,48 @@ def _strip_list_prefix(text: str) -> str:
         return text
     return _LIST_PREFIX_RE.sub("", text, count=1).strip()
 
+
+_MEMORY_CATEGORIES = ("identity", "preference", "fact", "contact", "project", "goal", "task")
+_VALID_CATEGORIES = set(_MEMORY_CATEGORIES)
+
+
+def _parse_ai_response(raw: str) -> list:
+    raw = raw.strip()
+    if not raw:
+        return []
+    stripped = raw
+    if stripped.startswith("```"):
+        stripped = stripped.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    parsed = None
+    try:
+        parsed = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    if isinstance(parsed, list):
+        suggestions = []
+        for item in parsed:
+            if isinstance(item, dict) and item.get("text"):
+                cat = item.get("category") or "fact"
+                if cat not in _VALID_CATEGORIES:
+                    cat = "fact"
+                suggestions.append({
+                    "text": _strip_list_prefix(str(item["text"])),
+                    "category": cat,
+                })
+            elif isinstance(item, str) and item.strip():
+                suggestions.append({
+                    "text": _strip_list_prefix(item.strip()),
+                    "category": "fact",
+                })
+        return suggestions
+    suggestions = []
+    for line in raw.splitlines():
+        line = _strip_list_prefix(line.strip())
+        if line and len(line) > 5:
+            suggestions.append({"text": line, "category": "fact"})
+    return suggestions[:50]
+
+
 from services.memory import MemoryManager
 from core.session_manager import SessionManager
 from src.request_models import MemoryAddRequest

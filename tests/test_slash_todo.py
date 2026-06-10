@@ -1,7 +1,16 @@
-"""Tests for the /todo slash command payload via the notes API."""
+import os
+os.environ["AUTH_ENABLED"] = "false"
+
+import core.database
+from sqlalchemy import create_engine
+core.database.engine = create_engine("sqlite:///test_todo.db", connect_args={"check_same_thread": False})
+core.database.SessionLocal.configure(bind=core.database.engine)
+
 from fastapi.testclient import TestClient
 from app import app
-from core.database import SessionLocal, Note
+from core.database import SessionLocal, Note, init_db
+
+init_db()
 
 client = TestClient(app)
 
@@ -51,3 +60,9 @@ def test_todo_slash_command_payload():
         db.commit()
     finally:
         db.close()
+
+    try:
+        if os.path.exists("test_todo.db"):
+            os.remove("test_todo.db")
+    except Exception:
+        pass

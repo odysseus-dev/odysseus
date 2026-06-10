@@ -49,7 +49,8 @@ def test_serialize_keeps_list_note_items(monkeypatch):
 
 
 def test_serialize_skips_invalid_note_item_rows(monkeypatch):
-    cli = _load_cli(monkeypatch)
+    make_core_db_stub(monkeypatch, models=["Note"])
+    cli = load_script("odysseus-notes")
     note = SimpleNamespace(
         id="n1",
         title="Checklist",

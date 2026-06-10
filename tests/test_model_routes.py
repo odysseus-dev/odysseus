@@ -1532,6 +1532,7 @@ def test_llm_core_list_model_ids_uses_cached_configured_proxy(monkeypatch):
     _src_db_live = sys.modules.get("src.database") or src_database
     monkeypatch.setattr(_src_db_live, "ModelEndpoint", _RouteModelEndpoint, raising=False)
     monkeypatch.setattr(_src_db_live, "SessionLocal", lambda: db, raising=False)
+    sys.modules["src.database"] = _src_db_live
     monkeypatch.setattr(llm_core.httpx, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("/models should not be fetched")))
 
     assert llm_core.list_model_ids("http://100.117.136.97:34521/v1/chat/completions", timeout=1) == ["cached-model"]

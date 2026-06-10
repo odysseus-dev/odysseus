@@ -5,7 +5,6 @@ import pytest
 
 from services.memory.skill_from_document import (
     SkillImportError,
-    _clip_input,
     _cap_extracted,
     _parse_distill_json,
     bundle_from_distill,

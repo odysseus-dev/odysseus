@@ -126,7 +126,7 @@ def test_delimiter_spoofing_is_neutralized():
     assert len(parts) == 2, (
         f"Expected exactly 2 parts (1 structural close), got {len(parts)}"
     )
-    assert "<<<_END_UNTRUSTED_DATA>>>" in msg["content"]
+    assert "[DELIMITER_BLOCKED]" in msg["content"]
 
 
 def test_open_guard_spoofing_is_neutralized():
@@ -136,7 +136,7 @@ def test_open_guard_spoofing_is_neutralized():
 
     parts = msg["content"].split(GUARD_OPEN)
     assert len(parts) == 2
-    assert "<<<_UNTRUSTED_DATA>>>" in msg["content"]
+    assert "[DELIMITER_BLOCKED]" in msg["content"]
 
 
 def test_label_guard_open_is_escaped():

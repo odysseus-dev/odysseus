@@ -390,6 +390,7 @@ async def maybe_compact(
     ]
 
     try:
+        compact_timeout = resolve_endpoint_timeout("utility", owner=owner, default=90)
         summary = await llm_call_async(
             compact_url,
             compact_model,
@@ -397,7 +398,7 @@ async def maybe_compact(
             temperature=0.2,
             max_tokens=SUMMARY_MAX_TOKENS,
             headers=compact_headers,
-            timeout=_compact_timeout,
+            timeout=compact_timeout,
         )
     except Exception as e:
         logger.error(f"Compaction summary failed: {e}")

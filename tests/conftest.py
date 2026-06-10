@@ -49,7 +49,7 @@ for mod_name in [
     if mod_name not in sys.modules and not _has_module(mod_name):
         sys.modules[mod_name] = MagicMock()
 
-if "src.database" not in sys.modules:
+if "src.database" not in sys.modules and not _has_module("src.database"):
     _db = types.ModuleType("src.database")
     _db.SessionLocal = MagicMock()
     _db.ModelEndpoint = MagicMock()

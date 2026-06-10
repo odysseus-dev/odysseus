@@ -1,6 +1,7 @@
 # src/llm_core.py
 import httpx
 import asyncio
+import ipaddress
 import time
 import json
 import logging
@@ -11,9 +12,66 @@ from fastapi import HTTPException
 from typing import Optional, Dict, List, Tuple
 from src.model_capabilities import requires_openai_responses_api
 from src.model_context import get_context_length, DEFAULT_CONTEXT
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse, quote
 
 logger = logging.getLogger(__name__)
+
+_PROVIDER_FINGERPRINT_TTL = 60.0
+_lmstudio_models_cache: Dict[tuple, tuple] = {}
+
+
+def _is_local_host(host: Optional[str]) -> bool:
+    host = (host or "").lower()
+    if not host:
+        return False
+    if host in {"localhost", "host.docker.internal"} or host.endswith(".local"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return "." not in host
+    if ip.is_loopback or ip.is_private or ip.is_link_local:
+        return True
+    return ip in ipaddress.ip_network("100.64.0.0/10")
+
+
+def _is_lmstudio_models_payload(data: dict) -> bool:
+    models = (data or {}).get("models")
+    return (
+        isinstance(models, list)
+        and bool(models)
+        and isinstance(models[0], dict)
+        and "key" in models[0]
+        and "architecture" in models[0]
+    )
+
+
+def _probe_lmstudio_models(url: str) -> Optional[list]:
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    key = (host, parsed.port)
+    now = time.time()
+    cached = _lmstudio_models_cache.get(key)
+    if cached is not None and cached[1] > now:
+        return cached[0]
+    authority = host if parsed.port is None else f"{host}:{parsed.port}"
+    probe_url = f"{parsed.scheme or 'http'}://{authority}/api/v1/models"
+    try:
+        r = httpx.get(probe_url, timeout=1.0)
+    except Exception:
+        return None
+    try:
+        data = r.json() if r.is_success else {}
+    except Exception:
+        data = {}
+    models = data.get("models") if _is_lmstudio_models_payload(data) else None
+    _lmstudio_models_cache[key] = (models, now + _PROVIDER_FINGERPRINT_TTL)
+    return models
+
+
+def _fingerprint_is_lmstudio(url: str) -> bool:
+    return _probe_lmstudio_models(url) is not None
+
 
 class LLMConfig:
     """Configuration constants for LLM operations."""
@@ -483,6 +541,18 @@ def _is_google_native_model(model: str) -> bool:
     return m.startswith("gemini") or m.startswith("gemma")
 
 
+def _responses_url_from_chat_url(url: str) -> str:
+    """Convert a /v1/chat/completions URL to the OpenAI Responses API URL."""
+    url = url.rstrip("/")
+    if url.endswith("/responses") or url.endswith("/v1/responses"):
+        return url
+    if url.endswith("/chat/completions"):
+        return url[: -len("/chat/completions")] + "/responses"
+    if url.endswith("/v1"):
+        return url + "/responses"
+    return url + "/v1/responses"
+
+
 def _google_api_root(url: str) -> str:
     """Return the Google Gemini REST root for a configured endpoint URL."""
     url = (url or "").strip().rstrip("/")
@@ -723,6 +793,69 @@ def _parse_google_response(data: dict) -> tuple[str, List[Dict], Dict]:
     return "".join(text_parts), tool_calls, usage
 
 
+def _endpoint_requires_reasoning_content(url: str) -> bool:
+    return _host_match(url, "deepseek.com")
+
+
+def _parse_responses_response(data: dict) -> tuple[str, List[Dict], Dict]:
+    """Extract text, tool calls, and usage metadata from a Response object (OpenAI Responses API)."""
+    if not isinstance(data, dict):
+        return "", [], {}
+    
+    text_parts = []
+    tool_calls = []
+    
+    output = data.get("output") or []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        
+        item_type = item.get("type")
+        if item_type == "message":
+            content = item.get("content") or []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "output_text":
+                    text = part.get("text")
+                    if text:
+                        text_parts.append(text)
+        elif item_type == "function_call":
+            call = {
+                "id": item.get("call_id") or item.get("id") or f"call_{len(tool_calls)}",
+                "name": item.get("name") or "",
+                "arguments": item.get("arguments") or "{}",
+            }
+            tool_calls.append(call)
+            
+    usage = data.get("usage") or {}
+    return "".join(text_parts), tool_calls, usage
+
+
+def _responses_stream_call_key(event: dict) -> int:
+    return event.get("output_index", 0)
+
+
+def _record_responses_stream_call(call_acc: dict, event: dict) -> None:
+    key = _responses_stream_call_key(event)
+    item = event.get("item") or {}
+    if item.get("type") == "function_call":
+        call = call_acc.setdefault(key, {"id": "", "name": "", "arguments": ""})
+        if item.get("call_id"):
+            call["id"] = item["call_id"]
+        if item.get("name"):
+            call["name"] = item["name"]
+        if item.get("arguments"):
+            call["arguments"] = item["arguments"]
+
+
+def _responses_stream_calls(call_acc: dict) -> List[Dict]:
+    calls = []
+    for k in sorted(call_acc.keys()):
+        c = call_acc[k]
+        if c.get("name"):
+            calls.append(c)
+    return calls
+
+
 def _host_match(url: str, *domains: str) -> bool:
     """Return True if url's hostname equals any of `domains` or is a subdomain of one.
 
@@ -894,7 +1027,7 @@ async def httpx_post_kimi_aware_async(client, url: str, headers: Optional[Dict],
     return last
 
 
-def _detect_provider(url: str) -> str:
+def _detect_provider(url: str, *, probe: bool = False) -> str:
     """Detect the API provider from a configured endpoint URL.
 
     Matches on hostname (exact or subdomain) rather than substring, so a URL
@@ -902,9 +1035,17 @@ def _detect_provider(url: str) -> str:
     look-alike host such as ``anthropic.com.example`` — is not misclassified.
     Unknown hosts fall back to the OpenAI-compatible default, which the
     majority of providers implement.
+
+    When *probe* is True and the endpoint is on a local / private address,
+    the function performs a lightweight HTTP fingerprint to determine whether
+    the server is LM Studio (returning ``"lmstudio"`` if confirmed).
     """
+    if probe and _is_local_host(urlparse(url).hostname) and _fingerprint_is_lmstudio(url):
+        return "lmstudio"
     if _is_ollama_native_url(url):
         return "ollama"
+    if _host_match(url, "chatgpt.com"):
+        return "chatgpt-subscription"
     if _host_match(url, "anthropic.com"):
         return "anthropic"
     if _host_match(url, "opencode.ai/zen/go"):
@@ -1017,7 +1158,11 @@ def _provider_label(url: str) -> str:
     except Exception:
         return "provider"
     if host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+        if _fingerprint_is_lmstudio(url):
+            return "LM Studio"
         return "local endpoint"
+    if _is_local_host(host) and _fingerprint_is_lmstudio(url):
+        return "LM Studio"
     return host or "provider"
 
 
@@ -1082,6 +1227,68 @@ def _build_chatgpt_responses_payload(
     # ChatGPT Subscription Codex API does not support max_output_tokens —
     # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
     # Do not include it in the payload.
+    return payload
+
+
+def _build_responses_payload(
+    model: str,
+    messages: List[Dict],
+    temperature: float,
+    max_tokens: int,
+    *,
+    tools: Optional[List] = None,
+    stream: bool = False,
+    url: Optional[str] = None,
+) -> Dict:
+    from src.chatgpt_subscription import build_responses_input
+
+    conversation = [msg for msg in (messages or []) if (msg.get("role") or "") != "system"]
+    
+    if url and _host_match(url, "openai.com"):
+        input_items = []
+        for msg in conversation:
+            input_items.append({
+                "type": "message",
+                "role": msg.get("role") or "user",
+                "content": msg.get("content") or "",
+            })
+        inputs = input_items
+    else:
+        inputs = build_responses_input(conversation)
+
+    payload: Dict = {
+        "model": model,
+        "instructions": _chatgpt_subscription_instructions(messages),
+        "input": inputs,
+    }
+    if stream:
+        payload["stream"] = True
+    if not _restricts_temperature(model):
+        payload["temperature"] = temperature
+    if max_tokens and max_tokens > 0:
+        if url and _host_match(url, "openai.com"):
+            payload["max_output_tokens"] = max_tokens
+        else:
+            tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_output_tokens"
+            payload[tok_key] = max_tokens
+    if tools:
+        if url and _host_match(url, "openai.com"):
+            flattened = []
+            for t in tools:
+                if isinstance(t, dict) and t.get("type") == "function":
+                    f = t.get("function") or {}
+                    flattened.append({
+                        "type": "function",
+                        "name": f.get("name") or "",
+                        "description": f.get("description") or "",
+                        "parameters": f.get("parameters") or {"type": "object", "properties": {}},
+                        "strict": f.get("strict") or False,
+                    })
+                else:
+                    flattened.append(t)
+            payload["tools"] = flattened
+        else:
+            payload["tools"] = tools
     return payload
 
 
@@ -1380,7 +1587,7 @@ def _is_untrusted_context_content(content) -> bool:
 _REFERENCE_CONTEXT_BOUNDARY = "Reference context received."
 
 
-def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
+def _sanitize_llm_messages(messages: List[Dict], keep_reasoning: bool = False) -> List[Dict]:
     """Strip Odysseus-only metadata before sending messages to providers.
 
     Per the OpenAI chat format: user/system messages must have content; a tool
@@ -1391,7 +1598,9 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
     (content=None, since Gemini/Ollama reject tool_calls alongside ""). Dropping
     it leaves the tool result dangling and breaks the next round.
     """
-    allowed = {"role", "content", "name", "tool_call_id", "tool_calls", "function_call", "reasoning_content"}
+    allowed = {"role", "content", "name", "tool_call_id", "tool_calls", "function_call"}
+    if keep_reasoning:
+        allowed.add("reasoning_content")
     cleaned = []
     for msg in messages or []:
         if not isinstance(msg, dict):
@@ -1459,11 +1668,14 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
             j += 1
 
         if not tool_batch:
-            plain = {k: v for k, v in msg.items() if k != "tool_calls"}
-            if (plain.get("content") or "").strip():
-                repaired.append(plain)
+            if j < len(cleaned):
+                plain = {k: v for k, v in msg.items() if k != "tool_calls"}
+                if (plain.get("content") or "").strip():
+                    repaired.append(plain)
+                else:
+                    logger.debug("Dropping unanswered assistant tool_calls before provider request")
             else:
-                logger.debug("Dropping unanswered assistant tool_calls before provider request")
+                repaired.append(msg)
             i = j
             continue
 
@@ -1689,7 +1901,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     if isinstance(headers, dict):
         h.update(headers)
 
-    messages_copy = _sanitize_llm_messages(messages)
+    keep_reasoning = _endpoint_requires_reasoning_content(url)
+    messages_copy = _sanitize_llm_messages(messages, keep_reasoning=keep_reasoning)
 
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
@@ -1705,7 +1918,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         messages_copy = non_sys
 
     provider = _detect_provider(url)
-    google_native = _is_google_native_model(model) and provider not in {"anthropic", "ollama", "openrouter", "groq", "copilot"}
+    google_native = _is_google_native_model(model) and provider not in {"anthropic", "ollama", "openrouter", "groq", "copilot"} and "/openai" not in url
     cache_key = _get_cache_key(url, model, messages_copy, temperature, max_tokens)
     cached_response = _get_cached_response(cache_key)
     if cached_response:
@@ -1728,7 +1941,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         )
     elif requires_openai_responses_api(url, model):
         target_url = _responses_url_from_chat_url(url)
-        payload = _build_responses_payload(model, messages_copy, temperature, max_tokens)
+        payload = _build_responses_payload(model, messages_copy, temperature, max_tokens, url=url)
     else:
         target_url = url
         if provider == "copilot":
@@ -1850,7 +2063,9 @@ async def llm_call_async(
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
     use_responses_api = requires_openai_responses_api(url, model)
-    messages_copy = _sanitize_llm_messages(messages)
+    google_native = _is_google_native_model(model) and provider not in {"anthropic", "ollama", "openrouter", "groq", "copilot"} and "/openai" not in url
+    keep_reasoning = _endpoint_requires_reasoning_content(url)
+    messages_copy = _sanitize_llm_messages(messages, keep_reasoning=keep_reasoning)
 
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
@@ -1930,7 +2145,7 @@ async def llm_call_async(
     elif use_responses_api:
         target_url = _responses_url_from_chat_url(url)
         h = _provider_headers(provider, headers)
-        payload = _build_responses_payload(model, messages_copy, temperature, max_tokens)
+        payload = _build_responses_payload(model, messages_copy, temperature, max_tokens, url=url)
     else:
         target_url = url
         h = _provider_headers(provider, headers)
@@ -2021,9 +2236,11 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
       - event: error                       — errors
       - data: [DONE]                       — end of stream
     """
-    provider = _detect_provider(url)
+    provider = _detect_provider(url, probe=True)
     use_responses_api = requires_openai_responses_api(url, model)
-    messages_copy = _sanitize_llm_messages(messages)
+    google_native = _is_google_native_model(model) and provider not in {"anthropic", "ollama", "openrouter", "groq", "copilot"} and "/openai" not in url
+    keep_reasoning = _endpoint_requires_reasoning_content(url)
+    messages_copy = _sanitize_llm_messages(messages, keep_reasoning=keep_reasoning)
 
     # Consolidate multiple system messages into one at the start.
     # Some models (e.g. Qwen3.5) reject system messages that aren't first.
@@ -2062,7 +2279,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
     elif use_responses_api:
         target_url = _responses_url_from_chat_url(url)
-        payload = _build_responses_payload(model, messages_copy, temperature, max_tokens, tools=tools, stream=True)
+        payload = _build_responses_payload(model, messages_copy, temperature, max_tokens, tools=tools, stream=True, url=url)
         h = _provider_headers(provider, headers)
     else:
         target_url = url
@@ -2074,7 +2291,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         }
         if _restricts_temperature(model):
             payload.pop("temperature", None)
-        if provider not in {"openrouter", "groq"}:
+        if provider not in {"openrouter", "groq", "lmstudio"}:
             payload["stream_options"] = {"include_usage": True}
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"

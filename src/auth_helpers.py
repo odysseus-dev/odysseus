@@ -7,7 +7,8 @@ from fastapi import Request, HTTPException
 
 def get_current_user(request: Request) -> Optional[str]:
     """Get current username from request state (set by auth middleware)."""
-    return getattr(request.state, 'current_user', None)
+    state = getattr(request, "state", None)
+    return getattr(state, 'current_user', None) if state else None
 
 
 def effective_user(request: Request) -> Optional[str]:
@@ -27,8 +28,9 @@ def effective_user(request: Request) -> Optional[str]:
     owner falls back to :func:`get_current_user` (the "api" pseudo-user), so it
     never escalates.
     """
-    if getattr(request.state, "api_token", False):
-        owner = getattr(request.state, "api_token_owner", None)
+    state = getattr(request, "state", None)
+    if state and getattr(state, "api_token", False):
+        owner = getattr(state, "api_token_owner", None)
         if owner:
             return owner
     return get_current_user(request)
@@ -36,7 +38,8 @@ def effective_user(request: Request) -> Optional[str]:
 
 def _is_api_token_request(request: Request) -> bool:
     """Return True when middleware authenticated a bearer API token."""
-    return bool(getattr(request.state, "api_token", False))
+    state = getattr(request, "state", None)
+    return bool(getattr(state, "api_token", False)) if state else False
 
 
 def require_authenticated_request(request: Request) -> str:

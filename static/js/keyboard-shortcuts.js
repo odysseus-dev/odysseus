@@ -303,3 +303,47 @@ export function initKeyboardShortcuts(modules) {
 
   installKeyDebugProbe(EMAIL_SHORTCUT_DEFAULTS);
 }
+
+export function _shiftPulse(state, event, now) {
+  const result = { state: state || null, open: false };
+
+  if (event === 'reset') {
+    result.state = null;
+    return result;
+  }
+
+  const isShift = event.code === 'ShiftLeft' || event.code === 'ShiftRight';
+
+  if (event.type === 'keydown') {
+    if (!isShift || event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.isComposing) {
+      result.state = null;
+      return result;
+    }
+
+    if (!state) {
+      result.state = { lastDown: now, lastUp: null };
+    } else {
+      if (state.lastUp !== null) {
+        if (now - state.lastDown < 400) {
+          result.open = true;
+          result.state = null;
+        } else {
+          result.state = { lastDown: now, lastUp: null };
+        }
+      } else {
+        result.state = { lastDown: now, lastUp: null };
+      }
+    }
+  } else if (event.type === 'keyup') {
+    if (!isShift) {
+      return result;
+    }
+
+    if (state && state.lastUp === null) {
+      result.state = { lastDown: state.lastDown, lastUp: now };
+    }
+  }
+
+  return result;
+}
+
