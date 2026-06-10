@@ -356,6 +356,17 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         if not endpoint_url and not skip_val:
             raise HTTPException(400, "endpoint_url is required (choose from /api/models)")
 
+        # Defensive URL normalization — a frontend flow that supplies a raw
+        # BASE URL (e.g. https://openrouter.ai/api/v1) without an endpoint_id
+        # would otherwise persist the base URL into the session, and the next
+        # chat would POST to the provider's website HTML (or a 404) and 500
+        # with an empty body. llm_core is also defensive (see
+        # _ensure_openai_chat_url) but normalizing at write time is cleaner
+        # AND keeps the model-picker's reported URL consistent.
+        if endpoint_url:
+            from src.endpoint_resolver import build_chat_url, normalize_base as _normalize_base_url
+            endpoint_url = build_chat_url(_normalize_base_url(endpoint_url))
+
         model_to_use = model
         request_api_key = api_key.strip() if api_key else ""
         effective_api_key = request_api_key or endpoint_api_key

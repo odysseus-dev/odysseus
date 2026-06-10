@@ -423,6 +423,46 @@ def _host_match(url: str, *domains: str) -> bool:
     return any(host == d or host.endswith("." + d) for d in domains)
 
 
+# OpenAI-compatible chat-completions suffix. Used by the defensive URL
+# normalizer below to repair sessions whose endpoint_url is a BASE URL
+# (e.g. https://openrouter.ai/api/v1) instead of the chat URL. POSTing a
+# chat to the base hits the provider's website (HTML 200 from
+# openrouter.ai) or a 404 from others, so r.json() blows up on the
+# non-JSON body and the user sees an empty-body 500. The fix is
+# idempotent: URLs that already end in /chat/completions are left alone.
+_OPENAI_CHAT_SUFFIX = "/chat/completions"
+
+
+def _ensure_openai_chat_url(url: str) -> str:
+    """Return a usable OpenAI-compatible /chat/completions URL.
+
+    Defensive: some sessions store the BASE URL (e.g. ``https://openrouter.ai/api/v1``)
+    instead of the chat URL, because the form-based session-create handler only
+    ran ``build_chat_url`` when an ``endpoint_id`` was supplied. POSTing a chat
+    to the base URL returns the provider's marketing page (HTML 200 on
+    OpenRouter) or a JSON 404 on others, so the subsequent ``r.json()`` call
+    raises ``JSONDecodeError`` and the user sees a 500 with an empty body.
+    This helper repairs the URL in the chat path itself so the bug is
+    contained even when the persisted endpoint_url is wrong.
+
+    Idempotent: URLs that already carry the chat-completions suffix (correct
+    or with a trailing slash) are returned unchanged. Suffixes that imply a
+    different provider (Ollama's ``/api/chat`` or Anthropic's ``/v1/messages``)
+    are NOT normalized here — those providers take a separate branch before
+    this function is called.
+    """
+    if not url:
+        return url
+    u = url.rstrip("/")
+    # Already a chat URL — no-op.
+    if u.endswith(_OPENAI_CHAT_SUFFIX):
+        return u
+    # Strip the older ``/completions`` legacy suffix so we don't double-suffix.
+    if u.endswith("/completions"):
+        return u  # treat legacy ``/completions`` as a chat URL too
+    return u + _OPENAI_CHAT_SUFFIX
+
+
 def _detect_provider(url: str) -> str:
     """Detect the API provider from a configured endpoint URL.
 
@@ -1196,10 +1236,23 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             stream=False, num_ctx=get_context_length(url, model),
         )
     else:
-        target_url = url
         if provider == "copilot":
+            # Copilot's URL is passed raw — upstream contract (see _provider_headers
+            # + apply_request_headers). Don't normalize: copilot uses its own
+            # endpoint shape that we don't want to mutate here.
+            target_url = url
             from src.copilot import apply_request_headers
             apply_request_headers(h, messages_copy)
+        else:
+            # OpenAI-compatible (OpenRouter, OpenAI, Together, custom gateways, ...).
+            # Defensive URL normalization: some sessions store the BASE URL
+            # (e.g. https://openrouter.ai/api/v1) instead of the chat URL because
+            # the form-based session-create handler skipped build_chat_url() when
+            # no endpoint_id was supplied. Without this, POST hits the provider's
+            # website HTML (or a 404) and r.json() raises — surfacing as 500
+            # with an empty body. _ensure_openai_chat_url is idempotent: already-
+            # correct URLs are returned unchanged.
+            target_url = _ensure_openai_chat_url(url)
         payload = {
             "model": model,
             "messages": messages_copy,
@@ -1389,7 +1442,12 @@ async def llm_call_async(
             stream=False, num_ctx=get_context_length(url, model),
         )
     else:
-        target_url = url
+        # OpenAI-compatible (OpenRouter, OpenAI, Together, custom gateways, ...).
+        # See llm_call() above for why we normalize here too. Without this,
+        # sessions whose endpoint_url is the BASE URL (https://openrouter.ai/api/v1)
+        # 500 with an empty body because r.json() chokes on the provider's
+        # website HTML response. _ensure_openai_chat_url is idempotent.
+        target_url = _ensure_openai_chat_url(url)
         h = _provider_headers(provider, headers)
         if provider == "copilot":
             from src.copilot import apply_request_headers
@@ -1509,7 +1567,9 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         h = _provider_headers(provider, headers)
         payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
     else:
-        target_url = url
+        # OpenAI-compatible. Defensive normalization — see llm_call() above
+        # for the full story. _ensure_openai_chat_url is idempotent.
+        target_url = _ensure_openai_chat_url(url)
         payload = {
             "model": model,
             "messages": messages_copy,
