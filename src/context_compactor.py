@@ -404,14 +404,22 @@ async def maybe_compact(
         # Degrade gracefully: keep the conversation intact rather than
         # silently dropping the older half. was_compacted=False signals the
         # caller nothing was summarized; trim_for_context handles length.
-        return messages, context_length, False
+        # Still sanitize so a pre-existing orphan tool message cannot ride
+        # through and get rejected by the provider.
+        return _sanitize_tool_messages(messages), context_length, False
 
     summary_msg = {
         "role": "system",
         "content": f"[Conversation summary — earlier messages were compacted]\n{summary}",
     }
 
-    compacted = system_msgs + [summary_msg] + recent
+    # Sanitize: when the split lands mid-tool-batch, `recent` begins with a
+    # tool message whose assistant tool_calls parent was just summarized away.
+    # That orphan tool would be sent to the provider and rejected ("messages
+    # with role 'tool' must be a response to a preceding message with
+    # 'tool_calls'"), because the post-compaction history is usually under
+    # budget so trim_for_context's pre-send sanitize never runs.
+    compacted = _sanitize_tool_messages(system_msgs + [summary_msg] + recent)
 
     # Update session history to match. Pass len(system_msgs) so the
     # recent_history slice in _update_session_history uses the correct
