@@ -8,11 +8,49 @@ with missing users or assertion errors.
 import json
 import threading
 import time
+import contextlib
+import sys
+import types
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
 
 from tests.helpers.import_state import clear_module
+
+
+class _OwnerColumn:
+    def __eq__(self, other):
+        return ("owner ==", other)
+
+
+class _FakeApiToken:
+    owner = _OwnerColumn()
+
+
+class _FakeQuery:
+    def filter(self, *_conds):
+        return self
+
+    def delete(self, *args, **kwargs):
+        return 0
+
+
+class _FakeSession:
+    def query(self, model):
+        assert model is _FakeApiToken
+        return _FakeQuery()
+
+
+@pytest.fixture(autouse=True)
+def _stub_api_token_purge(monkeypatch):
+    @contextlib.contextmanager
+    def _fake_db_session():
+        yield _FakeSession()
+
+    db_stub = types.ModuleType("core.database")
+    db_stub.get_db_session = _fake_db_session
+    db_stub.ApiToken = _FakeApiToken
+    monkeypatch.setitem(sys.modules, "core.database", db_stub)
 
 
 def _fresh_auth_manager(tmp_path):

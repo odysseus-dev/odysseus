@@ -473,7 +473,23 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
-        ok = auth_manager.delete_user(body.username, user)
+
+        def _invalidate_api_token_cache():
+            try:
+                invalidator = getattr(request.app.state, "invalidate_token_cache", None)
+                if invalidator:
+                    invalidator()
+            except Exception:
+                pass
+
+        try:
+            ok = auth_manager.delete_user(body.username, user)
+        except Exception:
+            # delete_user can touch ApiToken rows before a later auth-store write
+            # fails. Dirty the bearer cache anyway so a partial token purge does
+            # not leave already-cached tokens authenticating until restart.
+            _invalidate_api_token_cache()
+            raise
         if not ok:
             raise HTTPException(400, "Cannot delete user")
         # delete_user removes the user's ApiToken rows, but the bearer-auth
@@ -481,12 +497,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         # rebuilds when flagged dirty. Without this, a deleted user's already
         # cached token keeps authenticating until some other token op or a
         # restart clears the cache. Mirror what the token routes do.
-        try:
-            invalidator = getattr(request.app.state, "invalidate_token_cache", None)
-            if invalidator:
-                invalidator()
-        except Exception:
-            pass
+        _invalidate_api_token_cache()
         return {"ok": True}
 
     # ---- Feature visibility (admin-managed) ----
