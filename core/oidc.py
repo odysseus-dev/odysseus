@@ -434,8 +434,9 @@ class OidcManager:
             parts = id_token.split(".")
             if len(parts) >= 2:
                 import base64
-                # Pad to a multiple of 4
-                padded = parts[0] + "=" * (4 - len(parts[0]) % 4)
+                # Pad to a multiple of 4 (base64url)
+                pad_len = (-len(parts[0])) % 4
+                padded = parts[0] + ("=" * pad_len)
                 return json.loads(base64.urlsafe_b64decode(padded))
         except Exception:
             pass
