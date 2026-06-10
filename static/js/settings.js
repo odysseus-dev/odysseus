@@ -5624,6 +5624,24 @@ export function close() {
   }
 }
 
+/* ── Language switcher ── */
+function initLanguageSwitcher() {
+  const langSelect = document.getElementById('language-select');
+  if (!langSelect) return;
+
+  // Set current value
+  const currentLang = localStorage.getItem('odysseus-lang') || 'zh';
+  langSelect.value = currentLang;
+
+  // Listen for changes
+  langSelect.addEventListener('change', async (e) => {
+    const newLang = e.target.value;
+    if (window.I18N) {
+      await window.I18N.setLang(newLang);
+    }
+  });
+}
+
 const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints };
 
 

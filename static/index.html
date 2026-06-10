@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <title>Odysseus Chat</title>
+  <title>Odysseus 聊天</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="manifest" href="/static/manifest.json">
   <meta name="theme-color" content="#282c34">
@@ -195,6 +195,9 @@
     @font-face { font-family: 'Inter'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-Regular.woff2') format('woff2'); }
     @font-face { font-family: 'Inter'; font-weight: 500; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-Medium.woff2') format('woff2'); }
     @font-face { font-family: 'Inter'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-SemiBold.woff2') format('woff2'); }
+    /* i18n: 页面加载完成后的淡入效果 */
+    body { opacity: 0; animation: fadeIn 0.3s ease forwards; }
+    @keyframes fadeIn { to { opacity: 1; } }
   </style>
   <!-- KaTeX CSS is loaded with media="print" so it doesn't block render,
        then flipped to "all" via JS after load. Mermaid init runs once the
@@ -689,13 +692,13 @@
       </div>
     </div>
     <div class="sidebar-inner">
-      <div class="list-item" id="sidebar-new-chat-btn" title="New chat">
+      <div class="list-item" id="sidebar-new-chat-btn" title="新聊天">
         <svg class="sidebar-action-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="position:relative;left:-2px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        <span class="grow" style="position:relative;left:-3px;">New Chat</span>
+        <span class="grow" style="position:relative;left:-3px;">新聊天</span>
       </div>
-      <div class="list-item" id="sidebar-search-btn" title="Search conversations (Ctrl+K)">
+      <div class="list-item" id="sidebar-search-btn" title="搜索会话 (Ctrl+K)">
         <svg class="sidebar-action-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
-        <span class="grow" style="position:relative;left:-1px;">Search</span>
+        <span class="grow" style="position:relative;left:-1px;">搜索</span>
       </div>
       <!-- Assistant sidebar entry removed — its log + settings live inside
            the Tasks modal (Activity + Settings tabs). The backend
@@ -709,7 +712,7 @@
 
       <div class="section" id="sessions-section">
         <div class="section-header-flex">
-          <span class="section-title" id="chats-section-title"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="chats-section-label" class="section-title-label">Chats</span><span id="chats-notif-dot" class="sidebar-notif-dot" style="display:none"></span></span>
+          <span class="section-title" id="chats-section-title"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="chats-section-label" class="section-title-label" data-i18n="nav.chats">Chats</span><span id="chats-notif-dot" class="sidebar-notif-dot" style="display:none"></span></span>
           <div style="position:relative; display:inline-block; display:flex; gap:4px; align-items:center;">
             <button type="button" class="section-header-btn chats-manage-btn" id="chats-library-btn" title="Manage Chats (Library)">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -729,9 +732,9 @@
               </svg>
             </button>
             <div id="session-sort-dropdown" class="dropdown sort-dropdown" style="display:none;">
-              <div class="dropdown-item sort-option sort-dropdown-item" data-sort="active">Last Active</div>
-              <div class="dropdown-item sort-option sort-dropdown-item" data-sort="newest">Newest First</div>
-              <div class="dropdown-item sort-option sort-dropdown-item" data-sort="group">By Folder</div>
+              <div class="dropdown-item sort-option sort-dropdown-item" data-sort="active" data-i18n="sessions.lastActive">Last Active</div>
+              <div class="dropdown-item sort-option sort-dropdown-item" data-sort="newest" data-i18n="sessions.newestFirst">Newest First</div>
+              <div class="dropdown-item sort-option sort-dropdown-item" data-sort="group" data-i18n="sessions.byFolder">By Folder</div>
               <div class="dropdown-item sort-dropdown-item sort-dropdown-sep" id="auto-sort-sessions-row" style="display:flex;align-items:center;padding:0;">
                 <span id="auto-sort-sessions-btn" style="flex:1;padding:5px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">
                   <span class="auto-sort-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Tidy</span>
@@ -783,7 +786,7 @@
 
       <div class="section" id="email-section">
         <div class="section-header-flex">
-          <span class="section-title" id="email-section-title" style="cursor:pointer;" title="Open email inbox"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg><span>Email</span></span>
+          <span class="section-title" id="email-section-title" style="cursor:pointer;" title="Open email inbox"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg><span data-i18n="nav.email">Email</span></span>
           <button type="button" class="section-header-btn list-item-plus-btn" id="email-compose-btn" title="Compose email">
             <svg class="list-item-plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             <span class="list-item-plus-label">new</span>
@@ -828,7 +831,7 @@
 
       <div class="section" id="tools-section">
         <div class="section-header-flex">
-          <span class="section-title"><svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Tools</span>
+          <span class="section-title"><svg class="section-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg><span data-i18n="nav.tools">Tools</span></span>
         </div>
         <div class="list-item" id="tool-memory-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -838,7 +841,7 @@
             <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
             <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/>
           </svg>
-          <span class="grow">Brain</span>
+          <span class="grow" data-i18n="nav.brain">Brain</span>
         </div>
         <div class="list-item" id="tool-calendar-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -849,11 +852,11 @@
             <line x1="8" y1="2" x2="8" y2="6"/>
             <line x1="3" y1="10" x2="21" y2="10"/>
           </svg>
-          <span class="grow">Calendar</span>
+          <span class="grow" data-i18n="nav.calendar">Calendar</span>
         </div>
         <div class="list-item" id="tool-compare-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5;"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><path d="M11 18H8a2 2 0 0 1-2-2V9"/></svg>
-          <span class="grow">Compare</span>
+          <span class="grow" data-i18n="nav.compare">Compare</span>
         </div>
         <div class="list-item" id="tool-cookbook-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -862,13 +865,13 @@
             <path d="M12 7v14"/>
             <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>
           </svg>
-          <span class="grow">Cookbook</span>
+          <span class="grow" data-i18n="nav.cookbook">Cookbook</span>
           <span id="cookbook-bg-status" style="display:none;font-size:9px;opacity:0.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-right:12px;flex-shrink:1;min-width:0;position:relative;top:-1px;"></span>
           <span class="cookbook-notif-dot" id="cookbook-notif-dot" style="display:none;margin-left:6px;margin-right:4px;position:relative;top:-1px;left:0px;"></span>
         </div>
         <div class="list-item" id="tool-research-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;opacity:0.5;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-          <span class="grow">Deep Research</span>
+          <span class="grow" data-i18n="nav.research">Deep Research</span>
         </div>
         <div class="list-item" id="tool-gallery-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -878,13 +881,13 @@
             <circle cx="8.5" cy="8.5" r="1.5"/>
             <path d="M21 15l-5-5L5 21"/>
           </svg>
-          <span class="grow">Gallery</span>
+          <span class="grow" data-i18n="nav.gallery">Gallery</span>
         </div>
         <div class="list-item" id="tool-library-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:0.5;">
             <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M9 7h6M9 11h4"/>
           </svg>
-          <span class="grow">Library</span>
+          <span class="grow" data-i18n="nav.library">Library</span>
           <button type="button" class="list-item-plus-btn" id="library-new-doc-btn" title="New document">
             <svg class="list-item-plus-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             <span class="list-item-plus-label">new</span>
@@ -898,7 +901,7 @@
             <path d="M15 3v5h5"/>
             <path d="M8 17.5 15.5 10l2.5 2.5L10.5 20H8z"/>
           </svg>
-          <span class="grow">Notes</span>
+          <span class="grow" data-i18n="nav.notes">Notes</span>
         </div>
         <div class="list-item" id="tool-tasks-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -910,7 +913,7 @@
             <line x1="3" y1="10" x2="21" y2="10"/>
             <path d="M9 16l2 2 4-4"/>
           </svg>
-          <span class="grow">Tasks</span>
+          <span class="grow" data-i18n="nav.tasks">Tasks</span>
           <span id="assistant-notif-dot" class="sidebar-notif-dot" style="display:none"></span>
         </div>
 
@@ -924,7 +927,7 @@
             <circle cx="15" cy="14" r="1.5" fill="currentColor"/>
             <circle cx="9" cy="15" r="1.5" fill="currentColor"/>
           </svg>
-          <span class="grow">Theme</span>
+          <span class="grow" data-i18n="nav.theme">Theme</span>
         </div>
       </div>
     </div>
@@ -1382,7 +1385,7 @@
   <div id="settings-modal" class="modal hidden">
     <div class="modal-content settings-modal-content" role="dialog" aria-label="Settings">
       <div class="modal-header">
-        <h4><span style="vertical-align:-1px;margin-right:6px;font-size:15px">&#x2699;</span>Settings</h4>
+        <h4><span style="vertical-align:-1px;margin-right:6px;font-size:15px">&#x2699;</span><span data-i18n="settings.title">Settings</span></h4>
         <button type="button" class="theme-opacity-wrap theme-opacity-toggle hidden" id="settings-opacity-wrap" title="Fade this window to preview the page behind it" aria-pressed="false">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
           <span class="theme-opacity-label">Peek</span>
@@ -1395,15 +1398,15 @@
           <!-- Section 1: AI plumbing (Add Models → AI Defaults → Search) -->
           <button class="settings-nav-item active" data-settings-tab="services">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>
-            <span>Add Models</span>
+            <span data-i18n="settings.addModels">Add Models</span>
           </button>
           <button class="settings-nav-item" data-settings-tab="ai">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 0-4 4v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2h-2V6a4 4 0 0 0-4-4z"/></svg>
-            <span>AI Defaults</span>
+            <span data-i18n="settings.aiDefaults">AI Defaults</span>
           </button>
           <button class="settings-nav-item" data-settings-tab="search">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <span>Search</span>
+            <span data-i18n="settings.search">Search</span>
           </button>
           <div class="settings-sidebar-divider"></div>
           <!-- Section 2: Comms (Integrations → Email → Reminders).
@@ -1466,7 +1469,7 @@
 
         <div data-settings-panel="ai" class="hidden">
           <div class="admin-card">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Default Chat Model</h2>
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span data-i18n="settings.defaultChatModel">Default Chat Model</span></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">The model used when creating a new chat session.</div>
             <div class="settings-col">
               <div class="settings-row">
@@ -1657,11 +1660,11 @@
         <!-- ═══ SEARCH TAB ═══ -->
         <div data-settings-panel="search" class="hidden">
           <div class="admin-card">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Web Search</h2>
-            <div class="admin-toggle-sub" style="margin-bottom:8px">Search API used for web search and deep research.</div>
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span data-i18n="settings.webSearch">Web Search</span></h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px" data-i18n="settings.webSearchDesc">Search API used for web search and deep research.</div>
             <div class="settings-col">
               <div class="settings-row">
-                <label class="settings-label">Provider</label>
+                <label class="settings-label" data-i18n="settings.provider">Provider</label>
                 <!-- Custom picker (with logos). Hidden native <select> mirrors
                      its value so the existing JS that reads
                      set-searchProvider keeps working unchanged. -->
@@ -1721,6 +1724,20 @@
 
         <!-- ═══ APPEARANCE TAB ═══ -->
         <div data-settings-panel="appearance" class="settings-appearance-panel hidden">
+          <div class="admin-card" style="padding-bottom:6px;">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Language / 语言</h2>
+            <div style="margin-bottom:16px;">
+              <select id="language-select" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--input-bg);color:var(--fg);font-size:14px;cursor:pointer;">
+                <option value="en">English</option>
+                <option value="zh">简体中文</option>
+                <option value="ja">日本語</option>
+                <option value="ko">한국어</option>
+                <option value="fr">Français</option>
+                <option value="de">Deutsch</option>
+                <option value="es">Español</option>
+              </select>
+            </div>
+          </div>
           <div class="admin-card" style="padding-bottom:6px;">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>Sidebar</h2>
             <div class="vis-toggles">
@@ -2510,7 +2527,33 @@
 
 
 
+<!-- i18n: 同步加载翻译，确保页面渲染前完成 -->
+<script nonce="{{CSP_NONCE}}">
+(function() {
+  window._i18n = { lang: localStorage.getItem('odysseus-lang') || 'zh', t: {} };
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', '/static/locales/' + window._i18n.lang + '.json?v=' + Date.now(), false);
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState === 4 && xhr.status === 200) {
+      window._i18n.t = JSON.parse(xhr.responseText);
+    }
+  };
+  xhr.send();
+  // 同步翻译函数
+  window.t = function(key, fallback) {
+    var keys = key.split('.');
+    var val = window._i18n.t;
+    for (var i = 0; i < keys.length; i++) {
+      val = val[keys[i]];
+      if (val === undefined) break;
+    }
+    return val || fallback || key;
+  };
+})();
+</script>
+
 <!-- Load modules in this order -->
+<script type="module" src="/static/js/i18n.js"></script>
 <script type="module" src="/static/js/storage.js"></script>
 <script type="module" src="/static/js/ui.js"></script>
 <script type="module" src="/static/js/markdown.js"></script>
