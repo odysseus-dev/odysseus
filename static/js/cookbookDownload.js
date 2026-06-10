@@ -504,7 +504,7 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
   // If this server has a directory flagged as the download target, send it so
   // the backend downloads into <dir>/<model> instead of the default HF cache.
   if (srv.downloadDir) payload.local_dir = srv.downloadDir;
-  if (isWin) {
+  if (isWin && host) {
     if (env === 'venv' && envPath) {
       payload.env_prefix = '& ' + (envPath.endsWith('\\Scripts\\Activate.ps1') ? envPath : envPath + '\\Scripts\\Activate.ps1');
     } else if (env === 'conda' && envPath) {
@@ -512,7 +512,9 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
     }
   } else {
     if (env === 'venv' && envPath) {
-      payload.env_prefix = 'source ' + (envPath.endsWith('/bin/activate') ? envPath : envPath + '/bin/activate');
+      const isLocalWin = !host && _isWindows('');
+      const activateScript = isLocalWin ? '/Scripts/activate' : '/bin/activate';
+      payload.env_prefix = 'source ' + (envPath.endsWith(activateScript) ? envPath : envPath + activateScript);
     } else if (env === 'conda' && envPath) {
       payload.env_prefix = 'eval "$(conda shell.bash hook)" && conda activate ' + envPath;
     }

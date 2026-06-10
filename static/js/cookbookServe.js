@@ -2062,7 +2062,9 @@ function _retryCachedModel(repo, m) {
   } else {
     if (_envState.env === 'venv' && _envState.envPath) {
       const p = _envState.envPath;
-      payload.env_prefix = 'source ' + _shellQuote(p.endsWith('/bin/activate') ? p : p + '/bin/activate');
+      const isLocalWin = !_host && _isWindows('');
+      const activateScript = isLocalWin ? '/Scripts/activate' : '/bin/activate';
+      payload.env_prefix = 'source ' + _shellQuote(p.endsWith(activateScript) ? p : p + activateScript);
     } else if (_envState.env === 'conda' && _envState.envPath) {
       payload.env_prefix = 'eval "$(conda shell.bash hook)" && conda activate ' + _shellQuote(_envState.envPath);
     }

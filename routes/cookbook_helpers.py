@@ -23,7 +23,7 @@ _REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]
 # folder name (no slash), e.g. `DeepSeek-R1-UD-IQ4_XS`. The serve command uses
 # the real on-disk path separately; this identifier is only for UI/task
 # bookkeeping, so serving should accept the same safe glyph set as repo IDs.
-_LOCAL_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_LOCAL_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-\/\\]*$")
 # Ollama model names include tags, e.g. `qwen2.5:0.5b` or `llama3.2:latest`.
 # Some registries also use a namespace path. Keep this shell-safe: no spaces,
 # quotes, `$`, `;`, `&`, pipes, or redirects.
@@ -148,7 +148,7 @@ def _shell_path(p: str) -> str:
         return '"$HOME"'
     if p.startswith("~/"):
         return '"$HOME/' + p[2:] + '"'
-    return '"' + p + '"'
+    return '"' + p.replace("\\", "\\\\") + '"'
 
 
 def _local_tooling_path_export(executable: str) -> str:

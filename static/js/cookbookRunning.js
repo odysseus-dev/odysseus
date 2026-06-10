@@ -774,6 +774,20 @@ export function _tmuxCmd(task, tmuxArgs) {
   return `tmux ${tmuxArgs} 2>/dev/null`;
 }
 
+function _poshB64Cmd(ps) {
+  const bytes = new Uint8Array(ps.length * 2);
+  for (let i = 0; i < ps.length; i++) {
+    const code = ps.charCodeAt(i);
+    bytes[i * 2] = code & 0xff;
+    bytes[i * 2 + 1] = code >> 8;
+  }
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return `powershell -EncodedCommand ${btoa(binary)}`;
+}
+
 function _winSessionCmd(task, tmuxArgs) {
   const host = task.remoteHost;
   const sd = host ? '$env:TEMP\\odysseus-sessions' : '$env:TEMP\\odysseus-tmux';
@@ -782,27 +796,27 @@ function _winSessionCmd(task, tmuxArgs) {
   if (tmuxArgs.includes('capture-pane')) {
     const lines = tmuxArgs.match(/-S\s*-?(\d+)/)?.[1] || '200';
     const ps = host
-      ? `Get-Content '${sd}\\${sid}.log' -Tail ${lines} -ErrorAction SilentlyContinue`
+      ? `Get-Content "${sd}\\${sid}.log" -Tail ${lines} -ErrorAction SilentlyContinue`
       : `Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.log') -Tail ${lines} -ErrorAction SilentlyContinue`;
-    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
+    return host ? `ssh ${pf}${host} "${_poshB64Cmd(ps)}"` : _poshB64Cmd(ps);
   }
   if (tmuxArgs.includes('has-session')) {
     const ps = host
-      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Get-Process -Id $p -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } else { exit 1 } } else { exit 1 }`
+      ? `$p = Get-Content "${sd}\\${sid}.pid" -ErrorAction SilentlyContinue; if ($p) { Get-Process -Id $p -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } else { exit 1 } } else { exit 1 }`
       : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Get-Process -Id $p -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } else { exit 1 } } else { exit 1 }`;
-    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
+    return host ? `ssh ${pf}${host} "${_poshB64Cmd(ps)}"` : _poshB64Cmd(ps);
   }
   if (tmuxArgs.includes('kill-session')) {
     const ps = host
       ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`
       : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.*') -Force -ErrorAction SilentlyContinue`;
-    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
+    return host ? `ssh ${pf}${host} "${_poshB64Cmd(ps)}"` : _poshB64Cmd(ps);
   }
   if (tmuxArgs.includes('send-keys') && tmuxArgs.includes('C-c')) {
     const ps = host
       ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -ErrorAction SilentlyContinue }`
       : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -ErrorAction SilentlyContinue }`;
-    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
+    return host ? `ssh ${pf}${host} "${_poshB64Cmd(ps)}"` : _poshB64Cmd(ps);
   }
   return host ? `ssh ${pf}${host} 'tmux ${tmuxArgs}' 2>/dev/null` : `tmux ${tmuxArgs} 2>/dev/null`;
 }
@@ -816,7 +830,7 @@ function _tmuxGracefulKill(task) {
     const ps = host
       ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`
       : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.*') -Force -ErrorAction SilentlyContinue`;
-    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
+    return host ? `ssh ${pf}${host} "${_poshB64Cmd(ps)}"` : _poshB64Cmd(ps);
   }
   if (task.remoteHost) {
     return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} 'tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null'`;
@@ -1132,6 +1146,8 @@ async function _retryTask(el, task) {
     if (task.type === 'serve' && task.payload._cmd) {
       _removeTask(task.sessionId);
       _launchServeTask(task.name, task.payload.repo_id, task.payload._cmd, task.payload._fields, task.remoteHost || '');
+    } else if (task.payload._dep) {
+      uiModule.showToast('Please retry this installation from the Dependencies tab.');
     } else {
       uiModule.showToast('Retrying download — progress may look reset while HuggingFace checks cached files, then it should resume.', 7000);
       _updateTask(task.sessionId, {
@@ -1514,7 +1530,7 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
   const _usedEnvPath = _envState.envPath;
   const _usedGpus = _envState.gpus || '';
   let envPrefix = '';
-  if (_isWindows()) {
+  if (_isWindows(_host) && _host) {
     if (_envState.env === 'venv' && _envState.envPath) {
       envPrefix = '& ' + (_envState.envPath.endsWith('\\Scripts\\Activate.ps1') ? _envState.envPath : _envState.envPath + '\\Scripts\\Activate.ps1');
     } else if (_envState.env === 'conda' && _envState.envPath) {
@@ -1523,7 +1539,9 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
   } else {
     if (_envState.env === 'venv' && _envState.envPath) {
       const p = _envState.envPath;
-      envPrefix = 'source ' + (p.endsWith('/bin/activate') ? p : p + '/bin/activate');
+      const isLocalWin = !_host && _isWindows('');
+      const activateScript = isLocalWin ? '/Scripts/activate' : '/bin/activate';
+      envPrefix = 'source ' + (p.endsWith(activateScript) ? p : p + activateScript);
     } else if (_envState.env === 'conda' && _envState.envPath) {
       envPrefix = 'eval "$(conda shell.bash hook)" && conda activate ' + _envState.envPath;
     }
@@ -2640,14 +2658,34 @@ async function _reconnectTask(el, task) {
               };
               _showDiagnosis(el, diag, lastOutput);
             } else if (task.type === 'download') {
-              const isDisk = /no space left|disk quota|enospc/i.test(lastOutput);
-              const isNetwork = /connection|timeout|timed out|incompleteread|chunkedencoding|reset by peer|protocolerror|all connection attempts failed/i.test(lastOutput);
-              const progressMatch = String(lastOutput || '').match(/(\d+)%\|/);
-              const nearDone = progressMatch && Number(progressMatch[1]) >= 80;
-              // Reconnect: most "crashed" downloads near the end are actually
-              // finished — we just missed the DOWNLOAD_OK / /snapshots/ marker
-              // because output rolled over, or the tmux session ended a tick
-              // before we polled. Probing has-session and re-attaching to
+              const isDep = !!(task.payload && task.payload._dep);
+              if (isDep) {
+                const diag = {
+                  message: 'Dependency installation failed or was interrupted.',
+                  suggestion: 'Suggested action: check the logs above for pip errors, or retry the installation from the Dependencies tab.',
+                  fixes: [
+                    { label: 'Go to Dependencies', action: () => {
+                        const tab = document.querySelector('.cookbook-tab[data-backend="Dependencies"]');
+                        if (tab && !tab.classList.contains('active')) tab.click();
+                      }
+                    },
+                    { label: 'Copy last 50 lines', action: () => {
+                        const last = String(lastOutput || '').split('\\n').slice(-50).join('\\n');
+                        _copyText(last || 'No install log available.');
+                      }
+                    }
+                  ],
+                };
+                _showDiagnosis(el, diag, lastOutput);
+              } else {
+                const isDisk = /no space left|disk quota|enospc/i.test(lastOutput);
+                const isNetwork = /connection|timeout|timed out|incompleteread|chunkedencoding|reset by peer|protocolerror|all connection attempts failed/i.test(lastOutput);
+                const progressMatch = String(lastOutput || '').match(/(\\d+)%\\|/);
+                const nearDone = progressMatch && Number(progressMatch[1]) >= 80;
+                // Reconnect: most "crashed" downloads near the end are actually
+                // finished — we just missed the DOWNLOAD_OK / /snapshots/ marker
+                // because output rolled over, or the tmux session ended a tick
+                // before we polled. Probing has-session and re-attaching to
               // capture-pane lets the existing _reconnectTask flow pick up
               // the real state (running, finished, or truly dead).
               const _reconnectFix = {
@@ -2700,6 +2738,7 @@ async function _reconnectTask(el, task) {
               // task back to running and the diagnosis disappears without
               // the user needing to click Reconnect.
               if (nearDone) setTimeout(() => { _selfHealStaleTasks().catch(() => {}); }, 1200);
+              }
             }
             _showCookbookNotif(true);
           } else {

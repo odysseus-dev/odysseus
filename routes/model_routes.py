@@ -826,11 +826,11 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
                     "error": "That is Odysseus, not a model server. Use the Ollama URL, usually http://host.docker.internal:11434/v1 in Docker.",
                 }
             return {"reachable": False, "status_code": r.status_code, "error": f"HTTP {r.status_code} redirect"}
-        if 200 <= r.status_code < 300:
+        if 200 <= r.status_code < 500:
             return {
                 "reachable": True,
                 "status_code": r.status_code,
-                "error": None,
+                "error": f"HTTP {r.status_code}" if r.status_code >= 400 else None,
             }
         return {"reachable": False, "status_code": r.status_code, "error": f"HTTP {r.status_code}"}
 

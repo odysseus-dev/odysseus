@@ -502,6 +502,7 @@ set_session_manager_instance(session_manager)
 app.state.session_manager = session_manager
 memory_manager    = components["memory_manager"]
 memory_vector     = components.get("memory_vector")
+memory_provider   = components.get("memory_provider")
 upload_handler    = components["upload_handler"]
 app.state.upload_handler = upload_handler
 personal_docs_mgr = components["personal_docs_manager"]
@@ -601,6 +602,7 @@ app.include_router(setup_chat_routes(
     memory_vector=memory_vector,
     webhook_manager=webhook_manager,
     skills_manager=skills_manager,
+    memory_provider=memory_provider,
 ))
 
 # Research (background deep-research tasks)
@@ -737,9 +739,15 @@ app.include_router(setup_mcp_routes(mcp_manager))
 logger.info("MCP routes initialized")
 
 # AI Interaction tools (debates, pipelines, self-managing AI, UI control)
-from src.ai_interaction import set_session_manager as set_ai_session_manager, set_memory_manager as set_ai_memory_manager, set_rag_manager as set_ai_rag_manager
+from src.ai_interaction import (
+    set_session_manager as set_ai_session_manager,
+    set_memory_manager as set_ai_memory_manager,
+    set_memory_provider as set_ai_memory_provider,
+    set_rag_manager as set_ai_rag_manager,
+)
 set_ai_session_manager(session_manager)
 set_ai_memory_manager(memory_manager, memory_vector)
+set_ai_memory_provider(memory_provider)
 set_ai_rag_manager(rag_manager, personal_docs_mgr)
 logger.info("AI interaction tools initialized (session, memory, RAG, UI control)")
 

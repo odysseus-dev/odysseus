@@ -228,6 +228,19 @@ export function _isMetal() {
   return ['metal', 'mps', 'apple'].includes(String(_hwfitCache?.system?.backend || '').toLowerCase());
 }
 
+const GEMMA4_THINKING_CHAT_TEMPLATE = `{% for message in messages %}{% if message['role'] == 'system' %}<|turn>system\n<|think|>{{ message['content'] }}<turn|>\n{% elif message['role'] == 'user' %}<|turn>user\n{{ message['content'] }}<turn|>\n{% elif message['role'] == 'assistant' %}<|turn>model\n{{ message['content'] }}<turn|>\n{% endif %}{% endfor %}{% if add_generation_prompt %}<|turn>model\n<|channel>thought{% endif %}`;
+
+function _isGemma4ThinkingModel(modelName) {
+  const n = (modelName || '').toLowerCase();
+  return n.includes('gemma-4') || n.includes('gemma4');
+}
+
+function _gemma4ThinkingChatTemplateArg(modelName) {
+  return _isGemma4ThinkingModel(modelName)
+    ? _shellQuote(GEMMA4_THINKING_CHAT_TEMPLATE)
+    : '';
+}
+
 /** Detect model-specific vLLM optimizations */
 function _detectModelOptimizations(modelName) {
   const n = (modelName || '').toLowerCase();
@@ -371,12 +384,15 @@ export function _psQuote(value) {
   return "'" + String(value ?? '').replace(/'/g, "''") + "'";
 }
 
-export function _buildEnvPrefix() {
-  if (_isWindows()) return _buildEnvPrefixWindows();
+export function _buildEnvPrefix(hostOverride) {
+  const _host = (hostOverride !== undefined) ? (hostOverride || '') : (_envState.remoteHost || '');
+  if (_isWindows(_host) && _host) return _buildEnvPrefixWindows();
   let parts = [];
   if (_envState.env === 'venv' && _envState.envPath) {
     const p = _envState.envPath;
-    const activate = p.endsWith('/bin/activate') ? p : p + '/bin/activate';
+    const isLocalWin = !_host && _isWindows('');
+    const activateScript = isLocalWin ? '/Scripts/activate' : '/bin/activate';
+    const activate = p.endsWith(activateScript) ? p : p + activateScript;
     parts.push('source ' + _shellQuote(activate));
   } else if (_envState.env === 'conda' && _envState.envPath) {
     parts.push('eval "$(conda shell.bash hook)" && conda activate ' + _shellQuote(_envState.envPath));
@@ -829,7 +845,9 @@ async function _fetchDependencies() {
       } else {
         if (_envState.env === 'venv' && _envState.envPath) {
           const p = _envState.envPath;
-          envPrefix = 'source ' + _shellQuote(p.endsWith('/bin/activate') ? p : p + '/bin/activate');
+          const isLocalWin = !_host && _isWindows('');
+          const activateScript = isLocalWin ? '/Scripts/activate' : '/bin/activate';
+          envPrefix = 'source ' + _shellQuote(p.endsWith(activateScript) ? p : p + activateScript);
         } else if (_envState.env === 'conda' && _envState.envPath) {
           envPrefix = 'eval "$(conda shell.bash hook)" && conda activate ' + _shellQuote(_envState.envPath);
         }
@@ -1374,7 +1392,7 @@ function _wireTabEvents(body) {
       if (host) { payload.remote_host = host; const _sp3 = _getPort(host); if (_sp3) payload.ssh_port = _sp3; }
       const srvPlatform = _getPlatform(host);
       if (srvPlatform) payload.platform = srvPlatform;
-      if (srvPlatform === 'windows') {
+      if (srvPlatform === 'windows' && host) {
         if (env === 'venv' && envPath) {
           payload.env_prefix = '& ' + _psQuote(envPath.endsWith('\\Scripts\\Activate.ps1') ? envPath : envPath + '\\Scripts\\Activate.ps1');
         } else if (env === 'conda' && envPath) {
@@ -1383,7 +1401,9 @@ function _wireTabEvents(body) {
       } else {
         if (env === 'venv' && envPath) {
           const p = envPath;
-          payload.env_prefix = 'source ' + _shellQuote(p.endsWith('/bin/activate') ? p : p + '/bin/activate');
+          const isLocalWin = !host && _isWindows('');
+          const activateScript = isLocalWin ? '/Scripts/activate' : '/bin/activate';
+          payload.env_prefix = 'source ' + _shellQuote(p.endsWith(activateScript) ? p : p + activateScript);
         } else if (env === 'conda' && envPath) {
           payload.env_prefix = 'eval "$(conda shell.bash hook)" && conda activate ' + _shellQuote(envPath);
         }
