@@ -29841,6 +29841,12 @@ body.doc-find-active mark.doc-find-mark.current {
   min-width: 0;
 }
 .email-field input:focus { border-color: var(--accent, #4a9eff); }
+.email-field-select {
+  flex: 1; width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  padding: 5px 8px; font-size: 13px; font-family: inherit; color: var(--fg); outline: none;
+  min-width: 0; cursor: pointer; appearance: auto;
+}
+.email-field-select:focus { border-color: var(--accent, #4a9eff); }
 @container docpane (max-width: 460px) {
   .doc-email-header .email-field {
     display: grid;
