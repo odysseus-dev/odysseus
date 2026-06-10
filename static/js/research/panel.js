@@ -758,9 +758,15 @@ function _renderJobs() {
     } else {
       dotColor = 'var(--color-success)';
     }
-    // Both sections carry a "Clear all" button in the header (cookbook-running
-    // section style); it clears all research and must not toggle the fold.
-    const clearAllHtml = '<button class="research-section-clear" title="Clear all research">' + _cancelIcon + ' Clear all</button>';
+    // Section-scoped "Clear all" (cookbook "Clear finished" style): Past dismisses
+    // completed items; Active removes queued/failed/cancelled only — never running jobs.
+    const canClear = key === 'past' || arr.some(j => j.status !== 'running');
+    const clearTitle = key === 'past'
+      ? 'Clear past research from this panel'
+      : 'Clear queued and finished items';
+    const clearAllHtml = canClear
+      ? '<button class="research-section-clear" title="' + clearTitle + '">' + _cancelIcon + ' Clear all</button>'
+      : '';
     header.innerHTML =
       '<span class="research-section-title">' + title + '</span>'
       + '<span class="research-section-count memory-count">' + arr.length + ' research</span>'
@@ -775,13 +781,13 @@ function _renderJobs() {
     });
     header.querySelector('.research-section-clear')?.addEventListener('click', (e) => {
       e.stopPropagation();
-      // Gracefully fade + collapse the whole section block(s) out, then clear.
-      container.querySelectorAll('.research-section').forEach(s => {
-        s.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
-        s.style.opacity = '0';
-        s.style.transform = 'translateX(-10px)';
-      });
-      setTimeout(() => jobs.clearAll(), 320);
+      sec.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+      sec.style.opacity = '0';
+      sec.style.transform = 'translateX(-10px)';
+      setTimeout(() => {
+        if (key === 'past') jobs.clearPast();
+        else jobs.clearActive();
+      }, 320);
     });
     const body = document.createElement('div');
     body.className = 'research-section-body';
@@ -808,7 +814,7 @@ function _renderJobs() {
     container.appendChild(sec);
   };
 
-  // ("Clear all" lives inside the Past research section header — see _addSection.)
+  // ("Clear all" lives in each section header — scoped via _addSection.)
 
   _addSection('active', 'Active', active);
   _addSection('past', 'Past research', recentDone.concat(past));
