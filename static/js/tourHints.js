@@ -4,6 +4,8 @@
 // fullscreened by dragging the title bar. Shown once globally — once the
 // user has dismissed it (or it auto-hides), it never returns.
 
+import { isTourActive, seenGet, seenSet, watchModals } from './tour-core.js';
+
 const HINT_SEEN_KEY = 'odysseus-hint-drag-to-snap-seen';
 
 // Allow-list of modals where the snap/fullscreen hint makes sense.
@@ -39,23 +41,12 @@ function _modalShouldShowHint(id) {
 let _shown = false;
 let _initialized = false;
 
-function _hasSeen() { return localStorage.getItem(HINT_SEEN_KEY) === '1'; }
-function _markSeen() { try { localStorage.setItem(HINT_SEEN_KEY, '1'); } catch {} }
-
-function _isVisible(el) {
-  if (!el || el.classList.contains('hidden')) return false;
-  // Some modals set inline display:none rather than .hidden
-  if (el.style.display === 'none') return false;
-  const r = el.getBoundingClientRect();
-  return r.width > 0 && r.height > 0;
-}
-
 function _onModalOpened(modal) {
-  if (_shown || _hasSeen()) return;
+  if (_shown || seenGet(HINT_SEEN_KEY)) return;
   const id = modal.id;
   if (!_modalShouldShowHint(id)) return;
   // Don't interrupt the welcome / tour itself
-  if (document.body.classList.contains('tour-active')) return;
+  if (isTourActive()) return;
   if (document.getElementById('tour-tooltip')) return;
   // Mobile: skip — snapping isn't a desktop-only feature there
   if (window.innerWidth <= 768) return;
@@ -66,7 +57,7 @@ function _onModalOpened(modal) {
 }
 
 function _show(modal) {
-  if (_hasSeen()) return;
+  if (seenGet(HINT_SEEN_KEY)) return;
   const content = modal.querySelector('.modal-content') || modal;
   const r = content.getBoundingClientRect();
 
@@ -117,7 +108,7 @@ function _show(modal) {
   const dismiss = () => {
     pop.classList.add('tour-hint-out');
     setTimeout(() => pop.remove(), 280);
-    _markSeen();
+    seenSet(HINT_SEEN_KEY);
   };
   pop.querySelector('.tour-hint-dismiss').addEventListener('click', dismiss);
   // Auto-dismiss after 14s so it doesn't linger forever.
@@ -125,45 +116,15 @@ function _show(modal) {
 }
 
 function _watchModals() {
-  const observeModal = (modal) => {
-    if (!modal || modal.dataset.tourHintObserved === '1') return;
-    modal.dataset.tourHintObserved = '1';
-    observer.observe(modal, {
-      attributes: true,
-      attributeOldValue: true,
-      attributeFilter: ['class', 'style'],
-    });
-    if (_isVisible(modal)) _onModalOpened(modal);
-  };
-  const observer = new MutationObserver((muts) => {
-    if (_hasSeen() || _shown) return;
-    for (const m of muts) {
-      if (m.attributeName !== 'class' && m.attributeName !== 'style') continue;
-      const el = m.target;
-      if (!(el instanceof HTMLElement)) continue;
-      if (!el.classList.contains('modal')) continue;
-      const wasHidden = !m.oldValue || /\bhidden\b/.test(m.oldValue) || /display:\s*none/.test(m.oldValue);
-      if (wasHidden && _isVisible(el)) _onModalOpened(el);
-    }
-  });
-  document.querySelectorAll('.modal').forEach(observeModal);
-  const addObserver = new MutationObserver((muts) => {
-    if (_hasSeen() || _shown) return;
-    for (const m of muts) {
-      m.addedNodes.forEach(node => {
-        if (!(node instanceof HTMLElement)) return;
-        if (node.classList.contains('modal')) observeModal(node);
-        node.querySelectorAll?.('.modal').forEach(observeModal);
-      });
-    }
-  });
-  addObserver.observe(document.body, { childList: true, subtree: true });
+  // Fire on any tool modal opening; _onModalOpened filters by the allow-list
+  // and self-guards on the seen flag (and _shown).
+  watchModals((el) => el.classList.contains('modal'), _onModalOpened);
 }
 
 export function init() {
   if (_initialized) return;
   _initialized = true;
-  if (_hasSeen()) return; // nothing to do
+  if (seenGet(HINT_SEEN_KEY)) return; // nothing to do
   // Defer one tick so the rest of the app has a chance to mount its modals.
   setTimeout(_watchModals, 50);
 }

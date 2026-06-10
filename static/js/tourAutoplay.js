@@ -9,6 +9,7 @@
 // the bottom-sheet layout cleanly.
 
 import { handleSlashCommand } from './slashCommands.js';
+import { isTourActive, seenGet, seenSet, watchModals } from './tour-core.js';
 
 // Modal id → slash command to fire (without the leading "/"). Add to this
 // map when a new feature picks up a `tour-*` command.
@@ -25,38 +26,25 @@ const TOUR_FOR_MODAL = {
 const SEEN_KEY = (tour) => `odysseus-tour-autoplay-seen-${tour}`;
 
 let _initialized = false;
-// Suppress re-fire if a tour is already active or another modal opens while
-// we're mid-tour. The slash command itself adds `body.tour-active` for the
-// duration of its halos.
-function _tourActive() {
-  return document.body.classList.contains('tour-active');
-}
-
-function _isVisible(el) {
-  if (!el || el.classList.contains('hidden')) return false;
-  if (el.style.display === 'none') return false;
-  const r = el.getBoundingClientRect();
-  return r.width > 0 && r.height > 0;
-}
 
 async function _maybeFire(modal) {
   const id = modal.id;
   const tour = TOUR_FOR_MODAL[id];
   if (!tour) return;
-  if (_tourActive()) {
+  // Suppress re-fire if a tour is already active (the slash command adds
+  // body.tour-active for the duration of its halos).
+  if (isTourActive()) {
     try { window.cancelActiveTour?.('modal-opened'); } catch (_) {}
     return;
   }
-  let seen = false;
-  try { seen = localStorage.getItem(SEEN_KEY(tour)) === '1'; } catch (_) {}
-  if (seen) return;
+  if (seenGet(SEEN_KEY(tour))) return;
   // Mark immediately so a quick double-trigger (e.g. modal-class observer
   // fires twice during animation) can't queue two tours.
-  try { localStorage.setItem(SEEN_KEY(tour), '1'); } catch (_) {}
+  seenSet(SEEN_KEY(tour));
   // Let the modal's own enter-animation settle before halos try to position
   // off the title bar / first card / etc. ~400ms matches tourHints.
   setTimeout(() => {
-    if (_tourActive()) return;
+    if (isTourActive()) return;
     try {
       handleSlashCommand('/' + tour);
     } catch (e) {
@@ -69,49 +57,11 @@ async function _maybeFire(modal) {
   }, 400);
 }
 
+// Defined for when autoplay is re-enabled (init is currently a no-op, below).
 function _watchModals() {
-  if (typeof MutationObserver === 'undefined') return;
-  const observer = new MutationObserver((muts) => {
-    for (const m of muts) {
-      if (m.attributeName !== 'class' && m.attributeName !== 'style') continue;
-      const el = m.target;
-      if (!(el instanceof HTMLElement)) continue;
-      if (!(el.id in TOUR_FOR_MODAL)) continue;
-      const wasHidden = !m.oldValue
-        || /\bhidden\b/.test(m.oldValue)
-        || /display:\s*none/.test(m.oldValue);
-      if (wasHidden && _isVisible(el)) _maybeFire(el);
-    }
-  });
-  // Observe each known target if it exists at boot…
-  Object.keys(TOUR_FOR_MODAL).forEach(id => {
-    const el = document.getElementById(id);
-    if (el) {
-      observer.observe(el, {
-        attributes: true,
-        attributeOldValue: true,
-        attributeFilter: ['class', 'style'],
-      });
-    }
-  });
-  // …and also for any matching modal added later (research overlay is
-  // appended on demand, for example).
-  const docObserver = new MutationObserver((muts) => {
-    for (const m of muts) {
-      m.addedNodes.forEach(node => {
-        if (!(node instanceof HTMLElement)) return;
-        if (node.id in TOUR_FOR_MODAL) {
-          observer.observe(node, {
-            attributes: true,
-            attributeOldValue: true,
-            attributeFilter: ['class', 'style'],
-          });
-          if (_isVisible(node)) _maybeFire(node);
-        }
-      });
-    }
-  });
-  docObserver.observe(document.body, { childList: true, subtree: false });
+  // Observe the known tour-triggering modals; _maybeFire filters by the map,
+  // guards on the seen flag, and skips while a tour is active.
+  watchModals((el) => el.id in TOUR_FOR_MODAL, _maybeFire);
 }
 
 export function init() {

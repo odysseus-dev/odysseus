@@ -25,6 +25,7 @@ from routes.cookbook_helpers import (
     _validate_gpus,
     _validate_local_dir,
     _validate_repo_id,
+    _validate_remote_host,
     _validate_serve_cmd,
     _validate_serve_model_id,
     _validate_ssh_port,
@@ -111,6 +112,18 @@ def test_validate_ssh_port_rejects_shell_payload():
     with pytest.raises(HTTPException):
         _validate_ssh_port("22; touch /tmp/pwned")
     assert _validate_ssh_port("2222") == "2222"
+
+
+def test_validate_remote_host_rejects_ssh_option_shape():
+    for host in [
+        "-oProxyCommand=sh",
+        "alice@-oProxyCommand=sh",
+        "--",
+        "-p2222",
+    ]:
+        with pytest.raises(HTTPException):
+            _validate_remote_host(host)
+    assert _validate_remote_host("alice@gpu-box_1") == "alice@gpu-box_1"
 
 
 def test_validate_local_dir_accepts_external_drive_paths_with_spaces():

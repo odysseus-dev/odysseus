@@ -31,8 +31,9 @@ _OLLAMA_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,200}$")
 # Include pattern is a glob: allow typical safe glyphs only.
 _INCLUDE_RE = re.compile(r"^[A-Za-z0-9._\-*?/\[\]]+$")
 # Remote host: either `user@host` or plain `host` (alias is allowed), where host
-# is a safe DNS-like token or a short SSH config alias.
-_REMOTE_HOST_RE = re.compile(r"^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+$")
+# is a safe DNS-like token or a short SSH config alias. The host portion must
+# start with an alphanumeric character so OpenSSH cannot parse it as an option.
+_REMOTE_HOST_RE = re.compile(r"^(?:[A-Za-z0-9][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9._-]*$")
 # HF tokens and API tokens are url-safe base64-like.
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9._~+/=-]+$")
 # Session IDs we mint look like "cookbook-deadbeef" or "serve-deadbeef".
