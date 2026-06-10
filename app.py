@@ -909,7 +909,7 @@ async def runtime_info() -> Dict[str, object]:
 # Auth: MCP_GATEWAY_AUTH_TOKEN env var must match what the gateway was started with.
 _MCP_GATEWAY_BASE = os.getenv("MCP_GATEWAY_URL", "http://localhost:9090")
 _MCP_GATEWAY_ENDPOINT = _MCP_GATEWAY_BASE.rstrip("/") + "/mcp"
-_MCP_GATEWAY_TOKEN = os.getenv("MCP_GATEWAY_AUTH_TOKEN", "***REDACTED***")
+_MCP_GATEWAY_TOKEN = os.getenv("MCP_GATEWAY_AUTH_TOKEN") or ""
 
 _MCP_VALID_SERVERS = {
     "odys-browser-mcp": "playwright",
