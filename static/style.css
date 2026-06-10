@@ -36690,6 +36690,14 @@ body.theme-frosted .modal {
 .ask-user-other-send { flex-shrink: 0; white-space: nowrap; min-height: 39px; }
 .ask-user-other-send:disabled { opacity: 0.5; cursor: default; }
 
+/* Prevent docked email panel from capturing hover state while typing in chat */
+#email-lib-modal.email-typing-ignore * {
+  pointer-events: none !important;
+}
+#email-lib-modal.email-typing-ignore {
+  pointer-events: auto !important;
+}
+
 /* ═══════════════════════════════════════════
    USAGE METRICS DASHBOARD
    ═══════════════════════════════════════════ */

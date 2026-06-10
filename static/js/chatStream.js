@@ -189,6 +189,18 @@ export function handleUIControl(uiData) {
       }).catch(function(e) {
         console.warn('open_email_reply failed:', e);
       });
+    } else if (uiEvent === 'set_email_view' || uiData.ui_event === 'set_email_view') {
+      import('./emailLibrary.js').then(function (mod) {
+        // setEmailView updates an already-open panel in place (preserving the
+        // user's window/dock); it falls back to openEmailLibrary when closed.
+        var fn = mod.setEmailView || (mod.default && mod.default.setEmailView);
+        if (fn) fn({
+          folder: uiData.folder,
+          filter: uiData.filter,
+          from: uiData.from,
+          hasAttachments: uiData.has_attachments,
+        });
+      }).catch(function (e) { console.warn('set_email_view failed:', e); });
     }
   } catch(e) {
     console.warn('ui_control handler error:', e);

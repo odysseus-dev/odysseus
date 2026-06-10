@@ -406,17 +406,20 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "ui_control",
-            "description": "Control the user interface. Actions: toggle (turn tools on/off), open_panel (open a modal: documents/library, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook), open_email_reply (open an email reply draft document; does NOT send), set_mode, switch_model, set_theme (built-in presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute), create_theme (CREATE any custom theme with a name + colors object — pick distinctive, evocative hex colors that match the requested aesthetic, NOT generic defaults. The theme auto-applies after creation). When a user asks for ANY theme not in the built-in preset list, ALWAYS use create_theme.",
+            "description": "Control the user interface. Actions: toggle (turn tools on/off), open_panel (open a modal: documents/library, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook), open_email_reply (open an email reply draft document; does NOT send), email_view (switch what the EMAIL TAB displays: folder + filters [unread/unanswered/sender/attachments]; this changes what the USER SEES, unlike list_emails which only reads mail into your own context), set_mode, switch_model, set_theme (built-in presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute), create_theme (CREATE any custom theme with a name + colors object — pick distinctive, evocative hex colors that match the requested aesthetic, NOT generic defaults. The theme auto-applies after creation). When a user asks for ANY theme not in the built-in preset list, ALWAYS use create_theme.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["toggle", "open_panel", "open_email_reply", "set_mode", "switch_model", "set_theme", "create_theme", "get_toggles"],
+                    "action": {"type": "string", "enum": ["toggle", "open_panel", "open_email_reply", "email_view", "set_mode", "switch_model", "set_theme", "create_theme", "get_toggles"],
                                "description": "The UI action. Use set_theme for presets, create_theme to build a custom theme with any hex colors"},
                     "name": {"type": "string", "description": "For toggle: web, bash, research, incognito, document_editor (aliases: shell, search, deepresearch, documents). For open_panel: documents, gallery, email, sessions, notes, brain/memories, skills, settings, cookbook. For open_email_reply: email UID. For set_theme: a preset theme name. For create_theme: the custom theme name."},
                     "value": {"type": "string", "description": "Value: on/off for toggle, agent/chat for set_mode, model name for switch_model, theme name for set_theme, or folder for open_email_reply"},
                     "uid": {"type": "string", "description": "Email UID for open_email_reply"},
-                    "folder": {"type": "string", "description": "Email folder for open_email_reply (default INBOX)"},
+                    "folder": {"type": "string", "description": "Email folder for open_email_reply or email_view (default INBOX). email_view also accepts friendly names: 'all mail', 'starred', 'important', 'spam', 'trash', 'sent'."},
                     "mode": {"type": "string", "description": "Reply draft mode for open_email_reply: reply, reply-all, or ai-reply"},
+                    "filter": {"type": "string", "enum": ["all", "unread", "unanswered"], "description": "For email_view: which messages to show (default all)."},
+                    "email_from": {"type": "string", "description": "For email_view: only show emails from this sender address."},
+                    "attachments": {"type": "boolean", "description": "For email_view: only show emails that have attachments."},
                     "colors": {"type": "object", "description": "For create_theme: the theme colors",
                                "properties": {
                                    "bg": {"type": "string", "description": "Background color (hex, e.g. #1a1a2e)"},
@@ -1343,6 +1346,21 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             folder = args.get("folder") or value or "INBOX"
             mode = args.get("mode") or "reply"
             content = f"open_email_reply {uid} {folder} {mode}"
+        elif action == "email_view":
+            # Assemble the line do_ui_control parses. shlex.quote keeps a spaced
+            # folder ("[Gmail]/All Mail") as one token through its shlex.split.
+            import shlex
+            folder = args.get("folder") or value or name or "INBOX"
+            bits = [f"email_view {shlex.quote(str(folder))}"]
+            flt = str(args.get("filter") or "").lower()
+            if flt in ("unread", "unanswered"):
+                bits.append(flt)
+            efrom = args.get("email_from") or ""
+            if efrom:
+                bits.append(f"from:{efrom}")
+            if args.get("attachments"):
+                bits.append("attachments")
+            content = " ".join(bits)
         elif action == "set_mode":
             content = f"set_mode {value or name}"
         elif action == "switch_model":
