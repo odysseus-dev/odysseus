@@ -10,10 +10,11 @@
 // the calendar's entry module.
 
 import uiModule from '../ui.js';
+import Storage from '../storage.js';
 
 const API_BASE = window.location.origin;
 
-let _notifFired = new Set(JSON.parse(localStorage.getItem('cal-notif-fired') || '[]'));
+let _notifFired = new Set(Storage.getJSON('cal-notif-fired', []));
 
 // Compute a fresh, system-clock-accurate notification body. Tries the
 // note's `event_dtstart` first (set by _createEventReminder); falls back
