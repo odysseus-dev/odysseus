@@ -488,8 +488,14 @@ async def serve_generated_image(filename: str, request: Request):
     )
 
 # ========= YOUTUBE INIT =========
+# Both YouTube handler modules need init_youtube(): src.youtube_handler is
+# used by chat_handler/chat_processor, services.youtube.youtube_handler by
+# diagnostics_routes. They keep separate YOUTUBE_AVAILABLE flags.
 from services.youtube import init_youtube
+from src.youtube_handler import init_youtube as init_youtube_src
+
 init_youtube()
+init_youtube_src()
 
 # ========= RAG (vector document RAG) =========
 # VectorRAG (ChromaDB-backed personal-document semantic search). Initialized
