@@ -926,10 +926,9 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
 
       if (el('web-toggle').checked && !_isAgent) {
         const _searchLabel = searchModule ? searchModule.getProviderLabel() : 'web';
-        loadingText = `Searching via ${_searchLabel}...<br>
+        loadingText = `Web access enabled via ${_searchLabel}...<br>
                        <span style="font-size: 0.9em; opacity: 0.8;">
-                       Query: "${msg.substring(0, 50)}${msg.length > 50 ? '...' : ''}"<br>
-                       Fetching top results...</span>`;
+                       Preparing request...</span>`;
       } else if (el('research-toggle').checked) {
         loadingText = 'Deep research mode active...';
       } else {
@@ -955,8 +954,8 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
       
       // Update spinner message based on mode
       if (el('web-toggle').checked && !_isAgent) {
-        spinner.updateMessage('Searching web with ' + (searchModule ? searchModule.getProviderLabel() : 'SearXNG'));
-        setTimeout(() => spinner.updateMessage('Processing results'), 1500);
+        spinner.updateMessage('Web access enabled');
+        setTimeout(() => spinner.updateMessage('Processing request'), 1500);
       } else if (el('research-toggle').checked) {
         spinner.updateMessage('Researching');
         setTimeout(() => spinner.updateMessage('Analyzing sources'), 1500);

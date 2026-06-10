@@ -41,6 +41,54 @@ def _content_tokens(text: str) -> list:
     return [w for w in words if len(w) >= 3 and w not in _STOPWORDS]
 
 
+_SOCIAL_ONLY_RE = re.compile(
+    r"^\s*(?:"
+    r"h+i+|h+e+a*l+o+|hey+|yo+|sup|"
+    r"good\s+(?:morning|afternoon|evening)|"
+    r"thanks?|thank\s+you|ok(?:ay)?|lol|haha+"
+    r")[\s!?.',-]*$",
+    re.I,
+)
+
+_SEARCH_PREFIX_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:"
+    r"search(?:\s+(?:the\s+)?web|\s+online)?(?:\s+for)?|"
+    r"look\s+up|"
+    r"find\s+(?:me\s+)?(?:sources?|citations?|articles?|news|information|info)?(?:\s+for)?|"
+    r"cite(?:\s+sources?\s+for)?"
+    r")\s+",
+    re.I,
+)
+
+
+def normalize_web_search_query(message: str) -> str:
+    """Turn explicit search instructions into a cleaner provider query."""
+    query = re.sub(r"\s+", " ", (message or "")).strip()
+    if not query:
+        return ""
+
+    previous = None
+    while previous != query:
+        previous = query
+        query = _SEARCH_PREFIX_RE.sub("", query).strip()
+
+    query = re.sub(r"\s+(?:on|from|using)\s+(?:the\s+)?(?:web|internet|google|bing)\s*$", "", query, flags=re.I)
+    query = query.strip(" \t\r\n\"'`.,;:!?")
+    return query[:500] or re.sub(r"\s+", " ", message).strip()[:500]
+
+
+def should_prefetch_web_search(message: str, time_filter: Optional[str] = None) -> bool:
+    """Return True when explicit chat-mode web search should fetch context."""
+    text = re.sub(r"\s+", " ", (message or "")).strip()
+    if not text:
+        return False
+
+    if _SOCIAL_ONLY_RE.match(text):
+        return False
+
+    return True
+
+
 class ChatProcessor:
     def __init__(self, memory_manager, personal_docs_manager, memory_vector=None, skills_manager=None):
         self.memory_manager = memory_manager
@@ -277,17 +325,22 @@ class ChatProcessor:
             except Exception as e:
                 logger.warning(f"RAG retrieval failed: {e}")
 
-        # Add web search if enabled
+        # Add web search only when the message benefits from external context.
         web_sources = []
         if use_web:
-            try:
-                web_context, web_sources = comprehensive_web_search(
-                    message, time_filter=time_filter, return_sources=True
-                )
-                preface.append(untrusted_context_message("web search results", web_context))
-            except Exception as e:
-                logger.error(f"Web search failed: {e}")
-                preface.append({"role": "system", "content": "Web search encountered an error and could not retrieve results."})
+            if should_prefetch_web_search(message, time_filter=time_filter):
+                search_query = normalize_web_search_query(message)
+                try:
+                    logger.info("Web prefetch: %r -> %r", message[:120], search_query[:120])
+                    web_context, web_sources = comprehensive_web_search(
+                        search_query, time_filter=time_filter, return_sources=True
+                    )
+                    preface.append(untrusted_context_message("web search results", web_context))
+                except Exception as e:
+                    logger.error(f"Web search failed: {e}")
+                    preface.append({"role": "system", "content": "Web search encountered an error and could not retrieve results."})
+            else:
+                logger.info("Web prefetch skipped for non-search-like message")
 
         # Process non-YouTube URLs in message (YouTube handled by preprocess_message)
         # Skip auto-fetch for long pastes (the user already pasted the content —
