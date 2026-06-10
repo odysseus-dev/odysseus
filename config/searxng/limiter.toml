@@ -1,0 +1,5 @@
+# Local bundled SearXNG is only used by Odysseus, not exposed as a public
+# instance. Keep bot link-token checks off while still providing the file
+# SearXNG looks for at startup.
+[botdetection.ip_limit]
+link_token = false

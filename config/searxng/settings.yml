@@ -1,4 +1,11 @@
-use_default_settings: true
+use_default_settings:
+  engines:
+    remove:
+      # These default engines either need Tor or initialize non-web caches.
+      # Odysseus only needs normal web/json search from the bundled instance.
+      - ahmia
+      - torch
+      - radio browser
 
 server:
   secret_key: "__SEARXNG_SECRET__"
