@@ -19,6 +19,8 @@ venv/
 data/
 !services/hwfit/data/
 !services/hwfit/data/hf_models.json
+!static/data/
+!static/data/model_pricing.json
 logs/
 *.log
 *.db
