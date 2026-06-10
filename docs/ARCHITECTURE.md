@@ -1148,6 +1148,7 @@ graph TD
 ```
 
 ### Directory Structure & Module Families
+- **Documentation Entry (`docs/index.html`)**: [`docs/index.html`](../docs/index.html) is a static HTML page that serves as the entry point for viewing generated project documentation.
 - **[`package.json`](../static/js/package.json)** & **[`static/js/MODULE_SUMMARY.md`](../static/js/MODULE_SUMMARY.md)**: Metadata, scripts, and summary of the frontend JS ecosystem.
 - **[`static/index.html`](../static/index.html)**: The main entry point. It defines the layout and loads all scripts.
 - **[`static/app.js`](../static/app.js) & [`static/js/init.js`](../static/js/init.js)**: The main orchestrator. Eagerly binds global event listeners (drag and drop, shortcuts) and bootstraps state.
@@ -1157,6 +1158,10 @@ graph TD
 - **Session & Memory ([`sessions.js`](../static/js/sessions.js), [`memory.js`](../static/js/memory.js))**: Manages CRUD for chat sessions and user vector memory.
 - **Sub-Apps**: Major integrations are separated completely, e.g., [`emailLibrary.js`](../static/js/emailLibrary.js) (IMAP client UI), [`calendar.js`](../static/js/calendar.js) (CalDAV sync rendering), [`tasks.js`](../static/js/tasks.js), and [`notes.js`](../static/js/notes.js).
 - **Cookbook (Hardware Management)**: The `cookbook*.js` modules execute complex, multi-step tasks across SSE streams, including diagnosis, hardware fitting, and download signaling.
+- **Third-party Libraries (`static/lib/`)**:
+  - [`docx.umd.min.js`](../static/lib/docx.umd.min.js), [`highlight.min.js`](../static/lib/highlight.min.js), [`html2pdf.bundle.min.js`](../static/lib/html2pdf.bundle.min.js), [`mammoth.browser.min.js`](../static/lib/mammoth.browser.min.js), [`qrcode.min.js`](../static/lib/qrcode.min.js), [`xlsx.full.min.js`](../static/lib/xlsx.full.min.js): Bundled external dependencies for rendering and exporting various document formats and generating QR codes directly in the browser.
+- **Service Worker (`static/sw.js`)**: [`static/sw.js`](../static/sw.js) provides caching capabilities to enable offline functionality and fast loading of static assets.
+- **Login (`static/login.html`)**: [`static/login.html`](../static/login.html) serves as the authentication portal when `AUTH_ENABLED` is set to true.
 - **Component Specifics**: Modular features like UI helpers ([`ui.js`](../static/js/ui.js)), keyboard shortcuts ([`keyboard-shortcuts.js`](../static/js/keyboard-shortcuts.js)), file handlers ([`fileHandler.js`](../static/js/fileHandler.js)), voice recorders, markdown processing ([`markdown.js`](../static/js/markdown.js)), drag sorting ([`dragSort.js`](../static/js/dragSort.js)), assistant logic ([`assistant.js`](../static/js/assistant.js)), loading indicators ([`spinner.js`](../static/js/spinner.js)), and theming/color utilities ([`theme.js`](../static/js/theme.js), [`color/hex.js`](../static/js/color/hex.js), [`util/ordinal.js`](../static/js/util/ordinal.js)). Other UI and feature modules include [`composerArrowUpRecall.js`](../static/js/composerArrowUpRecall.js), [`emojiShortcodes.js`](../static/js/emojiShortcodes.js), [`group.js`](../static/js/group.js), [`langIcons.js`](../static/js/langIcons.js), [`modelPicker.js`](../static/js/modelPicker.js), [`models.js`](../static/js/models.js), [`modelSort.js`](../static/js/modelSort.js), [`model/matchKey.js`](../static/js/model/matchKey.js), [`presets.js`](../static/js/presets.js), [`providerDeviceFlow.js`](../static/js/providerDeviceFlow.js), [`providers.js`](../static/js/providers.js), [`rag.js`](../static/js/rag.js), [`researchSynapse.js`](../static/js/researchSynapse.js), [`section-management.js`](../static/js/section-management.js), [`settings.js`](../static/js/settings.js), [`signature.js`](../static/js/signature.js), [`skills.js`](../static/js/skills.js), [`tourAutoplay.js`](../static/js/tourAutoplay.js), and [`tourHints.js`](../static/js/tourHints.js).
 
 ### Communication Pattern
@@ -1756,10 +1761,10 @@ graph LR
 ```
 
 ### Components
-- **Companion Bridge ([`companion/pairing.py`](../companion/pairing.py), [`companion/routes.py`](../companion/routes.py))**: Manages secure pairing using tokens and QR codes, allowing mobile or external apps to interact with the API securely without duplicating core LLM logic. Endpoints like `/api/companion/info` allow discovery, while token minting enforces strict CSRF protections.
+- **Companion Bridge ([`companion/pairing.py`](../companion/pairing.py), [`companion/routes.py`](../companion/routes.py), [`companion/__init__.py`](../companion/__init__.py))**: Manages secure pairing using tokens and QR codes, allowing mobile or external apps to interact with the API securely without duplicating core LLM logic. Endpoints like `/api/companion/info` allow discovery, while token minting enforces strict CSRF protections.
 - **Webhook Manager ([`src/webhook_manager.py`](../src/webhook_manager.py))**: Dispatches system events out to configured webhooks securely, filtering out private IP loopbacks.
 - **External API Integrations ([`src/integrations.py`](../src/integrations.py))**: A generalized module to store and resolve API keys, OAuth tokens, and connection configs for external tools.
-- **The "Codex" Abstraction ([`routes/codex_routes.py`](../routes/codex_routes.py))**: Historically named "codex", this router exposes the canonical, scope-gated API endpoints (`/api/codex/*`) that external agents (like Claude Code) hit to list available tools and execute them. Plugins reside in [`integrations/claude/`](../integrations/claude/). API tokens are strictly scoped.
+- **The "Codex" Abstraction ([`routes/codex_routes.py`](../routes/codex_routes.py))**: Historically named "codex", this router exposes the canonical, scope-gated API endpoints (`/api/codex/*`) that external agents (like Claude Code) hit to list available tools and execute them. Plugins reside in [`integrations/claude/`](../integrations/claude/) and utilize Python glue scripts like [`integrations/claude/skills/odysseus/scripts/odysseus_api.py`](../integrations/claude/skills/odysseus/scripts/odysseus_api.py) and [`integrations/codex/scripts/odysseus_api.py`](../integrations/codex/scripts/odysseus_api.py) to securely relay tool calls to the backend. API tokens are strictly scoped.
 - **YouTube Handler ([`src/youtube_handler.py`](../src/youtube_handler.py))**: Provides core YouTube video interaction capabilities, transcript fetching, and metadata extraction.
 
 ---
@@ -1791,6 +1796,7 @@ To leverage existing Copilot subscriptions, register built-in tools like memory 
 ### Components
 - **MCP Manager ([`src/mcp_manager.py`](../src/mcp_manager.py), [`routes/mcp_routes.py`](../routes/mcp_routes.py), [`src/builtin_mcp.py`](../src/builtin_mcp.py), [`src/mcp_oauth.py`](../src/mcp_oauth.py))**: Scaffolds the setup and oauth workflows required to integrate external MCP servers (e.g., Google Drive, GitHub) via stdio or HTTP. It dynamically converts MCP JSON schemas into OpenAI-compatible function calling schemas.
 - **Built-in Servers ([`mcp_servers/`](../mcp_servers/))**:
+  - **[`mcp_servers/__init__.py`](../mcp_servers/__init__.py)**: Initialization file for the MCP servers package.
   - **Memory Server ([`mcp_servers/memory_server.py`](../mcp_servers/memory_server.py))**: Exposes facts, preferences, and events directly bridging to `MemoryManager`.
   - **RAG Server ([`mcp_servers/rag_server.py`](../mcp_servers/rag_server.py))**: Gives the agent control over the semantic store.
   - **Email Server ([`mcp_servers/email_server.py`](../mcp_servers/email_server.py))**: Allows AI to query IMAP, download attachments, and compose replies over SMTP.
@@ -2249,10 +2255,10 @@ Odysseus is designed to run anywhere, but Docker is recommended. It employs stan
 The `hwfit` module analyzes the host machine (RAM, VRAM, GPU bandwidth) to score HuggingFace models. Models fitting entirely in VRAM are prioritized.
 
 ### Deployment Models & Launchers
-- **Docker Compose:** The default setup runs Odysseus alongside ChromaDB and SearXNG.
+- **Docker Compose:** The default setup runs Odysseus alongside ChromaDB and SearXNG, orchestrated by [`docker-compose.yml`](../docker-compose.yml).
 - **Docker Entrypoints ([`docker/entrypoint.sh`](../docker/entrypoint.sh))**: Runs PUID/PGID matching to ensure bind-mounted volumes don't suffer from root-ownership permission issues.
 - **GPU Passthrough:** Special overlays ([`docker-compose.gpu-nvidia.yml`](../docker-compose.gpu-nvidia.yml), [`docker-compose.gpu-amd.yml`](../docker-compose.gpu-amd.yml)) configure NVIDIA or AMD ROCm passthrough.
-- **Native Launchers ([`launch-windows.ps1`](../launch-windows.ps1), [`start-macos.sh`](../start-macos.sh))**: Automate Venv creation, dependency installation, and server binding on native OSes.
+- **Native Launchers ([`launch-windows.ps1`](../launch-windows.ps1), [`start-macos.sh`](../start-macos.sh))**: Automate Venv creation, dependency installation, and server binding on native OSes. Additionally, [`update_windows.bat`](../update_windows.bat) helps keep Windows installations up to date, and [`build-macos-app.sh`](../build-macos-app.sh) packages the application for macOS. [`install-service.sh`](../install-service.sh) sets up the systemd service on Linux.
 - **Local Serving Engine:** The "Cookbook" dynamically installs and configures `vLLM` or `llama.cpp` in the local data directory, orchestrating inference via `tmux` sessions.
 
 ### Task Scheduler & Background Jobs
