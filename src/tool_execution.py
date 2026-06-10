@@ -470,7 +470,6 @@ async def execute_tool_block(
         do_list_cookbook_servers,
         do_edit_image, do_trigger_research, do_manage_research, do_resolve_contact,
         do_manage_contact,
-        do_vault_search, do_vault_get, do_vault_unlock,
         do_app_api,
     )
 
@@ -669,7 +668,7 @@ async def execute_tool_block(
     elif tool in ("chat_with_model", "create_session", "list_sessions",
                   "send_to_session", "pipeline",
                   "manage_session", "manage_memory", "list_models",
-                  "ui_control", "ask_teacher"):
+                  "ui_control", "ask_teacher", "delegate_task", "load_skill"):
         from src.ai_interaction import dispatch_ai_tool
         desc, result = await dispatch_ai_tool(tool, content, session_id, owner=owner)
     elif tool == "manage_tasks":
@@ -763,15 +762,6 @@ async def execute_tool_block(
     elif tool == "manage_contact":
         desc = "manage_contact"
         result = await do_manage_contact(content, owner=owner)
-    elif tool == "vault_search":
-        desc = "vault_search"
-        result = await do_vault_search(content, owner=owner)
-    elif tool == "vault_get":
-        desc = "vault_get"
-        result = await do_vault_get(content, owner=owner)
-    elif tool == "vault_unlock":
-        desc = "vault_unlock"
-        result = await do_vault_unlock(content, owner=owner)
     elif tool.startswith("mcp__"):
         # MCP tool dispatch
         mcp = get_mcp_manager()

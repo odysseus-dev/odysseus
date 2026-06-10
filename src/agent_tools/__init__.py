@@ -73,7 +73,7 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              # the dispatcher — silent failure for the whole cookbook
              # surface.
              "download_model", "serve_model",
-             "list_served_models", "stop_served_model",
+             "list_served_models", "stop_served_model", "tail_serve_output",
              "list_downloads", "cancel_download",
              "search_hf_models", "list_cached_models",
              "list_serve_presets", "serve_preset", "adopt_served_model",
@@ -83,7 +83,9 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              # Generic loopback to any UI-button endpoint (cookbook,
              # gallery, email folders, etc.) — agent uses this when
              # there's no named tool wrapper for the action.
-             "app_api"}
+             "app_api",
+             # Sub-agent delegation and skill loading.
+             "delegate_task", "load_skill"}
 
 ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
 
