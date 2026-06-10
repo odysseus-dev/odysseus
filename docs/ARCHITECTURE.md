@@ -1181,6 +1181,23 @@ Provide localization, theming, and consistent rendering mechanics.
 - **[`src/text_helpers.py`](../src/text_helpers.py)**: Utilities for stripping reasoning chains or specific tokens from LLM output before presentation.
 - **[`src/user_time.py`](../src/user_time.py)**: Manages timezone calculations so that when an agent is told "remind me tomorrow", it correctly translates to the user's localized time based on browser data.
 
+- **Window & Modal Management**: Uses modular window logic. [`modalManager.js`](../static/js/modalManager.js) handles lifecycle and stacking, [`modalSnap.js`](../static/js/modalSnap.js) enables snapping to screen edges, and [`escMenuStack.js`](../static/js/escMenuStack.js) ensures the escape key logically pops UI layers. Panel resizing and dragging are driven by [`windowDrag.js`](../static/js/windowDrag.js) and [`windowResize.js`](../static/js/windowResize.js).
+- **Workspace Layout**: Managed by [`sidebar-layout.js`](../static/js/sidebar-layout.js) (collapsible sidebars) and [`tileManager.js`](../static/js/tileManager.js) (dynamic workspace grids).
+- **Interactive Tools & Utilities**:
+  - [`codeRunner.js`](../static/js/codeRunner.js): Handles execution of code blocks (like Python/JS) directly within the chat UI.
+  - [`slashCommands.js`](../static/js/slashCommands.js) & [`slashAutocomplete.js`](../static/js/slashAutocomplete.js): Provides type-ahead UI for system commands (e.g., `/search`, `/imagine`).
+  - [`tts-ai.js`](../static/js/tts-ai.js) & [`voiceRecorder.js`](../static/js/voiceRecorder.js): Frontend integrations for audio playback and microphone capture.
+  - [`colorPicker.js`](../static/js/colorPicker.js) & [`emojiPicker.js`](../static/js/emojiPicker.js): Custom, lightweight drop-ins avoiding heavy external dependencies.
+  - [`a11y.js`](../static/js/a11y.js): Global accessibility observer that adds ARIA labels dynamically.
+  - [`admin.js`](../static/js/admin.js): Renders privileged UI segments when the authenticated user holds administrative rights.
+- **Specialized Subsystems (`static/js/*/`)**:
+  - **`calendar/`**: [`reminders.js`](../static/js/calendar/reminders.js) and [`utils.js`](../static/js/calendar/utils.js) calculate recurrent rule sets and manage browser notification lifecycles.
+  - **`emailLibrary/`**: Features standalone logic for folding long signature blocks ([`signatureFold.js`](../static/js/emailLibrary/signatureFold.js)) and deriving reply recipients dynamically ([`replyRecipients.js`](../static/js/emailLibrary/replyRecipients.js)).
+  - **`markdown/`**: Custom extensions to the Markdown renderer, e.g., [`tableRow.js`](../static/js/markdown/tableRow.js) for advanced table rendering.
+  - **`research/`**: Components like [`jobs.js`](../static/js/research/jobs.js) and [`panel.js`](../static/js/research/panel.js) to view ongoing deep research execution state and source collation.
+  - **`researchSynapse.js`**: Drives the UI graph visualization for multi-agent or multi-step reasoning.
+
+
 ---
 
 </details>
@@ -1287,6 +1304,11 @@ Odysseus isolates the API surface area from business logic through a highly modu
 - **Helper Extraction:** Complex or reusable logic inside a router is often extracted to a companion file (e.g., [`chat_helpers.py`](../src/chat_helpers.py), [`document_helpers.py`](../routes/document_helpers.py), [`cookbook_helpers.py`](../routes/cookbook_helpers.py)).
 - **Security Scope:** Middleware ensures that endpoints are protected based on user roles. Most routers perform their own checks against `get_current_user` to restrict data access to the session owner. Certain administrative routes ([`api_token_routes.py`](../routes/api_token_routes.py), [`webhook_routes.py`](../routes/webhook_routes.py)) mandate a higher privilege level via `require_admin`.
 
+- **Specialized Routers**:
+  - **[`preset_routes.py`](../routes/preset_routes.py) & [`skills_routes.py`](../routes/skills_routes.py)**: Manage the lifecycle (CRUD) of user-defined AI personas and tool-use scripts.
+  - **[`email_routes.py`](../routes/email_routes.py) & [`email_helpers.py`](../routes/email_helpers.py)**: Serve mail client operations (SMTP send, IMAP fetch/move), abstracting away raw `email` library complexities.
+
+
 ---
 
 </details>
@@ -1317,6 +1339,21 @@ graph TD
 - **Security Middleware ([`core/middleware.py`](../core/middleware.py))**: Intercepts all incoming requests to inject critical headers. It applies the `SecurityHeadersMiddleware`, enforcing the Content Security Policy (CSP), mitigating clickjacking by preventing framing (except on specific routes like the PDF previewer), and ensuring cross-origin isolation and loopback agent security.
 - **Atomic IO ([`core/atomic_io.py`](../core/atomic_io.py))**: Provides safe file-writing operations using temporary files and atomic renames. This ensures that a sudden power loss or application crash during a save operation (e.g., updating a [`user_prefs.json`](../data/user_prefs.json)) does not result in a corrupted, zero-byte file.
 - **Platform Compatibility ([`core/platform_compat.py`](../core/platform_compat.py))**: Normalizes differences between Windows, macOS, and Linux. This includes abstracting file path creation, permission handling (which differs vastly between POSIX and NTFS), and process signal management.
+
+---
+
+</details>
+
+### Configuration & Data Models
+
+<details>
+<summary>View Configuration & Data Models</summary>
+
+Odysseus uses strict typing and configuration management to ensure payload integrity and environment consistency.
+
+### Components
+- **[`src/config.py`](../src/config.py)**: Loads environment variables using `pydantic-settings`. It defines the `Settings` schema that validates ports, booleans, and system paths at boot time, failing loudly if the `.env` file is misconfigured.
+- **[`src/request_models.py`](../src/request_models.py)**: Houses the Pydantic schemas (e.g., `ChatRequest`, `DocumentUploadRequest`) used across all FastAPI routes. This provides automatic validation, OpenAPI schema generation, and defends against malformed JSON payloads.
 
 ---
 
@@ -2241,6 +2278,26 @@ For maintenance, debugging, and offline operations, Odysseus includes a suite of
 - **[`index_documents.py`](../scripts/index_documents.py)**: A script to manually force re-indexing of documents into ChromaDB.
 - **[`migrate_faiss_to_chroma.py`](../scripts/migrate_faiss_to_chroma.py)**: A historical migration script ensuring safe transfer of semantic memories.
 - **[`check-docker-gpu.sh`](../scripts/check-docker-gpu.sh) & [`check-docker-amd-gpu.sh`](../scripts/check-docker-amd-gpu.sh)**: Utilities used during deployment to confirm the container runtime supports the hardware passthrough required.
+
+---
+
+</details>
+
+### CI/CD, Build, and Repository Management
+
+<details>
+<summary>View CI/CD, Build, and Repository Management</summary>
+
+Odysseus utilizes standard tools for Python/Node environments, augmented by strict GitHub Actions workflows to maintain code quality.
+
+### Build & Dependencies
+- **[`pyproject.toml`](../pyproject.toml) & [`setup.py`](../setup.py)**: Manages Python project metadata, entry points, and dependencies. `requirements.txt` contains pinned core packages, while `requirements-optional.txt` isolates heavy dependencies like PyMuPDF.
+- **[`package.json`](../package.json)**: Despite the frontend being vanilla JS, `npm` is used to orchestrate test runners (`node:test`) and manage development linters.
+
+### GitHub Workflows ([`.github/`](../.github/))
+- **`ci.yml`**: The primary Continuous Integration pipeline. It runs the Pytest suite, Node.js invariant tests, enforces typing with `mypy`, and checks formatting.
+- **`docker-publish.yml`**: Automatically builds and pushes multi-architecture (AMD64, ARM64) Docker images to the registry on new releases.
+- **Issue & PR Validations**: Workflows like `issue-description-check.yml` and `pr-description-check.yml` execute scripts (e.g., [`check-pr-description.js`](../.github/scripts/check-pr-description.js)) to enforce minimum character limits and template adherence, reducing triage overhead.
 
 ---
 
