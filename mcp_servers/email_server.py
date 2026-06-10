@@ -891,6 +891,22 @@ def _smtp_connect(account=None, cfg=None):
     return conn
 
 
+def _envelope_recipients(to, cc=None, bcc=None):
+    """Extract bare SMTP envelope addresses from to/cc/bcc.
+
+    Splitting on "," corrupted display names that contain a comma — the
+    canonical Outlook form `"Smith, John" <john@corp.com>` became two broken
+    RCPT entries. email.utils.getaddresses parses the address list correctly.
+    Each field may be a string or a list of strings.
+    """
+    fields = []
+    for f in (to, cc, bcc):
+        if not f:
+            continue
+        fields.append(f if isinstance(f, str) else ", ".join(f))
+    return [addr for _name, addr in email.utils.getaddresses(fields) if addr]
+
+
 def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, bcc=None, account=None):
     """Send an email via SMTP. Returns dict with status."""
     send_account, cfg = _resolve_send_config(account)
@@ -910,15 +926,7 @@ def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, b
         msg["Message-ID"] = email.utils.make_msgid()
     msg.set_content(body)
 
-    recipients = []
-    if isinstance(to, str):
-        recipients.extend([a.strip() for a in to.split(",") if a.strip()])
-    else:
-        recipients.extend(to)
-    if cc:
-        recipients.extend([a.strip() for a in cc.split(",")] if isinstance(cc, str) else cc)
-    if bcc:
-        recipients.extend([a.strip() for a in bcc.split(",")] if isinstance(bcc, str) else bcc)
+    recipients = _envelope_recipients(to, cc, bcc)
 
     conn = _smtp_connect(send_account, cfg=cfg)
     try:
