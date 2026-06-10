@@ -627,14 +627,14 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_notes",
-            "description": "Manage notes and checklists (Google Keep-style): list, add, update, delete, toggle_item. IMPORTANT: For to-do lists / checklists, set note_type='checklist' and pass the items as the `checklist_items` array — do NOT serialize them into `content` as plain text. For freeform notes, use note_type='note' and put the body in `content`. `due_date` accepts natural language like 'tomorrow at 9am' (parsed in the user's timezone) and fires a notification — do not also create a calendar event for the same reminder.",
+            "description": "Manage notes and checklists (Google Keep-style): list, search, list_open, add, update, delete, toggle_item, append_item. IMPORTANT: For to-do lists / checklists, set note_type='checklist' and pass the items as the `checklist_items` array — do NOT serialize them into `content` as plain text. For freeform notes, use note_type='note' and put the body in `content`. `due_date` accepts natural language like 'tomorrow at 9am' (parsed in the user's timezone) and fires a notification — do not also create a calendar event for the same reminder.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {"type": "string",
-                               "enum": ["list", "add", "update", "delete", "toggle_item"],
+                               "enum": ["list", "search", "list_open", "add", "update", "delete", "toggle_item", "append_item"],
                                "description": "The action to perform"},
-                    "id": {"type": "string", "description": "Note id (for update/delete/toggle_item); 8-char prefix is fine"},
+                    "id": {"type": "string", "description": "Note id (for update/delete/toggle_item/append_item); 8-char prefix is fine"},
                     "title": {"type": "string", "description": "Note title (for add/update)"},
                     "content": {"type": "string", "description": "Freeform body text. Use this for note_type='note'. Do NOT use this for checklists — pass `checklist_items` instead."},
                     "note_type": {"type": "string", "enum": ["note", "checklist"],
@@ -650,9 +650,12 @@ FUNCTION_TOOL_SCHEMAS = [
                     "color": {"type": "string", "description": "Optional color label (e.g. 'yellow', 'blue', 'green')"},
                     "label": {"type": "string", "description": "Optional category label (also used as a list filter)"},
                     "pinned": {"type": "boolean", "description": "Pin the note to the top"},
-                    "archived": {"type": "boolean", "description": "For update: archive/unarchive. For list: show archived notes when true."},
+                    "archived": {"type": "boolean", "description": "For update: archive/unarchive. For list/search/list_open: show archived notes when true."},
                     "due_date": {"type": "string", "description": "Reminder time. Accepts natural language ('tomorrow at 9am', '11pm today') or ISO 8601. Fires a notification at that time."},
-                    "index": {"type": "integer", "description": "Checklist item index (for toggle_item, 0-based)"}
+                    "index": {"type": "integer", "description": "Checklist item index (for toggle_item, 0-based)"},
+                    "query": {"type": "string", "description": "Search text for action='search': searches across note title, content, label, and checklist item text"},
+                    "limit": {"type": "integer", "description": "Maximum number of results to return for search/list_open. Defaults to 20 for search, 50 for list_open"},
+                    "text": {"type": "string", "description": "Checklist item text for action='append_item'"}
                 },
                 "required": ["action"]
             }

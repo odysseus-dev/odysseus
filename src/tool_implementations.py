@@ -1469,8 +1469,148 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             mark = "done" if items[index]["done"] else "undone"
             return {"response": f"Item '{items[index].get('text', '')}' marked {mark}", "exit_code": 0}
 
+        elif action == "search":
+            # Search notes by title, content, label, and checklist item text
+            query = (args.get("query") or "").strip().lower()
+            if not query:
+                return {"error": "query is required for search", "exit_code": 1}
+            limit = args.get("limit", 20)
+            q = db.query(Note)
+            if owner is not None:
+                q = q.filter(Note.owner == owner)
+            show_archived = args.get("archived", False)
+            q = q.filter(Note.archived == show_archived)
+            if args.get("label"):
+                q = q.filter(Note.label == args["label"])
+            notes = q.order_by(Note.pinned.desc(), Note.updated_at.desc()).limit(limit).all()
+            results = []
+            for n in notes:
+                # Search in title
+                if query in (n.title or "").lower():
+                    snippet = n.content[:120] if n.content else ""
+                    results.append({
+                        "id": n.id[:8],
+                        "title": n.title or "(untitled)",
+                        "label": n.label or "",
+                        "note_type": n.note_type or "note",
+                        "snippet": snippet.replace("\n", " ")
+                    })
+                    continue
+                # Search in content
+                if n.content and query in n.content.lower():
+                    snippet = n.content[:120]
+                    results.append({
+                        "id": n.id[:8],
+                        "title": n.title or "(untitled)",
+                        "label": n.label or "",
+                        "note_type": n.note_type or "note",
+                        "snippet": snippet.replace("\n", " ")
+                    })
+                    continue
+                # Search in label
+                if n.label and query in n.label.lower():
+                    snippet = n.content[:120] if n.content else ""
+                    results.append({
+                        "id": n.id[:8],
+                        "title": n.title or "(untitled)",
+                        "label": n.label or "",
+                        "note_type": n.note_type or "note",
+                        "snippet": snippet.replace("\n", " ")
+                    })
+                    continue
+                # Search in checklist items
+                if n.items:
+                    try:
+                        items = json.loads(n.items)
+                        for item in items:
+                            item_text = item.get("text", "")
+                            if query in item_text.lower():
+                                results.append({
+                                    "id": n.id[:8],
+                                    "title": n.title or "(untitled)",
+                                    "label": n.label or "",
+                                    "note_type": n.note_type or "note",
+                                    "snippet": item_text
+                                })
+                                break
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            if not results:
+                return {"response": "No matching notes found.", "exit_code": 0}
+            return {"response": f"Found {len(results)} note(s)", "notes": results, "exit_code": 0}
+
+        elif action == "append_item":
+            # Append a new checklist item to an existing checklist note
+            note_id = args.get("id", "")
+            text = args.get("text", "").strip()
+            if not note_id:
+                return {"error": "id is required for append_item", "exit_code": 1}
+            if not text:
+                return {"error": "text is required for append_item", "exit_code": 1}
+            note = db.query(Note).filter(Note.id.startswith(note_id)).first()
+            if not note:
+                return {"error": f"Note '{note_id}' not found", "exit_code": 1}
+            if owner is not None and note.owner and note.owner != owner:
+                return {"error": "Note not found", "exit_code": 1}
+            if note.note_type != "checklist":
+                return {"error": "append_item only works with checklist notes", "exit_code": 1}
+            items = []
+            if note.items:
+                try:
+                    items = json.loads(note.items)
+                except (json.JSONDecodeError, TypeError):
+                    items = []
+            new_item = {"text": text, "done": False}
+            items.append(new_item)
+            note.items = json.dumps(items)
+            flag_modified(note, "items")
+            db.commit()
+            return {
+                "response": f"Added checklist item to \"{note.title or '(untitled)'}\"",
+                "note_id": note.id[:8],
+                "item_index": len(items) - 1,
+                "exit_code": 0
+            }
+
+        elif action == "list_open":
+            # List incomplete checklist items across all notes
+            q = db.query(Note).filter(Note.note_type == "checklist")
+            if owner is not None:
+                q = q.filter(Note.owner == owner)
+            show_archived = args.get("archived", False)
+            q = q.filter(Note.archived == show_archived)
+            if args.get("label"):
+                q = q.filter(Note.label == args["label"])
+            notes = q.order_by(Note.pinned.desc(), Note.updated_at.desc()).all()
+            limit = args.get("limit", 50)
+            open_items = []
+            for n in notes:
+                if not n.items:
+                    continue
+                try:
+                    items = json.loads(n.items)
+                    for idx, item in enumerate(items):
+                        if not item.get("done", False):
+                            open_items.append({
+                                "note_id": n.id[:8],
+                                "title": n.title or "(untitled)",
+                                "label": n.label or "",
+                                "index": idx,
+                                "text": item.get("text", ""),
+                                "due_date": n.due_date.isoformat() if hasattr(n.due_date, 'isoformat') else n.due_date if n.due_date else None
+                            })
+                            if len(open_items) >= limit:
+                                break
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if len(open_items) >= limit:
+                    break
+            if not open_items:
+                return {"response": "No open checklist items found.", "exit_code": 0}
+            return {"response": f"Found {len(open_items)} open item(s)", "items": open_items, "exit_code": 0}
+
         else:
-            return {"error": f"Unknown action: {action}. Use list/add/update/delete/toggle_item", "exit_code": 1}
+            return {"error": f"Unknown action: {action}. Use list/search/list_open/add/update/delete/toggle_item/append_item", "exit_code": 1}
     except Exception as e:
         logger.error(f"manage_notes error: {e}")
         return {"error": str(e), "exit_code": 1}
