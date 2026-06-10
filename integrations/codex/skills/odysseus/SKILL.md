@@ -66,12 +66,14 @@ The Codex API supports scoped email reads:
 
 - `GET /api/codex/emails?folder=INBOX&limit=10&offset=0&filter=all`
 - `GET /api/codex/emails/{uid}?folder=INBOX`
+- `GET /api/codex/emails/search?q=...&folder=INBOX&limit=50` — server-side IMAP search matching FROM, SUBJECT, and body TEXT. Use this when the user asks to "find an email about X" or "search for email from Y".
 
 Use the bundled helper script when available:
 
 ```bash
 python3 integrations/codex/scripts/odysseus_api.py emails list 5
 python3 integrations/codex/scripts/odysseus_api.py emails read UID
+python3 integrations/codex/scripts/odysseus_api.py emails search "meeting tomorrow"
 ```
 
 If `/api/codex/capabilities` does not show `email.read: true`, do not inspect email. Ask the user to enable Email read in the Codex Agent settings.

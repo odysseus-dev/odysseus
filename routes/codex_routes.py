@@ -95,6 +95,7 @@ def setup_codex_routes(
     email_read_endpoint = _find_endpoint(email_router, "GET", "/api/email/read/{uid}")
     email_send_endpoint = _find_endpoint(email_router, "POST", "/api/email/send")
     email_draft_endpoint = _find_endpoint(email_router, "POST", "/api/email/draft")
+    email_search_endpoint = _find_endpoint(email_router, "GET", "/api/email/search")
     memory_list_endpoint = _find_endpoint(memory_router, "GET", "/api/memory")
     memory_add_endpoint = _find_endpoint(memory_router, "POST", "/api/memory/add")
     calendar_list_events = _find_endpoint(calendar_router, "GET", "/api/calendar/events")
@@ -122,7 +123,7 @@ def setup_codex_routes(
                     "read": scoped(EMAIL_READ_SCOPES),
                     "draft": scoped(EMAIL_DRAFT_SCOPES),
                     "send": scoped(EMAIL_SEND_SCOPES),
-                    "actions": ["list", "read", "draft", "send"],
+                    "actions": ["list", "read", "search", "draft", "send"],
                 },
                 "memory": {
                     "read": scoped(MEMORY_READ_SCOPES),
@@ -239,6 +240,30 @@ def setup_codex_routes(
             folder=folder,
             account_id=account_id,
             mark_seen=mark_seen,
+            owner=owner,
+        )
+
+    @router.get("/emails/search")
+    async def codex_email_search(
+        request: Request,
+        q: str = "",
+        folder: str = "INBOX",
+        limit: int = 50,
+        offset: int = 0,
+        account_id: str | None = None,
+    ):
+        owner = _scope_owner(request, EMAIL_READ_SCOPES)
+        if email_search_endpoint is None:
+            raise HTTPException(503, "Email integration is not available")
+        if account_id:
+            from routes.email_helpers import _assert_owns_account
+            _assert_owns_account(account_id, owner)
+        return await email_search_endpoint(
+            q=q,
+            folder=folder,
+            limit=min(int(limit or 50), 100),
+            offset=max(0, int(offset or 0)),
+            account_id=account_id,
             owner=owner,
         )
 

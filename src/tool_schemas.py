@@ -1178,6 +1178,23 @@ FUNCTION_TOOL_SCHEMAS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_emails",
+            "description": "Search emails by free-text query matching sender, subject, or body text. Use this INSTEAD of list_emails when the user asks to 'find', 'search', 'look for', or 'locate' a specific email by person, topic, or keyword. Walks INBOX + Sent + Archive. Returns matching emails with UIDs to then read_email. Supports optional folder and account.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Free-text search query matching FROM, SUBJECT, and body TEXT"},
+                    "folder": {"type": "string", "description": "IMAP folder to search (default: INBOX)"},
+                    "max_results": {"type": "integer", "description": "Max results per folder (default: 20)"},
+                    "account": {"type": "string", "description": "Optional account name/email/id from list_email_accounts"},
+                },
+                "required": ["query"]
+            }
+        }
+    },
 ]
 
 
@@ -1212,7 +1229,8 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         return ToolBlock(tool_type, content)
     # Email tools are implemented as MCP — route them to email
     _BUILTIN_EMAIL_TOOLS = {"list_email_accounts", "send_email", "list_emails", "read_email", "reply_to_email",
-                            "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment"}
+                            "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment",
+                            "search_emails"}
     if name in _BUILTIN_EMAIL_TOOLS:
         return ToolBlock(f"mcp__email__{name}", json.dumps(args) if args else "{}")
     if tool_type not in TOOL_TAGS:

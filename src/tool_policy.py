@@ -43,6 +43,7 @@ _COMMON_TOOL_NAMES = {
     "list_downloads",
     "list_emails",
     "list_models",
+    "search_emails",
     "list_serve_presets",
     "list_served_models",
     "list_sessions",

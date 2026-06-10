@@ -17,6 +17,7 @@ def _usage() -> int:
     print("  odysseus_api.py todos add TITLE", file=sys.stderr)
     print("  odysseus_api.py emails list [limit]", file=sys.stderr)
     print("  odysseus_api.py emails read UID", file=sys.stderr)
+    print("  odysseus_api.py emails search QUERY", file=sys.stderr)
     print("  odysseus_api.py cookbook tasks", file=sys.stderr)
     print("  odysseus_api.py cookbook servers", file=sys.stderr)
     print("  odysseus_api.py cookbook cached [HOST]", file=sys.stderr)
@@ -78,6 +79,11 @@ def main() -> int:
         elif action == "read" and len(sys.argv) >= 4:
             method = "GET"
             path = f"/api/codex/emails/{sys.argv[3]}"
+            body = None
+        elif action == "search" and len(sys.argv) >= 4:
+            from urllib.parse import quote
+            method = "GET"
+            path = f"/api/codex/emails/search?q={quote(' '.join(sys.argv[3:]))}"
             body = None
         else:
             return _usage()

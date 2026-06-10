@@ -85,6 +85,8 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("email", "email contact request", r"\bemail\s+\w+\b"),
         ("email", "check inbox request", r"\bcheck\s+(?:my\s+)?(?:email|inbox|mail)\b"),
         ("email", "unread email request", r"\bunread\s+(?:email|mail)s?\b"),
+        ("email", "search/find email request", rf"{_ACTION_QUESTION}(?:find|search|look\s*(?:for|up)?|locate)\b.{{0,120}}\b(?:emails?|mail|messages?|inbox)\b"),
+        ("email", "search/find email imperative request", rf"{_PLEASE}(?:find|search|look\s*(?:for|up)?|locate)\b.{{0,120}}\b(?:emails?|mail|messages?|inbox)\b"),
 
         # UI/control-plane actions that should open panels or flip toggles.
         ("ui", "open/show panel request", rf"{_PLEASE}(?:open|show|bring\s+up)\s+(?:me\s+)?(?:my\s+|the\s+)?{_PANEL}\b"),

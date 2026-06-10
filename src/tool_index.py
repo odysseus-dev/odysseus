@@ -71,7 +71,7 @@ ALWAYS_AVAILABLE = frozenset({
 # check-ins and proactive tasks, in addition to RAG-selected tools.
 ASSISTANT_ALWAYS_AVAILABLE = frozenset({
     "list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email",
-    "bulk_email", "archive_email", "delete_email", "mark_email_read",
+    "bulk_email", "archive_email", "delete_email", "mark_email_read", "search_emails",
     "manage_calendar", "manage_notes", "manage_tasks",
     "manage_memory", "web_search", "read_file",
     "create_document", "update_document",
@@ -136,6 +136,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "delete_email": "Delete an email — moves to Trash by default, or expunges permanently with permanent=true.",
     "mark_email_read": "Mark an email as read or unread by toggling the \\Seen flag.",
     "bulk_email": "Perform one action on many emails at once. Use for delete all those, archive these, mark all read, move spam to junk. Takes explicit UIDs from list_emails or all_unread=true. Always pass account for Gmail/work/custom mailbox results.",
+    "search_emails": "Search emails by free-text query matching sender/from, subject, or body text via IMAP SEARCH. Walks INBOX + Sent + Archive by default so older threads are findable. Use this whenever the user asks to 'find', 'search', 'lookup', or 'locate' an email about a person, topic, or keyword — e.g. 'find the email about the property', 'search for invoice from EY', 'lookup email from DBIS about presentation'. Returns matching emails with UIDs so you can read_email for full content. Supports specific folders and accounts.",
     "resolve_contact": "Look up a contact's email address by name. Searches CardDAV address book and sent email history. Use when the user says 'message [name]', 'email [name]', or 'send to [name]' without an email address.",
     "manage_contact": "Create, update, delete, or list CardDAV contacts. Use to save a new contact, change an existing one's email/phone, or remove one. Action=list returns uids needed for update/delete. Use when the user says 'save this contact', 'add [name] to contacts', 'update [name]'s email', 'delete [name] from contacts'. Do not use for user identity facts like 'my name is <name>'; those are memory.",
     "manage_notes": "Create and manage notes and checklists (Google Keep-style). ALWAYS use this for note/todo/checklist/reminder creation — NEVER hit /api/notes via app_api. Accepts natural-language `due_date` like 'tomorrow at 9am' or '11pm today' (parsed in the USER'S timezone). The due_date IS the reminder — it fires a notification at that time, so do NOT also create a calendar event for the same reminder. Set colors, labels, pin, archive. Do NOT use manage_memory for note content.",
@@ -362,8 +363,8 @@ class ToolIndex:
         # request (e.g. "visit <url> and tell me the title"), force-including the
         # whole email toolset and crowding out the relevant tools — the model then
         # believed it had only email tools and refused web/other tasks (#1707).
-        frozenset({"email", "mail", "gmail", "googlemail", "message", "send", "reply", "inbox", "unread"}):
-            {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control"},
+        frozenset({"email", "mail", "gmail", "googlemail", "message", "send", "reply", "inbox", "unread", "find", "search"}):
+            {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "search_emails", "resolve_contact", "ui_control"},
         frozenset({"calendar", "event", "meeting", "schedule", "appointment"}):
             {"manage_calendar"},
         frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to"}):

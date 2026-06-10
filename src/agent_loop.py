@@ -322,6 +322,7 @@ Bulk delete/archive/mark emails. Use this for "delete all those" after listing e
     "delete_email": "- ```delete_email``` — Delete one email by UID. Args (JSON): {\"uid\":\"...\", \"folder\":\"INBOX\", \"account\":\"Gmail\"}. For multiple messages use bulk_email.",
     "archive_email": "- ```archive_email``` — Archive one email by UID. Args (JSON): {\"uid\":\"...\", \"folder\":\"INBOX\", \"account\":\"Gmail\"}. For multiple messages use bulk_email.",
     "mark_email_read": "- ```mark_email_read``` — Mark one email read/unread. Args (JSON): {\"uid\":\"...\", \"read\":true, \"folder\":\"INBOX\", \"account\":\"Gmail\"}. For multiple messages use bulk_email.",
+    "search_emails": "- ```search_emails``` — Search emails by free-text query matching sender, subject, or body. Args (JSON): {\"query\": \"invoice from vendor\", \"folder\": \"INBOX\", \"max_results\": 20, \"account\": \"gmail\"}. Use this INSTEAD of list_emails when the user asks to 'find', 'search', 'lookup', or 'locate' a specific email by person, topic, or keyword. Walks INBOX + Sent + Archive by default. Returns UIDs to read_email.",
     "resolve_contact": "- ```resolve_contact``` — Look up a contact's email by name. Searches CardDAV address book + sent email history. Args (JSON): {\"name\": \"...\"}. Use BEFORE send_email when the user gives only a name.",
     "manage_contact": "- ```manage_contact``` — Create/update/delete/list CardDAV contacts. Args (JSON): {\"action\": \"list|add|update|delete\", \"name\": \"...\", \"email\": \"...\", \"uid\": \"...\"}. Use only for explicit address-book/contact requests with contact details. Do NOT use for user identity facts like 'my name is <name>'; save those with manage_memory. For update/delete, call action=list first to get the uid.",
     "manage_calendar": """\
@@ -799,12 +800,13 @@ def _build_system_prompt(
     _EMAIL_TOOL_HINTS = {
         "list_email_accounts", "send_email", "reply_to_email", "list_emails", "read_email",
         "bulk_email", "archive_email", "delete_email", "mark_email_read",
-        "resolve_contact", "ui_control",
+        "search_emails", "resolve_contact", "ui_control",
         "mcp__email__list_email_accounts",
         "mcp__email__send_email", "mcp__email__reply_to_email",
         "mcp__email__list_emails", "mcp__email__read_email",
         "mcp__email__bulk_email", "mcp__email__archive_email",
         "mcp__email__delete_email", "mcp__email__mark_email_read",
+        "mcp__email__search_emails",
     }
     if active_document and active_document.language == "email":
         _inject_style = True
