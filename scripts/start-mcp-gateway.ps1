@@ -6,4 +6,4 @@
 # Env out: MCP_GATEWAY_AUTH_TOKEN=***REDACTED***
 
 $env:MCP_GATEWAY_AUTH_TOKEN = "***REDACTED***"
-docker mcp gateway run --transport streaming --port 9090 --servers playwright,fetch --long-lived
+docker mcp gateway run --transport streaming --port 9090 --servers playwright,fetch,filesystem --long-lived
