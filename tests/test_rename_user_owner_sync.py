@@ -228,7 +228,84 @@ def test_rename_research_respects_custom_data_dir(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 3. memory.json
+# 3. In-flight research tasks
+# ---------------------------------------------------------------------------
+
+def test_rename_updates_active_research_task_owner(rename_endpoint):
+    endpoint, _am, tmp_path = rename_endpoint
+
+    from routes.research_routes import setup_research_routes
+    from src.research_handler import ResearchHandler
+
+    rh = ResearchHandler.__new__(ResearchHandler)
+    rh._active_tasks = {
+        "alice-task": {
+            "owner": "Alice",
+            "status": "running",
+            "query": "q",
+            "progress": {},
+            "started_at": 1,
+        },
+        "carol-task": {
+            "owner": "carol",
+            "status": "running",
+            "query": "q2",
+            "progress": {},
+            "started_at": 2,
+        },
+    }
+
+    asyncio.run(endpoint(
+        "alice",
+        SimpleNamespace(username="alice2"),
+        _request(tmp_path, research_handler=rh),
+    ))
+
+    assert rh._active_tasks["alice-task"]["owner"] == "alice2"
+    assert rh._active_tasks["carol-task"]["owner"] == "carol"
+
+    router = setup_research_routes(rh)
+    active = next(
+        r.endpoint for r in router.routes
+        if getattr(r, "path", "") == "/api/research/active"
+    )
+
+    alice2 = asyncio.run(active(
+        SimpleNamespace(state=SimpleNamespace(current_user="alice2")),
+    ))
+    alice = asyncio.run(active(
+        SimpleNamespace(state=SimpleNamespace(current_user="alice")),
+    ))
+
+    assert [item["session_id"] for item in alice2["active"]] == ["alice-task"]
+    assert alice["active"] == []
+
+
+def test_rename_updates_active_research_before_completed_json_sweep(rename_endpoint):
+    endpoint, _am, tmp_path = rename_endpoint
+
+    dr_dir = tmp_path / "deep_research"
+    dr_dir.mkdir()
+    report = dr_dir / "race-window.json"
+    report.write_text(json.dumps({"owner": "alice", "status": "done"}), encoding="utf-8")
+    owner_seen_by_active_hook = []
+
+    class FakeResearchHandler:
+        def rename_owner(self, _old, _new):
+            owner_seen_by_active_hook.append(json.loads(report.read_text(encoding="utf-8"))["owner"])
+
+    asyncio.run(endpoint(
+        "alice",
+        SimpleNamespace(username="alice2"),
+        _request(tmp_path, research_handler=FakeResearchHandler()),
+    ))
+
+    assert owner_seen_by_active_hook == ["alice"]
+    assert json.loads(report.read_text(encoding="utf-8"))["owner"] == "alice2"
+
+
+# ---------------------------------------------------------------------------
+# 4. memory.json
 # ---------------------------------------------------------------------------
 
 def test_rename_updates_memory_json_owner(rename_endpoint):
@@ -266,7 +343,7 @@ def test_rename_no_memory_json_does_not_crash(rename_endpoint):
 
 
 # ---------------------------------------------------------------------------
-# 4. uploads.json
+# 5. uploads.json
 # ---------------------------------------------------------------------------
 
 def test_rename_updates_upload_metadata_owner(rename_endpoint):
@@ -315,7 +392,7 @@ def test_rename_updates_upload_metadata_owner(rename_endpoint):
 
 
 # ---------------------------------------------------------------------------
-# 5. Skills (SKILL.md frontmatter + _usage.json sidecar)
+# 6. Skills (SKILL.md frontmatter + _usage.json sidecar)
 # ---------------------------------------------------------------------------
 
 _SKILL_MD = """\
@@ -391,7 +468,7 @@ def test_rename_no_skills_dir_does_not_crash(rename_endpoint):
 
 
 # ---------------------------------------------------------------------------
-# 6. P1 regression: rejected auth rename must not mutate file-backed stores
+# 7. P1 regression: rejected auth rename must not mutate file-backed stores
 # ---------------------------------------------------------------------------
 
 def test_rejected_rename_does_not_mutate_files(monkeypatch, tmp_path):
