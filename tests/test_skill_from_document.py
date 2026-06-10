@@ -5,6 +5,11 @@ import pytest
 
 from services.memory.skill_from_document import (
     SkillImportError,
+    _clip_input,
+    _parse_distill_json,
+    bundle_from_distill,
+    extract_upload_to_text,
+=======
     _parse_distill_json,
     bundle_from_distill,
     extract_upload_to_text,
@@ -25,6 +30,16 @@ def _sample_skill_md():
     )
 
 
+def test_clip_input_rejects_empty():
+    with pytest.raises(SkillImportError, match="no readable text"):
+        _clip_input("   ")
+
+
+def test_clip_input_truncates_long_docs():
+    out = _clip_input("x" * 60_000)
+    assert len(out) <= 48_000 + 64
+    assert "truncated" in out
+=======
 def test_split_document_chunks_single():
     assert split_document_chunks("short doc") == ["short doc"]
 

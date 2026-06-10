@@ -13,12 +13,13 @@ from typing import List, Optional
 
 import httpx
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from services.memory.skills import SkillsManager
 from src.auth_helpers import get_current_user
 from core.middleware import require_admin
+from src.upload_limits import read_upload_limited
 
 logger = logging.getLogger(__name__)
 
@@ -1268,6 +1269,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         _fire_skill_added(user)
         return {"ok": True, "skill": entry, "files": len(files)}
 
+<<<<<<< ours
     @router.post("/upload")
     async def upload_skill(request: Request):
         require_admin(request)
@@ -1340,6 +1342,87 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
 
         else:
             raise HTTPException(400, "Unsupported file format. Please upload a .md or .zip file.")
+=======
+    @router.post("/import-bundle")
+    async def import_skill_bundle(request: Request, file: UploadFile = File(...)):
+        """Install a SKILL.md bundle from an uploaded ZIP (e.g. book-to-skill output)."""
+        require_admin(request)
+        user = _owner(request)
+        from services.memory.skill_importer import (
+            BUNDLE_ZIP_MAX_BYTES,
+            SkillImportError,
+            parse_skill_bundle_zip,
+        )
+
+        filename = (file.filename or "bundle.zip").strip()
+        if not filename.lower().endswith(".zip"):
+            raise HTTPException(400, "Upload a .zip file containing SKILL.md and text assets")
+
+        try:
+            data = await read_upload_limited(file, BUNDLE_ZIP_MAX_BYTES, "Skill bundle")
+            files = parse_skill_bundle_zip(data)
+            entry = skills_manager.import_bundle_from_files(
+                files,
+                owner=user,
+                source_url=f"upload:{filename}",
+            )
+        except SkillImportError as e:
+            raise HTTPException(400, str(e)) from e
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("skill bundle import failed: %s", e)
+            raise HTTPException(500, "Skill import failed") from e
+
+        _fire_skill_added(user)
+        return {"ok": True, "skill": entry, "files": len(files)}
+>>>>>>> theirs
+
+    @router.post("/import-from-document")
+    async def import_skill_from_document(request: Request, file: UploadFile = File(...)):
+        """Distill a PDF or text document into a SKILL.md bundle (book-to-skill style)."""
+        require_admin(request)
+        user = _owner(request)
+        from services.memory.skill_from_document import (
+            DOCUMENT_MAX_BYTES,
+            distill_document_to_bundle,
+            extract_upload_to_text,
+        )
+        from services.memory.skill_importer import SkillImportError
+        from src.endpoint_resolver import resolve_endpoint
+
+        filename = (file.filename or "document").strip()
+        try:
+            data = await read_upload_limited(file, DOCUMENT_MAX_BYTES, "Skill document")
+            text = extract_upload_to_text(data, filename)
+            url, model, headers = resolve_endpoint("utility", owner=user)
+            if not url or not model:
+                raise HTTPException(
+                    400,
+                    "No utility model configured. Set a utility model in Settings.",
+                )
+            files, _slug = await distill_document_to_bundle(
+                text,
+                url=url,
+                model=model,
+                headers=headers,
+                source_name=filename,
+            )
+            entry = skills_manager.import_bundle_from_files(
+                files,
+                owner=user,
+                source_url=f"document:{filename}",
+            )
+        except SkillImportError as e:
+            raise HTTPException(400, str(e)) from e
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("skill document import failed: %s", e)
+            raise HTTPException(500, "Skill import failed") from e
+
+        _fire_skill_added(user)
+        return {"ok": True, "skill": entry, "files": len(files)}
 
     @router.post("/add")
     async def add_skill(request: Request, body: SkillAddRequest):

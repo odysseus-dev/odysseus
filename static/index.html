@@ -317,8 +317,8 @@
             <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
               <h2 style="margin:0;padding:0;line-height:1;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Add Skill</h2>
             </div>
-            <p class="memory-desc doclib-desc" style="margin-top:6px;">Import a skill from GitHub or <a href="https://skills.sh" target="_blank" rel="noopener noreferrer">skills.sh</a> (folder with <code>SKILL.md</code> and optional templates).</p>
-            <div class="memory-add-row" style="margin-top:6px;margin-bottom:10px;">
+            <p class="memory-desc doclib-desc" style="margin-top:6px;">Import a skill from GitHub or <a href="https://skills.sh" target="_blank" rel="noopener noreferrer">skills.sh</a>, upload a ZIP from <a href="https://github.com/virgiliojr94/book-to-skill" target="_blank" rel="noopener noreferrer">book-to-skill</a>, or distill a <code>PDF</code>/<code>.md</code> directly into a skill (uses your utility model).</p>
+            <div class="memory-add-row" style="margin-top:6px;margin-bottom:6px;">
               <div class="skill-ph-wrap" style="flex:1;min-width:0;">
                 <input type="url" id="skill-import-url" placeholder=" " class="memory-add-input skill-hint-input" aria-label="Skill import URL" />
                 <span class="skill-rich-ph"><span class="k">Import URL</span> — e.g. GitHub tree link to a skill folder</span>
@@ -326,6 +326,16 @@
               <button type="button" id="skill-import-url-btn" class="theme-io-btn" title="Import skill from URL" style="flex:none;height:28px;font-size:12px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Import</button>
               <button type="button" id="skill-upload-btn" class="theme-io-btn" title="Upload local skill file (.md or .zip)" style="flex:none;height:28px;font-size:12px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>Upload</button>
               <input type="file" id="skill-upload-file" accept=".md,.zip" hidden />
+            </div>
+            <div class="memory-add-row" style="margin-bottom:6px;">
+              <p class="memory-desc doclib-desc" style="margin:0;flex:1;min-width:0;">ZIP bundle with <code>SKILL.md</code> plus <code>chapters/</code>, <code>glossary.md</code>, etc.</p>
+              <button type="button" id="skill-import-bundle-btn" class="theme-io-btn" title="Import skill bundle ZIP" style="flex:none;height:28px;font-size:12px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Import ZIP</button>
+              <input type="file" id="skill-import-bundle-file" accept=".zip,application/zip" hidden />
+            </div>
+            <div class="memory-add-row" style="margin-bottom:10px;">
+              <p class="memory-desc doclib-desc" style="margin:0;flex:1;min-width:0;">PDF or markdown — distilled into <code>SKILL.md</code> + reference files.</p>
+              <button type="button" id="skill-import-document-btn" class="theme-io-btn" title="Import PDF or document as skill" style="flex:none;height:28px;font-size:12px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Import PDF</button>
+              <input type="file" id="skill-import-document-file" accept=".pdf,.md,.txt,.markdown,.epub,.docx,application/pdf" hidden />
             </div>
             <p class="memory-desc doclib-desc" style="margin-top:0;">Or create a skill by hand — title, what it solves, and an approach.</p>
             <div class="skill-ph-wrap" style="margin-top:4px;margin-bottom:6px;">

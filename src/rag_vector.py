@@ -198,24 +198,20 @@ class VectorRAG:
         if not valid:
             return {"success": False, "message": "No valid documents"}
 
-        added_ids = set()
-        attempted_new = False
-        write_failed = False
-        for lane in self._lanes:
+        try:
+            # Generate all IDs upfront, then fetch in one batch query
             all_ids = [_generate_doc_id(t, m.get("owner") or "") for t, m in valid]
-            try:
-                existing = lane.collection.get(ids=all_ids)
-                existing_ids = set(existing.get("ids") or [])
-            except Exception:
-                existing_ids = set()
-
+            existing_result = self._collection.get(ids=all_ids)
+            existing_ids = set(existing_result["ids"])
+            
+            # Get existing IDs to avoid duplicates
             new_texts = []
             new_metas = []
             new_ids = []
-            for (text, meta), doc_id in zip(valid, all_ids):
+            for doc_id, (t, m) in zip(all_ids, valid):
                 if doc_id not in existing_ids:
-                    new_texts.append(text)
-                    new_metas.append(meta)
+                    new_texts.append(t)
+                    new_metas.append(m)
                     new_ids.append(doc_id)
 
             if new_texts:

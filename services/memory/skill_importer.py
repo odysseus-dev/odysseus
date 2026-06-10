@@ -1,9 +1,11 @@
-"""Import SKILL.md bundles from public GitHub (or skills.sh → GitHub) URLs."""
+"""Import SKILL.md bundles from GitHub URLs, skills.sh, or uploaded ZIP archives."""
 from __future__ import annotations
 
+import io
 import logging
 import os
 import re
+import zipfile
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import quote, urlparse
@@ -17,6 +19,8 @@ logger = logging.getLogger(__name__)
 MAX_FILES = 64
 MAX_TOTAL_BYTES = 2_000_000
 MAX_FILE_BYTES = 400_000
+BUNDLE_ZIP_MAX_BYTES = 8 * 1024 * 1024
+_ZIP_SKIP_PREFIXES = ("__MACOSX/", ".")
 ALLOWED_SUFFIXES = (
     ".md", ".txt", ".json", ".yaml", ".yml", ".py", ".sh", ".toml",
     ".js", ".ts", ".css", ".html", ".xml", ".csv",
@@ -277,6 +281,78 @@ def pick_skill_md(files: Dict[str, str]) -> Tuple[str, str]:
         if rel.lower().endswith("skill.md"):
             return rel, content
     raise SkillImportError("bundle has no SKILL.md")
+
+
+def _strip_bundle_root(files: Dict[str, str]) -> Dict[str, str]:
+    """If every file lives under one folder (e.g. book-to-skill output), strip it."""
+    safe = {_safe_relpath(k): v for k, v in files.items()}
+    skill_paths = sorted(
+        [p for p in safe if p.lower().endswith("skill.md")],
+        key=lambda p: p.count("/"),
+    )
+    if not skill_paths:
+        return safe
+    skill_rel = skill_paths[0]
+    if "/" not in skill_rel:
+        return safe
+    prefix = skill_rel.rsplit("/", 1)[0] + "/"
+    if all(p.startswith(prefix) for p in safe):
+        return {_safe_relpath(p[len(prefix):]): v for p, v in safe.items()}
+    return safe
+
+
+def _zip_entry_allowed(name: str) -> bool:
+    norm = (name or "").replace("\\", "/").strip()
+    if not norm or norm.endswith("/"):
+        return False
+    if any(norm.startswith(p) for p in _ZIP_SKIP_PREFIXES):
+        return False
+    if "/." in f"/{norm}/":
+        return False
+    base = os.path.basename(norm)
+    if not base or base.startswith("."):
+        return False
+    return _is_text_file(base)
+
+
+def parse_skill_bundle_zip(data: bytes) -> Dict[str, str]:
+    """Extract a text skill bundle from a ZIP (e.g. book-to-skill output)."""
+    if not data:
+        raise SkillImportError("empty upload")
+    files: Dict[str, str] = {}
+    total = 0
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            entries = [i for i in zf.infolist() if not i.is_dir()]
+            if len(entries) > MAX_FILES:
+                raise SkillImportError(f"bundle has too many files (max {MAX_FILES})")
+            for info in entries:
+                name = info.filename.replace("\\", "/")
+                if not _zip_entry_allowed(name):
+                    continue
+                if info.file_size > MAX_FILE_BYTES:
+                    raise SkillImportError(f"file too large: {name}")
+                raw = zf.read(info)
+                if len(raw) > MAX_FILE_BYTES:
+                    raise SkillImportError(f"file too large: {name}")
+                total += len(raw)
+                if total > MAX_TOTAL_BYTES:
+                    raise SkillImportError("skill bundle exceeds size limit")
+                try:
+                    text = raw.decode("utf-8")
+                except UnicodeDecodeError as e:
+                    raise SkillImportError(f"non-text file: {name}") from e
+                rel = _safe_relpath(name)
+                files[rel] = text
+                if len(files) >= MAX_FILES:
+                    break
+    except zipfile.BadZipFile as e:
+        raise SkillImportError("invalid ZIP file") from e
+
+    files = _strip_bundle_root(files)
+    if not any(p.lower().endswith("skill.md") for p in files):
+        raise SkillImportError("bundle has no SKILL.md")
+    return files
 
 
 def default_category_from_source(src: ResolvedSource) -> str:
