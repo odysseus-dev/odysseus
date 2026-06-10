@@ -946,16 +946,21 @@ async def _startup_event():
     async def _warmup_endpoints():
         try:
             import httpx
-            endpoints = model_discovery.get_endpoints() if model_discovery else []
-            for ep in endpoints[:5]:
-                url = ep.get("url", "").replace("/chat/completions", "/models")
-                if url:
-                    try:
-                        async with httpx.AsyncClient(timeout=5.0) as client:
-                            await client.get(url)
-                        logger.info(f"Warmup ping OK: {url}")
-                    except Exception as e:
-                        logger.debug(f"Warmup ping failed for endpoint: {e}")
+            # model_discovery has no get_endpoints(); that call raised
+            # AttributeError every run and silently disabled warmup/keepalive.
+            # Resolve the /models probe URLs via the real discovery API, off the
+            # event loop since discovery does a blocking port scan.
+            urls = (
+                await asyncio.to_thread(model_discovery.warmup_ping_urls)
+                if model_discovery else []
+            )
+            for url in urls:
+                try:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        await client.get(url)
+                    logger.info(f"Warmup ping OK: {url}")
+                except Exception as e:
+                    logger.debug(f"Warmup ping failed for endpoint: {e}")
         except Exception as e:
             logger.debug(f"Warmup ping skipped: {e}")
 
