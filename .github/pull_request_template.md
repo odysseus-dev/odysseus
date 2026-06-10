@@ -55,3 +55,7 @@ Fixes #
 ### Screenshots / clips
 
 <!-- Drag and drop images or a screen recording here. Required for any UI/visual change. -->
+
+## Model Used
+
+<!-- Which AI model(s) assisted this change, and how? Provider + model ID + how it was used. If no AI, write None. -->

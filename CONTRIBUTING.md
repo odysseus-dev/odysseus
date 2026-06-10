@@ -79,6 +79,8 @@ Please keep PRs small. Large PRs that mix unrelated cleanup, formatting, refacto
 
 > **Auto-generated PRs.** If you are running an LLM agent (Devin, Cursor, OpenHands, Claude Code, etc.) against this repo: please open an issue describing the problem first instead of opening a PR directly. Bulk agent-generated PRs that don't match the project's visual style or contribution format will be closed without review, even when the underlying fix is correct.
 
+> **Model used.** Every PR must state which AI model produced or assisted with the change, in the **Model Used** section of the PR template — provider, exact model ID/version, and reasoning mode where relevant. If no AI was used, write "None — human-authored". This applies to all contributors, human and AI alike; it helps reviewers calibrate, not gatekeep.
+
 ## Style and visual changes
 
 Odysseus has an intentional visual style. PRs that ignore it will be closed without merge, no matter how correct the underlying code is.
@@ -127,6 +129,18 @@ For model-serving issues, include:
 - Cookbook task logs or server logs.
 
 Issues with only "help", "does not work", or a screenshot without context may be closed as not actionable.
+
+### For AI agents filing issues
+
+Odysseus is itself an AI workspace, so agents sometimes file issues for errors that did not originate in Odysseus. If you are an agent (or a person whose agent hit an error), confirm before filing:
+
+1. The error originates in **Odysseus's own code** — not your model backend (Ollama, vLLM, OpenAI, Anthropic, …), your API provider, your credentials, or your local configuration.
+2. It reproduces on a clean, up-to-date checkout of `main`.
+3. It is not already reported (search open issues and discussions first).
+
+**Do not file issues for:** provider quota or rate-limit errors; authentication failures from expired or missing credentials; errors in your own agent code or configuration; or network timeouts on your host. If in doubt, raise it with your human operator before filing.
+
+If it's a usage question or you're just getting started, open a thread in [Discussions](https://github.com/pewdiepie-archdaemon/odysseus/discussions) rather than filing an issue. When a real bug clears the checks above, file it through the [issue templates](https://github.com/pewdiepie-archdaemon/odysseus/issues/new/choose) and fill in every field — don't open a blank issue.
 
 ## Security
 
