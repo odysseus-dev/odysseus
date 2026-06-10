@@ -271,7 +271,7 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   │   ├── filesystem_tools.py
     │   │   ├── subprocess_tools.py
     │   │   └── web_tools.py
-    │   ├── agent_tools.py
+    │   ├── tool_execution.py
     │   ├── ai_interaction.py
     │   ├── api_key_manager.py
     │   ├── app_helpers.py
@@ -1148,15 +1148,16 @@ graph TD
 ```
 
 ### Directory Structure & Module Families
+- **[`package.json`](../static/js/package.json)** & **[`static/js/MODULE_SUMMARY.md`](../static/js/MODULE_SUMMARY.md)**: Metadata, scripts, and summary of the frontend JS ecosystem.
 - **[`static/index.html`](../static/index.html)**: The main entry point. It defines the layout and loads all scripts.
 - **[`static/app.js`](../static/app.js) & [`static/js/init.js`](../static/js/init.js)**: The main orchestrator. Eagerly binds global event listeners (drag and drop, shortcuts) and bootstraps state.
-- **Core Wiring**: [`storage.js`](../static/js/storage.js) provides wrappers for LocalStorage persistence.
+- **Core Wiring**: [`storage.js`](../static/js/storage.js) provides wrappers for LocalStorage persistence, while [`platform.js`](../static/js/platform.js) handles OS and browser detection.
 - **Chat Engine ([`chat.js`](../static/js/chat.js), [`chatStream.js`](../static/js/chatStream.js), [`chatRenderer.js`](../static/js/chatRenderer.js))**: The largest monolith. Directs UI transitions, manages chat session logic, submission, and SSE streaming. [`chat.js`](../static/js/chat.js) has a watchdog to detect stalled streams. Rendering output and markdown logic is handled via [`chatRenderer.js`](../static/js/chatRenderer.js), [`streamingRenderer.js`](../static/js/streamingRenderer.js), and [`streamingSegmenter.js`](../static/js/streamingSegmenter.js).
 - **Editors & Visuals ([`document.js`](../static/js/document.js), [`editor/`](../static/js/editor/), [`gallery.js`](../static/js/gallery.js))**: A multi-tab markdown/HTML editor with AI integration. [`document.js`](../static/js/document.js) manages state and SSE sync. [`gallery.js`](../static/js/gallery.js) handles image assets and grids. [`editor/`](../static/js/editor/) contains specialized tools for masking and layout.
 - **Session & Memory ([`sessions.js`](../static/js/sessions.js), [`memory.js`](../static/js/memory.js))**: Manages CRUD for chat sessions and user vector memory.
 - **Sub-Apps**: Major integrations are separated completely, e.g., [`emailLibrary.js`](../static/js/emailLibrary.js) (IMAP client UI), [`calendar.js`](../static/js/calendar.js) (CalDAV sync rendering), [`tasks.js`](../static/js/tasks.js), and [`notes.js`](../static/js/notes.js).
 - **Cookbook (Hardware Management)**: The `cookbook*.js` modules execute complex, multi-step tasks across SSE streams, including diagnosis, hardware fitting, and download signaling.
-- **Component Specifics**: Modular features like UI helpers ([`ui.js`](../static/js/ui.js)), keyboard shortcuts, file handlers, voice recorders, and theming.
+- **Component Specifics**: Modular features like UI helpers ([`ui.js`](../static/js/ui.js)), keyboard shortcuts ([`keyboard-shortcuts.js`](../static/js/keyboard-shortcuts.js)), file handlers ([`fileHandler.js`](../static/js/fileHandler.js)), voice recorders, markdown processing ([`markdown.js`](../static/js/markdown.js)), drag sorting ([`dragSort.js`](../static/js/dragSort.js)), assistant logic ([`assistant.js`](../static/js/assistant.js)), loading indicators ([`spinner.js`](../static/js/spinner.js)), and theming/color utilities ([`theme.js`](../static/js/theme.js), [`color/hex.js`](../static/js/color/hex.js), [`util/ordinal.js`](../static/js/util/ordinal.js)). Other UI and feature modules include [`composerArrowUpRecall.js`](../static/js/composerArrowUpRecall.js), [`emojiShortcodes.js`](../static/js/emojiShortcodes.js), [`group.js`](../static/js/group.js), [`langIcons.js`](../static/js/langIcons.js), [`modelPicker.js`](../static/js/modelPicker.js), [`models.js`](../static/js/models.js), [`modelSort.js`](../static/js/modelSort.js), [`model/matchKey.js`](../static/js/model/matchKey.js), [`presets.js`](../static/js/presets.js), [`providerDeviceFlow.js`](../static/js/providerDeviceFlow.js), [`providers.js`](../static/js/providers.js), [`rag.js`](../static/js/rag.js), [`researchSynapse.js`](../static/js/researchSynapse.js), [`section-management.js`](../static/js/section-management.js), [`settings.js`](../static/js/settings.js), [`signature.js`](../static/js/signature.js), [`skills.js`](../static/js/skills.js), [`tourAutoplay.js`](../static/js/tourAutoplay.js), and [`tourHints.js`](../static/js/tourHints.js).
 
 ### Communication Pattern
 The frontend communicates with the backend primarily through standard REST APIs. However, for chat generation and long-running tasks, it heavily relies on **Server-Sent Events (SSE)**.
@@ -1249,7 +1250,7 @@ graph TD
 ```
 
 ### Components
-- **Frontend State ([`static/js/compare/`](../static/js/compare/))**: Comprises numerous modular files handling the dual UI ([`panes.js`](../static/js/compare/panes.js)), tracking connection health ([`probe.js`](../static/js/compare/probe.js)), and managing the synchronized SSE streams for both models ([`stream.js`](../static/js/compare/stream.js)). The models' identities remain obfuscated until a winner is declared ([`vote.js`](../static/js/compare/vote.js)).
+- **Frontend State ([`static/js/compare/`](../static/js/compare/))**: Comprises numerous modular files handling the dual UI ([`panes.js`](../static/js/compare/panes.js)), tracking connection health ([`probe.js`](../static/js/compare/probe.js)), and managing the synchronized SSE streams for both models ([`stream.js`](../static/js/compare/stream.js)). The models' identities remain obfuscated until a winner is declared ([`vote.js`](../static/js/compare/vote.js)). Additional components include [`icons.js`](../static/js/compare/icons.js), [`index.js`](../static/js/compare/index.js), [`models.js`](../static/js/compare/models.js), [`scoreboard.js`](../static/js/compare/scoreboard.js), [`selector.js`](../static/js/compare/selector.js), and [`state.js`](../static/js/compare/state.js).
 - **Backend Routing ([`routes/compare_routes.py`](../routes/compare_routes.py))**: Manages the API surface area for starting a comparison, validating model access, handling vote submission, and managing the `RecordVoteRequest` schema to compile metrics over time.
 
 ---
@@ -1278,10 +1279,10 @@ graph TD
 ```
 
 ### Components
-- **Core Canvas Logic ([`static/js/editor/`](../static/js/editor/))**: Managed by [`state.js`](../static/js/editor/state.js), with interactions translated through [`canvas-coords.js`](../static/js/editor/canvas-coords.js) and [`canvas-events.js`](../static/js/editor/canvas-events.js) to account for zooming and panning across the viewport. Additional state and rendering constraints are mapped via [`canvas-transforms.js`](../static/js/editor/canvas-transforms.js), [`checkerboard.js`](../static/js/editor/checkerboard.js), and [`snap.js`](../static/js/editor/snap.js).
-- **Tools & Effects**: Standard editing tools (move, crop, flood-fill, lasso-mask, stroke) live in the [`tools/`](../static/js/editor/tools/) directory, while non-destructive overlays and visual filters reside in [`fx/`](../static/js/editor/fx/) and [`filters/`](../static/js/editor/filters/). Specialized operations like [`harmonize-masks.js`](../static/js/editor/harmonize-masks.js), [`clipboard-and-drop.js`](../static/js/editor/clipboard-and-drop.js), and [`stroke-pipeline.js`](../static/js/editor/stroke-pipeline.js) support advanced composite workflows.
-- **UI & Layout Controllers**: The editor interface is heavily modularized with floating panels, toolbars, and dynamic controls wrapped in the `wire-*.js` files (e.g., [`wire-topbar.js`](../static/js/editor/wire-topbar.js), [`wire-selection-controls.js`](../static/js/editor/wire-selection-controls.js)), driving components like the [`history-panel.js`](../static/js/editor/history-panel.js) and specialized slider UX [`slider-ux.js`](../static/js/editor/slider-ux.js).
-- **AI Integrations**: Specific files like [`ai-inpaint.js`](../static/js/editor/ai-inpaint.js), [`ai-rembg.js`](../static/js/editor/ai-rembg.js), and [`ai-models.js`](../static/js/editor/ai-models.js) hook into the active canvas state to generate masks ([`mask-utils.js`](../static/js/editor/mask-utils.js)), transmit them to the backend, and apply the returned images onto new, non-destructive canvas layers ([`layer-helpers.js`](../static/js/editor/layer-helpers.js)). The actual tool API orchestration goes through [`ai-tool-runner.js`](../static/js/editor/ai-tool-runner.js).
+- **Core Canvas Logic ([`static/js/editor/`](../static/js/editor/))**: Managed by [`state.js`](../static/js/editor/state.js), with interactions translated through [`canvas-coords.js`](../static/js/editor/canvas-coords.js) and [`canvas-events.js`](../static/js/editor/canvas-events.js) to account for zooming and panning across the viewport. Additional state and rendering constraints are mapped via [`canvas-transforms.js`](../static/js/editor/canvas-transforms.js), [`checkerboard.js`](../static/js/editor/checkerboard.js), and [`snap.js`](../static/js/editor/snap.js). Shortcuts are managed via [`keyboard-shortcuts.js`](../static/js/editor/keyboard-shortcuts.js).
+- **Tools & Effects**: Standard editing tools ([`tools/crop.js`](../static/js/editor/tools/crop.js), [`tools/flood-fill.js`](../static/js/editor/tools/flood-fill.js), [`tools/lasso-mask.js`](../static/js/editor/tools/lasso-mask.js), [`tools/lasso.js`](../static/js/editor/tools/lasso.js), [`tools/move.js`](../static/js/editor/tools/move.js), [`tools/stroke.js`](../static/js/editor/tools/stroke.js), [`tools/wand.js`](../static/js/editor/tools/wand.js), transform scripts like [`tools/transform-drag.js`](../static/js/editor/tools/transform-drag.js) / [`tools/transform-handles.js`](../static/js/editor/tools/transform-handles.js) / [`tools/transform-session.js`](../static/js/editor/tools/transform-session.js), and [`tools/clone.js`](../static/js/editor/tools/clone.js)) live in the [`tools/`](../static/js/editor/tools/) directory. Non-destructive overlays and visual filters reside in [`fx/`](../static/js/editor/fx/) (e.g., [`fx/adj-popup.js`](../static/js/editor/fx/adj-popup.js), [`fx/filter-string.js`](../static/js/editor/fx/filter-string.js), [`fx/histogram.js`](../static/js/editor/fx/histogram.js), [`fx/pixel-pass.js`](../static/js/editor/fx/pixel-pass.js)) and [`filters/`](../static/js/editor/filters/) (e.g., [`filters/blur.js`](../static/js/editor/filters/blur.js), [`filters/edge-feather.js`](../static/js/editor/filters/edge-feather.js)). Specialized operations like [`harmonize-masks.js`](../static/js/editor/harmonize-masks.js), [`composite-helpers.js`](../static/js/editor/composite-helpers.js), [`clipboard-and-drop.js`](../static/js/editor/clipboard-and-drop.js), and [`stroke-pipeline.js`](../static/js/editor/stroke-pipeline.js) support advanced composite workflows.
+- **UI & Layout Controllers**: The editor interface is heavily modularized with floating panels, toolbars, and dynamic controls wrapped in the `wire-*.js` and `build/` files (e.g., [`wire-topbar.js`](../static/js/editor/wire-topbar.js), [`wire-topbar-menus.js`](../static/js/editor/wire-topbar-menus.js), [`wire-topbar-overflow.js`](../static/js/editor/wire-topbar-overflow.js), [`wire-selection-controls.js`](../static/js/editor/wire-selection-controls.js), [`wire-inpaint-controls.js`](../static/js/editor/wire-inpaint-controls.js), [`wire-import.js`](../static/js/editor/wire-import.js), [`wire-merge-buttons.js`](../static/js/editor/wire-merge-buttons.js), [`build/controls.js`](../static/js/editor/build/controls.js), [`build/popups.js`](../static/js/editor/build/popups.js), [`build/right-panel.js`](../static/js/editor/build/right-panel.js), [`build/toolbar.js`](../static/js/editor/build/toolbar.js), [`build/topbar.js`](../static/js/editor/build/topbar.js), [`build/transform-popup.js`](../static/js/editor/build/transform-popup.js)), driving components like the [`history-panel.js`](../static/js/editor/history-panel.js), [`layer-panel.js`](../static/js/editor/layer-panel.js), [`shortcuts-popover.js`](../static/js/editor/shortcuts-popover.js), [`stroke-tool-sliders.js`](../static/js/editor/stroke-tool-sliders.js), and specialized slider UX [`slider-ux.js`](../static/js/editor/slider-ux.js).
+- **AI Integrations**: Specific files like [`ai-inpaint.js`](../static/js/editor/ai-inpaint.js), [`ai-rembg.js`](../static/js/editor/ai-rembg.js), [`ai-tools-misc.js`](../static/js/editor/ai-tools-misc.js), and [`ai-models.js`](../static/js/editor/ai-models.js) hook into the active canvas state to generate masks ([`mask-utils.js`](../static/js/editor/mask-utils.js)), transmit them to the backend, and apply the returned images onto new, non-destructive canvas layers ([`layer-helpers.js`](../static/js/editor/layer-helpers.js)). The actual tool API orchestration goes through [`ai-tool-runner.js`](../static/js/editor/ai-tool-runner.js).
 
 
 
@@ -1312,7 +1313,7 @@ graph LR
 - **[`core/models.py`](../core/models.py)**: SQLAlchemy declarative base models. It defines the schema for `ChatMessage`, `Session`, `Document`, `EmailAccount`, `McpServer`, etc.
 - **[`core/database.py`](../core/database.py)**: Manages the SQLite connection pool, SQLAlchemy engine, and encrypted text types.
 - **[`core/session_manager.py`](../core/session_manager.py)**: Handles transactional logic for session states and chat history persistence.
-- **[`src/`](../src/)**: The core logic engine. Contains the agent loop ([`agent_loop.py`](../src/agent_loop.py)), tool execution logic ([`agent_tools.py`](../src/agent_tools.py)), LLM interactions ([`llm_core.py`](../src/llm_core.py)), and more.
+- **[`src/`](../src/)**: The core logic engine. Contains the agent loop ([`agent_loop.py`](../src/agent_loop.py)), tool execution logic ([`tool_execution.py`](../src/tool_execution.py)), LLM interactions ([`llm_core.py`](../src/llm_core.py)), and more.
 - **[`routes/`](../routes/)**: FastAPI router definitions, separated by feature (e.g., [`chat_routes.py`](../routes/chat_routes.py), [`document_routes.py`](../routes/document_routes.py), [`memory_routes.py`](../routes/memory_routes.py)).
 - **[`services/`](../services/)**: Sub-services for specialized tasks like hardware fitness scoring ([`hwfit/`](../services/hwfit/)), search integrations, TTS/STT, etc.
 
@@ -1328,9 +1329,10 @@ graph LR
 Odysseus isolates the API surface area from business logic through a highly modular router design. Instead of a monolithic routing file, the application features over 40 distinct route controllers in the [`routes/`](../routes/) directory.
 
 ### Routing Organization
+- **[`routes/__init__.py`](../routes/__init__.py)**: Initialization for the routes package.
 - **[`app.py`](../app.py) Mounting:** The primary FastAPI application imports and mounts these routers using `include_router`.
 - **Feature Encapsulation:** Endpoints are strictly scoped to their domain. For instance, [`document_routes.py`](../routes/document_routes.py) manages all `GET/POST /api/documents` operations, while [`chat_routes.py`](../routes/chat_routes.py) handles generation and SSE streams.
-- **Helper Extraction:** Complex or reusable logic inside a router is often extracted to a companion file (e.g., [`chat_helpers.py`](../src/chat_helpers.py), [`document_helpers.py`](../routes/document_helpers.py), [`cookbook_helpers.py`](../routes/cookbook_helpers.py)).
+- **Helper Extraction:** Complex or reusable logic inside a router is often extracted to a companion file (e.g., [`chat_helpers.py`](../routes/chat_helpers.py), [`document_helpers.py`](../routes/document_helpers.py), [`cookbook_helpers.py`](../routes/cookbook_helpers.py)).
 - **Security Scope:** Middleware ensures that endpoints are protected based on user roles. Most routers perform their own checks against `get_current_user` to restrict data access to the session owner. Certain administrative routes ([`api_token_routes.py`](../routes/api_token_routes.py), [`webhook_routes.py`](../routes/webhook_routes.py)) mandate a higher privilege level via `require_admin`.
 
 - **Specialized Routers**:
@@ -1363,11 +1365,14 @@ graph TD
 ```
 
 ### Components
+- **[`core/__init__.py`](../core/__init__.py)**: Initialization file for the core package.
 - **Session Management ([`core/session_manager.py`](../core/session_manager.py))**: A centralized state machine holding in-memory references to user chat sessions and synchronizing them with SQLite. This module guarantees the transaction lifecycle, archiving inactive chats, tracking history, and purging deleted threads gracefully.
 - **Authentication ([`core/auth.py`](../core/auth.py))**: Provides security logic for the web application and external integrations. It handles Bearer tokens for API integrations and user TOTP secrets.
 - **Security Middleware ([`core/middleware.py`](../core/middleware.py))**: Intercepts all incoming requests to inject critical headers. It applies the `SecurityHeadersMiddleware`, enforcing the Content Security Policy (CSP), mitigating clickjacking by preventing framing (except on specific routes like the PDF previewer), and ensuring cross-origin isolation and loopback agent security.
 - **Atomic IO ([`core/atomic_io.py`](../core/atomic_io.py))**: Provides safe file-writing operations using temporary files and atomic renames. This ensures that a sudden power loss or application crash during a save operation (e.g., updating a [`user_prefs.json`](../data/user_prefs.json)) does not result in a corrupted, zero-byte file.
 - **Platform Compatibility ([`core/platform_compat.py`](../core/platform_compat.py))**: Normalizes differences between Windows, macOS, and Linux. This includes abstracting file path creation, permission handling (which differs vastly between POSIX and NTFS), and process signal management.
+- **Constants ([`core/constants.py`](../core/constants.py))**: Re-exports constants.
+- **Exceptions ([`core/exceptions.py`](../core/exceptions.py))**: Defines custom exceptions for core logic.
 
 ---
 
@@ -1409,11 +1414,30 @@ graph TD
 ```
 
 ### Components
-- **Hardware Fitness ([`services/hwfit/`](../services/hwfit/))**: Profiles the host machine dynamically. It uses utilities like `nvidia-smi` (via Python wrappers) or macOS `sysctl` to estimate available VRAM and system memory, which is then communicated to the frontend so it can warn users before downloading models that are too large.
-- **AI Services (Faces) ([`services/faces/`](../services/faces/))**: A standalone worker and service module responsible for face detection and embedding services. It helps aggregate model personas ("faces") and exposes them to the frontend, allowing for rich, avatar-driven interactions in the UI (e.g., in [`modelPicker.js`](../static/js/modelPicker.js)).
-- **Shell Executor ([`services/shell/`](../services/shell/))**: Provides controlled subprocess execution capabilities complete with streaming outputs and rigid execution timeouts. Used to implement the "bash" native tool.
-- **Speech Processing ([`services/stt/`](../services/stt/) & [`services/tts/`](../services/tts/))**: Wraps speech-to-text (Whisper/Browser API) and text-to-speech (Kokoro-82M on GPU/API endpoints). Integrates transparent fallback if models fail to load or aren't installed locally.
-- **YouTube Handler ([`services/youtube/`](../services/youtube/))**: Employs `youtube_transcript_api` and `yt-dlp` to asynchronously pull video transcripts and high-voted comments for deep content context injection into the LLM.
+- **[`services/__init__.py`](../services/__init__.py)**: Root package initialization.
+- **Hardware Fitness ([`services/hwfit/`](../services/hwfit/))**: Profiles the host machine dynamically.
+  - **[`services/hwfit/__init__.py`](../services/hwfit/__init__.py)**: Package init.
+  - **[`services/hwfit/models.py`](../services/hwfit/models.py)**, **[`services/hwfit/image_models.py`](../services/hwfit/image_models.py)**: Define hardware fit models and sizing logic.
+  - **[`services/hwfit/profiles.py`](../services/hwfit/profiles.py)**: Stores sizing heuristics.
+  - **[`services/hwfit/data/hf_models.json`](../services/hwfit/data/hf_models.json)**: Model repository index.
+- **Document Services ([`services/docs/__init__.py`](../services/docs/__init__.py))**: Core logic for internal document service management.
+- **AI Services (Faces) ([`services/faces/`](../services/faces/))**:
+  - **[`services/faces/__init__.py`](../services/faces/__init__.py)**: Init file.
+- **Memory Services ([`services/memory/`](../services/memory/))**:
+  - **[`services/memory/__init__.py`](../services/memory/__init__.py)**: Init file.
+  - **[`services/memory/memory.py`](../services/memory/memory.py)**, **[`services/memory/memory_vector.py`](../services/memory/memory_vector.py)**, **[`services/memory/service.py`](../services/memory/service.py)**: Logic for vector storage and semantic extraction.
+- **Research Services ([`services/research/`](../services/research/))**:
+  - **[`services/research/__init__.py`](../services/research/__init__.py)**, **[`services/research/research_handler.py`](../services/research/research_handler.py)**, **[`services/research/service.py`](../services/research/service.py)**: Background worker scripts managing deep research logic.
+- **Search Services ([`services/search/`](../services/search/))**:
+  - **[`services/search/__init__.py`](../services/search/__init__.py)**: Init file.
+  - **[`services/search/analytics.py`](../services/search/analytics.py)**, **[`services/search/cache.py`](../services/search/cache.py)**, **[`services/search/content.py`](../services/search/content.py)**, **[`services/search/core.py`](../services/search/core.py)**, **[`services/search/providers.py`](../services/search/providers.py)**, **[`services/search/query.py`](../services/search/query.py)**, **[`services/search/ranking.py`](../services/search/ranking.py)**, **[`services/search/service.py`](../services/search/service.py)**: The underlying engine executing searches, caching results, and ranking the most relevant output snippets.
+- **Shell Executor ([`services/shell/`](../services/shell/))**:
+  - **[`services/shell/__init__.py`](../services/shell/__init__.py)**, **[`services/shell/service.py`](../services/shell/service.py)**: Provides controlled subprocess execution capabilities.
+- **Speech Processing ([`services/stt/`](../services/stt/) & [`services/tts/`](../services/tts/))**:
+  - **[`services/stt/__init__.py`](../services/stt/__init__.py)**, **[`services/stt/stt_service.py`](../services/stt/stt_service.py)**: Speech-to-text integration.
+  - **[`services/tts/__init__.py`](../services/tts/__init__.py)**, **[`services/tts/tts_service.py`](../services/tts/tts_service.py)**: Text-to-speech engine.
+- **YouTube Handler ([`services/youtube/`](../services/youtube/))**:
+  - **[`services/youtube/__init__.py`](../services/youtube/__init__.py)**, **[`services/youtube/youtube_handler.py`](../services/youtube/youtube_handler.py)**: Employs `youtube_transcript_api` and `yt-dlp` to asynchronously pull video transcripts.
 
 ---
 
@@ -1478,7 +1502,7 @@ graph TD
     RAG --> Loop[Agent Loop src/agent_loop.py]
     Loop --> Index[ToolIndex: Semantic Tool Matching]
     Index --> LLM[LLM Generation]
-    LLM --> |Tool Call Intercept| Dispatch[Tool Dispatch src/agent_tools.py]
+    LLM --> |Tool Call Intercept| Dispatch[Tool Dispatch src/tool_execution.py]
     Dispatch --> MCP[MCP Servers / Native Tools]
     MCP --> |Tool Response| Loop
     LLM --> |Final Answer| Output[Client]
@@ -1490,7 +1514,7 @@ graph TD
    - Odysseus uses a `ToolIndex` ([`src/tool_index.py`](../src/tool_index.py)) to semantically match available tools to the user's query. This prevents overwhelming the LLM prompt with hundreds of tool schemas.
    - If RAG fails or is skipped, it falls back to a keyword-based heuristic.
 3. **Execution Round:** The model generates a response. If the response contains tool calls (e.g., "search the web", "read a file"), the loop intercepts it.
-4. **Tool Dispatch:** The backend maps the tool call to Python functions (defined in [`src/tool_implementations.py`](../src/tool_implementations.py) and mapped via [`src/agent_tools.py`](../src/agent_tools.py)) or MCP counterparts.
+4. **Tool Dispatch:** The backend maps the tool call to Python functions (defined in [`src/tool_implementations.py`](../src/tool_implementations.py) and mapped via [`src/tool_execution.py`](../src/tool_execution.py)) or MCP counterparts.
 5. **Re-injection:** The results of the tool execution are appended to the conversation history as a "tool response" message.
 6. **Recursion:** The loop iterates, sending the updated history back to the model until the model provides a final answer or hits a maximum round limit.
 
@@ -1536,6 +1560,7 @@ graph TD
 ### Components
 - **[`chat_handler.py`](../src/chat_handler.py):** Parses incoming chat requests, manages attachment validations, coerces sessions, and sets up the async streams.
 - **[`chat_processor.py`](../src/chat_processor.py):** Applies NLP tasks. It checks for stopwords, extracts URLs directly via regex for immediate search querying, and handles security logic (like `UNTRUSTED_CONTEXT_POLICY`) to sanitize unsafe context windows.
+- **[`chat_helpers.py`](../src/chat_helpers.py)**: Contains additional utilities for managing text chunking, formatting, and processing tasks required by the chat logic.
 - **[`agent_runs.py`](../src/agent_runs.py):** Implements detached agent-runs. The model streams text even if the browser drops the SSE connection. This module catches the stream into a replay buffer that users can re-subscribe to upon page refresh, preventing mid-thought data loss.
 - **[`routes/assistant_routes.py`](../routes/assistant_routes.py), [`src/assistant_log.py`](../src/assistant_log.py)**: Manages the persona traits of the primary assistant and logging of its internal monologue.
 - **[`src/memory_provider.py`](../src/memory_provider.py), [`src/ai_interaction.py`](../src/ai_interaction.py)**: The interface between raw text streams and the structured memory graph.
@@ -1592,6 +1617,7 @@ graph TD
 ```
 
 ### Components
+- **[`src/agent_tools/__init__.py`](../src/agent_tools/__init__.py)**: Agent tools package init.
 - **Filesystem Tools ([`src/agent_tools/filesystem_tools.py`](../src/agent_tools/filesystem_tools.py))**: Provides concrete implementations for `read_file`, `write_file`, `list_directory`, etc. These tools are heavily sandboxed by the policy layer, meaning they generally cannot escape the [`data/`](../data/) directory unless explicitly authorized by an admin context.
 - **Subprocess Tools ([`src/agent_tools/subprocess_tools.py`](../src/agent_tools/subprocess_tools.py))**: Allows the agent to run arbitrary shell commands. It manages timeout constraints, captures `stdout` and `stderr` safely, and ensures long-running processes do not hang the main agent loop.
 - **Web Tools ([`src/agent_tools/web_tools.py`](../src/agent_tools/web_tools.py))**: Includes utilities for fetching webpage content, often interacting with local headless browsers or `BeautifulSoup` to strip away visual clutter and return clean markdown directly to the agent's context.
@@ -1641,6 +1667,7 @@ Provides reliable, zero-cost execution for routine system maintenance and user-d
 All data is kept local within the [`data/`](../data/) directory, adhering to the project's privacy-first ethos.
 
 ### SQLite Database
+- **[`src/database.py`](../src/database.py)**: Engine connection setup and dependency injection utilities for SQLite database connections.
 - **Relational Data:** Managed via SQLAlchemy ([`data/app.db`](../data/app.db)).
 - **Stores:** Chats, sessions, API tokens, MCP server configs, Webhooks, user privileges, scheduled tasks, and calendar events.
 
@@ -1725,7 +1752,7 @@ graph LR
     QRCode -.-> |Scanned / Copied| Client
     Agent[Claude Code / External Agent] --> |HTTP Bearer Token| Codex[routes/codex_routes.py]
     Codex --> Auth[Token Validation & Scope Check]
-    Auth --> ToolIndex[Tool Dispatch src/agent_tools.py]
+    Auth --> ToolIndex[Tool Dispatch src/tool_execution.py]
 ```
 
 ### Components
@@ -1733,6 +1760,7 @@ graph LR
 - **Webhook Manager ([`src/webhook_manager.py`](../src/webhook_manager.py))**: Dispatches system events out to configured webhooks securely, filtering out private IP loopbacks.
 - **External API Integrations ([`src/integrations.py`](../src/integrations.py))**: A generalized module to store and resolve API keys, OAuth tokens, and connection configs for external tools.
 - **The "Codex" Abstraction ([`routes/codex_routes.py`](../routes/codex_routes.py))**: Historically named "codex", this router exposes the canonical, scope-gated API endpoints (`/api/codex/*`) that external agents (like Claude Code) hit to list available tools and execute them. Plugins reside in [`integrations/claude/`](../integrations/claude/). API tokens are strictly scoped.
+- **YouTube Handler ([`src/youtube_handler.py`](../src/youtube_handler.py))**: Provides core YouTube video interaction capabilities, transcript fetching, and metadata extraction.
 
 ---
 
@@ -1884,11 +1912,13 @@ graph TD
 ```
 
 ### Components
+- **[`src/search/__init__.py`](../src/search/__init__.py)**: Search package init.
 - **Core Orchestrator ([`src/search/core.py`](../src/search/core.py), [`services/search/`](../services/search/))**: Manages the flow of fetching configurations and routing the search term to the designated active provider.
 - **Query & Content Handlers ([`src/search/query.py`](../src/search/query.py), [`src/search/content.py`](../src/search/content.py))**: Handles parsing of search intent into actionable query objects and extracts raw text or metadata from webpage bodies respectively.
 - **Caching ([`src/search/cache.py`](../src/search/cache.py))**: Reduces outbound requests by locally caching queries with identical parameters.
 - **Provider Implementations ([`src/search/providers.py`](../src/search/providers.py))**: Abstracts provider-specific API oddities (e.g., JSON handling from SearXNG vs raw HTTP scraping from DuckDuckGo) into a standardized `dict` format.
 - **Ranking & Analytics ([`src/search/ranking.py`](../src/search/ranking.py), [`src/search/analytics.py`](../src/search/analytics.py))**: Analyzes results to filter out spam or low-quality hits before they reach the LLM, tracking failure rates and error conditions centrally.
+- **Frontend Clients ([`static/js/search.js`](../static/js/search.js), [`static/js/search-chat.js`](../static/js/search-chat.js))**: Responsible for coordinating web search UI state and injecting results into the chat flow.
 
 ---
 
@@ -2015,7 +2045,7 @@ Odysseus includes an AI-integrated gallery and media editor.
 
 ### Components
 - **Gallery Routes ([`routes/gallery_routes.py`](../routes/gallery_routes.py))**: Exposes REST endpoints to query, filter, and upload images. All queries are heavily owner-scoped to ensure strict tenant isolation.
-- **Frontend State ([`static/js/gallery.js`](../static/js/gallery.js))**: Manages the multi-select interface, tag filtering, album sorting, and dynamic grid rendering.
+- **Frontend State ([`static/js/gallery.js`](../static/js/gallery.js), [`static/js/galleryEditor.js`](../static/js/galleryEditor.js))**: Manages the multi-select interface, tag filtering, album sorting, and dynamic grid rendering, alongside routing into the standalone image editor.
 - **AI Editor ([`static/js/editor/`](../static/js/editor/))**: A complex, multi-layered HTML5 canvas application. Features include checkerboard backgrounds, mask creation tools ([`wand.js`](../static/js/editor/tools/wand.js), [`lasso.js`](../static/js/editor/tools/lasso.js)), image composition ([`clone.js`](../static/js/editor/tools/clone.js)), and direct hooks to the backend for AI-assisted operations like inpainting or background removal ([`ai-inpaint.js`](../static/js/editor/ai-inpaint.js), [`ai-rembg.js`](../static/js/editor/ai-rembg.js)).
 
 ---
@@ -2095,6 +2125,7 @@ graph TD
 - **CalDAV Sync ([`src/caldav_sync.py`](../src/caldav_sync.py), [`src/caldav_writeback.py`](../src/caldav_writeback.py))**: Resolves CalDAV hosts, fetches `.ics` events, caches them locally, and pushes local edits back to the remote server.
 - **Email Pollers ([`routes/email_pollers.py`](../routes/email_pollers.py))**: Background threads that poll IMAP folders, detect new mail, and run background LLM tasks to summarize, tag, or auto-reply.
 - **Thread Parser ([`src/email_thread_parser.py`](../src/email_thread_parser.py))**: An advanced HTML/plaintext parser that strips quotes, mashes headers, and normalizes email body contents for LLM consumption.
+- **Frontend Mail UI ([`static/js/emailInbox.js`](../static/js/emailInbox.js), [`static/js/emailLibrary/state.js`](../static/js/emailLibrary/state.js), [`static/js/emailLibrary/utils.js`](../static/js/emailLibrary/utils.js))**: Responsible for the email inbox view, state management of selected threads, and formatting tools.
 
 ---
 
@@ -2151,9 +2182,10 @@ graph TD
 ```
 
 ### Components
+- **Core Wrapper ([`static/js/cookbook.js`](../static/js/cookbook.js))**: Main orchestrator for cookbook UI integration.
 - **UI Diagnostics ([`static/js/cookbook-diagnosis.js`](../static/js/cookbook-diagnosis.js))**: Polling mechanisms to verify if background processes like `ollama` or `vllm` are accessible before allowing operations.
 - **Hardware Fitness Client ([`static/js/cookbook-hwfit.js`](../static/js/cookbook-hwfit.js))**: Renders the visual bars for required VRAM and Context Window budgeting based on the data provided by the backend's [`fit.py`](../services/hwfit/fit.py) via [`hwfit_routes.py`](../routes/hwfit_routes.py).
-- **Process Signals ([`static/js/cookbookProgressSignal.js`](../static/js/cookbookProgressSignal.js), [`cookbookRunning.js`](../static/js/cookbookRunning.js), [`cookbookSchedule.js`](../static/js/cookbookSchedule.js))**: Tracks asynchronous SSE streams. If the browser tab is closed during a download, the next time the Cookbook is opened, [`cookbookRunning.js`](../static/js/cookbookRunning.js) attempts to reconnect and parse the active system state to restore the progress bar seamlessly.
+- **Process Signals ([`static/js/cookbookProgressSignal.js`](../static/js/cookbookProgressSignal.js), [`static/js/cookbookDownload.js`](../static/js/cookbookDownload.js), [`static/js/cookbookServe.js`](../static/js/cookbookServe.js), [`static/js/cookbookRunning.js`](../static/js/cookbookRunning.js), [`static/js/cookbookSchedule.js`](../static/js/cookbookSchedule.js))**: Tracks asynchronous SSE streams for model downloads and serving execution. If the browser tab is closed during a download, the next time the Cookbook is opened, [`cookbookRunning.js`](../static/js/cookbookRunning.js) attempts to reconnect and parse the active system state to restore the progress bar seamlessly.
 
 ---
 
@@ -2303,12 +2335,21 @@ Odysseus relies on several external components and strictly manages their config
 For maintenance, debugging, and offline operations, Odysseus includes a suite of Python CLI tools.
 
 ### Components
-- **`odysseus-*` commands**: A collection of scripts starting with `odysseus-` (e.g., [`odysseus-backup`](../scripts/odysseus-backup), [`odysseus-logs`](../scripts/odysseus-logs), [`odysseus-sessions`](../scripts/odysseus-sessions), [`odysseus-memory`](../scripts/odysseus-memory)) providing low-level access to the database and systems.
-- **[`_lib/cli.py`](../scripts/_lib/cli.py)**: A shared library simplifying the process of writing CLI tools, managing initialization, loading the [`app.db`](../data/app.db), and setting up rich console output.
-- **[`update_database.py`](../scripts/update_database.py)**: An essential operational script to run schema migrations and ensure the database reflects the current SQLAlchemy models without data loss.
-- **[`index_documents.py`](../scripts/index_documents.py)**: A script to manually force re-indexing of documents into ChromaDB.
-- **[`migrate_faiss_to_chroma.py`](../scripts/migrate_faiss_to_chroma.py)**: A historical migration script ensuring safe transfer of semantic memories.
-- **[`check-docker-gpu.sh`](../scripts/check-docker-gpu.sh) & [`check-docker-amd-gpu.sh`](../scripts/check-docker-amd-gpu.sh)**: Utilities used during deployment to confirm the container runtime supports the hardware passthrough required.
+- **`odysseus-*` commands**: A collection of scripts starting with `odysseus-` providing low-level access to the database and systems. This includes: [`odysseus`](../scripts/odysseus), [`odysseus-backup`](../scripts/odysseus-backup), [`odysseus-calendar`](../scripts/odysseus-calendar), [`odysseus-contacts`](../scripts/odysseus-contacts), [`odysseus-cookbook`](../scripts/odysseus-cookbook), [`odysseus-docs`](../scripts/odysseus-docs), [`odysseus-gallery`](../scripts/odysseus-gallery), [`odysseus-logs`](../scripts/odysseus-logs), [`odysseus-mail`](../scripts/odysseus-mail), [`odysseus-mcp`](../scripts/odysseus-mcp), [`odysseus-memory`](../scripts/odysseus-memory), [`odysseus-notes`](../scripts/odysseus-notes), [`odysseus-personal`](../scripts/odysseus-personal), [`odysseus-preset`](../scripts/odysseus-preset), [`odysseus-research`](../scripts/odysseus-research), [`odysseus-sessions`](../scripts/odysseus-sessions), [`odysseus-signature`](../scripts/odysseus-signature), [`odysseus-skills`](../scripts/odysseus-skills), [`odysseus-tasks`](../scripts/odysseus-tasks), [`odysseus-theme`](../scripts/odysseus-theme), and [`odysseus-webhook`](../scripts/odysseus-webhook).
+- **[`_lib/__init__.py`](../scripts/_lib/__init__.py) & [`_lib/cli.py`](../scripts/_lib/cli.py)**: A shared library simplifying the process of writing CLI tools, managing initialization, loading the [`app.db`](../data/app.db), and setting up rich console output.
+- **Shell Completions**: Scripts located in `scripts/_completion/` ([`odysseus.bash`](../scripts/_completion/odysseus.bash), [`odysseus.zsh`](../scripts/_completion/odysseus.zsh)) to facilitate terminal autocomplete.
+- **Maintenance & Migration**:
+  - **[`update_database.py`](../scripts/update_database.py)**: An essential operational script to run schema migrations and ensure the database reflects the current SQLAlchemy models without data loss.
+  - **[`index_documents.py`](../scripts/index_documents.py)**: A script to manually force re-indexing of documents into ChromaDB.
+  - **[`migrate_faiss_to_chroma.py`](../scripts/migrate_faiss_to_chroma.py)**: A historical migration script ensuring safe transfer of semantic memories.
+  - **[`claim_ownerless.py`](../scripts/claim_ownerless.py)** & **[`fix_paths.py`](../scripts/fix_paths.py)**: Utilities to repair permissions and correct malformed database paths.
+- **Model Fetching & Serving**:
+  - **[`hf_download.py`](../scripts/hf_download.py)** & **[`add_hwfit_models.py`](../scripts/add_hwfit_models.py)**: Utilities for parsing Hugging Face repositories and seeding the local model catalogue.
+  - **[`diffusion_server.py`](../scripts/diffusion_server.py)**: Background worker template for launching diffusion-based generation models locally.
+- **Deployment & Media**:
+  - **[`check-docker-gpu.sh`](../scripts/check-docker-gpu.sh) & [`check-docker-amd-gpu.sh`](../scripts/check-docker-amd-gpu.sh)**: Utilities used during deployment to confirm the container runtime supports the hardware passthrough required.
+  - **[`encode_previews.sh`](../scripts/encode_previews.sh)**: Media transcoding hook.
+- **Demo Assets ([`scripts/demo_email/`](../scripts/demo_email/))**: Includes scripts like [`demo_account.py`](../scripts/demo_email/demo_account.py), [`manage.sh`](../scripts/demo_email/manage.sh), and [`seed_demo_emails.py`](../scripts/demo_email/seed_demo_emails.py) for bootstrapping local testing environments.
 
 ---
 
