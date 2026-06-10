@@ -172,6 +172,18 @@ ODYSSEUS_HOST=0.0.0.0 ./start-macos.sh
 # then open http://<tailscale-ip>:7860
 ```
 
+#### Homebrew install (macOS)
+
+```bash
+brew install pewdiepie-archdaemon/tap/odysseus
+brew services start odysseus   # auto-start at login, restart on crash
+```
+
+The formula installs the repo to `libexec/`, symlinks `odysseus` +
+the helper commands into `bin/`, and writes a launchd plist under
+`brew services`. See [`docs/macos.md`](docs/macos.md#homebrew-install)
+for details and upgrade flow.
+
 The script also reads `.env` at startup, so `APP_BIND=0.0.0.0` and `APP_PORT`
 set there are picked up automatically without a command-line override each run.
 
