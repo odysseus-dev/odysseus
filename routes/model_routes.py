@@ -633,7 +633,7 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
 
     try:
         t0 = _time.time()
-        r = httpx.post(target_url, headers=h, json=payload, timeout=timeout)
+        r = httpx.post(target_url, headers=h, json=payload, timeout=timeout, verify=llm_verify())
         latency = round((_time.time() - t0) * 1000)
         if r.is_success:
             return {"status": "ok", "latency_ms": latency}
