@@ -2361,6 +2361,7 @@ function initAll() {
   initReminderSettings();
   initAgentContextSettings();
   initUnifiedIntegrations();
+  initLanguageSwitcher();
 }
 
 async function initAgentContextSettings() {
