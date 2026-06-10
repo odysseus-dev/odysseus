@@ -731,6 +731,135 @@ def _supports_thinking(model: str) -> bool:
     m = model.lower()
     return any(p in m for p in _THINKING_MODEL_PATTERNS)
 
+
+# Vision-capable model fragments (case-insensitive substring match).
+# Conservative default: anything not in this list is treated as text-only and
+# has image content stripped from message history before the request. Avoids
+# OpenRouter 404s like "No endpoints found that support image input" when a
+# session accumulated an image and the user later switches to (or never left)
+# a text-only model (deepseek-r1/v3/v4, llama-3.3-70b, qwen3-coder, etc.).
+_VISION_MODEL_PATTERNS = (
+    "gpt-4-vision",      # legacy
+    "gpt-4o",            # OpenAI multimodal
+    "gpt-4.1",           # OpenAI multimodal
+    "gpt-4-turbo",       # OpenAI multimodal (2024-04-09+)
+    "gpt-5",             # OpenAI multimodal (covers gpt-5-image, gpt-5-mini, etc.)
+    "o1",                # o1, o1-pro (NOTE: o1-mini is overridden to no-vision)
+    "o3",                # o3, o3-mini, o3-pro — all vision
+    "o4-mini",           # vision
+    "claude-3",          # all Claude 3+ (haiku, sonnet, opus) are vision
+    "claude-sonnet",     # Claude Sonnet 4 / 4.5 / 4.6
+    "claude-opus",       # Claude Opus 4 / 4.5 / 4.6 / 4.7 / 4.8
+    "claude-haiku",      # Claude Haiku 4 / 4.5
+    "gemini-1.5",
+    "gemini-2",          # gemini-2.0, gemini-2.5
+    "gemini-3",          # gemini-3 / 3.1 / 3.5
+    "qwen-vl",
+    "qwen2.5-vl",
+    "qwen3-vl",
+    "llama-3.2-11b-vision",
+    "llama-3.2-90b-vision",
+    "llama-4",           # llama-4-maverick, llama-4-scout
+    "pixtral",
+    "mistral-medium",    # Mistral Medium 3 / 3.5 — vision per Mistral docs
+    "glm-4.5v",
+    "glm-4.6v",
+    "gemma-3",
+    "kimi-k2-thinking",
+    "kimi-k2.6",
+    "nova-lite",
+    "nova-pro",
+    "nova-premier",
+)
+
+# Models that look vision-ish by name fragment but don't actually accept images.
+# Override the vision list — these are no-vision.
+_NO_VISION_OVERRIDES = (
+    "o1-mini",   # OpenAI o1-mini has no image input (o1, o1-pro do)
+    "o3-mini-high",  # alias of o3-mini (no images)
+)
+
+
+def _supports_vision(model: str) -> bool:
+    """Return True if the model is known to accept image input.
+
+    Conservative default: any model not matching a known vision pattern is
+    treated as text-only. Pair with ``_strip_image_blocks_for_non_vision()``
+    to defensively remove image content from message history before sending.
+    """
+    if not model:
+        return False
+    m = model.lower()
+    for override in _NO_VISION_OVERRIDES:
+        if override in m:
+            return False
+    for pat in _VISION_MODEL_PATTERNS:
+        if pat in m:
+            return True
+    return False
+
+
+# Placeholder inserted when an image block is stripped. Verbose on purpose —
+# the model needs to know an image was attached so it doesn't silently behave
+# as if no image ever existed (which would break the user's flow).
+_IMAGE_STRIP_PLACEHOLDER = (
+    "[image attached — vision support not available for this model; "
+    "please re-upload to a vision model or pick a vision-capable model]"
+)
+
+
+def _strip_image_blocks_for_non_vision(messages: List[Dict], model: str) -> List[Dict]:
+    """For text-only models, replace image_url/image blocks with a text placeholder.
+
+    The Seals session (id fd3e227d, 2026-06-10) accumulated an image_url block
+    in its history; the user then sent simple "?" / "working?" prompts to
+    ``deepseek/deepseek-v4-pro`` (text-only). Odysseus re-sent the full
+    conversation including the image, and OpenRouter 404'd with "No endpoints
+    found that support image input". This helper walks each user message's
+    content and substitutes a short text placeholder for every image block,
+    keeping the conversation shape valid (alternating roles, no orphan
+    blocks). Vision-capable models are passed through unchanged.
+
+    Returns a NEW list; the input is not mutated.
+    """
+    if _supports_vision(model):
+        return messages
+    out: List[Dict] = []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            out.append(m)
+            continue
+        role = m.get("role")
+        content = m.get("content")
+        if role != "user" or not isinstance(content, list):
+            out.append(m)
+            continue
+        new_blocks: List[Dict] = []
+        image_count = 0
+        for block in content:
+            if not isinstance(block, dict):
+                new_blocks.append(block)
+                continue
+            btype = block.get("type")
+            if btype == "image_url" or btype == "image":
+                image_count += 1
+                continue  # drop
+            new_blocks.append(block)
+        if image_count == 0:
+            out.append(m)
+            continue
+        if new_blocks:
+            text_parts = [
+                b["text"] for b in new_blocks
+                if b.get("type") == "text" and b.get("text")
+            ]
+            joined = "\n\n".join(text_parts)
+            new_content = [{"type": "text", "text": (joined + "\n\n" + _IMAGE_STRIP_PLACEHOLDER) if joined else _IMAGE_STRIP_PLACEHOLDER}]
+        else:
+            new_content = [{"type": "text", "text": _IMAGE_STRIP_PLACEHOLDER}]
+        out.append({**m, "content": new_content})
+    return out
+
 def _convert_openai_content_to_anthropic(content):
     """Convert OpenAI multimodal content blocks to Anthropic format.
 
@@ -1204,6 +1333,12 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         h.update(headers)
 
     messages_copy = _sanitize_llm_messages(messages)
+    # For non-vision models, replace any image_url blocks in the conversation
+    # history with a text placeholder. Otherwise OpenRouter (and similar
+    # gateways) 404 with "No endpoints found that support image input" once a
+    # prior turn in the conversation attached an image. See
+    # `_strip_image_blocks_for_non_vision` for the full story.
+    messages_copy = _strip_image_blocks_for_non_vision(messages_copy, model)
 
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
@@ -1365,6 +1500,8 @@ async def llm_call_async(
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
+    # See llm_call: strip image blocks for text-only models. (LANE-ODYSSEUS-OPENROUTER-NONVISION-V1)
+    messages_copy = _strip_image_blocks_for_non_vision(messages_copy, model)
 
     # Consolidate multiple system messages into one at the start.
     sys_parts = []
@@ -1534,6 +1671,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     """
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
+    # See llm_call: strip image blocks for text-only models. (LANE-ODYSSEUS-OPENROUTER-NONVISION-V1)
+    messages_copy = _strip_image_blocks_for_non_vision(messages_copy, model)
 
     # Consolidate multiple system messages into one at the start.
     # Some models (e.g. Qwen3.5) reject system messages that aren't first.
