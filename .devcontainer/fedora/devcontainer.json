@@ -1,0 +1,18 @@
+{
+  "name": "Odysseus (Fedora)",
+  "dockerComposeFile": [
+    "../docker-compose.dev.yml",
+    "docker-compose.yml"
+  ],
+  "service": "odysseus",
+  "workspaceFolder": "/app",
+  "remoteUser": "root",
+  "postCreateCommand": "python setup.py",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/bin/python3"
+      }
+    }
+  }
+}

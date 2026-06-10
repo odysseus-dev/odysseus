@@ -31,6 +31,9 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+For IDE-integrated development, see [.devcontainer/README.md](.devcontainer/README.md)
+(Ubuntu and Fedora Dev Container profiles with live reload).
+
 Manual development uses Python 3.11+:
 
 ```bash

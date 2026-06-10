@@ -1,0 +1,34 @@
+services:
+  odysseus:
+    build:
+      context: ../
+      dockerfile: .devcontainer/fedora/Dockerfile
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
+    volumes:
+      - ../:/app:cached
+      - ../data:/app/data:z
+      - ../logs:/app/logs:z
+      - ../data/ssh:/app/.ssh:z
+      - ../data/huggingface:/app/.cache/huggingface:z
+      - ../data/local:/app/.local:z
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+      - ./fedora/.env
+    environment:
+      - SEARXNG_INSTANCE=http://searxng:8080
+      - CHROMADB_HOST=chromadb
+      - CHROMADB_PORT=8000
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+    command: uvicorn app:app --host 0.0.0.0 --port 7000 --reload
+    depends_on:
+      searxng:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+    networks:
+      - odysseus-dev
+    restart: unless-stopped
