@@ -41,6 +41,10 @@ def _json_list(raw) -> list:
     return value if isinstance(value, list) else []
 
 
+def _json_string_list(raw) -> list[str]:
+    return [item for item in _json_list(raw) if isinstance(item, str)]
+
+
 def _json_dict(raw) -> dict:
     try:
         value = json.loads(raw) if raw else {}
@@ -50,7 +54,7 @@ def _json_dict(raw) -> dict:
 
 
 def _serialize(s: "McpServer", redact_env: bool = True) -> dict:
-    args_arr = _json_list(s.args)
+    args_arr = _json_string_list(s.args)
     env_obj = _json_dict(s.env)
     if redact_env and isinstance(env_obj, dict):
         env_obj = {k: ("***" if v else "") for k, v in env_obj.items()}
