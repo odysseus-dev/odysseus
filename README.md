@@ -454,7 +454,7 @@ All user data lives in `data/` (gitignored): `app.db` (sessions, messages, docum
 AGPL-3.0-or-later -- see [LICENSE](LICENSE) and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).
 
 ```
-                                                        !:^                                                                       
+                                                        !:^                                       
                                                        +.l.''''':iii!l,.                                           .;i!^. 
                                                        + ]                 .;~+<il"'..            c@$$$r     ."i~:     
                                                       ., <                              "i>!;;,^^\M88#WWx;il       
@@ -467,7 +467,7 @@ AGPL-3.0-or-later -- see [LICENSE](LICENSE) and [ACKNOWLEDGMENTS.md](ACKNOWLEDGM
                                             .inh@#p,                                          ]%hkkb0rjjrQkW$+       
                                             ;v>"Bz`h_                                         "$$$$$@$$$$$$$@+      
                                             ,X+`@Y  Y\        i\`                             '@qaWB8BBWakmQ*?         
-                                            -ml $U  .n}       1B[                             ^$I           1X                    
+                                            -ml $U  .n}       1B[                             ^$I           1X       
                                             }z` $0^  "ni      ($@                             .@?           {q.       
                                             ]j  $O"   /x      ($;%]                            Ba>  `-\xnkB$$d^         
                                    (Wx'     )j  ZJ    'w     }#W; \x'                          a$$$$$$$$$$$$$q.         
@@ -486,6 +486,6 @@ AGPL-3.0-or-later -- see [LICENSE](LICENSE) and [ACKNOWLEDGMENTS.md](ACKNOWLEDGM
           .                       .l?j0dk*o##MW8%%8&W&&&&*QCv/_~.                   .>)\\\|-^  -pdX1~<-[[)zhwf'             
 
    ~~^~^~~^~^~~^~^~~^~~^~~^~^~~^~^~~^~~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~~~^~~
-                                                              ~  A L L   A B O A R D !  ~
+                                                  ~  A L L   A B O A R D !  ~
    ~~^~^~~^~^~~^~^~~^~~^~~^~^~~^~^~~^~~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~^~~^~~~^~~
 ```
