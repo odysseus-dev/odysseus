@@ -374,7 +374,10 @@ function _emojiImg(emoji) {
   // with the surrounding text color (currentColor), so emoji render as a single
   // theme-tinted line glyph — never colorful (project rule). If the proxy can't
   // supply the glyph it returns a transparent SVG, so the mask shows nothing.
-  return `<span class="emoji" role="img" aria-label="${emoji}" style="--em:url('/api/emoji/${code}.svg')"></span>`;
+  // Unicode lives in aria-label; ::after renders it as a monochrome fallback when
+  // the SVG mask is blank. Do not put the glyph in the text node — color must stay
+  // inherited on .emoji so currentColor is not transparent on the same element.
+  return `<span class="emoji" role="img" aria-label="${escapeHtml(emoji)}" style="--em:url('/api/emoji/${code}.svg')"></span>`;
 }
 function _svgifyText(text) {
   if (!_emojiSeg) return text;

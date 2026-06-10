@@ -36689,18 +36689,43 @@ body.theme-frosted .modal {
 }
 
 /* Emoji rendered as monochrome line icons (OpenMoji-black via /api/emoji proxy)
-   instead of colorful system glyphs — project rule: never colorful emoji. The
-   SVG is used as a mask filled with the current text color, so it tints to the
-   theme. Sized to sit on the text baseline. */
+   instead of colorful system glyphs — project rule: never colorful emoji.
+   ::before = SVG mask tinted to inherited --fg; ::after = unicode fallback when
+   the mask image is blank (offline/CDN/unknown). Never set color:transparent on
+   the same element that supplies currentColor for the fallback shadow. */
 .emoji {
+  position: relative;
+  display: inline-block;
   height: 1.15em;
   width: 1.15em;
   vertical-align: -0.18em;
   margin: 0 0.05em;
-  display: inline-block;
+  line-height: 1;
+  font-size: inherit;
+  color: inherit;
+}
+.emoji::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   background-color: currentColor;
   -webkit-mask: var(--em) center / contain no-repeat;
           mask: var(--em) center / contain no-repeat;
+}
+.emoji::after {
+  content: attr(aria-label);
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1em;
+  line-height: 1;
+  color: transparent;
+  text-shadow: 0 0 0 currentColor;
+  pointer-events: none;
 }
 
 /* Nudge the X icon in the "Clear all" button down 2px. */
