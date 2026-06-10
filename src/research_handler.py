@@ -390,7 +390,6 @@ class ResearchHandler:
 
     def get_status(self, session_id: str) -> Optional[dict]:
         """Get current research status for a session."""
-        avg = self.get_avg_duration()
         if session_id in self._active_tasks:
             entry = self._active_tasks[session_id]
             result = {
@@ -399,6 +398,14 @@ class ResearchHandler:
                 "query": entry["query"],
                 "started_at": entry["started_at"],
             }
+            # avg_duration is a historical figure over completed reports on
+            # disk; get_avg_duration() globs and JSON-parses the whole research
+            # dir, so compute it at most once per active stream (memoized on the
+            # entry) instead of on every ~1s SSE poll. The disk branch below
+            # never used it, so it no longer pays that cost at all.
+            if "_avg_duration" not in entry:
+                entry["_avg_duration"] = self.get_avg_duration()
+            avg = entry["_avg_duration"]
             if avg is not None:
                 result["avg_duration"] = round(avg, 1)
             return result
