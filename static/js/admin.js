@@ -372,6 +372,12 @@ function _isLocalEndpoint(url) {
     const u = new URL(url);
     const h = u.hostname.toLowerCase();
     if (h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0') return true;
+    // Docker host-gateway alias: in a container this resolves to the user's
+    // own host machine (e.g. host Ollama at host.docker.internal:11434), so it
+    // belongs under Local, not the cloud/API section. Without this a scanned
+    // host Ollama lands under API and "doesn't seem right" (issue #1292).
+    // Matches the billing classifier in chatRenderer.js (isLocalEndpoint).
+    if (h === 'host.docker.internal') return true;
     if (h.endsWith('.local')) return true;
     if (/^10\./.test(h)) return true;
     if (/^192\.168\./.test(h)) return true;
