@@ -23,6 +23,7 @@
   let lastEmote = 0;
   let happyTimer = null;
   let workEmoteTimer = null;
+  let thinkOpen = false; // inside a <think>…</think> block streamed via deltas
 
   const FROG_SVG = `
 <svg class="frog-svg" viewBox="0 0 140 120" aria-hidden="true">
@@ -78,7 +79,7 @@
     root = document.createElement('div');
     root.id = 'frog-pet';
     root.className = 'frog-idle';
-    root.title = 'Ribbit. (click to minimize)';
+    root.title = 'Frog-coder \u{1F438} — click to hide me';
     root.innerHTML = CLOUD_HTML + FROG_SVG +
       '<div class="frog-emotes" aria-hidden="true"></div>' +
       '<button class="frog-restore" title="Bring the frog back" aria-label="Show frog pet">\u{1F438}</button>';
@@ -133,19 +134,31 @@
     onStart() {
       build();
       clearTimeout(happyTimer);
+      thinkOpen = false;
       setMood('thinking');
     },
     // One hook per SSE event from chat.js; `thinking` is chat.js's live flag.
+    // Local models (LM Studio/qwen) stream reasoning as literal <think>…</think>
+    // tags INSIDE json.delta, so track tag state here instead of relying on
+    // chat.js's heuristics catching up.
     onStream(json, thinking) {
       if (!root) build();
       clearTimeout(happyTimer);
       if (json.type === 'tool_start') {
+        thinkOpen = false;
         setMood('typing');
         const t = String(json.tool || '').toLowerCase();
         emote(TOOL_EMOJI[t] || '\u{1F527}');
-      } else if (json.thinking || thinking) {
-        setMood('thinking');
-      } else if (json.delta || json.type === 'doc_stream_delta') {
+        return;
+      }
+      if (json.thinking) { setMood('thinking'); return; } // vLLM/DeepSeek reasoning deltas
+      if (typeof json.delta === 'string' && json.delta) {
+        const close = json.delta.lastIndexOf('</think');
+        const open = json.delta.lastIndexOf('<think');
+        if (close > open) thinkOpen = false;
+        else if (open >= 0) thinkOpen = true;
+        setMood(thinkOpen || thinking ? 'thinking' : 'typing');
+      } else if (json.type === 'doc_stream_delta') {
         setMood('typing');
       }
     },
