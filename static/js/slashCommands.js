@@ -380,7 +380,7 @@ function _slashFooter(msgEl) {
   copyBtn.innerHTML = _copySvg;
   copyBtn.onclick = (e) => {
     e.stopPropagation();
-    uiModule.copyToClipboard(msgEl.dataset.raw || msgEl.querySelector('.body')?.textContent || '');
+    uiModule.copyToClipboard(chatRenderer.copyMessageText(msgEl));
     copyBtn.innerHTML = _checkSvg;
     setTimeout(() => { copyBtn.innerHTML = _copySvg; }, 1500);
   };
