@@ -108,10 +108,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # to markdown for prose.
             language = req.language
             if not language:
-                from src.tool_implementations import _looks_like_email_document, _sniff_doc_language
+                from src.agent_tools.document_tools import _looks_like_email_document, _sniff_doc_language
                 language = _sniff_doc_language(req.content)
             else:
-                from src.tool_implementations import _looks_like_email_document
+                from src.agent_tools.document_tools import _looks_like_email_document
             if _looks_like_email_document(req.content, req.title):
                 language = "email"
 
@@ -643,7 +643,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     # in-memory active-doc pointer so the last-resort injection
                     # path doesn't re-surface this doc in a later chat (#1160).
                     try:
-                        from src.tool_implementations import clear_active_document
+                        from src.agent_tools.document_tools import clear_active_document
                         clear_active_document(doc_id)
                     except Exception:
                         pass
@@ -672,7 +672,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # Closed/deleted — drop the in-memory active-doc pointer so it isn't
             # re-injected into a later, unrelated chat (#1160).
             try:
-                from src.tool_implementations import clear_active_document
+                from src.agent_tools.document_tools import clear_active_document
                 clear_active_document(doc_id)
             except Exception:
                 pass
