@@ -62,6 +62,22 @@ ASSISTANT_ALWAYS_AVAILABLE = frozenset({
     "ui_control",
 })
 
+def workspace_file_tools() -> frozenset[str]:
+    """Return file-system tools to auto-include when a workspace is configured.
+
+    When ODYSSEUS_WORKSPACE or ODYSSEUS_DEVELOPER_MODE is set, the user is
+    working on a code project — always include file tools so the agent can
+    read/write source files on every turn.
+    """
+    env_workspace = os.environ.get("ODYSSEUS_WORKSPACE", "").strip()
+    env_devmode = os.environ.get("ODYSSEUS_DEVELOPER_MODE", "").lower()
+    if env_workspace or env_devmode in ("1", "true", "yes"):
+        return frozenset({
+            "read_file", "write_file", "edit_file", "glob", "grep", "ls",
+            "bash", "python",
+        })
+    return frozenset()
+
 COLLECTION_NAME = "odysseus_tool_index"
 
 # ── Tool description registry ──
@@ -530,11 +546,9 @@ class ToolIndex:
         # prompts do not drag web schemas into the agent context.
         if self._WEB_RE.search(query):
             base.update({"web_search", "web_fetch"})
-        # When ODYSSEUS_WORKSPACE is configured, the user is working on a
-        # code project — always include file tools so the agent can actually
-        # read/write source files without waiting for keyword luck.
-        if os.environ.get("ODYSSEUS_WORKSPACE", "").strip() or os.environ.get("ODYSSEUS_DEVELOPER_MODE", "").lower() in ("1", "true", "yes"):
-            base.update({"read_file", "write_file", "edit_file", "glob", "grep", "ls", "bash", "python"})
+        # When a workspace or developer mode is configured, always include
+        # file tools so the agent can read/write source files.
+        base.update(workspace_file_tools())
         return base
 
 
