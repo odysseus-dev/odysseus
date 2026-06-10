@@ -41,6 +41,20 @@ async def list_tools() -> list[Tool]:
     ]
 
 
+_VALID_QUALITIES = ("low", "medium", "high", "auto")
+
+
+def _record_quality(quality: str) -> str:
+    """Normalize a requested image quality to a valid value.
+
+    Used for BOTH the API payload (where applicable) and the gallery row so
+    the recorded quality reflects what the user asked for regardless of the
+    model. DALL-E ignores the payload quality field, but the gallery should
+    still show the requested quality, not a hard-coded default.
+    """
+    return quality if quality in _VALID_QUALITIES else "medium"
+
+
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if name != "generate_image":
@@ -96,7 +110,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         payload = {"model": model_id, "prompt": prompt, "n": 1, "size": size}
         if is_gpt_image:
-            payload["quality"] = quality if quality in ("low", "medium", "high", "auto") else "medium"
+            payload["quality"] = _record_quality(quality)
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)) as client:
             resp = await client.post(images_url, json=payload, headers=headers)
@@ -140,7 +154,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                         prompt=prompt,
                         model=model_id,
                         size=size,
-                        quality=payload.get("quality", "medium"),
+                        quality=_record_quality(quality),
                     ))
                     db.commit()
                     db.close()
