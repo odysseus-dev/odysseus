@@ -4,10 +4,11 @@
 import uiModule from './ui.js';
 import markdownModule from './markdown.js';
 import { addAITTSButton } from './tts-ai.js';
-import { providerLogo } from './providers.js';
+import { providerLogo, providerLabel } from './providers.js';
 import settingsModule from './settings.js';
 import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
+import { matchModelKey } from './model/matchKey.js';
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
@@ -23,6 +24,29 @@ function _safeHref(url) {
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return uiModule.esc(url);
   } catch(e) { /* invalid URL */ }
   return '#';
+}
+
+export function safeToolScreenshotSrc(raw) {
+  const src = String(raw || '').trim();
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(src)) {
+    return src;
+  }
+  return '';
+}
+
+export function safeDisplayImageSrc(raw) {
+  const src = String(raw || '').trim();
+  if (!src) return '';
+  if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(src)) {
+    return src;
+  }
+  try {
+    const parsed = new URL(src, window.location.origin);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.href;
+    }
+  } catch (_) {}
+  return '';
 }
 
 function _makeActionBtn(className, title, text, handler) {
@@ -513,6 +537,39 @@ export function shortModel(name) {
   return short;
 }
 
+function modelValue(name) {
+  if (name == null) return '';
+  return String(name).trim();
+}
+
+export function sameModelName(left, right) {
+  const a = modelValue(left);
+  const b = modelValue(right);
+  if (!a || !b) return false;
+  return a.toLowerCase() === b.toLowerCase()
+    || shortModel(a).toLowerCase() === shortModel(b).toLowerCase();
+}
+
+export function modelRouteLabel(requestedModel, actualModel) {
+  const requested = modelValue(requestedModel);
+  const actual = modelValue(actualModel) || requested;
+  if (!requested || sameModelName(requested, actual)) return shortModel(actual || requested);
+  return shortModel(requested) + ' -> ' + shortModel(actual);
+}
+
+export function replyModelPair(modelName, metadata) {
+  const meta = metadata || {};
+  const actualFromMeta = modelValue(meta.model || meta.actual_model);
+  const requestedFromMeta = modelValue(meta.requested_model || meta.selected_model);
+  if (actualFromMeta || requestedFromMeta) {
+    const actual = actualFromMeta || requestedFromMeta || modelValue(modelName);
+    const requested = requestedFromMeta || actual;
+    return { requestedModel: requested, actualModel: actual };
+  }
+  const fallback = modelValue(modelName);
+  return { requestedModel: fallback, actualModel: fallback };
+}
+
 /**
  * Generate a consistent HSL color for a model name.
  * Returns an hsl() string. The hue is derived from a string hash,
@@ -532,11 +589,8 @@ export function modelColor(name) {
 /** Look up model info (pricing + context) by substring match */
 export function getModelInfo(modelName) {
   if (!modelName) return null;
-  const name = modelName.toLowerCase();
-  for (const [key, info] of Object.entries(MODEL_INFO)) {
-    if (name.includes(key)) return { key, ...info };
-  }
-  return null;
+  const key = matchModelKey(modelName, Object.keys(MODEL_INFO));
+  return key ? { key, ...MODEL_INFO[key] } : null;
 }
 
 function _fmtCtx(n) {
@@ -556,7 +610,11 @@ export function applyModelColor(roleEl, modelName) {
   }
   // Replace generic dot with provider logo if available
   const logo = providerLogo(modelName);
-  if (logo && !roleEl.querySelector('.role-provider-logo')) {
+  const existingLogo = roleEl.querySelector('.role-provider-logo');
+  if (!logo) {
+    if (existingLogo) existingLogo.remove();
+    roleEl.classList.remove('has-logo');
+  } else if (!existingLogo) {
     const span = document.createElement('span');
     span.className = 'role-provider-logo';
     span.innerHTML = logo;
@@ -579,6 +637,12 @@ export function applyModelColor(roleEl, modelName) {
       if (logoHtml) html += '<span class="role-provider-logo" style="opacity:0.7">' + logoHtml + '</span>';
       html += short + '</div>';
       html += '<div><span class="ctx-label">Model</span> ' + modelName.split('/').pop() + '</div>';
+      // Provider = the serving endpoint, distinct from the model vendor/logo
+      // (e.g. the same model via OpenRouter vs Copilot vs Anthropic direct).
+      const _epUrl = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
+        ? window.sessionModule.getCurrentEndpointUrl() : null;
+      const _provLabel = providerLabel(_epUrl);
+      if (_provLabel) html += '<div><span class="ctx-label">Provider</span> ' + uiModule.esc(_provLabel) + '</div>';
       // Show static context initially, then fetch real from server
       const _realCtx = window._realContextLengths && window._realContextLengths[modelName];
       if (_realCtx) {
@@ -616,9 +680,11 @@ export function applyModelColor(roleEl, modelName) {
           html += '<div><span class="ctx-label">Max tokens</span> ' + _mt.toLocaleString() + ' <span style="opacity:0.4">(configured)</span></div>';
         }
       }
-      if (info && info.input != null) html += '<div><span class="ctx-label">Input</span> $' + info.input.toFixed(2) + ' / 1M</div>';
-      if (info && info.output != null) html += '<div><span class="ctx-label">Output</span> $' + info.output.toFixed(2) + ' / 1M</div>';
-      if (!info) html += '<div style="opacity:0.4;font-size:0.85em;margin-top:4px;">No pricing data available</div>';
+      if (isCostTrackedEndpoint(_epUrl)) {
+        if (info && info.input != null) html += '<div><span class="ctx-label">Input</span> $' + info.input.toFixed(2) + ' / 1M</div>';
+        if (info && info.output != null) html += '<div><span class="ctx-label">Output</span> $' + info.output.toFixed(2) + ' / 1M</div>';
+        if (!info) html += '<div style="opacity:0.4;font-size:0.85em;margin-top:4px;">No pricing data available</div>';
+      }
       popup.innerHTML = html;
       const rect = roleEl.getBoundingClientRect();
       popup.style.top = (rect.bottom + 4) + 'px';
@@ -634,13 +700,10 @@ export function applyModelColor(roleEl, modelName) {
 
 export function getModelCost(modelName, inputTokens, outputTokens) {
   if (!modelName) return null;
-  const name = modelName.toLowerCase();
-  for (const [key, price] of Object.entries(MODEL_PRICING)) {
-    if (name.includes(key)) {
-      return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
-    }
-  }
-  return null;
+  const key = matchModelKey(modelName, Object.keys(MODEL_PRICING));
+  if (!key) return null;
+  const price = MODEL_PRICING[key];
+  return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
 }
 
 /**
@@ -674,11 +737,31 @@ export function isLocalEndpoint(url) {
   return false;
 }
 
-/** Cost for the current turn, returning null (free) for local endpoints. */
-function _billableCost(model, inputTokens, outputTokens) {
-  const url = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
+export function isSubscriptionEndpoint(url) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.replace(/\/+$/, '');
+    return parsed.hostname === 'chatgpt.com'
+      && (path === '/backend-api/codex' || path.startsWith('/backend-api/codex/'));
+  } catch (_e) {
+    return false;
+  }
+}
+
+function _currentEndpointUrl() {
+  return (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
     ? window.sessionModule.getCurrentEndpointUrl() : null;
-  if (isLocalEndpoint(url)) return null;
+}
+
+export function isCostTrackedEndpoint(url) {
+  return !isLocalEndpoint(url) && !isSubscriptionEndpoint(url);
+}
+
+/** Cost for the current turn, returning null for non-billable endpoints. */
+function _billableCost(model, inputTokens, outputTokens) {
+  const url = _currentEndpointUrl();
+  if (!isCostTrackedEndpoint(url)) return null;
   return getModelCost(model, inputTokens, outputTokens);
 }
 
@@ -723,11 +806,10 @@ export function resetSessionCost(sessionId) {
 export function updateSessionCostUI() {
   const el = document.getElementById('session-cost-display');
   if (!el) return;
-  // Local model? It's free — hide the badge and clear any stale cost that a
-  // previous (buggy) cloud-rate billing left in localStorage for this session.
-  const _url = (window.sessionModule && window.sessionModule.getCurrentEndpointUrl)
-    ? window.sessionModule.getCurrentEndpointUrl() : null;
-  if (isLocalEndpoint(_url)) {
+  // Non-billable endpoint? Hide the badge and clear stale cost that a previous
+  // cloud-rate calculation may have left in localStorage for this session.
+  const _url = _currentEndpointUrl();
+  if (!isCostTrackedEndpoint(_url)) {
     const sid = window.sessionModule && window.sessionModule.getCurrentSessionId();
     if (sid && getSessionCost(sid) > 0) {
       try {
@@ -981,7 +1063,12 @@ document.addEventListener('click', function(e) {
 // matching module via a dynamic import (avoids circular deps —
 // sessions.js itself imports chatRenderer.js).
 document.addEventListener('click', function(e) {
-  const a = e.target && e.target.closest && e.target.closest('a[href]');
+  // Walk past Text nodes — clicking link text yields a Text node target
+  // whose .closest is undefined, so preventDefault never fires and the
+  // browser performs a default hash-navigation that resets the session.
+  let _t = e.target;
+  while (_t && _t.nodeType === Node.TEXT_NODE) _t = _t.parentElement;
+  const a = _t && _t.closest && _t.closest('a[href]');
   if (!a) return;
   const href = a.getAttribute('href') || '';
   if (!href.startsWith('#')) return;
@@ -1057,12 +1144,19 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   const body = document.createElement('div');
   body.className = 'body';
 
+  const safeImageUrl = safeDisplayImageSrc(imageUrl);
+  if (!safeImageUrl) {
+    body.textContent = '[Image unavailable]';
+    wrap.appendChild(body);
+    return wrap;
+  }
+
   const img = document.createElement('img');
   img.className = 'generated-image';
   img.alt = prompt || 'Generated image';
   img.title = prompt || 'Generated image';
-  img.src = imageUrl;
-  img.addEventListener('click', () => { window.open(img.src, '_blank'); });
+  img.src = safeImageUrl;
+  img.addEventListener('click', () => { window.open(safeImageUrl, '_blank', 'noopener,noreferrer'); });
   body.appendChild(img);
 
   if (prompt) {
@@ -1635,7 +1729,8 @@ export function displayMetrics(messageElement, metrics) {
     e.stopPropagation();
     document.querySelectorAll('.ctx-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
 
-    const costStr = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : 'n/a';
+    const costStr = cost !== null ? `$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}` : '';
+    const costRows = costStr ? `<div><span class="ctx-label">Cost</span> ${costStr}</div>` : '';
     const speedStr = tps != null && tps !== 'undefined' ? `${tps} tok/s` : 'n/a';
     const totalTok = inputTokens + outputTokens;
     const ctxColor = ctxPct >= 85 ? 'var(--red, #e06c75)' : ctxPct >= 70 ? '#ff9900' : 'var(--color-muted-alt, #6b7280)';
@@ -1649,7 +1744,7 @@ export function displayMetrics(messageElement, metrics) {
     // Session total cost
     let sessionCostStr = '';
     const sc = getSessionCost();
-    if (sc > 0) {
+    if (costStr && sc > 0) {
       sessionCostStr = `<div><span class="ctx-label">Session</span> $${sc < 0.01 ? sc.toFixed(4) : sc.toFixed(3)}</div>`;
     }
 
@@ -1665,7 +1760,7 @@ export function displayMetrics(messageElement, metrics) {
       <div><span class="ctx-label">Time</span> ${responseTime}s</div>
       ${prepTime != null ? `<div><span class="ctx-label">Prep</span> ${prepTime}s</div>` : ''}
       ${modelWaitTime != null ? `<div><span class="ctx-label">Model wait</span> ${modelWaitTime}s</div>` : ''}
-      <div><span class="ctx-label">Cost</span> ${costStr}</div>
+      ${costRows}
       ${sessionCostStr}
       ${prepDetails ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:0.85em;opacity:0.8;">
         <div style="font-weight:600;margin-bottom:4px;color:var(--fg);">Agent prep</div>
@@ -1804,7 +1899,13 @@ export function displayMetrics(messageElement, metrics) {
                 }
               }, 200);
             } else {
-              compactBody.innerHTML = '<span style="color:var(--red);">Compaction failed. Try again later.</span>';
+              let detail = 'Compaction failed. Try again later.';
+              try {
+                const err = await res.json();
+                if (err.detail) detail = err.detail;
+              } catch {}
+              compactBody.textContent = detail;
+              compactBody.style.color = 'var(--red)';
             }
           } catch (err) {
             clearInterval(waveInterval);
@@ -1897,8 +1998,12 @@ export function addMessage(role, content, modelName, metadata) {
           wrap.className = 'msg msg-ai' + (r > 0 ? ' msg-continuation' : '');
           const roleEl = document.createElement('div');
           roleEl.className = 'role';
-          const contModel = modelName || metadata?.model;
-          roleEl.textContent = shortModel(contModel);
+          const pair = replyModelPair(modelName, metadata);
+          const contModel = pair.actualModel || pair.requestedModel;
+          roleEl.textContent = modelRouteLabel(pair.requestedModel, contModel);
+          if (pair.requestedModel && contModel && !sameModelName(pair.requestedModel, contModel)) {
+            roleEl.title = pair.requestedModel + ' -> ' + contModel;
+          }
           applyModelColor(roleEl, contModel);
           if (r === 0) roleEl.appendChild(roleTimestamp(metadata?.timestamp));
           wrap.appendChild(roleEl);
@@ -1952,13 +2057,37 @@ export function addMessage(role, content, modelName, metadata) {
             if (ev.output && ev.output.trim()) {
               outHtml = `<details class="agent-tool-output"><summary>Output</summary><pre>${esc(ev.output)}</pre></details>`;
             }
-            if (ev.screenshot) {
-              outHtml += `<details class="agent-tool-output"><summary>Screenshot</summary><img src="${esc(ev.screenshot)}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" /></details>`;
+            const screenshotSrc = safeToolScreenshotSrc(ev.screenshot);
+            if (screenshotSrc) {
+              outHtml += `<details class="agent-tool-output"><summary>Screenshot</summary><img src="${esc(screenshotSrc)}" style="max-width:100%;border-radius:6px;margin-top:6px;border:1px solid var(--border)" /></details>`;
+            }
+            // File-write/edit diff (persisted in the tool event) \u2014 re-render it
+            // so it survives reload, matching the live stream.
+            let evDiffHtml = '';
+            if (ev.diff && ev.diff.text) {
+              const d = ev.diff;
+              const stat = [
+                d.new_file ? '<span class="diff-stat-new">new</span>' : '',
+                d.added ? `<span class="diff-stat-add">+${d.added}</span>` : '',
+                d.removed ? `<span class="diff-stat-del">\u2212${d.removed}</span>` : '',
+              ].filter(Boolean).join(' ');
+              const rows = d.text.split('\n').map(line => {
+                let cls = 'diff-ctx', text = line;
+                if (line.startsWith('+++') || line.startsWith('---')) cls = 'diff-meta';
+                else if (line.startsWith('@@')) cls = 'diff-hunk';
+                // Drop the leading diff marker (+/-/space) — colour encodes add/del.
+                else if (line.startsWith('+')) { cls = 'diff-add'; text = line.slice(1); }
+                else if (line.startsWith('-')) { cls = 'diff-del'; text = line.slice(1); }
+                else if (line.startsWith(' ')) { text = line.slice(1); }
+                return `<span class="${cls}">${esc(text) || '&nbsp;'}</span>`;
+              }).join('');  // spans are display:block \u2014 a literal \n would double-space
+              evDiffHtml = `<details class="agent-tool-output agent-tool-diff"><summary><span class="diff-file">${esc(d.file || 'diff')}</span> <span class="diff-summary-stats">${stat}</span></summary><pre class="diff-pre">${rows}</pre></details>`;
             }
             const node = document.createElement('div');
             node.className = 'agent-thread-node' + (ok ? '' : ' error');
-            const evCmdHtml = ev.command ? `<pre class="agent-thread-cmd">${esc(ev.command)}</pre>` : '';
-            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(ev.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}</div>`;
+            // Hide the raw JSON command when a diff says it better (same as live).
+            const evCmdHtml = (ev.command && !(ev.diff && ev.diff.text)) ? `<pre class="agent-thread-cmd">${esc(ev.command)}</pre>` : '';
+            node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(ev.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${evCmdHtml}${outHtml}${evDiffHtml}</div>`;
             // Click handling is delegated globally \u2014 see chat.js init.
             threadWrap.appendChild(node);
           }
@@ -1989,6 +2118,28 @@ export function addMessage(role, content, modelName, metadata) {
       return lastWrap;
     }
 
+    // --- Wake-task / supervisor system check-in ---
+    // The self-wake mechanism injects "Did you finish?" as a user message
+    // (or persisted history shows a "[Task] Self-check: <id>" envelope)
+    // so the agent loop re-enters and re-checks status. Render as a
+    // normal user-style bubble — same chrome as a real user message,
+    // just with role "Supervisor" and a short summary body — instead of
+    // a slim system chip. Matches chat style and integrates cleanly
+    // into the conversation flow.
+    let _isWakeCheck = !!(metadata?.wake_check_in || metadata?.hidden_from_user_view);
+    if (!_isWakeCheck && typeof textRaw === 'string') {
+      // Also catch historical messages persisted as "[Task] Self-check: <sid>"
+      // (older wake tasks that didn't set wake_check_in metadata).
+      if (/^\s*\[Task\]\s+Self-check:/i.test(textRaw)) {
+        _isWakeCheck = true;
+      }
+    }
+    if (_isWakeCheck) {
+      // Supervisor self-check messages are an internal control signal —
+      // skip rendering entirely so they don't show up in the conversation.
+      return null;
+    }
+
     // --- Standard single-bubble message ---
     const wrap = document.createElement('div');
     wrap.className = 'msg ' + (role === 'user' ? 'msg-user' : 'msg-ai');
@@ -1997,8 +2148,9 @@ export function addMessage(role, content, modelName, metadata) {
     r.className = 'role';
     const isSlash = metadata?.source === 'slash';
     const isCompacted = metadata?.compacted;
-    const resolvedModel = modelName || metadata?.model;
-    var _roleText = role === 'user' ? 'You' : (isSlash || isCompacted) ? 'Odysseus' : shortModel(resolvedModel);
+    const replyModels = replyModelPair(modelName, metadata);
+    const resolvedModel = replyModels.actualModel || replyModels.requestedModel;
+    var _roleText = role === 'user' ? 'You' : (isSlash || isCompacted) ? 'Odysseus' : modelRouteLabel(replyModels.requestedModel, resolvedModel);
     if (role === 'assistant' && (metadata?.research || metadata?.research_clarification)) {
       _roleText += ' (Research)';
     }
@@ -2009,6 +2161,9 @@ export function addMessage(role, content, modelName, metadata) {
     }
     r.textContent = _roleText;
     if (role !== 'user') {
+      if (!isSlash && !isCompacted && replyModels.requestedModel && resolvedModel && !sameModelName(replyModels.requestedModel, resolvedModel)) {
+        r.title = replyModels.requestedModel + ' -> ' + resolvedModel;
+      }
       if (!isSlash && !isCompacted) applyModelColor(r, resolvedModel);
       r.appendChild(roleTimestamp(metadata?.timestamp));
     }
@@ -2275,15 +2430,22 @@ export function addMessage(role, content, modelName, metadata) {
 
 const chatRenderer = {
   shortModel,
+  sameModelName,
+  modelRouteLabel,
+  replyModelPair,
   modelColor,
   applyModelColor,
   getModelCost,
+  isCostTrackedEndpoint,
+  isSubscriptionEndpoint,
   getImageCost,
   getSessionCost,
   resetSessionCost,
   updateSessionCostUI,
   roleTimestamp,
   stripToolBlocks,
+  safeToolScreenshotSrc,
+  safeDisplayImageSrc,
   buildSourcesBox,
   buildFindingsBox,
   appendReportButton,

@@ -1,12 +1,8 @@
-import importlib.machinery
-import importlib.util
 import sys
 import types
-from pathlib import Path
 from unittest.mock import MagicMock
 
-
-ROOT = Path(__file__).resolve().parents[1]
+from tests.helpers.cli_loader import load_script
 
 
 def _load_cli(monkeypatch):
@@ -15,12 +11,7 @@ def _load_cli(monkeypatch):
     routes._fetch_contacts = MagicMock()
     routes._create_contact = MagicMock()
     monkeypatch.setitem(sys.modules, "routes.contacts_routes", routes)
-    path = ROOT / "scripts" / "odysseus-contacts"
-    loader = importlib.machinery.SourceFileLoader("odysseus_contacts_cli", str(path))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
+    return load_script("odysseus-contacts")
 
 
 def test_contact_rows_skips_invalid_rows(monkeypatch):

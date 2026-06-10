@@ -12,6 +12,8 @@ from typing import Tuple
 
 from src.auth_helpers import owner_filter
 from core.platform_compat import IS_WINDOWS, find_bash
+from core.constants import internal_api_base
+from src.constants import DATA_DIR, DEEP_RESEARCH_DIR, TIDY_CALENDAR_STATE_FILE, EMAIL_URGENCY_CACHE_DIR, COOKBOOK_STATE_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +40,16 @@ class TaskDeferred(BaseException):
 
 
 async def action_tidy_sessions(owner: str, **kwargs) -> Tuple[str, bool]:
-    """Delete empty/throwaway sessions for the owner. Pure heuristic —
+    """Delete empty sessions for the owner. Pure heuristic —
     the LLM folder-sort phase is skipped (user opted to keep this task
     LLM-free; sorting can be triggered manually via the Chats UI)."""
     try:
         import asyncio
         from src.session_actions import run_auto_sort
-        result = await asyncio.wait_for(run_auto_sort(owner, skip_llm=True), timeout=60)
+        result = await asyncio.wait_for(
+            run_auto_sort(owner, skip_llm=True, delete_throwaway=False),
+            timeout=60,
+        )
         return result, True
     except asyncio.TimeoutError:
         logger.error("tidy_sessions action timed out")
@@ -163,7 +168,6 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                     drop_items = decision.get("drop") if isinstance(decision, dict) else None
                     if isinstance(keep_items, list) and isinstance(drop_items, list):
                         by_id = {m.get("id"): m for m in group_memories if m.get("id")}
-                        keep_ids = set()
                         cleaned_by_id = {}
                         for item in keep_items:
                             if not isinstance(item, dict):
@@ -174,7 +178,6 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                             text = (item.get("text") or "").strip()
                             if not text:
                                 continue
-                            keep_ids.add(mid)
                             cleaned = {
                                 "category": (item.get("category") or by_id[mid].get("category") or "fact").strip(),
                             }
@@ -183,11 +186,20 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                                 cleaned["text"] = text
                             cleaned_by_id[mid] = cleaned
 
-                        # If the model only saw a truncated memory, do not let
-                        # that partial view delete or rewrite the full memory.
-                        keep_ids.update(mid for mid in truncated_ids if mid in by_id)
+                        # Delete only memories the model EXPLICITLY dropped, never
+                        # ones it merely omitted from `keep`. Treating the
+                        # complement of `keep` as deletions meant a model that
+                        # forgot to re-list an id (common) silently destroyed that
+                        # memory. Honor the explicit `drop` set instead.
+                        drop_ids = {
+                            d.get("id")
+                            for d in drop_items
+                            if isinstance(d, dict) and d.get("id") in by_id
+                        }
+                        # Never delete a memory the model only saw truncated.
+                        drop_ids -= truncated_ids
 
-                        if keep_ids:
+                        if drop_ids or cleaned_by_id:
                             changed_text = 0
                             group_ref_ids = {id(m) for m in group_memories}
                             kept_all = []
@@ -196,7 +208,7 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                                     kept_all.append(mem)
                                     continue
                                 mid = mem.get("id")
-                                if mid not in keep_ids:
+                                if mid in drop_ids:
                                     continue
                                 cleaned = cleaned_by_id.get(mid) or {}
                                 if mid in truncated_ids:
@@ -208,7 +220,7 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                                     mem["category"] = cleaned["category"]
                                 kept_all.append(mem)
 
-                            removed = len(group_memories) - len(keep_ids)
+                            removed = sum(1 for m in group_memories if m.get("id") in drop_ids)
                             total_scanned += len(group_memories)
                             if removed or changed_text:
                                 all_memories = kept_all
@@ -345,7 +357,7 @@ async def action_tidy_research(owner: str, **kwargs) -> Tuple[str, bool]:
     try:
         from pathlib import Path
         import json as _json
-        research_dir = Path("data/deep_research")
+        research_dir = Path(DEEP_RESEARCH_DIR)
         if not research_dir.exists():
             raise TaskNoop("no research directory")
         files = list(research_dir.glob("*.json"))
@@ -383,7 +395,7 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
         from core.database import SessionLocal, CalendarEvent
         from sqlalchemy import func
 
-        STATE_FILE = Path("data/tidy_calendar_state.json")
+        STATE_FILE = Path(TIDY_CALENDAR_STATE_FILE)
         last_watermark = None
         try:
             if STATE_FILE.exists():
@@ -590,9 +602,9 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
             if not events:
                 return "No upcoming events to classify", True
 
-            llm_url, llm_model, llm_headers = resolve_endpoint("utility")
+            llm_url, llm_model, llm_headers = resolve_endpoint("utility", owner=owner)
             if not llm_url:
-                llm_url, llm_model, llm_headers = resolve_endpoint("default")
+                llm_url, llm_model, llm_headers = resolve_endpoint("default", owner=owner)
             llm_available = bool(llm_url and llm_model)
 
             # Pull user memories so the LLM has personal context (relationships,
@@ -760,201 +772,6 @@ async def action_extract_email_events(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
-async def action_mark_email_boundaries(owner: str, **kwargs) -> Tuple[str, bool]:
-    """LLM-based signature / quoted-reply boundary detection. For each new
-    inbox email that we haven't analyzed yet, ask the model to return char
-    offsets where the signature and quoted-reply start. Cache the offsets
-    keyed by Message-ID — once cached, the renderer uses them directly with
-    no further LLM calls. Caps at 30 emails per pass to keep cost bounded.
-    """
-    try:
-        import sqlite3 as _sql3
-        import json as _json
-        import re as _re
-        import email as _email_mod
-        import asyncio as _aio
-        from datetime import datetime as _dt
-        from routes.email_helpers import _imap_connect, _decode_header, SCHEDULED_DB
-        from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
-
-        # Pull recent inbox UIDs + Message-IDs directly via IMAP (the
-        # nested helpers in email_routes aren't importable, and this keeps
-        # the action self-contained).
-        def _pull_recent():
-            results = []
-            conn = _imap_connect(None)
-            try:
-                conn.select("INBOX", readonly=True)
-                status, data = conn.search(None, "ALL")
-                if status != "OK" or not data or not data[0]:
-                    return results
-                uids = data[0].split()[-50:][::-1]  # newest 50
-                for uid in uids:
-                    try:
-                        st, msg_data = conn.fetch(uid, "(RFC822.HEADER)")
-                        if st != "OK" or not msg_data or not msg_data[0]:
-                            continue
-                        raw = msg_data[0][1] if isinstance(msg_data[0], tuple) else None
-                        if not raw:
-                            continue
-                        msg = _email_mod.message_from_bytes(raw)
-                        results.append({
-                            "uid": uid.decode() if isinstance(uid, bytes) else str(uid),
-                            "message_id": (msg.get("Message-ID") or "").strip(),
-                            "subject": _decode_header(msg.get("Subject", "")),
-                        })
-                    except Exception:
-                        continue
-            finally:
-                try: conn.logout()
-                except Exception: pass
-            return results
-
-        mails = await _aio.to_thread(_pull_recent)
-        if not mails:
-            raise TaskNoop("no emails to analyze")
-
-        url, model, headers = resolve_endpoint("utility")
-        if not url or not model:
-            url, model, headers = resolve_endpoint("default")
-        if not url or not model:
-            return "No LLM endpoint available", False
-
-        c = _sql3.connect(SCHEDULED_DB)
-        already = {r[0] for r in c.execute(
-            "SELECT message_id FROM email_boundaries"
-        ).fetchall()}
-        c.close()
-
-        analyzed = 0
-        skipped = 0
-        for em in mails[:30]:
-            mid = (em.get("message_id") or "").strip()
-            if not mid or mid in already:
-                skipped += 1
-                continue
-            uid = em.get("uid")
-            if not uid:
-                continue
-            def _fetch_body(_uid):
-                conn = _imap_connect(None)
-                try:
-                    conn.select("INBOX", readonly=True)
-                    st, data = conn.fetch(_uid, "(BODY.PEEK[TEXT])")
-                    if st != "OK" or not data or not data[0]:
-                        return ""
-                    raw = data[0][1] if isinstance(data[0], tuple) else None
-                    if not raw:
-                        return ""
-                    try:
-                        return raw.decode("utf-8", errors="replace")
-                    except Exception:
-                        return str(raw)
-                finally:
-                    try: conn.logout()
-                    except Exception: pass
-            try:
-                body = (await _aio.to_thread(_fetch_body, str(uid))).strip()
-            except Exception as e:
-                logger.warning(f"boundary detection: IMAP fetch failed for uid={uid} mid={mid}: {e}")
-                continue
-            if not body or len(body) < 100:
-                continue
-            # Truncate very long bodies — boundaries usually live in the
-            # first few KB of plain text.
-            truncated = body[:8000]
-
-            prompt = (
-                "Identify where the signature and the quoted-reply start in "
-                "this email body. Return ONLY raw JSON, no prose. Schema:\n"
-                '{"sig_start": <int>, "quote_start": <int>}\n\n'
-                "Rules:\n"
-                "- sig_start = char offset where the sender's signature block "
-                "begins (closing phrase like 'Best regards' / 'Mit freundlichen' / "
-                "'Med vänliga' / contact details / disclaimer / job title block). "
-                "Use -1 if none.\n"
-                "- quote_start = char offset where any quoted-reply / forwarded "
-                "thread begins (lines like 'On <date>, <name> wrote:', "
-                "'From: ... Sent: ... Subject:' in any language — German 'Von:', "
-                "French 'De :', Spanish 'De:', etc.). Use -1 if none.\n"
-                "- Both offsets are byte/char positions in the input string starting "
-                "from 0. The signature/quote should INCLUDE the marker line itself.\n"
-                "- If both exist, sig_start is normally before quote_start (sig of "
-                "the current message, then quoted thread underneath).\n\n"
-                f"BODY (length={len(truncated)}):\n{truncated}"
-            )
-            try:
-                raw = await llm_call_async(
-                    url=url, model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.0, max_tokens=200,
-                    headers=headers, timeout=60,
-                )
-                from src.text_helpers import strip_think as _st
-                raw = _st(raw or "", prose=False, prompt_echo=False)
-                raw = _re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=_re.MULTILINE).strip()
-                # Balanced-brace match: handles {"sig_start": 10, "info": {}}
-                # which the previous [^{}] class would have broken on.
-                start = raw.find("{")
-                m_text = None
-                if start != -1:
-                    depth = 0
-                    for i in range(start, len(raw)):
-                        if raw[i] == "{":
-                            depth += 1
-                        elif raw[i] == "}":
-                            depth -= 1
-                            if depth == 0:
-                                m_text = raw[start:i + 1]
-                                break
-                if not m_text:
-                    logger.warning(f"boundary detection: no JSON object in LLM response for mid={mid}: {raw[:200]!r}")
-                    continue
-                parsed = _json.loads(m_text)
-                sig = int(parsed.get("sig_start", -1))
-                quote = int(parsed.get("quote_start", -1))
-            except Exception as e:
-                logger.warning(f"boundary detection failed for mid={mid}: {e}")
-                continue
-
-            # Also pre-parse the thread tree so the client never has to.
-            try:
-                from src.email_thread_parser import parse_thread, THREAD_PARSER_VERSION
-                # The boundary loop only has the plaintext body; parse_thread
-                # also accepts None for HTML so this is safe.
-                turns = parse_thread(None, body)
-                turns_json = (
-                    _json.dumps({"v": THREAD_PARSER_VERSION, "turns": turns})
-                    if turns else None
-                )
-            except Exception as _pe:
-                logger.debug(f"thread parse failed for {mid}: {_pe}")
-                turns_json = None
-
-            try:
-                c = _sql3.connect(SCHEDULED_DB)
-                c.execute(
-                    "INSERT OR REPLACE INTO email_boundaries "
-                    "(message_id, uid, folder, sig_start, quote_start, model_used, created_at, turns_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (mid, str(uid), "INBOX", sig, quote, model, _dt.utcnow().isoformat(), turns_json),
-                )
-                c.commit()
-                c.close()
-                analyzed += 1
-            except Exception as e:
-                logger.warning(f"could not cache boundaries for {mid}: {e}")
-
-        if analyzed == 0:
-            # All recent emails already had boundaries cached — nothing new
-            # to do, don't pollute Activity.
-            raise TaskNoop(f"boundaries already cached for {skipped} email(s)")
-        return f"Marked boundaries: {analyzed} new, {skipped} cached", True
-    except Exception as e:
-        logger.error(f"mark_email_boundaries failed: {e}")
-        return str(e), False
-
 
 # Sender local-parts (matched exactly or by prefix) whose mail never carries a
 # personal signature worth learning. These compare against the local-part
@@ -1059,9 +876,9 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         if not eligible:
             return "All sender sigs already cached (or no eligible senders)", True
 
-        url, model, headers = resolve_endpoint("utility")
+        url, model, headers = resolve_endpoint("utility", owner=owner)
         if not url or not model:
-            url, model, headers = resolve_endpoint("default")
+            url, model, headers = resolve_endpoint("default", owner=owner)
         if not url or not model:
             return "No LLM endpoint available", False
 
@@ -1495,12 +1312,12 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
         # users' entries (review C4). Legacy path kept as fallback so a
         # single-user install (empty owner) doesn't lose its history.
         _owner_slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
-        STATE = _P(f"data/note_pings_{_owner_slug}.json")
+        STATE = _P(DATA_DIR) / f"note_pings_{_owner_slug}.json"
         STATE.parent.mkdir(parents=True, exist_ok=True)
         # One-time migration: if legacy global file exists and per-owner file
         # doesn't, seed from global (entries for OTHER owners still get pruned
         # on their first run — acceptable, prevents silent loss).
-        _legacy = _P("data/note_pings.json")
+        _legacy = _P(DATA_DIR) / "note_pings.json"
         if _legacy.exists() and not STATE.exists():
             try:
                 STATE.write_text(_legacy.read_text(encoding="utf-8"), encoding="utf-8")
@@ -1657,8 +1474,8 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         # notified_uids / urgency counts. Empty owner falls back to a generic
         # filename for single-user installs (matches prior behaviour).
         _owner_slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
-        STATE_PATH = _P(f"data/email_urgency_state_{_owner_slug}.json")
-        CACHE_DIR = _P("data/email_urgency_cache")
+        STATE_PATH = _P(DATA_DIR) / f"email_urgency_state_{_owner_slug}.json"
+        CACHE_DIR = _P(EMAIL_URGENCY_CACHE_DIR)
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         AGE_CUTOFF = _dt.utcnow() - _td(days=7)
@@ -1672,12 +1489,12 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
 
         # ── 1. Resolve LLM candidates (utility primary + utility fallbacks; fall
         # through to default chat as a last resort).
-        url, model, headers = resolve_endpoint("utility")
+        url, model, headers = resolve_endpoint("utility", owner=owner)
         if not url or not model:
-            url, model, headers = resolve_endpoint("default")
+            url, model, headers = resolve_endpoint("default", owner=owner)
         if not url or not model:
             return "No LLM endpoint available", False
-        candidates = [(url, model, headers)] + resolve_utility_fallback_candidates()
+        candidates = [(url, model, headers)] + resolve_utility_fallback_candidates(owner=owner)
 
         # ── 2. Enumerate enabled accounts. Match this task's owner AND fall
         # back to the legacy "unowned account whose imap_user / from_address
@@ -2094,6 +1911,8 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     delivered = bool(dispatch_result.get("email_sent"))
                 elif channel == "ntfy":
                     delivered = bool(dispatch_result.get("ntfy_sent"))
+                elif channel == "webhook":
+                    delivered = bool(dispatch_result.get("webhook_sent"))
                 if delivered:
                     newly_notified.update(new_urgent)
                 else:
@@ -2193,6 +2012,197 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
+async def action_cookbook_serve(
+    owner: str,
+    task_name: str = "",
+    progress_cb=None,
+    command: str = "",
+    **kwargs,
+) -> Tuple[str, bool]:
+    """Launch a Cookbook model serve as a scheduled task.
+
+    `command` is the JSON config string the task carries in `prompt`,
+    of shape: {"preset": "name"} OR {"repo_id": "...", "cmd": "...", "host": "..."}.
+    Optional `end_after_min: N` schedules a hard-stop N minutes after launch
+    (handled by cookbook_serve_lifecycle_loop in src/cookbook_serve_lifecycle.py).
+    """
+    import json
+    import time as _time
+    import httpx
+    from pathlib import Path
+    from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
+    from core.atomic_io import atomic_write_json
+
+    headers = {INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN}
+    try:
+        cfg = json.loads(command or "{}")
+    except Exception:
+        return f"Invalid JSON config: {command!r}", False
+    if not isinstance(cfg, dict):
+        return "Config must be a JSON object", False
+
+    # Resolve the preset (if named) OR fall through with explicit fields.
+    preset_name = (cfg.get("preset") or "").strip()
+    repo_id = (cfg.get("repo_id") or "").strip()
+    cmd = (cfg.get("cmd") or "").strip()
+    host = (cfg.get("host") or cfg.get("remote_host") or "").strip()
+    try:
+        end_after_min = int(cfg.get("end_after_min") or 0)
+    except Exception:
+        end_after_min = 0
+
+    state_path = Path(COOKBOOK_STATE_FILE)
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+    except Exception:
+        state = {}
+
+    # Preset lookup. Try three matching strategies in order so the
+    # schedule still works even when the user's preset is named
+    # differently from the model's short name:
+    #
+    #   1. Exact preset.name == preset_name (case-insensitive)
+    #   2. preset.model / preset.modelId == repo_id  (caller knows the repo)
+    #   3. preset.model's short name (after final /) == preset_name
+    #
+    # Without #2 and #3, scheduling "Qwen3.5-397B-A17B-AWQ" failed when
+    # the saved preset was named "vllm-qwen-397b" or had the model field
+    # populated with the full HF repo path. Either should resolve.
+    def _short(name: str) -> str:
+        return (name or "").rsplit("/", 1)[-1].lower()
+
+    if not cmd or not repo_id:
+        presets = state.get("presets") or []
+        chosen = None
+        # Strategy 1: exact name match.
+        if preset_name:
+            chosen = next(
+                (p for p in presets if isinstance(p, dict)
+                 and (p.get("name") or "").lower() == preset_name.lower()),
+                None,
+            )
+        # Strategy 2: repo_id matches the preset's model field.
+        if chosen is None and repo_id:
+            chosen = next(
+                (p for p in presets if isinstance(p, dict)
+                 and (p.get("model") or p.get("modelId") or "").lower() == repo_id.lower()),
+                None,
+            )
+        # Strategy 3: model's short name matches the preset_name.
+        if chosen is None and preset_name:
+            chosen = next(
+                (p for p in presets if isinstance(p, dict)
+                 and _short(p.get("model") or p.get("modelId") or "") == preset_name.lower()),
+                None,
+            )
+        if chosen is not None:
+            repo_id = repo_id or chosen.get("model") or chosen.get("modelId") or ""
+            cmd = cmd or (chosen.get("cmd") or "").strip()
+            host = host or chosen.get("host") or chosen.get("remoteHost") or ""
+    if not repo_id or not cmd or cmd.startswith("(adopted"):
+        # Surface what we tried so the user can name their preset to match.
+        preset_names = [(p.get("name") or "") for p in (state.get("presets") or []) if isinstance(p, dict)]
+        hint = f" Saved presets: {preset_names!r}" if preset_names else ""
+        return (f"No launchable config for {preset_name!r} (repo_id={repo_id!r}). "
+                f"Check Cookbook → Presets has a real cmd, not 'adopted'.{hint}", False)
+
+    # Resolve env_prefix etc. from the host's saved cookbook server entry,
+    # matching the chat agent's serve_model path.
+    body = {"repo_id": repo_id, "cmd": cmd}
+    if host:
+        body["remote_host"] = host
+    env = (state.get("env") or {})
+    srv = next(
+        (s for s in (env.get("servers") or [])
+         if isinstance(s, dict) and (s.get("host") == host or s.get("name") == host)),
+        {},
+    )
+    if srv.get("env") == "venv" and srv.get("envPath"):
+        body["env_prefix"] = f"source {srv['envPath']}/bin/activate"
+    elif srv.get("env") == "conda" and srv.get("envPath"):
+        body["env_prefix"] = f"conda activate {srv['envPath']}"
+    if srv.get("hfToken"): body["hf_token"] = srv["hfToken"]
+    if srv.get("port"): body["ssh_port"] = str(srv["port"])
+    if srv.get("platform"): body["platform"] = srv["platform"]
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(f"{internal_api_base()}/api/model/serve",
+                                  json=body, headers=headers)
+            data = r.json() if r.content else {}
+    except Exception as e:
+        return f"Launch HTTP failed: {e}", False
+    if not data.get("ok"):
+        return f"Launch rejected: {data.get('error') or data.get('detail') or 'unknown'}", False
+
+    sid = data.get("session_id") or ""
+    # Register the new task in cookbook_state.json + stamp it with our
+    # scheduler-owner markers. /api/model/serve spawns the tmux session
+    # but leaves the state-write to the UI — when a scheduled action
+    # launches a serve from server-side, NOBODY writes the task into
+    # state, so the Cookbook tab never shows it. We do the write here.
+    if sid:
+        try:
+            # Re-read fresh (the route may have updated state already).
+            try:
+                fresh = json.loads(state_path.read_text(encoding="utf-8"))
+            except Exception:
+                fresh = {}
+            if not isinstance(fresh, dict):
+                fresh = {}
+            tasks = fresh.get("tasks") if isinstance(fresh.get("tasks"), list) else []
+            existing = next(
+                (t for t in tasks if isinstance(t, dict) and t.get("sessionId") == sid),
+                None,
+            )
+            if existing is None:
+                display_name = repo_id.split("/")[-1] if "/" in repo_id else repo_id
+                placeholder = (
+                    f"Launched by scheduled task {task_name!r} — waiting for tmux output…\n"
+                    f"  session: {sid}\n"
+                    f"  target:  {host or 'local'}\n"
+                    f"  cmd:     {cmd[:200]}{'…' if len(cmd) > 200 else ''}"
+                )
+                existing = {
+                    "id": sid,
+                    "sessionId": sid,
+                    "name": display_name,
+                    "modelId": repo_id,
+                    "type": "serve",
+                    "status": "running",
+                    "output": placeholder,
+                    "ts": int(_time.time() * 1000),
+                    "payload": {"repo_id": repo_id, "remote_host": host or "", "_cmd": cmd},
+                    "remoteHost": host or "",
+                    "sshPort": "",
+                    "platform": "linux",
+                    "_serveReady": False,
+                    "_endpointAdded": False,
+                }
+                tasks.append(existing)
+            # Stamp ownership + end-at on the task entry.
+            existing["_scheduledByTask"] = task_name or ""
+            existing["_scheduledByOwner"] = owner or ""
+            if end_after_min > 0:
+                existing["_scheduledStopAtMs"] = int(_time.time() * 1000) + end_after_min * 60 * 1000
+            fresh["tasks"] = tasks
+            atomic_write_json(state_path, fresh)
+        except Exception as e:
+            logger.warning(f"cookbook_serve: state register/stamp failed: {e}")
+    # Don't try to render absolute clock time in the message — the
+    # server runs in UTC (Docker default), the user reads it as local,
+    # and the offset depends on the user's TZ which the action doesn't
+    # have a reliable handle on. The Tasks UI already shows the RUN
+    # timestamp in the user's local time right above this message, so
+    # "stops 8 min after that" gives the user everything they need.
+    if end_after_min:
+        return (
+            f"Launched {repo_id} (session {sid}); stops {end_after_min} min after this ran",
+            True,
+        )
+    return f"Launched {repo_id} (session {sid})", True
+
+
 BUILTIN_ACTIONS = {
     "tidy_sessions": action_tidy_sessions,
     "tidy_documents": action_tidy_documents,
@@ -2205,7 +2215,6 @@ BUILTIN_ACTIONS = {
     # ping_events removed from the user-facing registry. Calendar reminders
     # are represented as Notes, so note pings are the single dispatch path.
     "daily_brief": action_daily_brief,
-    "mark_email_boundaries": action_mark_email_boundaries,
     "learn_sender_signatures": action_learn_sender_signatures,
     "ssh_command": action_ssh_command,
     "run_script": action_run_script,
@@ -2213,6 +2222,7 @@ BUILTIN_ACTIONS = {
     "test_skills": action_test_skills,
     "audit_skills": action_audit_skills,
     "check_email_urgency": action_check_email_urgency,
+    "cookbook_serve": action_cookbook_serve,
     # ping_notes removed from the registry — runs only inside `_note_pings_loop`.
 }
 
@@ -2227,7 +2237,6 @@ BUILTIN_ACTION_INFO = {
     "extract_email_events": "Scan emails for booking/meeting confirmations and auto-add to calendar",
     "classify_events": "Tag upcoming events with importance (low/normal/high/critical) and type (work/health/travel/etc.); colors them too",
     "daily_brief": "Build a morning digest: today's calendar, unread email count + top senders, active todos",
-    "mark_email_boundaries": "LLM-detect signature & quoted-reply offsets in new emails; cached so future renders fold without further LLM calls",
     "learn_sender_signatures": "LLM learns each sender's signature from 3+ of their recent emails; cached per address so future renders fold sigs reliably without heuristics",
     "ssh_command": "Run a shell command on a local or remote host",
     "run_script": "Run a script locally or on ODYSSEUS_SCRIPT_HOST",
