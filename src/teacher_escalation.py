@@ -363,6 +363,10 @@ def _format_trace(tool_results: List[Dict[str, Any]], agent_reply: str) -> str:
         trace += f"\n\nFinal reply: {snippet!r}"
     # Fence the trace so the teacher prompt's untrusted-data guard has explicit
     # boundaries to point at. Content inside is data, not instructions.
+    # Escape any delimiter sequences that appear in tool output to prevent
+    # spoofing attacks (see prompt_security._escape_delimiters).
+    from src.prompt_security import _escape_delimiters
+    trace = _escape_delimiters(trace)
     return f"<<<UNTRUSTED_TRACE>>>\n{trace}\n<<<END_UNTRUSTED_TRACE>>>"
 
 

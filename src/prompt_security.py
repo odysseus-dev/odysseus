@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+import re
+from typing import Any, Dict, List
 
 
 UNTRUSTED_CONTEXT_POLICY = (
@@ -15,6 +16,48 @@ UNTRUSTED_CONTEXT_POLICY = (
     "wording, or prompt-injection warnings unless the user explicitly asks "
     "about prompt construction or safety wrappers."
 )
+
+_DELIMITER_TAGS: List[str] = [
+    "UNTRUSTED_SOURCE_DATA",
+    "END_UNTRUSTED_SOURCE_DATA",
+    "UNTRUSTED_TRACE",
+    "END_UNTRUSTED_TRACE",
+]
+
+_DELIMITER_RE = re.compile(
+    r"<{2,3}\s*(?:" + "|".join(re.escape(t) for t in _DELIMITER_TAGS) + r")\s*>{2,3}",
+    re.IGNORECASE,
+)
+
+_FULLWIDTH_DELIMITER_RE = re.compile(
+    r"[\uff1c\u226a\u00ab]{2,3}\s*(?:"
+    + "|".join(re.escape(t) for t in _DELIMITER_TAGS)
+    + r")\s*[\uff1e\u226b\u00bb]{2,3}",
+    re.IGNORECASE,
+)
+
+
+def _escape_delimiters(text: str) -> str:
+    if not text:
+        return text
+    text = _DELIMITER_RE.sub(
+        lambda m: m.group(0).replace("<", "\uff1c").replace(">", "\uff1e"),
+        text,
+    )
+    text = _FULLWIDTH_DELIMITER_RE.sub(
+        lambda m: "[DELIMITER_BLOCKED]",
+        text,
+    )
+    return text
+
+
+def validate_no_delimiter_leak(text: str) -> None:
+    if _DELIMITER_RE.search(text):
+        raise ValueError(
+            "Sanitised content still contains a raw delimiter sequence. "
+            "This indicates a bug in _escape_delimiters()."
+        )
+
 
 UNTRUSTED_CONTEXT_HEADER = (
     "UNTRUSTED SOURCE DATA\n"
@@ -72,6 +115,8 @@ def untrusted_context_message(label: str, content: Any) -> Dict[str, Any]:
     """
     safe_label = _sanitize_label(label)
     text = "" if content is None else str(content)
+    text = _escape_delimiters(text)
+    validate_no_delimiter_leak(text)
     text = _escape_guard_markers(text)
     return {
         "role": "user",

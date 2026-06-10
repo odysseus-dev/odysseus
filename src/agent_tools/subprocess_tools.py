@@ -22,6 +22,17 @@ async def _run_subprocess_streaming(
     stderr_full: list[str] = []
     tail = collections.deque(maxlen=PROGRESS_TAIL_LINES)
 
+    async def _emit_progress():
+        if not progress_cb:
+            return
+        try:
+            await progress_cb({
+                "elapsed_s": round(time.time() - started, 1),
+                "tail": "\n".join(list(tail)),
+            })
+        except Exception:
+            pass
+
     async def _reader(stream, full_buf, label: str):
         if stream is None:
             return
@@ -29,24 +40,18 @@ async def _run_subprocess_streaming(
             line = await stream.readline()
             if not line:
                 break
-            decoded = line.decode("utf-8", errors="replace").rstrip("\n")
+            decoded = line.decode("utf-8", errors="replace").rstrip("\n\r")
             full_buf.append(decoded)
             if label == "err":
                 tail.append(f"! {decoded}")
             else:
                 tail.append(decoded)
+            await _emit_progress()
 
     async def _progress_emitter():
         await asyncio.sleep(PROGRESS_INTERVAL_S)
         while True:
-            if progress_cb:
-                try:
-                    await progress_cb({
-                        "elapsed_s": round(time.time() - started, 1),
-                        "tail": "\n".join(list(tail)),
-                    })
-                except Exception:
-                    pass
+            await _emit_progress()
             await asyncio.sleep(PROGRESS_INTERVAL_S)
 
     rd_out = asyncio.create_task(_reader(proc.stdout, stdout_full, "out"))
@@ -131,8 +136,15 @@ class PythonTool:
         from src.tool_execution import agent_cwd, _truncate
         progress_cb = ctx.get("progress_cb")
         _subproc_env = ctx.get("subproc_env")
+        _py_code = (
+            "import sys as _sys\n"
+            "try:\n"
+            "    _sys.stdout.reconfigure(line_buffering=True)\n"
+            "except Exception:\n"
+            "    pass\n"
+        ) + content
         proc = await asyncio.create_subprocess_exec(
-            (sys.executable or "python"), "-I", "-c", content,
+            (sys.executable or "python"), "-u", "-I", "-c", _py_code,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=_subproc_env,

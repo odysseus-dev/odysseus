@@ -435,6 +435,7 @@ async def _direct_fallback(
         "COLUMNS": "120",
         "LINES": "40",
         "HOME": _AGENT_WORKDIR,
+        "PYTHONUNBUFFERED": "1",
     }
 
     try:
