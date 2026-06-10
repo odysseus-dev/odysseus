@@ -407,7 +407,6 @@ function _openVisionEditor(att, userMsgEl) {
 // Tool call syntax patterns to strip from displayed text
 const TOOL_CALL_RE = /\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\]/gi;
 // Only strip fenced tool-call blocks that look like structured invocations, not regular code examples
-const EXEC_FENCE_RE = /```(?:web_search|read_file|write_file|create_document|edit_document|update_document)\s*\n[\s\S]*?```/gi;
 // XML-style tool calls: <minimax:tool_call>, <tool_call>, <function_call>, bare <invoke>
 const XML_TOOL_CALL_RE = /<(?:[\w]+:)?(?:tool_call|function_call)>[\s\S]*?<\/(?:[\w]+:)?(?:tool_call|function_call)>/gi;
 const XML_INVOKE_RE = /<invoke\s+name=['"][^'"]*['"]>[\s\S]*?<\/invoke>/gi;
@@ -847,12 +846,50 @@ export function roleTimestamp(when) {
   return ts;
 }
 
+// Nesting-tolerant removal of executable doc/file fences. The plain
+// EXEC_FENCE_RE stops at the FIRST ``` anywhere, so a write_file/create_document
+// body containing a nested ```lang example fence got split: half stripped,
+// half rendered as leaked prose. Mirrors the server-side scanner in
+// src/tool_parsing.py (column-0 closer, depth-tracked nested fences,
+// legacy first-``` fallback for runaway blocks).
+const EXEC_FENCE_OPEN_RE = /```(web_search|read_file|write_file|create_document|edit_document|update_document)[ \t]*\r?\n/gi;
+function stripExecFences(text) {
+  let out = '', last = 0, m;
+  EXEC_FENCE_OPEN_RE.lastIndex = 0;
+  while ((m = EXEC_FENCE_OPEN_RE.exec(text))) {
+    const bodyStart = m.index + m[0].length;
+    let i = bodyStart, depth = 0, spanEnd = -1;
+    while (i <= text.length) {
+      const nl = text.indexOf('\n', i);
+      const le = nl === -1 ? text.length : nl;
+      const fm = /^([ \t]*)```(.*)$/.exec(text.slice(i, le));
+      if (fm) {
+        const rest = fm[2].trim();
+        if (rest && /^[\w.+-]+$/.test(rest)) depth++;
+        else if (!rest && depth > 0) depth--;
+        else if (!fm[1]) { spanEnd = rest ? i + 3 : le; break; }
+      }
+      if (nl === -1) break;
+      i = nl + 1;
+    }
+    if (spanEnd === -1) {
+      const j = text.indexOf('```', bodyStart);
+      if (j === -1) break;
+      spanEnd = j + 3;
+    }
+    out += text.slice(last, m.index);
+    last = spanEnd;
+    EXEC_FENCE_OPEN_RE.lastIndex = spanEnd;
+  }
+  return out + text.slice(last);
+}
+
 /**
  * Strip tool invocation blocks from text before rendering.
  */
 export function stripToolBlocks(text) {
   let cleaned = text.replace(TOOL_CALL_RE, '');
-  cleaned = cleaned.replace(EXEC_FENCE_RE, '');
+  cleaned = stripExecFences(cleaned);
   cleaned = cleaned.replace(DSML_TOOL_RE, '');
   cleaned = cleaned.replace(DSML_STRAY_RE, '');
   cleaned = cleaned.replace(XML_TOOL_CALL_RE, '');

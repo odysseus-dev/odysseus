@@ -25,6 +25,88 @@ _TOOL_BLOCK_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Fence-scanner pieces for Pattern 1. The naive regex above stops at the FIRST
+# ``` anywhere — so a markdown report written via a bash heredoc that contains
+# an example fence ("  ```python ... ```") got split mid-heredoc: half the file
+# executed (silently truncated on disk), half leaked into chat. The scanner
+# below closes a tool block only on a real closer, tracking (a) open shell
+# heredocs — any fence line inside a heredoc is file content — and (b) nested
+# ```lang … ``` pairs inside the body.
+_TOOL_FENCE_OPEN_RE = re.compile(
+    r"```(" + "|".join(TOOL_TAGS) + r")[ \t]*\r?\n",
+    re.IGNORECASE,
+)
+_FENCE_LINE_RE = re.compile(r"^([ \t]*)```(.*)$")
+_HEREDOC_OPEN_SCAN_RE = re.compile(r"(?:^|[\s;&|])<<-?\s*(['\"]?)([A-Za-z_]\w*)\1")
+
+
+def _find_fenced_tool_spans(text: str) -> list:
+    """Return (start, end, tag, raw_content) spans for fenced tool blocks.
+
+    Closing rules, in priority order per body line:
+    - inside an open heredoc (shell tags only): nothing closes; the heredoc
+      delimiter line ends the heredoc.
+    - ````lang`` (word-like info string): opens a nested display fence.
+    - bare ``` ``` with a nested fence open: closes that nested fence.
+    - column-0 ``` (bare, or with trailing prose à la "```Done, next…"):
+      closes the tool block; trailing prose stays outside the span.
+    - indented stray ``` with no nested fence open: body content.
+
+    If no closer is ever found, fall back to the legacy first-``` behavior so
+    a runaway block can't swallow the rest of the message.
+    """
+    spans = []
+    pos = 0
+    n = len(text)
+    while True:
+        m = _TOOL_FENCE_OPEN_RE.search(text, pos)
+        if not m:
+            break
+        tag = m.group(1).lower()
+        body_start = m.end()
+        is_shell = tag in ("bash", "sh", "shell")
+        depth = 0
+        heredoc = None
+        content_end = None
+        span_end = None
+        i = body_start
+        while i <= n:
+            nl = text.find("\n", i)
+            le = n if nl == -1 else nl
+            line = text[i:le]
+            if heredoc is not None:
+                if line.strip() == heredoc:
+                    heredoc = None
+            else:
+                fm = _FENCE_LINE_RE.match(line)
+                if fm:
+                    indent, rest = fm.group(1), fm.group(2).strip()
+                    if rest and re.fullmatch(r"[\w.+-]+", rest):
+                        depth += 1
+                    elif not rest and depth > 0:
+                        depth -= 1
+                    elif not indent:
+                        content_end = i
+                        span_end = (i + 3) if rest else le
+                        break
+                    # else: indented stray ``` at depth 0 — treat as content
+                elif is_shell and "<<" in line:
+                    hm = _HEREDOC_OPEN_SCAN_RE.search(line)
+                    if hm:
+                        heredoc = hm.group(2)
+            if nl == -1:
+                break
+            i = nl + 1
+        if content_end is None:
+            j = text.find("```", body_start)
+            if j == -1:
+                break  # unterminated fence — same as the old regex: no match
+            content_end = j
+            span_end = j + 3
+        spans.append((m.start(), span_end, tag, text[body_start:content_end]))
+        pos = span_end
+    return spans
+
 # Pattern 2: [TOOL_CALL] ... [/TOOL_CALL] blocks (some models use this format)
 # Matches: {tool => "shell", args => {--command "ls -la"}} etc.
 _TOOL_CALL_RE = re.compile(
@@ -456,9 +538,8 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
 
     # Pattern 1: fenced code blocks (skipped when `skip_fenced` — see docstring).
     if not skip_fenced:
-        for m in _TOOL_BLOCK_RE.finditer(text):
-            tag = m.group(1).lower()
-            content = m.group(2).strip()
+        for _start, _end, tag, raw in _find_fenced_tool_spans(text):
+            content = raw.strip()
             if not content:
                 continue
             # If a code block's content is an <invoke> XML call (some models wrap
@@ -528,7 +609,17 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     # Normalize DSML first so its markup gets stripped by the <invoke>
     # / <tool_call> removers below instead of leaking to the user.
     text = _normalize_dsml(text)
-    cleaned = text if skip_fenced else _TOOL_BLOCK_RE.sub('', text)
+    if skip_fenced:
+        cleaned = text
+    else:
+        # Remove the same spans parse_tool_blocks executes (heredoc/nested-fence
+        # aware) so display stays in lockstep with execution.
+        parts, last = [], 0
+        for s, e, _tag, _raw in _find_fenced_tool_spans(text):
+            parts.append(text[last:s])
+            last = e
+        parts.append(text[last:])
+        cleaned = "".join(parts)
     cleaned = _TOOL_CALL_RE.sub('', cleaned)
     cleaned = _XML_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _TOOL_CODE_RE.sub('', cleaned)

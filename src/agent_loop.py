@@ -2408,7 +2408,13 @@ async def stream_agent_loop(
         )
         if not has_doc_tool and session_id and "create_document" not in (disabled_tools or set()):
             _code_block_re = re.compile(r'```(\w*)\n([\s\S]*?)```')
-            for m in _code_block_re.finditer(round_response):
+            # Scan only the text WITHOUT executed tool blocks — the naive regex
+            # otherwise re-splits a bash heredoc at a nested ```lang fence and
+            # auto-creates a junk document from the middle of the command.
+            # Mirror the skip_fenced gate used by _resolve_tool_blocks above.
+            _doc_scan_text = strip_tool_blocks(
+                round_response, skip_fenced=(_is_api_model and not used_native))
+            for m in _code_block_re.finditer(_doc_scan_text):
                 lang_tag = m.group(1).lower()
                 code_body = m.group(2).strip()
                 # Skip small blocks and known tool tags
