@@ -21589,6 +21589,22 @@ body.gallery-selecting .gallery-dl-btn,
   background: color-mix(in srgb, var(--red) 15%, transparent);
   color: var(--red); font-weight: 600; font-size: 8px;
 }
+.hwfit-gguf-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-left: 4px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--yellow, #f1fa8c) 45%, var(--border));
+  background: color-mix(in srgb, var(--yellow, #f1fa8c) 12%, transparent);
+  color: var(--yellow, #f1fa8c);
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1;
+  vertical-align: 1px;
+}
 .hwfit-sort, .hwfit-quant { width: auto; min-width: 70px; flex-shrink: 0; }
 .hwfit-row-active { background: color-mix(in srgb, var(--red) 8%, transparent); }
 

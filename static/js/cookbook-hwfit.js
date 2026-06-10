@@ -29,6 +29,7 @@ import {
   // importer uses. A query mismatch loads cookbook.js twice as two separate modules
   // (two _envState objects), which silently sent downloads to the wrong server.
 } from './cookbook.js';
+import { _missingGgufMessage } from './cookbookDownload.js';
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
 
@@ -70,6 +71,11 @@ function _downloadSourceRepo(model, backend) {
     }
   }
   return { repo: model?.quant_repo || model?.name || '', kind: '' };
+}
+
+function _missingGgufDownload(model, backend) {
+  if (backend !== 'llamacpp') return false;
+  return !_firstGgufSource(model) && !_looksLikeGgufRepo(model);
 }
 
 // Reset GPU-toggle state so the next scan re-renders the RAM/GPU buttons for a
@@ -1114,10 +1120,13 @@ export function _hwfitRenderList(el, models) {
     const pcount = m.parameter_count || '?';
     const ctx = m.context ? (m.context >= 1024 ? (m.context / 1024).toFixed(0) + 'k' : m.context) : '?';
     const fitLabel = (m.fit_level || '').replace('_', ' ');
+    const detectedBackend = _detectBackend(m);
     const modeLabel = _modeLabel(m);
+    const missingGguf = _missingGgufDownload(m, detectedBackend?.backend);
     const vramLabel = m.required_gb ? m.required_gb.toFixed(1) + 'G' : '?';
     const moeBadge = m.is_moe ? '<span class="hwfit-badge hwfit-moe">MoE</span>' : '';
     const imgBadge = m.is_image_gen ? '<span class="hwfit-badge" style="background:color-mix(in srgb, var(--red) 20%, transparent);color:var(--red);font-size:8px;padding:1px 4px;border-radius:3px;margin-left:4px;">IMG</span>' : '';
+    const ggufWarn = missingGguf ? `<span class="hwfit-gguf-dot" title="${esc(_missingGgufMessage(m))}">!</span>` : '';
     const dlDot = (_cachedModelIds && (_cachedModelIds.has(m.name) || [..._cachedModelIds].some(id => id === m.name?.split('/').pop()))) ? '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>' : '';
     html += `<div class="hwfit-row" data-model="${esc(m.name)}">`;
     html += `<span class="hwfit-col hwfit-fit" style="color:${fitColor}">${esc(fitLabel)}</span>`;
@@ -1150,7 +1159,7 @@ export function _hwfitRenderList(el, models) {
     html += `<span class="hwfit-col hwfit-c-ctx">${m.is_image_gen ? '\u2014' : ctx}</span>`;
     html += `<span class="hwfit-col hwfit-c-speed">${m.is_image_gen ? '\u2014' : tps + ' t/s'}</span>`;
     html += `<span class="hwfit-col hwfit-c-score">${score}</span>`;
-    html += `<span class="hwfit-col hwfit-c-mode" title="${_requiresAcceleratorBackend(m) ? 'Requires vLLM or SGLang with a visible CUDA/ROCm accelerator. llama.cpp and Ollama need GGUF files.' : ''}">${esc(modeLabel)}</span>`;
+    html += `<span class="hwfit-col hwfit-c-mode" title="${missingGguf ? esc(_missingGgufMessage(m)) : (_requiresAcceleratorBackend(m) ? 'Requires vLLM or SGLang with a visible CUDA/ROCm accelerator. llama.cpp and Ollama need GGUF files.' : '')}">${esc(modeLabel)}${ggufWarn}</span>`;
     html += `</div>`;
   }
   el.innerHTML = html;
@@ -1274,6 +1283,7 @@ export function _expandModelRow(row, modelData) {
   const { backend, label } = _detectBackend(modelData);
   const isVllm = backend === 'vllm';
   const isLlamaCpp = backend === 'llamacpp';
+  const missingGguf = _missingGgufDownload(modelData, backend);
   const ctx = modelData.context || 8192;
 
   const dlSource = _downloadSourceRepo(modelData, backend);
@@ -1284,16 +1294,20 @@ export function _expandModelRow(row, modelData) {
   html += `<span class="hwfit-panel-badge">${esc(label)}</span>`;
   html += `<a href="${esc(hfUrl)}" target="_blank" rel="noopener" class="hwfit-panel-hf-link" title="View download source on HuggingFace">HF \u2197</a>`;
   html += `</div>`;
+  if (missingGguf) {
+    html += `<div class="hwfit-panel-note">${esc(_missingGgufMessage(modelData))}</div>`;
+  }
   html += `<div class="hwfit-panel-actions">`;
-  html += `<button class="cookbook-btn hwfit-dl-btn">Download</button>`;
+  const missingGgufAttrs = missingGguf ? ` disabled title="${esc(_missingGgufMessage(modelData))}"` : '';
+  html += `<button class="cookbook-btn hwfit-dl-btn"${missingGgufAttrs}>Download</button>`;
   if (!modelData.is_image_gen) {
-    html += `<button class="cookbook-btn cookbook-run-btn hwfit-quickrun-btn" title="Download + launch with smart defaults">Run</button>`;
+    html += `<button class="cookbook-btn cookbook-run-btn hwfit-quickrun-btn" title="${missingGguf ? esc(_missingGgufMessage(modelData)) : 'Download + launch with smart defaults'}"${missingGguf ? ' disabled' : ''}>Run</button>`;
     html += `<button class="cookbook-btn hwfit-serve-expand-btn" title="Configure & serve">Configure</button>`;
   }
   html += `</div>`;
   if (modelData.is_image_gen) {
     html += `<div style="font-size:10px;opacity:0.5;margin-top:4px;">${esc((modelData.capabilities || []).join(' \u00B7 ') || '')}${modelData.description ? ' \u2014 ' + esc(modelData.description) : ''}</div>`;
-  } else if (_requiresAcceleratorBackend(modelData)) {
+  } else if (!missingGguf && _requiresAcceleratorBackend(modelData)) {
     // Only show the "needs CUDA/ROCm" note when the host doesn't already have
     // one. With a visible CUDA/ROCm accelerator the note is noise — the user
     // can already serve the model and reading the warning on every row makes
