@@ -42,7 +42,7 @@ def _memory_map(rows):
         if not isinstance(row, dict):
             continue
         memory_id = row.get("id", "")
-        if memory_id:
+        if isinstance(memory_id, str) and memory_id:
             memories[memory_id] = row
     return memories
 

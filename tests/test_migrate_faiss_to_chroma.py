@@ -21,6 +21,8 @@ def test_memory_map_skips_invalid_rows():
         "bad-row",
         None,
         {"text": "missing id"},
+        {"id": {"bad": "id"}, "text": "unhashable"},
+        {"id": 123, "text": "numeric"},
     ]) == {"m1": {"id": "m1", "text": "hello"}}
 
 
