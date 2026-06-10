@@ -1983,6 +1983,13 @@ async def stream_agent_loop(
             messages.insert(0, {"role": "system", "content": GUIDE_ONLY_DIRECTIVE})
     prep_timings["prompt_build"] = time.time() - _t2
 
+    # Pin the current user query so trimming can NEVER strip every user message.
+    # Some chat templates (qwen3.x) raise "No user query found in messages" and
+    # return an empty completion when the array has no user role — which is how
+    # a long post-continue context silently died. Captured before trim/strip.
+    _pinned_user = next((m for m in reversed(messages)
+                         if m.get("role") == "user" and str(m.get("content") or "").strip()), None)
+
     _t3 = time.time()
     try:
         from src.context_compactor import trim_for_context
@@ -2033,6 +2040,14 @@ async def stream_agent_loop(
 
     # Strip internal metadata keys before sending to the LLM API
     messages = [{k: v for k, v in msg.items() if k != "_protected"} for msg in messages]
+
+    # Safety net: if trimming removed every user message, re-append the pinned
+    # query so the model always has something to answer (prevents the qwen
+    # "No user query found in messages" empty-response failure after a continue).
+    if _pinned_user is not None and not any(
+            m.get("role") == "user" and str(m.get("content") or "").strip() for m in messages):
+        messages.append({k: v for k, v in _pinned_user.items() if k != "_protected"})
+        logger.warning("[agent] re-pinned user query after trim left no user message")
 
     yield f"data: {json.dumps({'type': 'agent_prep', 'data': {k: round(v, 3) for k, v in prep_timings.items()}})}\n\n"
 
