@@ -22,14 +22,14 @@ def _flags(meta_b: bytes) -> str:
 # UID FETCH a,b (UID FLAGS RFC822.HEADER RFC822.SIZE):
 GMAIL_RESPONSE = [
     (b"10779 (UID 18723 RFC822.SIZE 54308 RFC822.HEADER {24}", b"Subject: read one\r\n\r\n"),
-    b" FLAGS (\\Seen))",
+    rb" FLAGS (\Seen))",
     (b"10780 (UID 18724 RFC822.SIZE 124310 RFC822.HEADER {26}", b"Subject: unread one\r\n\r\n"),
-    b" FLAGS ())",
+    rb" FLAGS ())",
 ]
 
 # Dovecot puts FLAGS before the literal and terminates with a bare b')'.
 DOVECOT_RESPONSE = [
-    (b"1 (UID 5 FLAGS (\\Seen) RFC822.SIZE 100 RFC822.HEADER {18}", b"Subject: hi\r\n\r\n"),
+    (rb"1 (UID 5 FLAGS (\Seen) RFC822.SIZE 100 RFC822.HEADER {18}", b"Subject: hi\r\n\r\n"),
     b")",
     (b"2 (UID 6 FLAGS () RFC822.SIZE 90 RFC822.HEADER {19}", b"Subject: new\r\n\r\n"),
     b")",
@@ -41,7 +41,7 @@ def test_gmail_post_literal_flags_attach_to_their_own_message():
 
     assert len(grouped) == 2
     assert _uid_from_fetch_meta(grouped[0][0]) == "18723"
-    assert _flags(grouped[0][0]) == "\\Seen"
+    assert _flags(grouped[0][0]) == r"\Seen"
     assert grouped[0][1] == b"Subject: read one\r\n\r\n"
 
     assert _uid_from_fetch_meta(grouped[1][0]) == "18724"
@@ -53,7 +53,7 @@ def test_dovecot_pre_literal_flags_unchanged():
     grouped = _group_uid_fetch_records(DOVECOT_RESPONSE)
 
     assert len(grouped) == 2
-    assert _flags(grouped[0][0]) == "\\Seen"
+    assert _flags(grouped[0][0]) == r"\Seen"
     assert _flags(grouped[1][0]) == ""
     assert grouped[1][1] == b"Subject: new\r\n\r\n"
 
@@ -68,4 +68,4 @@ def test_empty_and_none_inputs():
     assert _group_uid_fetch_records(None) == []
     assert _group_uid_fetch_records([]) == []
     # A stray bare element before any tuple opens no record and must not crash.
-    assert _group_uid_fetch_records([b" FLAGS (\\Seen))"]) == []
+    assert _group_uid_fetch_records([rb" FLAGS (\Seen))"]) == []
