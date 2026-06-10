@@ -998,7 +998,9 @@ function _buildComparisonMarkdown() {
     const m = state._selectedModels[i];
     const name = m ? (m.name || m.model) + (m.endpointName ? ' (' + m.endpointName + ')' : '') : 'Model ' + (i + 1);
     const body = pane.querySelector('.compare-text-content, .msg-body, .body');
-    const text = body ? (body.innerText || body.textContent || '').trim() : '';
+    // Prefer dataset.raw (original markdown) over innerText (rendered HTML as text)
+    // to avoid extra newlines and formatting artifacts.
+    const text = body ? (body.dataset.raw || body.innerText || body.textContent || '').trim() : '';
     const metrics = state._paneMetrics[i];
     const grade = pane.querySelector('.pane-grade-badge');
     const gradeMark = grade ? (grade.classList.contains('pass') ? ' ✓' : ' ✗') : '';
@@ -1123,7 +1125,9 @@ async function _exportComparison(btn) {
     const m = state._selectedModels[i];
     const name = m ? (m.name || m.model) + (m.endpointName ? ' (' + m.endpointName + ')' : '') : 'Model ' + (i + 1);
     const body = pane.querySelector('.compare-text-content, .msg-body, .body');
-    const text = body ? (body.innerText || body.textContent || '').trim() : '';
+    // Prefer dataset.raw (original markdown) over innerText (rendered HTML as text)
+    // to avoid extra newlines and formatting artifacts.
+    const text = body ? (body.dataset.raw || body.innerText || body.textContent || '').trim() : '';
     const metrics = state._paneMetrics[i];
     const grade = pane.querySelector('.pane-grade-badge');
     const gradeMark = grade ? (grade.classList.contains('pass') ? ' ✓' : ' ✗') : '';
