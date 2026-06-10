@@ -108,6 +108,8 @@ def _q(name: str) -> str:
 
 
 def _split_recipients(value: str) -> list[str]:
+    if not isinstance(value, str):
+        return []
     return [r.strip() for r in (value or "").split(",") if r.strip()]
 
 
