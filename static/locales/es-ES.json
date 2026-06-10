@@ -610,5 +610,7 @@
   "ui.js.ui_copied": "Copiado",
   "ui.js.ui_delete": "Eliminar",
   "ui.js.ui_name": "Nombre",
-  "ui.js.ui_save": "Guardar"
+  "ui.js.ui_save": "Guardar",
+  "ui.logout": "Cerrar sesión",
+  "ui.js.logout_confirm": "¿Cerrar la sesión de Odysseus?"
 }

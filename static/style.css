@@ -535,6 +535,12 @@ body.bg-pattern-sparkles {
       background: color-mix(in srgb, var(--fg) 8%, transparent);
     }
 
+    /* Logout reads as a destructive action — tint it on hover. */
+    .user-bar-logout:hover {
+      color: var(--color-error);
+      background: color-mix(in srgb, var(--color-error) 10%, transparent);
+    }
+
 
     .sidebar.hidden .sidebar-user-bar {
       display: none;

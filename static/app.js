@@ -1126,6 +1126,20 @@ function initializeEventListeners() {
   if (userBarAdmin) {
     userBarAdmin.addEventListener('click', () => adminModule.open());
   }
+  const userBarLogout = el('user-bar-logout');
+  if (userBarLogout) {
+    userBarLogout.addEventListener('click', async () => {
+      const t = window.i18n?.t ?? ((k, v, f) => f);
+      // One click in the sidebar shouldn't end the session — confirm first
+      // (the Settings → Account button keeps its direct behaviour).
+      const ok = window.styledConfirm
+        ? await window.styledConfirm(t('ui.js.logout_confirm', null, 'Log out of Odysseus?'), {
+            confirmText: t('ui.logout', null, 'Logout'), danger: true,
+          })
+        : confirm(t('ui.js.logout_confirm', null, 'Log out of Odysseus?'));
+      if (ok) settingsModule.performLogout();
+    });
+  }
 
   // Fetch auth status — populate user bar and show admin button if admin
   fetch(`${API_BASE}/api/auth/status`, { credentials: 'same-origin' })

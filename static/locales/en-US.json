@@ -610,5 +610,7 @@
   "ui.js.ui_copied": "Copied",
   "ui.js.ui_delete": "Delete",
   "ui.js.ui_name": "Name",
-  "ui.js.ui_save": "Save"
+  "ui.js.ui_save": "Save",
+  "ui.logout": "Logout",
+  "ui.js.logout_confirm": "Log out of Odysseus?"
 }

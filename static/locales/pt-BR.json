@@ -610,5 +610,7 @@
   "ui.js.ui_copied": "Copiado",
   "ui.js.ui_delete": "Excluir",
   "ui.js.ui_name": "Nome",
-  "ui.js.ui_save": "Salvar"
+  "ui.js.ui_save": "Salvar",
+  "ui.logout": "Sair",
+  "ui.js.logout_confirm": "Sair do Odysseus?"
 }

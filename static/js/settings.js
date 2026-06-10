@@ -2154,28 +2154,31 @@ function initAccount() {
   if (logoutBtn) {
     logoutBtn.addEventListener('mouseenter', () => { logoutBtn.style.opacity = '1'; logoutBtn.style.borderColor = 'var(--red)'; logoutBtn.style.color = 'var(--red)'; });
     logoutBtn.addEventListener('mouseleave', () => { logoutBtn.style.opacity = ''; logoutBtn.style.borderColor = ''; logoutBtn.style.color = ''; });
-    logoutBtn.addEventListener('click', async () => {
-      try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (_) {}
-      // SECURITY: wipe all client-side state on logout so the next user that
-      // signs in on this browser doesn't inherit the previous account's
-      // session id, last-used model, draft chat input, or any cached lists.
-      // Keep "odysseus-last-user" so the login form remembers the username
-      // (if "Remember me" was on). Without this the chat composer pre-loaded
-      // the previous user's last model into a fresh session, which read as
-      // cross-account leakage.
-      try {
-        const _keepKeys = new Set(['odysseus-last-user']);
-        const _toRemove = [];
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && !_keepKeys.has(k)) _toRemove.push(k);
-        }
-        _toRemove.forEach(k => localStorage.removeItem(k));
-        sessionStorage.clear();
-      } catch (_) {}
-      window.location.href = '/login';
-    });
+    logoutBtn.addEventListener('click', performLogout);
   }
+}
+
+// Shared by the Settings → Account button and the sidebar user-bar button.
+export async function performLogout() {
+  try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (_) {}
+  // SECURITY: wipe all client-side state on logout so the next user that
+  // signs in on this browser doesn't inherit the previous account's
+  // session id, last-used model, draft chat input, or any cached lists.
+  // Keep "odysseus-last-user" so the login form remembers the username
+  // (if "Remember me" was on). Without this the chat composer pre-loaded
+  // the previous user's last model into a fresh session, which read as
+  // cross-account leakage.
+  try {
+    const _keepKeys = new Set(['odysseus-last-user']);
+    const _toRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && !_keepKeys.has(k)) _toRemove.push(k);
+    }
+    _toRemove.forEach(k => localStorage.removeItem(k));
+    sessionStorage.clear();
+  } catch (_) {}
+  window.location.href = '/login';
 }
 
 function initAll() {
@@ -5261,7 +5264,7 @@ export function close() {
   }
 }
 
-const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints };
+const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints, performLogout };
 
 
 export default settingsModule;
