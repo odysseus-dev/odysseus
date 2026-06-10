@@ -1530,6 +1530,10 @@ def _compute_final_metrics(
         "total_tokens": input_tokens + output_tokens,
         "context_length": context_length,
         "context_percent": ctx_pct,
+        # What actually sits in the model's window right now (last round's
+        # prompt). `input_tokens` is the SUM over all agent rounds — billing
+        # total, not occupancy — and must not be compared to context_length.
+        "context_tokens": ctx_tokens,
         "usage_source": "real" if has_real_usage else "estimated",
         "model": model,
     }
@@ -2416,6 +2420,17 @@ async def stream_agent_loop(
                 lang_map = {"py": "python", "js": "javascript", "ts": "typescript", "": "text"}
                 doc_lang = lang_map.get(lang_tag, lang_tag or "text")
                 doc_title = f"Code ({doc_lang})"
+                # Untagged fences are usually markdown reports, not code: title
+                # them by their first heading so the panel doesn't fill with
+                # interchangeable "Code (text)" entries (and so the same report
+                # re-emitted next round versions into ONE document by title).
+                if doc_lang in ("text", "markdown", "md"):
+                    _h = re.search(r'^#{1,4}\s+(.+?)\s*$', code_body, re.MULTILINE)
+                    if _h:
+                        doc_title = _h.group(1).strip().strip('#*` ')[:80] or doc_title
+                        doc_lang = "markdown"
+                    elif doc_lang == "md":
+                        doc_lang = "markdown"
                 tb = ToolBlock("create_document", f"{doc_title}\n{doc_lang}\n{code_body}")
                 tool_blocks.append(tb)
                 # Stream the document open event
@@ -2767,6 +2782,8 @@ async def stream_agent_loop(
                     output_text = f'Document edited: "{title}" (v{ver}, {result.get("applied", 0)} edit(s))'
                 elif action == "update":
                     output_text = f'Document updated: "{title}" (v{ver})'
+                elif action == "unchanged":
+                    output_text = f'Document unchanged: "{title}" (v{ver} — identical content)'
             elif "stdout" in result:
                 # On a bash/python timeout the result carries error + (often
                 # empty) stdout/stderr; fall back to the error so the "timed

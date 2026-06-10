@@ -388,6 +388,72 @@ def _split_bg_marker(content: str):
     return False, content
 
 
+_HEREDOC_OPEN_RE = re.compile(
+    r"""^\s*cat\s+(?:
+        <<-?\s*(?P<q1>['"]?)(?P<d1>\w+)(?P=q1)\s*>\s*(?P<p1>\S+)   # cat << 'EOF' > path
+        |
+        >\s*(?P<p2>\S+)\s*<<-?\s*(?P<q2>['"]?)(?P<d2>\w+)(?P=q2)   # cat > path << 'EOF'
+    )\s*$""",
+    re.VERBOSE,
+)
+
+
+def _heredoc_to_write_file(command: str):
+    """If a bash command is nothing but a single `cat` heredoc writing one file
+    (optionally surrounded by comments/blank lines), return (path, body) so it
+    can be executed as the write_file tool instead. Local models lean on
+    heredocs for whole-file writes and then loop on shell-quoting failures;
+    write_file takes the body verbatim and registers the file in the UI panel.
+    Returns None when the command does anything else (pipelines, appends `>>`,
+    trailing commands, or an unquoted delimiter with $/` expansion intended)."""
+    lines = command.split("\n")
+    i = 0
+    while i < len(lines) and (not lines[i].strip() or lines[i].lstrip().startswith("#")):
+        i += 1
+    if i >= len(lines):
+        return None
+    m = _HEREDOC_OPEN_RE.match(lines[i])
+    if not m:
+        return None
+    quote = m.group("q1") or m.group("q2") or ""
+    delim = m.group("d1") or m.group("d2")
+    path = (m.group("p1") or m.group("p2")).strip("'\"")
+    close = None
+    for k in range(i + 1, len(lines)):
+        if lines[k].strip() == delim:
+            close = k
+            break
+    if close is None:
+        return None
+    # Anything after the closing delimiter besides blanks/comments → real script.
+    for k in range(close + 1, len(lines)):
+        if lines[k].strip() and not lines[k].lstrip().startswith("#"):
+            return None
+    body = "\n".join(lines[i + 1:close])
+    # Unquoted delimiter means the shell would expand $vars/backticks — if the
+    # body uses them, the substitution is intended; leave it to bash.
+    if not quote and re.search(r"[$`]", body):
+        return None
+    if not body.strip():
+        return None
+    return path, body
+
+
+def _existing_file_line_count(raw_path: str) -> int:
+    """Line count of an existing regular file the agent is about to overwrite
+    (0 if it doesn't exist / can't be read). Used for the edit_file nudge."""
+    try:
+        p = os.path.expanduser(raw_path.strip())
+        if not os.path.isabs(p):
+            p = os.path.join(_AGENT_WORKDIR, p)
+        if not os.path.isfile(p) or os.path.getsize(p) > 2_000_000:
+            return 0
+        with open(p, "r", errors="ignore") as fh:
+            return sum(1 for _ in fh)
+    except Exception:
+        return 0
+
+
 async def _direct_fallback(
     tool: str,
     content: str,
@@ -598,6 +664,7 @@ async def execute_tool_block(
     # real failure. Catch it and teach the correct format.
     _NON_SHELL_TOOLS = {"write_file", "read_file", "create_document", "edit_document",
                         "update_document", "edit_file", "manage_notes", "manage_memory"}
+    _heredoc_converted = False
     if tool in ("bash", "sh", "shell"):
         _first_tok = (content.strip().split() or [""])[0]
         if _first_tok in _NON_SHELL_TOOLS:
@@ -609,6 +676,16 @@ async def execute_tool_block(
                     "(first line = absolute path, everything after = the file body)."),
                 "exit_code": 1,
             })
+        # A bash block that is just `cat << 'EOF' > file` is a whole-file write
+        # in disguise — execute it as write_file instead: the body lands
+        # verbatim (no shell-quoting retry loops) and the file shows up in the
+        # UI files panel via document registration below.
+        _hd = _heredoc_to_write_file(content)
+        if _hd is not None:
+            tool = "write_file"
+            content = f"{_hd[0]}\n{_hd[1]}"
+            _heredoc_converted = True
+            logger.info(f"[tools] bash heredoc converted to write_file: {_hd[0]}")
 
     # write_file with no body (path-only or empty) — the model fumbled the format.
     if tool == "write_file":
@@ -769,6 +846,8 @@ async def execute_tool_block(
     if tool in _MCP_TOOL_MAP:
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
+        _pre_lines = _existing_file_line_count(content.split("\n", 1)[0]) \
+            if tool == "write_file" else 0
         result = await _call_mcp_tool(tool, content, progress_cb=progress_cb)
         # Surface a written text file in the UI: the file panel lists DB-backed
         # documents, not the filesystem, so a bare write_file to /tmp is
@@ -784,6 +863,24 @@ async def execute_tool_block(
                     result = {**result, "registered_document": _reg}
             except Exception:
                 logger.debug("write_file doc registration failed", exc_info=True)
+        if (tool == "write_file" and isinstance(result, dict)
+                and result.get("exit_code") == 0):
+            _notes = []
+            if _heredoc_converted:
+                _notes.append(
+                    "Your bash heredoc was executed as the write_file tool (body written "
+                    "verbatim — no shell quoting issues). Next time write files with a "
+                    "```write_file block directly.")
+            if _pre_lines >= 10:
+                _notes.append(
+                    f"This OVERWROTE an existing {_pre_lines}-line file with a full rewrite. "
+                    "For changing part of a file, use ```edit_file "
+                    '{"path": "...", "old_string": "<exact text>", "new_string": "<replacement>"}``` '
+                    "— send only the lines that change, never the whole file again.")
+            if _notes:
+                result = {**result,
+                          "output": (str(result.get("output") or "").rstrip()
+                                     + "\n\n[note] " + "\n[note] ".join(_notes)).strip()}
     elif tool in ("grep", "glob", "ls"):
         # Code-navigation tools — no MCP server; run the direct implementation.
         first_line = content.split(chr(10))[0][:80]
@@ -979,6 +1076,8 @@ def format_tool_result(description: str, result: Dict) -> str:
             parts.append(f"Document created: \"{result.get('title', '')}\" (id: {result['doc_id']}, v{result['version']})")
         elif action == "update":
             parts.append(f"Document updated: \"{result.get('title', '')}\" (v{result['version']})")
+        elif action == "unchanged":
+            parts.append(f"Document unchanged: \"{result.get('title', '')}\" (v{result['version']} — identical content, no new version created)")
         elif action == "edit":
             parts.append(f'Document edited: "{result.get("title", "")}" (v{result.get("version", "?")}, {result.get("applied", 0)} edit(s) applied)')
     elif "error" in result:

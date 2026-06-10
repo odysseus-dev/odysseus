@@ -1753,7 +1753,7 @@ export function displayMetrics(messageElement, metrics) {
     popup.innerHTML = `
       <div style="font-weight:600;margin-bottom:6px;color:var(--fg);">Message Stats</div>
       <div><span class="ctx-label">Model</span> ${model.split('/').pop()}</div>
-      <div><span class="ctx-label">Input</span> ${inputTokens.toLocaleString()} tokens${isReal ? '' : '~'}</div>
+      <div><span class="ctx-label">Input</span> ${inputTokens.toLocaleString()} tokens${isReal ? '' : '~'}${metrics.context_tokens && metrics.context_tokens < inputTokens ? ' (all rounds)' : ''}</div>
       <div><span class="ctx-label">Output</span> ${outputTokens.toLocaleString()} tokens${isReal ? '' : '~'}</div>
       <div><span class="ctx-label">Total</span> ${totalTok.toLocaleString()} tokens</div>
       <div><span class="ctx-label">Speed</span> ${speedStr}</div>
@@ -1821,7 +1821,12 @@ export function displayMetrics(messageElement, metrics) {
       e.stopPropagation();
       document.querySelectorAll('.ctx-detail-popup').forEach(p => { if (typeof p._dismiss === 'function') p._dismiss(); else p.remove(); });
 
-      const usedTokens = inputTokens || 0;
+      // Window occupancy = last round's prompt size. input_tokens is the sum
+      // over all agent rounds (can exceed the window several times over) —
+      // for old messages without context_tokens, derive it from the percent.
+      const usedTokens = metrics.context_tokens
+        || (ctxPct && ctxLen ? Math.round(ctxPct / 100 * ctxLen) : 0)
+        || inputTokens || 0;
       const totalCtx = ctxLen || 0;
       const modelShort = model.split('/').pop();
       const fmtNum = n => n ? n.toLocaleString() : '?';

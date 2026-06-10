@@ -293,6 +293,61 @@ class CreateDocumentTool:
                 return {"error": "Cannot create document in another user's session"}
             _owner = _sess.owner if _sess else None
 
+            # Same title in the same session → this is the same deliverable.
+            # Models (and the auto-create fallback) re-emit a document every
+            # round; without this the panel fills with identical-titled copies
+            # while each copy sits at v1, defeating the version history.
+            existing = (
+                db.query(Document)
+                .filter(
+                    Document.session_id == session_id,
+                    Document.title == title,
+                    Document.is_active == True,  # noqa: E712
+                    Document.archived == False,  # noqa: E712
+                )
+                .order_by(Document.updated_at.desc())
+                .first()
+            )
+            if existing is not None:
+                if (existing.current_content or "") == (content or ""):
+                    set_active_document(existing.id)
+                    return {
+                        "action": "unchanged",
+                        "doc_id": existing.id,
+                        "title": existing.title,
+                        "language": existing.language,
+                        "content": content,
+                        "version": existing.version_count,
+                    }
+                new_ver = existing.version_count + 1
+                db.add(DocumentVersion(
+                    id=ver_id,
+                    document_id=existing.id,
+                    version_number=new_ver,
+                    content=content,
+                    summary=f"Re-created by {_active_model or 'AI'}",
+                    source="ai",
+                ))
+                existing.current_content = content
+                existing.version_count = new_ver
+                if language:
+                    existing.language = language
+                db.commit()
+                set_active_document(existing.id)
+                try:
+                    from src.event_bus import fire_event
+                    fire_event("document_updated", _owner)
+                except Exception:
+                    logger.debug("document_updated event dispatch failed", exc_info=True)
+                return {
+                    "action": "update",
+                    "doc_id": existing.id,
+                    "title": existing.title,
+                    "language": existing.language,
+                    "content": content,
+                    "version": new_ver,
+                }
+
             doc = Document(
                 id=doc_id,
                 session_id=session_id,
