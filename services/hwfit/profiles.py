@@ -103,6 +103,9 @@ def compute_serve_profiles(system, model, serve_weights_gb=None, serve_quant=Non
     in the actual serving knobs (n_cpu_moe, KV-cache type, context). serve_quant
     is the file's quant label (e.g. "Q4_K_M") just for display.
     """
+    if not isinstance(system, dict) or not isinstance(model, dict):
+        return []
+
     vram = float(system.get("gpu_vram_gb") or 0)
     if vram <= 0:
         return []
