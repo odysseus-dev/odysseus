@@ -223,8 +223,19 @@ if AUTH_ENABLED:
     _token_cache_dirty = True
 
     def _token_cache_invalidate():
-        nonlocal_dict = app.state.__dict__
-        nonlocal_dict["_token_cache_dirty"] = True
+        """Mark the in-memory API-token cache as dirty so the next request
+        rebuilds it. Set both the app.state flag and the module-level flag to
+        avoid mismatches when callers touch either namespace.
+        """
+        try:
+            # Preferred: set attribute on app.state
+            app.state._token_cache_dirty = True
+        except Exception:
+            # Fallback: directly set the underlying dict entry
+            app.state.__dict__["_token_cache_dirty"] = True
+        # Keep module-level flag in sync for any legacy references
+        global _token_cache_dirty
+        _token_cache_dirty = True
     app.state.invalidate_token_cache = _token_cache_invalidate
     app.state._token_cache = _token_cache
     app.state._token_cache_dirty = True
