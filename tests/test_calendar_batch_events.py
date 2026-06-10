@@ -102,20 +102,20 @@ async def test_batch_events_partial_failure():
         ]
     }
     res = await do_manage_calendar(json.dumps(payload), owner=owner)
-    
+
     # Partial failure = non-zero exit code
     assert res.get("exit_code") != 0, "Partial failure should return non-zero exit code"
-    
+
     # Response should mention both created and failed counts
     response = res.get("response", "")
     assert "Created 2 event(s)" in response, f"Should report 2 created: {response}"
     assert "Failed to create 1 event(s)" in response, f"Should report 1 failed: {response}"
     assert "error" in response.lower() or "required" in response.lower(), "Should include error details"
-    
+
     # Metadata fields
     assert res.get("created_count") == 2
     assert res.get("failed_count") == 1
-    
+
     # Verify only valid events were created
     db = _TS()
     events = db.query(CalendarEvent).filter(
