@@ -737,11 +737,28 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             try:
                 async with httpx.AsyncClient(timeout=8.0) as client:
                     r = await client.post(webhook_url, json=payload)
-                if r.is_success:
-                    return {"ok": True, "message": "Test embed sent — check your Discord channel to confirm it arrived."}
-                return {"ok": False, "message": f"Discord returned HTTP {r.status_code}: {r.text[:200]}"}
+                    if r.is_success:
+                        return {"ok": True, "message": "Discord Webhook is active."}
+                    return {"ok": False, "message": f"Discord returned HTTP {r.status_code}: {r.text[:200]}"}
             except Exception as e:
-                return {"ok": False, "message": f"Request failed: {e}"[:400]}
+                return {"ok": False, "message": f"Discord publish failed: {e}"[:500]}
+
+        if preset == "slack_webhook":
+            import httpx
+            webhook_url = (integ.get("base_url") or "").strip()
+            if not webhook_url:
+                return {"ok": False, "message": "No webhook URL set — paste the full Slack webhook URL into the Base URL field."}
+            payload = {
+                "text": "*Odysseus connectivity test*\nIf you see this, your Slack Webhook integration is wired up correctly."
+            }
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    r = await client.post(webhook_url, json=payload)
+                    if r.is_success:
+                        return {"ok": True, "message": "Slack Webhook is active."}
+                    return {"ok": False, "message": f"Slack returned HTTP {r.status_code}: {r.text[:200]}"}
+            except Exception as e:
+                return {"ok": False, "message": f"Slack publish failed: {e}"[:500]}
 
         # All other presets: GET against a known health endpoint.
         # Fall back to detecting from name if preset is missing.

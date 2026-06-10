@@ -2455,6 +2455,7 @@ async function initReminderSettings() {
   // handler can reference it.
   const WEBHOOK_PRESET_TEMPLATES = {
     discord_webhook: '{"embeds": [{"title": "{{title}}", "description": "{{message}}", "color": 5793266}]}',
+    slack_webhook: '{"text": "*{{title}}*\\n{{message}}"}',
   };
 
   try {
@@ -3057,7 +3058,7 @@ async function initIntegrations() {
 
   // Presets where the secret is embedded in the URL — no separate key or
   // auth header is used, so hiding those fields avoids confusion.
-  const URL_AUTH_PRESETS = ['discord_webhook'];
+  const URL_AUTH_PRESETS = ['discord_webhook', 'slack_webhook'];
 
   // Toggle auth header + key row visibility based on auth type and preset.
   function syncAuthRow() {
@@ -3616,7 +3617,7 @@ async function initUnifiedIntegrations() {
     const _applyPreset = () => {
       const p = presets[preset.value];
       const isNtfy = preset.value === 'ntfy' || (p && (p.name || '').toLowerCase() === 'ntfy');
-      const isUrlAuth = preset.value === 'discord_webhook'; // secret embedded in URL — no key/auth fields needed
+      const isUrlAuth = preset.value === 'discord_webhook' || preset.value === 'slack_webhook'; // secret embedded in URL — no key/auth fields needed
       if (ntfyHint) {
         ntfyHint.style.display = isNtfy ? 'block' : 'none';
         if (isNtfy) {
@@ -3624,7 +3625,10 @@ async function initUnifiedIntegrations() {
         }
       }
       if (url) {
-        url.placeholder = isNtfy ? 'http://127.0.0.1:8091' : isUrlAuth ? 'https://discord.com/api/webhooks/...' : 'http://localhost:8080';
+        if (isNtfy) url.placeholder = 'http://127.0.0.1:8091';
+        else if (preset.value === 'discord_webhook') url.placeholder = 'https://discord.com/api/webhooks/...';
+        else if (preset.value === 'slack_webhook') url.placeholder = 'https://hooks.slack.com/services/...';
+        else url.placeholder = 'http://localhost:8080';
       }
       // For presets that embed the secret in the URL, hide auth/key/header rows
       // so users aren't confused into thinking they need to fill them in.

@@ -48,12 +48,22 @@ def _smtp_security_mode(cfg: dict) -> str:
     return "ssl"
 
 
+def _normalize_mail_text(value: str) -> str:
+    """Normalize invisible paste separators before handing values to stdlib."""
+    return str(value or "").replace("\xa0", " ").strip()
+
+
+def _normalize_mail_password(value: str) -> str:
+    """Remove pasted grouping whitespace from app passwords."""
+    return re.sub(r"[\s\xa0]+", "", str(value or ""))
+
+
 def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message: str | bytes, timeout: int = 30) -> None:
     """Send through SMTP using the configured transport security mode."""
     host = cfg["smtp_host"]
     port = int(cfg.get("smtp_port") or 465)
-    user = cfg.get("smtp_user") or ""
-    password = cfg.get("smtp_password") or ""
+    user = _normalize_mail_text(cfg.get("smtp_user") or "")
+    password = _normalize_mail_password(cfg.get("smtp_password") or "")
     security = _smtp_security_mode(cfg)
 
     if security == "ssl":
@@ -245,6 +255,7 @@ def _q(name: str) -> str:
     in double quotes so user-supplied folder names with spaces or quotes can't
     confuse `SELECT` / `COPY`. imaplib already rejects CRLF, but quoting also
     handles `[Gmail]/Sent Mail`-style names that need wrapping anyway."""
+    name = str(name or "").replace("\xa0", " ").strip()
     return '"' + (name or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
@@ -825,7 +836,7 @@ def _imap_connect(account_id: str | None = None, owner: str = "",
         timeout=timeout,
     )
     try:
-        conn.login(cfg["imap_user"], cfg["imap_password"])
+        conn.login(_normalize_mail_text(cfg["imap_user"]), _normalize_mail_password(cfg["imap_password"]))
     except Exception:
         # A failed AUTHENTICATE (e.g. an Office 365 app password on an
         # MFA-enabled tenant, #3174) otherwise orphans the already-connected

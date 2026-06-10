@@ -71,6 +71,8 @@ def test_mcp_quote_helper_handles_spaced_and_quoted_mailboxes():
     assert es._q("Sent Items") == '"Sent Items"'
     assert es._q('[Gmail]/All Mail') == '"[Gmail]/All Mail"'
     assert es._q('Label "Needs Reply"') == '"Label \\"Needs Reply\\""'
+    assert es._q("INBOX\xa0") == '"INBOX"'
+    assert es._q("Sent\xa0Items") == '"Sent Items"'
 
 
 def test_known_imap_mailbox_call_sites_are_quoted():

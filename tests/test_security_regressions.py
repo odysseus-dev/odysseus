@@ -215,6 +215,12 @@ def test_q_name_with_spaces():
     assert _q("[Gmail]/Sent Mail") == '"[Gmail]/Sent Mail"'
 
 
+def test_q_normalizes_invisible_nbsp():
+    _q = _import_q()
+    assert _q("INBOX\xa0") == '"INBOX"'
+    assert _q("Sent\xa0Items") == '"Sent Items"'
+
+
 def test_q_escapes_backslash():
     _q = _import_q()
     assert _q("weird\\name") == '"weird\\\\name"'

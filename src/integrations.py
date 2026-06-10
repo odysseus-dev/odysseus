@@ -114,6 +114,18 @@ INTEGRATION_PRESETS: Dict[str, Dict[str, Any]] = {
             "  Embed:   {\"embeds\": [{\"title\": \"{{title}}\", \"description\": \"{{message}}\", \"color\": 5793266}]}"
         ),
     },
+    "slack_webhook": {
+        "name": "Slack Webhook",
+        "auth_type": "none",
+        "description": (
+            "Slack Incoming Webhook. Paste the full webhook URL as the Base URL.\n"
+            "To get a URL: Slack workspace -> Apps -> Custom Integrations -> Incoming WebHooks -> Add Configuration.\n"
+            "The secret is embedded in the URL — leave auth type as None.\n\n"
+            "Use this integration as the target in Settings -> Reminders -> Webhook channel.\n"
+            "Payload template examples:\n"
+            "  Simple:  {\"text\": \"*{{title}}*\\n{{message}}\"}"
+        ),
+    },
     "vaultwarden": {
         "name": "Vaultwarden",
         "auth_type": "header",

@@ -42,6 +42,7 @@ def _b(value) -> bytes:
 
 def _q(name: str) -> str:
     """Quote an IMAP mailbox name for commands that take mailbox args."""
+    name = str(name or "").replace("\xa0", " ").strip()
     return '"' + (name or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 

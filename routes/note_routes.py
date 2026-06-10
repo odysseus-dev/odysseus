@@ -400,6 +400,7 @@ async def dispatch_reminder(
             # to configure a template just to use a standard service.
             _PRESET_TEMPLATE_DEFAULTS = {
                 "discord_webhook": '{"embeds": [{"title": "{{title}}", "description": "{{message}}", "color": 5793266}]}',
+                "slack_webhook": '{"text": "*{{title}}*\\n{{message}}"}',
             }
             intg_id = settings.get("reminder_webhook_integration_id", "").strip()
             template = settings.get("reminder_webhook_payload_template", "").strip()

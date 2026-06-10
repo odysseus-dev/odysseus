@@ -117,7 +117,7 @@ Core (`requirements.txt`) and optional (`requirements-optional.txt`):
 | qrcode\[pil] | BSD-3-Clause |
 | croniter | MIT |
 | pytest / pytest-asyncio | MIT / Apache-2.0 |
-| duckduckgo-search (optional) | MIT |
+| ddgs (optional) | MIT |
 | markitdown (optional — Office/EPUB text extraction) | MIT |
 | **PyMuPDF** *(optional — form-filling only)* | **AGPL-3.0** — see note below |
 
