@@ -30,7 +30,7 @@ DIRS = [
     CHROMA_DIR,
     RAG_DIR,
     MEMORY_VECTORS_DIR,
-    os.path.join(BASE_DIR, "logs"),
+    os.path.join(DATA_DIR, "logs"),
 ]
 
 
@@ -145,6 +145,9 @@ def create_env():
     example_path = os.path.join(BASE_DIR, ".env.example")
     if os.path.exists(env_path):
         print("  [skip] .env already exists")
+        return
+    if not os.access(BASE_DIR, os.W_OK):
+        print("  [skip] BASE_DIR is not writable (e.g. Nix store) — set env vars directly or use an env file")
         return
     if os.path.exists(example_path):
         import shutil

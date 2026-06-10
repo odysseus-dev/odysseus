@@ -90,6 +90,47 @@ downloads and serves. The app itself is lightweight; local model serving is the
 heavy part and depends on the model, runtime, GPU, and VRAM, so small hosts can
 connect to API or remote model servers instead. Use `--host 0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
 
+### Nix dev shell
+
+The flake provides a reproducible development environment with Python and all
+dependencies pinned — no venv or pip needed. Works on Linux, macOS, and Windows
+(via WSL2).
+
+```bash
+nix develop          # or: nix-shell nix/shell.nix
+python setup.py      # first run: creates the admin account
+uvicorn app:app --host 127.0.0.1 --port 7000
+```
+
+To update the pinned inputs later, run `nix flake update`.
+
+### NixOS / nix-darwin modules
+
+Deploy Odysseus as a managed service. Add the flake as an input, then import
+the module for your platform:
+
+**NixOS** (`configuration.nix`):
+```nix
+imports = [ inputs.odysseus.nixosModules.default ];
+services.odysseus = {
+  enable = true;
+  # environmentFile = "/run/secrets/odysseus-env";  # API keys, LLM_HOST, etc.
+};
+```
+
+**nix-darwin / macOS** (`darwin-configuration.nix`):
+```nix
+imports = [ inputs.odysseus.darwinModules.default ];
+services.odysseus.enable = true;
+```
+
+The module runs the app plus a bundled ChromaDB (and, opt-in,
+SearXNG / llama.cpp) as system services. Mutable data lives under
+`services.odysseus.dataDir` (default `/var/lib/odysseus/data`), and all Python
+dependencies are bundled via nixpkgs — no venv or pip at runtime. See the
+`services.odysseus.*` options for ports, `searxng`, `llamaCpp`,
+`extraPythonPackages`, and `openFirewall`.
+
 ### Apple Silicon
 Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
 M-series Mac, run Odysseus natively:
