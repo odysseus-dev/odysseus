@@ -400,10 +400,16 @@ _HEREDOC_OPEN_RE = re.compile(
 
 def _heredoc_to_write_file(command: str):
     """If a bash command is nothing but a single `cat` heredoc writing one file
-    (optionally surrounded by comments/blank lines), return (path, body) so it
-    can be executed as the write_file tool instead. Local models lean on
-    heredocs for whole-file writes and then loop on shell-quoting failures;
-    write_file takes the body verbatim and registers the file in the UI panel.
+    (optionally surrounded by comments/blank lines), return (path, body, closed)
+    so it can be handled as a write_file instead. Local models lean on heredocs
+    for whole-file writes and then loop on shell-quoting failures; write_file
+    takes the body verbatim and registers the file in the UI panel.
+
+    closed=False means the closing delimiter never appeared — the model's
+    output was cut off mid-heredoc. bash would silently write the TRUNCATED
+    body with exit 0 and the model would believe the file is complete; the
+    caller must turn that into an explicit error instead.
+
     Returns None when the command does anything else (pipelines, appends `>>`,
     trailing commands, or an unquoted delimiter with $/` expansion intended)."""
     lines = command.split("\n")
@@ -424,7 +430,8 @@ def _heredoc_to_write_file(command: str):
             close = k
             break
     if close is None:
-        return None
+        # Unterminated heredoc: everything to end-of-input is the body.
+        return path, "\n".join(lines[i + 1:]), False
     # Anything after the closing delimiter besides blanks/comments → real script.
     for k in range(close + 1, len(lines)):
         if lines[k].strip() and not lines[k].lstrip().startswith("#"):
@@ -436,7 +443,28 @@ def _heredoc_to_write_file(command: str):
         return None
     if not body.strip():
         return None
-    return path, body
+    return path, body, True
+
+
+_REDIRECT_TARGET_RE = re.compile(
+    r"(?<!\d)>{1,2}\s*(['\"]?)((?:~/|/)?(?:[\w@%+=.,-]+/)*[\w@%+=.,-]+\.(?:md|markdown|txt|rst|json|csv|tsv|ya?ml|toml|ini|cfg|conf|log|html?|css|js|ts|py|sh|sql|xml))\1(?=[\s;|&)]|$)"
+)
+_REDIRECT_REGISTER_MAX = 3
+_REDIRECT_REGISTER_MAX_BYTES = 262_144
+
+
+def _bash_written_files(command: str) -> list:
+    """Paths of text files a bash command redirected output into (`> x.md`,
+    `>> x.log`, heredocs with trailing commands, `| tee x.txt` is NOT covered).
+    Used to surface those files in the UI documents panel after the command
+    succeeds — the panel lists DB documents, not the filesystem."""
+    seen, out = set(), []
+    for m in _REDIRECT_TARGET_RE.finditer(command):
+        p = m.group(2)
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
 
 
 def _existing_file_line_count(raw_path: str) -> int:
@@ -681,6 +709,22 @@ async def execute_tool_block(
         # verbatim (no shell-quoting retry loops) and the file shows up in the
         # UI files panel via document registration below.
         _hd = _heredoc_to_write_file(content)
+        if _hd is not None and not _hd[2]:
+            # The closing delimiter never arrived — the model's output was cut
+            # off (token limit). bash would silently write a half-finished file
+            # with exit 0 and the model would report the work as done.
+            logger.info(f"[tools] unterminated heredoc rejected: {_hd[0]}")
+            return (f"{tool}: unterminated heredoc", {
+                "error": (
+                    f"Your heredoc writing `{_hd[0]}` never closed — the final delimiter "
+                    "line is missing, so your output was CUT OFF mid-file (token limit). "
+                    "Nothing was written; the previous content would have been silently "
+                    "truncated. Do NOT retry the same giant heredoc. Instead write the "
+                    "file in parts: a ```write_file block with the first sections, then "
+                    "```edit_file replacements to extend it section by section. Keep each "
+                    "part small enough to finish."),
+                "exit_code": 1,
+            })
         if _hd is not None:
             tool = "write_file"
             content = f"{_hd[0]}\n{_hd[1]}"
@@ -881,6 +925,27 @@ async def execute_tool_block(
                 result = {**result,
                           "output": (str(result.get("output") or "").rstrip()
                                      + "\n\n[note] " + "\n[note] ".join(_notes)).strip()}
+        # A bash command that redirected output into text files (heredoc with a
+        # trailing command, `echo > x.md`, ...) leaves those files invisible to
+        # the UI panel — register them as documents too. Best-effort.
+        if (tool == "bash" and session_id and isinstance(result, dict)
+                and result.get("exit_code") == 0):
+            for _p in _bash_written_files(content)[:_REDIRECT_REGISTER_MAX]:
+                try:
+                    _fp = os.path.expanduser(_p)
+                    if not os.path.isabs(_fp):
+                        _fp = os.path.join(_AGENT_WORKDIR, _fp)
+                    if (not os.path.isfile(_fp)
+                            or os.path.getsize(_fp) > _REDIRECT_REGISTER_MAX_BYTES
+                            or _is_sensitive_path(os.path.realpath(_fp))):
+                        continue
+                    with open(_fp, "r", errors="ignore") as _fh:
+                        _fbody = _fh.read()
+                    if _fbody.strip():
+                        await register_file_as_document(
+                            _p, _fbody, session_id=session_id, owner=owner)
+                except Exception:
+                    logger.debug("bash redirect doc registration failed", exc_info=True)
     elif tool in ("grep", "glob", "ls"):
         # Code-navigation tools — no MCP server; run the direct implementation.
         first_line = content.split(chr(10))[0][:80]
