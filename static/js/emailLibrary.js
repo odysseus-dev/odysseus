@@ -2297,7 +2297,7 @@ async function _doSearch() {
     const accountQS = accountAtStart ? `&account_id=${encodeURIComponent(accountAtStart)}` : '';
     const res = await fetch(`${API_BASE}/api/email/search?folder=${encodeURIComponent(folderAtStart)}${accountQS}&q=${encodeURIComponent(q)}&limit=100`);
     const data = await res.json();
-    sp.destroy();
+    if (sp) sp.destroy();
     if (
       seq !== _libSearchSeq ||
       q !== state._libSearch.trim() ||
@@ -2316,7 +2316,7 @@ async function _doSearch() {
     const stats = document.getElementById('email-lib-stats');
     if (stats) stats.textContent = `${data.total || results.length} match${(data.total || results.length) === 1 ? '' : 'es'}`;
   } catch (e) {
-    sp.destroy();
+    if (sp) sp.destroy();
     grid.innerHTML = '<div class="email-loading">Search failed</div>';
   }
 }
@@ -5450,7 +5450,7 @@ async function _generateSummary(reader, data, btn) {
   } catch (e) {
     sp.destroy();
     panel.remove();
-    if (uiModule) uiModule.showError?.('Failed to summarize');
+    import('./ui.js').then(m => m.showError && m.showError('Failed to summarize')).catch(() => {});
   } finally {
     if (btn) btn.disabled = false;
   }
