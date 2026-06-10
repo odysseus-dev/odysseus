@@ -123,7 +123,9 @@
   body {
     font-family: 'Fira Code', monospace;
     background: var(--bg); color: var(--fg);
-    display: flex; justify-content: center; align-items: flex-start;
+    /* Column so the language selector (.login-locale) stacks BELOW the
+       credentials card instead of beside it. */
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
     min-height: 100vh; min-height: 100dvh;
     padding-top: 15vh;
     transition: padding-top 0.2s ease;
