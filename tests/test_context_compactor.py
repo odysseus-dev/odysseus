@@ -192,3 +192,42 @@ class TestMaybeCompactFourthMessage:
         ]}
         result = self._run(messages)
         assert len(result) == 3 and result[2] is True
+
+    def test_resolves_utility_endpoint_for_session_owner(self):
+        calls = []
+        messages = self._four_turn_history_with_tool_call()
+        session = type("Session", (), {"owner": "alice"})()
+
+        orig_ctx = cc.get_context_length
+        orig_call = cc.llm_call_async
+        orig_resolve = cc.resolve_endpoint
+        orig_update = cc._update_session_history
+
+        async def _fake_summary(*a, **k):
+            return "compact summary text"
+
+        def _fake_resolve(which, **kwargs):
+            calls.append((which, kwargs.get("owner")))
+            return (None, None, None)
+
+        cc.get_context_length = lambda url, model: 500
+        cc.llm_call_async = _fake_summary
+        cc.resolve_endpoint = _fake_resolve
+        cc._update_session_history = lambda *a, **k: None
+        try:
+            asyncio.run(
+                maybe_compact(
+                    session=session,
+                    endpoint_url="http://local/v1/chat/completions",
+                    model="local-model",
+                    messages=list(messages),
+                    headers={},
+                )
+            )
+        finally:
+            cc.get_context_length = orig_ctx
+            cc.llm_call_async = orig_call
+            cc.resolve_endpoint = orig_resolve
+            cc._update_session_history = orig_update
+
+        assert calls == [("utility", "alice")]
