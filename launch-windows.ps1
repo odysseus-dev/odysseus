@@ -154,7 +154,25 @@ if (Test-Path $cudaBase) {
     }
 }
 
-# 7. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
+# 7. Start the Docker MCP Gateway (Phase B/C) - skipped if Docker is missing or port 9090 is already in use
+Write-Step "Checking MCP Gateway (port 9090)"
+$gatewayScript = Join-Path $PSScriptRoot "scripts\start-mcp-gateway.ps1"
+$dockerCmd = Get-Command docker -ErrorAction SilentlyContinue
+$gatewayUp = Test-NetConnection -ComputerName 127.0.0.1 -Port 9090 -InformationLevel Quiet -WarningAction SilentlyContinue
+if ($gatewayUp) {
+    Write-Host "MCP Gateway already running on port 9090 - skipping."
+} elseif (-not $dockerCmd) {
+    Write-Host "Docker not found - skipping MCP Gateway (agent tools unavailable)." -ForegroundColor Yellow
+} elseif (-not (Test-Path $gatewayScript)) {
+    Write-Host "scripts\start-mcp-gateway.ps1 not found - skipping MCP Gateway." -ForegroundColor Yellow
+} else {
+    $pwshExe = Get-Command pwsh -ErrorAction SilentlyContinue
+    if (-not $pwshExe) { $pwshExe = Get-Command powershell -ErrorAction SilentlyContinue }
+    Start-Process -FilePath $pwshExe.Source -ArgumentList @("-NoProfile", "-File", $gatewayScript) -WindowStyle Minimized
+    Write-Host "MCP Gateway starting in background window (servers: playwright, fetch, filesystem)."
+}
+
+# 8. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
 Write-Step ("Starting Odysseus at http://{0}:{1}" -f $BindHost, $Port)
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
