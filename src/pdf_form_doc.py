@@ -300,7 +300,13 @@ def parse_markdown_to_values(content: str) -> dict[str, Any]:
 
 
 def _checkbox_marker(value: Any) -> str:
-    return "[x]" if value else "[ ]"
+    # An AcroForm checkbox value is the reserved "Off" state when unchecked
+    # (PyMuPDF / the PDF spec), and an on-state name (e.g. "Yes") when checked.
+    # "Off" is a non-empty string, so a naive truthiness test rendered every
+    # unchecked box as [x] and corrupted form data on export. Treat empty/None
+    # and the Off sentinel as unchecked; any real on-state means checked.
+    s = str(value).strip().lstrip("/").casefold() if value is not None else ""
+    return "[x]" if s and s != "off" else "[ ]"
 
 
 def _flatten(value: Any) -> str:

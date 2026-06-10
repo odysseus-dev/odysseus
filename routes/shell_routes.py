@@ -420,9 +420,19 @@ async def _create_shell(command: str, **kwargs):
     return await asyncio.create_subprocess_shell(command, **kwargs)
 
 
-async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, Any]:
-    """Run a shell command and return stdout/stderr/exit_code."""
+async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT, request: Request = None) -> Dict[str, Any]:
+    """Run a shell command and return stdout/stderr/exit_code.
+
+    A falsy timeout means "no fixed limit", per the request model
+    (`0 = run until client disconnects`). Even then we poll for client
+    disconnect so a non-terminating command (tail -f, sleep infinity, a hung
+    process) cannot block the worker forever or orphan the subprocess: Starlette
+    does not cancel a buffered request coroutine when the client goes away, so
+    the no-timeout path has to detect the disconnect itself and kill the process.
+    """
     proc = None
+    comm_task = None
+    disconnected = False
     try:
         proc = await _create_shell(
             command,
@@ -430,17 +440,32 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, An
             stderr=asyncio.subprocess.PIPE,
             cwd=str(Path.home()),
         )
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        comm_task = asyncio.ensure_future(proc.communicate())
+        if timeout:
+            stdout_b, stderr_b = await asyncio.wait_for(comm_task, timeout=timeout)
+        else:
+            # No fixed timeout, but still end on client disconnect.
+            while not comm_task.done():
+                if request is not None and await request.is_disconnected():
+                    disconnected = True
+                    comm_task.cancel()
+                    raise asyncio.CancelledError
+                await asyncio.wait({comm_task}, timeout=0.5)
+            stdout_b, stderr_b = comm_task.result()
         stdout = stdout_b.decode(errors="replace")[:MAX_OUTPUT]
         stderr = stderr_b.decode(errors="replace")[:MAX_OUTPUT]
         return {"stdout": stdout, "stderr": stderr, "exit_code": proc.returncode}
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, asyncio.CancelledError):
         if proc:
             try:
                 proc.kill()
                 await proc.wait()
             except ProcessLookupError:
                 pass
+        if comm_task is not None:
+            await asyncio.gather(comm_task, return_exceptions=True)
+        if disconnected:
+            return {"stdout": "", "stderr": "Command cancelled: client disconnected", "exit_code": -1}
         return {
             "stdout": "",
             "stderr": f"Command timed out after {timeout}s",
@@ -816,7 +841,9 @@ def setup_shell_routes() -> APIRouter:
 
         logger.info("User shell exec requested: length=%d", len(cmd))
         result = await _exec_shell(
-            cmd, timeout=req.timeout if req.timeout is not None else EXEC_TIMEOUT
+            cmd,
+            timeout=req.timeout if req.timeout is not None else EXEC_TIMEOUT,
+            request=request,
         )
         return result
 
