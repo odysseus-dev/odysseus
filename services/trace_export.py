@@ -21,9 +21,10 @@ def export_json(file_name: str, data: list[dict]):
 def build_trace_records(
     db,
     current_user: str,
-    session_id: str,
     message_ids: List[str],
+    session_id: str,
     label: str,
+    note: str="",
 ):
     """Export selected chat messages for `session_id` using the provided
     SQLAlchemy `db` session. This follows the project's DB/session patterns
@@ -99,6 +100,7 @@ def build_trace_records(
         "created_at": session_row.created_at,
         "label": label,
         "messages": messages_list,
+        "note": note
     }
 
     export_json("chats_export", [session_properties])
@@ -162,6 +164,7 @@ def test_build_trace_records():
                 "adcadbf1-d197-491d-b7b6-63fba7c273e6",
             ],
             label="success",
+            note="needs review",
         )
 
         print("Test completed successfully")
@@ -169,6 +172,6 @@ def test_build_trace_records():
         db.close()
 
 if __name__ == "__main__":
-    inspect_sessions()
-    inspect_messages("8571ae67-b6f8-471c-bba7-6ce26e786d8d")
+    # inspect_sessions()
+    # inspect_messages("8571ae67-b6f8-471c-bba7-6ce26e786d8d")
     test_build_trace_records()
