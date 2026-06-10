@@ -124,8 +124,8 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
         script_path = _JOBS_DIR / f"{job_id}.cmd"
         script_path.write_text(
             "@echo off\r\n"
-            f'call "{child_path}" > "{log_path}" 2>&1\r\n'
-            f'echo %ERRORLEVEL%> "{exit_path}"\r\n',
+            f'cmd.exe /c "{child_path}" > "{log_path}" 2>&1\r\n'
+            f'echo %ERRORLEVEL% > "{exit_path}"\r\n',
             encoding="utf-8",
         )
         argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
